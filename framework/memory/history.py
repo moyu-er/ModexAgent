@@ -10,7 +10,6 @@ from typing import Any
 from framework.memory.core.scope import MemoryContext
 from framework.memory.core.message import ChatMessage
 from framework.memory.managers.short_term import ShortTermMemoryManager
-from framework.memory.managers.working import WorkingMemoryManager
 
 
 class MessageHistory(ABC):
@@ -71,12 +70,11 @@ class ShortTermMessageHistory(MessageHistory):
         self,
         manager: ShortTermMemoryManager,
         context: MemoryContext,
-        working_manager: WorkingMemoryManager | None = None,
+        initial_messages: Sequence[ChatMessage | dict[str, Any]] | None = None,
     ) -> None:
         self._manager = manager
         self._context = context
-        self._working_manager = working_manager
-        self._cache: list[ChatMessage] | None = None
+        self._cache: list[ChatMessage] | None = [ChatMessage.coerce(m) for m in initial_messages] if initial_messages is not None else None
         self._cache_lock = asyncio.Lock()
 
     async def append(self, message: ChatMessage | dict[str, Any]) -> None:
@@ -94,17 +92,13 @@ class ShortTermMessageHistory(MessageHistory):
             self._cache = None
 
     async def to_list(self) -> list[ChatMessage]:
-        """Read from storage, merge working memory, and cache the result."""
+        """Read from storage and cache the result."""
         # Storage-first lock ordering: acquire storage read lock, compute view,
         # release storage lock, then acquire cache lock to store result.
         stm_messages = await self._manager.get_messages(self._context)
-        working_messages: list[ChatMessage] = []
-        if self._working_manager is not None:
-            working_messages = self._working_manager.get_messages(self._context)
-        combined = list(stm_messages) + list(working_messages)
         async with self._cache_lock:
-            self._cache = combined
-        return list(combined)
+            self._cache = list(stm_messages)
+        return list(stm_messages)
 
     async def clear(self) -> None:
         """清空短期记忆中的所有消息。"""

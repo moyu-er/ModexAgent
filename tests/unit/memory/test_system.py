@@ -28,7 +28,6 @@ async def memory_system():
 @pytest.mark.asyncio
 class TestMemorySystem:
     async def test_default_single_user_layers(self, memory_system):
-        assert "working" in memory_system.layers
         assert "short_term" in memory_system.layers
         assert "history" in memory_system.layers
         assert "long_term" in memory_system.layers
@@ -86,6 +85,9 @@ class TestMemorySystemContextManager:
         user_msg = {"role": "user", "content": "hello"}
         result = AgentResult(content="hi", messages=[{"role": "assistant", "content": "hi"}])
         await adapter.save("s1", user_msg, result)
+        # 模拟 ReAct agent 通过 context.history 实时写入 assistant message
+        ctx = MemoryContext(session_id="s1", user_id="default")
+        await memory_system.add_message(ctx, {"role": "assistant", "content": "hi"})
 
         state = await adapter.load("s1")
         assert len(state.history) == 2
@@ -401,13 +403,6 @@ class TestAgentSessionWithMemorySystem:
 
 @pytest.mark.asyncio
 class TestMemorySystemReadAPIs:
-    async def test_get_working_messages(self, memory_system):
-        ctx = MemoryContext(session_id="s1", user_id="u1")
-        memory_system.stage_working(ctx, [{"role": "user", "content": "w1"}])
-        msgs = memory_system.get_working_messages(ctx)
-        assert len(msgs) == 1
-        assert msgs[0]["content"] == "w1"
-
     async def test_get_history_entries(self, memory_system):
         ctx = MemoryContext(session_id="s1", user_id="u1")
         await memory_system._managers.history.append(ctx, "summary1", {})
@@ -423,28 +418,9 @@ class TestMemorySystemReadAPIs:
         assert lt.soul == "witty"
         assert lt.user == "developer"
 
-    async def test_clear_working(self, memory_system):
-        ctx = MemoryContext(session_id="s1", user_id="u1")
-        memory_system.stage_working(ctx, [{"role": "user", "content": "x"}])
-        removed = memory_system.clear_working(ctx)
-        assert len(removed) == 1
-        assert memory_system.get_working_messages(ctx) == []
-
-    async def test_flush_working_moves_to_short_term(self, memory_system):
-        ctx = MemoryContext(session_id="s1", user_id="u1")
-        memory_system.stage_working(ctx, [{"role": "user", "content": "to_flush"}])
-        flushed = await memory_system.flush_working(ctx)
-        assert len(flushed) == 1
-        assert memory_system.get_working_messages(ctx) == []
-
-        short_term = await memory_system.get_history(ctx)
-        assert len(short_term) == 1
-        assert short_term[0]["content"] == "to_flush"
-
     async def test_add_messages_only_writes_short_term(self, memory_system):
         ctx = MemoryContext(session_id="s1", user_id="u1")
         await memory_system.add_messages(ctx, [{"role": "user", "content": "only_short"}])
-        assert memory_system.get_working_messages(ctx) == []
         short_term = await memory_system.get_history(ctx)
         assert len(short_term) == 1
 
@@ -456,14 +432,10 @@ class TestMemorySystemReadAPIs:
             AgentResult(content="hi"),
         )
         ctx = MemoryContext(session_id="s1", user_id="default")
-        # save() 直接写入 short_term，不会 stage 到 working
-        working = memory_system.get_working_messages(ctx)
-        assert len(working) == 0
         history = await memory_system.get_history(ctx)
         assert len(history) == 1
-        # flush() 不会影响已持久化的消息
+        # flush() 是 no-op，不会影响已持久化的消息
         await adapter.flush("s1")
-        assert memory_system.get_working_messages(ctx) == []
         history_after = await memory_system.get_history(ctx)
         assert len(history_after) == 1
 

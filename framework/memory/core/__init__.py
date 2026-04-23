@@ -4,7 +4,6 @@ from .base_managers import (
     BaseHistoryArchiveManager,
     BaseLongTermMemoryManager,
     BaseShortTermManager,
-    BaseWorkingMemoryManager,
 )
 from .compression import CompressionContext, CompressionResult, CompressionStrategy
 from .consolidation import ConsolidationEngine, ConsolidationResult, MemoryUpdate
@@ -27,7 +26,6 @@ __all__ = [
     "BaseHistoryArchiveManager",
     "BaseLongTermMemoryManager",
     "BaseShortTermManager",
-    "BaseWorkingMemoryManager",
     "ChatMessage",
     "CompressionResult",
     "CompressionStrategy",

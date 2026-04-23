@@ -125,22 +125,3 @@ class BaseLongTermMemoryManager(ABC):
 
     @abstractmethod
     async def clear(self, context: MemoryContext) -> None: ...
-
-
-class BaseWorkingMemoryManager(ABC):
-    """工作记忆管理器抽象基类."""
-
-    @abstractmethod
-    def add_message(
-        self, context: MemoryContext, message: ChatMessage | dict[str, Any]
-    ) -> None: ...
-
-    @abstractmethod
-    def get_messages(
-        self, context: MemoryContext
-    ) -> list[ChatMessage]: ...
-
-    @abstractmethod
-    def clear(
-        self, context: MemoryContext
-    ) -> list[ChatMessage]: ...

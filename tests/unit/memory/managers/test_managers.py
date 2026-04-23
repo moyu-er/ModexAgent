@@ -6,7 +6,6 @@ from framework.memory.core.scope import MemoryContext, SessionScope, UserScope
 from framework.memory.managers.history import HistoryArchiveManager
 from framework.memory.managers.long_term import LongTermMemoryManager
 from framework.memory.managers.short_term import ShortTermConfig, ShortTermMemoryManager
-from framework.memory.managers.working import WorkingMemoryManager
 from framework.memory.stores.in_memory import InMemoryStorage
 
 
@@ -18,29 +17,6 @@ async def storage():
     await s.close()
 
 
-class TestWorkingMemoryManager:
-    def test_add_and_get(self):
-        mgr = WorkingMemoryManager(SessionScope())
-        ctx = MemoryContext(session_id="s1")
-        mgr.add_message(ctx, {"role": "user", "content": "hi"})
-        msgs = mgr.get_messages(ctx)
-        assert len(msgs) == 1
-        assert msgs[0]["content"] == "hi"
-
-    def test_scope_isolation(self):
-        mgr = WorkingMemoryManager(SessionScope())
-        mgr.add_message(MemoryContext(session_id="s1"), {"role": "user", "content": "a"})
-        mgr.add_message(MemoryContext(session_id="s2"), {"role": "user", "content": "b"})
-        assert len(mgr.get_messages(MemoryContext(session_id="s1"))) == 1
-        assert len(mgr.get_messages(MemoryContext(session_id="s2"))) == 1
-
-    def test_clear_returns_messages(self):
-        mgr = WorkingMemoryManager(SessionScope())
-        ctx = MemoryContext(session_id="s1")
-        mgr.add_message(ctx, {"role": "user", "content": "x"})
-        msgs = mgr.clear(ctx)
-        assert len(msgs) == 1
-        assert mgr.get_messages(ctx) == []
 
 
 @pytest.mark.asyncio

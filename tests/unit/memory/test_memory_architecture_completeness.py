@@ -31,7 +31,6 @@ from framework.memory.injection import DefaultMemoryInjectionPolicy
 from framework.memory.managers.history import HistoryArchiveManager
 from framework.memory.managers.long_term import LongTermMemoryManager
 from framework.memory.managers.short_term import ShortTermConfig, ShortTermMemoryManager
-from framework.memory.managers.working import WorkingMemoryManager
 from framework.memory.stores.file import FileStorage
 from framework.memory.stores.in_memory import InMemoryStorage
 from framework.memory.system import MemorySystem, MemorySystemContextManager
@@ -110,7 +109,7 @@ async def test_full_lifecycle_with_swappable_implementations(
     storage_cls, compression_cls, archive_cls, tmp_path
 ):
     """
-    working -> short_term (with compression) -> history -> long_term
+    short_term (with compression) -> history -> long_term
     Must work identically regardless of which concrete impl is chosen.
     """
     store = await _make_storage(storage_cls, tmp_path)
@@ -271,7 +270,6 @@ async def test_memory_system_accepts_all_custom_implementations(tmp_path):
 
     try:
         custom_layers = {
-            "working": LayerConfig(scope=SessionScope(), storage=InMemoryStorage()),
             "short_term": LayerConfig(
                 scope=SessionScope(),
                 storage=store,
@@ -292,10 +290,8 @@ async def test_memory_system_accepts_all_custom_implementations(tmp_path):
 
         ctx = MemoryContext(session_id="custom_s1", user_id="u1")
 
-        # Working -> flush -> short_term
-        ms.stage_working(ctx, [{"role": "user", "content": "hello"}])
-        flushed = await ms.flush_working(ctx)
-        assert len(flushed) == 1
+        # Add to short_term
+        await ms.add_message(ctx, {"role": "user", "content": "hello"})
 
         # Short_term with custom compression
         for i in range(10):
@@ -332,7 +328,6 @@ async def test_memory_system_accepts_all_custom_implementations(tmp_path):
 async def test_injection_policy_assembles_context_across_storage_backends(storage_cls, tmp_path):
     store = await _make_storage(storage_cls, tmp_path)
     try:
-        working_mgr = WorkingMemoryManager(SessionScope())
         stm = ShortTermMemoryManager(store, SessionScope())
         history_mgr = HistoryArchiveManager(store, UserScope())
         ltm = LongTermMemoryManager(store, UserScope())
@@ -340,7 +335,6 @@ async def test_injection_policy_assembles_context_across_storage_backends(storag
         ctx = MemoryContext(session_id="inject_s1", user_id="u1")
 
         # Populate tiers
-        working_mgr.add_message(ctx, {"role": "assistant", "content": "working_msg"})
         await stm.add_message(ctx, {"role": "user", "content": "short_term_msg"})
         await history_mgr.append(ctx, "history_summary", {})
         await ltm.update(ctx, {"soul": "injected_soul"})
@@ -351,14 +345,12 @@ async def test_injection_policy_assembles_context_across_storage_backends(storag
         ms = MemorySystem(
             workspace=tmp_path / "inject_ms",
             layers={
-                "working": LayerConfig(scope=SessionScope(), storage=InMemoryStorage()),
                 "short_term": LayerConfig(scope=SessionScope(), storage=store),
                 "history": LayerConfig(scope=UserScope(), storage=store),
                 "long_term": LayerConfig(scope=UserScope(), storage=store),
             },
         )
         await ms.initialize()
-        ms.stage_working(ctx, [{"role": "assistant", "content": "working_msg"}])
         await ms.add_message(ctx, {"role": "user", "content": "short_term_msg"})
         await ms._managers.history.append(ctx, "history_summary", {})
         await ms._managers.long_term.update(ctx, {"soul": "injected_soul"})
@@ -366,11 +358,9 @@ async def test_injection_policy_assembles_context_across_storage_backends(storag
         policy = DefaultMemoryInjectionPolicy(max_short_term_messages=10)
         state = await policy.assemble(ms, ctx)
 
-        # Order: short_term + working
         history = state.history
         contents = [m.get("content") for m in history]
         assert "short_term_msg" in contents
-        assert "working_msg" in contents
 
         assert "injected_soul" in state.system_prompt
         assert "history_summary" in state.system_prompt
@@ -397,6 +387,9 @@ async def test_context_manager_round_trip_with_file_storage(tmp_path):
             {"role": "user", "content": "hello"},
             AgentResult(content="hi", messages=[{"role": "assistant", "content": "hi"}]),
         )
+        # 模拟 ReAct agent 实时写入 assistant message
+        ctx = MemoryContext(session_id="rt_s1", user_id="default")
+        await ms.add_message(ctx, {"role": "assistant", "content": "hi"})
         await adapter.flush("rt_s1")
 
         # Build system prompt to populate cache with runtime_info
@@ -407,7 +400,7 @@ async def test_context_manager_round_trip_with_file_storage(tmp_path):
         # Prompt should include runtime info (platform/qq style) or at least not be empty
         assert isinstance(prompt, str) and len(prompt) > 0
 
-        # Load should use cached context — save() now persists both user + assistant messages
+        # Load should use cached context
         state = await adapter.load("rt_s1")
         assert len(state.history) == 2
     finally:

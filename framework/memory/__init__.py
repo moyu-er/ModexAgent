@@ -1,10 +1,9 @@
 """Tiered memory system for agent context management.
 
-Provides a four-layer architecture:
-1. Working Memory — current turn cache (in-memory)
-2. Short-term Memory — recent conversation history
-3. History Archive — compressed summaries (medium-term)
-4. Long-term Memory — user profile and knowledge
+Provides a three-layer architecture:
+1. Short-term Memory — recent conversation history
+2. History Archive — compressed summaries (medium-term)
+3. Long-term Memory — user profile and knowledge
 
 Key abstractions:
 - MemorySystem: unified entry point
@@ -34,6 +33,7 @@ from framework.memory.core.scope import (
     GlobalScope,
     MemoryContext,
     MemoryScope,
+    PeerPairScope,
     SessionScope,
     TenantScope,
     UserScope,
@@ -52,7 +52,6 @@ from framework.memory.managers.short_term import (
     ShortTermConfig,
     ShortTermMemoryManager,
 )
-from framework.memory.managers.working import WorkingMemoryManager
 from framework.memory.stores.file import FileStorage
 from framework.memory.stores.in_memory import InMemoryStorage
 from framework.memory.system import (
@@ -77,12 +76,12 @@ __all__ = [
     "ChatScope",
     "CompositeScope",
     "GlobalScope",
+    "PeerPairScope",
     # Storage backends
     "MemoryStorage",
     "InMemoryStorage",
     "FileStorage",
     # Managers
-    "WorkingMemoryManager",
     "ShortTermConfig",
     "ShortTermMemoryManager",
     "HistoryArchiveManager",

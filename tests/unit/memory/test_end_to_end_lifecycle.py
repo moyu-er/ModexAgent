@@ -119,23 +119,16 @@ class TestShortTermCompressionArchivesToHistory:
 
 @pytest.mark.asyncio
 class TestMemoryLifecycleEndToEnd:
-    """验证消息从 working -> short_term -> history -> long_term 的完整流转。"""
+    """验证消息从 short_term -> history -> long_term 的完整流转。"""
 
     async def test_full_lifecycle_through_memory_system(self, memory_system):
         ctx = MemoryContext(session_id="life_session", user_id="u1")
 
-        # 1. 当前 turn 的消息先进入 working memory
-        memory_system.stage_working(ctx, [
+        # 1. 消息直接写入 short_term
+        await memory_system.add_messages(ctx, [
             {"role": "user", "content": "hello"},
             {"role": "assistant", "content": "hi there"},
         ])
-        working = memory_system.get_working_messages(ctx)
-        assert len(working) == 2
-
-        # 2. turn 结束时 flush 到 short_term
-        flushed = await memory_system.flush_working(ctx)
-        assert len(flushed) == 2
-        assert memory_system.get_working_messages(ctx) == []
 
         short_term = await memory_system.get_history(ctx)
         assert len(short_term) == 2
@@ -166,14 +159,13 @@ class TestMemoryLifecycleEndToEnd:
 class TestContextInjectionEndToEnd:
     """验证 MemorySystemContextManager 加载的 ContextState 正确组合各层记忆。"""
 
-    async def test_load_includes_short_term_and_working_memory(self, memory_system):
+    async def test_load_includes_short_term(self, memory_system):
         ctx = MemoryContext(session_id="inj_session", user_id="u1")
         adapter = MemorySystemContextManager(memory_system)
 
-        # 先持久化一些 short_term 历史
+        # 持久化 short_term 历史
         await memory_system.add_message(ctx, {"role": "user", "content": "old_msg"})
-        # 再 stage 当前 turn 的 working 消息
-        memory_system.stage_working(ctx, [{"role": "assistant", "content": "new_msg"}])
+        await memory_system.add_message(ctx, {"role": "assistant", "content": "new_msg"})
 
         state = await adapter.load("inj_session")
         history = state.history
@@ -259,19 +251,6 @@ class TestMemoryAgingAndCleanup:
 
         stm._config.max_messages = original_max
 
-    async def test_clear_working_does_not_affect_short_term(self, memory_system):
-        ctx = MemoryContext(session_id="wk_session", user_id="u1")
-        memory_system.stage_working(ctx, [{"role": "user", "content": "wk"}])
-        await memory_system.flush_working(ctx)
-        memory_system.stage_working(ctx, [{"role": "assistant", "content": "wk2"}])
-
-        cleared = memory_system.clear_working(ctx)
-        assert len(cleared) == 1
-
-        short_term = await memory_system.get_history(ctx)
-        assert len(short_term) == 1
-        assert short_term[0]["content"] == "wk"
-
 
 @pytest.mark.asyncio
 class TestMemorySystemContextManagerRoundTrip:
@@ -285,13 +264,9 @@ class TestMemorySystemContextManagerRoundTrip:
             AgentResult(),
         )
         # Agent implementations are responsible for appending their own messages
-        await adapter.save(
-            "rt_session",
-            user_message=None,
-            assistant_result=AgentResult(
-                messages=[{"role": "assistant", "content": "world"}],
-            ),
-        )
+        # 模拟 ReAct agent 通过 context.history 实时写入 assistant message
+        ctx = MemoryContext(session_id="rt_session", user_id="default")
+        await memory_system.add_message(ctx, {"role": "assistant", "content": "world"})
 
         state = await adapter.load("rt_session")
         history = state.history
@@ -301,6 +276,7 @@ class TestMemorySystemContextManagerRoundTrip:
 
     async def test_multiple_saves_maintain_order(self, memory_system):
         adapter = MemorySystemContextManager(memory_system)
+        ctx = MemoryContext(session_id="multi_session", user_id="default")
         for i in range(3):
             await adapter.save(
                 "multi_session",
@@ -309,6 +285,8 @@ class TestMemorySystemContextManagerRoundTrip:
                     messages=[{"role": "assistant", "content": f"a{i}"}],
                 ),
             )
+            # 模拟 ReAct agent 实时写入 assistant message
+            await memory_system.add_message(ctx, {"role": "assistant", "content": f"a{i}"})
 
         state = await adapter.load("multi_session")
         history = state.history
@@ -519,9 +497,11 @@ class TestAgentSessionMemoryIntegration:
             )
 
             assert result.stop_reason == "complete"
+            # _MemoryWritingAgent 未通过 context.history.append() 写入消息，
+            # 因此只有 user message 被 save() 持久化
             state = await adapter.load("sess_1")
             history = state.history
-            assert len(history) == 2  # user + assistant
+            assert len(history) == 1  # user only
 
             await ms.close()
 
@@ -605,6 +585,6 @@ class TestAgentSessionMemoryIntegration:
             # MemorySystemContextManager 的 load 返回的 ContextState 未保存 metadata。
             # 本测试验证的是 process_message 不会异常退出，且历史正确。
             history = state.history
-            assert len(history) == 2
+            assert len(history) == 1  # user only (agent 未通过 context.history 写入)
 
             await ms.close()

@@ -15,7 +15,6 @@ from framework.memory.core.base_managers import (
     BaseHistoryArchiveManager,
     BaseLongTermMemoryManager,
     BaseShortTermManager,
-    BaseWorkingMemoryManager,
 )
 from framework.memory.core.message import ChatMessage
 from framework.memory.core.scope import (
@@ -29,8 +28,11 @@ from framework.memory.core.scope import (
 from framework.memory.core.storage import MemoryStorage
 from framework.memory.managers.history import HistoryArchiveManager
 from framework.memory.managers.long_term import LongTermMemory, LongTermMemoryManager
+from typing import cast
+
+from framework.memory.history import ShortTermMessageHistory
 from framework.memory.managers.short_term import ShortTermConfig, ShortTermMemoryManager
-from framework.memory.managers.working import WorkingMemoryManager
+from framework.memory.content_transform import ContentTransformer
 from framework.memory.stores.file import FileStorage
 from framework.memory.stores.in_memory import InMemoryStorage
 from framework.plugins import MemoryProvider
@@ -46,7 +48,6 @@ class MemorySystemManagers:
     插件可通过替换 short_term 字段注入自定义实现。
     """
 
-    working: BaseWorkingMemoryManager
     short_term: BaseShortTermManager
     history: BaseHistoryArchiveManager | None = None
     long_term: BaseLongTermMemoryManager | None = None
@@ -79,13 +80,14 @@ class LayerConfig:
     archive_strategy: Any | None = None
     max_messages: int | None = 100
     max_tokens: int | None = 8000
-    content_transformer: Any | None = None  # ContentTransformer | None
+    max_entries: int | None = None
+    content_transformer: ContentTransformer | None = None
 
 
 class MemorySystem:
     """统一的多层记忆系统入口。
 
-    协调 Working、Short-term、History、Long-term 四层记忆管理器，
+    协调 Short-term、History、Long-term 三层记忆管理器，
     支持每层独立配置分组维度和存储后端。
     """
 
@@ -104,15 +106,13 @@ class MemorySystem:
         self._providers: list[MemoryProvider] = []  # MemoryProvider instances
 
     def _build_managers(self) -> MemorySystemManagers:
-        # Working layer (required)
-        working = WorkingMemoryManager(self.layers["working"].scope)
-
         # Short-term layer (required)
         history: HistoryArchiveManager | None = None
         if "history" in self.layers:
             history = HistoryArchiveManager(
                 self.layers["history"].storage,
                 self.layers["history"].scope,
+                max_entries=self.layers["history"].max_entries,
             )
         short_term = ShortTermMemoryManager(
             self.layers["short_term"].storage,
@@ -136,7 +136,6 @@ class MemorySystem:
             )
 
         return MemorySystemManagers(
-            working=working,
             short_term=short_term,
             history=history,
             long_term=long_term,
@@ -172,7 +171,6 @@ class MemorySystem:
             _, max_tokens = _derive_memory_budget(llm_max_tokens, budget_ratio=budget_ratio)
 
         return {
-            "working": LayerConfig(scope=SessionScope(), storage=InMemoryStorage()),
             "short_term": LayerConfig(
                 scope=SessionScope(),
                 storage=file_store,
@@ -181,7 +179,9 @@ class MemorySystem:
                 max_messages=max_messages,
                 max_tokens=max_tokens,
             ),
-            "history": LayerConfig(scope=UserScope(), storage=file_store),
+            "history": LayerConfig(
+                scope=UserScope(), storage=file_store, max_entries=1000
+            ),
             "long_term": LayerConfig(scope=UserScope(), storage=file_store),
         }
 
@@ -205,10 +205,6 @@ class MemorySystem:
             archive_strategy = SemanticArchiveStrategy()
 
         return {
-            "working": LayerConfig(
-                scope=CompositeScope(TenantScope(), UserScope(), SessionScope()),
-                storage=InMemoryStorage(),
-            ),
             "short_term": LayerConfig(
                 scope=CompositeScope(TenantScope(), UserScope(), SessionScope()),
                 storage=file_store,
@@ -218,6 +214,7 @@ class MemorySystem:
             "history": LayerConfig(
                 scope=CompositeScope(TenantScope(), UserScope()),
                 storage=file_store,
+                max_entries=1000,
             ),
             "long_term": LayerConfig(
                 scope=CompositeScope(TenantScope(), UserScope()),
@@ -239,6 +236,24 @@ class MemorySystem:
                 await provider.shutdown()
             except Exception as e:
                 logger.warning("Provider '%s' shutdown error: %s", provider.name, e)
+
+    def create_message_history(
+        self,
+        context: MemoryContext,
+        initial_messages: Sequence[ChatMessage | dict[str, Any]] | None = None,
+    ) -> ShortTermMessageHistory:
+        """创建与短期记忆关联的 MessageHistory 实例。
+
+        通过工厂方法解耦 InjectionPolicy 对具体 manager 类型的依赖。
+        """
+        stm = self._managers.short_term
+        if stm is None:
+            raise RuntimeError("short_term layer is not configured")
+        return ShortTermMessageHistory(
+            manager=cast(ShortTermMemoryManager, stm),
+            context=context,
+            initial_messages=initial_messages,
+        )
 
     async def add_message(
         self,
@@ -328,32 +343,6 @@ class MemorySystem:
                 logger.warning("Provider '%s' prefetch failed: %s", provider.name, e)
         return "\n\n".join(blocks) if blocks else None
 
-    def stage_working(
-        self,
-        context: MemoryContext,
-        messages: Sequence[ChatMessage | dict[str, Any]],
-    ) -> None:
-        """将消息暂存到 WorkingMemory（当前 turn 缓存，不触发压缩/持久化）。"""
-        if not messages:
-            return
-        for message in messages:
-            self._managers.working.add_message(context, message)
-
-    async def flush_working(self, context: MemoryContext) -> list[ChatMessage]:
-        """将 WorkingMemory 中的消息批量刷入 ShortTermMemory，并清空 WorkingMemory。
-
-        Returns:
-            被刷入的消息列表
-        """
-        working_msgs = self._managers.working.clear(context)
-        if working_msgs:
-            await self._managers.short_term.add_messages(context, working_msgs)
-        return working_msgs
-
-    def get_working_messages(self, context: MemoryContext) -> list[ChatMessage]:
-        """获取当前 turn 的 WorkingMemory 消息。"""
-        return self._managers.working.get_messages(context)
-
     async def get_history(
         self, context: MemoryContext, max_messages: int | None = None
     ) -> list[ChatMessage]:
@@ -382,10 +371,6 @@ class MemorySystem:
         if long_term_mgr is None:
             return LongTermMemory()
         return await long_term_mgr.get_all(context)
-
-    def clear_working(self, context: MemoryContext) -> list[ChatMessage]:
-        """清空 WorkingMemory，返回被清空的消息。"""
-        return self._managers.working.clear(context)
 
     async def build_system_prompt(
         self,
@@ -469,8 +454,6 @@ class MemorySystem:
         """清空指定 scope 的所有记忆层级。"""
         # 短期记忆
         await self._managers.short_term.clear_messages(context)
-        # 工作记忆
-        self._managers.working.clear(context)
         # 历史摘要（可选）
         if "history" in self.layers:
             history_scope_key = self.layers["history"].scope.get_scope_key(context)
@@ -634,16 +617,12 @@ class MemorySystemContextManager(ContextManager):
             await self.memory_system.add_messages(ctx, [prefixed_message])
 
     async def flush(self, session_id: str) -> None:
-        """将当前 turn 的 Working Memory 显式刷入 Short-term Memory。
+        """Turn-boundary 持久化钩子。
 
-        应在 Agent 执行结束后调用，以完成 turn-boundary 的持久化。
-        同时清空 Working Memory 中可能残留的消息，防止重复追加。
+        当前为 no-op：所有消息（包括 ReAct 轮内消息）已通过
+        ShortTermMessageHistory 实时写入存储，无需额外 flush。
+        保留此接口以兼容现有 pipeline 调用方。
         """
-        ctx = self._context_cache.get(session_id)
-        if ctx is None:
-            ctx = MemoryContext(session_id=session_id, user_id=self.default_user_id)
-        self.memory_system.clear_working(ctx)
-        await self.memory_system.flush_working(ctx)
 
     async def save_checkpoint(self, session_id: str, messages: Sequence[ChatMessage | dict[str, Any]]) -> None:
         """保存崩溃恢复检查点。"""
@@ -726,11 +705,9 @@ class MemorySystemContextManager(ContextManager):
         memory_prompt = await self.memory_system.build_system_prompt(ctx)
 
         # 补充 per-turn prefetch（与 DefaultMemoryInjectionPolicy.assemble() 保持一致）
-        short_term_msgs = await self.memory_system.get_history(
+        history = await self.memory_system.get_history(
             ctx, max_messages=self.injection_policy.max_short_term_messages
         )
-        working_msgs = self.memory_system.get_working_messages(ctx)
-        history = short_term_msgs + working_msgs
 
         # 过滤 tool 消息
         if getattr(self.injection_policy, "filter_tool_messages", True):
