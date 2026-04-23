@@ -45,21 +45,25 @@ Task: Based on the analysis below, produce a JSON array of update instructions f
 
 Each update must be a JSON object with:
 - "file_name": one of "SOUL.md", "USER.md", "MEMORY.md"
-- "mode": one of "incremental", "append", "section_replace"
+- "mode": one of "incremental", "append", "section_replace", "replace_text"
 - "content": the new or updated content to write
 - "reason": brief explanation of why this update is needed
+- "search_text": (only for "replace_text" mode) the exact existing text to find and replace
 
 Rules:
-1. Use "incremental" for small additions or edits
+1. Use "replace_text" when modifying existing information (most precise)
+   - Provide the exact "search_text" found in the current file
+   - "content" becomes the replacement text
 2. Use "append" for adding new facts at the end
 3. Use "section_replace" only when rewriting a whole section
-4. Do not duplicate existing content
-5. Return ONLY a valid JSON array. No markdown code blocks, no extra text.
+4. Use "incremental" for small additions when no exact text can be matched
+5. Do not duplicate existing content
+6. Return ONLY a valid JSON array. No markdown code blocks, no extra text.
 
 Example output:
 [
   {"file_name": "MEMORY.md", "mode": "append", "content": "- User prefers dark mode\\n", "reason": "new preference"},
-  {"file_name": "USER.md", "mode": "incremental", "content": "- Name: Alice\\n- Role: Developer\\n", "reason": "identity update"}
+  {"file_name": "USER.md", "mode": "replace_text", "search_text": "- Location: Tokyo\\n", "content": "- Location: Osaka\\n", "reason": "location corrected"}
 ]
 """
 
@@ -271,6 +275,7 @@ class DreamEngine(ConsolidationEngine):
                         content=item.get("content", ""),
                         mode=item.get("mode", "append"),
                         reason=item.get("reason", ""),
+                        search_text=item.get("search_text", ""),
                     )
                 )
         return updates

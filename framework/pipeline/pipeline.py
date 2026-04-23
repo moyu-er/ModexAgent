@@ -14,14 +14,19 @@ from framework.memory.core.message import ChatMessage
 from ..core.agent import Agent, AgentContext
 from ..core.context import ContextManager
 from ..core.emitter import AgentResult, StreamingAwareEmitter
+from ..core.runtime_context import RuntimeContextManager
 from ..core.tool_manager import ToolManager
 from ..core.types import InputMessage, MessageRole
+from ..memory import ContextGovernance
+from ..memory.consolidation import DreamEngine
 from ..memory.history import (
     ListMessageHistory,
     ShortTermMessageHistory,
     history_to_list,
     inject_attachments_to_history,
 )
+from ..multi_agent import SubagentManager, AgentMessageRouter, MessageDeduplicator, MultiAgentContextBuilder, \
+    AgentDescriptor
 from ..session.agent_session import _dream_locks
 from .adapters import InputAdapter, OutputAdapter, OutputMessage
 
@@ -53,24 +58,25 @@ class AgentPipeline:
         input_adapter: InputAdapter,
         output_adapter: OutputAdapter,
         emitter_factory: Any | None = None,
-        dream_engine: Any | None = None,
+        dream_engine: DreamEngine | None = None,
         dream_interval: float | None = None,
         dream_threshold: int = 5,
         max_iterations: int = 10,
         incremental_flush: bool = True,
         skill_manager: SkillManager | None = None,
         hooks: list[Any] | None = None,
-        subagent_manager: Any | None = None,
+        subagent_manager: SubagentManager | None = None,
         command_interceptor: Any | None = None,
-        router: Any | None = None,
-        deduplicator: Any | None = None,
-        context_builder: Any | None = None,
-        agent_descriptor: Any | None = None,
+        router: AgentMessageRouter | None = None,
+        deduplicator: MessageDeduplicator | None = None,
+        context_builder: MultiAgentContextBuilder | None = None,
+        agent_descriptor: AgentDescriptor | None = None,
         sanitizer: Any = _UNSET,
         context_manager_factory: Any | None = None,
         on_session_start: Any | None = None,
         on_session_end: Any | None = None,
-        runtime_context_manager: Any | None = None,
+        runtime_context_manager: RuntimeContextManager | None = None,
+        governance: ContextGovernance | None = None,
     ):
         """
         Args:
@@ -94,6 +100,7 @@ class AgentPipeline:
             sanitizer: 可选的内容清洗函数，默认使用 ContentSanitizer.sanitize，传 None 表示禁用
             context_manager_factory: 可选的 ContextManager 工厂函数，接收 session_id 返回 ContextManager
             runtime_context_manager: 可选的 RuntimeContextManager，用于按会话隔离运行时状态
+            governance: 可选的 ContextGovernance，用于轮内消息治理
         """
         if sanitizer is _UNSET:
             from framework.multi_agent.sanitizer import ContentSanitizer
@@ -127,6 +134,7 @@ class AgentPipeline:
         self.on_session_start = on_session_start
         self.on_session_end = on_session_end
         self.runtime_context_manager = runtime_context_manager
+        self.governance = governance
         self._running = False
         self._dream_task: asyncio.Task | None = None
         self._session_locks: dict[str, asyncio.Lock] = {}
@@ -456,6 +464,7 @@ class AgentPipeline:
             on_checkpoint=on_checkpoint,
             hooks=self.hooks,
             runtime_context_manager=self.runtime_context_manager,
+            governance=self.governance,
         )
 
         # 选择 emitter：

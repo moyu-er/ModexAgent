@@ -2,7 +2,17 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
+
+
+class MemoryUpdateMode(StrEnum):
+    """长期记忆更新模式。"""
+
+    INCREMENTAL = "incremental"
+    APPEND = "append"
+    SECTION_REPLACE = "section_replace"
+    REPLACE_TEXT = "replace_text"
 
 
 @dataclass
@@ -11,8 +21,9 @@ class MemoryUpdate:
 
     file_name: str
     content: str
-    mode: str = "incremental"  # incremental, section_replace, append
+    mode: str = str(MemoryUpdateMode.INCREMENTAL)
     reason: str = ""
+    search_text: str = ""  # for replace_text mode: text to find
 
 
 @dataclass

@@ -6,7 +6,8 @@ import logging
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from enum import StrEnum
+from typing import Any
 
 from framework.memory.archive import ArchiveStrategy, SemanticArchiveStrategy
 from framework.memory.compression.tool_chain import (
@@ -28,13 +29,20 @@ from framework.memory.utils import estimate_token_count
 logger = logging.getLogger(__name__)
 
 
+class CompressionMode(StrEnum):
+    """短期记忆压缩模式。"""
+
+    DELETE = "delete"
+    CURSOR = "cursor"
+
+
 @dataclass
 class ShortTermConfig:
     """短期记忆配置。"""
 
     max_messages: int | None = None
     max_tokens: int | None = None
-    compression_mode: Literal["delete", "cursor"] = "delete"
+    compression_mode: str = str(CompressionMode.DELETE)
     compression_strategy: CompressionStrategy | None = None
     archive_strategy: ArchiveStrategy | None = None
     content_transformer: ContentTransformer | None = None

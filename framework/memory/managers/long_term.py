@@ -103,9 +103,21 @@ class LongTermMemoryManager(BaseLongTermMemoryManager):
             raw = await self._storage.get(scope_key, file_name)
             existing = raw if isinstance(raw, str) else ""
 
+        from framework.memory.core.consolidation import MemoryUpdateMode
+
         mode = update.mode.lower()
-        if mode == "section_replace":
+        if mode == str(MemoryUpdateMode.SECTION_REPLACE):
             result = update.content
+        elif mode == str(MemoryUpdateMode.REPLACE_TEXT):
+            if update.search_text and update.search_text in existing:
+                result = existing.replace(update.search_text, update.content, 1)
+            else:
+                # Fallback: append if search_text not found
+                result = (
+                    existing
+                    + ("\n" if existing and not existing.endswith("\n") else "")
+                    + update.content
+                )
         else:  # append / incremental — both append new content
             result = (
                 existing

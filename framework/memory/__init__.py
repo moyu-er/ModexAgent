@@ -25,6 +25,12 @@ from framework.memory.core.compression import (
     CompressionStrategy,
     ImportanceScorer,
 )
+from framework.memory.core.consolidation import (
+    ConsolidationEngine,
+    ConsolidationResult,
+    MemoryUpdate,
+    MemoryUpdateMode,
+)
 from framework.memory.core.scope import (
     AgentScope,
     ChannelScope,
@@ -58,6 +64,7 @@ from framework.memory.managers.long_term import (
     LongTermMemoryManager,
 )
 from framework.memory.managers.short_term import (
+    CompressionMode,
     ShortTermConfig,
     ShortTermMemoryManager,
 )
@@ -96,11 +103,17 @@ __all__ = [
     "HistoryArchiveManager",
     "LongTermMemory",
     "LongTermMemoryManager",
+    "CompressionMode",
     # Compression
     "CompressionStrategy",
     "CompressionResult",
     "CompressionContext",
     "ImportanceScorer",
+    # Consolidation
+    "ConsolidationEngine",
+    "ConsolidationResult",
+    "MemoryUpdate",
+    "MemoryUpdateMode",
     # Archiving
     "ArchiveStrategy",
     "PreserveSummaryArchiveStrategy",

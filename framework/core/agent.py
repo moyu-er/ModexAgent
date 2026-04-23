@@ -18,6 +18,7 @@ from .hooks import AgentRunHook
 from .message_utils import AGENT_COMMUNICATION_SYSTEM_NOTE, normalize_agent_messages_for_llm
 from .runtime_context import RuntimeContext, RuntimeContextManager
 from .tool_manager import ToolManager
+from ..memory import ContextGovernance
 
 
 @dataclass
@@ -41,7 +42,7 @@ class AgentContext:
     attachments: list[str] = field(default_factory=list)  # Agent->User 方向的附件路径列表
     runtime_context_manager: RuntimeContextManager | None = None
     runtime_context: RuntimeContext | None = None
-    governance: Any | None = None
+    governance: ContextGovernance | None = None
 
     def add_attachment(self, path: str) -> None:
         """将文件路径添加到 attachments 列表（供 Tool 调用期间使用）。"""
