@@ -16,6 +16,7 @@ import copy
 import logging
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 import mimetypes
@@ -176,7 +177,7 @@ class ContentTransformer(ABC):
         ...
 
     async def transform_messages(
-        self, messages: list[ChatMessage | dict[str, Any]]
+        self, messages: Sequence[ChatMessage | dict[str, Any]]
     ) -> list[dict[str, Any]]:
         """批量转换。默认逐个调用，子类可优化为并发处理。
 
@@ -347,7 +348,7 @@ class CompositeTransformer(ContentTransformer):
         return message
 
     async def transform_messages(
-        self, messages: list[ChatMessage | dict[str, Any]]
+        self, messages: Sequence[ChatMessage | dict[str, Any]]
     ) -> list[dict[str, Any]]:
         """批量转换：顺序应用所有 transformer 到每条消息。
 

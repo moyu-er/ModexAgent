@@ -4,24 +4,33 @@ import re
 from collections.abc import Sequence
 from typing import Any
 
+from framework.memory.core.message import ChatMessage
+
 _RUNTIME_PREFIX_RE = re.compile(
     r"^\[Runtime Context\]\s*\n.*?\n\n",
     re.MULTILINE | re.DOTALL,
 )
 
 
-def strip_runtime_prefixes(messages: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+def _msg_to_dict(msg: ChatMessage | dict[str, Any]) -> dict[str, Any]:
+    """将 ChatMessage 或 dict 统一转为 dict。"""
+    return msg.to_dict() if isinstance(msg, ChatMessage) else dict(msg)
+
+
+def strip_runtime_prefixes(
+    messages: Sequence[ChatMessage | dict[str, Any]],
+) -> list[dict[str, Any]]:
     """剥离消息内容中的 [Runtime Context] 前缀。
 
     Args:
-        messages: 原始消息列表
+        messages: 原始消息列表（ChatMessage 或 dict）
 
     Returns:
         清理后的消息列表（新对象，不修改原列表）
     """
     cleaned = []
     for msg in messages:
-        m = dict(msg)
+        m = _msg_to_dict(msg)
         content = m.get("content") or ""
         if content:
             content = _RUNTIME_PREFIX_RE.sub("", content)
@@ -41,16 +50,22 @@ def _estimate_text_tokens(text: str) -> int:
     return ascii_chars // 4 + non_ascii_chars
 
 
-def estimate_token_count(messages: Sequence[dict[str, Any]]) -> int:
+def estimate_token_count(messages: Sequence[ChatMessage | dict[str, Any]]) -> int:
     """基于字符数快速估算消息列表的 token 数。
 
     不需要引入 tiktoken 依赖，但对中文场景做了针对性修正。
     """
     total = 0
     for msg in messages:
-        content = msg.get("content") or ""
+        if isinstance(msg, ChatMessage):
+            raw_content = msg.content or ""
+            tool_calls = msg.tool_calls
+        else:
+            raw_content = msg.get("content") or ""
+            tool_calls = msg.get("tool_calls")
+        content = raw_content if isinstance(raw_content, str) else str(raw_content)
         total += _estimate_text_tokens(content)
-        if msg.get("tool_calls"):
-            for tc in msg["tool_calls"]:
+        if tool_calls:
+            for tc in tool_calls:
                 total += _estimate_text_tokens(str(tc))
     return total + len(messages) * 2

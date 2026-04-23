@@ -21,10 +21,8 @@ from framework.memory.core.compression import (
 from framework.memory.core.message import ChatMessage
 from framework.memory.core.scope import MemoryContext, MemoryScope
 from framework.memory.core.storage import MemoryStorage
+from framework.memory.content_transform import ContentTransformer
 from framework.memory.utils import estimate_token_count
-
-# Forward reference for type hint only
-ContentTransformer = Any
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +35,7 @@ class ShortTermConfig:
     max_tokens: int | None = None
     compression_strategy: CompressionStrategy | None = None
     archive_strategy: ArchiveStrategy | None = None
-    content_transformer: Any | None = None  # ContentTransformer | None
+    content_transformer: ContentTransformer | None = None
     pre_compress_callbacks: list[Any] | None = None  # list of async callables
 
 

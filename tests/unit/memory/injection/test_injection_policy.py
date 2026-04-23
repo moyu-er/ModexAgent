@@ -28,20 +28,19 @@ class TestDefaultMemoryInjectionPolicy:
         assert state.system_prompt == "Base prompt"
         assert len(state.history) == 0
 
-    async def test_history_is_short_term_plus_working(self, memory_system):
+    async def test_history_is_short_term(self, memory_system):
         policy = DefaultMemoryInjectionPolicy()
         ctx = MemoryContext(session_id="s1", user_id="u1")
 
-        # short_term messages (older)
+        # short_term messages
         await memory_system.add_message(ctx, {"role": "user", "content": "short1"})
-        # working memory (newer, current turn)
-        memory_system.stage_working(ctx, [{"role": "assistant", "content": "working1"}])
+        await memory_system.add_message(ctx, {"role": "assistant", "content": "short2"})
 
         state = await policy.assemble(memory_system, ctx)
         history = state.history
         assert len(history) == 2
         assert history[0]["content"] == "short1"
-        assert history[1]["content"] == "working1"
+        assert history[1]["content"] == "short2"
 
     async def test_respects_max_short_term_messages(self, memory_system):
         policy = DefaultMemoryInjectionPolicy(max_short_term_messages=3)
@@ -78,7 +77,7 @@ class TestDefaultMemoryInjectionPolicy:
         ctx = MemoryContext(session_id="s1", user_id="u1")
 
         await memory_system.add_message(ctx, {"role": "user", "content": "old"})
-        memory_system.stage_working(ctx, [{"role": "user", "content": "new"}])
+        await memory_system.add_message(ctx, {"role": "user", "content": "new"})
 
         state = await adapter.load("s1")
         history = state.history

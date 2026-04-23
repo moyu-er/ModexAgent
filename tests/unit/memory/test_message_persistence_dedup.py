@@ -70,8 +70,8 @@ class TestMessagePersistenceDedup:
     """P0: 验证 Pipeline 流程中消息不重复写入。"""
 
     @pytest.mark.asyncio
-    async def test_pipeline_history_is_list_message_history(self):
-        """Pipeline 包装的 history 是 ListMessageHistory，append() 不持久化。"""
+    async def test_pipeline_history_is_short_term_message_history(self):
+        """Pipeline 的 load() 返回 ShortTermMessageHistory，append() 实时持久化。"""
         with tempfile.TemporaryDirectory() as tmp:
             ms = MemorySystem(workspace=Path(tmp))
             await ms.initialize()
@@ -81,24 +81,24 @@ class TestMessagePersistenceDedup:
             ctx = MemoryContext(session_id="s1", user_id="u1")
             await ms.add_message(ctx, {"role": "user", "content": "hello"})
 
-            # 模拟 Pipeline 的 load + wrap 流程
+            # 模拟 Pipeline 的 load 流程
             state = await adapter.load("s1")
-            assert not isinstance(state.history, ShortTermMessageHistory)
-            state.history = ListMessageHistory(list(state.history))
+            assert isinstance(state.history, ShortTermMessageHistory)
 
-            # 模拟 ReAct agent 的 append
+            # 模拟 ReAct agent 的 append（实时持久化）
             await state.history.append({"role": "assistant", "content": "reply"})
 
-            # 验证：append 后存储中**没有**新增消息
+            # 验证：append 后存储中已有新增消息
             stored = await ms.get_history(ctx)
-            assert len(stored) == 1  # 只有原始的 user 消息
+            assert len(stored) == 2  # user + assistant
             assert stored[0]["content"] == "hello"
+            assert stored[1]["content"] == "reply"
 
             await ms.close()
 
     @pytest.mark.asyncio
-    async def test_save_persists_assistant_messages(self):
-        """save() 的 assistant_result.messages 是唯一的持久化路径。"""
+    async def test_save_only_persists_user_message(self):
+        """save() 只保存 user_message；assistant messages 通过 context.history 实时写入。"""
         with tempfile.TemporaryDirectory() as tmp:
             ms = MemorySystem(workspace=Path(tmp))
             await ms.initialize()
@@ -111,19 +111,11 @@ class TestMessagePersistenceDedup:
                 AgentResult(),
             )
 
-            # Step 2: save assistant result (模拟 Pipeline 的行为)
-            await adapter.save(
-                "s1",
-                user_message=None,
-                assistant_result=AgentResult(
-                    content="final",
-                    messages=[
-                        {"role": "assistant", "content": "thinking..."},
-                        {"role": "tool", "content": "output", "tool_call_id": "tc1"},
-                        {"role": "assistant", "content": "final"},
-                    ],
-                ),
-            )
+            # Step 2: 模拟 ReAct agent 通过 context.history 实时写入
+            state = await adapter.load("s1")
+            await state.history.append({"role": "assistant", "content": "thinking..."})
+            await state.history.append({"role": "tool", "content": "output", "tool_call_id": "tc1"})
+            await state.history.append({"role": "assistant", "content": "final"})
 
             # Step 3: 验证存储中的消息
             ctx = MemoryContext(session_id="s1", user_id="default")
@@ -140,7 +132,7 @@ class TestMessagePersistenceDedup:
 
     @pytest.mark.asyncio
     async def test_full_turn_no_duplicates(self):
-        """完整 turn：agent append(内存) + save(持久化) → 存储中无重复。"""
+        """完整 turn：save(user) + load + agent append → 存储中无重复。"""
         with tempfile.TemporaryDirectory() as tmp:
             ms = MemorySystem(workspace=Path(tmp))
             await ms.initialize()
@@ -153,11 +145,10 @@ class TestMessagePersistenceDedup:
                 AgentResult(),
             )
 
-            # 模拟 Pipeline 步骤 ②：load + wrap history
+            # 模拟 Pipeline 步骤 ②：load history（ShortTermMessageHistory，实时持久化）
             state = await adapter.load("s1")
-            state.history = ListMessageHistory(list(state.history))
 
-            # 模拟 ReAct agent 步骤 ②③：append 到内存 history
+            # 模拟 ReAct agent 步骤 ②③：append 到 history（直接持久化）
             agent = _ToolCallingAgent()
             emitter = _FakeEmitter()
             agent_context = AgentContext(
@@ -172,10 +163,10 @@ class TestMessagePersistenceDedup:
             mem_msgs = await state.history.to_list()
             assert len(mem_msgs) == 4
 
-            # 模拟 Pipeline 步骤 ④：save assistant result
+            # 模拟 Pipeline 步骤 ④：save assistant result（不重复保存）
             await adapter.save("s1", user_message=None, assistant_result=result)
 
-            # 验证存储中也有恰好 4 条 —— 无重复
+            # 验证存储中仍然恰好 4 条 —— 无重复
             ctx = MemoryContext(session_id="s1", user_id="default")
             stored = await ms.get_history(ctx)
             assert len(stored) == 4

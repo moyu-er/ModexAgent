@@ -7,15 +7,14 @@ ContextState (system_prompt + history).
 from abc import ABC, abstractmethod
 
 from framework.core.context import ContextState
+from framework.core.types import MessageRole
 from framework.memory.compression.tool_chain import (
     _fit_token_window,
     _is_tool_call,
     _is_tool_result,
 )
+from framework.memory.core.message import ChatMessage
 from framework.memory.core.scope import MemoryContext
-from framework.memory.history import ShortTermMessageHistory
-from framework.memory.managers.short_term import ShortTermMemoryManager
-from framework.memory.managers.working import WorkingMemoryManager
 from framework.memory.system import MemorySystem
 from framework.memory.utils import estimate_token_count
 
@@ -46,7 +45,7 @@ class MemoryInjectionPolicy(ABC):
 class DefaultMemoryInjectionPolicy(MemoryInjectionPolicy):
     """默认策略：
     - system_prompt = base_prompt + long_term(SOUL/USER/MEMORY) + history 摘要
-    - history = short_term(已持久化历史) + working_memory(当前 turn 缓存)
+    - history = short_term(已持久化历史)
     """
 
     def __init__(
@@ -75,12 +74,11 @@ class DefaultMemoryInjectionPolicy(MemoryInjectionPolicy):
         # - MemorySystemContextManager.build_system_prompt() 在此基础上追加
         #   工具描述、skills 和运行时信息，两者是组合关系而非重复。
 
-        # 1. 短期记忆 + 工作记忆（按时间顺序：旧的 short_term 在前，新的 working 在后）
+        # 1. 短期记忆
         short_term_msgs = await memory_system.get_history(
             context, max_messages=self.max_short_term_messages
         )
-        working_msgs = memory_system.get_working_messages(context)
-        history = short_term_msgs + working_msgs
+        history = short_term_msgs
 
         # 1.1 过滤 tool 消息（tool_calls + tool results），减少 token 浪费
         if self.filter_tool_messages:
@@ -107,10 +105,10 @@ class DefaultMemoryInjectionPolicy(MemoryInjectionPolicy):
         # 3. Token 预算控制
         if self.max_total_tokens is not None:
             base_tokens = estimate_token_count(
-                [{"role": "system", "content": base_system_prompt}]
+                [ChatMessage(role=MessageRole.SYSTEM, content=base_system_prompt)]
             )
             memory_tokens = estimate_token_count(
-                [{"role": "system", "content": memory_prompt}]
+                [ChatMessage(role=MessageRole.SYSTEM, content=memory_prompt)]
             )
             available_for_history = self.max_total_tokens - base_tokens - memory_tokens
             available_for_history = max(available_for_history, 0)
@@ -129,7 +127,7 @@ class DefaultMemoryInjectionPolicy(MemoryInjectionPolicy):
                 if not memory_prompt:
                     break
                 tokens = estimate_token_count(
-                    [{"role": "system", "content": combined_system}]
+                    [ChatMessage(role=MessageRole.SYSTEM, content=combined_system)]
                 )
                 if tokens <= self.max_system_prompt_tokens:
                     break
@@ -149,27 +147,14 @@ class DefaultMemoryInjectionPolicy(MemoryInjectionPolicy):
             parts.append(memory_prompt)
         system_prompt = "\n\n---\n\n".join(parts) if parts else ""
 
-        # 使用 ShortTermMessageHistory 让 context.history.append()
-        # 直接写入短期记忆存储（实时持久化 ReAct 中间数据）。
-        # ShortTermMessageHistory.to_list() 会自动读取 messages.jsonl
-        # 并合并 working memory，不需要手动同步历史消息。
-        stm = memory_system._managers.short_term
-        working = memory_system._managers.working
-        if not isinstance(stm, ShortTermMemoryManager):
-            raise TypeError(
-                f"short_term manager must be ShortTermMemoryManager, got {type(stm).__name__}"
-            )
-        if not isinstance(working, WorkingMemoryManager):
-            raise TypeError(
-                f"working manager must be WorkingMemoryManager, got {type(working).__name__}"
-            )
+        # 使用 MemorySystem 工厂方法创建 MessageHistory，解耦对具体 manager 类型的依赖
+        history_obj = memory_system.create_message_history(
+            context=context,
+            initial_messages=history,
+        )
         return ContextState(
             system_prompt=system_prompt,
-            history=ShortTermMessageHistory(
-                manager=stm,
-                context=context,
-                working_manager=working,
-            ),
+            history=history_obj,
         )
 
     @staticmethod
