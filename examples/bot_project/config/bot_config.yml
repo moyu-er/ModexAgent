@@ -156,7 +156,6 @@ multi_agent:
         enabled: true
         short_term:
           max_messages: 50
-          budget_ratio: 0.5
 
       context_strategy: "persistent"
       allowed_tools: null
@@ -231,7 +230,6 @@ multi_agent:
         enabled: true
         short_term:
           max_messages: 30
-          budget_ratio: 0.4
 
       context_strategy: "persistent"
       allowed_tools: null
@@ -260,10 +258,52 @@ multi_agent:
 
 # ==================== Memory ====================
 memory:
-  short_term:
-    max_messages: 50
-    # budget_ratio: short-term token limit = llm.max_tokens * budget_ratio, capped at 128K
-    budget_ratio: 0.5
+  main:
+    short_term:
+      max_messages: 50
+      # max_tokens: if omitted, calculated from llm.max_tokens * budget_ratio, capped at 128K
+      budget_ratio: 0.5
+      compression_mode: "cursor"   # "delete" | "cursor"
+      auto_llm_compression: true
+    long_term:
+      enabled: true
+      init_defaults: true      # auto-create SOUL.md/USER.md/MEMORY.md with templates
+    history:
+      enabled: true
+      max_entries: 1000
+    governance:
+      enabled: true
+      tool_chain_repair: true
+      microcompact:
+        enabled: true
+        keep_recent: 10
+      token_budget:
+        enabled: true
+        budget_ratio: 0.5      # of llm.max_tokens
+        safety_buffer: 1024
+    auto_compact:
+      enabled: true
+      idle_threshold_seconds: 1800   # 30 min
+      keep_recent_messages: 8
+    dream_engine:
+      enabled: true
+      interval: 300
+      threshold: 5
+
+  peers:
+    short_term:
+      max_messages: 50
+      budget_ratio: 0.5
+      compression_mode: "delete"
+      auto_llm_compression: false
+
+  subagents:
+    short_term:
+      max_messages: 20
+      max_tokens: 4000
+      budget_ratio: 0.5
+      compression_mode: "delete"
+      auto_llm_compression: false
 
 # ==================== Plugins ====================
 plugins:

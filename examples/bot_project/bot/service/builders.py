@@ -19,9 +19,8 @@ from framework.core.skills import (
     SkillManager,
 )
 from framework.memory.content_transform import Base64SanitizeTransformer
-from framework.memory.core.scope import SessionScope
+from framework.memory.core.scope import PeerPairScope, SessionScope
 from framework.memory.stores.file import FileStorage
-from framework.memory.stores.in_memory import InMemoryStorage
 from framework.memory.system import LayerConfig, MemorySystem, MemorySystemContextManager
 from framework.multi_agent import (
     AgentAddress,
@@ -42,7 +41,7 @@ class AgentBuilderMixin:
         config, provider, tool_manager, mcp_manager, output_adapter,
         broker, agent_bus, agent_pool, subagent_manager, plugin_integration,
         _subagent_skill_managers, _peers_skill_manager, _subagent_memory_systems,
-        peer_memory_system, peer_context_manager, inbox_server, agent_factory
+        _peer_memory_systems, inbox_server, agent_factory
     """
 
     # --- Tool Registration ---
@@ -320,17 +319,20 @@ class AgentBuilderMixin:
         sub_data_dir.mkdir(parents=True, exist_ok=True)
         file_store = FileStorage(sub_data_dir)
 
+        memory_config = self.config.get("memory", {})
+        sub_memory_config = memory_config.get("subagents", {})
+        sub_st_config = sub_memory_config.get("short_term", {})
+
         memory_system = MemorySystem(
             workspace=sub_data_dir,
-            llm_provider=self.provider,
+            llm_provider=None,
             auto_llm_compression=False,
             layers={
-                "working": LayerConfig(scope=SessionScope(), storage=InMemoryStorage()),
                 "short_term": LayerConfig(
                     scope=SessionScope(),
                     storage=file_store,
-                    max_messages=20,
-                    max_tokens=4000,
+                    max_messages=sub_st_config.get("max_messages", 20),
+                    max_tokens=sub_st_config.get("max_tokens", 4000),
                     content_transformer=Base64SanitizeTransformer(),
                 ),
             },
@@ -356,13 +358,48 @@ class AgentBuilderMixin:
         if not memory_config.get("enabled", True):
             return InMemoryContextManager(base_system_prompt=system_prompt)
 
-        if self.peer_context_manager is None:
-            raise RuntimeError("Peer context manager is not initialized")
-        if self.peer_memory_system is None:
-            raise RuntimeError("Peer memory system is not initialized")
+        # Check cache first
+        if hasattr(self, "_peer_memory_systems") and peer_name in self._peer_memory_systems:
+            return MemorySystemContextManager(
+                memory_system=self._peer_memory_systems[peer_name],
+                base_system_prompt=system_prompt,
+            )
+
+        peer_data_dir = Path(__file__).parent.parent.parent / "data" / "memory" / "peers" / peer_name
+        peer_data_dir.mkdir(parents=True, exist_ok=True)
+        peer_file_store = FileStorage(peer_data_dir)
+
+        # Read global peers config, merge with peer-specific overrides
+        global_memory_config = self.config.get("memory", {})
+        peers_global_config = global_memory_config.get("peers", {})
+        peers_st_global = peers_global_config.get("short_term", {})
+        peer_st_local = memory_config.get("short_term", {})
+
+        memory_system = MemorySystem(
+            workspace=peer_data_dir,
+            llm_provider=None,
+            auto_llm_compression=False,
+            layers={
+                "short_term": LayerConfig(
+                    scope=PeerPairScope(),
+                    storage=peer_file_store,
+                    max_messages=peer_st_local.get("max_messages")
+                    or peers_st_global.get("max_messages", 50),
+                    max_tokens=peer_st_local.get("max_tokens")
+                    or peers_st_global.get("max_tokens", 80000),
+                    content_transformer=Base64SanitizeTransformer(),
+                ),
+            },
+        )
+        await memory_system.initialize()
+        self.plugin_integration.inject_memory_system_modifiers(memory_system)
+
+        if not hasattr(self, "_peer_memory_systems"):
+            self._peer_memory_systems: dict[str, MemorySystem] = {}
+        self._peer_memory_systems[peer_name] = memory_system
 
         return MemorySystemContextManager(
-            memory_system=self.peer_memory_system,
+            memory_system=memory_system,
             base_system_prompt=system_prompt,
         )
 
@@ -489,11 +526,10 @@ class AgentBuilderMixin:
 
         _, sender, receiver = parse_peer_session_id(session_id)
         if sender is not None and receiver is not None:
-            if self.peer_context_manager is not None:
-                return self.peer_context_manager
-            if self.context_manager is None:
-                raise RuntimeError("No context manager available")
-            return self.context_manager
+            # Peers have their own context manager set directly on their pipeline;
+            # context_manager_factory is cleared during peer initialization.
+            # Fall through to the main context manager if needed.
+            pass
         if self.context_manager is None:
             raise RuntimeError("Context manager is not initialized")
         return self.context_manager

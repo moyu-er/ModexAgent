@@ -8,6 +8,7 @@ Supports two runtime modes:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import signal
 from collections.abc import Callable
@@ -29,14 +30,19 @@ from framework.core.skills import (
     SkillManager,
 )
 from framework.extensions.llm.litellm_provider import LiteLLMProvider
+from framework.memory.auto_compact import AutoCompactService
 from framework.memory.content_transform import Base64SanitizeTransformer
-from framework.memory.core.scope import PeerPairScope
-from framework.memory.stores.file import FileStorage
-from framework.memory.stores.in_memory import InMemoryStorage
+from framework.memory.context_governance import (
+    CompositeGovernance,
+    MicrocompactGovernance,
+    TokenBudgetGovernance,
+    ToolChainRepairGovernance,
+)
+from framework.memory.core.scope import MemoryContext
 from framework.memory.system import (
-    LayerConfig,
     MemorySystem,
     MemorySystemContextManager,
+    _derive_memory_budget,
 )
 from framework.messaging.broker_bridge import (
     BrokerBridgeService,
@@ -102,9 +108,8 @@ class BotService(AgentBuilderMixin):
         self.tool_manager: InMemoryToolManager | None = None
         self.mcp_manager: Any | None = None
         self.memory_system: MemorySystem | None = None
-        self.peer_memory_system: MemorySystem | None = None
-        self.peer_context_manager: MemorySystemContextManager | None = None
         self.context_manager: MemorySystemContextManager | None = None
+        self.auto_compact_service: Any | None = None
         self.agent: ReActAgent | None = None
         self.agent_factory: AgentFactory | None = None
         self.subagent_manager: SubagentManager | None = None
@@ -123,6 +128,12 @@ class BotService(AgentBuilderMixin):
 
         # Subagent memory-system cache (lazy-loaded)
         self._subagent_memory_systems: dict[str, Any] = {}
+
+        # Peer memory-system cache (lazy-loaded)
+        self._peer_memory_systems: dict[str, Any] = {}
+
+        # Auto-compact background task
+        self._auto_compact_task: asyncio.Task | None = None
 
         # Runtime control
         self._shutdown_event = asyncio.Event()
@@ -207,23 +218,35 @@ class BotService(AgentBuilderMixin):
         # 5. Create MemorySystem and ContextManager (user<->main uses SessionScope)
         data_dir = self._resolve_path("memory_dir", "data/memory")
         memory_config = self.config.get("memory", {})
-        short_term_config = memory_config.get("short_term", {})
+        main_memory_config = memory_config.get("main", {})
+        main_st_config = main_memory_config.get("short_term", {})
         main_layers = MemorySystem.default_single_user_layers(
             workspace=data_dir,
             llm_provider=provider,
-            auto_llm_compression=True,
-            short_term_max_messages=short_term_config.get("max_messages"),
-            short_term_max_tokens=short_term_config.get("max_tokens"),
+            auto_llm_compression=main_st_config.get("auto_llm_compression", True),
+            short_term_max_messages=main_st_config.get("max_messages"),
+            short_term_max_tokens=main_st_config.get("max_tokens"),
             llm_max_tokens=self.config.get("llm", {}).get("max_tokens"),
-            budget_ratio=short_term_config.get("budget_ratio", 0.5),
+            budget_ratio=main_st_config.get("budget_ratio", 0.5),
         )
         main_layers["short_term"].content_transformer = Base64SanitizeTransformer()
+
         self.memory_system = MemorySystem(
             workspace=data_dir,
             layers=main_layers,
             llm_provider=provider,
-            auto_llm_compression=True,
+            auto_llm_compression=main_st_config.get("auto_llm_compression", True),
         )
+
+        # Inject compression_mode into the built ShortTermMemoryManager
+        compression_mode = main_st_config.get("compression_mode", "cursor")
+        if compression_mode:
+            from framework.memory.managers.short_term import ShortTermMemoryManager
+
+            stm = self.memory_system._managers.short_term
+            if isinstance(stm, ShortTermMemoryManager):
+                stm._config.compression_mode = compression_mode
+
         await self.memory_system.initialize()
 
         # Apply plugin MemorySystem modifiers
@@ -235,34 +258,13 @@ class BotService(AgentBuilderMixin):
             memory_system=self.memory_system,
             base_system_prompt=self.config["agent"]["system_prompt"],
         )
-        print(f"[OK] MemorySystem initialized (storage: {data_dir})")
+        print(f"[OK] MemorySystem initialized (storage: {data_dir}, layers: {list(main_layers.keys())})")
 
-        # 5.0 Shared Peer Communication MemorySystem
-        peer_shared_dir = data_dir / "peer_shared"
-        peer_shared_dir.mkdir(parents=True, exist_ok=True)
-        peer_file_store = FileStorage(peer_shared_dir)
-        self.peer_memory_system = MemorySystem(
-            workspace=peer_shared_dir,
-            llm_provider=provider,
-            auto_llm_compression=True,
-            layers={
-                "working": LayerConfig(scope=PeerPairScope(), storage=InMemoryStorage()),
-                "short_term": LayerConfig(
-                    scope=PeerPairScope(),
-                    storage=peer_file_store,
-                    max_messages=short_term_config.get("max_messages", 50),
-                    max_tokens=short_term_config.get("max_tokens", 80000),
-                    content_transformer=Base64SanitizeTransformer(),
-                ),
-            },
-        )
-        await self.peer_memory_system.initialize()
-        self.plugin_integration.inject_memory_system_modifiers(self.peer_memory_system)
-        self.peer_context_manager = MemorySystemContextManager(
-            memory_system=self.peer_memory_system,
-            base_system_prompt=self.config["agent"]["system_prompt"],
-        )
-        print(f"[OK] Peer Shared MemorySystem initialized (storage: {peer_shared_dir})")
+        # 5.1 Initialize default long-term memory files
+        await self._init_long_term_defaults(data_dir, main_memory_config)
+
+        # 5.2 Initialize AutoCompactService
+        await self._init_auto_compact(main_memory_config)
 
         # -- Inject plugin Memory Providers --
         await self.plugin_integration.inject_memory_providers(
@@ -425,6 +427,7 @@ class BotService(AgentBuilderMixin):
             hooks=pipeline_hooks,
             subagent_manager=self.subagent_manager,
             context_manager_factory=self._get_context_manager,
+            governance=self._build_governance(),
         )
         print("[OK] AgentPipeline initialized")
         print(f"   Input: {self.input_adapter.name}")
@@ -590,6 +593,138 @@ class BotService(AgentBuilderMixin):
         finally:
             await self.stop()
 
+    # ------------------------------------------------------------------ #
+    # Memory helpers
+    # ------------------------------------------------------------------ #
+
+    def _build_governance(self) -> Any | None:
+        """Build ContextGovernance chain from config."""
+        memory_config = self.config.get("memory", {})
+        main_memory = memory_config.get("main", {})
+        gov_config = main_memory.get("governance", {})
+        if not gov_config.get("enabled", True):
+            return None
+
+        strategies: list[Any] = []
+        if gov_config.get("tool_chain_repair", True):
+            strategies.append(ToolChainRepairGovernance())
+
+        microcompact = gov_config.get("microcompact", {})
+        if microcompact.get("enabled", True):
+            strategies.append(
+                MicrocompactGovernance(
+                    keep_recent=microcompact.get("keep_recent", 10),
+                )
+            )
+
+        token_budget = gov_config.get("token_budget", {})
+        if token_budget.get("enabled", True):
+            llm_max_tokens = self.config.get("llm", {}).get("max_tokens", 80000)
+            budget_ratio = token_budget.get("budget_ratio", 0.5)
+            max_tokens = int(llm_max_tokens * budget_ratio)
+            cap = 128000
+            if max_tokens > cap:
+                max_tokens = cap
+            strategies.append(
+                TokenBudgetGovernance(
+                    max_tokens=max_tokens,
+                    safety_buffer=token_budget.get("safety_buffer", 1024),
+                )
+            )
+
+        if not strategies:
+            return None
+        return CompositeGovernance(strategies)
+
+    async def _init_long_term_defaults(
+        self,
+        _data_dir: Path,
+        main_memory_config: dict[str, Any],
+    ) -> None:
+        """Initialize default long-term memory files if enabled and not present."""
+        lt_config = main_memory_config.get("long_term", {})
+        if not lt_config.get("init_defaults", True):
+            return
+        if self.memory_system is None:
+            return
+
+        lt_mgr = self.memory_system.long_term_manager
+        if lt_mgr is None:
+            return
+
+        defaults: dict[str, str] = {
+            "soul": (
+                "## 沟通风格\n"
+                "- 使用中文回复，风格自然、简洁\n"
+                "- 优先给出直接答案，再补充解释\n"
+                "- 不确定的事情如实说明，不编造\n"
+            ),
+            "user": (
+                "## 用户画像\n"
+                "- 首次使用，暂无特定偏好记录\n"
+                "- 后续对话中会逐渐积累用户习惯和偏好\n"
+            ),
+            "memory": (
+                "## 相关知识\n"
+                "- 暂无特定领域知识记录\n"
+                "- 长期对话中会自动整理和更新\n"
+            ),
+        }
+
+        ctx = MemoryContext(session_id="default", user_id="default")
+        for key, content in defaults.items():
+            existing = await lt_mgr.get_file(ctx, key)
+            if not existing:
+                await lt_mgr.update(ctx, {key: content})
+                print(f"   [OK] Initialized default long-term memory: {key}.md")
+
+    async def _init_auto_compact(self, main_memory_config: dict[str, Any]) -> None:
+        """Initialize and start AutoCompactService if enabled."""
+        ac_config = main_memory_config.get("auto_compact", {})
+        if not ac_config.get("enabled", True):
+            return
+        if self.memory_system is None:
+            return
+
+        # Get storage from short_term layer
+        short_term_layer = self.memory_system.layers.get("short_term")
+        if short_term_layer is None:
+            return
+
+        service = AutoCompactService(
+            storage=short_term_layer.storage,
+            idle_threshold_seconds=ac_config.get("idle_threshold_seconds", 1800),
+            keep_recent_messages=ac_config.get("keep_recent_messages", 8),
+        )
+        self.auto_compact_service = service
+
+        # Start background scan loop
+        scan_interval = ac_config.get("scan_interval", 300)
+        self._auto_compact_task = asyncio.create_task(
+            self._auto_compact_loop(service, scan_interval)
+        )
+        print(
+            f"   [OK] AutoCompactService started "
+            f"(idle_threshold={ac_config.get('idle_threshold_seconds', 1800)}s, "
+            f"scan_interval={scan_interval}s)"
+        )
+
+    async def _auto_compact_loop(self, service: AutoCompactService, interval: float) -> None:
+        """Background loop for auto-compaction."""
+        while not self._shutdown_event.is_set():
+            try:
+                await asyncio.wait_for(self._shutdown_event.wait(), timeout=interval)
+            except TimeoutError:
+                pass
+            if self._shutdown_event.is_set():
+                break
+            try:
+                compacted = await service.scan_once()
+                if compacted:
+                    logger.info("Auto-compacted scopes: %s", compacted)
+            except Exception:
+                logger.exception("AutoCompact scan loop error")
+
     async def stop(self) -> None:
         """Stop the service."""
         print("\n[STOP] Shutting down service...")
@@ -659,13 +794,24 @@ class BotService(AgentBuilderMixin):
             except Exception as e:
                 print(f"   [WARN] MemorySystem close error: {e}")
 
-        if self.peer_memory_system:
+        if self._auto_compact_task is not None:
             try:
-                print("   Closing Peer MemorySystem...")
-                await self.peer_memory_system.close()
-                print("   [OK] Peer MemorySystem closed")
+                print("   Stopping AutoCompactService...")
+                self._auto_compact_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._auto_compact_task
+                print("   [OK] AutoCompactService stopped")
             except Exception as e:
-                print(f"   [WARN] Peer MemorySystem close error: {e}")
+                print(f"   [WARN] AutoCompactService stop error: {e}")
+
+        # Close peer memory systems
+        for peer_name, peer_ms in getattr(self, "_peer_memory_systems", {}).items():
+            try:
+                print(f"   Closing peer memory system: {peer_name}...")
+                await peer_ms.close()
+                print(f"   [OK] Peer memory system '{peer_name}' closed")
+            except Exception as e:
+                print(f"   [WARN] Peer memory system '{peer_name}' close error: {e}")
 
         if self.plugin_integration:
             try:
