@@ -376,8 +376,16 @@ class MemorySystem:
         self,
         context: MemoryContext,
         max_history_entries: int = 5,
+        query: str = "",
     ) -> str:
-        """构建包含长期记忆和近期历史摘要的系统提示词。"""
+        """构建包含长期记忆和近期历史摘要的系统提示词。
+
+        Args:
+            context: 记忆上下文
+            max_history_entries: 最多包含的历史摘要条目数
+            query: 用户查询字符串。非空时通过 search() 检索相关历史，
+                   否则回退到 get_recent() 盲取最近条目。
+        """
         sections: list[str] = []
 
         # 长期记忆（可选）
@@ -397,7 +405,19 @@ class MemorySystem:
         if max_history_entries > 0:
             history_mgr = self._managers.history
             if history_mgr is not None:
-                history_entries = await history_mgr.get_recent(context, limit=max_history_entries)
+                if query:
+                    history_entries = await history_mgr.search(
+                        context, query=query, limit=max_history_entries
+                    )
+                    # 检索无结果时回退到最近条目，避免丢失历史上下文
+                    if not history_entries:
+                        history_entries = await history_mgr.get_recent(
+                            context, limit=max_history_entries
+                        )
+                else:
+                    history_entries = await history_mgr.get_recent(
+                        context, limit=max_history_entries
+                    )
                 if history_entries:
                     history_lines: list[str] = []
                     for entry in history_entries:

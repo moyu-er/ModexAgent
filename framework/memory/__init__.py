@@ -39,6 +39,7 @@ from framework.memory.core.scope import (
     UserScope,
 )
 from framework.memory.core.storage import MemoryStorage
+from framework.memory.history_search import HistorySearchStrategy, KeywordHistorySearch
 from framework.memory.injection import (
     DefaultMemoryInjectionPolicy,
     MemoryInjectionPolicy,
@@ -99,4 +100,7 @@ __all__ = [
     # Injection
     "MemoryInjectionPolicy",
     "DefaultMemoryInjectionPolicy",
+    # History search
+    "HistorySearchStrategy",
+    "KeywordHistorySearch",
 ]

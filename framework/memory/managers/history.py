@@ -3,17 +3,17 @@
 from datetime import UTC, datetime
 from typing import Any
 
+from framework.memory.core.base_managers import BaseHistoryArchiveManager
 from framework.memory.core.scope import MemoryContext, MemoryScope
 from framework.memory.core.storage import MemoryStorage
-
-
-from framework.memory.core.base_managers import BaseHistoryArchiveManager
+from framework.memory.history_search import HistorySearchStrategy, KeywordHistorySearch
 
 
 class HistoryArchiveManager(BaseHistoryArchiveManager):
     """管理结构化的历史摘要，支持 cursor 驱动的增量消费。
 
     当条目数超过 max_entries 时，会自动淘汰最旧的记录。
+    支持通过 search_strategy 进行语义/关键词检索。
     """
 
     def __init__(
@@ -21,10 +21,12 @@ class HistoryArchiveManager(BaseHistoryArchiveManager):
         storage: MemoryStorage,
         scope: MemoryScope,
         max_entries: int | None = None,
+        search_strategy: HistorySearchStrategy | None = None,
     ):
         self._storage = storage
         self._scope = scope
         self._max_entries = max_entries
+        self._search_strategy = search_strategy or KeywordHistorySearch()
 
     async def _maybe_prune(self, context: MemoryContext) -> None:
         """如果超出 max_entries，删除最旧的条目。"""
@@ -93,3 +95,23 @@ class HistoryArchiveManager(BaseHistoryArchiveManager):
         scope_key = self._scope.get_scope_key(context)
         entries = await self._storage.read_logs(scope_key, since_cursor=0)
         return entries[-limit:] if limit else entries
+
+    async def search(
+        self,
+        context: MemoryContext,
+        query: str,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """检索与 query 最相关的历史摘要条目。
+
+        Args:
+            context: 记忆上下文
+            query: 查询字符串（用于关键词匹配）
+            limit: 最多返回条目数
+
+        Returns:
+            按相关性排序的条目列表
+        """
+        scope_key = self._scope.get_scope_key(context)
+        entries = await self._storage.read_logs(scope_key, since_cursor=0)
+        return await self._search_strategy.search(entries, query, limit)

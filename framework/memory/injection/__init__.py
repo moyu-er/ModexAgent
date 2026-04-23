@@ -87,9 +87,20 @@ class DefaultMemoryInjectionPolicy(MemoryInjectionPolicy):
                 if not (_is_tool_call(msg) or _is_tool_result(msg))
             ]
 
+        # 1.2 从历史中提取最近一条 user message 作为 query，用于相关历史检索
+        query = ""
+        for msg in reversed(short_term_msgs):
+            role = msg.role if isinstance(msg, ChatMessage) else msg.get("role", "")
+            if role == MessageRole.USER:
+                content = msg.content if isinstance(msg, ChatMessage) else msg.get("content", "")
+                query = content if isinstance(content, str) else str(content)
+                break
+
         # 2. 中长期记忆系统提示词
         memory_prompt = await memory_system.build_system_prompt(
-            context, max_history_entries=self.max_history_entries
+            context,
+            max_history_entries=self.max_history_entries,
+            query=query,
         )
 
         # 2.1 短期记忆压缩摘要（不再以 system 消息存入 history，而是动态注入 system_prompt）

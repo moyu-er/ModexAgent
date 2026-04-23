@@ -101,6 +101,14 @@ class BaseHistoryArchiveManager(ABC):
         limit: int = 5,
     ) -> list[dict[str, Any]]: ...
 
+    @abstractmethod
+    async def search(
+        self,
+        context: MemoryContext,
+        query: str,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]: ...
+
 
 class BaseLongTermMemoryManager(ABC):
     """长期记忆管理器抽象基类."""
