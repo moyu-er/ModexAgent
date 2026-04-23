@@ -132,6 +132,10 @@ class ReActAgent(Agent[ReActEvent]):
                 # 重新构建 messages，以便 Hook 注入的新消息被纳入上下文
                 messages = await context.to_messages()
 
+                # 应用上下文治理（token 预算、tool 链修复等）
+                if context.governance is not None:
+                    messages = await context.governance.apply(messages)
+
                 response = await self._request_llm(messages, context, emitter)
                 content = response.content or ""
                 reasoning = response.reasoning_content

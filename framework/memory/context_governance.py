@@ -1,0 +1,215 @@
+"""Context governance — in-turn token budget management for LLM context.
+
+Governance chain:
+  drop_orphans → backfill → microcompact → tool_budget → snip_history
+
+All governance operates on a *copy* of messages; the persisted history
+is never modified.
+"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from typing import Any
+
+from framework.core.types import MessageRole
+from framework.memory.utils import estimate_token_count
+
+
+class ContextGovernance(ABC):
+    """轮内上下文治理抽象基类。
+
+    在每次 LLM 调用前对消息列表进行调整，确保不超出 token 预算
+    或上下文窗口限制。所有实现必须返回新的消息列表副本，不得
+    修改原始输入。
+    """
+
+    @abstractmethod
+    async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """应用治理策略，返回调整后的消息列表副本。
+
+        Args:
+            messages: 原始消息列表（system + history + current turn）
+
+        Returns:
+            新的消息列表副本，可能经过截断、压缩或修复
+        """
+        ...
+
+
+class CompositeGovernance(ContextGovernance):
+    """按顺序组合多个治理策略。"""
+
+    def __init__(self, strategies: list[ContextGovernance]) -> None:
+        self._strategies = strategies
+
+    async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        result = list(messages)
+        for strategy in self._strategies:
+            result = await strategy.apply(result)
+        return result
+
+
+class ToolChainRepairGovernance(ContextGovernance):
+    """修复 tool-call 链完整性。
+
+    1. 移除无对应 assistant tool_call 的 orphan tool results
+    2. 为缺失 tool result 的 assistant tool_call 插入占位符
+    """
+
+    _BACKFILL_CONTENT = "[Tool result unavailable — call was interrupted or lost]"
+
+    async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        # Step 1: drop orphans
+        declared: set[str] = set()
+        dropped: list[dict[str, Any]] | None = None
+        for idx, msg in enumerate(messages):
+            role = msg.get("role")
+            if role == str(MessageRole.ASSISTANT):
+                for tc in msg.get("tool_calls") or []:
+                    if isinstance(tc, dict) and tc.get("id"):
+                        declared.add(str(tc["id"]))
+            if role == str(MessageRole.TOOL):
+                tid = msg.get("tool_call_id")
+                if tid and str(tid) not in declared:
+                    if dropped is None:
+                        dropped = [dict(m) for m in messages[:idx]]
+                    continue
+            if dropped is not None:
+                dropped.append(dict(msg))
+
+        cleaned = dropped if dropped is not None else list(messages)
+
+        # Step 2: backfill missing
+        declared_calls: list[tuple[int, str, str]] = []
+        fulfilled: set[str] = set()
+        for idx, msg in enumerate(cleaned):
+            role = msg.get("role")
+            if role == str(MessageRole.ASSISTANT):
+                for tc in msg.get("tool_calls") or []:
+                    if isinstance(tc, dict) and tc.get("id"):
+                        name = ""
+                        func = tc.get("function")
+                        if isinstance(func, dict):
+                            name = func.get("name", "")
+                        declared_calls.append((idx, str(tc["id"]), name))
+            elif role == str(MessageRole.TOOL):
+                tid = msg.get("tool_call_id")
+                if tid:
+                    fulfilled.add(str(tid))
+
+        missing = [(ai, cid, name) for ai, cid, name in declared_calls if cid not in fulfilled]
+        if not missing:
+            return cleaned
+
+        updated = list(cleaned)
+        offset = 0
+        for assistant_idx, call_id, name in missing:
+            insert_at = assistant_idx + 1 + offset
+            while insert_at < len(updated) and updated[insert_at].get("role") == str(MessageRole.TOOL):
+                insert_at += 1
+            updated.insert(
+                insert_at,
+                {
+                    "role": str(MessageRole.TOOL),
+                    "tool_call_id": call_id,
+                    "name": name,
+                    "content": self._BACKFILL_CONTENT,
+                },
+            )
+            offset += 1
+        return updated
+
+
+class MicrocompactGovernance(ContextGovernance):
+    """将旧的可压缩 tool result 替换为一行摘要，保留最近 N 个。"""
+
+    _COMPACTABLE_TOOLS: frozenset[str] = frozenset({
+        "read_file", "exec", "grep", "glob",
+        "web_search", "web_fetch", "list_dir",
+    })
+
+    def __init__(
+        self,
+        keep_recent: int = 10,
+        min_chars: int = 500,
+        compactable_tools: frozenset[str] | None = None,
+    ) -> None:
+        self._keep_recent = keep_recent
+        self._min_chars = min_chars
+        self._compactable = compactable_tools or self._COMPACTABLE_TOOLS
+
+    async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        compactable_indices: list[int] = []
+        for idx, msg in enumerate(messages):
+            if msg.get("role") == str(MessageRole.TOOL) and msg.get("name") in self._compactable:
+                compactable_indices.append(idx)
+
+        if len(compactable_indices) <= self._keep_recent:
+            return list(messages)
+
+        stale = compactable_indices[: len(compactable_indices) - self._keep_recent]
+        updated: list[dict[str, Any]] | None = None
+        for idx in stale:
+            msg = messages[idx]
+            content = msg.get("content")
+            if not isinstance(content, str) or len(content) < self._min_chars:
+                continue
+            name = msg.get("name", "tool")
+            summary = f"[{name} result omitted from context]"
+            if updated is None:
+                updated = [dict(m) for m in messages]
+            updated[idx]["content"] = summary
+
+        return updated if updated is not None else list(messages)
+
+
+class TokenBudgetGovernance(ContextGovernance):
+    """当消息列表超 token 预算时从开头截断，保留 system 和最近消息。"""
+
+    def __init__(
+        self,
+        max_tokens: int,
+        safety_buffer: int = 1024,
+    ) -> None:
+        self._max_tokens = max_tokens
+        self._safety_buffer = safety_buffer
+
+    async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not messages:
+            return []
+
+        system_messages = [dict(msg) for msg in messages if msg.get("role") == str(MessageRole.SYSTEM)]
+        non_system = [dict(msg) for msg in messages if msg.get("role") != str(MessageRole.SYSTEM)]
+
+        if not non_system:
+            return system_messages
+
+        system_tokens = estimate_token_count(system_messages)
+        remaining_budget = max(128, self._max_tokens - system_tokens - self._safety_buffer)
+
+        # 从尾部向前累加，直到预算耗尽
+        kept: list[dict[str, Any]] = []
+        kept_tokens = 0
+        for msg in reversed(non_system):
+            msg_tokens = estimate_token_count([msg])
+            if kept and kept_tokens + msg_tokens > remaining_budget:
+                break
+            kept.append(msg)
+            kept_tokens += msg_tokens
+        kept.reverse()
+
+        # 确保保留的消息以 user 消息开头（满足多数 LLM API 的交替要求）
+        if kept:
+            for i, msg in enumerate(kept):
+                if msg.get("role") == str(MessageRole.USER):
+                    kept = kept[i:]
+                    break
+            else:
+                # 找不到 user 消息，回退到保留最近一条 user
+                for msg in reversed(non_system):
+                    if msg.get("role") == str(MessageRole.USER):
+                        kept = [dict(msg)]
+                        break
+
+        return system_messages + kept

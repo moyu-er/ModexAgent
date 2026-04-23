@@ -39,6 +39,13 @@ from framework.memory.core.scope import (
     UserScope,
 )
 from framework.memory.core.storage import MemoryStorage
+from framework.memory.context_governance import (
+    CompositeGovernance,
+    ContextGovernance,
+    MicrocompactGovernance,
+    TokenBudgetGovernance,
+    ToolChainRepairGovernance,
+)
 from framework.memory.history_search import HistorySearchStrategy, KeywordHistorySearch
 from framework.memory.injection import (
     DefaultMemoryInjectionPolicy,
@@ -103,4 +110,10 @@ __all__ = [
     # History search
     "HistorySearchStrategy",
     "KeywordHistorySearch",
+    # Context governance
+    "ContextGovernance",
+    "CompositeGovernance",
+    "ToolChainRepairGovernance",
+    "MicrocompactGovernance",
+    "TokenBudgetGovernance",
 ]
