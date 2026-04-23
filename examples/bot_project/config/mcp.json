@@ -1,0 +1,37 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["@playwright/mcp"]
+    },
+    "fetch": {
+      "type": "sse",
+      "url": "https://mcp.api-inference.modelscope.net/bcd44d7e93bd40/sse",
+      "headers": {
+        "Authorization": "Bearer ${MCP_BEARER_TOKEN}"
+      }
+    },
+    "12306-mcp": {
+      "type": "sse",
+      "url": "https://mcp.api-inference.modelscope.net/c47d1c75706c44/sse",
+      "headers": {
+        "Authorization": "Bearer ${MCP_BEARER_TOKEN}"
+      }
+    },
+    "mcp-deepwiki": {
+      "type": "sse",
+      "url": "https://mcp.api-inference.modelscope.net/f2f8c46fc2d64d/sse",
+      "headers": {
+        "Authorization": "Bearer ${MCP_BEARER_TOKEN}"
+      }
+    },
+    "MiniMax": {
+      "command": "uvx",
+      "args": ["minimax-coding-plan-mcp", "-y"],
+      "env": {
+        "MINIMAX_API_KEY": "${MINIMAX_MCP_API_KEY}",
+        "MINIMAX_API_HOST": "https://api.minimaxi.com"
+      }
+    }
+  }
+}

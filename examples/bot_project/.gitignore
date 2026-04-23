@@ -1,0 +1,61 @@
+# Logs
+logs/
+*.log
+*.log.*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+config/bot_config.local.yml
+config/*.local.json
+
+# Secrets (copy .env.example to .env and fill in your values)
+.env
+!.env.example
+
+node_modules
+data
+*.docx
+*.pptx
+*.xlsx
+*.pdf
+*.ts
+*.js
+package.json
+package-lock.json

@@ -1,0 +1,129 @@
+"""Cross-platform utilities for sandbox execution."""
+
+import sys
+from enum import Enum
+from typing import Optional
+
+
+class Platform(Enum):
+    """Supported platforms."""
+    WINDOWS = "windows"
+    MACOS = "darwin"
+    LINUX = "linux"
+    UNKNOWN = "unknown"
+
+
+def get_platform() -> Platform:
+    """Detect the current operating system platform.
+    
+    Returns:
+        Platform enum value for the current OS.
+    """
+    if sys.platform == "win32":
+        return Platform.WINDOWS
+    elif sys.platform == "darwin":
+        return Platform.MACOS
+    elif sys.platform.startswith("linux"):
+        return Platform.LINUX
+    else:
+        return Platform.UNKNOWN
+
+
+def get_default_shell() -> str:
+    """Get the default shell for the current platform.
+    
+    Returns:
+        Shell command string (e.g., 'bash', 'cmd.exe', 'powershell.exe').
+    """
+    platform = get_platform()
+    
+    if platform == Platform.WINDOWS:
+        # Prefer PowerShell on Windows, fallback to cmd
+        return "powershell.exe"
+    elif platform == Platform.MACOS:
+        return "bash"
+    else:  # Linux and others
+        return "bash"
+
+
+def get_shell_executable() -> Optional[str]:
+    """Get the full path to the default shell executable.
+    
+    Returns:
+        Path to shell executable or None if not found.
+    """
+    import shutil
+    
+    shell = get_default_shell()
+    return shutil.which(shell)
+
+
+def convert_path_for_platform(path: str, target_platform: Optional[Platform] = None) -> str:
+    """Convert a path to use the correct separators for the target platform.
+    
+    Args:
+        path: The path to convert.
+        target_platform: Target platform. If None, uses current platform.
+        
+    Returns:
+        Path with correct separators for the target platform.
+    """
+    if target_platform is None:
+        target_platform = get_platform()
+    
+    # Normalize to forward slashes first
+    normalized = path.replace("\\", "/")
+    
+    if target_platform == Platform.WINDOWS:
+        # Convert to backslashes for Windows
+        return normalized.replace("/", "\\")
+    else:
+        # Keep forward slashes for Unix-like systems
+        return normalized
+
+
+def is_unix_like() -> bool:
+    """Check if the current platform is Unix-like (macOS or Linux).
+    
+    Returns:
+        True if platform is macOS or Linux, False otherwise.
+    """
+    platform = get_platform()
+    return platform in (Platform.MACOS, Platform.LINUX)
+
+
+def get_command_separator() -> str:
+    """Get the command separator for the current platform.
+    
+    Returns:
+        '&&' for Unix-like, '&' for Windows.
+    """
+    return "&&" if is_unix_like() else "&"
+
+
+def get_shell_command_args(command: str) -> list[str]:
+    """Build platform-appropriate shell invocation args for a command string.
+
+    Args:
+        command: The shell command string to execute.
+
+    Returns:
+        List of args for subprocess.Popen, e.g. ["bash", "-c", cmd] or ["cmd.exe", "/c", cmd].
+    """
+    if get_platform() == Platform.WINDOWS:
+        return ["cmd.exe", "/c", command]
+    else:
+        return ["bash", "-c", command]
+
+
+def join_commands(*commands: str) -> str:
+    """Join multiple commands with the appropriate separator for the platform.
+
+    Args:
+        *commands: Commands to join.
+
+    Returns:
+        Joined command string.
+    """
+    separator = f" {get_command_separator()} "
+    return separator.join(commands)

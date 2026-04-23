@@ -1,0 +1,301 @@
+"""File-based storage backend for cross-platform persistence."""
+
+import contextlib
+import json
+import logging
+import os
+from pathlib import Path
+from typing import Any
+
+from framework.memory.core.lock import AioRWLock, StorageLock
+from framework.memory.core.storage import MemoryStorage
+from framework.memory.stores.utils import ensure_scope_dir
+
+logger = logging.getLogger(__name__)
+
+
+def _atomic_json_write(path: Path, data: dict[str, Any]) -> None:
+    """原子写入 JSON 文件（使用临时文件替换）"""
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    # 在 Windows 上，os.replace 会原子替换目标文件
+    os.replace(str(tmp_path), str(path))
+
+
+_MESSAGES_FILE = "messages.jsonl"
+_HISTORY_FILE = "history.jsonl"
+_KV_FILE = "kv.json"
+
+
+class FileStorage(MemoryStorage):
+    """基于文件的跨平台存储后端。
+
+    目录结构:
+        workspace/
+        └── <sanitized_scope_key>/
+            ├── messages.jsonl
+            ├── history.jsonl
+            ├── kv.json
+            └── .cursor_default
+            └── .cursor_dream
+    """
+
+    def __init__(self, workspace: Path, lock: StorageLock | None = None) -> None:
+        # Default to AioRWLock for single-process use.
+        # Pass FileStorageLock explicitly for cross-process safety.
+        ws = Path(workspace)
+        if lock is None:
+            lock = AioRWLock()
+        super().__init__(lock)
+        self.workspace = ws
+
+    async def initialize(self) -> None:
+        self.workspace.mkdir(parents=True, exist_ok=True)
+        for tmp_file in self.workspace.rglob("*.tmp"):
+            with contextlib.suppress(Exception):
+                tmp_file.unlink()
+                logger.debug("Cleaned up residual tmp file: %s", tmp_file)
+
+    async def close(self) -> None:
+        pass
+
+    def _scope_dir(self, scope_key: str) -> Path:
+        return ensure_scope_dir(self.workspace, scope_key)
+
+    def _messages_path(self, scope_dir: Path) -> Path:
+        return scope_dir / _MESSAGES_FILE
+
+    def _history_path(self, scope_dir: Path) -> Path:
+        return scope_dir / _HISTORY_FILE
+
+    def _kv_path(self, scope_dir: Path) -> Path:
+        return scope_dir / _KV_FILE
+
+    def _cursor_path(self, scope_dir: Path, cursor_name: str) -> Path:
+        return scope_dir / f".cursor_{cursor_name}"
+
+    # --- KV ---
+    async def get(self, scope_key: str, key: str) -> Any | None:
+        async with self.get_lock().read():
+            scope_dir = self._scope_dir(scope_key)
+            kv_path = self._kv_path(scope_dir)
+            if not kv_path.exists():
+                return None
+            try:
+                data = json.loads(kv_path.read_text(encoding="utf-8"))
+                return data.get(key)
+            except Exception as e:
+                logger.warning(f"Failed to read kv for {scope_key}: {e}")
+                return None
+
+    async def set(self, scope_key: str, key: str, value: Any) -> None:
+        async with self.get_lock().write():
+            scope_dir = self._scope_dir(scope_key)
+            kv_path = self._kv_path(scope_dir)
+            scope_dir.mkdir(parents=True, exist_ok=True)
+
+            if not kv_path.exists():
+                _atomic_json_write(kv_path, {key: value})
+                return
+
+            try:
+                with open(kv_path, "r+", encoding="utf-8") as f:
+                    try:
+                        data = json.load(f)
+                    except json.JSONDecodeError:
+                        data = {}
+                    data[key] = value
+                    f.seek(0)
+                    f.truncate()
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                logger.error(f"Failed to set kv key {key} for {scope_key}: {e}")
+                raise
+
+    async def delete(self, scope_key: str, key: str) -> bool:
+        async with self.get_lock().write():
+            scope_dir = self._scope_dir(scope_key)
+            kv_path = self._kv_path(scope_dir)
+            if not kv_path.exists():
+                return False
+
+            try:
+                with open(kv_path, "r+", encoding="utf-8") as f:
+                    try:
+                        data = json.load(f)
+                    except json.JSONDecodeError:
+                        return False
+                    if key in data:
+                        del data[key]
+                        f.seek(0)
+                        f.truncate()
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                        return True
+                    return False
+            except Exception as e:
+                logger.warning(f"Failed to delete kv key {key} for {scope_key}: {e}")
+            return False
+
+    async def list_keys(self, scope_key: str, prefix: str = "") -> list[str]:
+        async with self.get_lock().read():
+            scope_dir = self._scope_dir(scope_key)
+            kv_path = self._kv_path(scope_dir)
+            if not kv_path.exists():
+                return []
+            try:
+                data = json.loads(kv_path.read_text(encoding="utf-8"))
+                return [k for k in data if k.startswith(prefix)]
+            except Exception:
+                return []
+
+    # --- Messages ---
+    async def load_messages(self, scope_key: str) -> list[dict[str, Any]]:
+        async with self.get_lock().read():
+            scope_dir = self._scope_dir(scope_key)
+            path = self._messages_path(scope_dir)
+            if not path.exists():
+                return []
+            messages = []
+            try:
+                with open(path, encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            messages.append(json.loads(line))
+            except Exception as e:
+                logger.warning(f"Failed to load messages for {scope_key}: {e}")
+            return messages
+
+    async def save_messages(self, scope_key: str, messages: list[dict[str, Any]]) -> None:
+        """原子覆盖写入 messages.jsonl（使用临时文件 + replace）"""
+        async with self.get_lock().write():
+            scope_dir = self._scope_dir(scope_key)
+            path = self._messages_path(scope_dir)
+            scope_dir.mkdir(parents=True, exist_ok=True)
+            tmp_path = path.with_suffix(path.suffix + ".tmp")
+            try:
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    for msg in messages:
+                        f.write(json.dumps(msg, ensure_ascii=False) + "\n")
+                os.replace(str(tmp_path), str(path))
+            except Exception as e:
+                logger.error(f"Failed to save messages for {scope_key}: {e}")
+                if tmp_path.exists():
+                    with contextlib.suppress(Exception):
+                        tmp_path.unlink()
+                raise
+
+    async def append_message(self, scope_key: str, message: dict[str, Any]) -> None:
+        """追加写入 messages.jsonl"""
+        async with self.get_lock().write():
+            scope_dir = self._scope_dir(scope_key)
+            path = self._messages_path(scope_dir)
+            scope_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                with open(path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(message, ensure_ascii=False) + "\n")
+            except Exception as e:
+                logger.error(f"Failed to append message for {scope_key}: {e}")
+                raise
+
+    # --- Logs ---
+    async def append_log(self, scope_key: str, entry: dict[str, Any]) -> int:
+        async with self.get_lock().write():
+            scope_dir = self._scope_dir(scope_key)
+            path = self._history_path(scope_dir)
+            cursor = await self.get_last_cursor(scope_key, "default") + 1
+            entry = {**entry, "cursor": cursor}
+
+            scope_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                with open(path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            except Exception as e:
+                logger.error(f"Failed to append log for {scope_key}: {e}")
+                raise
+            await self.set_last_cursor(scope_key, "default", cursor)
+            return cursor
+
+    async def read_logs(
+        self,
+        scope_key: str,
+        since_cursor: int = 0,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        async with self.get_lock().read():
+            scope_dir = self._scope_dir(scope_key)
+            path = self._history_path(scope_dir)
+            if not path.exists():
+                return []
+            logs = []
+            try:
+                with open(path, encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        entry = json.loads(line)
+                        if entry.get("cursor", 0) > since_cursor:
+                            logs.append(entry)
+                            if len(logs) >= limit:
+                                break
+            except Exception as e:
+                logger.warning(f"Failed to read logs for {scope_key}: {e}")
+            return logs
+
+    async def save_logs(self, scope_key: str, entries: list[dict[str, Any]]) -> None:
+        async with self.get_lock().write():
+            scope_dir = self._scope_dir(scope_key)
+            path = self._history_path(scope_dir)
+            tmp_path = path.with_suffix(path.suffix + ".tmp")
+            try:
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    for entry in entries:
+                        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                os.replace(str(tmp_path), str(path))
+            except Exception as e:
+                logger.error(f"Failed to save logs for {scope_key}: {e}")
+                if tmp_path.exists():
+                    with contextlib.suppress(Exception):
+                        tmp_path.unlink()
+                raise
+
+    async def get_last_cursor(self, scope_key: str, cursor_name: str = "default") -> int:
+        """获取最后 cursor。若 cursor 文件丢失/损坏，从历史日志末尾恢复。"""
+        async with self.get_lock().read():
+            scope_dir = self._scope_dir(scope_key)
+            path = self._cursor_path(scope_dir, cursor_name)
+            cursor_val = 0
+            if path.exists():
+                try:
+                    cursor_val = int(path.read_text(encoding="utf-8").strip())
+                except Exception:
+                    cursor_val = 0
+
+            # 若 cursor 文件缺失或损坏，尝试从 history.jsonl 最后一行恢复
+            if cursor_val == 0 and cursor_name == "default":
+                history_path = self._history_path(scope_dir)
+                if history_path.exists():
+                    try:
+                        with open(history_path, encoding="utf-8") as f:
+                            last_line = ""
+                            for line in f:
+                                line = line.strip()
+                                if line:
+                                    last_line = line
+                            if last_line:
+                                recovered = json.loads(last_line).get("cursor", 0)
+                                cursor_val = recovered
+                    except Exception:
+                        pass
+            return cursor_val
+
+    async def set_last_cursor(self, scope_key: str, cursor_name: str, cursor: int) -> None:
+        """原子写入 cursor 文件（临时文件 + replace），避免崩溃时产生空文件或半写文件。"""
+        async with self.get_lock().write():
+            scope_dir = self._scope_dir(scope_key)
+            path = self._cursor_path(scope_dir, cursor_name)
+            scope_dir.mkdir(parents=True, exist_ok=True)
+            tmp_path = path.with_suffix(path.suffix + ".tmp")
+            tmp_path.write_text(str(cursor), encoding="utf-8")
+            os.replace(str(tmp_path), str(path))
