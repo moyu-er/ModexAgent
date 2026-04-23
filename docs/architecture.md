@@ -11,7 +11,7 @@
 | **泛型类型安全** | `Agent[E]`、`ContentEmitter[E]` 通过泛型绑定事件枚举，编译期即可发现类型错误 |
 | **I/O 无关** | `InputAdapter` / `OutputAdapter` 模式 + `PlatformAdapter` 能力声明，Agent 逻辑不感知消息来源 |
 | **流式/非流式统一** | 由 `StreamingAwareEmitter` + `StreamingMode` 枚举实现，Agent 代码无需修改 |
-| **多层记忆** | Working → Short-term → History → Long-term 四层架构，每层独立 Scope 和存储后端 |
+| **多层记忆** | Short-term → History → Long-term 三层架构，每层独立 Scope 和存储后端 |
 | **ReAct 推理** | Thought → Action → Observation 迭代执行循环，支持可中断 Runner |
 | **多 Agent 协作** | SubagentManager（同步子 Agent）+ AgentPool（常驻 Peer Agent）+ AgentMessageBus 双模式 |
 | **可插拔扩展** | Plugin 系统（MemoryProvider、ToolModifier）+ Skill 系统（SKILL.md 驱动） |
@@ -71,7 +71,6 @@ framework/
 │   │   ├── consolidation.py  # 记忆整合接口
 │   │   └── lock.py           # 读写锁
 │   ├── managers/             # 各层记忆管理器实现
-│   │   ├── working.py        # Working Memory（当前轮次缓存）
 │   │   ├── short_term.py     # Short-term Memory（近期对话）
 │   │   ├── history.py        # History Archive（压缩摘要）
 │   │   └── long_term.py      # Long-term Memory（用户画像与知识）
@@ -470,11 +469,11 @@ StreamingAwareEmitter
 | 事件系统 | `AgentHook` 回调 | 泛型 `Agent[E]` + `ContentEmitter[E]` |
 | 输出处理 | `BaseChannel.send()` | `ContentEmitter` + `OutputAdapter` + `PlatformAdapter` 三层 |
 | 工具执行 | `ToolRegistry` 顺序 | `ToolManager` 支持并行/异步 + `ToolAssemblyKit` 克隆组装 |
-| 会话管理 | `SessionManager` | `ContextManager` + `MemorySystem` 四层 |
+| 会话管理 | `SessionManager` | `ContextManager` + `MemorySystem` 三层 |
 | I/O 抽象 | `BaseChannel` (每平台一个类) | `InputAdapter` / `OutputAdapter` 分离 + `StreamingMode` 枚举 |
 | 类型安全 | 运行时检查 | 泛型编译期类型安全 |
 | 多 Agent | `SubagentManager` + `SpawnTool` | SubagentManager + AgentPool + AgentMessageBus + AgentFactory |
-| 记忆系统 | `MemoryStore` + `Dream` | 四层 MemorySystem + DreamEngine + Plugin MemoryProvider |
+| 记忆系统 | `MemoryStore` + `Dream` | 三层 MemorySystem + DreamEngine + Plugin MemoryProvider |
 | Provider | 原生 openai/anthropic SDK | LiteLLM 统一 100+ 模型 |
 | 沙箱 | 无 | Subprocess / Landlock / Docker / E2B |
 | 安全 | 基础 | SecurityPolicy + Validators + SecureWrapper |
@@ -581,7 +580,7 @@ await runtime_ctx.record_tool_call(tool_name, arguments, result)
 
 ### MemoryProvider
 
-可插拔记忆后端，作为四层记忆的增强层：
+可插拔记忆后端，作为三层记忆的增强层：
 
 ```python
 class MemoryProvider(ABC):

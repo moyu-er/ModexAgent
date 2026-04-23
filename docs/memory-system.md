@@ -1,4 +1,4 @@
-# 四层记忆系统
+# 三层记忆系统
 
 > 本文档详细讲解 ModexAgent 的多层记忆架构。
 
@@ -10,16 +10,17 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │                        MemorySystem                             │
 │                      （统一入口）                                │
-├─────────────┬─────────────┬─────────────┬─────────────────────┤
-│  Working    │ Short-Term  │   History   │    Long-Term        │
-│  Memory     │   Memory    │   Archive   │     Memory          │
-│  (热缓存)   │  (近期对话)  │  (历史摘要) │   (用户画像/知识)   │
-├─────────────┼─────────────┼─────────────┼─────────────────────┤
-│ SessionScope│ SessionScope│  UserScope  │    UserScope        │
-│ 内存存储    │ 文件存储    │  文件存储   │    文件存储         │
-│ 当前 turn   │ 最近 100 条 │  压缩归档   │    SOUL.md          │
-│ 不持久化    │ 自动压缩    │  Dream整理  │    USER.md          │
-└─────────────┴─────────────┴─────────────┴─────────────────────┘
+├──────────────────┬─────────────┬────────────────────────────────┤
+│   Short-Term     │   History   │         Long-Term              │
+│    Memory        │   Archive   │          Memory                │
+│   (近期对话)      │  (历史摘要)  │      (用户画像/知识)            │
+├──────────────────┼─────────────┼────────────────────────────────┤
+│   SessionScope   │  UserScope  │        UserScope               │
+│   文件存储        │  文件存储    │       文件存储                  │
+│   最近 N 条      │  压缩归档    │       SOUL.md                  │
+│   自动压缩        │  Dream整理  │       USER.md                  │
+│   cursor/delete  │             │       MEMORY.md                │
+└──────────────────┴─────────────┴────────────────────────────────┘
                               │
                               ▼
                     ┌─────────────────────┐
@@ -30,37 +31,9 @@
 
 ---
 
-## 2. 四层记忆详解
+## 2. 三层记忆详解
 
-### 2.1 Working Memory — 工作记忆
-
-**作用**：当前 turn 的热缓存，存储本轮对话的临时状态。
-
-| 属性 | 说明 |
-|------|------|
-| 存储 | 内存（InMemoryStorage） |
-| 作用域 | SessionScope（每个会话独立） |
-| 持久化 | 否，会话结束即丢弃 |
-| 用途 | 当前 turn 的工具结果缓存、中间计算结果 |
-
-```python
-from framework.memory.managers.working import WorkingMemoryManager
-from framework.memory.core.scope import SessionScope, MemoryContext
-
-working_mgr = WorkingMemoryManager(scope=SessionScope())
-context = MemoryContext(session_id="session_123")
-
-# 添加消息
-working_mgr.add_message(context, {"role": "user", "content": "Hello"})
-
-# 获取消息
-messages = working_mgr.get_messages(context)
-
-# 清空并返回消息
-messages = working_mgr.clear(context)
-```
-
-### 2.2 Short-Term Memory — 短期记忆
+### 2.1 Short-Term Memory — 短期记忆
 
 **作用**：保存最近的多轮对话历史，供 LLM 上下文使用。
 
@@ -97,7 +70,7 @@ config = ShortTermConfig(
 4. **TokenWindowCompression** - 基于 token 窗口的简单截断
 5. **HybridCompression** - 组合多种策略
 
-### 2.3 History Archive — 历史归档
+### 2.2 History Archive — 历史归档
 
 **作用**：保存跨会话的长期对话摘要，按用户维度存储。
 
@@ -110,7 +83,7 @@ config = ShortTermConfig(
 
 **DreamEngine**：后台离线进程，定期扫描 History，提取关键信息更新到 Long-Term Memory。
 
-### 2.4 Long-Term Memory — 长期记忆
+### 2.3 Long-Term Memory — 长期记忆
 
 **作用**：结构化存储用户画像、知识、偏好。
 
@@ -327,21 +300,11 @@ entries = await memory_system.get_history_entries(context, limit=5)
 long_term = await memory_system.get_long_term(context)
 ```
 
-### 5.4 Working Memory 操作
+### 5.4 Working Memory（已移除）
 
-```python
-# 暂存消息到 Working Memory（不触发压缩/持久化）
-memory_system.stage_working(context, messages)
-
-# 获取 Working Memory 消息
-working_msgs = memory_system.get_working_messages(context)
-
-# 刷入 Short-term Memory 并清空
-flushed = await memory_system.flush_working(context)
-
-# 清空 Working Memory
-cleared = memory_system.clear_working(context)
-```
+> **注意**：Working Memory 层已在 v0.3.0+ 中移除（P11 重构）。
+> 所有消息直接写入 Short-Term Memory，由 `compression_mode`（`cursor` / `delete`）控制可见性。
+> `cursor` 模式下，消息物理保留但前 `.compression_cursor` 条对 LLM 不可见；`delete` 模式下物理删除。
 
 ### 5.5 与 ContextManager 集成
 
@@ -491,15 +454,13 @@ memory_system = MemorySystem(
 # 使用 PeerPairScope 隔离不同 Agent 对之间的记忆
 from framework.memory.core.scope import PeerPairScope
 
+# Peer Agent 通常只需要单层 short_term 记忆
 layers = {
-    "working": LayerConfig(scope=PeerPairScope(), storage=InMemoryStorage()),
     "short_term": LayerConfig(
         scope=PeerPairScope(),
         storage=FileStorage(workspace),
         compression_strategy=Consolidator(llm_provider=provider),
     ),
-    "history": LayerConfig(scope=UserScope(), storage=FileStorage(workspace)),
-    "long_term": LayerConfig(scope=UserScope(), storage=FileStorage(workspace)),
 }
 
 memory_system = MemorySystem(workspace=workspace, layers=layers)

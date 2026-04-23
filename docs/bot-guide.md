@@ -56,7 +56,8 @@ BotService.initialize()
   │   └── 注册 MCP 工具（通过 MCPClientManager）
   ├── 4. 创建 LiteLLMProvider（支持 100+ 模型）
   ├── 5. 创建 MemorySystem + MemorySystemContextManager
-  │   └── 四层记忆：Working → ShortTerm → History → LongTerm
+  │   └── 三层记忆：ShortTerm → History → LongTerm
+  │       └── main: 3 层全功能 / peers: 1 层短记忆 / subagents: 1 层短记忆
   ├── 6. 创建 DreamEngine（后台离线长期记忆整理）
   ├── 7. 创建 SkillManager（加载 skills/main/ 下的 SKILL.md）
   ├── 8. 创建 AgentFactory + SubagentManager（多 Agent 协作）
@@ -237,7 +238,6 @@ multi_agent:
         enabled: true
         short_term:
           max_messages: 50
-          budget_ratio: 0.5
       context_strategy: "persistent"
       skill_dirs:
         - "skills/peers/docx"
@@ -248,9 +248,51 @@ multi_agent:
 
 ```yaml
 memory:
-  short_term:
-    max_messages: 50
-    budget_ratio: 0.5  # 短期记忆 token 上限 = llm.max_tokens * 0.5
+  main:
+    short_term:
+      max_messages: 50
+      budget_ratio: 0.5
+      compression_mode: "cursor"    # cursor 保留物理消息，delete 物理删除
+      auto_llm_compression: true
+    long_term:
+      enabled: true
+      init_defaults: true           # 自动创建 SOUL.md / USER.md / MEMORY.md
+    history:
+      enabled: true
+      max_entries: 1000
+    governance:
+      enabled: true
+      tool_chain_repair: true
+      microcompact:
+        enabled: true
+        keep_recent: 10
+      token_budget:
+        enabled: true
+        budget_ratio: 0.5
+        safety_buffer: 1024
+    auto_compact:
+      enabled: true
+      idle_threshold_seconds: 1800  # 30 min
+      keep_recent_messages: 8
+    dream_engine:
+      enabled: true
+      interval: 300
+      threshold: 5
+
+  peers:
+    short_term:
+      max_messages: 50
+      budget_ratio: 0.5
+      compression_mode: "delete"
+      auto_llm_compression: false
+
+  subagents:
+    short_term:
+      max_messages: 20
+      max_tokens: 4000
+      budget_ratio: 0.5
+      compression_mode: "delete"
+      auto_llm_compression: false
 ```
 
 ### 4.7 插件配置

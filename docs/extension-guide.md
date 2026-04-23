@@ -366,7 +366,7 @@ class WebSocketEmitter(ContentEmitter[ReActEvent]):
 
 ## 5. 添加 MemoryProvider 插件
 
-MemoryProvider 是框架的主要扩展点，用于增强四层记忆系统。
+MemoryProvider 是框架的主要扩展点，用于增强三层记忆系统。
 
 ### 5.1 实现 MemoryProvider
 

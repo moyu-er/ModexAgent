@@ -17,7 +17,7 @@
 ## 核心特性
 
 - **🧩 积木式架构** — Memory / Tool / Agent / Emitter / Adapter 全部可插拔替换，按需组合
-- **🧠 四层记忆系统** — Working → Short-term → History → Long-term，每层独立配置存储后端和压缩策略
+- **🧠 三层记忆系统** — Short-term → History → Long-term，每层独立配置存储后端和压缩策略
 - **🤖 多 Agent 协作** — SubagentManager（临时派生）+ AgentPool（常驻 Peer），支持跨 Agent 消息路由
 - **🔧 工具生态** — 内置工具注册表、并行执行调度、MCP 协议客户端集成
 - **📦 插件系统** — 基于约定的插件发现机制，支持注入 MemoryProvider、Hook 和工具
@@ -39,7 +39,7 @@
 │  ┌──────┴──────┐   │          │                        │
 │  │   Memory    │   │          │                        │
 │  │   System    │   │          │                        │
-│  │ (四层记忆)   │   │          │                        │
+│  │ (三层记忆)   │   │          │                        │
 │  └─────────────┘   │          │                        │
 │                    │          │                        │
 │  ┌─────────────┐   │          │   ┌────────────────┐  │
@@ -120,7 +120,7 @@ python bot_service.py --mode pool
 
 #### 使用截图
 
-![使用截图](./assets/qq_bot.jpg)
+<img src="./assets/qq_bot.jpg" alt="使用截图" style="zoom:25%;" />
 
 ## 文档
 
@@ -128,7 +128,7 @@ python bot_service.py --mode pool
 |------|------|
 | [架构概览](docs/architecture.md) | 整体架构设计、组件关系、数据流 |
 | [核心模块](docs/core-modules.md) | Agent、Emitter、ToolManager、ContextManager 详解 |
-| [记忆系统](docs/memory-system.md) | 四层记忆架构、Scope 体系、压缩策略 |
+| [记忆系统](docs/memory-system.md) | 三层记忆架构、Scope 体系、压缩策略 |
 | [多 Agent 协作](docs/multi-agent-guide.md) | SubagentManager、AgentPool、Inbox 系统 |
 | [扩展开发](docs/extension-guide.md) | 添加工具、Agent、插件、适配器 |
 | [Bot 示例](docs/bot-guide.md) | QQ Bot 示例项目完整指南 |
@@ -141,7 +141,7 @@ framework/
 ├── agents/react/          # ReActAgent 实现
 ├── pipeline/              # AgentPipeline 编排、InputAdapter、OutputAdapter
 ├── session/               # AgentSession（请求/响应模式）
-├── memory/                # 四层记忆系统
+├── memory/                # 三层记忆系统
 │   ├── core/              # 抽象基类：MemoryScope, Storage, Compression
 │   ├── managers/          # Working, ShortTerm, History, LongTerm 管理器
 │   ├── compression/       # 压缩策略：ToolChain, Importance, TokenWindow, Hybrid
