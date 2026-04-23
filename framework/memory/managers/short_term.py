@@ -6,7 +6,7 @@ import logging
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from framework.memory.archive import ArchiveStrategy, SemanticArchiveStrategy
 from framework.memory.compression.tool_chain import (
@@ -34,6 +34,7 @@ class ShortTermConfig:
 
     max_messages: int | None = None
     max_tokens: int | None = None
+    compression_mode: Literal["delete", "cursor"] = "delete"
     compression_strategy: CompressionStrategy | None = None
     archive_strategy: ArchiveStrategy | None = None
     content_transformer: ContentTransformer | None = None
@@ -125,7 +126,25 @@ class ShortTermMemoryManager(BaseShortTermManager):
             return await self._storage.get(scope_key, ".compression_summary")
 
     async def get_messages(self, context: MemoryContext) -> list[ChatMessage]:
-        """获取指定 scope 的完整短期消息列表。"""
+        """获取指定 scope 的短期消息列表。
+
+        在 cursor 压缩模式下，自动过滤掉已压缩（cursor 之前）的消息，
+        只返回对当前对话可见的消息。
+        """
+        scope_key = self._scope.get_scope_key(context)
+        async with self._storage.get_lock(scope_key).read():
+            raw = await self._storage.load_messages(scope_key)
+            if self._config.compression_mode == "cursor":
+                cursor_raw = await self._storage.get(scope_key, ".compression_cursor")
+                cursor = int(cursor_raw) if cursor_raw is not None else 0
+                raw = raw[cursor:]
+        return ChatMessage.from_dicts(raw)
+
+    async def get_all_messages(self, context: MemoryContext) -> list[ChatMessage]:
+        """获取指定 scope 的完整消息列表（包含已压缩部分）。
+
+        供 DreamEngine 等需要消费全部历史的场景使用。
+        """
         scope_key = self._scope.get_scope_key(context)
         async with self._storage.get_lock(scope_key).read():
             raw = await self._storage.load_messages(scope_key)
@@ -194,10 +213,23 @@ class ShortTermMemoryManager(BaseShortTermManager):
         2. 若压缩后仍超限，先执行按 Token 的硬截断（保证 tool-call 链完整），
            再执行按消息数的硬截断。
         3. 被移除的消息会同步归档到 HistoryArchive（如可用）。
+
+        cursor 模式：不物理删除消息，仅更新 `.compression_cursor` KV。
+        get_messages() 会自动过滤 cursor 之前的消息。
         """
         scope_key = self._scope.get_scope_key(context)
         raw = await self._storage.load_messages(scope_key)
-        messages: list[dict[str, Any]] = raw
+        all_messages: list[dict[str, Any]] = raw
+
+        # cursor 模式：计算当前可见消息
+        cursor = 0
+        is_cursor_mode = self._config.compression_mode == "cursor"
+        if is_cursor_mode:
+            cursor_raw = await self._storage.get(scope_key, ".compression_cursor")
+            cursor = int(cursor_raw) if cursor_raw is not None else 0
+            messages = all_messages[cursor:]
+        else:
+            messages = all_messages
 
         # dirty-bit cooldown：若自上次压缩以来新增消息数不足阈值且未超硬限制，跳过
         last_count = self._last_compress_counts.get(scope_key, 0)
@@ -208,6 +240,7 @@ class ShortTermMemoryManager(BaseShortTermManager):
         if not is_over_hard_limit and current_count - last_count < self.COOLDOWN_MSG_DELTA:
             return
 
+        original_visible_len = len(messages)
         pruned: list[dict[str, Any]] = []
         summary = ""
         protected_count = 0
@@ -242,7 +275,6 @@ class ShortTermMemoryManager(BaseShortTermManager):
                     messages = [m for m in messages if m not in result.pruned_messages]
             if result.summary:
                 summary = result.summary
-                # 将摘要保存到 KV 存储，避免以 system 消息污染历史记录
                 await self._storage.set(
                     scope_key, ".compression_summary", summary
                 )
@@ -271,21 +303,42 @@ class ShortTermMemoryManager(BaseShortTermManager):
                 pruned.extend(messages[protected_count:safe_excess])
                 messages = messages[:protected_count] + messages[safe_excess:]
 
-        if pruned:
-            await self._storage.save_messages(scope_key, messages)
-            self._last_compress_counts[scope_key] = len(messages)
-            logger.debug(f"Compressed {len(pruned)} messages for {scope_key}")
-            if self._history_manager is not None and self._config.archive_strategy is not None:
-                result = CompressionResult(
-                    summary=summary,
-                    pruned_messages=list(pruned),  # Convert to list[ChatMessage | dict]
-                    remaining_messages=list(messages),  # Convert to list[ChatMessage | dict]
-                )
-                await self._config.archive_strategy.archive(
-                    context,
-                    list(pruned),  # Convert to list[ChatMessage | dict]
-                    result,
-                    self._history_manager,
-                )
+        removed_count = original_visible_len - len(messages)
+
+        if is_cursor_mode:
+            if removed_count > 0 or pruned:
+                new_cursor = cursor + removed_count
+                await self._storage.set(scope_key, ".compression_cursor", new_cursor)
+                self._last_compress_counts[scope_key] = len(messages)
+                logger.debug("Cursor-compressed %d messages for %s", removed_count, scope_key)
+                if self._history_manager is not None and self._config.archive_strategy is not None:
+                    result = CompressionResult(
+                        summary=summary,
+                        pruned_messages=list(pruned),
+                        remaining_messages=list(messages),
+                    )
+                    await self._config.archive_strategy.archive(
+                        context,
+                        list(pruned),
+                        result,
+                        self._history_manager,
+                    )
         else:
-            self._last_compress_counts[scope_key] = current_count
+            if pruned:
+                await self._storage.save_messages(scope_key, messages)
+                self._last_compress_counts[scope_key] = len(messages)
+                logger.debug("Compressed %d messages for %s", len(pruned), scope_key)
+                if self._history_manager is not None and self._config.archive_strategy is not None:
+                    result = CompressionResult(
+                        summary=summary,
+                        pruned_messages=list(pruned),
+                        remaining_messages=list(messages),
+                    )
+                    await self._config.archive_strategy.archive(
+                        context,
+                        list(pruned),
+                        result,
+                        self._history_manager,
+                    )
+            else:
+                self._last_compress_counts[scope_key] = current_count
