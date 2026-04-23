@@ -1,4 +1,4 @@
-# Agent Framework V2 — 核心架构
+# ModexAgent — 核心架构
 
 > 版本: 0.3.0 | 更新: 2026-04-22
 

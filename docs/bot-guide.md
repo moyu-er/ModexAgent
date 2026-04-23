@@ -1,6 +1,6 @@
-# QQ Bot 示例项目指南
+# Bot 示例项目指南
 
-> 本文档详细讲解 `examples/bot_project/` 示例的架构、配置和运行方式。
+> 本文档详细讲解 ModexAgent 的 `examples/bot_project/` 示例的架构、配置和运行方式。
 
 ---
 
@@ -412,13 +412,13 @@ python bot_service.py
 
 ```bash
 # 构建镜像
-docker build -t lite-agent-bot .
+docker build -t ModexAgent-bot .
 
 # 运行容器
 docker run -d \
   --env-file .env \
   -v $(pwd)/data:/app/data \
-  lite-agent-bot
+  ModexAgent-bot
 ```
 
 ---

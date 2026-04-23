@@ -1,6 +1,6 @@
 # 四层记忆系统
 
-> 本文档详细讲解 Agent Framework V2 的多层记忆架构。
+> 本文档详细讲解 ModexAgent 的多层记忆架构。
 
 ---
 

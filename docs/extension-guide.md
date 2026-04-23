@@ -1,6 +1,6 @@
 # 扩展开发指南
 
-> 本文档讲解如何扩展 Agent Framework V2，包括添加新平台、新工具、新 Agent 类型、MemoryProvider 插件等。
+> 本文档讲解如何扩展 ModexAgent，包括添加新平台、新工具、新 Agent 类型、MemoryProvider 插件等。
 
 ---
 

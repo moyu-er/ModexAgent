@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 url = "https://mirrors.aliyun.com/pypi/simple"
 
 [project]
-name = "lite-agent"
+name = "ModexAgent"
 version = "0.1.0"
 description = "DIY Agent Framework - A flexible multi-agent system framework"
 readme = "README.md"
@@ -64,7 +64,7 @@ gateway = [
     "qq-botpy>=1.2.0",
 ]
 all = [
-    "lite-agent[llm,storage,session,sandbox,gateway]",
+    "ModexAgent[llm,storage,session,sandbox,gateway]",
 ]
 
 [tool.hatch.build.targets.wheel]

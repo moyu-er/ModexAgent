@@ -1,13 +1,13 @@
-# QQ Bot 项目 (Agent Framework V2)
+# QQ Bot 项目 (ModexAgent)
 
-基于 Agent Framework V2 架构的完整 QQ Bot 实现，支持 LLM 对话、工具调用、MCP 集成、四层记忆系统等功能。
+基于 ModexAgent 框架的完整 QQ Bot 实现，支持 LLM 对话、工具调用、MCP 集成、四层记忆系统等功能。
 
 ## 项目简介
 
-本项目展示如何使用 Agent Framework V2 构建一个功能完善的 QQ 机器人。通过整合 LLM 能力和多种工具系统，实现智能对话、文件操作、MCP 工具调用等能力。
+本项目展示如何使用 ModexAgent 构建一个功能完善的 QQ 机器人。通过整合 LLM 能力和多种工具系统，实现智能对话、文件操作、MCP 工具调用等能力。
 
-**V2 架构特点**：
-- 使用 `AgentPipeline` 端到端编排，替代旧的 MessageBus + Gateway 架构
+**ModexAgent 特点**：
+- 积木式架构：`AgentPipeline` 端到端编排，所有组件可插拔替换
 - 基于 `InputAdapter` / `OutputAdapter` 抽象，支持任意 IM 平台接入
 - `StreamingAwareEmitter` 统一处理流式与非流式输出
 - 独立的 `ContextManager`、`ToolManager`、`Agent` 组件，职责清晰
@@ -590,5 +590,4 @@ qq:
 
 ## 相关文档
 
-- [Agent Framework V2 文档](../../CLAUDE.md)
-- [迁移指南](../../MIGRATION_GUIDE.md)
+- [ModexAgent 文档](../../CLAUDE.md)

@@ -4,7 +4,7 @@ Guidance for Claude Code when working in this repository.
 
 ## Project Overview
 
-**DIY Agent Framework** — a lightweight, extensible multi-agent framework in Python with a **generic type-safe architecture**. Core tenets:
+**ModexAgent** (**Mod**ular + **Nex**us + **Agent**) — a lightweight, modular multi-agent framework in Python with a **generic type-safe architecture**. Every component (Memory, Tool, Agent, Emitter, Adapter) is an independent, pluggable module — developers pick what they need and compose like building blocks.
 
 1. **Generic Type Safety**: `Agent[E]`, `ContentEmitter[E]`, `EmitterConfig[E]` bind event enums at compile time.
 2. **Clean Separation**: Agent (reasoning), Emitter (output), ToolManager (tools), ContextManager (history) are independent.

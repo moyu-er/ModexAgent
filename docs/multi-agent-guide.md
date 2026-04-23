@@ -1,6 +1,6 @@
 # 多 Agent 协作指南
 
-> 本文档详细讲解 Agent Framework V2 的多 Agent 协作架构和实现。
+> 本文档详细讲解 ModexAgent 的多 Agent 协作架构和实现。
 
 ---
 
