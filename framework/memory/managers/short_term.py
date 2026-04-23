@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -101,6 +102,8 @@ class ShortTermMemoryManager(BaseShortTermManager):
                 )
             for msg in dict_msgs:
                 await self._storage.append_message(scope_key, msg)
+            # 记录最后活动时间，供 AutoCompact 判断空闲
+            await self._storage.set(scope_key, ".last_activity", time.time())
             try:
                 await self._maybe_compress(context)
             except Exception:

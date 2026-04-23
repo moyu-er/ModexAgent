@@ -24,6 +24,10 @@ class InMemoryStorage(MemoryStorage):
     async def close(self) -> None:
         pass
 
+    def list_scopes(self) -> list[str]:
+        """返回所有已创建的 scope key 列表。"""
+        return list(self._data.keys())
+
     def _ensure_scope(self, scope_key: str) -> None:
         if scope_key not in self._data:
             self._data[scope_key] = {}

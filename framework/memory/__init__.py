@@ -39,6 +39,7 @@ from framework.memory.core.scope import (
     UserScope,
 )
 from framework.memory.core.storage import MemoryStorage
+from framework.memory.auto_compact import AutoCompactService
 from framework.memory.context_governance import (
     CompositeGovernance,
     ContextGovernance,
@@ -116,4 +117,6 @@ __all__ = [
     "ToolChainRepairGovernance",
     "MicrocompactGovernance",
     "TokenBudgetGovernance",
+    # Auto compact
+    "AutoCompactService",
 ]

@@ -56,6 +56,12 @@ class FileStorage(MemoryStorage):
                 tmp_file.unlink()
                 logger.debug("Cleaned up residual tmp file: %s", tmp_file)
 
+    def list_scopes(self) -> list[str]:
+        """返回 workspace 下所有已存在的 scope 目录名列表。"""
+        if not self.workspace.exists():
+            return []
+        return [d.name for d in self.workspace.iterdir() if d.is_dir()]
+
     async def close(self) -> None:
         pass
 
