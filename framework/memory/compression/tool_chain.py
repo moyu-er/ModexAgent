@@ -8,20 +8,21 @@ from framework.memory.core.compression import (
     CompressionResult,
     CompressionStrategy,
 )
+from framework.core.types import MessageRole
 from framework.memory.core.message import ChatMessage
 from framework.memory.utils import estimate_token_count
 
 
 def _is_tool_call(msg: ChatMessage | dict[str, Any]) -> bool:
     if isinstance(msg, ChatMessage):
-        return msg.role == "assistant" and bool(msg.tool_calls)
-    return msg.get("role") == "assistant" and bool(msg.get("tool_calls"))
+        return msg.role == MessageRole.ASSISTANT and bool(msg.tool_calls)
+    return msg.get("role") == MessageRole.ASSISTANT and bool(msg.get("tool_calls"))
 
 
 def _is_tool_result(msg: ChatMessage | dict[str, Any]) -> bool:
     if isinstance(msg, ChatMessage):
-        return msg.role == "tool"
-    return msg.get("role") == "tool"
+        return msg.role == MessageRole.TOOL
+    return msg.get("role") == MessageRole.TOOL
 
 
 def _msg_to_dict(msg: ChatMessage | dict[str, Any]) -> dict[str, Any]:

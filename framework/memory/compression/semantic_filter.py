@@ -2,10 +2,12 @@
 
 from typing import Any
 
+from framework.core.types import MessageRole
 from framework.memory.compression.strategy import (
     MessageFilterStrategy,
     MessageSemanticValue,
 )
+from framework.memory.core.message import ChatMessage
 
 # 工具白名单：这些 tool 结果被视为具有中等语义价值，值得保留
 MEDIUM_TOOL_NAMES = {
@@ -111,7 +113,7 @@ class SemanticMessageFilter(MessageFilterStrategy):
                     original_content = messages[i].get("content") or ""
                     content = f"{original_content} {hint}".strip() if original_content else hint
                     if content.strip():
-                        sanitized.append({"role": "assistant", "content": content})
+                        sanitized.append(ChatMessage(role=MessageRole.ASSISTANT, content=content).to_dict())
                 # 跳过对应的孤儿 tool results
                 call_ids = {tc.get("id") for tc in tool_calls if tc.get("id")}
                 j = i + 1
