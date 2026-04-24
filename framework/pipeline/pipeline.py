@@ -349,14 +349,20 @@ class AgentPipeline:
         # 崩溃恢复
         recovered = await ctx_mgr.load_checkpoint(session_id)
         if recovered:
-            # 将恢复的消息保存到 short-term memory（与 agent_session.py 一致）
-            await ctx_mgr.save(
-                session_id=session_id,
-                user_message=None,
-                assistant_result=AgentResult(messages=recovered),
-                metadata={"finish_reason": "recovered_from_checkpoint"},
-            )
-            await ctx_mgr.flush(session_id)
+            # ctx_mgr.save(user_message=None) 不会写入 assistant_result.messages，
+            # 因此 recovered 消息必须通过 memory_system.add_messages() 直接写入，
+            # 否则 clear_checkpoint() 后消息永久丢失。
+            memory_system = getattr(ctx_mgr, "memory_system", None)
+            if memory_system is not None:
+                ctx = getattr(ctx_mgr, "_context_cache", {}).get(session_id)
+                if ctx is None:
+                    from framework.memory.core.scope import MemoryContext
+
+                    ctx = MemoryContext(
+                        session_id=session_id,
+                        user_id=getattr(ctx_mgr, "default_user_id", "default"),
+                    )
+                await memory_system.add_messages(ctx, recovered)
             await ctx_mgr.clear_checkpoint(session_id)
             context_state = await ctx_mgr.load_with_metadata(
                 session_id,
@@ -443,6 +449,13 @@ class AgentPipeline:
             if system_msgs:
                 context_state.system_prompt = "\n\n".join(m.get("content", "") for m in system_msgs)
             non_system = [m for m in built_messages if m.get("role") != "system"]
+            # Defensive: ensure the current user message is preserved in history.
+            # If context_builder.build_messages() omits the user message,
+            # replace_all() would permanently lose it.
+            if user_message.get("role") == MessageRole.USER and not any(
+                m.get("role") == MessageRole.USER for m in non_system
+            ):
+                non_system = list(non_system) + [user_message]
             # Write built non-system messages back into the underlying MessageHistory
             # ShortTermMessageHistory 支持 replace_all() 原子写入存储，
             # 避免替换为 ListMessageHistory 导致实时写入中断。

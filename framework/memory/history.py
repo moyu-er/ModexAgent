@@ -5,11 +5,14 @@ from __future__ import annotations
 import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from framework.memory.core.scope import MemoryContext
 from framework.memory.core.message import ChatMessage
 from framework.memory.managers.short_term import ShortTermMemoryManager
+
+if TYPE_CHECKING:
+    from framework.memory.recorder import MemoryAppendRecorder
 
 
 class MessageHistory(ABC):
@@ -34,7 +37,9 @@ class MessageHistory(ABC):
         """Return a copy of the current message list (ChatMessage objects)."""
         pass
 
-    async def replace_all(self, messages: Sequence[ChatMessage | dict[str, Any]]) -> None:
+    async def replace_all(
+        self, messages: Sequence[ChatMessage | dict[str, Any]], *, skip_transform: bool = False
+    ) -> None:
         """替换全部消息（默认实现：清空后 extend）。
 
         子类可优化为原子操作（如 ShortTermMessageHistory 的单锁写入）。
@@ -71,15 +76,19 @@ class ShortTermMessageHistory(MessageHistory):
         manager: ShortTermMemoryManager,
         context: MemoryContext,
         initial_messages: Sequence[ChatMessage | dict[str, Any]] | None = None,
+        recorder: MemoryAppendRecorder | None = None,
     ) -> None:
         self._manager = manager
         self._context = context
+        self._recorder = recorder
         self._cache: list[ChatMessage] | None = [ChatMessage.coerce(m) for m in initial_messages] if initial_messages is not None else None
         self._cache_lock = asyncio.Lock()
 
     async def append(self, message: ChatMessage | dict[str, Any]) -> None:
         """Append a single message via STM and invalidate cache."""
         await self._manager.add_message(self._context, message)
+        if self._recorder is not None:
+            await self._recorder.record([message], self._context)
         async with self._cache_lock:
             self._cache = None
 
@@ -88,13 +97,19 @@ class ShortTermMessageHistory(MessageHistory):
         if not messages:
             return
         await self._manager.add_messages(self._context, list(messages))
+        if self._recorder is not None:
+            await self._recorder.record(list(messages), self._context)
         async with self._cache_lock:
             self._cache = None
 
     async def to_list(self) -> list[ChatMessage]:
         """Read from storage and cache the result."""
-        # Storage-first lock ordering: acquire storage read lock, compute view,
-        # release storage lock, then acquire cache lock to store result.
+        # If cache is valid (not invalidated by write), return it directly.
+        # This preserves message-limiting applied at construction time
+        # (e.g. DefaultMemoryInjectionPolicy's max_short_term_messages).
+        async with self._cache_lock:
+            if self._cache is not None:
+                return list(self._cache)
         stm_messages = await self._manager.get_messages(self._context)
         async with self._cache_lock:
             self._cache = list(stm_messages)
@@ -106,26 +121,33 @@ class ShortTermMessageHistory(MessageHistory):
         async with self._cache_lock:
             self._cache = None
 
-    async def replace_all(self, messages: Sequence[ChatMessage | dict[str, Any]]) -> None:
+    async def replace_all(
+        self, messages: Sequence[ChatMessage | dict[str, Any]], *, skip_transform: bool = False
+    ) -> None:
         """通过 Manager 接口原子替换，触发 transformer 和跟踪。"""
-        await self._manager.replace_all_messages(self._context, list(messages))
+        await self._manager.replace_all_messages(
+            self._context, list(messages), skip_transform=skip_transform
+        )
         async with self._cache_lock:
             self._cache = None
 
     def __len__(self) -> int:
-        if self._cache is not None:
-            return len(self._cache)
-        return 0
+        raise RuntimeError(
+            "ShortTermMessageHistory does not support synchronous len(). "
+            "Use 'await history.to_list()' for async access."
+        )
 
     def __iter__(self) -> Iterator[ChatMessage]:
-        if self._cache is not None:
-            return iter(self._cache)
-        return iter([])
+        raise RuntimeError(
+            "ShortTermMessageHistory does not support synchronous iteration. "
+            "Use 'await history.to_list()' for async access."
+        )
 
     def __getitem__(self, index: int) -> ChatMessage:
-        if self._cache is not None:
-            return self._cache[index]
-        raise IndexError("_cache not exists")
+        raise RuntimeError(
+            "ShortTermMessageHistory does not support synchronous indexing. "
+            "Use 'await history.to_list()' for async access."
+        )
 
 
 class ListMessageHistory(MessageHistory):
@@ -157,7 +179,9 @@ class ListMessageHistory(MessageHistory):
         """返回 ChatMessage 列表副本。"""
         return list(self._messages)
 
-    async def replace_all(self, messages: Sequence[ChatMessage | dict[str, Any]]) -> None:
+    async def replace_all(
+        self, messages: Sequence[ChatMessage | dict[str, Any]], *, skip_transform: bool = False
+    ) -> None:
         """替换全部消息（用于 pipeline attachments 注入等场景）。"""
         self._messages = []
         for m in messages:
@@ -263,7 +287,8 @@ async def restore_multimodal_in_history(
 
         if isinstance(history, MessageHistory):
             try:
-                await history.replace_all(hist_list)
+                # skip_transform=True: 避免 content_transformer 再次将 base64 替换为占位符
+                await history.replace_all(hist_list, skip_transform=True)
                 return None  # 已写回
             except NotImplementedError:
                 return hist_list  # 调用方需手动赋值

@@ -231,12 +231,21 @@ class AgentSession(Generic[E]):
                 recovered = await load_checkpoint(session_id)
                 if recovered:
                     recovered = self._sanitize_recovered_messages(recovered)
-                    await self._context_manager.save(
-                        session_id=session_id,
-                        user_message=None,
-                        assistant_result=AgentResult(messages=recovered),
-                        metadata={"finish_reason": "recovered_from_checkpoint"},
-                    )
+                    # MemorySystemContextManager.save() 不保存 assistant_result.messages，
+                    # 因此 recovered 消息必须通过 memory_system.add_messages() 直接写入
+                    memory_system = getattr(self._context_manager, "memory_system", None)
+                    if memory_system is not None:
+                        from framework.memory.core.scope import MemoryContext
+
+                        ctx = self._context_manager._context_cache.get(session_id)
+                        if ctx is None:
+                            ctx = MemoryContext(
+                                session_id=session_id,
+                                user_id=getattr(
+                                    self._context_manager, "default_user_id", "default"
+                                ),
+                            )
+                        await memory_system.add_messages(ctx, recovered)
                     clear_checkpoint = getattr(self._context_manager, "clear_checkpoint", None)
                     if clear_checkpoint is not None:
                         await clear_checkpoint(session_id)
