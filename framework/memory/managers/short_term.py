@@ -14,16 +14,17 @@ from framework.memory.compression.tool_chain import (
     _find_safe_truncation_count,
     _fit_token_window,
 )
-from framework.memory.core.base_managers import BaseShortTermManager
-from framework.memory.core.compression import (
-    CompressionContext,
-    CompressionResult,
-    CompressionStrategy,
-)
-from framework.memory.core.message import ChatMessage
-from framework.memory.core.scope import MemoryContext, MemoryScope
-from framework.memory.core.storage import MemoryStorage
 from framework.memory.content_transform import ContentTransformer
+from framework.memory.core.base_managers import BaseShortTermManager
+from framework.memory.core.compression import CompressionResult
+from framework.memory.core.message import ChatMessage
+from framework.memory.core.scope import (
+    MemoryContext,
+    MemoryLayerName,
+    MemoryScope,
+    infer_agent_role,
+)
+from framework.memory.core.storage import MemoryStorage
 from framework.memory.utils import estimate_token_count
 
 logger = logging.getLogger(__name__)
@@ -42,11 +43,11 @@ class ShortTermConfig:
 
     max_messages: int | None = None
     max_tokens: int | None = None
-    compression_mode: str = str(CompressionMode.DELETE)
-    compression_strategy: CompressionStrategy | None = None
+    compression_mode: CompressionMode | str = CompressionMode.DELETE
     archive_strategy: ArchiveStrategy | None = None
     content_transformer: ContentTransformer | None = None
     pre_compress_callbacks: list[Any] | None = None  # list of async callables
+    pipeline: Any | None = None  # MemoryCompactionPipeline
 
 
 class ShortTermMemoryManager(BaseShortTermManager):
@@ -104,6 +105,13 @@ class ShortTermMemoryManager(BaseShortTermManager):
         scope_key = self._scope.get_scope_key(context)
         dict_msgs = self._to_dicts(chat_msgs)
         async with self._storage.get_lock(scope_key).write():
+            await self._storage.ensure_scope_metadata(
+                scope_key,
+                layer=MemoryLayerName.SHORT_TERM,
+                context=context,
+                agent_role=infer_agent_role(context),
+                agent_id=context.agent_id,
+            )
             # transformer 调用在锁内，确保 transform 和 write 是原子操作
             if self._config.content_transformer is not None:
                 dict_msgs = await self._config.content_transformer.transform_messages(
@@ -189,7 +197,11 @@ class ShortTermMemoryManager(BaseShortTermManager):
         await self._storage.delete(scope_key, ".checkpoint")
 
     async def replace_all_messages(
-        self, context: MemoryContext, messages: Sequence[ChatMessage | dict[str, Any]]
+        self,
+        context: MemoryContext,
+        messages: Sequence[ChatMessage | dict[str, Any]],
+        *,
+        skip_transform: bool = False,
     ) -> None:
         """Atomically replace all messages, triggering transformer and tracking."""
         if not messages:
@@ -199,7 +211,14 @@ class ShortTermMemoryManager(BaseShortTermManager):
         scope_key = self._scope.get_scope_key(context)
         dict_msgs = self._to_dicts(chat_msgs)
         async with self._storage.get_lock(scope_key).write():
-            if self._config.content_transformer is not None:
+            await self._storage.ensure_scope_metadata(
+                scope_key,
+                layer=MemoryLayerName.SHORT_TERM,
+                context=context,
+                agent_role=infer_agent_role(context),
+                agent_id=context.agent_id,
+            )
+            if self._config.content_transformer is not None and not skip_transform:
                 dict_msgs = await self._config.content_transformer.transform_messages(
                     dict_msgs
                 )
@@ -216,8 +235,9 @@ class ShortTermMemoryManager(BaseShortTermManager):
         """检查是否超出容量限制，并执行压缩。
 
         压缩顺序：
-        1. 若存在自定义压缩策略且存在溢出，优先使用策略进行智能压缩，
-           并将生成的摘要插回短期记忆，保留上下文语义。
+        1. 若配置了 ``MemoryCompactionPipeline``，优先走统一管线进行智能压缩
+           与归档，保证和 idle AutoCompact 使用同一套 message policy、boundary
+           规则、summary strategy 与 archive format。
         2. 若压缩后仍超限，先执行按 Token 的硬截断（保证 tool-call 链完整），
            再执行按消息数的硬截断。
         3. 被移除的消息会同步归档到 HistoryArchive（如可用）。
@@ -262,32 +282,32 @@ class ShortTermMemoryManager(BaseShortTermManager):
                 except Exception as e:
                     logger.warning("pre_compress_callback failed: %s", e)
 
-        # 1. 自定义压缩策略：仅在消息数或 token 数仍超出预算时触发
-        no_hard_limit = self._config.max_messages is None and self._config.max_tokens is None
-
-        if self._config.compression_strategy and messages and (over_messages or over_tokens or no_hard_limit):
-            assert self._config.compression_strategy is not None
-            ctx = CompressionContext(
-                token_count=estimate_token_count(messages),
-                target_token_count=self._config.max_tokens,
+        # 1. 智能压缩：优先走统一 MemoryCompactionPipeline
+        pipeline = self._config.pipeline
+        if pipeline is not None and messages and is_over_hard_limit:
+            keep_recent = self._config.max_messages or len(messages)
+            pipeline_result = await pipeline.run(
+                context=context,
+                messages=messages,
+                reason="token_pressure",
+                keep_recent_messages=keep_recent,
             )
-            result = await self._config.compression_strategy.compress(messages, ctx)
-            if result.pruned_messages:
-                # Convert pruned messages to dicts for storage
-                pruned_dicts = [m.to_dict() if isinstance(m, ChatMessage) else m for m in result.pruned_messages]
-                pruned.extend(pruned_dicts)
-                if result.remaining_messages is not None:
-                    # Convert remaining messages back to dicts
-                    messages = [m.to_dict() if isinstance(m, ChatMessage) else m for m in result.remaining_messages]
-                else:
-                    messages = [m for m in messages if m not in result.pruned_messages]
-            if result.summary:
-                summary = result.summary
-                await self._storage.set(
-                    scope_key, ".compression_summary", summary
+            if pipeline_result.pruned_messages and not pipeline_result.archive_success:
+                # Pipeline 要求归档但未成功（如 history_manager 不可用，或 archive_strategy 抛异常）。
+                # 为避免数据丢失，不执行截断。
+                logger.warning(
+                    "Token-pressure compaction archive failed for %s; short-term left intact",
+                    scope_key,
                 )
+                return
+            messages = list(pipeline_result.remaining_messages)
+            if pipeline_result.summary:
+                summary = pipeline_result.summary
+                await self._storage.set(scope_key, ".compression_summary", summary)
             else:
                 await self._storage.delete(scope_key, ".compression_summary")
+            # Pipeline 内部已归档 pruned messages；清空避免后续旧路径重复归档
+            pruned = []
 
         # 2. Token 限制（使用 tool-chain 感知的窗口裁剪）
         if self._config.max_tokens:
@@ -296,7 +316,6 @@ class ShortTermMemoryManager(BaseShortTermManager):
                 remaining_msgs, token_pruned = _fit_token_window(
                     messages, self._config.max_tokens, protected_count=protected_count, min_tail_keep=min_tail_keep
                 )
-                # Convert remaining messages and token_pruned to dicts
                 messages = [m.to_dict() if isinstance(m, ChatMessage) else m for m in remaining_msgs]
                 token_pruned_dicts = [m.to_dict() if isinstance(m, ChatMessage) else m for m in token_pruned]
                 pruned.extend(token_pruned_dicts)
@@ -312,41 +331,32 @@ class ShortTermMemoryManager(BaseShortTermManager):
                 messages = messages[:protected_count] + messages[safe_excess:]
 
         removed_count = original_visible_len - len(messages)
+        should_update = removed_count > 0 or bool(pruned)
 
-        if is_cursor_mode:
-            if removed_count > 0 or pruned:
+        if should_update:
+            # Archive BEFORE mutating short-term storage.
+            # If archive fails, short-term remains untouched (no data loss).
+            if self._history_manager is not None and self._config.archive_strategy is not None:
+                archive_result = CompressionResult(
+                    summary=summary,
+                    pruned_messages=list(pruned),
+                    remaining_messages=list(messages),
+                )
+                await self._config.archive_strategy.archive(
+                    context,
+                    list(pruned),
+                    archive_result,
+                    self._history_manager,
+                )
+
+            if is_cursor_mode:
                 new_cursor = cursor + removed_count
                 await self._storage.set(scope_key, ".compression_cursor", new_cursor)
                 self._last_compress_counts[scope_key] = len(messages)
                 logger.debug("Cursor-compressed %d messages for %s", removed_count, scope_key)
-                if self._history_manager is not None and self._config.archive_strategy is not None:
-                    result = CompressionResult(
-                        summary=summary,
-                        pruned_messages=list(pruned),
-                        remaining_messages=list(messages),
-                    )
-                    await self._config.archive_strategy.archive(
-                        context,
-                        list(pruned),
-                        result,
-                        self._history_manager,
-                    )
-        else:
-            if pruned:
+            else:
                 await self._storage.save_messages(scope_key, messages)
                 self._last_compress_counts[scope_key] = len(messages)
                 logger.debug("Compressed %d messages for %s", len(pruned), scope_key)
-                if self._history_manager is not None and self._config.archive_strategy is not None:
-                    result = CompressionResult(
-                        summary=summary,
-                        pruned_messages=list(pruned),
-                        remaining_messages=list(messages),
-                    )
-                    await self._config.archive_strategy.archive(
-                        context,
-                        list(pruned),
-                        result,
-                        self._history_manager,
-                    )
-            else:
-                self._last_compress_counts[scope_key] = current_count
+        else:
+            self._last_compress_counts[scope_key] = current_count

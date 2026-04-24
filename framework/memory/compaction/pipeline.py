@@ -128,6 +128,9 @@ class MemoryCompactionResult:
     archived: bool = False
     """True if an archive write was attempted (regardless of success)."""
 
+    archive_success: bool = False
+    """True only if archive write was attempted and succeeded."""
+
 
 class MemoryCompactionPipeline:
     """Unified compaction pipeline.
@@ -223,6 +226,7 @@ class MemoryCompactionPipeline:
 
         # 6. Archive to history
         archived = False
+        archive_success = False
         all_pruned: Sequence[ChatMessage | dict[str, Any]] = summarized + raw_archived
         if all_pruned and self._history_manager is not None and self._archive_strategy is not None:
             compression_result = CompressionResult(
@@ -238,13 +242,15 @@ class MemoryCompactionPipeline:
                     self._history_manager,
                 )
                 archived = True
+                archive_success = True
             except Exception:
                 logger.exception(
                     "Archive failed in compaction pipeline for context %s",
                     context.session_id,
                 )
+                archived = True
                 # Archive failure must not abort compaction; caller
-                # (e.g. AutoCompact) checks ``archived`` to decide whether
+                # (e.g. AutoCompact) checks ``archive_success`` to decide whether
                 # it is safe to overwrite short-term storage.
 
         return MemoryCompactionResult(
@@ -255,6 +261,7 @@ class MemoryCompactionPipeline:
             dropped_messages=dropped,
             summary=summary,
             archived=archived,
+            archive_success=archive_success,
         )
 
 

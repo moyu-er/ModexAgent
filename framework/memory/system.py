@@ -33,9 +33,9 @@ from typing import cast
 from framework.memory.history import ShortTermMessageHistory
 from framework.memory.managers.short_term import ShortTermConfig, ShortTermMemoryManager
 from framework.memory.content_transform import ContentTransformer
+from framework.memory.recorder import MemoryAppendRecorder
 from framework.memory.stores.file import FileStorage
 from framework.memory.stores.in_memory import InMemoryStorage
-from framework.plugins import MemoryProvider
 
 logger = logging.getLogger(__name__)
 
@@ -76,12 +76,12 @@ class LayerConfig:
 
     scope: MemoryScope
     storage: MemoryStorage
-    compression_strategy: Any | None = None
     archive_strategy: Any | None = None
     max_messages: int | None = 100
     max_tokens: int | None = 8000
     max_entries: int | None = None
     content_transformer: ContentTransformer | None = None
+    pipeline: Any | None = None  # MemoryCompactionPipeline for short_term layer
 
 
 class MemorySystem:
@@ -103,7 +103,16 @@ class MemorySystem:
             self.workspace, llm_provider=llm_provider, auto_llm_compression=auto_llm_compression
         )
         self._managers: MemorySystemManagers = self._build_managers()
-        self._providers: list[MemoryProvider] = []  # MemoryProvider instances
+        self._recorder = MemoryAppendRecorder()
+
+    def get_providers(self) -> list[Any]:
+        """Return a snapshot of registered memory providers."""
+        return list(self._recorder.providers)
+
+    @property
+    def _providers(self) -> list[Any]:
+        """Internal accessor for tests that inspect registered providers."""
+        return self._recorder.providers
 
     def _build_managers(self) -> MemorySystemManagers:
         # Short-term layer (required)
@@ -114,15 +123,24 @@ class MemorySystem:
                 self.layers["history"].scope,
                 max_entries=self.layers["history"].max_entries,
             )
+
+        # Wire history_manager into pipeline if not already set
+        pipeline = self.layers["short_term"].pipeline
+        if pipeline is not None and history is not None:
+            if getattr(pipeline, "_history_manager", None) is None:
+                pipeline._history_manager = history
+            if getattr(pipeline, "_archive_strategy", None) is None:
+                pipeline._archive_strategy = self.layers["short_term"].archive_strategy
+
         short_term = ShortTermMemoryManager(
             self.layers["short_term"].storage,
             self.layers["short_term"].scope,
             config=ShortTermConfig(
                 max_messages=self.layers["short_term"].max_messages,
                 max_tokens=self.layers["short_term"].max_tokens,
-                compression_strategy=self.layers["short_term"].compression_strategy,
                 archive_strategy=self.layers["short_term"].archive_strategy,
                 content_transformer=self.layers["short_term"].content_transformer,
+                pipeline=pipeline,
             ),
             history_manager=history,
         )
@@ -156,13 +174,21 @@ class MemorySystem:
         ws = Path(workspace) if workspace else Path("./memory")
         file_store = FileStorage(ws)
 
-        compression_strategy = None
+        pipeline = None
         archive_strategy = None
         if auto_llm_compression and llm_provider is not None:
+            from framework.memory.compaction.pipeline import (
+                ConsolidatorSummaryStrategy,
+                MemoryCompactionPipeline,
+            )
             from framework.memory.consolidation.consolidator import Consolidator
 
-            compression_strategy = Consolidator(llm_provider=llm_provider)
+            consolidator = Consolidator(llm_provider=llm_provider)
             archive_strategy = SemanticArchiveStrategy()
+            pipeline = MemoryCompactionPipeline(
+                summary_strategy=ConsolidatorSummaryStrategy(consolidator),
+                archive_strategy=archive_strategy,
+            )
 
         max_messages = short_term_max_messages if short_term_max_messages is not None else 100
         if short_term_max_tokens is not None:
@@ -174,10 +200,10 @@ class MemorySystem:
             "short_term": LayerConfig(
                 scope=SessionScope(),
                 storage=file_store,
-                compression_strategy=compression_strategy,
                 archive_strategy=archive_strategy,
                 max_messages=max_messages,
                 max_tokens=max_tokens,
+                pipeline=pipeline,
             ),
             "history": LayerConfig(
                 scope=UserScope(), storage=file_store, max_entries=1000
@@ -196,20 +222,28 @@ class MemorySystem:
         ws = Path(workspace) if workspace else Path("./memory")
         file_store = FileStorage(ws)
 
-        compression_strategy = None
+        pipeline = None
         archive_strategy = None
         if auto_llm_compression and llm_provider is not None:
+            from framework.memory.compaction.pipeline import (
+                ConsolidatorSummaryStrategy,
+                MemoryCompactionPipeline,
+            )
             from framework.memory.consolidation.consolidator import Consolidator
 
-            compression_strategy = Consolidator(llm_provider=llm_provider)
+            consolidator = Consolidator(llm_provider=llm_provider)
             archive_strategy = SemanticArchiveStrategy()
+            pipeline = MemoryCompactionPipeline(
+                summary_strategy=ConsolidatorSummaryStrategy(consolidator),
+                archive_strategy=archive_strategy,
+            )
 
         return {
             "short_term": LayerConfig(
                 scope=CompositeScope(TenantScope(), UserScope(), SessionScope()),
                 storage=file_store,
-                compression_strategy=compression_strategy,
                 archive_strategy=archive_strategy,
+                pipeline=pipeline,
             ),
             "history": LayerConfig(
                 scope=CompositeScope(TenantScope(), UserScope()),
@@ -231,7 +265,8 @@ class MemorySystem:
         """关闭所有存储后端和注册的 providers。"""
         for config in self.layers.values():
             await config.storage.close()
-        for provider in self._providers:
+        await self._recorder.flush()
+        for provider in self._recorder.providers:
             try:
                 await provider.shutdown()
             except Exception as e:
@@ -253,6 +288,7 @@ class MemorySystem:
             manager=cast(ShortTermMemoryManager, stm),
             context=context,
             initial_messages=initial_messages,
+            recorder=self._recorder,
         )
 
     async def add_message(
@@ -265,7 +301,7 @@ class MemorySystem:
 
     def add_provider(self, provider: Any) -> None:
         """Add a MemoryProvider (called by PluginLoader)."""
-        self._providers.append(provider)
+        self._recorder.add_provider(provider)
         # Wire on_pre_compress callback into short-term manager
         stm = self._managers.short_term
         if stm is not None:
@@ -281,16 +317,34 @@ class MemorySystem:
 
         Fan-out to all providers, per-provider error isolation.
         Results are sorted by score descending and truncated to limit.
+        Per-provider min-max normalization is applied so scores from different
+        providers (with potentially different scales) can be compared fairly.
         """
-        all_results: list[dict[str, Any]] = []
-        for provider in self._providers:
+        provider_results: list[tuple[str, list[dict[str, Any]]]] = []
+        for provider in self._recorder.providers:
             try:
                 results = await provider.search(query, context, limit)
-                all_results.extend(results)
+                if results:
+                    provider_results.append((provider.name, results))
             except Exception as e:
                 logger.warning("Provider '%s' search failed: %s", provider.name, e)
-        all_results.sort(key=lambda x: x.get("score", 0), reverse=True)
-        return all_results[:limit]
+
+        # Normalize scores per-provider, then merge and sort
+        normalized: list[tuple[float, dict[str, Any]]] = []
+        for _provider_name, results in provider_results:
+            scores = [r.get("score", 0) for r in results]
+            min_score = min(scores)
+            max_score = max(scores)
+            score_range = max_score - min_score
+            for i, result in enumerate(results):
+                if score_range > 0:
+                    norm = (scores[i] - min_score) / score_range
+                else:
+                    norm = 0.5  # all equal within provider
+                normalized.append((norm, result))
+
+        normalized.sort(key=lambda x: x[0], reverse=True)
+        return [r for _score, r in normalized[:limit]]
 
     async def add_messages(
         self,
@@ -316,12 +370,8 @@ class MemorySystem:
                         )
         await self._managers.short_term.add_messages(context, messages)
 
-        # Fan-out to registered providers
-        for provider in self._providers:
-            try:
-                await provider.add(messages, context)
-            except Exception as e:
-                logger.warning("Provider '%s' add failed: %s", provider.name, e)
+        # Fan-out to registered providers via recorder (fire-and-forget)
+        await self._recorder.record(list(messages), context)
 
     async def prefetch_memories(
         self,
@@ -334,7 +384,7 @@ class MemorySystem:
         into the LLM context before each turn.
         """
         blocks: list[str] = []
-        for provider in self._providers:
+        for provider in self._recorder.providers:
             try:
                 block = await provider.prefetch(query, context)
                 if block:
@@ -355,6 +405,12 @@ class MemorySystem:
     async def get_compression_summary(self, context: MemoryContext) -> str | None:
         """获取短期记忆的压缩摘要（若存在）。"""
         return await self._managers.short_term.get_compression_summary(context)
+
+    async def get_auto_compact_summary(self, context: MemoryContext) -> str | None:
+        """获取 AutoCompact 生成的空闲压缩摘要（若存在）。"""
+        scope_key = self.layers["short_term"].scope.get_scope_key(context)
+        result = await self.layers["short_term"].storage.get(scope_key, ".auto_compact_summary")
+        return result if isinstance(result, str) else None
 
     async def get_history_entries(
         self, context: MemoryContext, limit: int = 5
@@ -426,15 +482,6 @@ class MemorySystem:
                             history_lines.append(f"- {summary}")
                     if history_lines:
                         sections.append("## 历史对话摘要\n" + "\n".join(history_lines))
-
-        # Inject provider system prompt blocks
-        for provider in self._providers:
-            try:
-                block = provider.system_prompt_block()
-                if block:
-                    sections.append(block)
-            except Exception as e:
-                logger.warning("Provider '%s' system_prompt_block failed: %s", provider.name, e)
 
         return "\n\n---\n\n".join(sections) if sections else ""
 
@@ -529,6 +576,14 @@ class MemorySystemContextManager(ContextManager):
             ctx = self._context_cache.get(session_id)
             if ctx is None:
                 ctx = MemoryContext(session_id=session_id, user_id=self.default_user_id)
+        # Ensure context is within budget before LLM request, even if no new
+        # messages were added since the last add_messages() call.
+        stm = self.memory_system._managers.short_term
+        if hasattr(stm, "_maybe_compress"):
+            try:
+                await stm._maybe_compress(ctx)
+            except Exception:
+                logger.warning("Pre-load compression check failed", exc_info=True)
         return await self.injection_policy.assemble(
             self.memory_system, ctx, self.base_system_prompt
         )
@@ -722,49 +777,15 @@ class MemorySystemContextManager(ContextManager):
             session_id = "default"
 
         ctx = self._build_context(session_id, runtime_info=runtime_info)
-        memory_prompt = await self.memory_system.build_system_prompt(ctx)
 
-        # 补充 per-turn prefetch（与 DefaultMemoryInjectionPolicy.assemble() 保持一致）
-        history = await self.memory_system.get_history(
-            ctx, max_messages=self.injection_policy.max_short_term_messages
+        # 统一注入入口：委托给 injection_policy，避免与 assemble() 重复逻辑
+        context_state = await self.injection_policy.assemble(
+            self.memory_system, ctx, self.base_system_prompt
         )
-
-        # 过滤 tool 消息
-        if getattr(self.injection_policy, "filter_tool_messages", True):
-            from framework.memory.compression.tool_chain import (
-                _is_tool_call,
-                _is_tool_result,
-            )
-
-            history = [
-                msg for msg in history
-                if not (_is_tool_call(msg) or _is_tool_result(msg))
-            ]
-
-        last_user_msg = next(
-            (m for m in reversed(history) if getattr(m, "role", None) == "user"),
-            None,
-        )
-        if last_user_msg:
-            query = getattr(last_user_msg, "content", "") or ""
-            if isinstance(query, list):
-                query = " ".join(
-                    part.get("text", "")
-                    for part in query
-                    if part.get("type") == "text"
-                )
-            if query:
-                prefetch_result = await self.memory_system.prefetch_memories(query, ctx)
-                if prefetch_result:
-                    section = f"<memory-context>\n{prefetch_result}\n</memory-context>"
-                    if memory_prompt:
-                        memory_prompt = memory_prompt + "\n\n---\n\n" + section
-                    else:
-                        memory_prompt = section
+        # policy 返回的 system_prompt 已包含 base_system_prompt，不再重复追加
+        memory_prompt = context_state.system_prompt
 
         parts: list[str] = []
-        if self.base_system_prompt:
-            parts.append(self.base_system_prompt)
         if memory_prompt:
             parts.append(memory_prompt)
 
@@ -775,9 +796,6 @@ class MemorySystemContextManager(ContextManager):
             )
             if skill_prompt:
                 parts.append(skill_prompt)
-
-        # Agent message prefix note is injected dynamically by ContextState.to_messages()
-        # and AgentContext.to_messages() based on actual message content, not here.
 
         # 运行时信息
         if runtime_info:
