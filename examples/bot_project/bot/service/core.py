@@ -281,11 +281,19 @@ class BotService(AgentBuilderMixin):
 
         history_mgr = self.memory_system.history_manager
         long_term_mgr = self.memory_system.long_term_manager
-        if history_mgr is not None and long_term_mgr is not None:
+        dream_enabled = main_memory_config.get("dream_engine", {}).get("enabled", True)
+        if not dream_enabled:
+            self.dream_engine = None
+            print("[INFO] DreamEngine disabled by config")
+        elif history_mgr is not None and long_term_mgr is not None:
+            history_layer = self.memory_system.layers.get("history")
+            short_term_layer = self.memory_system.layers.get("short_term")
+            dream_storage = history_layer.storage if history_layer else (short_term_layer.storage if short_term_layer else None)
             self.dream_engine = DreamEngine(
                 llm_provider=provider,
                 history_manager=history_mgr,
                 long_term_manager=long_term_mgr,
+                storage=dream_storage,
             )
             print("[OK] DreamEngine initialized")
         else:
@@ -672,11 +680,8 @@ class BotService(AgentBuilderMixin):
         }
 
         ctx = MemoryContext(session_id="default", user_id="default")
-        for key, content in defaults.items():
-            existing = await lt_mgr.get_file(ctx, key)
-            if not existing:
-                await lt_mgr.update(ctx, {key: content})
-                print(f"   [OK] Initialized default long-term memory: {key}.md")
+        await lt_mgr.ensure_defaults(ctx, defaults)
+        print("   [OK] Long-term memory defaults ensured")
 
     async def _init_auto_compact(self, main_memory_config: dict[str, Any]) -> None:
         """Initialize and start AutoCompactService if enabled."""
@@ -695,6 +700,9 @@ class BotService(AgentBuilderMixin):
             storage=short_term_layer.storage,
             idle_threshold_seconds=ac_config.get("idle_threshold_seconds", 1800),
             keep_recent_messages=ac_config.get("keep_recent_messages", 8),
+            history_manager=self.memory_system.history_manager,
+            archive_strategy=short_term_layer.archive_strategy,
+            pipeline=short_term_layer.pipeline,
         )
         self.auto_compact_service = service
 
