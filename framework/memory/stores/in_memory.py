@@ -1,8 +1,12 @@
 """In-memory storage backend for testing and ephemeral use."""
+from __future__ import annotations
 
+import time
+from collections.abc import Collection
 from typing import Any
 
 from framework.memory.core.lock import NoOpStorageLock, StorageLock
+from framework.memory.core.scope import MemoryAgentRole, MemoryContext, ScopeRecord
 from framework.memory.core.storage import MemoryStorage
 
 
@@ -16,7 +20,9 @@ class InMemoryStorage(MemoryStorage):
         super().__init__(lock or NoOpStorageLock())
         self._data: dict[str, dict[str, Any]] = {}
         self._logs: dict[str, list[dict[str, Any]]] = {}
+        self._changelogs: dict[str, list[dict[str, Any]]] = {}
         self._cursors: dict[str, int] = {}
+        self._scope_records: dict[str, ScopeRecord] = {}
 
     async def initialize(self) -> None:
         pass
@@ -32,6 +38,7 @@ class InMemoryStorage(MemoryStorage):
         if scope_key not in self._data:
             self._data[scope_key] = {}
             self._logs[scope_key] = []
+            self._changelogs[scope_key] = []
             self._cursors[f"{scope_key}:default"] = 0
 
     # --- KV ---
@@ -89,6 +96,17 @@ class InMemoryStorage(MemoryStorage):
             self._logs[scope_key].append(entry)
             return cursor
 
+    async def append_changelog(self, scope_key: str, entry: dict[str, Any]) -> int:
+        """Append a changelog entry to a separate store from history archive."""
+        async with self.get_lock().write():
+            self._ensure_scope(scope_key)
+            cursor_key = f"{scope_key}:changelog"
+            cursor = self._cursors.get(cursor_key, 0) + 1
+            self._cursors[cursor_key] = cursor
+            entry = {**entry, "cursor": cursor}
+            self._changelogs[scope_key].append(entry)
+            return cursor
+
     async def read_logs(
         self,
         scope_key: str,
@@ -112,3 +130,57 @@ class InMemoryStorage(MemoryStorage):
     async def set_last_cursor(self, scope_key: str, cursor_name: str, cursor: int) -> None:
         async with self.get_lock().write():
             self._cursors[f"{scope_key}:{cursor_name}"] = cursor
+
+    async def ensure_scope_metadata(
+        self,
+        scope_key: str,
+        *,
+        layer: str,
+        context: MemoryContext,
+        agent_role: str | MemoryAgentRole = MemoryAgentRole.MAIN,
+        agent_id: str | None = None,
+    ) -> None:
+        async with self.get_lock().write():
+            self._ensure_scope(scope_key)
+            existing = self._scope_records.get(scope_key)
+            created_at = existing.created_at if existing else None
+            self._scope_records[scope_key] = ScopeRecord(
+                scope_key=scope_key,
+                layer=layer,
+                context=context,
+                storage_path=f"memory://{scope_key}",
+                agent_role=str(agent_role),
+                agent_id=agent_id,
+                created_at=created_at,
+                updated_at=time.time(),
+            )
+
+    async def list_scope_records(
+        self,
+        *,
+        layer: str | None = None,
+        has_file: str | None = None,
+        agent_roles: Collection[str | MemoryAgentRole] | None = frozenset(
+            {MemoryAgentRole.MAIN}
+        ),
+    ) -> list[ScopeRecord]:
+        async with self.get_lock().read():
+            records = list(self._scope_records.values())
+            if layer is not None:
+                records = [record for record in records if record.layer == layer]
+            if agent_roles is not None:
+                allowed_roles = {str(role) for role in agent_roles}
+                records = [record for record in records if str(record.agent_role) in allowed_roles]
+            if has_file == "messages":
+                records = [
+                    record
+                    for record in records
+                    if bool(self._data.get(record.scope_key, {}).get("__messages__"))
+                ]
+            elif has_file == "history":
+                records = [
+                    record
+                    for record in records
+                    if bool(self._logs.get(record.scope_key))
+                ]
+            return records

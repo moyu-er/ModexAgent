@@ -1,13 +1,17 @@
 """File-based storage backend for cross-platform persistence."""
+from __future__ import annotations
 
 import contextlib
 import json
 import logging
 import os
+import time
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
 from framework.memory.core.lock import AioRWLock, StorageLock
+from framework.memory.core.scope import MemoryAgentRole, MemoryContext, ScopeRecord
 from framework.memory.core.storage import MemoryStorage
 from framework.memory.stores.utils import ensure_scope_dir
 
@@ -24,7 +28,9 @@ def _atomic_json_write(path: Path, data: dict[str, Any]) -> None:
 
 _MESSAGES_FILE = "messages.jsonl"
 _HISTORY_FILE = "history.jsonl"
+_CHANGELOG_FILE = "changelog.jsonl"
 _KV_FILE = "kv.json"
+_SCOPE_FILE = ".scope.json"
 
 
 class FileStorage(MemoryStorage):
@@ -74,11 +80,113 @@ class FileStorage(MemoryStorage):
     def _history_path(self, scope_dir: Path) -> Path:
         return scope_dir / _HISTORY_FILE
 
+    def _changelog_path(self, scope_dir: Path) -> Path:
+        return scope_dir / _CHANGELOG_FILE
+
     def _kv_path(self, scope_dir: Path) -> Path:
         return scope_dir / _KV_FILE
 
     def _cursor_path(self, scope_dir: Path, cursor_name: str) -> Path:
         return scope_dir / f".cursor_{cursor_name}"
+
+    def _scope_metadata_path(self, scope_dir: Path) -> Path:
+        return scope_dir / _SCOPE_FILE
+
+    def _has_data_file(self, scope_dir: Path, has_file: str | None) -> bool:
+        if has_file is None:
+            return True
+        file_map = {
+            "messages": _MESSAGES_FILE,
+            "history": _HISTORY_FILE,
+            "kv": _KV_FILE,
+        }
+        filename = file_map.get(has_file, has_file)
+        return (scope_dir / filename).exists()
+
+    def _read_scope_record(self, scope_dir: Path) -> ScopeRecord | None:
+        path = self._scope_metadata_path(scope_dir)
+        if not path.exists():
+            return None
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            return ScopeRecord(
+                scope_key=raw["scope_key"],
+                layer=raw["layer"],
+                context=MemoryContext.from_dict(raw.get("context")),
+                storage_path=raw.get("storage_path") or str(scope_dir),
+                agent_role=raw.get("agent_role", "main"),
+                agent_id=raw.get("agent_id"),
+                created_at=raw.get("created_at"),
+                updated_at=raw.get("updated_at"),
+            )
+        except Exception as e:
+            logger.warning("Failed to read scope metadata from %s: %s", path, e)
+            return None
+
+    async def ensure_scope_metadata(
+        self,
+        scope_key: str,
+        *,
+        layer: str,
+        context: MemoryContext,
+        agent_role: str | MemoryAgentRole = MemoryAgentRole.MAIN,
+        agent_id: str | None = None,
+    ) -> None:
+        async with self.get_lock(scope_key).write():
+            scope_dir = self._scope_dir(scope_key)
+            path = self._scope_metadata_path(scope_dir)
+            now = time.time()
+            created_at = now
+            if path.exists():
+                existing = self._read_scope_record(scope_dir)
+                if existing and existing.created_at is not None:
+                    created_at = existing.created_at
+            data = {
+                "scope_key": scope_key,
+                "layer": layer,
+                "context": context.to_dict(),
+                "storage_path": str(scope_dir),
+                "agent_role": str(agent_role),
+                "agent_id": agent_id,
+                "created_at": created_at,
+                "updated_at": now,
+            }
+            _atomic_json_write(path, data)
+
+    async def list_scope_records(
+        self,
+        *,
+        layer: str | None = None,
+        has_file: str | None = None,
+        agent_roles: Collection[str | MemoryAgentRole] | None = frozenset(
+            {MemoryAgentRole.MAIN}
+        ),
+    ) -> list[ScopeRecord]:
+        if not self.workspace.exists():
+            return []
+        records: list[ScopeRecord] = []
+        allowed_roles = {str(role) for role in agent_roles} if agent_roles is not None else None
+        # Collect directory list outside the lock; only protect individual reads
+        scope_dirs = [d for d in self.workspace.iterdir() if d.is_dir()]
+        for scope_dir in scope_dirs:
+            record = self._read_scope_record(scope_dir)
+            if record is None:
+                # Log warning for legacy directories without .scope.json
+                logger.warning(
+                    "Scope directory %s has no .scope.json metadata; "
+                    "it may contain legacy data that is not accessible. "
+                    "Consider running a migration tool.",
+                    scope_dir.name,
+                )
+                continue
+            if layer is not None and record.layer != layer:
+                continue
+            if allowed_roles is not None and str(record.agent_role) not in allowed_roles:
+                continue
+            if not self._has_data_file(scope_dir, has_file):
+                continue
+            records.append(record)
+        return records
 
     # --- KV ---
     async def get(self, scope_key: str, key: str) -> Any | None:
@@ -220,6 +328,24 @@ class FileStorage(MemoryStorage):
                 logger.error(f"Failed to append log for {scope_key}: {e}")
                 raise
             await self.set_last_cursor(scope_key, "default", cursor)
+            return cursor
+
+    async def append_changelog(self, scope_key: str, entry: dict[str, Any]) -> int:
+        """Append a changelog entry to a separate file from history archive."""
+        async with self.get_lock().write():
+            scope_dir = self._scope_dir(scope_key)
+            path = self._changelog_path(scope_dir)
+            cursor = await self.get_last_cursor(scope_key, "changelog") + 1
+            entry = {**entry, "cursor": cursor}
+
+            scope_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                with open(path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            except Exception as e:
+                logger.error(f"Failed to append changelog for {scope_key}: {e}")
+                raise
+            await self.set_last_cursor(scope_key, "changelog", cursor)
             return cursor
 
     async def read_logs(
