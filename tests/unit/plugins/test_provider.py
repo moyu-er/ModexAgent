@@ -76,6 +76,7 @@ class TestMemorySystemProviderIntegration:
         ctx = MemoryContext(session_id="test")
         messages = [{"role": "user", "content": "hello"}]
         await memory_system.add_messages(ctx, messages)
+        await memory_system._recorder.flush()
 
         assert p1.add_count == 1
         assert p2.add_count == 1
@@ -123,6 +124,7 @@ class TestMemorySystemProviderIntegration:
         messages = [{"role": "user", "content": "hello"}]
         # Should not raise
         await memory_system.add_messages(ctx, messages)
+        await memory_system._recorder.flush()
         assert good.add_count == 1
 
     @pytest.mark.asyncio
@@ -143,12 +145,17 @@ class TestMemorySystemProviderIntegration:
 
     @pytest.mark.asyncio
     async def test_system_prompt_block_injection(self, memory_system: MemorySystem):
+        from framework.memory.injection import DefaultMemoryInjectionPolicy
+
         p = CountingProvider("prompt")
         p.block_text = "## Custom Block\nSome info"
         memory_system.add_provider(p)
 
         ctx = MemoryContext(session_id="test")
-        prompt = await memory_system.build_system_prompt(ctx)
+        # Provider system_prompt_block is injected via DefaultMemoryInjectionPolicy
+        policy = DefaultMemoryInjectionPolicy()
+        context_state = await policy.assemble(memory_system, ctx, base_system_prompt="")
+        prompt = context_state.system_prompt
         assert "Custom Block" in prompt
         assert "Some info" in prompt
 

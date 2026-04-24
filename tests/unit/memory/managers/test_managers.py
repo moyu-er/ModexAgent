@@ -2,7 +2,13 @@
 
 import pytest
 
-from framework.memory.core.scope import MemoryContext, SessionScope, UserScope
+from framework.memory.core.scope import (
+    MemoryAgentRole,
+    MemoryContext,
+    MemoryLayerName,
+    SessionScope,
+    UserScope,
+)
 from framework.memory.managers.history import HistoryArchiveManager
 from framework.memory.managers.long_term import LongTermMemoryManager
 from framework.memory.managers.short_term import ShortTermConfig, ShortTermMemoryManager
@@ -27,6 +33,18 @@ class TestShortTermMemoryManager:
         await mgr.add_message(ctx, {"role": "user", "content": "hello"})
         msgs = await mgr.get_messages(ctx)
         assert len(msgs) == 1
+
+    async def test_add_message_registers_scope_metadata(self, storage):
+        mgr = ShortTermMemoryManager(storage, SessionScope())
+        ctx = MemoryContext(session_id="s1", user_id="u1", agent_id=MemoryAgentRole.MAIN)
+
+        await mgr.add_message(ctx, {"role": "user", "content": "hello"})
+
+        records = await storage.list_scope_records(layer=MemoryLayerName.SHORT_TERM)
+        assert len(records) == 1
+        assert records[0].scope_key == "s1"
+        assert records[0].context.user_id == "u1"
+        assert records[0].agent_role == MemoryAgentRole.MAIN
 
     async def test_max_messages_compression(self, storage):
         mgr = ShortTermMemoryManager(
@@ -148,29 +166,27 @@ class TestShortTermMemoryManager:
             if m.get("role") == "tool":
                 assert m.get("tool_call_id") in valid_tool_call_ids, "发现孤儿 tool result"
 
-    async def test_uses_remaining_messages_when_strategy_provides_it(self, storage):
-        """当 CompressionStrategy 返回 remaining_messages 时，应直接使用而非 not in 反推。"""
-        from framework.memory.core.compression import (
-            CompressionResult,
-            CompressionStrategy,
-        )
+    async def test_uses_remaining_messages_when_pipeline_provides_it(self, storage):
+        """当 pipeline 返回 remaining_messages 时，应直接使用。"""
+        from framework.memory.compaction.pipeline import MemoryCompactionPipeline, MemoryCompactionResult
 
-        class MockStrategy(CompressionStrategy):
-            async def compress(self, messages, context):
-                # 自定义：只保留最后一条
-                return CompressionResult(
+        class MockPipeline(MemoryCompactionPipeline):
+            async def run(self, context, messages, reason, keep_recent_messages=None):
+                return MemoryCompactionResult(
+                    remaining_messages=[dict(m) for m in messages[-1:]],
+                    pruned_messages=[dict(m) for m in messages[:-1]],
                     summary="mock",
-                    pruned_messages=messages[:-1],
-                    remaining_messages=messages[-1:],
+                    archived=True,
+                    archive_success=True,
                 )
 
         mgr = ShortTermMemoryManager(
             storage,
             SessionScope(),
             config=ShortTermConfig(
-                max_messages=None,  # 不触发内置截断
+                max_messages=1,  # 触发 hard limit 以激活 pipeline
                 max_tokens=None,
-                compression_strategy=MockStrategy(),
+                pipeline=MockPipeline(),
             ),
         )
         ctx = MemoryContext(session_id="s1")
@@ -191,68 +207,27 @@ class TestShortTermMemoryManager:
         summary = await storage.get(scope_key, ".compression_summary")
         assert summary == "mock"
 
-    async def test_fallback_to_not_in_when_remaining_messages_missing(self, storage):
-        """当 CompressionStrategy 不提供 remaining_messages（为 None）时，应回退到 not in 反推。"""
-        from framework.memory.core.compression import (
-            CompressionResult,
-            CompressionStrategy,
-        )
+    async def test_pipeline_can_clear_all_messages(self, storage):
+        """当 pipeline 返回 remaining_messages=[] 时，应清空所有消息。"""
+        from framework.memory.compaction.pipeline import MemoryCompactionPipeline, MemoryCompactionResult
 
-        class LegacyStrategy(CompressionStrategy):
-            async def compress(self, messages, context):
-                return CompressionResult(
-                    summary="legacy",
-                    pruned_messages=messages[:-1],
-                    remaining_messages=None,
-                )
-
-        mgr = ShortTermMemoryManager(
-            storage,
-            SessionScope(),
-            config=ShortTermConfig(
-                max_messages=None,
-                max_tokens=None,
-                compression_strategy=LegacyStrategy(),
-            ),
-        )
-        ctx = MemoryContext(session_id="s1")
-        await mgr.add_messages(ctx, [
-            {"role": "user", "content": "a"},
-            {"role": "user", "content": "b"},
-            {"role": "user", "content": "c"},
-            {"role": "user", "content": "d"},
-            {"role": "user", "content": "e"},
-        ])
-
-        msgs = await mgr.get_messages(ctx)
-        assert len(msgs) == 1
-        assert msgs[0]["content"] == "e"
-        scope_key = mgr._scope.get_scope_key(ctx)
-        summary = await storage.get(scope_key, ".compression_summary")
-        assert summary == "legacy"
-
-    async def test_empty_remaining_messages_clears_all(self, storage):
-        """当 CompressionStrategy 显式返回 remaining_messages=[] 时，应清空所有消息。"""
-        from framework.memory.core.compression import (
-            CompressionResult,
-            CompressionStrategy,
-        )
-
-        class EmptyStrategy(CompressionStrategy):
-            async def compress(self, messages, context):
-                return CompressionResult(
-                    summary="empty",
-                    pruned_messages=messages,
+        class EmptyPipeline(MemoryCompactionPipeline):
+            async def run(self, context, messages, reason, keep_recent_messages=None):
+                return MemoryCompactionResult(
                     remaining_messages=[],
+                    pruned_messages=[dict(m) for m in messages],
+                    summary="empty",
+                    archived=True,
+                    archive_success=True,
                 )
 
         mgr = ShortTermMemoryManager(
             storage,
             SessionScope(),
             config=ShortTermConfig(
-                max_messages=None,
+                max_messages=1,
                 max_tokens=None,
-                compression_strategy=EmptyStrategy(),
+                pipeline=EmptyPipeline(),
             ),
         )
         ctx = MemoryContext(session_id="s1")
@@ -289,34 +264,29 @@ class TestShortTermMemoryManager:
             assert str(100 + i) in contents
 
     async def test_compression_cooldown_skips_when_delta_below_threshold(self, storage):
-        """Fewer than 5 new messages should skip compression check."""
-        from framework.memory.core.compression import CompressionResult, CompressionStrategy
-
-        class NoOpStrategy(CompressionStrategy):
-            async def compress(self, messages, context):
-                return CompressionResult(summary="noop", pruned_messages=messages[:-1])
-
+        """Fewer than 5 new messages should skip compression check when under hard limit."""
         mgr = ShortTermMemoryManager(
             storage,
             SessionScope(),
             config=ShortTermConfig(
-                max_messages=None,
-                max_tokens=None,
-                compression_strategy=NoOpStrategy(),
+                max_messages=100,  # 大限制，确保不触发硬限制
             ),
         )
         ctx = MemoryContext(session_id="s1")
+        scope_key = mgr._scope.get_scope_key(ctx)
 
-        # 首次添加 5 条，越过 cooldown 阈值，触发压缩
+        # 首次添加 5 条，delta=5 >= COOLDOWN_MSG_DELTA，不跳过
         await mgr.add_messages(ctx, [{"role": "user", "content": str(i)} for i in range(5)])
-        msgs = await mgr.get_messages(ctx)
-        assert len(msgs) == 1  # last message only (summary now stored in KV, not history)
+        # _last_compress_counts 应更新为当前消息数
+        assert mgr._last_compress_counts[scope_key] == 5
 
-        # 再添加 3 条（delta=3 < 5），应跳过压缩
+        # 再添加 3 条（delta=3 < 5），且未超硬限制，应跳过压缩检查
         await mgr.add_messages(ctx, [{"role": "user", "content": str(i + 100)} for i in range(3)])
+        # _last_compress_counts 应保持为 5（没有重新评估）
+        assert mgr._last_compress_counts[scope_key] == 5
+        # 所有 8 条消息都应保留
         msgs = await mgr.get_messages(ctx)
-        # 跳过了压缩，所以新增 3 条都保留了
-        assert len(msgs) == 4  # 1 old + 3 new
+        assert len(msgs) == 8
 
 
 @pytest.mark.asyncio
@@ -331,6 +301,20 @@ class TestHistoryArchiveManager:
         new_cursor, entries = await mgr.get_unprocessed(ctx)
         assert len(entries) == 2
         assert entries[0]["summary"] == "summary1"
+
+    async def test_append_registers_scope_metadata(self, storage):
+        mgr = HistoryArchiveManager(storage, UserScope())
+        ctx = MemoryContext(user_id="u1", agent_id=MemoryAgentRole.MAIN)
+
+        await mgr.append(ctx, "summary", {})
+
+        records = await storage.list_scope_records(
+            layer=MemoryLayerName.HISTORY,
+            has_file="history",
+        )
+        assert len(records) == 1
+        assert records[0].scope_key == "u1"
+        assert records[0].agent_role == MemoryAgentRole.MAIN
 
     async def test_cursor_commit(self, storage):
         mgr = HistoryArchiveManager(storage, UserScope())

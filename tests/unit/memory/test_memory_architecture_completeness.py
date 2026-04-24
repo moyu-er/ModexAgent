@@ -18,13 +18,14 @@ from framework.memory.archive import (
     RawDumpArchiveStrategy,
     SemanticArchiveStrategy,
 )
-from framework.memory.compression import (
-    HybridCompressionStrategy,
-    TokenWindowStrategy,
-    ToolChainAwareStrategy,
-    TruncationStrategy,
+from framework.memory.compaction import (
+    ConservativeCompactionPolicy,
+    HeuristicSummaryStrategy,
+    KeepAllCompactionPolicy,
+    MemoryCompactionPipeline,
+    SemanticToolCompactionPolicy,
+    ToolChainBoundaryPolicy,
 )
-from framework.memory.core.compression import CompressionContext, CompressionStrategy
 from framework.memory.core.scope import MemoryContext, SessionScope, UserScope
 from framework.memory.core.storage import MemoryStorage
 from framework.memory.injection import DefaultMemoryInjectionPolicy
@@ -34,25 +35,28 @@ from framework.memory.managers.short_term import ShortTermConfig, ShortTermMemor
 from framework.memory.stores.file import FileStorage
 from framework.memory.stores.in_memory import InMemoryStorage
 from framework.memory.system import MemorySystem, MemorySystemContextManager
-from framework.memory.utils import estimate_token_count
+
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 1. Verify all public compression strategies inherit from CompressionStrategy
+# 1. Verify all public compaction policies are constructable
 # ──────────────────────────────────────────────────────────────────────────────
 
-COMPRESSION_STRATEGIES = [
-    TruncationStrategy,
-    TokenWindowStrategy,
-    ToolChainAwareStrategy,
-    HybridCompressionStrategy,
+COMPACTION_POLICIES = [
+    ConservativeCompactionPolicy,
+    SemanticToolCompactionPolicy,
+    KeepAllCompactionPolicy,
 ]
 
 
-@pytest.mark.parametrize("strategy_cls", COMPRESSION_STRATEGIES)
-def test_compression_strategy_is_abc_subclass(strategy_cls):
-    assert issubclass(strategy_cls, CompressionStrategy)
-    assert inspect.isabstract(strategy_cls) is False, f"{strategy_cls.__name__} should be concrete"
-    assert hasattr(strategy_cls, "compress")
+@pytest.mark.parametrize("policy_cls", COMPACTION_POLICIES)
+def test_compaction_pipeline_is_callable(policy_cls):
+    pipeline = MemoryCompactionPipeline(
+        policy=policy_cls(),
+        boundary_policy=ToolChainBoundaryPolicy(),
+        summary_strategy=HeuristicSummaryStrategy(),
+    )
+    assert pipeline is not None
+    assert hasattr(pipeline, "run")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -89,7 +93,7 @@ def test_storage_is_abc_subclass(storage_cls):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 4. Full lifecycle with every (storage, compression, archive) combination
+# 4. Full lifecycle with every (storage, compaction, archive) combination
 # ──────────────────────────────────────────────────────────────────────────────
 
 async def _make_storage(storage_cls, tmp_path):
@@ -103,40 +107,34 @@ async def _make_storage(storage_cls, tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("storage_cls", STORAGE_BACKENDS)
-@pytest.mark.parametrize("compression_cls", COMPRESSION_STRATEGIES)
+@pytest.mark.parametrize("policy_cls", COMPACTION_POLICIES)
 @pytest.mark.parametrize("archive_cls", ARCHIVE_STRATEGIES)
 async def test_full_lifecycle_with_swappable_implementations(
-    storage_cls, compression_cls, archive_cls, tmp_path
+    storage_cls, policy_cls, archive_cls, tmp_path
 ):
     """
-    short_term (with compression) -> history -> long_term
+    short_term (with compaction pipeline) -> history -> long_term
     Must work identically regardless of which concrete impl is chosen.
     """
     store = await _make_storage(storage_cls, tmp_path)
 
     try:
         history_mgr = HistoryArchiveManager(store, UserScope())
-
-        if compression_cls is TruncationStrategy:
-            compression: CompressionStrategy = TruncationStrategy(target_count=3)
-        elif compression_cls is TokenWindowStrategy:
-            compression = TokenWindowStrategy(max_tokens=500)
-        elif compression_cls is ToolChainAwareStrategy:
-            compression = ToolChainAwareStrategy(max_tokens=500)
-        else:
-            compression = HybridCompressionStrategy([
-                TruncationStrategy(target_count=5),
-                TokenWindowStrategy(max_tokens=400),
-            ])
-
         archive = archive_cls()
+        pipeline = MemoryCompactionPipeline(
+            policy=policy_cls(),
+            boundary_policy=ToolChainBoundaryPolicy(),
+            summary_strategy=HeuristicSummaryStrategy(),
+            archive_strategy=archive,
+            history_manager=history_mgr,
+        )
 
         stm = ShortTermMemoryManager(
             store,
             SessionScope(),
             config=ShortTermConfig(
-                max_messages=3,  # hard truncation fallback
-                compression_strategy=compression,
+                max_messages=3,
+                pipeline=pipeline,
                 archive_strategy=archive,
             ),
             history_manager=history_mgr,
@@ -144,21 +142,15 @@ async def test_full_lifecycle_with_swappable_implementations(
 
         ctx = MemoryContext(session_id="lifecycle_s1", user_id="u1")
 
-        # Inject 5 messages to trigger compression (over COOLDOWN_MSG_DELTA=5 threshold
-        # if we used add_messages, but here we add 5 one by one; first add won't trigger,
-        # subsequent ones will as count exceeds max_messages=3)
         for i in range(5):
             await stm.add_message(ctx, {"role": "user", "content": f"msg{i}"})
 
         short_term = await stm.get_messages(ctx)
-        # After compression, short_term should be within limits
-        assert len(short_term) <= 3, f"{compression_cls.__name__}/{archive_cls.__name__} failed truncation"
+        assert len(short_term) <= 3
 
-        # History should contain at least one archived entry
         _, entries = await history_mgr.get_unprocessed(ctx)
-        assert len(entries) >= 1, f"{compression_cls.__name__}/{archive_cls.__name__} failed to archive"
+        assert len(entries) >= 1
 
-        # Long-term update
         ltm = LongTermMemoryManager(store, UserScope())
         await ltm.update(ctx, {"soul": "friendly"})
         lt = await ltm.get_all(ctx)
@@ -169,29 +161,21 @@ async def test_full_lifecycle_with_swappable_implementations(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 5. Tool-chain integrity across all compression strategies
+# 5. Tool-chain integrity with compaction pipeline
 # ──────────────────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("compression_cls", COMPRESSION_STRATEGIES)
-async def test_tool_chain_integrity_with_all_compression_strategies(compression_cls, tmp_path):
-    """Any compression strategy must never leave orphan tool results."""
+async def test_tool_chain_integrity_with_compaction_pipeline():
+    """Compaction pipeline must never leave orphan tool results."""
     store = InMemoryStorage()
     await store.initialize()
 
-    if compression_cls is TruncationStrategy:
-        compression: CompressionStrategy = TruncationStrategy(target_count=3)
-    elif compression_cls is TokenWindowStrategy:
-        compression = TokenWindowStrategy(max_tokens=2000)
-    elif compression_cls is ToolChainAwareStrategy:
-        compression = ToolChainAwareStrategy(max_tokens=2000)
-    else:
-        compression = HybridCompressionStrategy([
-            TruncationStrategy(target_count=3),
-            TokenWindowStrategy(max_tokens=2000),
-        ])
+    pipeline = MemoryCompactionPipeline(
+        policy=ConservativeCompactionPolicy(),
+        boundary_policy=ToolChainBoundaryPolicy(),
+        summary_strategy=HeuristicSummaryStrategy(),
+    )
 
-    # Build a chain that would be pruned
     messages = [
         {"role": "user", "content": "start"},
         {"role": "assistant", "content": "", "tool_calls": [
@@ -202,12 +186,9 @@ async def test_tool_chain_integrity_with_all_compression_strategies(compression_
         {"role": "tool", "tool_call_id": "tc2", "content": "results"},
         {"role": "user", "content": "end"},
     ]
-    # We're testing the strategy directly to ensure it respects tool chains
-    comp_ctx = CompressionContext(
-        token_count=estimate_token_count(messages),
-        target_token_count=estimate_token_count(messages[:2]),  # force pruning
-    )
-    result = await compression.compress(messages, comp_ctx)
+
+    ctx = MemoryContext(session_id="tc_s1", user_id="u1")
+    result = await pipeline.run(ctx, messages, reason="token_pressure", keep_recent_messages=2)
 
     remaining = result.remaining_messages
     if remaining is None:
@@ -223,7 +204,7 @@ async def test_tool_chain_integrity_with_all_compression_strategies(compression_
     for m in remaining:
         if m.get("role") == "tool":
             assert m.get("tool_call_id") in valid_call_ids, (
-                f"{compression_cls.__name__} produced orphan tool result: {m}"
+                f"compaction pipeline produced orphan tool result: {m}"
             )
 
     await store.close()
@@ -262,7 +243,7 @@ async def test_concurrent_add_messages_with_all_storage_backends(storage_cls, tm
 
 @pytest.mark.asyncio
 async def test_memory_system_accepts_all_custom_implementations(tmp_path):
-    """MemorySystem must accept custom storage, compression, and archive strategies."""
+    """MemorySystem must accept custom storage, compaction pipeline, and archive strategies."""
     from framework.memory.system import LayerConfig
 
     store = InMemoryStorage()
@@ -275,10 +256,11 @@ async def test_memory_system_accepts_all_custom_implementations(tmp_path):
                 storage=store,
                 max_messages=5,
                 max_tokens=1000,
-                compression_strategy=HybridCompressionStrategy([
-                    TruncationStrategy(target_count=4),
-                    TokenWindowStrategy(max_tokens=800),
-                ]),
+                pipeline=MemoryCompactionPipeline(
+                    policy=ConservativeCompactionPolicy(),
+                    boundary_policy=ToolChainBoundaryPolicy(),
+                    summary_strategy=HeuristicSummaryStrategy(),
+                ),
                 archive_strategy=SemanticArchiveStrategy(),
             ),
             "history": LayerConfig(scope=UserScope(), storage=store),
@@ -290,29 +272,26 @@ async def test_memory_system_accepts_all_custom_implementations(tmp_path):
 
         ctx = MemoryContext(session_id="custom_s1", user_id="u1")
 
-        # Add to short_term
         await ms.add_message(ctx, {"role": "user", "content": "hello"})
 
-        # Short_term with custom compression
         for i in range(10):
             await ms.add_message(ctx, {"role": "user", "content": f"flood{i}" * 50})
 
         short_term = await ms.get_history(ctx)
         assert len(short_term) <= 5
 
-        # History with custom scope
         entries = await ms.get_history_entries(ctx, limit=100)
         assert len(entries) >= 1
 
-        # Long-term
-        await ms._managers.long_term.update(ctx, {"soul": "witty"})
+        long_term_mgr = ms._managers.long_term
+        assert long_term_mgr is not None
+        await long_term_mgr.update(ctx, {"soul": "witty"})
         lt = await ms.get_long_term(ctx)
         assert lt.soul == "witty"
 
-        # Context injection round-trip
         adapter = MemorySystemContextManager(ms)
         state = await adapter.load("custom_s1")
-        assert len(state.history) >= 1
+        assert len(await state.history.to_list()) >= 1
 
         await ms.close()
     finally:
@@ -334,12 +313,10 @@ async def test_injection_policy_assembles_context_across_storage_backends(storag
 
         ctx = MemoryContext(session_id="inject_s1", user_id="u1")
 
-        # Populate tiers
         await stm.add_message(ctx, {"role": "user", "content": "short_term_msg"})
         await history_mgr.append(ctx, "history_summary", {})
         await ltm.update(ctx, {"soul": "injected_soul"})
 
-        # Build a MemorySystem wrapper so the injection policy can consume it
         from framework.memory.system import LayerConfig
 
         ms = MemorySystem(
@@ -352,13 +329,17 @@ async def test_injection_policy_assembles_context_across_storage_backends(storag
         )
         await ms.initialize()
         await ms.add_message(ctx, {"role": "user", "content": "short_term_msg"})
-        await ms._managers.history.append(ctx, "history_summary", {})
-        await ms._managers.long_term.update(ctx, {"soul": "injected_soul"})
+
+        hist_mgr = ms._managers.history
+        lt_mgr = ms._managers.long_term
+        assert hist_mgr is not None and lt_mgr is not None
+        await hist_mgr.append(ctx, "history_summary", {})
+        await lt_mgr.update(ctx, {"soul": "injected_soul"})
 
         policy = DefaultMemoryInjectionPolicy(max_short_term_messages=10)
         state = await policy.assemble(ms, ctx)
 
-        history = state.history
+        history = await state.history.to_list()
         contents = [m.get("content") for m in history]
         assert "short_term_msg" in contents
 
@@ -381,27 +362,22 @@ async def test_context_manager_round_trip_with_file_storage(tmp_path):
     try:
         adapter = MemorySystemContextManager(ms)
 
-        # Save user turn
         await adapter.save(
             "rt_s1",
             {"role": "user", "content": "hello"},
             AgentResult(content="hi", messages=[{"role": "assistant", "content": "hi"}]),
         )
-        # 模拟 ReAct agent 实时写入 assistant message
         ctx = MemoryContext(session_id="rt_s1", user_id="default")
         await ms.add_message(ctx, {"role": "assistant", "content": "hi"})
         await adapter.flush("rt_s1")
 
-        # Build system prompt to populate cache with runtime_info
         prompt = await adapter.build_system_prompt(
             tool_manager=None,
             runtime_info={"session_id": "rt_s1", "user_id": "alice"},
         )
-        # Prompt should include runtime info (platform/qq style) or at least not be empty
         assert isinstance(prompt, str) and len(prompt) > 0
 
-        # Load should use cached context
         state = await adapter.load("rt_s1")
-        assert len(state.history) == 2
+        assert len(await state.history.to_list()) == 2
     finally:
         await ms.close()

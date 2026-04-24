@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from framework.memory.core.scope import MemoryContext
 from framework.memory.stores.file import FileStorage
 
 
@@ -222,3 +223,76 @@ class TestFileStorage:
         await s2.initialize()
         assert not tmp_file.exists()
         await s2.close()
+
+    async def test_scope_record_roundtrip_with_sanitized_path(self, storage):
+        scope_key = "tenant:用户:session/with*chars"
+        context = MemoryContext(
+            session_id="session/with*chars",
+            user_id="用户",
+            tenant_id="tenant",
+            agent_id="main",
+            channel="qq",
+            chat_id="group:123",
+        )
+
+        await storage.ensure_scope_metadata(
+            scope_key,
+            layer="short_term",
+            context=context,
+            agent_role="main",
+            agent_id="main",
+        )
+        records = await storage.list_scope_records(layer="short_term", has_file=None)
+
+        assert len(records) == 1
+        record = records[0]
+        assert record.scope_key == scope_key
+        assert record.layer == "short_term"
+        assert record.agent_role == "main"
+        assert record.context.chat_id == "group:123"
+        assert Path(record.storage_path).name != scope_key
+
+    async def test_scope_record_default_filters_main_role(self, storage):
+        await storage.ensure_scope_metadata(
+            "main-session",
+            layer="short_term",
+            context=MemoryContext(session_id="main-session", agent_id="main"),
+            agent_role="main",
+            agent_id="main",
+        )
+        await storage.ensure_scope_metadata(
+            "peer-session",
+            layer="short_term",
+            context=MemoryContext(session_id="peer-session", agent_id="peer-a"),
+            agent_role="peer",
+            agent_id="peer-a",
+        )
+
+        default_records = await storage.list_scope_records(layer="short_term")
+        all_records = await storage.list_scope_records(layer="short_term", agent_roles=None)
+        peer_records = await storage.list_scope_records(layer="short_term", agent_roles={"peer"})
+
+        assert [r.scope_key for r in default_records] == ["main-session"]
+        assert {r.scope_key for r in all_records} == {"main-session", "peer-session"}
+        assert [r.scope_key for r in peer_records] == ["peer-session"]
+
+    async def test_scope_record_filters_by_layer_and_file(self, storage):
+        await storage.ensure_scope_metadata(
+            "short",
+            layer="short_term",
+            context=MemoryContext(session_id="short", agent_id="main"),
+            agent_role="main",
+            agent_id="main",
+        )
+        await storage.ensure_scope_metadata(
+            "history",
+            layer="history",
+            context=MemoryContext(user_id="u1", agent_id="main"),
+            agent_role="main",
+            agent_id="main",
+        )
+        await storage.save_messages("short", [{"role": "user", "content": "hello"}])
+
+        records = await storage.list_scope_records(layer="short_term", has_file="messages")
+
+        assert [r.scope_key for r in records] == ["short"]

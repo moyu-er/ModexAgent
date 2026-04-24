@@ -2,6 +2,7 @@
 
 import pytest
 
+from framework.memory.compaction.pipeline import MemoryCompactionPipeline, MemoryCompactionResult
 from framework.memory.core.scope import MemoryContext, SessionScope
 from framework.memory.managers.short_term import ShortTermConfig, ShortTermMemoryManager
 from framework.memory.stores.in_memory import InMemoryStorage
@@ -25,30 +26,30 @@ async def storage():
 
 
 @pytest.fixture
-def dummy_compression_strategy():
-    """模拟压缩策略：移除前半部分消息。"""
+def dummy_pipeline():
+    """模拟压缩 pipeline：移除前半部分消息。"""
 
-    class DummyStrategy:
-        async def compress(self, messages, ctx):
-            from framework.memory.core.compression import CompressionResult
-
+    class DummyPipeline:
+        async def run(self, context, messages, reason, keep_recent_messages=None):
             split = len(messages) // 2
-            return CompressionResult(
+            return MemoryCompactionResult(
+                remaining_messages=[dict(m) for m in messages[split:]],
+                pruned_messages=[dict(m) for m in messages[:split]],
                 summary="dummy summary",
-                pruned_messages=messages[:split],
-                remaining_messages=messages[split:],
+                archived=True,
+                archive_success=True,
             )
 
-    return DummyStrategy()
+    return DummyPipeline()
 
 
 @pytest.mark.asyncio
-async def test_cursor_mode_get_messages_filters_cursor(context, scope, storage, dummy_compression_strategy):
+async def test_cursor_mode_get_messages_filters_cursor(context, scope, storage, dummy_pipeline):
     """cursor 模式下 get_messages() 只返回 cursor 之后的消息。"""
     config = ShortTermConfig(
         compression_mode="cursor",
-        compression_strategy=dummy_compression_strategy,
-        max_messages=None,  # 无硬限制，让策略触发
+        pipeline=dummy_pipeline,
+        max_messages=3,
     )
     mgr = ShortTermMemoryManager(storage, scope, config=config)
 
@@ -69,12 +70,12 @@ async def test_cursor_mode_get_messages_filters_cursor(context, scope, storage, 
 
 
 @pytest.mark.asyncio
-async def test_cursor_mode_get_all_messages_returns_everything(context, scope, storage, dummy_compression_strategy):
+async def test_cursor_mode_get_all_messages_returns_everything(context, scope, storage, dummy_pipeline):
     """cursor 模式下 get_all_messages() 返回所有消息。"""
     config = ShortTermConfig(
         compression_mode="cursor",
-        compression_strategy=dummy_compression_strategy,
-        max_messages=None,
+        pipeline=dummy_pipeline,
+        max_messages=3,
     )
     mgr = ShortTermMemoryManager(storage, scope, config=config)
 
@@ -87,12 +88,12 @@ async def test_cursor_mode_get_all_messages_returns_everything(context, scope, s
 
 
 @pytest.mark.asyncio
-async def test_cursor_mode_no_physical_delete(context, scope, storage, dummy_compression_strategy):
+async def test_cursor_mode_no_physical_delete(context, scope, storage, dummy_pipeline):
     """cursor 模式下压缩不物理删除消息。"""
     config = ShortTermConfig(
         compression_mode="cursor",
-        compression_strategy=dummy_compression_strategy,
-        max_messages=None,
+        pipeline=dummy_pipeline,
+        max_messages=3,
     )
     mgr = ShortTermMemoryManager(storage, scope, config=config)
 
@@ -106,12 +107,12 @@ async def test_cursor_mode_no_physical_delete(context, scope, storage, dummy_com
 
 
 @pytest.mark.asyncio
-async def test_cursor_mode_updates_compression_cursor(context, scope, storage, dummy_compression_strategy):
+async def test_cursor_mode_updates_compression_cursor(context, scope, storage, dummy_pipeline):
     """cursor 模式下应更新 .compression_cursor KV。"""
     config = ShortTermConfig(
         compression_mode="cursor",
-        compression_strategy=dummy_compression_strategy,
-        max_messages=None,
+        pipeline=dummy_pipeline,
+        max_messages=3,
     )
     mgr = ShortTermMemoryManager(storage, scope, config=config)
 
@@ -124,12 +125,12 @@ async def test_cursor_mode_updates_compression_cursor(context, scope, storage, d
 
 
 @pytest.mark.asyncio
-async def test_delete_mode_physical_deletes(context, scope, storage, dummy_compression_strategy):
+async def test_delete_mode_physical_deletes(context, scope, storage, dummy_pipeline):
     """delete 模式下压缩会物理删除消息。"""
     config = ShortTermConfig(
         compression_mode="delete",
-        compression_strategy=dummy_compression_strategy,
-        max_messages=None,
+        pipeline=dummy_pipeline,
+        max_messages=3,
     )
     mgr = ShortTermMemoryManager(storage, scope, config=config)
 
@@ -154,7 +155,7 @@ async def test_cursor_mode_no_cursor_when_no_compression(context, scope, storage
     """cursor 模式下若未触发压缩，不应设置 cursor。"""
     config = ShortTermConfig(
         compression_mode="cursor",
-        max_messages=None,
+        max_messages=3,
     )
     mgr = ShortTermMemoryManager(storage, scope, config=config)
 

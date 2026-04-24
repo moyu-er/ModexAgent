@@ -90,9 +90,9 @@ class TestMemorySystemContextManager:
         await memory_system.add_message(ctx, {"role": "assistant", "content": "hi"})
 
         state = await adapter.load("s1")
-        assert len(state.history) == 2
-        assert state.history[0]["content"] == "hello"
-        assert state.history[1]["content"] == "hi"
+        assert len(await state.history.to_list()) == 2
+        assert (await state.history.to_list())[0]["content"] == "hello"
+        assert (await state.history.to_list())[1]["content"] == "hi"
 
     async def test_build_system_prompt_uses_runtime_session_id(self, memory_system):
         adapter = MemorySystemContextManager(memory_system)
@@ -174,7 +174,7 @@ class TestMemorySystemContextManager:
                 metadata={"input_metadata": {"user_id": "alice"}},
             )
             state = await adapter.load("s1")
-            assert len(state.history) == 1
+            assert len(await state.history.to_list()) == 1
             await ms.close()
 
     async def test_load_uses_user_id_from_runtime_info_when_no_cache(self):
@@ -203,7 +203,7 @@ class TestMemorySystemContextManager:
                 runtime_info={"session_id": "s1", "user_id": "alice"},
             )
             state = await adapter.load("s1")
-            assert len(state.history) == 2
+            assert len(await state.history.to_list()) == 2
             await ms.close()
 
     async def test_clear_uses_cached_user_id(self):
@@ -231,7 +231,7 @@ class TestMemorySystemContextManager:
             )
             await adapter.clear("s1")
             state = await adapter.load("s1")
-            assert len(state.history) == 0
+            assert len(await state.history.to_list()) == 0
             await ms.close()
 
     async def test_clear_legacy(self, memory_system):
@@ -239,7 +239,7 @@ class TestMemorySystemContextManager:
         await adapter.save("s1", {"role": "user", "content": "x"}, AgentResult(content="y"))
         await adapter.clear("s1")
         state = await adapter.load("s1")
-        assert len(state.history) == 0
+        assert len(await state.history.to_list()) == 0
 
     async def test_save_only_persists_user_message(self, memory_system):
         adapter = MemorySystemContextManager(memory_system)
@@ -250,12 +250,12 @@ class TestMemorySystemContextManager:
         )
         state = await adapter.load("s1")
         history = state.history
-        assert len(history) == 1
-        assert history[0]["content"] == "hello"
+        assert len(await history.to_list()) == 1
+        assert (await history.to_list())[0]["content"] == "hello"
 
     async def test_default_layers_have_no_compression_strategy(self, memory_system):
         """默认配置不应设置 compression_strategy，避免与 max_tokens 双重裁剪。"""
-        assert memory_system.layers["short_term"].compression_strategy is None
+        assert memory_system.layers["short_term"].pipeline is None
 
     async def test_context_cache_has_size_limit(self, memory_system):
         """_context_cache 应有上限，防止长期运行内存无限增长。"""
@@ -297,8 +297,8 @@ class TestMemorySystemContextManager:
         history = await memory_system.get_history(ctx)
         assert len(history) == 3
         assert history[0]["content"] == "c"
-        assert history[1]["content"] == "d"
-        assert history[2]["content"] == "e"
+        assert (history)[1]["content"] == "d"
+        assert (history)[2]["content"] == "e"
 
         stm._config.max_messages = original_max
 
@@ -449,12 +449,12 @@ class TestMemorySystemReadAPIs:
     async def test_default_single_user_layers_injects_consolidator_when_llm_provided(self):
         mock_llm = MagicMock()
         layers = MemorySystem.default_single_user_layers(llm_provider=mock_llm)
-        assert layers["short_term"].compression_strategy is not None
+        assert layers["short_term"].pipeline is not None
         assert layers["short_term"].archive_strategy is not None
 
     async def test_default_single_user_layers_no_compression_without_llm(self):
         layers = MemorySystem.default_single_user_layers()
-        assert layers["short_term"].compression_strategy is None
+        assert layers["short_term"].pipeline is None
         assert layers["short_term"].archive_strategy is None
 
 

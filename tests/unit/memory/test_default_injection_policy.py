@@ -66,8 +66,8 @@ class TestPeerSubagentIsolation:
 
         # Should get base_system_prompt + short-term history only
         assert result.system_prompt == "Base"
-        assert len(result.history) == 1
-        assert result.history[0].content == "hello"
+        assert len(await result.history.to_list()) == 1
+        assert (await result.history.to_list())[0].content == "hello"
         # Provider prefetch should NOT be called for peer
         provider.prefetch.assert_not_called()
 
@@ -84,7 +84,7 @@ class TestPeerSubagentIsolation:
         result = await policy.assemble(system, ctx, base_system_prompt="Base")
 
         assert result.system_prompt == "Base"
-        assert len(result.history) == 1
+        assert len(await result.history.to_list()) == 1
         provider.prefetch.assert_not_called()
 
     @pytest.mark.asyncio
@@ -160,11 +160,11 @@ class TestFilterStrategyReplacement:
         result = await policy.assemble(system, ctx, base_system_prompt="")
 
         # Tool messages should be filtered out
-        roles = [m.role for m in result.history]
+        roles = [m.role for m in (await result.history.to_list())]
         assert MessageRole.USER in roles
         assert MessageRole.TOOL not in roles
         # The assistant message with tool_calls should also be filtered
-        assistant_msgs = [m for m in result.history if m.role == MessageRole.ASSISTANT]
+        assistant_msgs = [m for m in (await result.history.to_list()) if m.role == MessageRole.ASSISTANT]
         assert len(assistant_msgs) == 0
 
 

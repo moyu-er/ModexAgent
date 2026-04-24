@@ -8,6 +8,7 @@ import pytest
 
 from framework.memory.core.scope import MemoryContext
 from framework.memory.injection import DefaultMemoryInjectionPolicy
+from framework.memory.injection.filter import NoopFilterStrategy
 from framework.memory.managers.short_term import ShortTermConfig, ShortTermMemoryManager
 from framework.memory.stores.in_memory import InMemoryStorage
 from framework.memory.system import MemorySystem
@@ -55,7 +56,7 @@ class TestToolMessageFiltering:
     """P0-1: DefaultMemoryInjectionPolicy and tool message handling.
 
     assemble() returns a ShortTermMessageHistory proxy that reads from
-    storage (unfiltered). The filter_tool_messages flag controls filtering
+    storage (unfiltered). The filter_strategy controls filtering
     of the internal history list used for prefetch queries and token budget.
     Use await state.history.to_list() to populate the cache before checking.
     """
@@ -84,8 +85,9 @@ class TestToolMessageFiltering:
             messages = await state.history.to_list()
             msg_dicts = [m.to_dict() if hasattr(m, "to_dict") else m for m in messages]
 
-            # All 4 messages are stored in short-term memory (proxy is unfiltered)
-            assert len(messages) == 4
+            # DefaultMemoryInjectionPolicy uses ToolMessageFilterStrategy,
+            # so assembled history only contains non-tool messages
+            assert len(messages) == 2  # user + final assistant
 
             # Verify the filtering logic itself works on the raw data
             from framework.memory.compression.tool_chain import _is_tool_call, _is_tool_result
@@ -110,7 +112,7 @@ class TestToolMessageFiltering:
                 "tool_calls": [{"id": "tc1", "function": {"name": "read"}}],
             })
 
-            policy = DefaultMemoryInjectionPolicy(filter_tool_messages=False)
+            policy = DefaultMemoryInjectionPolicy(filter_strategy=NoopFilterStrategy())
             state = await policy.assemble(ms, ctx)
 
             messages = await state.history.to_list()

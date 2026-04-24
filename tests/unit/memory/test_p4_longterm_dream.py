@@ -93,8 +93,8 @@ class TestLongTermMetadata:
             ctx, MemoryUpdate("SOUL.md", "line2", "append", reason="r2")
         )
 
-        logs = await storage.read_logs("s1")
-        change_logs = [e for e in logs if e.get("file") == "SOUL.md"]
+        # Changelog entries now go to a separate store from history archive
+        change_logs = [e for e in storage._changelogs.get("s1", []) if e.get("key") == "SOUL.md"]
         assert len(change_logs) == 2
         assert change_logs[0]["reason"] == "r1"
         assert change_logs[1]["reason"] == "r2"

@@ -589,7 +589,9 @@ class TestMemorySystemIntegration:
 
     @pytest.mark.asyncio
     async def test_system_prompt_block_injected(self):
-        """system_prompt_block should appear in MemorySystem.build_system_prompt()."""
+        """system_prompt_block should appear in DefaultMemoryInjectionPolicy output."""
+        from framework.memory.injection import DefaultMemoryInjectionPolicy
+
         with tempfile.TemporaryDirectory() as tmp:
             ms = MemorySystem(workspace=Path(tmp))
             await ms.initialize()
@@ -598,7 +600,9 @@ class TestMemorySystemIntegration:
             ms.add_provider(p)
 
             ctx = _make_context()
-            prompt = await ms.build_system_prompt(ctx)
+            policy = DefaultMemoryInjectionPolicy()
+            context_state = await policy.assemble(ms, ctx, base_system_prompt="")
+            prompt = context_state.system_prompt
 
             assert "语义记忆" in prompt
             assert p.system_prompt_block() in prompt
@@ -620,6 +624,7 @@ class TestMemorySystemIntegration:
 
             ctx = _make_context()
             await ms.add_message(ctx, {"role": "user", "content": "hello"})
+            await ms._recorder.flush()
 
             # mem0.add should have been called
             mock_mem0.add.assert_called_once()
@@ -772,9 +777,8 @@ class TestPrefetchInjection:
             assert "Python developer" in prompt  # core memory
             assert "Relevant to:" in prompt  # search result
 
-            # Step 4: Verify system_prompt_block is also present
-            full_prompt = await ms.build_system_prompt(ctx)
-            assert "语义记忆" in full_prompt
+            # Step 4: Verify system_prompt_block is also present (injected via policy)
+            assert "语义记忆" in prompt
 
             await ms.close()
 

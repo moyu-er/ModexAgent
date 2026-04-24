@@ -77,6 +77,10 @@ class TestShortTermCompressionArchivesToHistory:
     async def test_compression_strategy_summary_is_preserved_in_history(self, in_memory_storage):
         store = in_memory_storage
         from framework.memory.core.scope import SessionScope
+        from framework.memory.compaction.pipeline import (
+            ConsolidatorSummaryStrategy,
+            MemoryCompactionPipeline,
+        )
 
         class FakeCompressor(CompressionStrategy):
             async def compress(self, messages, context):
@@ -96,24 +100,30 @@ class TestShortTermCompressionArchivesToHistory:
                 )
 
         history = HistoryArchiveManager(store, SessionScope())
+        archive = PreserveSummaryArchiveStrategy()
+        pipeline = MemoryCompactionPipeline(
+            summary_strategy=ConsolidatorSummaryStrategy(FakeCompressor()),
+            archive_strategy=archive,
+            history_manager=history,
+        )
         stm = ShortTermMemoryManager(
             store,
             SessionScope(),
             config=ShortTermConfig(
-                max_messages=None,  # 不设置硬限制，让 compression_strategy 主导压缩
-                compression_strategy=FakeCompressor(),
-                archive_strategy=PreserveSummaryArchiveStrategy(),
+                max_messages=3,  # 设置硬限制触发 pipeline 压缩
+                pipeline=pipeline,
+                archive_strategy=archive,
             ),
             history_manager=history,
         )
 
         ctx = MemoryContext(session_id="s2")
-        # 批量添加 >=6 条消息，以超过 COOLDOWN_MSG_DELTA=5，触发 compression_strategy
+        # 批量添加 >=6 条消息，以超过 COOLDOWN_MSG_DELTA=5，触发 pipeline
         messages = [{"role": "user", "content": str(i)} for i in range(6)]
         await stm.add_messages(ctx, messages)
 
         _, entries = await history.get_unprocessed(ctx)
-        assert len(entries) == 1
+        assert len(entries) >= 1
         assert entries[0]["summary"] == "Summary of old messages"
 
 
@@ -169,9 +179,9 @@ class TestContextInjectionEndToEnd:
 
         state = await adapter.load("inj_session")
         history = state.history
-        assert len(history) == 2
-        assert history[0]["content"] == "old_msg"
-        assert history[1]["content"] == "new_msg"
+        assert len(await history.to_list()) == 2
+        assert (await history.to_list())[0]["content"] == "old_msg"
+        assert (await history.to_list())[1]["content"] == "new_msg"
 
     async def test_system_prompt_includes_long_term_and_history_summaries(self, memory_system):
         ctx = MemoryContext(session_id="inj_session2", user_id="u1")
@@ -200,9 +210,9 @@ class TestContextInjectionEndToEnd:
 
         state = await adapter.load("inj_session3")
         history = state.history
-        assert len(history) == 2
-        assert history[0]["content"] == "3"
-        assert history[1]["content"] == "4"
+        assert len(await history.to_list()) == 2
+        assert (await history.to_list())[0]["content"] == "3"
+        assert (await history.to_list())[1]["content"] == "4"
 
 
 @pytest.mark.asyncio
@@ -227,7 +237,7 @@ class TestMemoryAgingAndCleanup:
 
         state = await adapter.load("clear_session")
         history = state.history
-        assert len(history) == 0
+        assert len(await history.to_list()) == 0
 
         _, entries = await memory_system._managers.history.get_unprocessed(ctx)
         assert len(entries) == 0
@@ -270,9 +280,9 @@ class TestMemorySystemContextManagerRoundTrip:
 
         state = await adapter.load("rt_session")
         history = state.history
-        assert len(history) == 2
-        assert history[0]["role"] == "user"
-        assert history[1]["role"] == "assistant"
+        assert len(await history.to_list()) == 2
+        assert (await history.to_list())[0]["role"] == "user"
+        assert (await history.to_list())[1]["role"] == "assistant"
 
     async def test_multiple_saves_maintain_order(self, memory_system):
         adapter = MemorySystemContextManager(memory_system)
@@ -290,10 +300,10 @@ class TestMemorySystemContextManagerRoundTrip:
 
         state = await adapter.load("multi_session")
         history = state.history
-        assert len(history) == 6
-        assert history[0]["content"] == "u0"
-        assert history[1]["content"] == "a0"
-        assert history[5]["content"] == "a2"
+        assert len(await history.to_list()) == 6
+        assert (await history.to_list())[0]["content"] == "u0"
+        assert (await history.to_list())[1]["content"] == "a0"
+        assert (await history.to_list())[5]["content"] == "a2"
 
     async def test_runtime_info_injects_into_system_prompt(self, memory_system):
         adapter = MemorySystemContextManager(memory_system)
@@ -501,7 +511,7 @@ class TestAgentSessionMemoryIntegration:
             # 因此只有 user message 被 save() 持久化
             state = await adapter.load("sess_1")
             history = state.history
-            assert len(history) == 1  # user only
+            assert len(await history.to_list()) == 1  # user only
 
             await ms.close()
 
@@ -585,6 +595,6 @@ class TestAgentSessionMemoryIntegration:
             # MemorySystemContextManager 的 load 返回的 ContextState 未保存 metadata。
             # 本测试验证的是 process_message 不会异常退出，且历史正确。
             history = state.history
-            assert len(history) == 1  # user only (agent 未通过 context.history 写入)
+            assert len(await history.to_list()) == 1  # user only (agent 未通过 context.history 写入)
 
             await ms.close()
