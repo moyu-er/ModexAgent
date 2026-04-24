@@ -1,8 +1,26 @@
 """Memory scope abstractions for configurable isolation dimensions."""
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from enum import StrEnum
 from typing import Any
+
+
+class MemoryAgentRole(StrEnum):
+    """Agent role for memory ownership and background processing."""
+
+    MAIN = "main"
+    PEER = "peer"
+    SUBAGENT = "subagent"
+
+
+class MemoryLayerName(StrEnum):
+    """Canonical memory layer names used in metadata and config."""
+
+    SHORT_TERM = "short_term"
+    HISTORY = "history"
+    LONG_TERM = "long_term"
+    PROVIDER = "provider"
 
 
 @dataclass
@@ -35,6 +53,51 @@ class MemoryContext:
             if current is None:
                 setattr(self, key, value)
         return self
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize context for scope metadata."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "MemoryContext":
+        """Restore context from persisted scope metadata."""
+        if not data:
+            return cls()
+        allowed = cls.__dataclass_fields__.keys()
+        return cls(**{key: data.get(key) for key in allowed})
+
+
+@dataclass(frozen=True)
+class ScopeRecord:
+    """Recoverable metadata for a persisted memory scope."""
+
+    scope_key: str
+    layer: str | MemoryLayerName
+    context: MemoryContext
+    storage_path: str
+    agent_role: str | MemoryAgentRole = MemoryAgentRole.MAIN
+    agent_id: str | None = None
+    created_at: float | None = None
+    updated_at: float | None = None
+
+
+def infer_agent_role(context: MemoryContext) -> MemoryAgentRole:
+    """Infer role for persisted scope metadata.
+
+    Explicit agent_id values are preferred. Unknown contexts default to main
+    because ordinary single-agent use should keep full memory behavior.
+    """
+    candidates = [
+        context.agent_id,
+        context.sender_agent,
+        context.receiver_agent,
+    ]
+    normalized = {str(value).lower() for value in candidates if value}
+    if MemoryAgentRole.SUBAGENT.value in normalized:
+        return MemoryAgentRole.SUBAGENT
+    if MemoryAgentRole.PEER.value in normalized:
+        return MemoryAgentRole.PEER
+    return MemoryAgentRole.MAIN
 
 
 class MemoryScope(ABC):
