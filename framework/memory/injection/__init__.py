@@ -4,19 +4,23 @@ Provides pluggable strategies for converting MemorySystem state into
 ContextState (system_prompt + history).
 """
 
+import logging
 from abc import ABC, abstractmethod
 
 from framework.core.context import ContextState
 from framework.core.types import MessageRole
-from framework.memory.compression.tool_chain import (
-    _fit_token_window,
-    _is_tool_call,
-    _is_tool_result,
-)
+from framework.memory.compression.tool_chain import _fit_token_window
 from framework.memory.core.message import ChatMessage
-from framework.memory.core.scope import MemoryContext
+from framework.memory.core.scope import MemoryAgentRole, MemoryContext
+from framework.memory.injection.filter import (
+    InjectionFilterStrategy,
+    NoopFilterStrategy,
+    ToolMessageFilterStrategy,
+)
 from framework.memory.system import MemorySystem
 from framework.memory.utils import estimate_token_count
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryInjectionPolicy(ABC):
@@ -44,8 +48,9 @@ class MemoryInjectionPolicy(ABC):
 
 class DefaultMemoryInjectionPolicy(MemoryInjectionPolicy):
     """默认策略：
-    - system_prompt = base_prompt + long_term(SOUL/USER/MEMORY) + history 摘要
-    - history = short_term(已持久化历史)
+    - system_prompt = base_prompt + long_term(SOUL/USER/MEMORY) + history 摘要 + provider prefetch
+    - history = short_term(已持久化历史，经 InjectionFilterStrategy 过滤)
+    - peer/subagent 仅获得 short-term，不注入中长期记忆或 provider 内容
     """
 
     def __init__(
@@ -54,13 +59,26 @@ class DefaultMemoryInjectionPolicy(MemoryInjectionPolicy):
         max_history_entries: int = 5,
         max_system_prompt_tokens: int | None = None,
         max_total_tokens: int | None = None,
-        filter_tool_messages: bool = True,
+        filter_strategy: InjectionFilterStrategy | None = None,
     ):
         self.max_short_term_messages = max_short_term_messages
         self.max_history_entries = max_history_entries
         self.max_system_prompt_tokens = max_system_prompt_tokens
         self.max_total_tokens = max_total_tokens
-        self.filter_tool_messages = filter_tool_messages
+        self.filter_strategy = filter_strategy or ToolMessageFilterStrategy()
+
+    @staticmethod
+    def _is_peer_or_subagent(context: MemoryContext) -> bool:
+        candidates = [context.agent_id, context.sender_agent, context.receiver_agent]
+        for value in candidates:
+            if not value:
+                continue
+            v = str(value).lower()
+            if v == MemoryAgentRole.PEER.value or v.startswith(MemoryAgentRole.PEER.value):
+                return True
+            if v == MemoryAgentRole.SUBAGENT.value or v.startswith(MemoryAgentRole.SUBAGENT.value):
+                return True
+        return False
 
     async def assemble(
         self,
@@ -68,26 +86,23 @@ class DefaultMemoryInjectionPolicy(MemoryInjectionPolicy):
         context: MemoryContext,
         base_system_prompt: str = "",
     ) -> ContextState:
-        # 职责边界说明：
-        # - 本方法（assemble）负责将 MemorySystem 各层数据组合成 ContextState，
-        #   其中 system_prompt 仅包含来自记忆层的内容（long_term + history 摘要）。
-        # - MemorySystemContextManager.build_system_prompt() 在此基础上追加
-        #   工具描述、skills 和运行时信息，两者是组合关系而非重复。
-
-        # 1. 短期记忆
+        # 1. 短期记忆（所有角色共享）
         short_term_msgs = await memory_system.get_history(
             context, max_messages=self.max_short_term_messages
         )
-        history = short_term_msgs
+        history = self.filter_strategy.filter(list(short_term_msgs))
 
-        # 1.1 过滤 tool 消息（tool_calls + tool results），减少 token 浪费
-        if self.filter_tool_messages:
-            history = [
-                msg for msg in history
-                if not (_is_tool_call(msg) or _is_tool_result(msg))
-            ]
+        # peer/subagent: 只返回过滤后的短期记忆，不注入中长期/provider
+        if self._is_peer_or_subagent(context):
+            history_obj = memory_system.create_message_history(
+                context=context, initial_messages=history
+            )
+            return ContextState(
+                system_prompt=base_system_prompt,
+                history=history_obj,
+            )
 
-        # 1.2 从历史中提取最近一条 user message 作为 query，用于相关历史检索
+        # 1.1 从历史中提取最近一条 user message 作为 query
         query = ""
         for msg in reversed(short_term_msgs):
             role = msg.role if isinstance(msg, ChatMessage) else msg.get("role", "")
@@ -103,10 +118,48 @@ class DefaultMemoryInjectionPolicy(MemoryInjectionPolicy):
             query=query,
         )
 
-        # 2.1 短期记忆压缩摘要（不再以 system 消息存入 history，而是动态注入 system_prompt）
+        # 2.0 provider 静态 system prompt blocks
+        provider_blocks: list[str] = []
+        for provider in memory_system.get_providers():
+            try:
+                block = provider.system_prompt_block()
+                if block:
+                    provider_blocks.append(block)
+            except Exception as e:
+                logger.warning("Provider '%s' system_prompt_block failed: %s", provider.name, e)
+        if provider_blocks:
+            blocks_text = "\n\n".join(provider_blocks)
+            memory_prompt = (
+                memory_prompt + "\n\n---\n\n" + blocks_text
+                if memory_prompt
+                else blocks_text
+            )
+
+        # 2.1 provider 动态 prefetch（统一注入入口）
+        if query:
+            prefetch_result = await memory_system.prefetch_memories(query, context)
+            if prefetch_result:
+                section = f"<memory-context>\n{prefetch_result}\n</memory-context>"
+                memory_prompt = (
+                    memory_prompt + "\n\n---\n\n" + section
+                    if memory_prompt
+                    else section
+                )
+
+        # 2.2 短期记忆压缩摘要
         compression_summary = await memory_system.get_compression_summary(context)
         if compression_summary:
             section = f"[Earlier conversation compressed] {compression_summary}"
+            memory_prompt = (
+                section + "\n\n---\n\n" + memory_prompt
+                if memory_prompt
+                else section
+            )
+
+        # 2.3 AutoCompact 空闲压缩摘要
+        auto_compact_summary = await memory_system.get_auto_compact_summary(context)
+        if auto_compact_summary:
+            section = f"[Auto-compact summary] {auto_compact_summary}"
             memory_prompt = (
                 section + "\n\n---\n\n" + memory_prompt
                 if memory_prompt
@@ -130,7 +183,6 @@ class DefaultMemoryInjectionPolicy(MemoryInjectionPolicy):
                 history, _ = _fit_token_window(history, available_for_history)
 
         if self.max_system_prompt_tokens is not None:
-            # system_prompt = base + memory_prompt
             combined_system = "\n\n---\n\n".join(
                 [p for p in [base_system_prompt, memory_prompt] if p]
             )
@@ -142,7 +194,6 @@ class DefaultMemoryInjectionPolicy(MemoryInjectionPolicy):
                 )
                 if tokens <= self.max_system_prompt_tokens:
                     break
-                # 从 memory_prompt 中逐 section 丢弃（优先丢弃历史摘要）
                 trimmed = self._trim_memory_prompt_section(memory_prompt)
                 if trimmed == memory_prompt:
                     break
@@ -158,7 +209,6 @@ class DefaultMemoryInjectionPolicy(MemoryInjectionPolicy):
             parts.append(memory_prompt)
         system_prompt = "\n\n---\n\n".join(parts) if parts else ""
 
-        # 使用 MemorySystem 工厂方法创建 MessageHistory，解耦对具体 manager 类型的依赖
         history_obj = memory_system.create_message_history(
             context=context,
             initial_messages=history,
@@ -184,3 +234,12 @@ class DefaultMemoryInjectionPolicy(MemoryInjectionPolicy):
         # 否则移除最后一个 section
         sections.pop()
         return "\n\n---\n\n".join(sections)
+
+
+__all__ = [
+    "DefaultMemoryInjectionPolicy",
+    "MemoryInjectionPolicy",
+    "InjectionFilterStrategy",
+    "NoopFilterStrategy",
+    "ToolMessageFilterStrategy",
+]

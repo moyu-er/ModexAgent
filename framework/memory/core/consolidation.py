@@ -13,6 +13,7 @@ class MemoryUpdateMode(StrEnum):
     APPEND = "append"
     SECTION_REPLACE = "section_replace"
     REPLACE_TEXT = "replace_text"
+    REMOVE = "remove"
 
 
 @dataclass

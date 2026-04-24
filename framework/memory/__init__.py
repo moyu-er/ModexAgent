@@ -9,7 +9,7 @@ Key abstractions:
 - MemorySystem: unified entry point
 - MemoryContext: scope dimensions (session, user, tenant, etc.)
 - MemoryScope: isolation strategy per layer
-- CompressionStrategy: short-term memory pruning
+- MemoryCompactionPipeline: unified short-term compaction orchestration
 - ArchiveStrategy: how pruned messages are archived
 - MemoryInjectionPolicy: maps memory layers to LLM ContextState
 """
@@ -46,6 +46,13 @@ from framework.memory.core.scope import (
 )
 from framework.memory.core.storage import MemoryStorage
 from framework.memory.auto_compact import AutoCompactService
+from framework.memory.compaction.pipeline import (
+    ConsolidatorSummaryStrategy,
+    HeuristicSummaryStrategy,
+    MemoryCompactionPipeline,
+    MemoryCompactionResult,
+    SummaryStrategy,
+)
 from framework.memory.context_governance import (
     CompositeGovernance,
     ContextGovernance,
@@ -57,7 +64,11 @@ from framework.memory.history_search import HistorySearchStrategy, KeywordHistor
 from framework.memory.injection import (
     DefaultMemoryInjectionPolicy,
     MemoryInjectionPolicy,
+    InjectionFilterStrategy,
+    NoopFilterStrategy,
+    ToolMessageFilterStrategy,
 )
+from framework.memory.recorder import MemoryAppendRecorder, MemoryAppendSource
 from framework.memory.managers.history import HistoryArchiveManager
 from framework.memory.managers.long_term import (
     LongTermMemory,
@@ -104,6 +115,9 @@ __all__ = [
     "LongTermMemory",
     "LongTermMemoryManager",
     "CompressionMode",
+    # Recorder
+    "MemoryAppendRecorder",
+    "MemoryAppendSource",
     # Compression
     "CompressionStrategy",
     "CompressionResult",
@@ -132,4 +146,10 @@ __all__ = [
     "TokenBudgetGovernance",
     # Auto compact
     "AutoCompactService",
+    # Compaction pipeline
+    "MemoryCompactionPipeline",
+    "MemoryCompactionResult",
+    "SummaryStrategy",
+    "HeuristicSummaryStrategy",
+    "ConsolidatorSummaryStrategy",
 ]

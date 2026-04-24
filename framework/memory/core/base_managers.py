@@ -133,3 +133,11 @@ class BaseLongTermMemoryManager(ABC):
 
     @abstractmethod
     async def clear(self, context: MemoryContext) -> None: ...
+
+    async def ensure_defaults(
+        self,
+        context: MemoryContext,
+        defaults: dict[str, str] | None = None,
+    ) -> None:
+        """Default no-op; overridden by LongTermMemoryManager."""
+        _ = context, defaults

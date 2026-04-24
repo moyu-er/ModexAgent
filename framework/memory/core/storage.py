@@ -1,9 +1,12 @@
 """MemoryStorage abstract base class."""
+from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Collection
 from typing import Any
 
 from framework.memory.core.lock import AioRWLock, StorageLock
+from framework.memory.core.scope import MemoryAgentRole, MemoryContext, ScopeRecord
 
 
 class MemoryStorage(ABC):
@@ -33,6 +36,40 @@ class MemoryStorage(ABC):
     async def initialize(self) -> None:
         """初始化存储资源，如创建目录、建表等。"""
         pass
+
+    async def ensure_scope_metadata(
+        self,
+        scope_key: str,
+        *,
+        layer: str,
+        context: MemoryContext,
+        agent_role: str | MemoryAgentRole = MemoryAgentRole.MAIN,
+        agent_id: str | None = None,
+    ) -> None:
+        """Persist recoverable metadata for a scope.
+
+        This is deliberately part of the storage abstraction so memory layers
+        can stay replaceable. Stores without scan support may keep the default
+        no-op implementation.
+        """
+        _ = scope_key, layer, context, agent_role, agent_id
+
+    async def list_scope_records(
+        self,
+        *,
+        layer: str | None = None,
+        has_file: str | None = None,
+        agent_roles: Collection[str | MemoryAgentRole] | None = frozenset(
+            {MemoryAgentRole.MAIN}
+        ),
+    ) -> list[ScopeRecord]:
+        """List recoverable scope records for background memory jobs.
+
+        agent_roles defaults to {"main"} because medium/long/provider jobs
+        must not process peer/subagent scopes. Pass None to include all roles.
+        """
+        _ = layer, has_file, agent_roles
+        return []
 
     @abstractmethod
     async def close(self) -> None:

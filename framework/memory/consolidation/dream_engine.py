@@ -12,7 +12,12 @@ from framework.memory.core.consolidation import (
     MemoryUpdate,
 )
 from framework.memory.core.message import ChatMessage
-from framework.memory.core.scope import MemoryContext
+from framework.memory.core.scope import (
+    MemoryAgentRole,
+    MemoryContext,
+    MemoryLayerName,
+)
+from framework.memory.core.storage import MemoryStorage
 from framework.memory.managers.history import HistoryArchiveManager
 from framework.memory.managers.long_term import LongTermMemoryManager
 
@@ -91,12 +96,14 @@ class DreamEngine(ConsolidationEngine):
         long_term_manager: LongTermMemoryManager,
         max_batch_size: int = 20,
         max_iterations: int = 10,
+        storage: MemoryStorage | None = None,
     ):
         self.llm = llm_provider
         self.history_manager = history_manager
         self.long_term_manager = long_term_manager
         self.max_batch_size = max_batch_size
         self.max_iterations = max_iterations
+        self.storage = storage
 
     async def run(self, context: MemoryContext) -> bool:
         """处理未处理的历史条目。
@@ -148,6 +155,36 @@ class DreamEngine(ConsolidationEngine):
         logger.debug("DreamEngine cursor advanced to %s", final_cursor)
 
         return True
+
+    async def scan_all(self) -> list[MemoryContext]:
+        """扫描 history 层 scope records，返回处理过的 MemoryContext 列表。
+
+        只处理 main agent 的 scope；peer/subagent 被过滤掉。
+        每个 scope 调用 run() 处理未处理的 history 条目。
+        """
+        processed: list[MemoryContext] = []
+        if self.storage is None:
+            logger.warning("DreamEngine.scan_all skipped: no storage configured")
+            return processed
+
+        records = await self.storage.list_scope_records(
+            layer=MemoryLayerName.HISTORY,
+            has_file="history",
+            agent_roles={MemoryAgentRole.MAIN},
+        )
+        for record in records:
+            ctx = record.context
+            if ctx is None:
+                continue
+            try:
+                did_work = await self.run(ctx)
+                if did_work:
+                    processed.append(ctx)
+            except Exception as e:
+                logger.warning(
+                    "DreamEngine failed for scope %s: %s", record.scope_key, e
+                )
+        return processed
 
     async def consolidate(
         self,

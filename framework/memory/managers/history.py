@@ -4,7 +4,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 from framework.memory.core.base_managers import BaseHistoryArchiveManager
-from framework.memory.core.scope import MemoryContext, MemoryScope
+from framework.memory.core.scope import (
+    MemoryContext,
+    MemoryLayerName,
+    MemoryScope,
+    infer_agent_role,
+)
 from framework.memory.core.storage import MemoryStorage
 from framework.memory.history_search import HistorySearchStrategy, KeywordHistorySearch
 
@@ -49,6 +54,13 @@ class HistoryArchiveManager(BaseHistoryArchiveManager):
     ) -> int:
         """追加一条历史摘要，返回自增 cursor。"""
         scope_key = self._scope.get_scope_key(context)
+        await self._storage.ensure_scope_metadata(
+            scope_key,
+            layer=MemoryLayerName.HISTORY,
+            context=context,
+            agent_role=infer_agent_role(context),
+            agent_id=context.agent_id,
+        )
         timestamp = metadata.get("timestamp") or datetime.now(UTC).isoformat()
         entry = {
             "timestamp": timestamp,

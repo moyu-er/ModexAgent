@@ -7,6 +7,7 @@ are archived into the history layer.
 import json
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -18,7 +19,7 @@ from framework.memory.core.scope import MemoryContext
 from framework.memory.utils import strip_runtime_prefixes
 
 
-def _raw_archive_summary(messages: list[ChatMessage | dict[str, Any]]) -> str:
+def _raw_archive_summary(messages: Sequence[ChatMessage | dict[str, Any]]) -> str:
     """将消息序列化为可读的原始摘要（自动清洗 Runtime Context 前缀）。"""
     dict_messages = [
         m.to_dict() if isinstance(m, ChatMessage) else m for m in messages
@@ -58,7 +59,7 @@ class ArchiveStrategy(ABC):
     async def archive(
         self,
         context: MemoryContext,
-        pruned_messages: list[ChatMessage | dict[str, Any]],
+        pruned_messages: Sequence[ChatMessage | dict[str, Any]],
         compression_result: CompressionResult,
         history_manager: Any,
     ) -> None:
@@ -79,7 +80,7 @@ class PreserveSummaryArchiveStrategy(ArchiveStrategy):
     async def archive(
         self,
         context: MemoryContext,
-        pruned_messages: list[ChatMessage | dict[str, Any]],
+        pruned_messages: Sequence[ChatMessage | dict[str, Any]],
         compression_result: CompressionResult,
         history_manager: Any,
     ) -> None:
@@ -105,7 +106,7 @@ class RawDumpArchiveStrategy(ArchiveStrategy):
     async def archive(
         self,
         context: MemoryContext,
-        pruned_messages: list[ChatMessage | dict[str, Any]],
+        pruned_messages: Sequence[ChatMessage | dict[str, Any]],
         compression_result: CompressionResult,
         history_manager: Any,
     ) -> None:
@@ -133,7 +134,7 @@ class SemanticArchiveStrategy(ArchiveStrategy):
     async def archive(
         self,
         context: MemoryContext,
-        pruned_messages: list[ChatMessage | dict[str, Any]],
+        pruned_messages: Sequence[ChatMessage | dict[str, Any]],
         compression_result: CompressionResult,
         history_manager: Any,
     ) -> None:
@@ -149,7 +150,7 @@ class SemanticArchiveStrategy(ArchiveStrategy):
 
     def _build_entry(
         self,
-        pruned_messages: list[ChatMessage | dict[str, Any]],
+        pruned_messages: Sequence[ChatMessage | dict[str, Any]],
         compression_result: CompressionResult,
     ) -> ArchiveEntry:
         if compression_result.summary:
