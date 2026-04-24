@@ -1,21 +1,21 @@
-"""Compression strategies for short-term memory management."""
+"""Compression utilities for short-term memory management.
 
-from .hybrid import HybridCompressionStrategy
+Legacy compression strategies (TruncationStrategy, TokenWindowStrategy,
+HybridCompressionStrategy, ToolChainAwareStrategy) have been removed.
+Use MemoryCompactionPipeline instead.
+"""
+
 from .importance import HeuristicImportanceScorer
 from .semantic_filter import MEDIUM_TOOL_NAMES, SemanticMessageFilter
 from .strategy import MessageFilterStrategy, MessageSemanticValue
-from .token_window import TokenWindowStrategy
-from .tool_chain import ToolChainAwareStrategy
-from .truncation import TruncationStrategy
+from .tool_chain import _find_safe_truncation_count, _fit_token_window
 
 __all__ = [
-    "TruncationStrategy",
-    "TokenWindowStrategy",
-    "ToolChainAwareStrategy",
-    "HybridCompressionStrategy",
     "HeuristicImportanceScorer",
     "MessageFilterStrategy",
     "MessageSemanticValue",
     "SemanticMessageFilter",
     "MEDIUM_TOOL_NAMES",
+    "_find_safe_truncation_count",
+    "_fit_token_window",
 ]

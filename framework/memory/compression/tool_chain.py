@@ -3,11 +3,6 @@
 from collections.abc import Sequence
 from typing import Any
 
-from framework.memory.core.compression import (
-    CompressionContext,
-    CompressionResult,
-    CompressionStrategy,
-)
 from framework.core.types import MessageRole
 from framework.memory.core.message import ChatMessage
 from framework.memory.utils import estimate_token_count
@@ -227,29 +222,3 @@ def _fit_token_window(
     return working, pruned
 
 
-class ToolChainAwareStrategy(CompressionStrategy):
-    """Tool 链感知压缩策略。
-
-    确保 assistant 的 `tool_calls` 和对应的 `tool` 结果消息始终成对被保留或移除，
-    不会出现只保留工具结果但丢失了工具调用请求的情况。
-    """
-
-    def __init__(self, max_tokens: int = 4000):
-        self.max_tokens = max_tokens
-
-    async def compress(
-        self,
-        messages: Sequence[ChatMessage | dict[str, Any]],
-        context: CompressionContext,
-    ) -> CompressionResult:
-        target = context.target_token_count or self.max_tokens
-        remaining, pruned = _fit_token_window(messages, target)
-        if not pruned:
-            return CompressionResult(summary="", pruned_messages=[], remaining_messages=list(messages))
-
-        return CompressionResult(
-            summary="",
-            pruned_messages=pruned,
-            remaining_messages=remaining,
-            importance=0.5,
-        )
