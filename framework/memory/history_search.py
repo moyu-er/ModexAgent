@@ -1,23 +1,15 @@
-"""History archive search strategies.
-
-Provides pluggable strategies for retrieving relevant history entries
-from the archive layer. The default KeywordHistorySearch uses simple
-token matching with stop-word filtering.
-"""
+"""History archive search strategies."""
 
 from __future__ import annotations
 
+import json
 import re
 from abc import ABC, abstractmethod
 from typing import Any
 
 
 class HistorySearchStrategy(ABC):
-    """归档检索策略抽象基类。
-
-    实现类接收全部历史条目列表，根据 query 返回最相关的条目。
-    所有计算在内存中进行，无外部依赖。
-    """
+    """Strategy for finding relevant archive entries."""
 
     @abstractmethod
     async def search(
@@ -26,36 +18,14 @@ class HistorySearchStrategy(ABC):
         query: str,
         limit: int,
     ) -> list[dict[str, Any]]:
-        """从历史条目列表中检索与 query 最相关的条目。
-
-        Args:
-            entries: 全部历史条目列表（通常来自 storage.read_logs）
-            query: 用户查询字符串，用于提取关键词匹配
-            limit: 最多返回的条目数
-
-        Returns:
-            按相关性排序的条目列表，长度不超过 limit
-        """
+        """Return archive entries that match ``query``."""
         ...
 
 
 class KeywordHistorySearch(HistorySearchStrategy):
-    """基于关键词的简单检索策略。
-
-    算法：
-    1. 从 query 中提取关键词（去掉停用词）
-    2. 计算每条 entry 的匹配分数 = 匹配关键词数 / 总关键词数
-    3. 返回分数最高的 limit 条（仅返回分数 > 0 的条目）
-
-    无外部依赖，纯内存计算，适合作为默认实现。
-    """
+    """Simple keyword search over archive summary and provenance fields."""
 
     _STOP_WORDS: set[str] = {
-        # 中文停用词
-        "的", "是", "了", "在", "和", "有", "我", "你", "他", "她", "它",
-        "我们", "你们", "他们", "这", "那", "个", "一", "不", "也", "就",
-        "都", "而", "及", "与", "或", "但是", "然而", "因为", "所以",
-        # 英文停用词
         "the", "a", "an", "is", "are", "was", "were", "be", "been",
         "being", "have", "has", "had", "do", "does", "did", "will",
         "would", "could", "should", "may", "might", "must", "shall",
@@ -70,21 +40,42 @@ class KeywordHistorySearch(HistorySearchStrategy):
     }
 
     def _extract_keywords(self, text: str) -> set[str]:
-        """从文本中提取关键词（去掉停用词和单字符）。"""
-        # 匹配中文单字、英文单词、数字
-        words = re.findall(r"[\u4e00-\u9fa5]|[a-zA-Z0-9]+", text.lower())
-        return {
-            w for w in words
-            if w not in self._STOP_WORDS and len(w) > 1
+        lowered = text.lower()
+        keywords: set[str] = {
+            word
+            for word in re.findall(r"[a-zA-Z0-9]+", lowered)
+            if word not in self._STOP_WORDS and len(word) > 1
         }
+        for segment in re.findall(r"[\u4e00-\u9fa5]+", lowered):
+            cleaned = "".join(ch for ch in segment if ch not in self._STOP_WORDS)
+            for size in range(2, min(4, len(cleaned)) + 1):
+                keywords.update(
+                    cleaned[index : index + size]
+                    for index in range(0, len(cleaned) - size + 1)
+                )
+            if len(cleaned) == 1 and cleaned not in self._STOP_WORDS:
+                keywords.add(cleaned)
+        return keywords
+
+    def _entry_text(self, entry: dict[str, Any]) -> str:
+        parts: list[str] = []
+        for key in ("summary", "content"):
+            value = entry.get(key)
+            if isinstance(value, str):
+                parts.append(value)
+        for key in ("metadata", "raw_refs"):
+            value = entry.get(key)
+            if value:
+                parts.append(json.dumps(value, ensure_ascii=False, sort_keys=True))
+        return "\n".join(parts)
 
     def _score(self, entry: dict[str, Any], keywords: set[str]) -> float:
-        """计算单条 entry 与关键词的匹配分数。"""
-        summary = entry.get("summary", "")
-        if not summary or not keywords:
+        if not keywords:
             return 0.0
-        summary_lower = summary.lower()
-        matched = sum(1 for kw in keywords if kw in summary_lower)
+        entry_text = self._entry_text(entry).lower()
+        if not entry_text:
+            return 0.0
+        matched = sum(1 for keyword in keywords if keyword in entry_text)
         return matched / len(keywords)
 
     async def search(
@@ -95,9 +86,8 @@ class KeywordHistorySearch(HistorySearchStrategy):
     ) -> list[dict[str, Any]]:
         keywords = self._extract_keywords(query)
         if not keywords:
-            # 无有效关键词时回退到最近条目
             return entries[-limit:] if limit else entries
 
-        scored = [(self._score(e, keywords), e) for e in entries]
-        scored.sort(key=lambda x: x[0], reverse=True)
-        return [e for s, e in scored[:limit] if s > 0]
+        scored = [(self._score(entry, keywords), entry) for entry in entries]
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [entry for score, entry in scored[:limit] if score > 0]

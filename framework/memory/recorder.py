@@ -16,13 +16,15 @@ import json
 import logging
 from collections.abc import Sequence
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeAlias
 
-from framework.memory.core.scope import MemoryAgentRole, MemoryContext
 from framework.memory.core.message import ChatMessage
+from framework.memory.core.scope import MemoryAgentRole, MemoryContext
 
 if TYPE_CHECKING:
     from framework.plugins import MemoryProvider
+
+QueuedAppend: TypeAlias = tuple[list[ChatMessage | dict[str, Any]], MemoryContext] | None
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +51,7 @@ class MemoryAppendRecorder:
     def __init__(self, providers: list[MemoryProvider] | None = None) -> None:
         self._providers: list[MemoryProvider] = list(providers) if providers is not None else []
         self._seen_hashes: dict[str, set[str]] = {}  # scope_key -> hashes
-        self._queue: asyncio.Queue | None = None
+        self._queue: asyncio.Queue[QueuedAppend] | None = None
         self._worker: asyncio.Task[Any] | None = None
 
     def add_provider(self, provider: MemoryProvider) -> None:
@@ -65,10 +67,7 @@ class MemoryAppendRecorder:
     def _message_hash(message: ChatMessage | dict[str, Any]) -> str:
         """Stable hash of role + content (metadata excluded to avoid churn)."""
         # Normalize: ensure we work with dict
-        if isinstance(message, ChatMessage):
-            msg_dict = message.to_dict()
-        else:
-            msg_dict = dict(message)
+        msg_dict = message.to_dict() if isinstance(message, ChatMessage) else dict(message)
         # Exclude fields that may change between saves (metadata, timestamps)
         canonical = {
             "role": msg_dict.get("role", ""),

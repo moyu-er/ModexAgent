@@ -1,245 +1,375 @@
 """Memory injection policies for LLM context assembly.
 
 Provides pluggable strategies for converting MemorySystem state into
-ContextState (system_prompt + history).
+structured context bundles.
 """
+
+from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from typing import Any
 
 from framework.core.context import ContextState
-from framework.core.types import MessageRole
-from framework.memory.compression.tool_chain import _fit_token_window
-from framework.memory.core.message import ChatMessage
-from framework.memory.core.scope import MemoryAgentRole, MemoryContext
+from framework.memory.core.models import (
+    MemoryBudget,
+    MemoryContextBundle,
+    PromptSection,
+)
+from framework.memory.core.scope import MemoryContext
+from framework.memory.core.system import InjectableMemorySystem, MemorySystem
 from framework.memory.injection.filter import (
     InjectionFilterStrategy,
-    NoopFilterStrategy,
     ToolMessageFilterStrategy,
 )
-from framework.memory.system import MemorySystem
-from framework.memory.utils import estimate_token_count
+from framework.memory.utils import estimate_text_tokens
 
 logger = logging.getLogger(__name__)
 
+__all__ = [
+    "FullInjectionPolicy",
+    "InjectionFilterStrategy",
+    "MemoryInjectionPolicy",
+    "RestrictedInjectionPolicy",
+    "ToolMessageFilterStrategy",
+]
+
 
 class MemoryInjectionPolicy(ABC):
-    """负责将 MemorySystem 各层内容映射为 LLM 可用的 ContextState。"""
+    """Convert MemorySystem state into a structured context bundle for LLM consumption."""
 
     @abstractmethod
     async def assemble(
         self,
-        memory_system: MemorySystem,
+        *,
         context: MemoryContext,
-        base_system_prompt: str = "",
-    ) -> ContextState:
-        """将 MemorySystem 的各层数据组装成 ContextState。
-
-        Args:
-            memory_system: 记忆系统实例
-            context: 记忆上下文
-            base_system_prompt: 基础系统提示词
-
-        Returns:
-            ContextState: 包含 system_prompt 和 history 的完整上下文状态
-        """
-        pass
+        memory_system: MemorySystem,
+        query: str = "",
+    ) -> MemoryContextBundle: ...
 
 
-class DefaultMemoryInjectionPolicy(MemoryInjectionPolicy):
-    """默认策略：
-    - system_prompt = base_prompt + long_term(SOUL/USER/MEMORY) + history 摘要 + provider prefetch
-    - history = short_term(已持久化历史，经 InjectionFilterStrategy 过滤)
-    - peer/subagent 仅获得 short-term，不注入中长期记忆或 provider 内容
+class RestrictedInjectionPolicy(MemoryInjectionPolicy):
+    """Peer/subagent policy — session messages only, no knowledge/archive/providers."""
+
+    def __init__(
+        self,
+        max_session_messages: int = 50,
+        filter_strategy: InjectionFilterStrategy | None = None,
+    ) -> None:
+        self._max_messages = max_session_messages
+        self._filter = filter_strategy or ToolMessageFilterStrategy()
+
+    async def assemble(
+        self,
+        *,
+        context: MemoryContext,
+        memory_system: MemorySystem,
+        query: str = "",
+    ) -> MemoryContextBundle:
+        messages = await memory_system.get_history(context, max_messages=self._max_messages)
+        filtered = self._filter.filter(list(messages))
+        return MemoryContextBundle(
+            system_sections=[],
+            messages=filtered,
+        )
+
+
+class FullInjectionPolicy(MemoryInjectionPolicy):
+    """Main agent policy — knowledge + archive + providers + session.
+
+    Injection order (deterministic, priority-ordered):
+    1. Bootstrap files: SOUL, USER → PromptSection(priority=100)
+    2. Knowledge: MEMORY.md → PromptSection(priority=90)
+    3. Archive recent: search or get_recent → PromptSection(priority=70)
+    4. Provider static blocks → PromptSection(priority=60, source="provider:{name}")
+    5. Provider prefetch → PromptSection(priority=50, source="provider:{name}")
+    6. Compression summary → PromptSection(priority=40)
+    7. Auto-compact summary → PromptSection(priority=30)
+    8. Session visible messages → messages field of bundle (after filter)
     """
 
     def __init__(
         self,
-        max_short_term_messages: int = 50,
+        *,
+        budget: MemoryBudget | None = None,
         max_history_entries: int = 5,
-        max_system_prompt_tokens: int | None = None,
-        max_total_tokens: int | None = None,
         filter_strategy: InjectionFilterStrategy | None = None,
-    ):
-        self.max_short_term_messages = max_short_term_messages
-        self.max_history_entries = max_history_entries
-        self.max_system_prompt_tokens = max_system_prompt_tokens
-        self.max_total_tokens = max_total_tokens
-        self.filter_strategy = filter_strategy or ToolMessageFilterStrategy()
-
-    @staticmethod
-    def _is_peer_or_subagent(context: MemoryContext) -> bool:
-        candidates = [context.agent_id, context.sender_agent, context.receiver_agent]
-        for value in candidates:
-            if not value:
-                continue
-            v = str(value).lower()
-            if v == MemoryAgentRole.PEER.value or v.startswith(MemoryAgentRole.PEER.value):
-                return True
-            if v == MemoryAgentRole.SUBAGENT.value or v.startswith(MemoryAgentRole.SUBAGENT.value):
-                return True
-        return False
+    ) -> None:
+        self._budget = budget or MemoryBudget()
+        self._max_history = max_history_entries
+        self._filter = filter_strategy or ToolMessageFilterStrategy()
 
     async def assemble(
         self,
-        memory_system: MemorySystem,
+        *,
         context: MemoryContext,
-        base_system_prompt: str = "",
-    ) -> ContextState:
-        # 1. 短期记忆（所有角色共享）
-        short_term_msgs = await memory_system.get_history(
-            context, max_messages=self.max_short_term_messages
-        )
-        history = self.filter_strategy.filter(list(short_term_msgs))
-
-        # peer/subagent: 只返回过滤后的短期记忆，不注入中长期/provider
-        if self._is_peer_or_subagent(context):
-            history_obj = memory_system.create_message_history(
-                context=context, initial_messages=history
+        memory_system: MemorySystem,
+        query: str = "",
+    ) -> MemoryContextBundle:
+        if not isinstance(memory_system, InjectableMemorySystem):
+            raise TypeError(
+                f"memory_system must implement InjectableMemorySystem, got {type(memory_system).__name__}"
             )
-            return ContextState(
-                system_prompt=base_system_prompt,
-                history=history_obj,
-            )
+        sections: list[PromptSection] = []
+        injectable = memory_system
 
-        # 1.1 从历史中提取最近一条 user message 作为 query
-        query = ""
-        for msg in reversed(short_term_msgs):
-            role = msg.role if isinstance(msg, ChatMessage) else msg.get("role", "")
-            if role == MessageRole.USER:
-                content = msg.content if isinstance(msg, ChatMessage) else msg.get("content", "")
-                query = content if isinstance(content, str) else str(content)
-                break
+        # 1. Knowledge (SOUL, USER, MEMORY)
+        await self._inject_knowledge(sections, context, injectable, query)
 
-        # 2. 中长期记忆系统提示词
-        memory_prompt = await memory_system.build_system_prompt(
-            context,
-            max_history_entries=self.max_history_entries,
-            query=query,
+        # 2. Archive
+        await self._inject_archive(sections, context, injectable, query)
+
+        # 3. Provider static
+        await self._inject_provider_blocks(sections, injectable)
+
+        # 4. Provider prefetch
+        await self._inject_provider_prefetch(sections, context, injectable, query)
+
+        # 5. Compression / auto-compact summaries
+        await self._inject_compression_summaries(sections, context, injectable)
+
+        # 6. Token budget trimming on sections
+        sections, dropped = self._trim_by_priority(sections)
+
+        # 7. Session messages after filter
+        session_msgs = await memory_system.get_history(
+            context, max_messages=self._budget.max_history_messages
+        )
+        filtered_msgs = self._filter.filter(list(session_msgs))
+
+        return MemoryContextBundle(
+            system_sections=sections,
+            messages=filtered_msgs,
+            dropped_sections=dropped,
         )
 
-        # 2.0 provider 静态 system prompt blocks
-        provider_blocks: list[str] = []
+    # -- injection helpers ---------------------------------------------------
+
+    async def _inject_knowledge(
+        self,
+        sections: list[PromptSection],
+        context: MemoryContext,
+        memory_system: InjectableMemorySystem,
+        query: str,
+    ) -> None:
+        try:
+            knowledge = await memory_system.retrieve_knowledge(context, query=query)
+            if knowledge.soul:
+                sections.append(PromptSection(
+                    key="knowledge:soul", content=f"## 你的沟通风格\n{knowledge.soul}",
+                    priority=100, source="system",
+                ))
+            if knowledge.user:
+                sections.append(PromptSection(
+                    key="knowledge:user", content=f"## 用户画像\n{knowledge.user}",
+                    priority=100, source="system",
+                ))
+            if knowledge.memory:
+                sections.append(PromptSection(
+                    key="knowledge:memory", content=f"## 相关知识\n{knowledge.memory}",
+                    priority=90, source="system",
+                ))
+        except Exception:
+            logger.debug("Knowledge injection skipped", exc_info=True)
+
+    async def _inject_archive(
+        self,
+        sections: list[PromptSection],
+        context: MemoryContext,
+        memory_system: InjectableMemorySystem,
+        query: str,
+    ) -> None:
+        try:
+            entries = await memory_system.get_history_entries(
+                context, limit=self._max_history, query=query
+            )
+            if entries:
+                lines = [f"- {e.get('summary', '')}" for e in entries if e.get('summary')]
+                if lines:
+                    sections.append(PromptSection(
+                        key="archive:recent",
+                        content="## 历史对话摘要\n" + "\n".join(lines),
+                        priority=70, source="system",
+                    ))
+        except Exception:
+            logger.debug("Archive injection skipped", exc_info=True)
+
+    async def _inject_provider_blocks(
+        self,
+        sections: list[PromptSection],
+        memory_system: InjectableMemorySystem,
+    ) -> None:
         for provider in memory_system.get_providers():
             try:
                 block = provider.system_prompt_block()
                 if block:
-                    provider_blocks.append(block)
-            except Exception as e:
-                logger.warning("Provider '%s' system_prompt_block failed: %s", provider.name, e)
-        if provider_blocks:
-            blocks_text = "\n\n".join(provider_blocks)
-            memory_prompt = (
-                memory_prompt + "\n\n---\n\n" + blocks_text
-                if memory_prompt
-                else blocks_text
-            )
+                    sections.append(PromptSection(
+                        key=f"provider:{provider.name}",
+                        content=block,
+                        priority=60, source=f"provider:{provider.name}",
+                    ))
+            except Exception:
+                logger.debug("Provider block failed for %s", provider.name, exc_info=True)
 
-        # 2.1 provider 动态 prefetch（统一注入入口）
-        if query:
-            prefetch_result = await memory_system.prefetch_memories(query, context)
-            if prefetch_result:
-                section = f"<memory-context>\n{prefetch_result}\n</memory-context>"
-                memory_prompt = (
-                    memory_prompt + "\n\n---\n\n" + section
-                    if memory_prompt
-                    else section
-                )
+    async def _inject_provider_prefetch(
+        self,
+        sections: list[PromptSection],
+        context: MemoryContext,
+        memory_system: InjectableMemorySystem,
+        query: str,
+    ) -> None:
+        if not query:
+            return
+        try:
+            prefetch = await memory_system.prefetch_memories(query, context)
+            if prefetch:
+                sections.append(PromptSection(
+                    key="provider:prefetch",
+                    content=f"<memory-context>\n{prefetch}\n</memory-context>",
+                    priority=50, source="provider:prefetch",
+                ))
+        except Exception:
+            logger.debug("Provider prefetch failed", exc_info=True)
 
-        # 2.2 短期记忆压缩摘要
-        compression_summary = await memory_system.get_compression_summary(context)
-        if compression_summary:
-            section = f"[Earlier conversation compressed] {compression_summary}"
-            memory_prompt = (
-                section + "\n\n---\n\n" + memory_prompt
-                if memory_prompt
-                else section
-            )
+    async def _inject_compression_summaries(
+        self,
+        sections: list[PromptSection],
+        context: MemoryContext,
+        memory_system: InjectableMemorySystem,
+    ) -> None:
+        try:
+            summary = await memory_system.get_compression_summary(context)
+            if summary:
+                sections.append(PromptSection(
+                    key="session:compression",
+                    content=f"[Earlier conversation compressed] {summary}",
+                    priority=40, source="system",
+                ))
+        except Exception:
+            pass
+        try:
+            auto = await memory_system.get_auto_compact_summary(context)
+            if auto:
+                sections.append(PromptSection(
+                    key="session:auto_compact",
+                    content=f"[Auto-compact summary] {auto}",
+                    priority=30, source="system",
+                ))
+        except Exception:
+            pass
 
-        # 2.3 AutoCompact 空闲压缩摘要
-        auto_compact_summary = await memory_system.get_auto_compact_summary(context)
-        if auto_compact_summary:
-            section = f"[Auto-compact summary] {auto_compact_summary}"
-            memory_prompt = (
-                section + "\n\n---\n\n" + memory_prompt
-                if memory_prompt
-                else section
-            )
+    def _trim_by_priority(
+        self, sections: list[PromptSection]
+    ) -> tuple[list[PromptSection], list[dict[str, Any]]]:
+        """Sort by priority descending and optionally trim to token budget.
 
-        # 3. Token 预算控制
-        if self.max_total_tokens is not None:
-            base_tokens = estimate_token_count(
-                [ChatMessage(role=MessageRole.SYSTEM, content=base_system_prompt)]
-            )
-            memory_tokens = estimate_token_count(
-                [ChatMessage(role=MessageRole.SYSTEM, content=memory_prompt)]
-            )
-            available_for_history = self.max_total_tokens - base_tokens - memory_tokens
-            available_for_history = max(available_for_history, 0)
+        If ``self._budget.max_system_prompt_tokens`` is set, sections are
+        dropped from lowest priority until the total is under budget.
+        Dropped sections are returned for diagnostics.
+        """
+        sorted_sections = sorted(sections, key=lambda s: s.priority, reverse=True)
+        dropped: list[dict[str, Any]] = []
+        max_tokens = self._budget.max_system_prompt_tokens
+        if max_tokens is None or max_tokens <= 0:
+            return sorted_sections, dropped
 
-            history_dicts = [m.to_dict() for m in history]
-            history_tokens = estimate_token_count(history_dicts)
-            if history_tokens > available_for_history and len(history) > 2:
-                history, _ = _fit_token_window(history, available_for_history)
+        # Calculate per-section token estimates
+        section_tokens: list[tuple[PromptSection, int]] = []
+        for sec in sorted_sections:
+            section_tokens.append((sec, estimate_text_tokens(sec.content)))
 
-        if self.max_system_prompt_tokens is not None:
-            combined_system = "\n\n---\n\n".join(
-                [p for p in [base_system_prompt, memory_prompt] if p]
-            )
-            while True:
-                if not memory_prompt:
-                    break
-                tokens = estimate_token_count(
-                    [ChatMessage(role=MessageRole.SYSTEM, content=combined_system)]
-                )
-                if tokens <= self.max_system_prompt_tokens:
-                    break
-                trimmed = self._trim_memory_prompt_section(memory_prompt)
-                if trimmed == memory_prompt:
-                    break
-                memory_prompt = trimmed
-                combined_system = "\n\n---\n\n".join(
-                    [p for p in [base_system_prompt, memory_prompt] if p]
-                )
+        total = sum(st for _, st in section_tokens)
+        if total <= max_tokens:
+            return sorted_sections, dropped
 
-        parts = []
-        if base_system_prompt:
-            parts.append(base_system_prompt)
-        if memory_prompt:
-            parts.append(memory_prompt)
-        system_prompt = "\n\n---\n\n".join(parts) if parts else ""
-
-        history_obj = memory_system.create_message_history(
-            context=context,
-            initial_messages=history,
-        )
-        return ContextState(
-            system_prompt=system_prompt,
-            history=history_obj,
-        )
+        # Drop from lowest priority until under budget
+        kept: list[PromptSection] = []
+        running = 0
+        for sec, tokens in section_tokens:
+            if running + tokens <= max_tokens:
+                kept.append(sec)
+                running += tokens
+            else:
+                # Try paragraph-level trim before dropping entirely
+                trimmed = self._trim_section_by_paragraphs(sec, max_tokens - running)
+                if trimmed:
+                    kept.append(trimmed)
+                    running += estimate_text_tokens(trimmed.content)
+                    if trimmed.content != sec.content:
+                        dropped.append({
+                            "section_key": sec.key,
+                            "source": sec.source,
+                            "priority": sec.priority,
+                            "estimated_size": tokens,
+                            "trim_reason": "paragraph_trim",
+                        })
+                else:
+                    dropped.append({
+                        "section_key": sec.key,
+                        "source": sec.source,
+                        "priority": sec.priority,
+                        "estimated_size": tokens,
+                        "trim_reason": "budget_drop",
+                    })
+        return kept, dropped
 
     @staticmethod
-    def _trim_memory_prompt_section(memory_prompt: str) -> str:
-        """移除 memory_prompt 中最后一个 Markdown section（优先移除历史摘要）。"""
-        if not memory_prompt:
-            return memory_prompt
-        sections = memory_prompt.split("\n\n---\n\n")
-        if len(sections) <= 1:
-            return memory_prompt
-        # 优先移除 "近期对话摘要" section
-        for i in range(len(sections) - 1, -1, -1):
-            if "近期对话摘要" in sections[i]:
-                sections.pop(i)
-                return "\n\n---\n\n".join(sections)
-        # 否则移除最后一个 section
-        sections.pop()
-        return "\n\n---\n\n".join(sections)
+    def _trim_section_by_paragraphs(
+        section: PromptSection, max_chars: int
+    ) -> PromptSection | None:
+        """Trim a single section by dropping paragraphs from the end.
+
+        Always keeps the first paragraph. Returns None if the first paragraph
+        alone exceeds the limit.
+        """
+        if len(section.content) <= max_chars:
+            return section
+        paragraphs = section.content.split("\n\n")
+        if not paragraphs:
+            return None
+        kept = [paragraphs[0]]
+        for para in paragraphs[1:]:
+            candidate = "\n\n".join(kept + [para])
+            if len(candidate) <= max_chars:
+                kept.append(para)
+            else:
+                break
+        if not kept:
+            return None
+        trimmed_content = "\n\n".join(kept)
+        if trimmed_content == section.content:
+            return section
+        return PromptSection(
+            key=section.key,
+            content=trimmed_content,
+            priority=section.priority,
+            source=section.source,
+            metadata=dict(section.metadata),
+        )
 
 
-__all__ = [
-    "DefaultMemoryInjectionPolicy",
-    "MemoryInjectionPolicy",
-    "InjectionFilterStrategy",
-    "NoopFilterStrategy",
-    "ToolMessageFilterStrategy",
-]
+# -- context manager bridge ---------------------------------------------------
+
+
+def bundle_to_context_state(
+    bundle: MemoryContextBundle,
+    memory_system: MemorySystem,
+    context: MemoryContext,
+    base_system_prompt: str = "",
+) -> ContextState:
+    """Convert a MemoryContextBundle into the framework ContextState.
+
+    Used by MemorySystemContextManager as a bridge.
+    """
+    parts: list[str] = []
+    if base_system_prompt:
+        parts.append(base_system_prompt)
+    for section in bundle.system_sections:
+        parts.append(section.content)
+    system_prompt = "\n\n---\n\n".join(parts) if parts else ""
+
+    history = memory_system.create_message_history(
+        context=context,
+        initial_messages=bundle.messages,
+    )
+    return ContextState(system_prompt=system_prompt, history=history)

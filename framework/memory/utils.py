@@ -39,11 +39,11 @@ def strip_runtime_prefixes(
     return cleaned
 
 
-def _estimate_text_tokens(text: str) -> int:
-    """更精确的逐字符 token 估算。
+def estimate_text_tokens(text: str) -> int:
+    """Estimate token count for a plain text string.
 
-    - ASCII 字符（英文、数字、标点）：按 1 token / 4 chars
-    - 非 ASCII（主要是 CJK 中文等）：按 1 token / char（保守估算）
+    - ASCII characters: 1 token / 4 chars
+    - Non-ASCII (CJK, etc.): 1 token / char (conservative)
     """
     ascii_chars = sum(1 for c in text if ord(c) < 128)
     non_ascii_chars = len(text) - ascii_chars
@@ -64,8 +64,8 @@ def estimate_token_count(messages: Sequence[ChatMessage | dict[str, Any]]) -> in
             raw_content = msg.get("content") or ""
             tool_calls = msg.get("tool_calls")
         content = raw_content if isinstance(raw_content, str) else str(raw_content)
-        total += _estimate_text_tokens(content)
+        total += estimate_text_tokens(content)
         if tool_calls:
             for tc in tool_calls:
-                total += _estimate_text_tokens(str(tc))
+                total += estimate_text_tokens(str(tc))
     return total + len(messages) * 2

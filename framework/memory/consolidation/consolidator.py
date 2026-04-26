@@ -1,29 +1,28 @@
 """Online Consolidator — token-budget triggered summarization with runtime prefix stripping."""
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from framework.core.provider import LLMProvider
 from framework.core.types import LLMResponse
+from framework.memory.compression.policies import SummaryStrategy
 from framework.memory.compression.semantic_filter import SemanticMessageFilter
 from framework.memory.compression.strategy import MessageFilterStrategy
 from framework.memory.compression.tool_chain import _find_safe_truncation_count
-from framework.memory.core.compression import (
-    CompressionContext,
-    CompressionResult,
-    CompressionStrategy,
-)
+from framework.memory.core.models import CompressionReason
+from framework.memory.core.scope import MemoryContext
 from framework.memory.utils import strip_runtime_prefixes
 
 logger = logging.getLogger(__name__)
 
 
-class Consolidator(CompressionStrategy):
+class Consolidator(SummaryStrategy):
     """在线 Consolidator：将过期的短期记忆消息压缩为摘要。
 
     特点：
     - 在调用 LLM 之前自动剥离 [Runtime Context] 前缀
-    - 可作为 ShortTermMemoryManager 的 compression_strategy 使用
+    - 可作为 MemoryCompressionCoordinator 的 summary strategy 使用
     - LLM 失败时回退到简单摘要（不阻塞流程）
     """
 
@@ -56,26 +55,27 @@ If the conversation is empty or trivial, output: (no summary)"""
         """剥离消息内容中的 [Runtime Context] 前缀（委托给共享工具函数）。"""
         return strip_runtime_prefixes(messages)
 
-    async def compress(
+    async def summarize(
         self,
-        messages: list[dict[str, Any]],
-        context: CompressionContext,
-    ) -> CompressionResult:
+        messages: Sequence[dict[str, Any]],
+        context: MemoryContext,
+        reason: CompressionReason,
+    ) -> str:
         """生成对话摘要。
 
         只压缩较旧的前半部分消息，保留最近的消息不动。
         如果没有配置 LLM provider，则回退到基于消息角色的简单摘要。
         """
-        _ = context  # 保留参数以兼容基类签名
-        if not messages:
-            return CompressionResult(summary="", pruned_messages=[])
+        _ = context, reason
+        dict_messages = list(messages)
+        if not dict_messages:
+            return ""
 
         # 保留最近的一半消息（至少保留 1 条），压缩较旧的部分
         # 使用 tool-chain 感知的安全分割，避免在 tool_call/tool_result 链中间切断
-        split_point = max(1, len(messages) // 2)
-        safe_split = _find_safe_truncation_count(messages, split_point)
-        to_compress = messages[:safe_split]
-        to_keep = messages[safe_split:]
+        split_point = max(1, len(dict_messages) // 2)
+        safe_split = _find_safe_truncation_count(dict_messages, split_point)
+        to_compress = dict_messages[:safe_split]
 
         cleaned = self.strip_runtime_prefixes(to_compress)
 
@@ -84,33 +84,18 @@ If the conversation is empty or trivial, output: (no summary)"""
             sanitized = self.filter_strategy.sanitize(cleaned)
 
         if not sanitized:
-            return CompressionResult(
-                summary="",
-                pruned_messages=to_compress,
-                remaining_messages=to_keep,
-                importance=0.0,
-            )
+            return ""
 
         if self.llm is not None:
             try:
                 summary = await self._summarize_with_llm(sanitized)
-                return CompressionResult(
-                    summary=f"[Consolidator] {summary}",
-                    pruned_messages=to_compress,
-                    remaining_messages=to_keep,
-                    importance=0.6,
-                )
+                return f"[Consolidator] {summary}"
             except Exception as e:
-                logger.warning(f"Consolidator LLM summarization failed: {e}")
+                logger.warning("Consolidator LLM summarization failed: %s", e)
 
         # Fallback: simple heuristic summary
         summary = self._fallback_summary(sanitized)
-        return CompressionResult(
-            summary=f"[Consolidator] {summary}",
-            pruned_messages=to_compress,
-            remaining_messages=to_keep,
-            importance=0.5,
-        )
+        return f"[Consolidator] {summary}"
 
     async def _summarize_with_llm(self, messages: list[dict[str, Any]]) -> str:
         """调用 LLM 生成摘要。"""

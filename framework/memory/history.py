@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
 from typing import TYPE_CHECKING, Any
 
-from framework.memory.core.scope import MemoryContext
+from framework.memory.core.layers import SessionMemoryManager
 from framework.memory.core.message import ChatMessage
-from framework.memory.managers.short_term import ShortTermMemoryManager
+from framework.memory.core.scope import MemoryContext
 
 if TYPE_CHECKING:
     from framework.memory.recorder import MemoryAppendRecorder
@@ -64,16 +65,16 @@ class MessageHistory(ABC):
 
 
 class ShortTermMessageHistory(MessageHistory):
-    """Live proxy over ShortTermMemoryManager and MemoryContext.
+    """Live proxy over SessionMemoryManager and MemoryContext.
 
-    Writes directly to short-term memory on append/extend and reads
+    Writes directly to session memory on append/extend and reads
     from it on to_list(). Maintains a short-lived cache protected by
     asyncio.Lock using storage-first lock ordering.
     """
 
     def __init__(
         self,
-        manager: ShortTermMemoryManager,
+        manager: SessionMemoryManager,
         context: MemoryContext,
         initial_messages: Sequence[ChatMessage | dict[str, Any]] | None = None,
         recorder: MemoryAppendRecorder | None = None,
@@ -86,7 +87,7 @@ class ShortTermMessageHistory(MessageHistory):
 
     async def append(self, message: ChatMessage | dict[str, Any]) -> None:
         """Append a single message via STM and invalidate cache."""
-        await self._manager.add_message(self._context, message)
+        await self._manager.add_messages(self._context, [message])
         if self._recorder is not None:
             await self._recorder.record([message], self._context)
         async with self._cache_lock:
@@ -110,14 +111,14 @@ class ShortTermMessageHistory(MessageHistory):
         async with self._cache_lock:
             if self._cache is not None:
                 return list(self._cache)
-        stm_messages = await self._manager.get_messages(self._context)
+        stm_messages = await self._manager.get_visible_messages(self._context)
         async with self._cache_lock:
             self._cache = list(stm_messages)
         return list(stm_messages)
 
     async def clear(self) -> None:
         """清空短期记忆中的所有消息。"""
-        await self._manager.clear_messages(self._context)
+        await self._manager.clear(self._context)
         async with self._cache_lock:
             self._cache = None
 
@@ -125,9 +126,8 @@ class ShortTermMessageHistory(MessageHistory):
         self, messages: Sequence[ChatMessage | dict[str, Any]], *, skip_transform: bool = False
     ) -> None:
         """通过 Manager 接口原子替换，触发 transformer 和跟踪。"""
-        await self._manager.replace_all_messages(
-            self._context, list(messages), skip_transform=skip_transform
-        )
+        _ = skip_transform
+        await self._manager.replace_messages(self._context, list(messages))
         async with self._cache_lock:
             self._cache = None
 
@@ -249,10 +249,8 @@ async def inject_attachments_to_history(
 
     # 如果 history 支持原子 replace，用 ChatMessage 写回存储
     if isinstance(history, MessageHistory):
-        try:
+        with contextlib.suppress(NotImplementedError):
             await history.replace_all(history_list)
-        except NotImplementedError:
-            pass
 
     return history_list
 

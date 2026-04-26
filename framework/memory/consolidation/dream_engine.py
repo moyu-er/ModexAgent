@@ -11,15 +11,16 @@ from framework.memory.core.consolidation import (
     ConsolidationResult,
     MemoryUpdate,
 )
+from framework.memory.core.layers import ArchiveMemoryManager, KnowledgeMemoryManager
 from framework.memory.core.message import ChatMessage
+from framework.memory.core.models import ArchiveEntry
 from framework.memory.core.scope import (
     MemoryAgentRole,
     MemoryContext,
     MemoryLayerName,
 )
 from framework.memory.core.storage import MemoryStorage
-from framework.memory.managers.history import HistoryArchiveManager
-from framework.memory.managers.long_term import LongTermMemoryManager
+from framework.memory.registry.base import MemoryStoreRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -85,18 +86,21 @@ class DreamEngine(ConsolidationEngine):
     Phase 2: 使用 LLM 生成具体的 MemoryUpdate 指令并应用到长期记忆
 
     特点：
-    - cursor 始终前进，防止无限重试
+    - cursor 仅在 consolidation 成功时前进，失败可重试
     - LLM 失败时返回空更新，不阻塞后续处理
     """
 
     def __init__(
         self,
         llm_provider: LLMProvider,
-        history_manager: HistoryArchiveManager,
-        long_term_manager: LongTermMemoryManager,
+        history_manager: ArchiveMemoryManager,
+        long_term_manager: KnowledgeMemoryManager,
         max_batch_size: int = 20,
         max_iterations: int = 10,
         storage: MemoryStorage | None = None,
+        registry: MemoryStoreRegistry | None = None,
+        schedule_mode: str = "manual",
+        idle_threshold_entries: int = 5,
     ):
         self.llm = llm_provider
         self.history_manager = history_manager
@@ -104,6 +108,9 @@ class DreamEngine(ConsolidationEngine):
         self.max_batch_size = max_batch_size
         self.max_iterations = max_iterations
         self.storage = storage
+        self.registry = registry
+        self.schedule_mode = schedule_mode
+        self.idle_threshold_entries = idle_threshold_entries
 
     async def run(self, context: MemoryContext) -> bool:
         """处理未处理的历史条目。
@@ -111,18 +118,19 @@ class DreamEngine(ConsolidationEngine):
         Returns:
             如果实际处理了条目则返回 True，否则返回 False
         """
-        new_cursor, entries = await self.history_manager.get_unprocessed(
+        unprocessed = await self.history_manager.get_unprocessed(
             context, cursor_name="dream"
         )
+        entries = unprocessed.entries
         if not entries:
             return False
 
         batch = entries[: self.max_batch_size]
+        batch_payload = [self._archive_entry_to_dict(entry) for entry in batch]
         logger.debug(
-            "DreamEngine: processing %s entries (cursor %s → %s)",
+            "DreamEngine: processing %s entries (cursor %s)",
             len(batch),
-            new_cursor - len(batch),  # approximate
-            batch[-1].get("cursor", new_cursor),
+            unprocessed.cursor,
         )
 
         # Gather existing memories for context
@@ -136,7 +144,7 @@ class DreamEngine(ConsolidationEngine):
 
         result = await self.consolidate(
             scope_key="",
-            new_entries=batch,
+            new_entries=batch_payload,
             existing_memories=existing_memories,
         )
 
@@ -149,12 +157,18 @@ class DreamEngine(ConsolidationEngine):
             if applied:
                 logger.debug("DreamEngine applied %s updates", applied)
 
-        # Cursor always advances
-        final_cursor = max(e.get("cursor", 0) for e in batch)
-        await self.history_manager.commit_cursor(context, "dream", final_cursor)
-        logger.debug("DreamEngine cursor advanced to %s", final_cursor)
+        # Cursor advances only on successful consolidation
+        if result.success:
+            final_cursor = max((e.entry_id or 0 for e in batch), default=unprocessed.cursor)
+            await self.history_manager.commit_cursor(context, "dream", final_cursor)
+            logger.debug("DreamEngine cursor advanced to %s", final_cursor)
+        else:
+            logger.debug(
+                "DreamEngine cursor not advanced (consolidation failed: %s)",
+                result.reasoning,
+            )
 
-        return True
+        return result.success
 
     async def scan_all(self) -> list[MemoryContext]:
         """扫描 history 层 scope records，返回处理过的 MemoryContext 列表。
@@ -163,12 +177,12 @@ class DreamEngine(ConsolidationEngine):
         每个 scope 调用 run() 处理未处理的 history 条目。
         """
         processed: list[MemoryContext] = []
-        if self.storage is None:
-            logger.warning("DreamEngine.scan_all skipped: no storage configured")
+        if self.registry is None:
+            logger.warning("DreamEngine.scan_all skipped: no registry configured")
             return processed
 
-        records = await self.storage.list_scope_records(
-            layer=MemoryLayerName.HISTORY,
+        records = await self.registry.list_records(
+            layer=MemoryLayerName.ARCHIVE,
             has_file="history",
             agent_roles={MemoryAgentRole.MAIN},
         )
@@ -189,7 +203,7 @@ class DreamEngine(ConsolidationEngine):
     async def consolidate(
         self,
         scope_key: str,
-        new_entries: list[ChatMessage | dict[str, Any]],
+        new_entries: list[dict[str, Any]],
         existing_memories: dict[str, str],
     ) -> ConsolidationResult:
         """整合新历史条目到长期记忆。"""
@@ -267,6 +281,16 @@ class DreamEngine(ConsolidationEngine):
                 result.memory_updates.append(update)
 
         return result
+
+    @staticmethod
+    def _archive_entry_to_dict(entry: ArchiveEntry) -> dict[str, Any]:
+        return {
+            "entry_id": entry.entry_id,
+            "summary": entry.summary,
+            "metadata": dict(entry.metadata),
+            "created_at": entry.created_at.isoformat() if entry.created_at else None,
+            "raw_refs": list(entry.raw_refs),
+        }
 
     @staticmethod
     def _parse_updates(response: Any) -> list[MemoryUpdate]:

@@ -8,13 +8,12 @@ import json
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from dataclasses import dataclass, field
 from typing import Any
 
 from framework.memory.compression.semantic_filter import SemanticMessageFilter
 from framework.memory.compression.strategy import MessageFilterStrategy
-from framework.memory.core.compression import CompressionResult
 from framework.memory.core.message import ChatMessage
+from framework.memory.core.models import ArchiveEntry
 from framework.memory.core.scope import MemoryContext
 from framework.memory.utils import strip_runtime_prefixes
 
@@ -40,18 +39,6 @@ def _raw_archive_summary(messages: Sequence[ChatMessage | dict[str, Any]]) -> st
     return json.dumps(sanitized, ensure_ascii=False)
 
 
-@dataclass
-class ArchiveEntry:
-    """结构化归档条目。
-
-    相比原始字符串摘要，ArchiveEntry 提供了摘要文本和可搜索的元数据，
-    便于未来的 RAG、DreamEngine 等组件进行基于 key 的检索。
-    """
-
-    summary: str
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
 class ArchiveStrategy(ABC):
     """负责将被裁剪的短期记忆消息持久化为历史摘要。"""
 
@@ -60,7 +47,7 @@ class ArchiveStrategy(ABC):
         self,
         context: MemoryContext,
         pruned_messages: Sequence[ChatMessage | dict[str, Any]],
-        compression_result: CompressionResult,
+        summary: str,
         history_manager: Any,
     ) -> None:
         """归档被裁剪的消息。
@@ -68,8 +55,8 @@ class ArchiveStrategy(ABC):
         Args:
             context: 记忆上下文
             pruned_messages: 被裁剪掉的消息列表
-            compression_result: 压缩策略返回的结果（可能包含 summary）
-            history_manager: HistoryArchiveManager 实例
+            summary: 压缩生成的摘要文本
+            history_manager: ArchiveMemoryManager 实例
         """
         pass
 
@@ -81,22 +68,31 @@ class PreserveSummaryArchiveStrategy(ArchiveStrategy):
         self,
         context: MemoryContext,
         pruned_messages: Sequence[ChatMessage | dict[str, Any]],
-        compression_result: CompressionResult,
+        summary: str,
         history_manager: Any,
     ) -> None:
-        summary = compression_result.summary
         if summary:
             await history_manager.append(
                 context,
-                summary,
-                {"pruned_count": len(pruned_messages), "source": "compression_summary"},
+                ArchiveEntry(
+                    summary=summary,
+                    metadata={
+                        "pruned_count": len(pruned_messages),
+                        "source": "compression_summary",
+                    },
+                ),
             )
         else:
             raw = _raw_archive_summary(pruned_messages)
             await history_manager.append(
                 context,
-                raw,
-                {"pruned_count": len(pruned_messages), "source": "raw_dump_fallback"},
+                ArchiveEntry(
+                    summary=raw,
+                    metadata={
+                        "pruned_count": len(pruned_messages),
+                        "source": "raw_dump_fallback",
+                    },
+                ),
             )
 
 
@@ -107,15 +103,17 @@ class RawDumpArchiveStrategy(ArchiveStrategy):
         self,
         context: MemoryContext,
         pruned_messages: Sequence[ChatMessage | dict[str, Any]],
-        compression_result: CompressionResult,
+        summary: str,
         history_manager: Any,
     ) -> None:
-        _ = compression_result  # intentionally unused: raw dump ignores LLM summary
+        _ = summary  # intentionally unused: raw dump ignores LLM summary
         raw = _raw_archive_summary(pruned_messages)
         await history_manager.append(
             context,
-            raw,
-            {"pruned_count": len(pruned_messages), "source": "raw_dump"},
+            ArchiveEntry(
+                summary=raw,
+                metadata={"pruned_count": len(pruned_messages), "source": "raw_dump"},
+            ),
         )
 
 
@@ -135,27 +133,29 @@ class SemanticArchiveStrategy(ArchiveStrategy):
         self,
         context: MemoryContext,
         pruned_messages: Sequence[ChatMessage | dict[str, Any]],
-        compression_result: CompressionResult,
+        summary: str,
         history_manager: Any,
     ) -> None:
-        entry = self._build_entry(pruned_messages, compression_result)
+        entry = self._build_entry(pruned_messages, summary)
         await history_manager.append(
             context,
-            entry.summary,
-            {
-                **entry.metadata,
-                "pruned_count": len(pruned_messages),
-            },
+            ArchiveEntry(
+                summary=entry.summary,
+                metadata={
+                    **entry.metadata,
+                    "pruned_count": len(pruned_messages),
+                },
+            ),
         )
 
     def _build_entry(
         self,
         pruned_messages: Sequence[ChatMessage | dict[str, Any]],
-        compression_result: CompressionResult,
+        summary: str,
     ) -> ArchiveEntry:
-        if compression_result.summary:
+        if summary:
             return ArchiveEntry(
-                summary=compression_result.summary,
+                summary=summary,
                 metadata={
                     "source": "compression_summary",
                     "semantic_count": len(pruned_messages),
@@ -167,9 +167,9 @@ class SemanticArchiveStrategy(ArchiveStrategy):
         ]
         sanitized = self.filter_strategy.sanitize(dict_messages)
         if sanitized:
-            summary = self._heuristic_summary(sanitized)
+            summary_text = self._heuristic_summary(sanitized)
             return ArchiveEntry(
-                summary=summary,
+                summary=summary_text,
                 metadata={
                     "source": "sanitized_fallback",
                     "semantic_count": len(sanitized),

@@ -6,20 +6,20 @@
 使用方式：
     from framework.memory.content_transform import Base64SanitizeTransformer
 
-    main_layers = MemorySystem.default_single_user_layers(...)
-    main_layers["short_term"].content_transformer = Base64SanitizeTransformer()
+    from framework.memory.layers.config import SessionMemoryConfig
+    config = SessionMemoryConfig(content_transformer=Base64SanitizeTransformer())
 """
 
 from __future__ import annotations
 
 import copy
 import logging
+import mimetypes
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-import mimetypes
 from pathlib import Path
 from typing import Any
 
@@ -86,7 +86,7 @@ class MediaInfo:
         return {
             _K.TYPE: self.media_type,
             _K.PATH: self.path,
-            _K.MIME: self.mime,  # type: ignore[name-defined]
+            _K.MIME: self.mime,
             _K.PLACEHOLDER: self.placeholder,
         }
 
@@ -97,7 +97,11 @@ class MediaInfo:
 
 def _get_block_url(block: dict[str, Any], block_type: BlockType) -> str:
     """从 block 中提取 URL。"""
-    return block.get(str(block_type), {}).get(_K.URL, "")
+    inner = block.get(str(block_type), {})
+    if not isinstance(inner, dict):
+        return ""
+    value = inner.get(_K.URL, "")
+    return str(value) if value is not None else ""
 
 
 def _get_block_data(block: dict[str, Any], block_type: BlockType) -> tuple[str, str]:
@@ -140,7 +144,11 @@ def _get_block_data(block: dict[str, Any], block_type: BlockType) -> tuple[str, 
 
 def _get_meta_path(block: dict[str, Any]) -> str:
     """从 block._meta 中提取 path。"""
-    return (block.get(_K.META) or {}).get(_K.PATH, "")
+    meta = block.get(_K.META) or {}
+    if not isinstance(meta, dict):
+        return ""
+    value = meta.get(_K.PATH, "")
+    return str(value) if value is not None else ""
 
 
 def _extract_mime_from_data_url(url: str) -> str:
@@ -161,7 +169,7 @@ class ContentTransformer(ABC):
     """多媒体内容转换器基类。
 
     框架层接口。业务模块可继承实现自定义转换逻辑。
-    ShortTermMemoryManager 在写入存储前调用此接口。
+    SessionMemoryManager 在写入存储前调用此接口。
     """
 
     @abstractmethod
