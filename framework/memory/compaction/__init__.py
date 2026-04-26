@@ -1,13 +1,11 @@
-"""Compaction pipeline: unified message policy + boundary + summary + archive."""
+"""Compaction pipeline: unified message policy + boundary + summary + archive.
+
+NOTE: MemoryCompactionPipeline has been removed.  The compaction workflow is
+unified under MemoryCompressionCoordinator.  Policy and boundary abstractions
+remain available for custom coordinator configurations.
+"""
 
 from framework.memory.compaction.boundary import BoundaryPolicy, ToolChainBoundaryPolicy
-from framework.memory.compaction.pipeline import (
-    ConsolidatorSummaryStrategy,
-    HeuristicSummaryStrategy,
-    MemoryCompactionPipeline,
-    MemoryCompactionResult,
-    SummaryStrategy,
-)
 from framework.memory.compaction.policy import (
     ConservativeCompactionPolicy,
     KeepAllCompactionPolicy,
@@ -19,14 +17,9 @@ from framework.memory.compaction.policy import (
 __all__ = [
     "BoundaryPolicy",
     "ConservativeCompactionPolicy",
-    "ConsolidatorSummaryStrategy",
-    "HeuristicSummaryStrategy",
     "KeepAllCompactionPolicy",
     "MessageCompactionDecision",
     "MessageCompactionPolicy",
-    "MemoryCompactionPipeline",
-    "MemoryCompactionResult",
     "SemanticToolCompactionPolicy",
-    "SummaryStrategy",
     "ToolChainBoundaryPolicy",
 ]

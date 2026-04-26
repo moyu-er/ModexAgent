@@ -103,8 +103,7 @@ class ToolChainRepairGovernance(ContextGovernance):
             return cleaned
 
         updated = list(cleaned)
-        offset = 0
-        for assistant_idx, call_id, name in missing:
+        for offset, (assistant_idx, call_id, name) in enumerate(missing):
             insert_at = assistant_idx + 1 + offset
             while insert_at < len(updated) and updated[insert_at].get("role") == str(MessageRole.TOOL):
                 insert_at += 1
@@ -117,7 +116,6 @@ class ToolChainRepairGovernance(ContextGovernance):
                     "content": self._BACKFILL_CONTENT,
                 },
             )
-            offset += 1
         return updated
 
 

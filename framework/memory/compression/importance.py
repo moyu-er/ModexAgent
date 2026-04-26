@@ -1,9 +1,36 @@
 """Heuristic importance scorer for short-term memory compression."""
 
+from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from typing import Any
 
-from framework.memory.core.compression import ImportanceScorer
 from framework.memory.core.message import ChatMessage
+
+
+class ImportanceScorer(ABC):
+    """消息重要性评分抽象基类。
+
+    用于为未来基于重要性的记忆压缩提供可插拔的评分策略。
+    """
+
+    @abstractmethod
+    def score(self, message: ChatMessage | dict[str, Any]) -> float:
+        """计算单条消息的重要性得分。
+
+        Args:
+            message: 待评分的消息
+
+        Returns:
+            float: 0.0~1.0 的重要性得分，越高表示越重要
+        """
+        pass
+
+    def score_batch(self, messages: Sequence[ChatMessage | dict[str, Any]]) -> list[float]:
+        """批量评分消息列表。
+
+        子类可覆盖此方法以提供性能优化实现。
+        """
+        return [self.score(m) for m in messages]
 
 
 def _msg_to_dict(msg: ChatMessage | dict[str, Any]) -> dict[str, Any]:
@@ -43,31 +70,37 @@ class HeuristicImportanceScorer(ImportanceScorer):
     def score(self, message: ChatMessage | dict[str, Any]) -> float:
         msg = _msg_to_dict(message)
         role = msg.get("role", "")
-        content = msg.get("content") or ""
-        content_lower = content.strip().lower()
+        content = (msg.get("content") or "").strip().lower()
 
+        # System message: highest priority
         if role == "system":
             return 1.0
 
+        # Assistant with tool_calls: critical for tool chain
         if role == "assistant" and msg.get("tool_calls"):
             return 0.9
 
-        # 对任意角色，如果内容极短且匹配常见填充词，降低重要性
-        if len(content_lower) <= 20 and content_lower in self._LOW_VALUE_FILLERS:
-            return 0.2
-
+        # Tool result message
         if role == "tool":
             return 0.5
 
+        # User message: base + modifiers
         if role == "user":
-            base = 0.6
+            if content in self._LOW_VALUE_FILLERS:
+                return 0.2
+            score = 0.6
             if "?" in content or "？" in content:
-                base += 0.1
+                score += 0.15
             if len(content) > 50:
-                base += 0.1
+                score += 0.05
             if len(content) > 200:
-                base += 0.05
-            return min(base, 0.85)
+                score += 0.05
+            return min(score, 0.85)
 
-        # 默认中等重要性
-        return 0.5
+        # Assistant plain message (no tool_calls)
+        if role == "assistant":
+            if content in self._LOW_VALUE_FILLERS:
+                return 0.2
+            return 0.55
+
+        return 0.3

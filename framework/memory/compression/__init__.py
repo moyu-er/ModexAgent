@@ -2,7 +2,7 @@
 
 Legacy compression strategies (TruncationStrategy, TokenWindowStrategy,
 HybridCompressionStrategy, ToolChainAwareStrategy) have been removed.
-Use MemoryCompactionPipeline instead.
+The compaction workflow is unified under MemoryCompressionCoordinator.
 """
 
 from .importance import HeuristicImportanceScorer

@@ -40,8 +40,8 @@ class MessageFilterStrategy(ABC):
 
     @abstractmethod
     def sanitize(
-        self, messages: list[dict], *, collapse_orphan_chains: bool = True
-    ) -> list[dict]:
+        self, messages: list[dict[str, Any]], *, collapse_orphan_chains: bool = True
+    ) -> list[dict[str, Any]]:
         """清洗消息列表。
 
         移除 LOW 价值消息，保留 HIGH/MEDIUM 消息，

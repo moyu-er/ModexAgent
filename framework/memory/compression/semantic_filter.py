@@ -46,8 +46,8 @@ class SemanticMessageFilter(MessageFilterStrategy):
         return MessageSemanticValue.LOW
 
     def sanitize(
-        self, messages: list[dict], *, collapse_orphan_chains: bool = True
-    ) -> list[dict]:
+        self, messages: list[dict[str, Any]], *, collapse_orphan_chains: bool = True
+    ) -> list[dict[str, Any]]:
         values = [self.classify(m) for m in messages]
         keep = [False] * len(messages)
 
@@ -93,7 +93,7 @@ class SemanticMessageFilter(MessageFilterStrategy):
                 i += 1
 
         # 3. 构建 sanitized 列表，折叠或丢弃孤儿链
-        sanitized: list[dict] = []
+        sanitized: list[dict[str, Any]] = []
         i = 0
         while i < len(messages):
             if values[i] == MessageSemanticValue.DERIVED and not keep[i]:
@@ -139,7 +139,7 @@ class SemanticMessageFilter(MessageFilterStrategy):
                     if tc.get("id"):
                         valid_call_ids.add(tc["id"])
 
-        final: list[dict] = []
+        final: list[dict[str, Any]] = []
         for m in sanitized:
             if m.get("role") == "tool" and m.get("tool_call_id") not in valid_call_ids:
                 continue

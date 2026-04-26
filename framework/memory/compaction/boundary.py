@@ -5,9 +5,9 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import Any
 
+from framework.memory.compaction.policy import MessageCompactionDecision
 from framework.memory.compression.tool_chain import _find_tool_chain, _is_tool_call
 from framework.memory.core.message import ChatMessage
-from framework.memory.compaction.policy import MessageCompactionDecision
 
 
 class BoundaryPolicy(ABC):
