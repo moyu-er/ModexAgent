@@ -19,7 +19,7 @@ from ..core.types import InputMessage
 from ..memory.core.scope import MemoryContext
 from ..memory.history import (
     ListMessageHistory,
-    ShortTermMessageHistory,
+    MessageHistory,
     history_to_list,
     inject_attachments_to_history,
     restore_multimodal_in_history,
@@ -341,13 +341,13 @@ class AgentSession(Generic[E]):
                     context_state.system_prompt = "\n\n".join(m.get("content", "") for m in system_msgs)
                 non_system = [m for m in built_messages if m.get("role") != "system"]
                 # Write built non-system messages back into the underlying MessageHistory
-                if isinstance(context_state.history, ShortTermMessageHistory):
+                if isinstance(context_state.history, MessageHistory) and not isinstance(
+                    context_state.history, ListMessageHistory
+                ):
                     if non_system:
                         await context_state.history.replace_all(non_system)
                     else:
                         await context_state.history.clear()
-                elif isinstance(context_state.history, ListMessageHistory):
-                    context_state.history = ListMessageHistory(non_system)
                 else:
                     context_state.history = ListMessageHistory(non_system)
 

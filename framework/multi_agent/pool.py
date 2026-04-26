@@ -20,8 +20,8 @@ from .inbox.consumer import InboxConsumer
 from .inbox.producer import InboxProducer
 from .inbox.types import InboxMessage
 from .registry import AgentProfile, AgentRegistry
+from .session_id import DefaultSessionIdStrategy, SessionIdStrategy
 from .state import AgentState
-from .utils import format_pool_session_id, parse_pool_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,7 @@ class AgentPool(AgentRegistry):
         enable_inbox_polling: bool = True,
         inbox_poll_interval: float = 10.0,
         default_context_manager_factory: Callable[[str], ContextManager] | None = None,
+        session_strategy: SessionIdStrategy | None = None,
     ):
         self._agents: dict[str, AgentInstance] = {}
         self._status: dict[str, AgentState] = {}
@@ -54,6 +55,7 @@ class AgentPool(AgentRegistry):
         self._inbox_consumer = inbox_consumer
         self._enable_inbox_polling = enable_inbox_polling
         self._inbox_poll_interval = inbox_poll_interval
+        self._session_strategy = session_strategy or DefaultSessionIdStrategy()
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._consumers: dict[str, asyncio.Task] = {}
         self._agent_tasks: dict[str, list[asyncio.Task]] = {}
@@ -346,7 +348,7 @@ class AgentPool(AgentRegistry):
         conversation_id = envelope.conversation_id or envelope.payload.get(
             "conversation_id", "default"
         )
-        session_id = envelope.agent_session_id or format_pool_session_id(
+        session_id = envelope.agent_session_id or self._session_strategy.agent_session(
             conversation_id, descriptor.address.name
         )
         metadata = {
@@ -386,7 +388,7 @@ class AgentPool(AgentRegistry):
     ) -> None:
         """将 AgentResult 包装为 subagent_result 回传给父 Agent。"""
         parent_address = envelope.source
-        parent_session_id = format_pool_session_id(
+        parent_session_id = self._session_strategy.agent_session(
             conversation_id, parent_address.name
         ) if parent_address else conversation_id
 
@@ -433,7 +435,7 @@ class AgentPool(AgentRegistry):
         conversation_id = envelope.conversation_id or envelope.payload.get(
             "conversation_id", "default"
         )
-        session_id = envelope.agent_session_id or format_pool_session_id(
+        session_id = envelope.agent_session_id or self._session_strategy.agent_session(
             conversation_id, instance.descriptor.address.name
         )
         content = envelope.payload.get("content", "")
@@ -467,7 +469,7 @@ class AgentPool(AgentRegistry):
             or msg.payload.get("conversation_id")
             or msg.payload.get("session_id", "default")
         )
-        session_id = msg.payload.get("agent_session_id") or format_pool_session_id(
+        session_id = msg.payload.get("agent_session_id") or self._session_strategy.agent_session(
             conversation_id, descriptor.address.name
         )
         content = msg.payload.get("content", "")
@@ -584,7 +586,7 @@ class AgentPool(AgentRegistry):
                         logger.debug("Failed to list inbox sessions", exc_info=True)
 
                 for session_id in sessions_to_check:
-                    _, agent_name = parse_pool_session_id(session_id)
+                    _, agent_name = self._session_strategy.parse(session_id)
                     if not agent_name or agent_name not in self._agents:
                         continue
                     if self._status.get(agent_name) not in (AgentState.IDLE,):

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from framework.core.tool_manager import Tool, ToolConfig
 
-from .utils import format_peer_session_id, format_pool_session_id
+from .session_id import DefaultSessionIdStrategy, SessionIdStrategy
 
 if TYPE_CHECKING:
     from framework.messaging.broker import MessageBroker
@@ -85,12 +85,14 @@ class SendMessageTool(Tool):
         allowed_callers: list[str] | None = None,
         allowed_targets: list[str] | None = None,
         registry: AgentRegistry | None = None,
+        session_strategy: SessionIdStrategy | None = None,
     ):
         self._broker = broker
         self._self_address = self_address
         self._allowed_callers = set(allowed_callers) if allowed_callers else None
         self._allowed_targets = set(allowed_targets) if allowed_targets else None
         self._registry = registry
+        self._session_strategy = session_strategy or DefaultSessionIdStrategy()
         super().__init__(
             name="send_message",
             description=(
@@ -157,6 +159,9 @@ class SendMessageTool(Tool):
 
             conversation_id = current_conversation_id.get() or ""
 
+        if not conversation_id:
+            logger.warning("send_message called without conversation context")
+
         if not self._is_allowed(caller_context):
             return "Error: send_message is not allowed for this caller."
 
@@ -182,7 +187,7 @@ class SendMessageTool(Tool):
             message_type=message_type,
             conversation_id=conversation_id,
             agent_session_id=agent_session_id
-            or format_peer_session_id(conversation_id, self._self_address.name, target_agent),
+            or self._session_strategy.target_session(conversation_id, target_agent, self._self_address.name),
         )
 
         if envelope.target is not None:
@@ -211,6 +216,7 @@ class SendMessageAsyncTool(Tool):
         agent_bus: AgentMessageBus | None = None,
         registry: AgentRegistry | None = None,
         wakeup_timeout: float | None = None,
+        session_strategy: SessionIdStrategy | None = None,
     ):
         self._broker = broker
         self._self_address = self_address
@@ -218,7 +224,9 @@ class SendMessageAsyncTool(Tool):
         self._allowed_targets = set(allowed_targets) if allowed_targets else None
         self._agent_bus = agent_bus
         self._registry = registry
-        self._wakeup_timeout = wakeup_timeout
+        self._wakeup_timeout = wakeup_timeout if wakeup_timeout is not None and wakeup_timeout > 0 else 1.0
+        self._session_strategy = session_strategy or DefaultSessionIdStrategy()
+        self._wakeup_tasks: set[asyncio.Task] = set()
         super().__init__(
             name="send_message_async",
             description=(
@@ -284,6 +292,9 @@ class SendMessageAsyncTool(Tool):
 
             conversation_id = current_conversation_id.get() or ""
 
+        if not conversation_id:
+            logger.warning("send_message_async called without conversation context")
+
         if not self._is_allowed(caller_context):
             return "Error: send_message_async is not allowed for this caller."
 
@@ -312,16 +323,17 @@ class SendMessageAsyncTool(Tool):
             message_type=message_type,
             conversation_id=conversation_id,
             agent_session_id=agent_session_id
-            or format_peer_session_id(conversation_id, self._self_address.name, target_agent),
+            or self._session_strategy.target_session(conversation_id, target_agent, self._self_address.name),
         )
 
-        inbox_key = format_pool_session_id(conversation_id, target_agent)
+        inbox_key = self._session_strategy.agent_session(conversation_id, target_agent)
         await self._agent_bus.send_silent(inbox_key, envelope)
 
-        if self._wakeup_timeout is not None and self._wakeup_timeout > 0:
-            asyncio.create_task(
-                self._wakeup_if_pending(inbox_key, target_agent, self._wakeup_timeout)
-            )
+        task = asyncio.create_task(
+            self._wakeup_if_pending(inbox_key, target_agent, self._wakeup_timeout)
+        )
+        self._wakeup_tasks.add(task)
+        task.add_done_callback(self._wakeup_tasks.discard)
 
         return f"Async message queued for {target_agent}."
 

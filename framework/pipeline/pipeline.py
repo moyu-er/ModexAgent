@@ -21,12 +21,17 @@ from ..memory import ContextGovernance
 from ..memory.consolidation import DreamEngine
 from ..memory.history import (
     ListMessageHistory,
-    ShortTermMessageHistory,
+    MessageHistory,
     history_to_list,
     inject_attachments_to_history,
 )
-from ..multi_agent import SubagentManager, AgentMessageRouter, MessageDeduplicator, MultiAgentContextBuilder, \
-    AgentDescriptor
+from ..multi_agent import (
+    AgentDescriptor,
+    AgentMessageRouter,
+    MessageDeduplicator,
+    MultiAgentContextBuilder,
+    SubagentManager,
+)
 from ..session.agent_session import _dream_locks
 from .adapters import InputAdapter, OutputAdapter, OutputMessage
 
@@ -412,11 +417,18 @@ class AgentPipeline:
                 context_state.history = ListMessageHistory(pending)
 
         # 构建系统提示词（注入 tools / skills / runtime info）
+        # 将 input_metadata 中的 scope 关键字段传递到 runtime_info，
+        # 确保 build_system_prompt() 能正确解析 user_id / tenant_id
         agent_name = self.agent_descriptor.address.name if self.agent_descriptor else "main"
+        runtime_info: dict[str, Any] = {"caller_context": {"agent_name": agent_name}}
+        if input_metadata:
+            for key in ("user_id", "tenant_id", "channel", "chat_id"):
+                if key in input_metadata:
+                    runtime_info[key] = input_metadata[key]
         context_state.system_prompt = await ctx_mgr.build_system_prompt(
             tool_manager=self.tool_manager,
             skill_manager=self.skill_manager,
-            runtime_info={"caller_context": {"agent_name": agent_name}},
+            runtime_info=runtime_info,
         )
 
         # 使用 MultiAgentContextBuilder 构建上下文（如果配置）
@@ -459,7 +471,9 @@ class AgentPipeline:
             # Write built non-system messages back into the underlying MessageHistory
             # ShortTermMessageHistory 支持 replace_all() 原子写入存储，
             # 避免替换为 ListMessageHistory 导致实时写入中断。
-            if isinstance(context_state.history, ShortTermMessageHistory):
+            if isinstance(context_state.history, MessageHistory) and not isinstance(
+                context_state.history, ListMessageHistory
+            ):
                 await context_state.history.replace_all(non_system)
             else:
                 context_state.history = ListMessageHistory(non_system)

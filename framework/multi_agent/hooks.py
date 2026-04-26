@@ -140,19 +140,12 @@ class PeerAutoSendHook(AgentRunHook):
         session_id = ctx.metadata.get("session_id", "")
         from .address import AgentAddress
         from .envelope import AgentMessageEnvelope
-        from .utils import (
-            format_pool_session_id,
-            is_peer_session_id,
-            parse_peer_session_id,
-            parse_pool_session_id,
-        )
+        from .session_id import DefaultSessionIdStrategy
 
-        if is_peer_session_id(session_id):
-            conversation_id, _, _ = parse_peer_session_id(session_id)
-        else:
-            conversation_id, _ = parse_pool_session_id(session_id)
+        strategy = DefaultSessionIdStrategy(main_agent_name=self._parent_name)
+        conversation_id, _ = strategy.parse(session_id)
 
-        inbox_key = format_pool_session_id(conversation_id, self._parent_name)
+        inbox_key = strategy.main_session(conversation_id)
 
         sanitized = self._sanitize_forward_content(result.content)
 
@@ -162,7 +155,7 @@ class PeerAutoSendHook(AgentRunHook):
             target=AgentAddress(name=self._parent_name),
             message_type="agent_message",
             conversation_id=conversation_id,
-            agent_session_id=session_id,
+            agent_session_id=inbox_key,
         )
 
         try:

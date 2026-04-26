@@ -52,11 +52,15 @@ class AgentMessageEnvelope:
 
     @classmethod
     def from_broker_message(cls, msg: BrokerMessage) -> AgentMessageEnvelope | None:
-        """从 BrokerMessage 还原，若缺少必要 headers 则返回 None。"""
+        """从 BrokerMessage 还原，若缺少必要 headers 则返回 None。
+
+        conversation_id/agent_session_id may be empty strings (legacy).
+        Only reject when they are None (not present in headers at all).
+        """
         headers = msg.headers
         conversation_id = headers.get("conversation_id")
         agent_session_id = headers.get("agent_session_id")
-        if not conversation_id or not agent_session_id:
+        if conversation_id is None or agent_session_id is None:
             return None
         from framework.multi_agent.address import AgentAddress
 

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from collections.abc import AsyncIterator
 
 from .broker import Address, BrokerMessage, MessageBroker
 
 _SENTINEL = object()
+logger = logging.getLogger(__name__)
 
 
 class InMemoryMessageBroker(MessageBroker):
@@ -14,6 +16,7 @@ class InMemoryMessageBroker(MessageBroker):
 
     def __init__(self) -> None:
         self._mailboxes: dict[Address, asyncio.Queue[BrokerMessage]] = {}
+        self._consumers: set[Address] = set()
         self._topic_subscriptions: dict[str, set[Address]] = {}
         self._running = False
 
@@ -31,6 +34,10 @@ class InMemoryMessageBroker(MessageBroker):
             await q.put(_SENTINEL)  # type: ignore[arg-type]
 
     async def send_to(self, recipient: Address, message: BrokerMessage) -> None:
+        if recipient not in self._consumers:
+            logger.debug(
+                "Sending to address %s with no registered consumer", recipient
+            )
         await self._ensure_mailbox(recipient).put(message)
 
     async def publish(self, topic: str, message: BrokerMessage) -> None:
@@ -47,9 +54,11 @@ class InMemoryMessageBroker(MessageBroker):
 
     async def register_consumer(self, address: Address) -> None:
         self._ensure_mailbox(address)
+        self._consumers.add(address)
 
     async def unregister_consumer(self, address: Address) -> None:
         self._mailboxes.pop(address, None)
+        self._consumers.discard(address)
         for subs in self._topic_subscriptions.values():
             subs.discard(address)
 

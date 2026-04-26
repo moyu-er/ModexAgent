@@ -71,11 +71,12 @@ class PluginContext:
         """Register a callback that mutates a MemorySystem after initialization.
 
         Use case: plugins that need to wrap/override a MemorySystem's
-        internal managers (e.g. replacing the short_term manager with a
-        policy-aware decorator).
+        internal managers (e.g. wrapping the session manager with a
+        policy-aware decorator via MemoryLayerSet.with_session()).
 
         The modifier receives the MemorySystem instance and can modify
-        its internal state (e.g. memory_system._managers.short_term).
+        its internal state (e.g. wrapping the session manager via
+        memory_system.layers.with_session()).
         """
         self._memory_system_modifiers.append((modifier, self._name))
 

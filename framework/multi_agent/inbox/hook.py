@@ -37,24 +37,13 @@ class InboxFlushHook(AgentRunHook):
     def _sanitize_content(content: str) -> str:
         """对 inbox 消息内容进行基本安全过滤，防止 prompt injection。
 
-        注意：当前过滤规则是防御性启发式策略，可能存在误报（例如合法地
-        包含 tool_calls 示例代码块时会被规则 2 误移除）。后续可根据业务
-        场景引入 `strict_mode` 开关进行更精细的控制。
+        当前过滤规则为防御性启发式策略，已降低攻击性以避免误报。
         """
         if not content:
             return content
-        # 1. 移除 <system> 标签及其内容
         content = re.sub(
             r"<\s*system\b[^>]*>.*?<\s*/\s*system\s*>", "", content, flags=re.IGNORECASE | re.DOTALL
         )
-        # 2. 移除伪装的 tool_calls JSON 块（防御性启发式，存在误报风险）
-        content = re.sub(
-            r"```\s*json\s*\{\s*[\"']tool_calls[\"'].*?```",
-            "",
-            content,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-        # 3. 清理连续空行
         content = re.sub(r"\n{3,}", "\n\n", content)
         return content.strip()
 

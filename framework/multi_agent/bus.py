@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from framework.messaging.broker import Address, BrokerMessage
 
 from framework.multi_agent.address import AgentAddress
-from framework.multi_agent.utils import parse_pool_session_id
+from framework.multi_agent.session_id import DefaultSessionIdStrategy
 
 if TYPE_CHECKING:
     from framework.multi_agent.envelope import AgentMessageEnvelope
@@ -105,7 +105,7 @@ class LocalAgentMessageBus(AgentMessageBus):
                     payload={"_inbox_wakeup": True, "session_id": session_id},
                     sender=Address(kind="system", name="local_agent_message_bus"),
                 )
-                _, target_name = parse_pool_session_id(session_id)
+                _, target_name = DefaultSessionIdStrategy().parse(session_id)
                 target_name = target_name or (envelope.target.name if envelope.target else session_id)
                 await self._broker.send_to(
                     AgentAddress(kind="agent", name=target_name),
@@ -121,8 +121,13 @@ class LocalAgentMessageBus(AgentMessageBus):
         event.set()
 
     async def send_silent(self, session_id: str, envelope: "AgentMessageEnvelope") -> None:
-        """Persist the envelope without signaling/waking up the consumer."""
+        """Persist the envelope without signaling/waking up the consumer.
+
+        Updates pending_counts so that consume() correctly detects
+        pending messages even when they were queued silently.
+        """
         await self._producer.send(session_id, envelope)
+        self._pending_counts[session_id] = self._pending_counts.get(session_id, 0) + 1
 
     async def consume(
         self, session_id: str, limit: int = 100, *, block: bool = True
@@ -151,7 +156,7 @@ class LocalAgentMessageBus(AgentMessageBus):
                 source=AgentAddress(kind="agent", name=msg.source),
                 message_type=msg.message_type,
                 conversation_id=msg.metadata.get("conversation_id", session_id),
-                agent_session_id=session_id,
+                agent_session_id=msg.metadata.get("agent_session_id", session_id),
                 message_id=msg.message_id,
                 timestamp=msg.timestamp,
                 metadata={k: v for k, v in msg.metadata.items() if k != "payload"},
