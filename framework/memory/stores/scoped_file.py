@@ -21,7 +21,52 @@ _CHANGELOG_FILE = "changelog.jsonl"
 
 
 class DefaultScopedStorage(MemoryStorage):
-    """Local-file storage for one layer/scope directory."""
+    """Local-file storage for one layer/scope directory.
+
+    File layout in ``directory``:
+    - ``messages.jsonl`` – conversation history; **this is the only data**
+      injected into LLM context via ``history.to_messages()``.
+    - ``kv.json`` – lightweight key-value metadata **not** fed to the LLM.
+      Used for internal bookkeeping (``.last_activity``, ``.last_write_id``,
+      ``.checkpoint``, etc.). It is intentionally separate from
+      ``messages.jsonl`` so growing tool-call content does **not** bloat
+      the context or require full-file rewrites of conversation state.
+    - ``archive.jsonl`` / ``changelog.jsonl`` – layer-specific logs.
+    - ``.cursor_*`` – cursor tracking files.
+    """
+
+    def __init__(
+        self,
+        directory: Path,
+        *,
+        layer: MemoryLayerName,
+        lock: StorageLock | None = None,
+    ) -> None:
+        super().__init__(lock or AioRWLock())
+        self.directory = Path(directory)
+        self.layer = layer
+        self._version = 0
+        self._updated_at = datetime.now(UTC)
+
+    async def initialize(self) -> None:
+        self.directory.mkdir(parents=True, exist_ok=True)
+        for tmp_file in self.directory.glob("*.tmp"):
+            with contextlib.suppress(Exception):
+                tmp_file.unlink()
+
+    async def close(self) -> None:
+        pass
+
+    def _touch(self) -> None:
+        self._version += 1
+        self._updated_at = datetime.now(UTC)
+
+    # -----------------------------------------------------------------------
+    # kv.json helpers – internal state only; never injected into LLM context.
+    # -----------------------------------------------------------------------
+
+    def _kv_path(self) -> Path:
+        return self.directory / _KV_FILE
 
     def __init__(
         self,

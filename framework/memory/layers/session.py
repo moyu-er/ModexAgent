@@ -81,14 +81,31 @@ class ScopedSessionMemoryManager(SessionMemoryManager):
         context: MemoryContext,
         messages: Sequence[ChatMessage | dict[str, object]],
     ) -> None:
+        """Store a checkpoint with truncated content to prevent kv.json bloat.
+
+        Tool results can be very large (e.g. file reads). We preserve the
+        message structure but truncate oversized ``content`` fields so the
+        checkpoint stays lightweight while remaining recoverable.
+        """
         storage = await self._storage_factory(context)
         chat_messages = self._to_chat_messages(messages)
+        truncated: list[dict[str, object]] = []
+        for msg in chat_messages:
+            d = msg.to_dict()
+            content = d.get("content")
+            if isinstance(content, str) and len(content) > 2000:
+                d["content"] = (
+                    content[:2000]
+                    + f"\n... (truncated, {len(content)} chars total)"
+                )
+            truncated.append(d)
         await storage.set(
             self._config.checkpoint_key,
-            json.dumps({"messages": self._to_dicts(chat_messages)}, ensure_ascii=False),
+            json.dumps({"messages": truncated}, ensure_ascii=False),
         )
 
     async def load_checkpoint(self, context: MemoryContext) -> list[ChatMessage] | None:
+        """Recover messages from the last checkpoint."""
         storage = await self._storage_factory(context)
         raw = await storage.get(self._config.checkpoint_key)
         if raw is None:
