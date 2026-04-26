@@ -1,137 +1,119 @@
-"""存储层自定义实现 —— 继承 ShortTermMemoryManager 实现 Tool-Call 感知逻辑。
+"""Tool-Call 感知 Session 管理器 -- 组合模式包装 SessionMemoryManager.
 
-ToolCallAwareShortTermManager 继承默认 ShortTermMemoryManager，
-在写入路径中嵌入清理逻辑，在压缩路径中处理中断残留。
+ToolCallAwareSessionManager 实现 SessionMemoryManager ABC，
+内部委托给原始 manager（装饰器模式），在写入后自动清理 tool-call 中间步骤。
 
-与 Protocol+包装器模式相比，继承模式的优点：
-- 直接复用父类的 storage/scope/lock 逻辑
-- 子类只需关注差异化的清理/压缩策略
-- 框架层面有 ABC 约束，类型安全
+与旧版继承具体实现类不同，新版使用组合：
+- 不依赖任何 concrete 类的私有字段
+- 通过 SessionMemoryManager ABC 交互，可适配任何实现
+- 清理逻辑委托给 ToolCallCleanupPolicy（纯策略）
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping, Sequence
 from typing import Any
 
+from framework.memory.core.layers import SessionMemoryManager
 from framework.memory.core.message import ChatMessage
+from framework.memory.core.models import StorageRevision
 from framework.memory.core.scope import MemoryContext
-from framework.memory.managers.short_term import ShortTermMemoryManager
 
 from .policy import ToolCallCleanupPolicy
 
 logger = logging.getLogger(__name__)
 
 
-class ToolCallAwareShortTermManager(ShortTermMemoryManager):
-    """Tool-Call 感知短期记忆管理器。
+class ToolCallAwareSessionManager(SessionMemoryManager):
+    """Tool-Call 感知 Session 管理器（装饰器模式）。
 
-    继承 ShortTermMemoryManager，重写写入路径和压缩路径：
-
-    1. 写入后（add_messages / replace_all_messages）立即触发清理：
-       - 当前轮正常结束时，清理当前轮的 tool-call 链
-       - 往前追溯，将之前所有中断轮次的 assistant-tool 链
-         替换为模拟 assistant
-       - 遇到之前正常结束的轮次时停止追溯
-
-    2. 当前轮达到上限（最后一条 assistant 含 tool_calls）时：
-       - 不触发清理，保留完整 tool-call 链
-
-    3. 压缩时（_maybe_compress）：
-       - 若消息流中仍有带 tool_calls 的 assistant（当前轮
-         达到上限），跳过压缩
-       - 否则调用父类压缩（理论上只剩 user-assistant 对，
-         含模拟 assistant）
+    包装原始 SessionMemoryManager，在每次 add_messages 后执行清理：
+    1. 当 ReAct 轮正常完成（最后一条 assistant 无 tool_calls）时，
+       清理所有 tool-call 中间步骤
+    2. 当 ReAct 轮被中断（最后一条 assistant 含 tool_calls）时，
+       不触发清理，保留完整 tool-call 链
+    3. 后续轮次完成后，向前追溯清理历史中断轮次
     """
 
     def __init__(
         self,
-        *args: Any,
+        inner: SessionMemoryManager,
         policy: ToolCallCleanupPolicy | None = None,
-        **kwargs: Any,
     ) -> None:
-        super().__init__(*args, **kwargs)
+        self._inner = inner
         self._policy = policy or ToolCallCleanupPolicy()
 
-    # ---- 重写写入路径 ----
-
     async def add_messages(
-        self, context: MemoryContext, messages: list[ChatMessage | dict[str, Any]]
+        self,
+        context: MemoryContext,
+        messages: Sequence[ChatMessage | dict[str, Any]],
+    ) -> StorageRevision:
+        revision = await self._inner.add_messages(context, messages)
+        await self._cleanup(context)
+        return revision
+
+    async def get_visible_messages(
+        self,
+        context: MemoryContext,
+        limit: int | None = None,
+    ) -> list[ChatMessage]:
+        return await self._inner.get_visible_messages(context, limit=limit)
+
+    async def get_all_messages(self, context: MemoryContext) -> list[ChatMessage]:
+        return await self._inner.get_all_messages(context)
+
+    async def save_checkpoint(
+        self,
+        context: MemoryContext,
+        messages: Sequence[ChatMessage | dict[str, Any]],
     ) -> None:
-        """批量追加消息，写入后在锁内执行清理，再触发压缩。"""
-        if not messages:
-            return
-        chat_msgs = self._to_chat_messages(messages)
-        dict_msgs = self._to_dicts(chat_msgs)
-        scope_key = self._scope.get_scope_key(context)
-        async with self._storage.get_lock(scope_key).write():
-            if self._config.content_transformer is not None:
-                dict_msgs = await self._config.content_transformer.transform_messages(
-                    dict_msgs
-                )
-            for message in dict_msgs:
-                await self._storage.append_message(scope_key, message)
-            # 写入后立即清理
-            await self._do_cleanup(scope_key)
-            try:
-                await self._maybe_compress(context)
-            except Exception:
-                logger.warning(
-                    "Compression failed after cleanup; messages retained.",
-                    exc_info=True,
-                )
+        await self._inner.save_checkpoint(context, messages)
 
-    async def add_message(
-        self, context: MemoryContext, message: ChatMessage | dict[str, Any]
-    ) -> None:
-        await self.add_messages(context, [message])
+    async def load_checkpoint(self, context: MemoryContext) -> list[ChatMessage] | None:
+        return await self._inner.load_checkpoint(context)
 
-    async def replace_all_messages(
-        self, context: MemoryContext, messages: list[ChatMessage | dict[str, Any]]
-    ) -> None:
-        """原子替换，然后触发清理。"""
-        chat_msgs = self._to_chat_messages(messages)
-        dict_msgs = self._to_dicts(chat_msgs)
-        scope_key = self._scope.get_scope_key(context)
-        async with self._storage.get_lock(scope_key).write():
-            if self._config.content_transformer is not None:
-                dict_msgs = await self._config.content_transformer.transform_messages(
-                    dict_msgs
-                )
-            await self._storage.save_messages(scope_key, list(dict_msgs))
-        self._last_compress_counts[scope_key] = len(dict_msgs)
-        await self._do_cleanup(scope_key)
+    async def clear(self, context: MemoryContext) -> None:
+        await self._inner.clear(context)
 
-    # ---- 核心清理逻辑 ----
+    async def replace_messages(
+        self,
+        context: MemoryContext,
+        messages: Sequence[ChatMessage | dict[str, Any]],
+    ) -> StorageRevision:
+        revision = await self._inner.replace_messages(context, messages)
+        await self._cleanup(context)
+        return revision
 
-    async def _do_cleanup(self, scope_key: str) -> None:
-        """检测并执行清理。"""
-        msgs = await self._storage.load_messages(scope_key)
-        cleaned = self._policy.clean(msgs)
+    async def replace_messages_if_revision(
+        self,
+        context: MemoryContext,
+        messages: Sequence[ChatMessage | dict[str, Any]],
+        expected_revision: StorageRevision,
+        state_updates: Mapping[str, Any] | None = None,
+    ) -> StorageRevision | None:
+        revision = await self._inner.replace_messages_if_revision(
+            context,
+            messages,
+            expected_revision,
+            state_updates,
+        )
+        if revision is not None:
+            await self._cleanup(context)
+        return revision
 
-        if len(cleaned) < len(msgs):
-            await self._storage.save_messages(scope_key, cleaned)
+    async def get_revision(self, context: MemoryContext) -> StorageRevision:
+        return await self._inner.get_revision(context)
+
+    async def _cleanup(self, context: MemoryContext) -> None:
+        all_msgs = await self._inner.get_all_messages(context)
+        dict_msgs = [m.to_dict() for m in all_msgs]
+        cleaned = self._policy.clean(dict_msgs)
+
+        if len(cleaned) < len(dict_msgs):
+            await self._inner.replace_messages(context, cleaned)
             logger.info(
-                "ToolCallAwareShortTermManager: cleaned %d \u2192 %d messages",
-                len(msgs),
+                "ToolCallAwareSessionManager: cleaned %d -> %d messages",
+                len(dict_msgs),
                 len(cleaned),
             )
-
-    # ---- 重写压缩路径 ----
-
-    async def _maybe_compress(self, context: MemoryContext) -> None:
-        """压缩控制：若仍有 tool_calls 残留（当前轮达到上限），跳过压缩。"""
-        scope_key = self._scope.get_scope_key(context)
-        msgs = await self._storage.load_messages(scope_key)
-
-        # 若消息流中仍有带 tool_calls 的 assistant，说明当前轮
-        # 达到上限未结束，跳过压缩以保护 tool-call 链完整性
-        if any(
-            m.get("role") == "assistant" and m.get("tool_calls")
-            for m in msgs
-        ):
-            return
-
-        # 正常场景：调用父类压缩（消息流中只剩 user-assistant 对，
-        # 含模拟 assistant；压缩策略会自然处理）
-        await super()._maybe_compress(context)

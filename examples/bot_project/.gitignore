@@ -57,5 +57,6 @@ data
 *.pdf
 *.ts
 *.js
+workspace
 package.json
 package-lock.json

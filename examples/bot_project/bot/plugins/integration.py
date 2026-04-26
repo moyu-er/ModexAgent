@@ -43,13 +43,13 @@ class PluginIntegration:
         Returns:
             True if any plugins were loaded.
         """
-        plugin_configs = self.config.get("plugins", {}).get("configurations") or {}
+        plugin_configs = dict(self.config.get("plugins", {}).get("configurations") or {})
         enabled_plugins = self.config.get("plugins", {}).get("enabled", None)
         # enabled can be: bool (True/False → on/off), list (whitelist), or None
         if enabled_plugins is False:
             plugin_configs["_enabled"] = []          # whitelist: nothing
         elif isinstance(enabled_plugins, list):
-            plugin_configs["_enabled"] = enabled_plugins  # whitelist: listed names
+            plugin_configs["_enabled"] = list(enabled_plugins)  # whitelist: listed names
         # True or None → no _enabled key → load all plugins
 
         # 额外扫描项目本地插件目录（必须在 discover_and_load 之前，
@@ -113,7 +113,7 @@ class PluginIntegration:
         """应用插件 MemorySystem 修饰器。
 
         在 MemorySystem.initialize() 之后调用，让插件可以修改
-        MemorySystem 的内部状态（如替换 short_term manager）。
+        MemorySystem 的内部状态（如包装 session manager）。
         """
         if not self.plugin_manager.memory_system_modifiers:
             return []

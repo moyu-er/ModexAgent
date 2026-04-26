@@ -5,10 +5,10 @@ peer agents, subagents, tools, skills, and memory systems.
 """
 
 import logging
-import shutil
 from pathlib import Path
 from typing import Any
 
+from bot.tools.custom import SpawnSubagentTool
 from framework import InMemoryToolManager, ToolManagerConfig
 from framework.core.context import ContextManager
 from framework.core.skills import (
@@ -18,18 +18,18 @@ from framework.core.skills import (
     ProgressiveBuilder,
     SkillManager,
 )
-from framework.memory.content_transform import Base64SanitizeTransformer
-from framework.memory.core.scope import PeerPairScope, SessionScope
-from framework.memory.stores.file import FileStorage
-from framework.memory.system import LayerConfig, MemorySystem, MemorySystemContextManager
+from framework.memory.core.scope import MemoryAgentRole, MemoryContext
+from framework.memory.injection import RestrictedInjectionPolicy
+from framework.memory.layers.config import MemoryLayerConfigSet, SessionMemoryConfig
+from framework.memory.system import MemorySystemContextManager, create_memory_system
 from framework.multi_agent import (
     AgentAddress,
     AgentDescriptor,
 )
 from framework.multi_agent.descriptor import AgentLLMConfig
+from framework.multi_agent.session_id import DefaultSessionIdStrategy
 from framework.multi_agent.tools import SendMessageAsyncTool, SendMessageTool
 from framework.pipeline.adapters import NullOutputAdapter
-from bot.tools.custom import SpawnSubagentTool
 
 logger = logging.getLogger(__name__)
 
@@ -155,15 +155,32 @@ class AgentBuilderMixin:
         peer_names = [p.get("name", "") for p in peers_config if p.get("name")]
 
         allowed_callers = multi_agent_config.get("allowed_callers")
+        parent_name = multi_agent_config.get("parent_agent_name", "main")
+        strategy = DefaultSessionIdStrategy(main_agent_name=parent_name)
         send_tool = SendMessageTool(
             broker=self.broker,
             self_address=parent_address,
             allowed_callers=allowed_callers,
             allowed_targets=peer_names or None,
             registry=self.agent_pool,
+            session_strategy=strategy,
         )
         self.tool_manager.register(send_tool)
         print("   [OK] send_message registered")
+
+        if self.agent_bus is not None:
+            async_send_tool = SendMessageAsyncTool(
+                broker=self.broker,
+                self_address=parent_address,
+                allowed_callers=allowed_callers,
+                allowed_targets=peer_names or None,
+                agent_bus=self.agent_bus,
+                registry=self.agent_pool,
+                wakeup_timeout=5.0,
+                session_strategy=strategy,
+            )
+            self.tool_manager.register(async_send_tool)
+            print("   [OK] send_message_async registered")
 
         sub_sync = multi_agent_config.get("subagent_sync", {})
         if sub_sync.get("enabled", True):
@@ -303,46 +320,38 @@ class AgentBuilderMixin:
 
     # --- Memory Creation ---
 
+    def _session_only_memory_config(self, section: dict[str, Any]) -> MemoryLayerConfigSet:
+        short_term = section.get("short_term", {})
+        return MemoryLayerConfigSet(
+            session=SessionMemoryConfig(max_messages=short_term.get("max_messages", 50)),
+            archive=None,
+            knowledge=None,
+        )
+
     async def _create_subagent_memory(
         self,
         sub_name: str,
         base_system_prompt: str = "",
     ) -> ContextManager:
-        if sub_name in self._subagent_memory_systems:
-            memory_system = self._subagent_memory_systems[sub_name]
-            return MemorySystemContextManager(
-                memory_system=memory_system,
-                base_system_prompt=base_system_prompt,
-            )
-
-        sub_data_dir = Path(__file__).parent.parent.parent / "data" / "memory" / "subagents" / sub_name
-        sub_data_dir.mkdir(parents=True, exist_ok=True)
-        file_store = FileStorage(sub_data_dir)
-
-        memory_config = self.config.get("memory", {})
-        sub_memory_config = memory_config.get("subagents", {})
-        sub_st_config = sub_memory_config.get("short_term", {})
-
-        memory_system = MemorySystem(
-            workspace=sub_data_dir,
-            llm_provider=None,
-            auto_llm_compression=False,
-            layers={
-                "short_term": LayerConfig(
-                    scope=SessionScope(),
-                    storage=file_store,
-                    max_messages=sub_st_config.get("max_messages", 20),
-                    max_tokens=sub_st_config.get("max_tokens", 4000),
-                    content_transformer=Base64SanitizeTransformer(),
-                ),
-            },
+        memory_config = self.config.get("memory", {}).get("subagents", {})
+        sub_dir = self._resolve_path("memory_dir", "data/memory") / "subagents" / sub_name
+        sub_dir.mkdir(parents=True, exist_ok=True)
+        memory_system = create_memory_system(
+            workspace=sub_dir,
+            config=self._session_only_memory_config(memory_config),
+            session_only=True,
         )
         await memory_system.initialize()
-        self.plugin_integration.inject_memory_system_modifiers(memory_system)
+        _pi = getattr(self, "plugin_integration", None)
+        if _pi is not None:
+            _pi.inject_memory_system_modifiers(memory_system)
         self._subagent_memory_systems[sub_name] = memory_system
         return MemorySystemContextManager(
             memory_system=memory_system,
+            default_agent_id=sub_name,
+            default_agent_role=MemoryAgentRole.SUBAGENT,
             base_system_prompt=base_system_prompt,
+            injection_policy=RestrictedInjectionPolicy(max_session_messages=20),
         )
 
     async def _create_peer_memory(
@@ -350,57 +359,45 @@ class AgentBuilderMixin:
         peer_name: str,
         peer_config: dict[str, Any],
     ) -> ContextManager:
-        from framework.core.context import InMemoryContextManager
-
-        memory_config = peer_config.get("memory", {})
         system_prompt = peer_config.get("system_prompt", "")
-
+        memory_config = peer_config.get("memory", {})
         if not memory_config.get("enabled", True):
+            from framework.core.context import InMemoryContextManager
             return InMemoryContextManager(base_system_prompt=system_prompt)
 
-        # Check cache first
-        if hasattr(self, "_peer_memory_systems") and peer_name in self._peer_memory_systems:
-            return MemorySystemContextManager(
-                memory_system=self._peer_memory_systems[peer_name],
-                base_system_prompt=system_prompt,
-            )
+        global_peer_memory = self.config.get("memory", {}).get("peers", {})
+        merged_memory = {
+            **global_peer_memory,
+            **{key: value for key, value in memory_config.items() if key != "enabled"},
+        }
+        if "short_term" in global_peer_memory or "short_term" in memory_config:
+            merged_memory["short_term"] = {
+                **global_peer_memory.get("short_term", {}),
+                **memory_config.get("short_term", {}),
+            }
 
-        peer_data_dir = Path(__file__).parent.parent.parent / "data" / "memory" / "peers" / peer_name
-        peer_data_dir.mkdir(parents=True, exist_ok=True)
-        peer_file_store = FileStorage(peer_data_dir)
-
-        # Read global peers config, merge with peer-specific overrides
-        global_memory_config = self.config.get("memory", {})
-        peers_global_config = global_memory_config.get("peers", {})
-        peers_st_global = peers_global_config.get("short_term", {})
-        peer_st_local = memory_config.get("short_term", {})
-
-        memory_system = MemorySystem(
-            workspace=peer_data_dir,
-            llm_provider=None,
-            auto_llm_compression=False,
-            layers={
-                "short_term": LayerConfig(
-                    scope=PeerPairScope(),
-                    storage=peer_file_store,
-                    max_messages=peer_st_local.get("max_messages")
-                    or peers_st_global.get("max_messages", 50),
-                    max_tokens=peer_st_local.get("max_tokens")
-                    or peers_st_global.get("max_tokens", 80000),
-                    content_transformer=Base64SanitizeTransformer(),
-                ),
-            },
+        peer_dir = self._resolve_path("memory_dir", "data/memory") / "peers" / peer_name
+        peer_dir.mkdir(parents=True, exist_ok=True)
+        memory_system = create_memory_system(
+            workspace=peer_dir,
+            config=self._session_only_memory_config(merged_memory),
+            session_only=True,
         )
         await memory_system.initialize()
-        self.plugin_integration.inject_memory_system_modifiers(memory_system)
-
+        _pi = getattr(self, "plugin_integration", None)
+        if _pi is not None:
+            _pi.inject_memory_system_modifiers(memory_system)
         if not hasattr(self, "_peer_memory_systems"):
-            self._peer_memory_systems: dict[str, MemorySystem] = {}
+            self._peer_memory_systems: dict[str, Any] = {}
         self._peer_memory_systems[peer_name] = memory_system
-
         return MemorySystemContextManager(
             memory_system=memory_system,
+            default_agent_id=peer_name,
+            default_agent_role=MemoryAgentRole.PEER,
             base_system_prompt=system_prompt,
+            injection_policy=RestrictedInjectionPolicy(
+                max_session_messages=merged_memory.get("short_term", {}).get("max_messages", 50),
+            ),
         )
 
     # --- Descriptor Building ---
@@ -522,14 +519,12 @@ class AgentBuilderMixin:
     # --- Context Routing ---
 
     def _get_context_manager(self, session_id: str) -> ContextManager:
-        from framework.multi_agent.utils import parse_peer_session_id
+        """Return the appropriate context manager for a session.
 
-        _, sender, receiver = parse_peer_session_id(session_id)
-        if sender is not None and receiver is not None:
-            # Peers have their own context manager set directly on their pipeline;
-            # context_manager_factory is cleared during peer initialization.
-            # Fall through to the main context manager if needed.
-            pass
+        All agents use ``{conv}:{name}`` format via SessionIdStrategy.
+        Peers have their own context manager set directly on their pipeline;
+        context_manager_factory is cleared during peer initialization.
+        """
         if self.context_manager is None:
             raise RuntimeError("Context manager is not initialized")
         return self.context_manager
@@ -537,25 +532,27 @@ class AgentBuilderMixin:
     # --- Cleanup ---
 
     async def _cleanup_subagent_memory(self, session_id: str) -> None:
-        from framework.memory.stores.utils import sanitize_scope_key
-
-        parts = session_id.split(":")
-        sub_name = (
-            parts[2] if len(parts) >= 3
-            else (parts[-1] if len(parts) >= 2 else session_id)
-        )
+        from framework.multi_agent.session_id import DefaultSessionIdStrategy
+        parent_name = self.config.get("multi_agent", {}).get("parent_agent_name", "main")
+        strategy = DefaultSessionIdStrategy(main_agent_name=parent_name)
+        _, sub_name = strategy.parse(session_id)
+        if sub_name is None:
+            return
         memory_system = self._subagent_memory_systems.get(sub_name)
         if memory_system is None:
             return
 
-        workspace = Path(memory_system.workspace)
-        scope_dir = workspace / sanitize_scope_key(session_id)
-        if scope_dir.exists() and scope_dir.is_dir():
-            try:
-                shutil.rmtree(scope_dir)
-                logger.info("Cleaned up subagent memory directory: %s", scope_dir)
-            except Exception:
-                logger.exception("Failed to clean up subagent memory directory: %s", scope_dir)
+        try:
+            ctx = MemoryContext(
+                session_id=session_id,
+                user_id="default",
+                agent_id=sub_name,
+                agent_role=MemoryAgentRole.SUBAGENT,
+            )
+            await memory_system.clear(ctx)
+            logger.info("Cleaned up subagent memory for session: %s", session_id)
+        except Exception:
+            logger.exception("Failed to clean up subagent memory for session: %s", session_id)
 
     # --- Peer Agent Initialization ---
 
@@ -606,6 +603,7 @@ class AgentBuilderMixin:
             # a broker wakeup signal is automatically sent to trigger inbox consumption.
             peer_address = AgentAddress(name=peer_name)
             async_send_timeout = peer_config.get("async_send_timeout", 5.0)
+            peer_strategy = DefaultSessionIdStrategy(main_agent_name=parent_name)
             async_send_tool = SendMessageAsyncTool(
                 broker=self.broker,
                 self_address=peer_address,
@@ -613,6 +611,7 @@ class AgentBuilderMixin:
                 agent_bus=self.agent_bus,
                 registry=self.agent_pool,
                 wakeup_timeout=async_send_timeout,
+                session_strategy=peer_strategy,
             )
             tool_manager.register(async_send_tool)
             print(f"   [OK] send_message_async registered (allowed_targets=[{parent_name}], wakeup_timeout={async_send_timeout}s)")

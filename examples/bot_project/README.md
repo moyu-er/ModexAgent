@@ -285,21 +285,21 @@ context_manager = MemorySystemContextManager(memory_system)
 `MemorySystem` 支持按 `Session`、`User`、`Tenant`、`Agent`、`Global` 以及 `Composite` 组合灵活配置每层的分组维度：
 
 ```python
-from framework.memory.system import MemorySystem, LayerConfig
+from framework.memory.system import MemorySystem
+from framework.memory.layers import MemoryLayerConfigSet, SessionMemoryConfig, ArchiveMemoryConfig, KnowledgeMemoryConfig
 from framework.memory.core.scope import CompositeScope, TenantScope, UserScope, SessionScope
 from framework.memory.stores.file import FileStorage
 from framework.memory.stores.in_memory import InMemoryStorage
 
 file_store = FileStorage(Path("./data/memory"))
 
-layers = {
-    "working": LayerConfig(scope=CompositeScope(TenantScope(), UserScope(), SessionScope()), storage=InMemoryStorage()),
-    "short_term": LayerConfig(scope=CompositeScope(TenantScope(), UserScope(), SessionScope()), storage=file_store),
-    "history": LayerConfig(scope=CompositeScope(TenantScope(), UserScope()), storage=file_store),
-    "long_term": LayerConfig(scope=CompositeScope(TenantScope(), UserScope()), storage=file_store),
-}
+layers = MemoryLayerConfigSet(
+    session=SessionMemoryConfig(scope=CompositeScope(TenantScope(), UserScope(), SessionScope())),
+    archive=ArchiveMemoryConfig(scope=CompositeScope(TenantScope(), UserScope())),
+    knowledge=KnowledgeMemoryConfig(scope=CompositeScope(TenantScope(), UserScope())),
+)
 
-memory_system = MemorySystem(workspace=Path("./data/memory"), layers=layers)
+memory_system = create_memory_system(workspace=Path("./data/memory"), layer_config=layers)
 ```
 
 内置便捷构造函数：

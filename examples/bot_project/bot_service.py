@@ -14,9 +14,6 @@ from typing import Literal
 # --------------------------------------------------------------------------- #
 # Path setup (must happen before importing framework)
 # --------------------------------------------------------------------------- #
-backend_dir = Path(__file__).parent.parent.parent.parent.parent
-if str(backend_dir) not in sys.path:
-    sys.path.insert(0, str(backend_dir))
 
 framework_dir = Path(__file__).parent.parent.parent
 if str(framework_dir) not in sys.path:
