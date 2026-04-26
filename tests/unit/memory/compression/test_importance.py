@@ -2,8 +2,7 @@
 
 import pytest
 
-from framework.memory.compression.importance import HeuristicImportanceScorer
-from framework.memory.core.compression import ImportanceScorer
+from framework.memory.compression.importance import HeuristicImportanceScorer, ImportanceScorer
 
 
 class TestHeuristicImportanceScorer:
@@ -52,7 +51,7 @@ class TestHeuristicImportanceScorer:
         assert len(scores) == 3
         assert scores[0] == 1.0
         assert scores[1] == 0.2
-        assert scores[2] == 0.5
+        assert scores[2] == 0.55
 
     def test_abc_cannot_instantiate(self):
         with pytest.raises(TypeError):

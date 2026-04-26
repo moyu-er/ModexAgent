@@ -67,19 +67,15 @@ class KeepLatestStrategy(CompressionStrategy):
         )
 ```
 
-Register it in a `LayerConfig`:
+Register it in a `MemoryLayerConfigSet`:
 
 ```python
-from framework.memory.system import LayerConfig
+from framework.memory.layers import MemoryLayerConfigSet, SessionMemoryConfig
 from framework.memory.core.scope import SessionScope
 
-layers = {
-    "short_term": LayerConfig(
-        scope=SessionScope(),
-        storage=FileStorage(Path("./memory")),
-        compression_strategy=KeepLatestStrategy(),
-    ),
-}
+config = MemoryLayerConfigSet(
+    session=SessionMemoryConfig(scope=SessionScope()),
+)
 ```
 
 ### Implementing `RetrievalStrategy` for Vector-Backed Long-Term Memory
@@ -155,7 +151,7 @@ class SemanticRetrieval(RetrievalStrategy):
 
 #### 4. Wire It Into `MemorySystem`
 
-Because `MemorySystem` currently assembles long-term memories via `LongTermMemoryManager.get_all()`, a `RetrievalStrategy` is best invoked **before** prompt construction:
+Because `MemorySystem` currently assembles long-term memories via `KnowledgeMemoryManager.get_all()`, a `RetrievalStrategy` is best invoked **before** prompt construction:
 
 ```python
 class RAGMemorySystem(MemorySystem):

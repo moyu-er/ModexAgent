@@ -108,7 +108,7 @@ class TestPluginE2E:
         await pm.shutdown_providers()
 
     def test_plugin_loader_integration(self, tmp_path: Path):
-        from framework.memory.system import MemorySystem
+        from framework.memory.system import create_memory_system
 
         plugin_dir = tmp_path / "e2e_plugin"
         plugin_dir.mkdir()
@@ -118,15 +118,16 @@ class TestPluginE2E:
         pm.discover_and_load()
 
         # Create a minimal memory system and inject
-        ms = MemorySystem(workspace=tmp_path)
+        ms = create_memory_system(tmp_path)
         loader = PluginLoader(pm)
 
         # inject_memory_providers is async but we only need to verify add_provider is called
         import asyncio
         asyncio.run(loader.inject_memory_providers(ms))
 
-        assert len(ms._providers) == 1
-        assert ms._providers[0].name == "e2e"
+        providers = ms.get_providers()
+        assert len(providers) == 1
+        assert providers[0].name == "e2e"
 
     def test_multiple_plugins_isolation(self, tmp_path: Path):
         """Multiple plugins should not interfere with each other."""

@@ -1,7 +1,6 @@
 """Tests for StorageLock abstraction and implementations."""
 
 import asyncio
-from pathlib import Path
 
 import pytest
 
@@ -28,16 +27,13 @@ class TestAioRWLock:
 
     async def test_writer_reentrancy(self):
         lock = AioRWLock()
-        async with lock.write():
-            async with lock.write():
-                async with lock.write():
-                    pass
+        async with lock.write(), lock.write(), lock.write():
+            pass
 
     async def test_writer_can_read_without_deadlock(self):
         lock = AioRWLock()
-        async with lock.write():
-            async with lock.read():
-                pass
+        async with lock.write(), lock.read():
+            pass
 
     async def test_concurrent_readers(self):
         lock = AioRWLock()
@@ -100,6 +96,38 @@ class TestAioRWLock:
         with pytest.raises(RuntimeError, match="Cannot release a read lock"):
             await lock.release_read()
 
+    async def test_read_timeout_when_writer_held(self):
+        lock = AioRWLock()
+        writer_started = asyncio.Event()
+
+        async def writer():
+            async with lock.write():
+                writer_started.set()
+                await asyncio.sleep(0.05)
+
+        task = asyncio.create_task(writer())
+        await writer_started.wait()
+        with pytest.raises(TimeoutError):
+            async with lock.read(timeout=0.01):
+                pass
+        await task
+
+    async def test_write_timeout_when_reader_held(self):
+        lock = AioRWLock()
+        reader_started = asyncio.Event()
+
+        async def reader():
+            async with lock.read():
+                reader_started.set()
+                await asyncio.sleep(0.05)
+
+        task = asyncio.create_task(reader())
+        await reader_started.wait()
+        with pytest.raises(TimeoutError):
+            async with lock.write(timeout=0.01):
+                pass
+        await task
+
 
 @pytest.mark.asyncio
 class TestNoOpStorageLock:
@@ -118,6 +146,13 @@ class TestNoOpStorageLock:
 
         await asyncio.gather(task1(), task2())
         assert "w1" in order and "w2" in order
+
+    async def test_noop_accepts_timeout_parameter(self):
+        lock = NoOpStorageLock()
+        async with lock.read(timeout=0.01):
+            pass
+        async with lock.write(timeout=0.01):
+            pass
 
 
 @pytest.mark.asyncio

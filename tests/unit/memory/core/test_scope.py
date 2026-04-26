@@ -15,17 +15,19 @@ from framework.memory.core.scope import (
 
 
 class TestMemoryContext:
-    def test_with_defaults_fills_missing(self):
+    def test_with_defaults_returns_new_with_fills(self):
         ctx = MemoryContext(session_id="s1")
-        ctx.with_defaults(user_id="u_default", tenant_id="t_default")
+        filled = ctx.with_defaults(user_id="u_default", tenant_id="t_default")
         assert ctx.session_id == "s1"
-        assert ctx.user_id == "u_default"
-        assert ctx.tenant_id == "t_default"
+        assert ctx.user_id is None  # original unchanged
+        assert filled.session_id == "s1"
+        assert filled.user_id == "u_default"
+        assert filled.tenant_id == "t_default"
 
     def test_with_defaults_preserves_existing(self):
         ctx = MemoryContext(session_id="s1", user_id="u1")
-        ctx.with_defaults(user_id="u_default")
-        assert ctx.user_id == "u1"
+        filled = ctx.with_defaults(user_id="u_default")
+        assert filled.user_id == "u1"  # existing value preserved
 
 
 class TestSessionScope:

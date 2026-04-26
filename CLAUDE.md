@@ -97,7 +97,7 @@ framework/
 ├── memory/                # Three-layer memory system + redesign docs in agent_docs/
 │   ├── core/              # ABCs: MemoryScope, MemoryStorage, ChatMessage, scope metadata
 │   ├── managers/          # ShortTerm, History, LongTerm layer managers
-│   ├── compaction/        # MemoryCompactionPipeline, MessageCompactionPolicy, BoundaryPolicy
+│   ├── compaction/        # MessageCompactionPolicy, BoundaryPolicy (pipeline removed)
 │   ├── consolidation/     # Online Consolidator + offline DreamEngine
 │   ├── stores/            # FileStorage (JSONL+KV), InMemoryStorage
 │   └── injection/         # MemoryInjectionPolicy → ContextState assembly
@@ -160,7 +160,7 @@ Three-layer with scope isolation: `Short-term → History → Long-term (SOUL/US
 - `SummaryStrategy` — LLM or heuristic summary generation
 - `ScopeRecord` + `.scope.json` — recoverable scope metadata for background tasks
 
-Compression is three-phase (pre-compress callbacks → strategy → hard limits), all tool-chain-aware. `DreamEngine` runs offline consolidation; `Consolidator` runs online LLM-based compression.
+Compression is two-phase (trigger → plan → summary → commit), all tool-chain-aware. `DreamEngine` runs offline consolidation; `Consolidator` runs online LLM-based compression via `SummaryStrategy`.
 
 **Design documents:** `agent_docs/memory-system-redesign.md` and `agent_docs/memory-system-redesign-plan.md` describe the ongoing P0-P5 redesign.
 

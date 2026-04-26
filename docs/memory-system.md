@@ -48,18 +48,17 @@
 **配置**：
 
 ```python
-from framework.memory.managers.short_term import ShortTermConfig, ShortTermMemoryManager
+from framework.memory.layers import MemoryLayerConfigSet, SessionMemoryConfig
 from framework.memory.consolidation.consolidator import Consolidator
 from framework.memory.archive import SemanticArchiveStrategy
 from framework.memory.content_transform import Base64SanitizeTransformer
 
-config = ShortTermConfig(
-    max_messages=100,           # 最大消息数
-    max_tokens=8000,            # 最大 token 数
-    compression_strategy=Consolidator(llm_provider=provider),  # LLM 压缩策略
-    archive_strategy=SemanticArchiveStrategy(),  # 语义归档策略
-    content_transformer=Base64SanitizeTransformer(),  # 内容转换器
+# 通过 MemoryLayerConfigSet 配置各层
+layers = MemoryLayerConfigSet(
+    session=SessionMemoryConfig(max_messages=100),
 )
+# 压缩策略由 DefaultMemoryCompressionCoordinator 统一管理
+# 如需自定义，在创建 memory system 时传入 coordinator 参数
 ```
 
 **压缩策略**：
@@ -228,15 +227,11 @@ config = ShortTermConfig(
 ### 5.1 初始化
 
 ```python
-from framework.memory.system import MemorySystem, LayerConfig
-from framework.memory.core.scope import SessionScope, UserScope
-from framework.memory.stores.file import FileStorage
-from framework.memory.stores.in_memory import InMemoryStorage
+from framework.memory.system import create_memory_system
 
-memory_system = MemorySystem(
+memory_system = create_memory_system(
     workspace=Path("./data/memory"),
     llm_provider=provider,
-    auto_llm_compression=True,
 )
 await memory_system.initialize()
 ```
@@ -246,29 +241,31 @@ await memory_system.initialize()
 **单用户桌面场景**：
 ```python
 # 单用户桌面场景默认配置
-layers = MemorySystem.default_single_user_layers(
+memory_system = create_memory_system(
     workspace=Path("./memory"),
     llm_provider=provider,
-    auto_llm_compression=True,
-    short_term_max_messages=100,
-    short_term_max_tokens=8000,
-    llm_max_tokens=80000,
-    budget_ratio=0.5,  # 短期记忆 token 上限 = llm_max_tokens * 0.5
+    config={
+        "session": {"max_messages": 100},
+        "auto_compact": {"max_messages": 100, "max_tokens": 8000},
+    },
 )
-
-memory_system = MemorySystem(workspace=Path("./memory"), layers=layers)
+await memory_system.initialize()
 ```
 
 **多租户 SaaS 场景**：
 ```python
 # 多租户 SaaS 场景默认配置
-layers = MemorySystem.default_multi_tenant_layers(
-    workspace=Path("./memory"),
-    llm_provider=provider,
-    auto_llm_compression=True,
-)
+from framework.memory.layers import MemoryLayerConfigSet
+from framework.memory.core.scope import TenantScope, UserScope, SessionScope, CompositeScope
+from framework.memory.layers.config import SessionMemoryConfig, ArchiveMemoryConfig, KnowledgeMemoryConfig
 
-memory_system = MemorySystem(workspace=Path("./memory"), layers=layers)
+layers = MemoryLayerConfigSet(
+    session=SessionMemoryConfig(scope=CompositeScope(TenantScope(), UserScope(), SessionScope())),
+    archive=ArchiveMemoryConfig(scope=CompositeScope(TenantScope(), UserScope())),
+    knowledge=KnowledgeMemoryConfig(scope=CompositeScope(TenantScope(), UserScope())),
+)
+memory_system = create_memory_system(workspace=Path("./memory"), layer_config=layers)
+await memory_system.initialize()
 ```
 
 ### 5.3 基本操作

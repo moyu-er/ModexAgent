@@ -224,14 +224,14 @@ class TestPeerAutoSendHook:
         assert "Final answer." in content
 
     # ------------------------------------------------------------------
-    # 10. Peer 3-part session_id: agent_session_id preserved
+    # 10. Peer session: agent_session_id routes to main's user session
     # ------------------------------------------------------------------
 
     async def test_peer_session_preserves_agent_session_id(self):
-        """3-part session_id must be preserved as agent_session_id."""
+        """Peer session → agent_session_id = main_session(conv) (routes to main's user session)."""
         bus = self._make_bus()
         hook = PeerAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
-        peer_session = "conv_001:main:office-expert"
+        peer_session = "conv_001:office-expert"
         ctx = self._make_ctx([], session_id=peer_session)
         result = AgentResult(content="Peer task done.")
 
@@ -240,18 +240,17 @@ class TestPeerAutoSendHook:
         bus.send.assert_awaited_once()
         args, _ = bus.send.await_args
         _, envelope = args
-        assert envelope.agent_session_id == peer_session
-        assert envelope.agent_session_id.count(":") == 2
+        assert envelope.agent_session_id == "conv_001:main"
 
     # ------------------------------------------------------------------
-    # 11. Peer 3-part session_id: inbox_key is always 2-part
+    # 11. Peer session: inbox_key is main's user session (2-part)
     # ------------------------------------------------------------------
 
     async def test_peer_session_inbox_key_is_two_part(self):
         """inbox_key for inbox delivery is always {cid}:main (2-part)."""
         bus = self._make_bus()
         hook = PeerAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
-        ctx = self._make_ctx([], session_id="conv_001:main:office-expert")
+        ctx = self._make_ctx([], session_id="conv_001:office-expert")
         result = AgentResult(content="Done.")
 
         await hook.after_turn(ctx, result)
@@ -263,14 +262,14 @@ class TestPeerAutoSendHook:
         assert inbox_key.count(":") == 1
 
     # ------------------------------------------------------------------
-    # 12. Peer 3-part session_id: conversation_id extracted correctly
+    # 12. Peer session: conversation_id extracted correctly
     # ------------------------------------------------------------------
 
     async def test_peer_session_conversation_id_extracted(self):
-        """conversation_id is the first segment of the 3-part session_id."""
+        """conversation_id is extracted from the session via strategy.parse()."""
         bus = self._make_bus()
         hook = PeerAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
-        ctx = self._make_ctx([], session_id="user_abc:main:office-expert")
+        ctx = self._make_ctx([], session_id="user_abc:office-expert")
         result = AgentResult(content="Done.")
 
         await hook.after_turn(ctx, result)
@@ -281,11 +280,11 @@ class TestPeerAutoSendHook:
         assert envelope.conversation_id == "user_abc"
 
     # ------------------------------------------------------------------
-    # 13. Pool 2-part session_id: backward compatible
+    # 13. Pool session: routes to main's user session
     # ------------------------------------------------------------------
 
     async def test_pool_session_preserves_agent_session_id(self):
-        """2-part pool session_id is also preserved as-is."""
+        """2-part pool session → agent_session_id = main_session(conv)."""
         bus = self._make_bus()
         hook = PeerAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
         pool_session = "conv_001:office-expert"
@@ -297,5 +296,21 @@ class TestPeerAutoSendHook:
         bus.send.assert_awaited_once()
         args, _ = bus.send.await_args
         inbox_key, envelope = args
-        assert envelope.agent_session_id == pool_session
+        assert envelope.agent_session_id == "conv_001:main"
         assert inbox_key == "conv_001:main"
+
+    async def test_non_default_parent_name_uses_correct_session(self):
+        """parent_name != 'main' → inbox_key uses correct parent name."""
+        bus = self._make_bus()
+        hook = PeerAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="qq_bot")
+        ctx = self._make_ctx([], session_id="conv_001:office-expert")
+        result = AgentResult(content="Done.")
+
+        await hook.after_turn(ctx, result)
+
+        bus.send.assert_awaited_once()
+        args, _ = bus.send.await_args
+        inbox_key, envelope = args
+        assert inbox_key == "conv_001:qq_bot"
+        assert envelope.agent_session_id == "conv_001:qq_bot"
+        assert envelope.target.name == "qq_bot"
