@@ -9,7 +9,7 @@ Key abstractions:
 - MemorySystem: unified entry point
 - MemoryContext: scope dimensions (session, user, tenant, etc.)
 - MemoryScope: isolation strategy per layer
-- MemoryCompactionPipeline: unified short-term compaction orchestration
+- MemoryCompressionCoordinator: unified session-to-archive compaction
 - ArchiveStrategy: how pruned messages are archived
 - MemoryInjectionPolicy: maps memory layers to LLM ContextState
 """
@@ -19,17 +19,48 @@ from framework.memory.archive import (
     PreserveSummaryArchiveStrategy,
     RawDumpArchiveStrategy,
 )
-from framework.memory.core.compression import (
-    CompressionContext,
-    CompressionResult,
-    CompressionStrategy,
-    ImportanceScorer,
+from framework.memory.compaction.boundary import BoundaryPolicy, ToolChainBoundaryPolicy
+from framework.memory.compaction.policy import (
+    ConservativeCompactionPolicy,
+    KeepAllCompactionPolicy,
+    MessageCompactionDecision,
+    MessageCompactionPolicy,
+    SemanticToolCompactionPolicy,
+)
+from framework.memory.compression.importance import HeuristicImportanceScorer, ImportanceScorer
+from framework.memory.context_governance import (
+    CompositeGovernance,
+    ContextGovernance,
+    MicrocompactGovernance,
+    TokenBudgetGovernance,
+    ToolChainRepairGovernance,
 )
 from framework.memory.core.consolidation import (
     ConsolidationEngine,
     ConsolidationResult,
     MemoryUpdate,
     MemoryUpdateMode,
+)
+from framework.memory.core.layers import (
+    ArchiveMemoryManager,
+    KnowledgeMemoryManager,
+    MemoryLayerSet,
+    SessionMemoryManager,
+)
+from framework.memory.core.models import (
+    ArchiveEntry,
+    CompressionPlan,
+    CompressionReason,
+    CompressionTrigger,
+    KnowledgeBudget,
+    LongTermMemory,
+    MemoryBudget,
+    MemoryContextBundle,
+    PromptSection,
+    StorageRevision,
+)
+from framework.memory.core.models import (
+    CompressionResult as CompressionCommitResult,
 )
 from framework.memory.core.scope import (
     AgentScope,
@@ -45,53 +76,50 @@ from framework.memory.core.scope import (
     UserScope,
 )
 from framework.memory.core.storage import MemoryStorage
-from framework.memory.auto_compact import AutoCompactService
-from framework.memory.compaction.pipeline import (
-    ConsolidatorSummaryStrategy,
-    HeuristicSummaryStrategy,
-    MemoryCompactionPipeline,
-    MemoryCompactionResult,
-    SummaryStrategy,
-)
-from framework.memory.context_governance import (
-    CompositeGovernance,
-    ContextGovernance,
-    MicrocompactGovernance,
-    TokenBudgetGovernance,
-    ToolChainRepairGovernance,
-)
+from framework.memory.core.system import MemorySystem
+from framework.memory.core.system import MemorySystem as MemorySystemABC
+from framework.memory.default_system import DefaultMemorySystem
 from framework.memory.history_search import HistorySearchStrategy, KeywordHistorySearch
 from framework.memory.injection import (
-    DefaultMemoryInjectionPolicy,
-    MemoryInjectionPolicy,
+    FullInjectionPolicy,
     InjectionFilterStrategy,
-    NoopFilterStrategy,
+    MemoryInjectionPolicy,
+    RestrictedInjectionPolicy,
     ToolMessageFilterStrategy,
 )
+from framework.memory.layers import (
+    ArchiveMemoryConfig,
+    KnowledgeMemoryConfig,
+    MemoryLayerConfigSet,
+    MemoryLayerFactory,
+    ScopedArchiveMemoryManager,
+    ScopedKnowledgeMemoryManager,
+    ScopedSessionMemoryManager,
+    SessionMemoryConfig,
+)
 from framework.memory.recorder import MemoryAppendRecorder, MemoryAppendSource
-from framework.memory.managers.history import HistoryArchiveManager
-from framework.memory.managers.long_term import (
-    LongTermMemory,
-    LongTermMemoryManager,
+from framework.memory.registry import (
+    DefaultMemoryStoreRegistry,
+    InMemoryStoreRegistry,
+    MemoryStoreRegistry,
 )
-from framework.memory.managers.short_term import (
-    CompressionMode,
-    ShortTermConfig,
-    ShortTermMemoryManager,
-)
-from framework.memory.stores.file import FileStorage
-from framework.memory.stores.in_memory import InMemoryStorage
 from framework.memory.system import (
-    LayerConfig,
-    MemorySystem,
     MemorySystemContextManager,
+    create_memory_system,
 )
 
 __all__ = [
     # Entry points
     "MemorySystem",
+    "MemorySystemABC",
+    "DefaultMemorySystem",
+    "create_memory_system",
     "MemorySystemContextManager",
-    "LayerConfig",
+    # Layer ownership
+    "MemoryLayerSet",
+    "SessionMemoryManager",
+    "ArchiveMemoryManager",
+    "KnowledgeMemoryManager",
     # Context & scope
     "MemoryContext",
     "MemoryScope",
@@ -104,25 +132,39 @@ __all__ = [
     "CompositeScope",
     "GlobalScope",
     "PeerPairScope",
-    # Storage backends
+    # Registry & storage
+    "MemoryStoreRegistry",
+    "DefaultMemoryStoreRegistry",
+    "InMemoryStoreRegistry",
     "MemoryStorage",
-    "InMemoryStorage",
-    "FileStorage",
-    # Managers
-    "ShortTermConfig",
-    "ShortTermMemoryManager",
-    "HistoryArchiveManager",
+    # Layer config & factory
+    "MemoryLayerConfigSet",
+    "MemoryLayerFactory",
+    "SessionMemoryConfig",
+    "ArchiveMemoryConfig",
+    "KnowledgeMemoryConfig",
+    "ScopedSessionMemoryManager",
+    "ScopedArchiveMemoryManager",
+    "ScopedKnowledgeMemoryManager",
+    # Shared models
+    "ArchiveEntry",
+    "CompressionPlan",
+    "CompressionReason",
+    "CompressionCommitResult",
+    "CompressionTrigger",
+    "KnowledgeBudget",
+    "MemoryBudget",
+    "MemoryContextBundle",
+    "PromptSection",
+    "StorageRevision",
+    # Shared models
     "LongTermMemory",
-    "LongTermMemoryManager",
-    "CompressionMode",
     # Recorder
     "MemoryAppendRecorder",
     "MemoryAppendSource",
-    # Compression
-    "CompressionStrategy",
-    "CompressionResult",
-    "CompressionContext",
+    # Compression (strategies live in compression sub-package)
     "ImportanceScorer",
+    "HeuristicImportanceScorer",
     # Consolidation
     "ConsolidationEngine",
     "ConsolidationResult",
@@ -134,7 +176,10 @@ __all__ = [
     "RawDumpArchiveStrategy",
     # Injection
     "MemoryInjectionPolicy",
-    "DefaultMemoryInjectionPolicy",
+    "FullInjectionPolicy",
+    "RestrictedInjectionPolicy",
+    "InjectionFilterStrategy",
+    "ToolMessageFilterStrategy",
     # History search
     "HistorySearchStrategy",
     "KeywordHistorySearch",
@@ -144,12 +189,13 @@ __all__ = [
     "ToolChainRepairGovernance",
     "MicrocompactGovernance",
     "TokenBudgetGovernance",
-    # Auto compact
-    "AutoCompactService",
-    # Compaction pipeline
-    "MemoryCompactionPipeline",
-    "MemoryCompactionResult",
-    "SummaryStrategy",
-    "HeuristicSummaryStrategy",
-    "ConsolidatorSummaryStrategy",
+    # Auto compact (removed; use DefaultMemoryMaintenancePolicy directly)
+    # Compaction policy / boundary (pipeline removed; workflow unified under coordinator)
+    "MessageCompactionPolicy",
+    "MessageCompactionDecision",
+    "ConservativeCompactionPolicy",
+    "KeepAllCompactionPolicy",
+    "SemanticToolCompactionPolicy",
+    "BoundaryPolicy",
+    "ToolChainBoundaryPolicy",
 ]
