@@ -17,9 +17,9 @@ class MemoryAgentRole(StrEnum):
 class MemoryLayerName(StrEnum):
     """Canonical memory layer names used in metadata and config."""
 
-    SHORT_TERM = "short_term"
-    HISTORY = "history"
-    LONG_TERM = "long_term"
+    SESSION = "session"
+    ARCHIVE = "archive"
+    KNOWLEDGE = "knowledge"
     PROVIDER = "provider"
 
 
@@ -31,28 +31,22 @@ class MemoryContext:
     user_id: str | None = None
     tenant_id: str | None = None
     agent_id: str | None = None
+    agent_role: str | MemoryAgentRole | None = None
     channel: str | None = None
     chat_id: str | None = None
     sender_agent: str | None = None
     receiver_agent: str | None = None
 
     def with_defaults(self, **defaults: Any) -> "MemoryContext":
-        """用默认值填充缺失字段，返回新对象。"""
-        data = {
-            "session_id": defaults.get("session_id", "default"),
-            "user_id": defaults.get("user_id", "default"),
-            "tenant_id": defaults.get("tenant_id", "default"),
-            "agent_id": defaults.get("agent_id", "default"),
-            "channel": defaults.get("channel"),
-            "chat_id": defaults.get("chat_id"),
-            "sender_agent": defaults.get("sender_agent"),
-            "receiver_agent": defaults.get("receiver_agent"),
-        }
-        for key, value in data.items():
-            current = getattr(self, key)
-            if current is None:
-                setattr(self, key, value)
-        return self
+        """Return a new MemoryContext with default values for missing fields."""
+        current = {key: getattr(self, key) for key in [
+            "session_id", "user_id", "tenant_id", "agent_id", "agent_role",
+            "channel", "chat_id", "sender_agent", "receiver_agent",
+        ]}
+        for key, default_value in defaults.items():
+            if hasattr(self, key) and current[key] is None and default_value is not None:
+                current[key] = default_value
+        return MemoryContext(**current)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize context for scope metadata."""
@@ -88,6 +82,7 @@ def infer_agent_role(context: MemoryContext) -> MemoryAgentRole:
     because ordinary single-agent use should keep full memory behavior.
     """
     candidates = [
+        context.agent_role,
         context.agent_id,
         context.sender_agent,
         context.receiver_agent,

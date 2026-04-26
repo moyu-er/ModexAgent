@@ -11,8 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from framework.memory.core.lock import AioRWLock, StorageLock
+from framework.memory.core.models import StorageRevision
 from framework.memory.core.scope import MemoryAgentRole, MemoryContext, ScopeRecord
-from framework.memory.core.storage import MemoryStorage
 from framework.memory.stores.utils import ensure_scope_dir
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ _KV_FILE = "kv.json"
 _SCOPE_FILE = ".scope.json"
 
 
-class FileStorage(MemoryStorage):
+class FileStorage:
     """基于文件的跨平台存储后端。
 
     目录结构:
@@ -52,8 +52,12 @@ class FileStorage(MemoryStorage):
         ws = Path(workspace)
         if lock is None:
             lock = AioRWLock()
-        super().__init__(lock)
+        self._lock = lock
         self.workspace = ws
+
+    def get_lock(self, lock_key: str | None = None) -> StorageLock:
+        _ = lock_key
+        return self._lock
 
     async def initialize(self) -> None:
         self.workspace.mkdir(parents=True, exist_ok=True)
@@ -70,6 +74,16 @@ class FileStorage(MemoryStorage):
 
     async def close(self) -> None:
         pass
+
+    async def get_revision(self, scope_key: str = "default") -> StorageRevision:
+        from datetime import UTC, datetime
+
+        messages = await self.load_messages(scope_key)
+        return StorageRevision(
+            message_count=len(messages),
+            updated_at=datetime.now(UTC),
+            version=await self.get_last_cursor(scope_key, "default"),
+        )
 
     def _scope_dir(self, scope_key: str) -> Path:
         return ensure_scope_dir(self.workspace, scope_key)

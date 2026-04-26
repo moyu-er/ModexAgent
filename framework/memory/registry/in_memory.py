@@ -1,0 +1,102 @@
+"""In-memory store registry."""
+
+from __future__ import annotations
+
+import time
+from collections.abc import Collection
+
+from framework.memory.core.scope import (
+    MemoryAgentRole,
+    MemoryContext,
+    MemoryLayerName,
+    MemoryScope,
+    ScopeRecord,
+    infer_agent_role,
+)
+from framework.memory.core.storage import MemoryStorage
+from framework.memory.registry.base import MemoryStoreRegistry
+from framework.memory.stores.scoped_in_memory import InMemoryScopedStorage
+
+
+class InMemoryStoreRegistry(MemoryStoreRegistry):
+    """Registry that creates one in-memory storage object per layer/scope."""
+
+    def __init__(self) -> None:
+        self._stores: dict[tuple[MemoryLayerName, str], InMemoryScopedStorage] = {}
+        self._records: dict[tuple[MemoryLayerName, str], ScopeRecord] = {}
+
+    async def initialize(self) -> None:
+        pass
+
+    async def close(self) -> None:
+        for storage in self._stores.values():
+            await storage.close()
+
+    async def resolve(
+        self,
+        *,
+        layer: MemoryLayerName,
+        scope: MemoryScope,
+        context: MemoryContext,
+    ) -> MemoryStorage:
+        scope_key = scope.get_scope_key(context)
+        cache_key = (layer, scope_key)
+        storage = self._stores.get(cache_key)
+        if storage is None:
+            storage = InMemoryScopedStorage()
+            await storage.initialize()
+            self._stores[cache_key] = storage
+        existing = self._records.get(cache_key)
+        self._records[cache_key] = ScopeRecord(
+            scope_key=scope_key,
+            layer=layer,
+            context=context,
+            storage_path=f"memory://{layer}/{scope_key}",
+            agent_role=infer_agent_role(context),
+            agent_id=context.agent_id,
+            created_at=existing.created_at if existing is not None else time.time(),
+            updated_at=time.time(),
+        )
+        return storage
+
+    async def list_records(
+        self,
+        *,
+        layer: MemoryLayerName | None = None,
+        agent_roles: Collection[str | MemoryAgentRole] | None = frozenset(
+            {MemoryAgentRole.MAIN}
+        ),
+        has_file: str | None = None,
+    ) -> list[ScopeRecord]:
+        records = list(self._records.values())
+        if layer is not None:
+            records = [record for record in records if record.layer == layer]
+        if agent_roles is not None:
+            allowed_roles = {str(role) for role in agent_roles}
+            records = [record for record in records if str(record.agent_role) in allowed_roles]
+        if has_file is not None:
+            filtered: list[ScopeRecord] = []
+            for record in records:
+                storage = self._stores.get((MemoryLayerName(record.layer), record.scope_key))
+                if storage is None:
+                    continue
+                if has_file == "messages" and await storage.load_messages() or has_file in {"history", "archive", "logs"} and await storage.read_logs() or has_file == "kv" and await storage.list_keys():
+                    filtered.append(record)
+            records = filtered
+        return records
+
+    async def evict(
+        self,
+        *,
+        layer: MemoryLayerName | None = None,
+        scope: MemoryScope | None = None,
+    ) -> None:
+        _ = scope
+        keys = [
+            key
+            for key in self._stores
+            if layer is None or key[0] == layer
+        ]
+        for key in keys:
+            await self._stores[key].close()
+            self._stores.pop(key, None)

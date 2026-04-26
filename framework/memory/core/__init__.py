@@ -1,13 +1,24 @@
 """Memory system core abstractions."""
 
-from .base_managers import (
-    BaseHistoryArchiveManager,
-    BaseLongTermMemoryManager,
-    BaseShortTermManager,
-)
-from .compression import CompressionContext, CompressionResult, CompressionStrategy
 from .consolidation import ConsolidationEngine, ConsolidationResult, MemoryUpdate
+from .layers import (
+    ArchiveMemoryManager,
+    KnowledgeMemoryManager,
+    MemoryLayerSet,
+    SessionMemoryManager,
+)
 from .message import ChatMessage
+from .models import (
+    ArchiveEntry,
+    CompressionPlan,
+    CompressionReason,
+    CompressionTrigger,
+    MemoryBudget,
+    MemoryContextBundle,
+    PromptSection,
+    StorageRevision,
+    UnprocessedResult,
+)
 from .scope import (
     AgentScope,
     ChannelScope,
@@ -21,20 +32,23 @@ from .scope import (
     UserScope,
 )
 from .storage import MemoryStorage
+from .system import MemorySystem
 
 __all__ = [
-    "BaseHistoryArchiveManager",
-    "BaseLongTermMemoryManager",
-    "BaseShortTermManager",
     "ChatMessage",
-    "CompressionResult",
-    "CompressionStrategy",
-    "CompressionContext",
+    "ArchiveEntry",
+    "ArchiveMemoryManager",
+    "CompressionPlan",
+    "CompressionReason",
+    "CompressionTrigger",
     "ConsolidationEngine",
     "ConsolidationResult",
     "MemoryUpdate",
+    "MemoryBudget",
+    "MemoryContextBundle",
     "MemoryContext",
     "MemoryScope",
+    "PromptSection",
     "SessionScope",
     "UserScope",
     "TenantScope",
@@ -44,4 +58,10 @@ __all__ = [
     "GlobalScope",
     "CompositeScope",
     "MemoryStorage",
+    "MemorySystem",
+    "KnowledgeMemoryManager",
+    "MemoryLayerSet",
+    "SessionMemoryManager",
+    "StorageRevision",
+    "UnprocessedResult",
 ]

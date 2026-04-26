@@ -1,6 +1,9 @@
 """Memory storage backends."""
 
-from .file import FileStorage
-from .in_memory import InMemoryStorage
+from .scoped_file import DefaultScopedStorage
+from .scoped_in_memory import InMemoryScopedStorage
 
-__all__ = ["FileStorage", "InMemoryStorage"]
+__all__ = [
+    "DefaultScopedStorage",
+    "InMemoryScopedStorage",
+]

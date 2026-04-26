@@ -6,29 +6,43 @@ from collections.abc import Collection
 from typing import Any
 
 from framework.memory.core.lock import NoOpStorageLock, StorageLock
+from framework.memory.core.models import StorageRevision
 from framework.memory.core.scope import MemoryAgentRole, MemoryContext, ScopeRecord
-from framework.memory.core.storage import MemoryStorage
 
 
-class InMemoryStorage(MemoryStorage):
+class InMemoryStorage:
     """内存中的存储后端，使用嵌套字典实现。
 
     数据在进程重启后丢失，适合单元测试和开发调试。
     """
 
     def __init__(self, lock: StorageLock | None = None) -> None:
-        super().__init__(lock or NoOpStorageLock())
+        self._lock = lock or NoOpStorageLock()
         self._data: dict[str, dict[str, Any]] = {}
         self._logs: dict[str, list[dict[str, Any]]] = {}
         self._changelogs: dict[str, list[dict[str, Any]]] = {}
         self._cursors: dict[str, int] = {}
         self._scope_records: dict[str, ScopeRecord] = {}
 
+    def get_lock(self, lock_key: str | None = None) -> StorageLock:
+        _ = lock_key
+        return self._lock
+
     async def initialize(self) -> None:
         pass
 
     async def close(self) -> None:
         pass
+
+    async def get_revision(self, scope_key: str = "default") -> StorageRevision:
+        from datetime import UTC, datetime
+
+        messages = await self.load_messages(scope_key)
+        return StorageRevision(
+            message_count=len(messages),
+            updated_at=datetime.now(UTC),
+            version=await self.get_last_cursor(scope_key, "default"),
+        )
 
     def list_scopes(self) -> list[str]:
         """返回所有已创建的 scope key 列表。"""

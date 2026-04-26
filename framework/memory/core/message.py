@@ -107,7 +107,7 @@ class ChatMessage(BaseModel):
         """递归序列化单个值。"""
         if value is None:
             return None
-        if isinstance(value, (str, int, float, bool)):
+        if isinstance(value, str | int | float | bool):
             return value
         if isinstance(value, list):
             return [ChatMessage._serialize_value(v) for v in value]
@@ -128,4 +128,4 @@ class ChatMessage(BaseModel):
         try:
             return getattr(self, key)
         except AttributeError:
-            raise KeyError(key)
+            raise KeyError(key) from None
