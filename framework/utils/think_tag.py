@@ -13,8 +13,8 @@ class ThinkTagExtractor:
     Supports incomplete tags spanning chunk boundaries.
     """
 
-    _OPEN_TAG = "nope"
-    _CLOSE_TAG = "nope"
+    _OPEN_TAG = "<think>"
+    _CLOSE_TAG = "</think>"
 
     def __init__(self):
         self._in_think = False

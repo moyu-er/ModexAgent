@@ -8,10 +8,12 @@ import contextlib
 import logging
 from typing import Any
 
+from framework.core.llm_error import RuntimeSafetyPolicy, TurnTimeoutPolicy
 from framework.core.skills import SkillManager
 from framework.memory.core.message import ChatMessage
 
 from ..core.agent import Agent, AgentContext
+from ..core.constants import FinishReason
 from ..core.context import ContextManager
 from ..core.emitter import AgentResult, StreamingAwareEmitter
 from ..core.runtime_context import RuntimeContextManager
@@ -38,6 +40,68 @@ from .adapters import InputAdapter, OutputAdapter, OutputMessage
 logger = logging.getLogger(__name__)
 
 _UNSET = object()
+
+_ERROR_PLACEHOLDER = "[Assistant reply unavailable due to model or runtime error.]"
+
+
+async def _safe_emit_error(
+    emitter: StreamingAwareEmitter,
+    error_text: str,
+    *,
+    timeout: float,
+) -> None:
+    """向用户发送错误提示，带 output timeout 保护。"""
+    try:
+        await asyncio.wait_for(
+            emitter.emit_error(error_text),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        logger.error("Emit error timeout after %.1fs", timeout)
+    except Exception:
+        logger.exception("Emit error failed")
+
+
+async def _save_error_placeholder(
+    ctx_mgr: Any,
+    session_id: str,
+    error: str,
+    *,
+    timeout: float,
+) -> bool:
+    """写入 assistant error placeholder，仅当历史尾部为 user 时生效。"""
+    try:
+        add_placeholder = getattr(ctx_mgr, "add_assistant_placeholder", None)
+        if add_placeholder is not None:
+            await asyncio.wait_for(add_placeholder(session_id, error), timeout=timeout)
+            return True
+        return False
+    except asyncio.TimeoutError:
+        logger.error("Save error placeholder timeout after %.1fs for %s", timeout, session_id)
+        return False
+    except Exception:
+        logger.exception("Failed to save error placeholder for %s", session_id)
+        return False
+
+
+async def _safe_flush(ctx_mgr: Any, session_id: str, *, timeout: float) -> None:
+    """Memory flush 带 timeout。"""
+    try:
+        await asyncio.wait_for(ctx_mgr.flush(session_id), timeout=timeout)
+    except asyncio.TimeoutError:
+        logger.error("Memory flush timeout for %s", session_id)
+    except Exception:
+        logger.exception("Memory flush failed for %s", session_id)
+
+
+async def _safe_clear_checkpoint(ctx_mgr: Any, session_id: str, *, timeout: float) -> None:
+    """Clear checkpoint 带 timeout。"""
+    try:
+        await asyncio.wait_for(ctx_mgr.clear_checkpoint(session_id), timeout=timeout)
+    except asyncio.TimeoutError:
+        logger.error("Clear checkpoint timeout for %s", session_id)
+    except Exception:
+        logger.exception("Clear checkpoint failed for %s", session_id)
 
 
 class AgentPipeline:
@@ -82,30 +146,12 @@ class AgentPipeline:
         on_session_end: Any | None = None,
         runtime_context_manager: RuntimeContextManager | None = None,
         governance: ContextGovernance | None = None,
+        safety: RuntimeSafetyPolicy | None = None,
     ):
         """
         Args:
-            agent: Agent 实例
-            context_manager: 上下文管理器
-            tool_manager: 工具管理器
-            input_adapter: 输入适配器
-            output_adapter: 输出适配器
-            emitter_factory: 可选的 Emitter 工厂函数，接收 session_id 返回 ContentEmitter
-            dream_engine: 可选的 DreamEngine，用于离线长期记忆整理
-            dream_interval: 后台扫描周期（秒），None 表示不扫描
-            dream_threshold: 触发 DreamEngine 的历史未处理条目阈值
-            skill_manager: 可选的 SkillManager，用于构建系统提示词
-            hooks: 可选的 AgentRunHook 列表
-            subagent_manager: 可选的 SubagentManager，用于 Turn 结束时取消子 Agent
-            command_interceptor: 可选的命令拦截器
-            router: 可选的 AgentMessageRouter
-            deduplicator: 可选的 MessageDeduplicator
-            context_builder: 可选的 MultiAgentContextBuilder
-            agent_descriptor: 可选的 AgentDescriptor（与 context_builder 配合使用）
-            sanitizer: 可选的内容清洗函数，默认使用 ContentSanitizer.sanitize，传 None 表示禁用
-            context_manager_factory: 可选的 ContextManager 工厂函数，接收 session_id 返回 ContextManager
-            runtime_context_manager: 可选的 RuntimeContextManager，用于按会话隔离运行时状态
-            governance: 可选的 ContextGovernance，用于轮内消息治理
+            ...
+            safety: P0-a 运行时安全策略（timeout、熔断等），None 则使用默认
         """
         if sanitizer is _UNSET:
             from framework.multi_agent.sanitizer import ContentSanitizer
@@ -140,6 +186,7 @@ class AgentPipeline:
         self.on_session_end = on_session_end
         self.runtime_context_manager = runtime_context_manager
         self.governance = governance
+        self.safety = safety or RuntimeSafetyPolicy()
         self._running = False
         self._dream_task: asyncio.Task | None = None
         self._session_locks: dict[str, asyncio.Lock] = {}
@@ -512,9 +559,14 @@ class AgentPipeline:
         conversation_id = input_metadata.get("conversation_id", session_id) or session_id
         conv_token = current_conversation_id.set(conversation_id)
         result: AgentResult | None = None
+        turn_clean = False
+        turn = self.safety.turn
 
         try:
-            result = await self.agent.run(agent_context, emitter)
+            result = await asyncio.wait_for(
+                self.agent.run(agent_context, emitter),
+                timeout=turn.agent_run_timeout_seconds,
+            )
 
             # 为最后一条 assistant 消息注入 attachments metadata
             if result and result.attachments:
@@ -528,18 +580,64 @@ class AgentPipeline:
                 assistant_result=result,
                 metadata={"input_metadata": input_metadata},
             )
+            turn_clean = True
+            logger.info(
+                "turn_done session=%s agent=%s stop_reason=%s elapsed=%.1fs",
+                session_id,
+                agent_name,
+                result.stop_reason if result else "none",
+                0.0,  # elapsed tracked per-provider elsewhere
+            )
+            return result
+
+        except asyncio.TimeoutError:
+            logger.error(
+                "Agent turn timeout after %.1fs session=%s agent=%s",
+                turn.agent_run_timeout_seconds,
+                session_id,
+                agent_name,
+            )
+            error_text = "Agent turn timed out"
+            result = AgentResult(
+                error=error_text,
+                stop_reason="error",
+                messages=[],
+                attachments=agent_context.attachments if hasattr(agent_context, "attachments") else [],
+            )
+            await _safe_emit_error(emitter, error_text, timeout=turn.output_send_timeout_seconds)
+            placeholder_saved = await _save_error_placeholder(
+                ctx_mgr, session_id, error_text,
+                timeout=turn.memory_flush_timeout_seconds,
+            )
+            turn_clean = placeholder_saved
+            return result
+
+        except asyncio.CancelledError:
+            logger.warning(
+                "Agent turn cancelled session=%s agent=%s",
+                session_id,
+                agent_name,
+            )
+            raise
+
         finally:
             current_conversation_id.reset(conv_token)
-            await ctx_mgr.flush(session_id)
-            await ctx_mgr.clear_checkpoint(session_id)
-            # Turn 结束时的清理工作（同步 subagent 无需 cancel_by_session）
+            await _safe_flush(ctx_mgr, session_id, timeout=turn.memory_flush_timeout_seconds)
+            if turn_clean:
+                await _safe_clear_checkpoint(ctx_mgr, session_id, timeout=turn.memory_flush_timeout_seconds)
+            else:
+                logger.warning("Turn did not complete cleanly; checkpoint kept for %s", session_id)
+            # Turn 结束时的清理（带 timeout 保护）
             if self.on_session_end is not None:
                 try:
-                    await self.on_session_end(session_id)
+                    await asyncio.wait_for(
+                        self.on_session_end(session_id),
+                        timeout=turn.hook_timeout_seconds,
+                    )
+                except asyncio.CancelledError:
+                    raise
                 except Exception:
                     logger.exception("on_session_end failed for %s", session_id)
-
-        return result
 
     async def stop(self) -> None:
         """停止流水线"""
