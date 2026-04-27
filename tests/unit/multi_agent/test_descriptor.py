@@ -24,8 +24,6 @@ class TestAgentLLMConfig:
 class TestContextGovernanceConfig:
     def test_defaults(self) -> None:
         cfg = ContextGovernanceConfig()
-        assert cfg.enable_orphan_drop is True
-        assert cfg.enable_backfill is True
         assert cfg.enable_microcompact is True
         assert cfg.max_tool_result_chars == 4000
 

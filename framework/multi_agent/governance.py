@@ -1,13 +1,10 @@
 from __future__ import annotations
 
 import json
-import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
 from framework.multi_agent.descriptor import AgentDescriptor
-
-logger = logging.getLogger(__name__)
 
 
 class ContextGovernancePolicy(ABC):
@@ -20,19 +17,23 @@ class ContextGovernancePolicy(ABC):
 
 
 class FullGovernance(ContextGovernancePolicy):
-    """完整治理策略：去孤儿、补全、微压缩、预算、截断。"""
+    """完整治理策略：微压缩、token 预算、截断。
+
+    Tool chain repair (去孤儿/补全缺失 tool 结果) 已统一下沉到
+    framework/memory/context_governance.py 的 ToolChainRepairGovernance，
+    其在 ReActAgent.run() 每次 LLM 调用前自动生效。
+
+    本策略仅保留上下文窗口管理相关的治理（微压缩、tool result 预算、
+    消息预算、历史截断），不再包含重复的 tool chain repair 实现。
+    """
 
     def apply(self, messages: list[dict[str, Any]], descriptor: AgentDescriptor) -> list[dict[str, Any]]:
         config = descriptor.governance_config
-        if config.enable_orphan_drop:
-            messages = self._drop_orphan_tool_results(messages)
-        if config.enable_backfill:
-            messages = self._backfill_missing_tool_results(messages)
         if config.enable_microcompact:
             messages = self._microcompact(messages, keep=config.microcompact_keep_recent)
         if config.enable_budget:
             messages = self._apply_tool_result_budget(messages, config.max_tool_result_chars)
-            messages = self._apply_message_budget(messages, config.max_tool_result_chars)
+            messages = self._apply_message_budget(messages, config.max_message_chars)
         if config.enable_snip:
             messages = self._snip_history(
                 messages,
@@ -40,48 +41,6 @@ class FullGovernance(ContextGovernancePolicy):
                 keep_recent=config.snip_keep_recent,
             )
         return messages
-
-    @staticmethod
-    def _drop_orphan_tool_results(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """移除没有对应 assistant tool_call 的 tool 结果消息。"""
-        tool_call_ids = set()
-        for msg in messages:
-            if msg.get("role") == "assistant":
-                for tc in msg.get("tool_calls", []):
-                    tid = tc.get("id") if isinstance(tc, dict) else None
-                    if tid:
-                        tool_call_ids.add(tid)
-        cleaned = []
-        for msg in messages:
-            if msg.get("role") == "tool":
-                if msg.get("tool_call_id") in tool_call_ids:
-                    cleaned.append(msg)
-                else:
-                    logger.debug("Dropped orphan tool result: %s", msg.get("tool_call_id"))
-            else:
-                cleaned.append(msg)
-        return cleaned
-
-    @staticmethod
-    def _backfill_missing_tool_results(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """为 assistant 的 tool_calls 补全缺失的 tool 结果消息。"""
-        tool_call_ids = [msg.get("tool_call_id") for msg in messages if msg.get("role") == "tool"]
-        result = []
-        for msg in messages:
-            result.append(msg)
-            if msg.get("role") == "assistant":
-                for tc in msg.get("tool_calls", []):
-                    if isinstance(tc, dict):
-                        tid = tc.get("id")
-                        if tid and tid not in tool_call_ids:
-                            result.append({
-                                "role": "tool",
-                                "tool_call_id": tid,
-                                "name": tc.get("function", {}).get("name", "unknown"),
-                                "content": "<result missing>",
-                            })
-                            tool_call_ids.append(tid)
-        return result
 
     @staticmethod
     def _microcompact(messages: list[dict[str, Any]], keep: int) -> list[dict[str, Any]]:

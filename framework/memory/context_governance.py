@@ -51,13 +51,33 @@ class CompositeGovernance(ContextGovernance):
 
 
 class ToolChainRepairGovernance(ContextGovernance):
-    """修复 tool-call 链完整性。
+    """修复 tool-call 链完整性，在每次 LLM 调用前对消息列表进行兜底修复。
 
-    1. 移除无对应 assistant tool_call 的 orphan tool results
-    2. 为缺失 tool result 的 assistant tool_call 插入占位符
+    统一处理两种常见的消息序列断裂场景（可能由崩溃、checkpoint 恢复、
+    异常中断等原因引起）：
+
+    1. **移除孤儿 tool 结果（orphan drop）**：如果存在 tool 消息但
+       之前没有对应的 assistant 消息声明该 tool_call_id，说明该 tool
+       结果已失去上下文，直接移除，避免 LLM 见到"来源不明"的 tool 结果。
+
+    2. **补全缺失的 tool 结果（backfill）**：如果 assistant 消息声明了
+       tool_calls 但对应 tool_call_id 的 tool 消息缺失，在 assistant
+       之后插入占位 tool 结果，避免 LLM 收到含 tool_calls 但无 tool
+       响应的断裂消息序列。
+
+    此策略在 ReActAgent.run() 每次迭代的 LLM 请求前通过
+    context.governance.apply() 调用。操作在消息副本上进行，
+    不修改持久化历史。
+
+    Note: multi_agent/governance.py 曾包含与此功能重复的
+    _drop_orphan_tool_results / _backfill_missing_tool_results，
+    现已统一下沉到此实现。
     """
 
-    _BACKFILL_CONTENT = "[Tool result unavailable — call was interrupted or lost]"
+    _BACKFILL_CONTENT = (
+        "[Tool result unavailable — the tool call may have been interrupted "
+        "or its result was lost before the response could be recorded]"
+    )
 
     async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # Step 1: drop orphans

@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     from framework.core.agent import Agent
     from framework.core.context import ContextManager
     from framework.core.emitter import EmitterConfig
+    from framework.core.llm_error import RuntimeSafetyPolicy
     from framework.core.tool_manager import ToolManager
     from framework.multi_agent.address import AgentAddress
     from framework.pipeline.pipeline import AgentPipeline
@@ -27,10 +28,12 @@ class AgentLLMConfig:
 
 @dataclass
 class ContextGovernanceConfig:
-    """上下文治理策略配置。"""
+    """上下文治理策略配置。
 
-    enable_orphan_drop: bool = True
-    enable_backfill: bool = True
+    Tool chain repair (去孤儿/补全缺失 tool 结果) 已统一由
+    framework/memory/context_governance.py 的 ToolChainRepairGovernance 处理。
+    """
+
     enable_microcompact: bool = True
     enable_budget: bool = True
     enable_snip: bool = True
@@ -66,6 +69,7 @@ class AgentDescriptor:
     role_description: str = ""
     specialties: list[str] = field(default_factory=list)
     exposed_to_peers: bool = True
+    safety_policy: RuntimeSafetyPolicy | None = None
 
 
 @dataclass

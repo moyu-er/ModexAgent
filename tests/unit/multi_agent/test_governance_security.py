@@ -158,30 +158,6 @@ class TestSystemCommandInterceptor:
 
 
 class TestContextGovernance:
-    def test_drop_orphan_tool_results(self) -> None:
-        gov = FullGovernance()
-        desc = AgentDescriptor(address=AgentAddress(kind="agent", name="a"))
-        messages = [
-            {"role": "assistant", "tool_calls": [{"id": "tc1"}]},
-            {"role": "tool", "tool_call_id": "tc1", "content": "ok"},
-            {"role": "tool", "tool_call_id": "tc2", "content": "orphan"},
-        ]
-        result = gov.apply(messages, desc)
-        tool_ids = [m.get("tool_call_id") for m in result if m["role"] == "tool"]
-        assert "tc1" in tool_ids
-        assert "tc2" not in tool_ids
-
-    def test_backfill_missing_tool_results(self) -> None:
-        gov = FullGovernance()
-        desc = AgentDescriptor(address=AgentAddress(kind="agent", name="a"))
-        messages = [
-            {"role": "assistant", "tool_calls": [{"id": "tc1", "function": {"name": "calc"}}]},
-        ]
-        result = gov.apply(messages, desc)
-        tool_msgs = [m for m in result if m["role"] == "tool"]
-        assert len(tool_msgs) == 1
-        assert tool_msgs[0]["tool_call_id"] == "tc1"
-
     def test_no_op_governance(self) -> None:
         gov = NoOpGovernance()
         desc = AgentDescriptor(address=AgentAddress(kind="agent", name="a"))
