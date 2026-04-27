@@ -293,8 +293,8 @@ class BotService(AgentBuilderMixin):
         self.inbox_consumer = InboxConsumer(server=self.inbox_server)
         print(f"[OK] InboxServer initialized (storage: {inbox_dir})")
 
-        # Collect plugin hooks for factory injection
-        plugin_hooks = self.plugin_integration.collect_hooks()
+        # Collect runtime hooks for factory injection
+        runtime_hooks = self._collect_run_hooks()
 
         # 7. Create AgentFactory
         self.agent_factory = DefaultAgentFactory(
@@ -302,7 +302,7 @@ class BotService(AgentBuilderMixin):
             default_tool_manager=self.tool_manager,
             skill_manager=main_skill_manager,
             inbox_server=self.inbox_server,
-            default_hooks=plugin_hooks,
+            default_hooks=runtime_hooks,
         )
 
         # 8. Create ReActAgent
@@ -380,8 +380,7 @@ class BotService(AgentBuilderMixin):
 
         agent_config = self.config.get("agent", {})
         pipeline_hooks = [inbox_flush_hook]
-        plugin_hooks = self.plugin_integration.collect_hooks()
-        pipeline_hooks.extend(plugin_hooks)
+        pipeline_hooks.extend(self._collect_run_hooks())
 
         self.pipeline = AgentPipeline(
             agent=self.agent,
@@ -518,6 +517,26 @@ class BotService(AgentBuilderMixin):
             max_tokens=llm_config.get("max_tokens", 2000),
         )
 
+    def _collect_run_hooks(self) -> list[Any]:
+        """Collect optional run hooks configured for this bot service."""
+        hooks = self.plugin_integration.collect_hooks()
+        observability_config = self.config.get("observability", {})
+        run_logging = observability_config.get("run_logging", {})
+        if run_logging.get("enabled", False):
+            from framework.core.hooks import RunLoggingHook
+
+            level_name = str(run_logging.get("level", "INFO")).upper()
+            level = getattr(logging, level_name, logging.INFO)
+            hooks.append(
+                RunLoggingHook(
+                    logger_name=run_logging.get("logger_name", "bot.run"),
+                    level=level,
+                    max_content_chars=run_logging.get("max_content_chars", 4000),
+                    max_result_chars=run_logging.get("max_result_chars", 4000),
+                )
+            )
+        return hooks
+
     # ------------------------------------------------------------------ #
     # Start / Stop
     # ------------------------------------------------------------------ #
@@ -540,6 +559,13 @@ class BotService(AgentBuilderMixin):
                 return
             await self.broker_bridge.start()
             print("[OK] BrokerBridgeService started")
+            # Start DreamEngine background loop for pool mode
+            if self.dream_engine is not None:
+                dream_config = self.config.get("memory", {}).get("main", {}).get("dream_engine", {})
+                dream_interval = dream_config.get("interval", 300)
+                dream_task = asyncio.create_task(self._dream_background_loop(dream_interval))
+                self._tasks.append(dream_task)
+                print(f"[OK] DreamEngine background loop started (interval={dream_interval}s)")
         else:
             print(f"[WARN] Unknown mode: {self.mode}")
             return
@@ -558,7 +584,8 @@ class BotService(AgentBuilderMixin):
             self._shutdown_event.set()
 
         signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
+        if hasattr(signal, "SIGTERM"):
+            signal.signal(signal.SIGTERM, signal_handler)
 
         try:
             await self._shutdown_event.wait()
@@ -647,6 +674,22 @@ class BotService(AgentBuilderMixin):
 
         ctx = MemoryContext(session_id="default", user_id="default")
         await lt_mgr.ensure_defaults(ctx, defaults)
+
+        # Wire auto-consolidation into knowledge manager
+        summarizer = getattr(self, "_summarizer_agent", None)
+        if summarizer is not None and hasattr(lt_mgr, "_consolidation_fn"):
+            from framework.agents.summarizer.agent import SummarizerAgent
+
+            async def _consolidate(content: str, _file_name: str) -> str:
+                return await summarizer.summarize(
+                    content,
+                    prompt=SummarizerAgent.PROMPT_KNOWLEDGE_CONSOLIDATION,
+                    max_tokens=2000,
+                )
+
+            lt_mgr._consolidation_fn = _consolidate
+            print("   [OK] Knowledge auto-consolidation wired")
+
         print("   [OK] Long-term memory defaults ensured")
 
     def _build_compression_coordinator(self, main_memory_config: dict[str, Any]) -> Any | None:
@@ -655,11 +698,17 @@ class BotService(AgentBuilderMixin):
         if not short_term.get("auto_llm_compression", True) and not auto_compact.get("enabled", True):
             return None
 
+        from framework.agents.summarizer import SummarizerAgent, SummarizerStrategy
         from framework.memory.compression.policies import DefaultMemoryCompressionCoordinator
+
+        # Shared SummarizerAgent for compression + consolidation + DreamEngine
+        self._summarizer_agent = SummarizerAgent(self.provider)
+        summary_strategy = SummarizerStrategy(self._summarizer_agent)
 
         return DefaultMemoryCompressionCoordinator(
             max_messages=auto_compact.get("max_messages", short_term.get("max_messages", 100)),
             max_tokens=auto_compact.get("max_tokens", short_term.get("max_tokens", 8000)),
+            summary=summary_strategy,
         )
 
     async def _init_auto_compact(
@@ -729,8 +778,27 @@ class BotService(AgentBuilderMixin):
             registry=self.memory_system.store_registry,
             max_batch_size=dream_config.get("max_batch_size", 20),
             max_iterations=dream_config.get("max_iterations", 10),
+            summarizer=getattr(self, "_summarizer_agent", None),
         )
         print("   [OK] DreamEngine initialized")
+
+    async def _dream_background_loop(self, interval: int = 300) -> None:
+        """Background loop for DreamEngine in pool mode."""
+        if self.dream_engine is None:
+            return
+        print(f"[OK] DreamEngine background loop starting (interval={interval}s)")
+        while not self._shutdown_event.is_set():
+            try:
+                await asyncio.sleep(interval)
+                if self._shutdown_event.is_set():
+                    break
+                processed = await self.dream_engine.scan_all()
+                if processed:
+                    print(f"[Dream] Processed {len(processed)} scopes")
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("DreamEngine background loop error")
 
     async def stop(self) -> None:
         """Stop the service."""

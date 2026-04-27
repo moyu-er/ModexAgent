@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import contextlib
 import json
-import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -13,6 +12,7 @@ from framework.memory.core.lock import AioRWLock, StorageLock
 from framework.memory.core.models import StorageRevision
 from framework.memory.core.scope import MemoryLayerName
 from framework.memory.core.storage import MemoryStorage
+from framework.memory.utils import safe_atomic_replace
 
 _KV_FILE = "kv.json"
 _MESSAGES_FILE = "messages.jsonl"
@@ -61,39 +61,6 @@ class DefaultScopedStorage(MemoryStorage):
         self._version += 1
         self._updated_at = datetime.now(UTC)
 
-    # -----------------------------------------------------------------------
-    # kv.json helpers – internal state only; never injected into LLM context.
-    # -----------------------------------------------------------------------
-
-    def _kv_path(self) -> Path:
-        return self.directory / _KV_FILE
-
-    def __init__(
-        self,
-        directory: Path,
-        *,
-        layer: MemoryLayerName,
-        lock: StorageLock | None = None,
-    ) -> None:
-        super().__init__(lock or AioRWLock())
-        self.directory = Path(directory)
-        self.layer = layer
-        self._version = 0
-        self._updated_at = datetime.now(UTC)
-
-    async def initialize(self) -> None:
-        self.directory.mkdir(parents=True, exist_ok=True)
-        for tmp_file in self.directory.glob("*.tmp"):
-            with contextlib.suppress(Exception):
-                tmp_file.unlink()
-
-    async def close(self) -> None:
-        pass
-
-    def _touch(self) -> None:
-        self._version += 1
-        self._updated_at = datetime.now(UTC)
-
     @property
     def _kv_path(self) -> Path:
         return self.directory / _KV_FILE
@@ -115,7 +82,7 @@ class DefaultScopedStorage(MemoryStorage):
         self.directory.mkdir(parents=True, exist_ok=True)
         tmp_path = path.with_suffix(path.suffix + ".tmp")
         tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(str(tmp_path), str(path))
+        safe_atomic_replace(tmp_path, path)
 
     async def get(self, key: str) -> Any | None:
         async with self.get_lock().read():
@@ -181,7 +148,7 @@ class DefaultScopedStorage(MemoryStorage):
             with tmp_path.open("w", encoding="utf-8") as handle:
                 for message in messages:
                     handle.write(json.dumps(message, ensure_ascii=False) + "\n")
-            os.replace(str(tmp_path), str(self._messages_path))
+            safe_atomic_replace(tmp_path, self._messages_path)
             self._touch()
             return self._get_revision_unsafe()
 
@@ -251,7 +218,7 @@ class DefaultScopedStorage(MemoryStorage):
             with tmp_path.open("w", encoding="utf-8") as handle:
                 for entry in entries:
                     handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
-            os.replace(str(tmp_path), str(self._log_path))
+            safe_atomic_replace(tmp_path, self._log_path)
             if entries:
                 self._set_last_cursor_unsafe(
                     "default", max(int(entry.get("cursor", 0)) for entry in entries)
@@ -281,4 +248,4 @@ class DefaultScopedStorage(MemoryStorage):
         path = self._cursor_path(cursor_name)
         tmp_path = path.with_suffix(path.suffix + ".tmp")
         tmp_path.write_text(str(cursor), encoding="utf-8")
-        os.replace(str(tmp_path), str(path))
+        safe_atomic_replace(tmp_path, path)

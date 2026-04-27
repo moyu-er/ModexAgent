@@ -1,40 +1,62 @@
 # QQ Bot 项目 (ModexAgent)
 
-基于 ModexAgent 框架的完整 QQ Bot 实现，支持 LLM 对话、工具调用、MCP 集成、四层记忆系统等功能。
+基于 ModexAgent 框架的完整 QQ Bot 实现，支持 LLM 对话、工具调用、MCP 集成、四层记忆系统、多 Agent 协作、插件扩展等功能。
 
 ## 项目简介
 
-本项目展示如何使用 ModexAgent 构建一个功能完善的 QQ 机器人。通过整合 LLM 能力和多种工具系统，实现智能对话、文件操作、MCP 工具调用等能力。
+本项目展示如何使用 ModexAgent 构建一个功能完善的 QQ 机器人。通过整合 LLM 能力和多种工具系统，实现智能对话、文件操作、MCP 工具调用、多 Agent 协作等能力。
 
 **ModexAgent 特点**：
 - 积木式架构：`AgentPipeline` 端到端编排，所有组件可插拔替换
 - 基于 `InputAdapter` / `OutputAdapter` 抽象，支持任意 IM 平台接入
 - `StreamingAwareEmitter` 统一处理流式与非流式输出
 - 独立的 `ContextManager`、`ToolManager`、`Agent` 组件，职责清晰
+- 插件系统支持动态扩展工具、记忆和技能来源
+- 治理系统（Governance）自动修复工具链、控制上下文长度
 
 ## 项目结构
 
 ```
 bot_project/
+├── bot/
+│   ├── adapters/
+│   │   └── qq.py              # QQ 平台 InputAdapter / OutputAdapter 实现
+│   ├── service/
+│   │   ├── core.py            # BotService 核心：生命周期、初始化、模式切换
+│   │   └── builders.py        # Agent/Peer/Subagent 构建器、工具注册
+│   ├── tools/
+│   │   └── custom.py          # 自定义工具：spawn_subagent、send_file_to_user
+│   ├── plugins/
+│   │   └── integration.py     # 插件系统集成封装
+│   ├── utils/
+│   │   └── config_loader.py   # 配置加载工具
+│   └── logging.py             # 日志配置
 ├── config/
-│   ├── bot_config.yml    # 主配置文件
-│   └── mcp.json          # MCP 服务器配置
-├── utils/
-│   ├── __init__.py
-│   └── config_loader.py  # 配置加载工具
-├── skills/               # Skill 能力目录
-├── data/                 # 数据目录 (记忆存储 + MCP 文件系统)
-├── logs/                 # 日志目录
-├── qq_adapters.py        # QQ 平台 InputAdapter / OutputAdapter 实现
-├── bot_service.py     # 主服务入口
-└── README.md             # 本文件
+│   ├── bot_config.yml         # 主配置文件
+│   └── mcp.json               # MCP 服务器配置
+├── skills/
+│   ├── main/                  # 主 Agent 的技能（自动发现）
+│   ├── peers/                 # Peer Agent 的技能（按 agent name 自动发现）
+│   └── subagents/             # 通用子 Agent 技能（通过 skill_dirs 引用）
+├── plugins/                   # 本地插件目录
+│   ├── mem0_memory/           # Mem0 语义记忆插件
+│   └── tool_call_cleanup/     # 工具调用清理插件
+├── data/                      # 数据目录
+│   ├── memory/                # 记忆存储
+│   ├── inbox/                 # 消息收件箱（Pool 模式）
+│   └── media/                 # QQ 附件下载目录
+├── workspace/                 # 工作区（文件工具默认允许目录）
+├── bot_service.py             # 主服务入口
+├── create_hermes_ppt.py       # 示例脚本：生成 PPT
+├── .env.example               # 环境变量模板
+└── README.md                  # 本文件
 ```
 
-## 架构概览 (V2)
+## 架构概览
 
-BotService 支持两种运行时模式，可通过 `mode="pipeline"`（默认）或 `mode="pool"` 切换：
+BotService 支持两种运行时模式，可通过 `mode="pipeline"` 或 `mode="pool"` 切换：
 
-### Pipeline 模式（默认）
+### Pipeline 模式
 
 适合单 Agent 长运行服务（QQ Bot、CLI 等）。
 
@@ -42,14 +64,14 @@ BotService 支持两种运行时模式，可通过 `mode="pipeline"`（默认）
 ┌─────────────────────────────────────────────────────────────────┐
 │                        QQ 用户 / 群聊                            │
 └─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
+                               │
+                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                     QQInputAdapter                              │
-│              (接收 QQ 消息，转为 InputMessage)                  │
+│              (接收 QQ 消息 + 附件下载，转为 InputMessage)       │
 └─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
+                               │
+                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                     AgentPipeline                               │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
@@ -61,15 +83,17 @@ BotService 支持两种运行时模式，可通过 `mode="pipeline"`（默认）
 │                   │ QQBotEmitter │                               │
 │                   │(事件分发/缓冲)│                               │
 │                   └──────┬──────┘                               │
+│  Hooks: InboxFlushHook, PeerAutoSendHook, Plugin hooks         │
+│  Governance: ToolChainRepair + Microcompact + TokenBudget      │
 └──────────────────────────┼──────────────────────────────────────┘
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    QQOutputAdapter                              │
-│              (发送回复到 QQ，支持 C2C / 群聊)                   │
+│              SessionPrefixStripAdapter → QQOutputAdapter        │
+│              (发送回复到 QQ，支持 C2C / 群聊 + 文件上传)        │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Pool 模式
+### Pool 模式（默认）
 
 适合多 Agent 常驻池场景。主 Agent 注册为常驻代理，通过 `MessageBroker` + `BrokerBridgeService` 桥接原生适配器，子 Agent 使用 `AgentMessageBus` 排队分发。
 
@@ -77,36 +101,43 @@ BotService 支持两种运行时模式，可通过 `mode="pipeline"`（默认）
 ┌─────────────────────────────────────────────────────────────────┐
 │                        QQ 用户 / 群聊                            │
 └─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
+                               │
+                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                     QQInputAdapter                              │
 └─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
+                               │
+                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                  BrokerBridgeService                            │
 │            (原生适配器 ↔ MessageBroker 桥接)                   │
 └─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
+                               │
+                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                     MessageBroker                               │
 │  ┌─────────────┐         ┌─────────────┐  ┌─────────────────┐  │
 │  │  AgentPool  │←───────→│  Subagent   │  │  BrokerOutput   │  │
 │  │ (常驻 Agent) │         │  Manager    │  │   Adapter       │  │
 │  └─────────────┘         └─────────────┘  └─────────────────┘  │
+│                                                                 │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │  AgentMessageBus (LocalAgentMessageBus)                 │   │
+│  │  ├─ InboxProducer  → 写入 data/inbox/                   │   │
+│  │  ├─ InboxConsumer  → 读取并分发给 Agent                 │   │
+│  │  └─ InboxPolling   → 定期扫描 inbox 目录                │   │
+│  └─────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
+                               │
+                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                  BrokerBridgeService                            │
 │            (订阅 agent:main:out topic 并转发)                   │
 └─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
+                               │
+                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    QQOutputAdapter                              │
+│         SessionPrefixStripAdapter → QQOutputAdapter             │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -119,7 +150,7 @@ BotService 支持两种运行时模式，可通过 `mode="pipeline"`（默认）
 | **子 Agent 分发** | `SubagentManager(local)` 直接 `asyncio.create_task` | `SubagentManager(queued)` 通过 `AgentMessageBus` 排队 |
 | **消息路由** | Pipeline 内部直接处理 | 原生适配器 → Broker → 常驻 Agent → Broker → 输出适配器 |
 | **状态保持** | 单一 Pipeline 状态 | 每个常驻 Agent 独立状态，支持 persistent/ephemeral/shared |
-| **切换方式** | `mode="pipeline"`（默认） | `mode="pool"` |
+| **切换方式** | `mode="pipeline"` | `mode="pool"`（默认） |
 
 **何时选择 Pipeline？**
 - 只需要一个主 Agent 处理所有对话
@@ -131,52 +162,101 @@ BotService 支持两种运行时模式，可通过 `mode="pipeline"`（默认）
 - 子 Agent 任务量大，需要排队和异步结果回传
 - 希望 Input/Output 与 Agent 逻辑完全解耦，通过 Broker 路由
 
-## V2 核心组件
+## 核心组件
 
 | 组件 | 说明 |
 |------|------|
-| **QQInputAdapter** | QQ 消息接收适配器，基于 botpy 实现，继承自 `InputAdapter` |
-| **QQOutputAdapter** | QQ 消息发送适配器，继承自 `OutputAdapter`，支持 `send_delta` / `flush_deltas` |
+| **QQInputAdapter** | QQ 消息接收适配器，基于 botpy 实现，支持接收附件（图片/文件）下载到本地 |
+| **QQOutputAdapter** | QQ 消息发送适配器，支持 `send_delta` / `flush_deltas`，支持文件上传 |
+| **SessionPrefixStripAdapter** | 包装层，自动去除回复中的 "Agent:" 等前缀 |
 | **QQBotEmitter** | 基于 `StreamingAwareEmitter` 的事件处理器，负责缓冲/发送/日志 |
 | **AgentPipeline** | 端到端流程编排器：Input → Context → Agent → Emitter → Output |
 | **ReActAgent** | ReAct 执行循环，支持 Thought → Action → Observation 模式 |
 | **LiteLLMProvider** | LLM 调用，支持 OpenAI 兼容接口，可接入 100+ 模型 |
 | **ToolManager** | 工具注册与执行管理，支持并行/异步执行模式 |
 | **MemorySystem** | 四层记忆架构 (Working / Short-term / History / Long-term) |
+| **Governance** | 上下文治理链：ToolChainRepair + Microcompact + TokenBudget |
+| **AutoCompact** | 后台自动压缩服务，按空闲阈值扫描并压缩过长的 short-term 记忆 |
+| **DreamEngine** | 离线记忆整合引擎，定期将历史记忆归档到长期记忆 |
 | **MCPTool** | MCP 工具集成，支持动态加载 MCP 服务器 |
+| **PluginSystem** | 插件系统，支持动态加载工具、记忆提供者和技能来源 |
+| **AgentMessageBus** | 消息总线，管理 Agent 间的 inbox 消息队列 |
+| **SkillManager** | 技能管理，从 Markdown 文件动态构建系统提示词 |
 
 ## 快速开始
 
-### 1. 配置
+### 1. 环境配置
 
-编辑 `config/bot_config.yml`：
+复制环境变量模板并填写：
 
-```yaml
-qq:
-  app_id: "YOUR_QQ_BOT_APP_ID"
-  secret: "YOUR_QQ_BOT_SECRET"
-  sandbox: false
-  allow_from:
-    - "*"
+```bash
+cp .env.example .env
+```
 
-llm:
-  api_key: "YOUR_API_KEY"
-  base_url: "https://api.openai.com/v1"
-  model: "openai/gpt-4o"
-  temperature: 0.7
-  max_tokens: 2000
+编辑 `.env`：
+
+```env
+# QQ Bot credentials
+QQ_APP_ID=your_qq_app_id
+QQ_SECRET=your_qq_bot_secret
+
+# LLM provider (MiniMax / OpenAI / Anthropic / Kimi / etc.)
+LLM_API_KEY=your_llm_api_key
+LLM_BASE_URL=https://api.minimaxi.com/v1
+LLM_MODEL=openai/MiniMax-M2.5
+
+# MCP servers — ModelScope SSE endpoints
+MCP_BEARER_TOKEN=your_modelscope_bearer_token
+
+# MiniMax MCP coding tool
+MINIMAX_MCP_API_KEY=your_minimax_api_key
 ```
 
 ### 2. 安装依赖
 
 ```bash
-pip install qq-botpy pyyaml litellm
+# 创建虚拟环境
+uv venv
+
+# Windows
+.venv\Scripts\activate
+
+# 安装框架及所有依赖
+uv pip install -e ".[all]"
+
+# 或仅安装开发依赖
+uv pip install -e ".[dev]"
 ```
 
-### 3. 运行
+### 3. 配置
+
+编辑 `config/bot_config.yml`（支持 `${ENV_VAR}` 环境变量插值）：
+
+```yaml
+qq:
+  app_id: "${QQ_APP_ID}"
+  secret: "${QQ_SECRET}"
+  sandbox: false
+  allow_from:
+    - "*"
+
+llm:
+  api_key: "${LLM_API_KEY}"
+  base_url: "${LLM_BASE_URL:-https://api.minimaxi.com/v1}"
+  model: "${LLM_MODEL:-openai/MiniMax-M2.5}"
+  temperature: 0.7
+  max_tokens: 80000
+```
+
+### 4. 运行
 
 ```bash
+# 默认 Pool 模式（多 Agent 协作）
 python bot_service.py
+
+# 或显式指定模式
+python bot_service.py --mode pool
+python bot_service.py --mode pipeline
 ```
 
 ## 适配其他 IM 平台
@@ -239,8 +319,8 @@ def create_discord_service(config_dir: Path) -> BotService:
 
 ```yaml
 qq:
-  app_id: "YOUR_APP_ID"        # QQ 开放平台应用 ID
-  secret: "YOUR_SECRET"       # QQ 开放平台应用密钥
+  app_id: "${QQ_APP_ID}"      # QQ 开放平台应用 ID
+  secret: "${QQ_SECRET}"      # QQ 开放平台应用密钥
   sandbox: false              # 是否使用沙箱环境
   allow_from:                 # 允许的用户列表
     - "*"                     # "*" 表示允许所有人
@@ -256,7 +336,7 @@ llm:
   base_url: "https://api.openai.com/v1"
   model: "openai/gpt-4o"
   temperature: 0.7            # 采样温度 (0-2)
-  max_tokens: 2000            # 最大生成 token 数
+  max_tokens: 80000           # 最大生成 token 数
 ```
 
 ### 记忆配置
@@ -306,6 +386,52 @@ memory_system = create_memory_system(workspace=Path("./data/memory"), layer_conf
 - `MemorySystem.default_single_user_layers(workspace)` — 单用户桌面场景
 - `MemorySystem.default_multi_tenant_layers(workspace)` — 多租户 SaaS 场景
 
+#### 自动压缩 (Auto Compact)
+
+后台服务定期检查空闲会话，自动压缩过长的 short-term 记忆：
+
+```yaml
+memory:
+  main:
+    auto_compact:
+      enabled: true
+      idle_threshold_seconds: 1800    # 30 分钟无活动则触发
+      keep_recent_messages: 8         # 保留最近 8 条消息
+      scan_interval: 300              # 扫描间隔（秒）
+```
+
+#### 梦境引擎 (Dream Engine)
+
+离线记忆整合，定期将历史归档压缩为长期知识：
+
+```yaml
+memory:
+  main:
+    dream_engine:
+      enabled: true
+      interval: 300                   # 触发间隔
+      threshold: 5                    # 最小历史条目数
+```
+
+#### 治理系统 (Governance)
+
+自动修复和优化上下文：
+
+```yaml
+memory:
+  main:
+    governance:
+      enabled: true
+      tool_chain_repair: true         # 修复断裂的工具调用链
+      microcompact:
+        enabled: true
+        keep_recent: 10               # 保留最近 10 条
+      token_budget:
+        enabled: true
+        budget_ratio: 0.5             # LLM max_tokens 的 50%
+        safety_buffer: 1024           # 安全缓冲
+```
+
 ### MCP 配置
 
 编辑 `config/mcp.json`：
@@ -316,9 +442,41 @@ memory_system = create_memory_system(workspace=Path("./data/memory"), layer_conf
     "filesystem": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "./data"]
+    },
+    "fetch": {
+      "type": "sse",
+      "url": "https://mcp.api-inference.modelscope.net/.../sse",
+      "headers": {
+        "Authorization": "Bearer ${MCP_BEARER_TOKEN}"
+      }
     }
   }
 }
+```
+
+### 插件配置
+
+框架支持动态加载插件，每个插件可扩展工具、记忆提供者和技能来源：
+
+```yaml
+plugins:
+  enabled: true
+
+  configurations:
+    tool_call_cleanup:
+      enabled: true                   # 清理冗余的工具调用记录
+
+    mem0_memory:
+      enabled: false                  # Mem0 语义记忆（需额外依赖）
+      workspace: "./data/vector_memory"
+      vector_store: "chroma"
+      collection_name: "bot_memories"
+      embedding_provider: "openai"
+      embedding_model: "${MEM0_EMBEDDING_MODEL}"
+      embedding_base_url: "${MEM0_EMBEDDING_BASE_URL}"
+      embedding_api_key: "${MEM0_EMBEDDING_API_KEY}"
+      prefetch_top_k: 5
+      search_top_k: 5
 ```
 
 ### 平级 Agent (Peer) 配置
@@ -330,32 +488,32 @@ multi_agent:
   enabled: true
   parent_agent_name: "main"
   peers:
-    - name: "doc-expert"
+    - name: "office-expert"
       role: "document"
       role_description: "Office document specialist"
       specialties: ["word", "excel", "powerpoint", "pdf"]
+      capabilities: ["document", "office"]
+      capabilities_detail: ["生成 Word/Excel/PPT/PDF", "格式转换", "文档批注"]
+      example_tasks: ["将 data/report.csv 转换为 Excel 并加图表"]
+      preferred_communication: "both"   # both | sync | async
       system_prompt: "..."
       context_strategy: "persistent"
       skill_dirs:
-        - "skills/subagents/docx"
-        - "skills/subagents/pdf"
-        - "skills/subagents/pptx"
-        - "skills/subagents/xlsx"
+        - "skills/peers/docx"
+        - "skills/peers/pdf"
+        - "skills/peers/pptx"
+        - "skills/peers/xlsx"
       tools:
         file_tools:
           enabled: true
           allowed_directories:
-            - "./data"
-    - name: "query-12306"
-      role: "travel"
-      role_description: "China railway ticket query assistant"
-      specialties: ["12306", "train_ticket", "itinerary"]
-      system_prompt: "..."
-      context_strategy: "persistent"
-      tools:
+            - "./workspace"
+        shell_tools:
+          enabled: true
+          timeout: 60
         mcp_tools:
           enabled: true
-          server_filter: ["12306-mcp"]  # 必须与 mcp.json 中的 server 名一致
+          server_filter: ["fetch"]
 ```
 
 **关键概念**：
@@ -373,11 +531,10 @@ Peer 的 `send_message` 工具描述会**动态注入**当前可见的 peer 列�
 
 | Agent | 文件 | Shell | MCP | 通信工具 | Skills |
 |-------|:----:|:-----:|:---:|----------|--------|
-| **main** | ✅ | ✅ | ✅ (全部) | send_message, view_peer_history | skills/main/* (9个) |
-| **doc-expert** | ✅ | ✅ | — | send_message_async(→main), view_peer_history | skill_dirs→docx,pdf,pptx,xlsx |
-| **query-12306** | ✅ | — | ✅ (12306-mcp) | send_message_async(→main), view_peer_history | — |
-| **helper-sync** | ✅ | ✅ | — | — (spawn 同步返回) | skill_dirs→docx,pdf,pptx,xlsx |
-| **helper-async** | ✅ | ✅ | — | — (inbox 异步回传) | skill_dirs→docx,pdf,pptx,xlsx |
+| **main** | ✅ | ✅ | ✅ (全部) | send_message, view_peer_history | skills/main/* (11个) |
+| **office-expert** | ✅ | ✅ | ✅ (fetch) | send_message_async(→main), view_peer_history | skills/peers/docx,pdf,pptx,xlsx |
+| **query-12306** | ✅ | ✅ | ✅ (12306-mcp, fetch) | send_message_async(→main), view_peer_history | — |
+| **helper-sync** | ✅ | ✅ | — | — (spawn 同步返回) | skills/subagents/* |
 
 #### 如何配置 Agent 的工具
 
@@ -389,8 +546,8 @@ tools:
   file_tools:
     enabled: true
     allowed_directories:
-      - "./data"
       - "./workspace"
+      - "./data"
 
   # Shell 工具：执行命令
   shell_tools:
@@ -418,10 +575,8 @@ tools:
 ```yaml
 # 方式 1：引用多个技能目录
 skill_dirs:
-  - "skills/subagents/docx"
-  - "skills/subagents/pdf"
-  - "skills/subagents/pptx"
-  - "skills/subagents/xlsx"
+  - "skills/peers/docx"
+  - "skills/peers/pdf"
 
 # 方式 2：自动发现（无需配置 skill_dirs）
 # 系统会自动搜索 skills/peers/{agent_name}/ 和 skills/subagents/{agent_name}/
@@ -480,6 +635,10 @@ peers:
     role: "custom"
     role_description: "What this agent does"
     specialties: ["keyword1", "keyword2"]
+    capabilities: ["capability1"]
+    capabilities_detail: ["详细能力描述"]
+    example_tasks: ["示例任务"]
+    preferred_communication: "async"
     system_prompt: |
       你是一个...的 Agent。
       完成后必须通过 send_message_async 将结果回复给主 Agent（target_agent="main"）
@@ -492,12 +651,11 @@ peers:
     tools:
       file_tools:
         enabled: true
-        allowed_directories: ["./data"]
+        allowed_directories: ["./workspace"]
       shell_tools:
         enabled: false
       mcp_tools:
         enabled: false
-    # 可选：引用现有技能
     skill_dirs:
       - "skills/subagents/pdf"
 ```
@@ -519,6 +677,7 @@ peers:
 | `edit_file` | 编辑文件内容 |
 | `list_dir` | 列出目录内容 |
 | `shell` | 执行 shell 命令 |
+| `send_file_to_user` | 发送本地文件给用户（QQ 支持文件上传） |
 
 ### MCP 工具
 
@@ -526,13 +685,45 @@ MCP 工具通过 `MCPTool` 动态加载，支持：
 - 文件系统服务器
 - GitHub API
 - 数据库操作
+- 网页抓取 (fetch)
+- 12306 火车票查询
 - 自定义 MCP 服务器
+
+### 自定义工具
+
+项目自定义工具：
+
+| 工具 | 功能 |
+|------|------|
+| `spawn_subagent` | 同步创建子 Agent 并等待结果 |
+| `send_file_to_user` | 发送本地文件到当前对话 |
+
+## 插件系统
+
+框架支持通过插件动态扩展功能，无需修改核心代码：
+
+### 内置插件
+
+| 插件 | 功能 | 状态 |
+|------|------|------|
+| **tool_call_cleanup** | 清理冗余工具调用记录，优化上下文 | 默认启用 |
+| **mem0_memory** | Mem0 语义记忆，向量检索增强对话记忆 | 需手动启用 |
+
+### 插件加载机制
+
+```
+1. 扫描 plugins/ 目录
+2. 读取每个插件的 plugin.yml 配置
+3. 根据 enabled 配置决定是否加载
+4. 注入工具、记忆提供者、技能来源到对应管理器
+5. 收集 hooks 并注入到 Pipeline
+```
 
 ## 功能特性
 
-- ✅ QQ 消息收发 (C2C 私聊 + 群聊)
+- ✅ QQ 消息收发 (C2C 私聊 + 群聊 + 附件接收)
 - ✅ LLM 对话 (支持流式/非流式输出)
-- ✅ 工具调用 (内置 + MCP)
+- ✅ 工具调用 (内置 + MCP + 自定义)
 - ✅ 四层记忆系统 (Working / Short-term / History / Long-term)
 - ✅ 用户白名单
 - ✅ ReAct 执行模式
@@ -540,6 +731,12 @@ MCP 工具通过 `MCPTool` 动态加载，支持：
 - ✅ Skill 系统动态加载
 - ✅ 平级 Agent (Peer) 协作与动态发现
 - ✅ Peer 通信历史查看 (`view_peer_history`)
+- ✅ 自动记忆压缩 (Auto Compact)
+- ✅ 离线记忆整合 (Dream Engine)
+- ✅ 上下文治理 (Governance)
+- ✅ 插件系统 (Plugin System)
+- ✅ 文件发送给用户 (`send_file_to_user`)
+- ✅ 后台 Agent 安全网 (PeerAutoSendHook)
 
 ## 消息处理流程
 
@@ -548,12 +745,12 @@ MCP 工具通过 `MCPTool` 动态加载，支持：
     │
     ▼
 ┌─────────────┐
-│ 消息验证    │ ← 白名单检查 + 去重
+│ 消息验证    │ ← 白名单检查 + 去重 + 附件下载
 └─────────────┘
     │
     ▼
 ┌─────────────┐
-│ InputMessage│ ← QQInputAdapter 封装
+│ InputMessage│ ← QQInputAdapter 封装（含附件路径）
 └─────────────┘
     │
     ▼
@@ -568,7 +765,7 @@ MCP 工具通过 `MCPTool` 动态加载，支持：
     │
     ├──→ 工具调用 ──→ ToolManager 执行 ──→ 返回结果
     │
-    └──→ 生成回复 ──→ QQBotEmitter ──→ QQOutputAdapter 发送
+    └──→ 生成回复 ──→ QQBotEmitter ──→ SessionPrefixStripAdapter ──→ QQOutputAdapter 发送
 ```
 
 ## 安全配置
@@ -582,12 +779,14 @@ qq:
 
 ## 日志
 
-日志文件位于 `logs/bot_project.log`，包含：
+日志文件位于 `bot/logs/bot.log`，包含：
 - 消息收发记录
 - 工具调用记录
 - LLM 调用记录
 - 错误日志
+- Agent 间通信记录
 
 ## 相关文档
 
 - [ModexAgent 文档](../../CLAUDE.md)
+- [AGENTS.md](../../AGENTS.md)

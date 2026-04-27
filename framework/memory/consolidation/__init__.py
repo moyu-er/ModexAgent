@@ -1,6 +1,5 @@
-"""Consolidation package: online Consolidator and offline DreamEngine."""
+"""Consolidation package: offline DreamEngine for long-term memory."""
 
-from .consolidator import Consolidator
 from .dream_engine import DreamEngine
 
-__all__ = ["Consolidator", "DreamEngine"]
+__all__ = ["DreamEngine"]

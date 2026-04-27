@@ -15,6 +15,7 @@ import pytest
 from framework.agents.react import ReActAgent, ReActEvent
 from framework.core.agent import AgentContext
 from framework.core.emitter import BufferingEmitter, StreamingAwareEmitter
+from framework.core.hooks import AgentRunHook
 from framework.core.provider import StreamingLLMProvider
 from framework.core.tool_manager import ToolResult
 from framework.core.types import LLMResponse, ToolCall
@@ -164,6 +165,22 @@ class TestReActAgentUnifiedLoop:
         assert len(streaming_emitter.get_events()) > 0
 
     @pytest.mark.asyncio
+    async def test_streaming_calls_after_llm_response_hook(self, streaming_provider, context, streaming_emitter):
+        responses: list[str | None] = []
+
+        class TrackingHook(AgentRunHook):
+            async def after_llm_response(self, ctx, response):
+                responses.append(response.content)
+
+        streaming_provider._stream_content = ["Hello ", "World"]
+        context.hooks = [TrackingHook()]
+        agent = ReActAgent(provider=streaming_provider)
+
+        await agent.run(context, streaming_emitter)
+
+        assert responses == ["Hello World"]
+
+    @pytest.mark.asyncio
     async def test_streaming_delta_emitted_as_independent_chunks(self, streaming_provider, context, streaming_emitter):
         streaming_provider._stream_content = ["Hello ", "World"]
         agent = ReActAgent(provider=streaming_provider)
@@ -263,6 +280,25 @@ class TestReActAgentUnifiedLoop:
         events = emitter.get_events_by_name("MODEL_OUTPUT")
         assert len(events) == 1
         assert events[0][1] == "Complete response"
+
+    @pytest.mark.asyncio
+    async def test_non_streaming_calls_after_llm_response_hook(self, non_streaming_provider, context, emitter):
+        responses: list[str | None] = []
+
+        class TrackingHook(AgentRunHook):
+            async def after_llm_response(self, ctx, response):
+                responses.append(response.content)
+
+        async def mock_chat(*args, **kwargs):
+            return LLMResponse(content="Complete response")
+
+        non_streaming_provider.chat = mock_chat
+        context.hooks = [TrackingHook()]
+        agent = ReActAgent(provider=non_streaming_provider)
+
+        await agent.run(context, emitter)
+
+        assert responses == ["Complete response"]
 
     @pytest.mark.asyncio
     async def test_non_streaming_with_tool_call(self, non_streaming_provider, context, emitter):

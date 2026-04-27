@@ -116,7 +116,12 @@ class HeuristicSummaryStrategy(SummaryStrategy):
     ) -> str:
         _ = context, reason
         parts = [m.get("content", "") for m in messages if m.get("role") == "user" and m.get("content")]
-        return " | ".join(parts[:5]) if parts else "(no conversation content)"
+        if parts:
+            return " | ".join(parts[:5])
+        parts = [m.get("content", "") for m in messages if m.get("role") == "assistant" and m.get("content")]
+        if parts:
+            return " | ".join(parts[:3])
+        return ""
 
 
 # ── Error ────────────────────────────────────────────────────────────────────
@@ -224,7 +229,10 @@ class DefaultCommitPolicy(CommitPolicy):
             await error_policy.on_commit_conflict(plan, context)
             return CompressionResult(committed=False, retryable=False, reason="revision_changed")
 
-        # Archive first
+        # Archive first — skip empty or placeholder summaries
+        _EMPTY_SUMMARIES = frozenset({"", "(no conversation content)", "(no summary)", "(nothing)"})
+        if (plan.summary or "").strip() in _EMPTY_SUMMARIES:
+            return CompressionResult(committed=True, reason="empty_summary_skipped")
         try:
             entry = ArchiveEntry(
                 summary=plan.summary or "",

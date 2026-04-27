@@ -92,7 +92,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         self,
         *,
         budget: MemoryBudget | None = None,
-        max_history_entries: int = 5,
+        max_history_entries: int = 20,
         filter_strategy: InjectionFilterStrategy | None = None,
     ) -> None:
         self._budget = budget or MemoryBudget()
@@ -184,7 +184,12 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                 context, limit=self._max_history, query=query
             )
             if entries:
-                lines = [f"- {e.get('summary', '')}" for e in entries if e.get('summary')]
+                _EMPTY_MARKERS = frozenset({"(no conversation content)", "(no summary)", "(nothing)"})
+                lines = [
+                    f"- {e.get('summary', '')}"
+                    for e in entries
+                    if e.get('summary') and e.get('summary').strip() not in _EMPTY_MARKERS
+                ]
                 if lines:
                     sections.append(PromptSection(
                         key="archive:recent",

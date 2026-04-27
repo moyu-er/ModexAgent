@@ -137,6 +137,7 @@ class ReActAgent(Agent[ReActEvent]):
                     messages = await context.governance.apply(messages)
 
                 response = await self._request_llm(messages, context, emitter)
+                await self._call_hooks("after_llm_response", context, response)
                 content = response.content or ""
                 reasoning = response.reasoning_content
                 tool_calls = response.tool_calls

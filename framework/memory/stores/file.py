@@ -4,7 +4,6 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-import os
 import time
 from collections.abc import Collection
 from pathlib import Path
@@ -14,6 +13,7 @@ from framework.memory.core.lock import AioRWLock, StorageLock
 from framework.memory.core.models import StorageRevision
 from framework.memory.core.scope import MemoryAgentRole, MemoryContext, ScopeRecord
 from framework.memory.stores.utils import ensure_scope_dir
+from framework.memory.utils import safe_atomic_replace
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +22,7 @@ def _atomic_json_write(path: Path, data: dict[str, Any]) -> None:
     """原子写入 JSON 文件（使用临时文件替换）"""
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    # 在 Windows 上，os.replace 会原子替换目标文件
-    os.replace(str(tmp_path), str(path))
+    safe_atomic_replace(tmp_path, path)
 
 
 _MESSAGES_FILE = "messages.jsonl"
@@ -305,7 +304,7 @@ class FileStorage:
                 with open(tmp_path, "w", encoding="utf-8") as f:
                     for msg in messages:
                         f.write(json.dumps(msg, ensure_ascii=False) + "\n")
-                os.replace(str(tmp_path), str(path))
+                safe_atomic_replace(tmp_path, path)
             except Exception as e:
                 logger.error(f"Failed to save messages for {scope_key}: {e}")
                 if tmp_path.exists():
@@ -398,7 +397,7 @@ class FileStorage:
                 with open(tmp_path, "w", encoding="utf-8") as f:
                     for entry in entries:
                         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-                os.replace(str(tmp_path), str(path))
+                safe_atomic_replace(tmp_path, path)
             except Exception as e:
                 logger.error(f"Failed to save logs for {scope_key}: {e}")
                 if tmp_path.exists():
@@ -444,4 +443,4 @@ class FileStorage:
             scope_dir.mkdir(parents=True, exist_ok=True)
             tmp_path = path.with_suffix(path.suffix + ".tmp")
             tmp_path.write_text(str(cursor), encoding="utf-8")
-            os.replace(str(tmp_path), str(path))
+            safe_atomic_replace(tmp_path, path)

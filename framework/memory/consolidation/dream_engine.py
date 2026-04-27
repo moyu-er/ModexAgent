@@ -1,10 +1,17 @@
-"""DreamEngine — two-phase offline memory consolidation."""
+"""DreamEngine — two-phase offline memory consolidation.
+
+Uses SummarizerAgent exclusively for all LLM calls.
+If no SummarizerAgent is provided, one is auto-constructed from llm_provider.
+"""
+
+from __future__ import annotations
 
 import json
 import logging
 import re
 from typing import Any
 
+from framework.agents.summarizer.agent import SummarizerAgent
 from framework.core.provider import LLMProvider
 from framework.memory.core.consolidation import (
     ConsolidationEngine,
@@ -24,55 +31,6 @@ from framework.memory.registry.base import MemoryStoreRegistry
 
 logger = logging.getLogger(__name__)
 
-_PHASE1_PROMPT = """You are a memory analysis assistant.
-
-Task: Analyze the following conversation history summaries and identify what needs to be updated in the agent's long-term memory files.
-
-Long-term memory files:
-- SOUL.md: bot behavior, tone, personality
-- USER.md: user identity, preferences, habits
-- MEMORY.md: knowledge, project context, tool patterns
-
-Output one line per finding using this format:
-[FILE] atomic fact or change description
-
-Where FILE is one of: SOUL, USER, MEMORY
-
-Rules:
-- Only new or conflicting information — skip duplicates
-- Prefer atomic facts: "has a cat named Luna" not "discussed pet care"
-- Corrections: [USER] location is Tokyo, not Osaka
-- If nothing needs updating: [SKIP] no new information
-"""
-
-_PHASE2_PROMPT = """You are a memory editing assistant.
-
-Task: Based on the analysis below, produce a JSON array of update instructions for the long-term memory files.
-
-Each update must be a JSON object with:
-- "file_name": one of "SOUL.md", "USER.md", "MEMORY.md"
-- "mode": one of "incremental", "append", "section_replace", "replace_text"
-- "content": the new or updated content to write
-- "reason": brief explanation of why this update is needed
-- "search_text": (only for "replace_text" mode) the exact existing text to find and replace
-
-Rules:
-1. Use "replace_text" when modifying existing information (most precise)
-   - Provide the exact "search_text" found in the current file
-   - "content" becomes the replacement text
-2. Use "append" for adding new facts at the end
-3. Use "section_replace" only when rewriting a whole section
-4. Use "incremental" for small additions when no exact text can be matched
-5. Do not duplicate existing content
-6. Return ONLY a valid JSON array. No markdown code blocks, no extra text.
-
-Example output:
-[
-  {"file_name": "MEMORY.md", "mode": "append", "content": "- User prefers dark mode\\n", "reason": "new preference"},
-  {"file_name": "USER.md", "mode": "replace_text", "search_text": "- Location: Tokyo\\n", "content": "- Location: Osaka\\n", "reason": "location corrected"}
-]
-"""
-
 
 def _msg_to_dict(msg: ChatMessage | dict[str, Any]) -> dict[str, Any]:
     """将 ChatMessage 或 dict 统一转为 dict。"""
@@ -82,12 +40,11 @@ def _msg_to_dict(msg: ChatMessage | dict[str, Any]) -> dict[str, Any]:
 class DreamEngine(ConsolidationEngine):
     """离线 DreamEngine：两阶段长期记忆整合。
 
-    Phase 1: 使用 LLM 分析未处理的历史摘要
-    Phase 2: 使用 LLM 生成具体的 MemoryUpdate 指令并应用到长期记忆
+    Phase 1: 使用 SummarizerAgent 分析未处理的历史摘要
+    Phase 2: 使用 SummarizerAgent 生成具体的 MemoryUpdate 指令
 
-    特点：
-    - cursor 仅在 consolidation 成功时前进，失败可重试
-    - LLM 失败时返回空更新，不阻塞后续处理
+    所有 LLM 调用统一经过 SummarizerAgent，不再直接使用 llm_provider。
+    若未提供 SummarizerAgent，则自动从 llm_provider 构建。
     """
 
     def __init__(
@@ -101,8 +58,8 @@ class DreamEngine(ConsolidationEngine):
         registry: MemoryStoreRegistry | None = None,
         schedule_mode: str = "manual",
         idle_threshold_entries: int = 5,
+        summarizer: SummarizerAgent | None = None,
     ):
-        self.llm = llm_provider
         self.history_manager = history_manager
         self.long_term_manager = long_term_manager
         self.max_batch_size = max_batch_size
@@ -111,6 +68,8 @@ class DreamEngine(ConsolidationEngine):
         self.registry = registry
         self.schedule_mode = schedule_mode
         self.idle_threshold_entries = idle_threshold_entries
+        # Always use SummarizerAgent — auto-construct from llm_provider if needed
+        self._summarizer: SummarizerAgent = summarizer or SummarizerAgent(llm_provider)
 
     async def run(self, context: MemoryContext) -> bool:
         """处理未处理的历史条目。
@@ -133,6 +92,15 @@ class DreamEngine(ConsolidationEngine):
             unprocessed.cursor,
         )
 
+        # Filter out meaningless entries before processing
+        meaningful = [e for e in batch_payload if self._is_meaningful_entry(e)]
+        final_cursor = max((e.entry_id or 0 for e in batch), default=unprocessed.cursor)
+
+        if not meaningful:
+            logger.debug("DreamEngine: all entries were empty/meaningless — advancing cursor")
+            await self.history_manager.commit_cursor(context, "dream", final_cursor)
+            return False
+
         # Gather existing memories for context
         existing = await self.long_term_manager.get_all(context)
         existing_memories = {
@@ -144,7 +112,7 @@ class DreamEngine(ConsolidationEngine):
 
         result = await self.consolidate(
             scope_key="",
-            new_entries=batch_payload,
+            new_entries=meaningful,
             existing_memories=existing_memories,
         )
 
@@ -157,16 +125,9 @@ class DreamEngine(ConsolidationEngine):
             if applied:
                 logger.debug("DreamEngine applied %s updates", applied)
 
-        # Cursor advances only on successful consolidation
-        if result.success:
-            final_cursor = max((e.entry_id or 0 for e in batch), default=unprocessed.cursor)
-            await self.history_manager.commit_cursor(context, "dream", final_cursor)
-            logger.debug("DreamEngine cursor advanced to %s", final_cursor)
-        else:
-            logger.debug(
-                "DreamEngine cursor not advanced (consolidation failed: %s)",
-                result.reasoning,
-            )
+        # Always advance cursor to prevent re-processing (even on failure)
+        await self.history_manager.commit_cursor(context, "dream", final_cursor)
+        logger.debug("DreamEngine cursor advanced to %s", final_cursor)
 
         return result.success
 
@@ -207,6 +168,7 @@ class DreamEngine(ConsolidationEngine):
         existing_memories: dict[str, str],
     ) -> ConsolidationResult:
         """整合新历史条目到长期记忆。"""
+        _ = scope_key
         if not new_entries:
             return ConsolidationResult.empty()
 
@@ -222,23 +184,12 @@ class DreamEngine(ConsolidationEngine):
             f"## Current MEMORY.md\n{existing_memories.get('MEMORY.md', '(empty)')}"
         )
 
-        # Phase 1: Analysis
+        # Phase 1: Fact extraction — via SummarizerAgent
         try:
-            phase1_response = await self.llm.chat_with_retry(
-                messages=[
-                    {"role": "system", "content": _PHASE1_PROMPT},
-                    {
-                        "role": "user",
-                        "content": f"## History\n{history_text}\n\n{file_context}",
-                    },
-                ],
-                temperature=0.3,
+            analysis = await self._summarizer.analyze(
+                f"## History\n{history_text}\n\n{file_context}",
+                prompt=SummarizerAgent.PROMPT_FACT_EXTRACTION,
                 max_tokens=2000,
-            )
-            analysis = (
-                phase1_response.strip()
-                if isinstance(phase1_response, str)
-                else str(phase1_response).strip()
             )
         except Exception as e:
             logger.warning("DreamEngine Phase 1 failed: %s", e)
@@ -250,20 +201,15 @@ class DreamEngine(ConsolidationEngine):
                 reasoning="Phase 1: no new information",
             )
 
-        # Phase 2: Generate updates
+        # Phase 2: Generate memory updates — via SummarizerAgent
         try:
-            phase2_response = await self.llm.chat_with_retry(
-                messages=[
-                    {"role": "system", "content": _PHASE2_PROMPT},
-                    {
-                        "role": "user",
-                        "content": f"## Analysis\n{analysis}\n\n{file_context}",
-                    },
-                ],
-                temperature=0.2,
+            phase2_text = await self._summarizer.summarize(
+                f"## Analysis\n{analysis}\n\n{file_context}",
+                prompt=SummarizerAgent.PROMPT_MEMORY_UPDATE,
                 max_tokens=2000,
+                temperature=0.2,
             )
-            updates = self._parse_updates(phase2_response)
+            updates = self._parse_updates(phase2_text)
         except Exception as e:
             logger.warning("DreamEngine Phase 2 failed: %s", e)
             return ConsolidationResult(
@@ -281,6 +227,14 @@ class DreamEngine(ConsolidationEngine):
                 result.memory_updates.append(update)
 
         return result
+
+    @staticmethod
+    def _is_meaningful_entry(entry: dict[str, Any]) -> bool:
+        """Check whether an archive entry contains useful content for consolidation."""
+        summary = entry.get("summary", "")
+        if not summary or not summary.strip():
+            return False
+        return summary.strip() not in ("(no conversation content)", "(no summary)", "(nothing)")
 
     @staticmethod
     def _archive_entry_to_dict(entry: ArchiveEntry) -> dict[str, Any]:
@@ -340,4 +294,3 @@ class DreamEngine(ConsolidationEngine):
                     )
                 )
         return updates
-

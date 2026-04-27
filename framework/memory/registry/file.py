@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import time
@@ -72,7 +73,12 @@ class DefaultMemoryStoreRegistry(MemoryStoreRegistry):
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = path.with_suffix(path.suffix + ".tmp")
         tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(str(tmp_path), str(path))
+        try:
+            os.replace(str(tmp_path), str(path))
+        except OSError:
+            path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            with contextlib.suppress(OSError):
+                tmp_path.unlink()
 
     def _read_scope_record(self, scope_dir: Path) -> ScopeRecord | None:
         path = scope_dir / _SCOPE_FILE

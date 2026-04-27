@@ -3,27 +3,42 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 
 from framework.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
 from framework.memory.core.layers import KnowledgeMemoryManager
 from framework.memory.core.models import LongTermMemory
 from framework.memory.core.scope import MemoryContext, MemoryScope
+from framework.memory.knowledge_search import (
+    FullDumpKnowledgeStrategy,
+    KnowledgeSearchStrategy,
+)
 from framework.memory.layers.config import KnowledgeMemoryConfig, StorageFactory
+from framework.memory.utils import estimate_text_tokens
 
 logger = logging.getLogger(__name__)
 
 
 class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
-    """Knowledge layer manager that resolves storage through a StorageFactory."""
+    """Knowledge layer manager that resolves storage through a StorageFactory.
+
+    Supports automatic consolidation: when a file exceeds the token threshold
+    after an update, the consolidation function is called to compress it.
+    """
 
     def __init__(
         self,
         storage_factory: StorageFactory,
         config: KnowledgeMemoryConfig | None = None,
+        search_strategy: KnowledgeSearchStrategy | None = None,
+        consolidation_fn: Callable[[str, str], Awaitable[str]] | None = None,
+        consolidation_threshold_tokens: int = 2000,
     ) -> None:
         self._storage_factory = storage_factory
         self._config = config or KnowledgeMemoryConfig()
+        self._search_strategy = search_strategy or FullDumpKnowledgeStrategy()
+        self._consolidation_fn = consolidation_fn
+        self._consolidation_threshold = consolidation_threshold_tokens
 
     def get_scope(self) -> MemoryScope:
         return self._config.scope
@@ -38,6 +53,15 @@ class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
         for key, file_name in self._config.default_files.items():
             if await storage.get(file_name) is None:
                 await storage.set(file_name, defaults.get(key, ""))
+
+    async def retrieve(
+        self, context: MemoryContext, query: str = ""
+    ) -> LongTermMemory:
+        """Retrieve knowledge using the configured search strategy."""
+        full = await self.get_all(context)
+        return await self._search_strategy.retrieve(
+            full, query=query, max_tokens=2000
+        )
 
     async def get_all(self, context: MemoryContext) -> LongTermMemory:
         await self.ensure_defaults(context)
@@ -114,7 +138,68 @@ class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
             }
         )
         await self._maybe_prune_changelog(context)
+
+        # Auto-consolidate if file exceeds threshold
+        await self._maybe_consolidate(context, file_name, result)
         return result
+
+    async def consolidate_file(
+        self, context: MemoryContext, file_key: str
+    ) -> str | None:
+        """Manually trigger consolidation of a specific knowledge file.
+
+        Returns the consolidated content, or None if consolidation was skipped.
+        """
+        if self._consolidation_fn is None:
+            return None
+        content = await self.get_file(context, file_key)
+        if not content:
+            return None
+        return await self._do_consolidate(context, file_key, content)
+
+    async def _maybe_consolidate(
+        self, context: MemoryContext, file_name: str, content: str
+    ) -> None:
+        """Check file size and consolidate if over threshold."""
+        if self._consolidation_fn is None:
+            return
+        tokens = estimate_text_tokens(content)
+        if tokens <= self._consolidation_threshold:
+            return
+        logger.info(
+            "Knowledge file %s exceeds threshold (%d > %d tokens), consolidating",
+            file_name, tokens, self._consolidation_threshold,
+        )
+        await self._do_consolidate(context, file_name, content)
+
+    async def _do_consolidate(
+        self, context: MemoryContext, file_name: str, content: str
+    ) -> str | None:
+        """Run consolidation on a file and persist the result."""
+        try:
+            if self._consolidation_fn is None:
+                return None
+            consolidated = await self._consolidation_fn(content, file_name)
+            if not consolidated or not consolidated.strip():
+                logger.warning("Consolidation returned empty for %s, skipping", file_name)
+                return None
+            storage = await self._storage_factory(context)
+            await storage.set(file_name, consolidated)
+            await storage.append_log({
+                "file": file_name,
+                "mode": "consolidation",
+                "reason": f"auto-consolidated ({estimate_text_tokens(content)} -> {estimate_text_tokens(consolidated)} tokens)",
+            })
+            logger.info(
+                "Consolidated %s: %d -> %d tokens",
+                file_name,
+                estimate_text_tokens(content),
+                estimate_text_tokens(consolidated),
+            )
+            return consolidated
+        except Exception:
+            logger.exception("Consolidation failed for %s", file_name)
+            return None
 
     async def _maybe_prune_changelog(self, context: MemoryContext) -> None:
         if self._config.max_changelog_entries is None:

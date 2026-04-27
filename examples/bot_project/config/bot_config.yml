@@ -351,6 +351,15 @@ plugins:
       operation_timeout: 20
       disable_telemetry: true
 
+# ==================== Observability ====================
+observability:
+  run_logging:
+    enabled: true
+    logger_name: "bot.run"
+    level: "INFO"
+    max_content_chars: 2000
+    max_result_chars: 2000
+
 # ==================== MCP ====================
 mcp:
   enabled: true

@@ -8,7 +8,10 @@ from datetime import datetime
 from framework.memory.core.layers import ArchiveMemoryManager
 from framework.memory.core.models import ArchiveEntry, UnprocessedResult
 from framework.memory.core.scope import MemoryContext, MemoryScope
-from framework.memory.history_search import HistorySearchStrategy, KeywordHistorySearch
+from framework.memory.history_search import (
+    HistorySearchStrategy,
+    RecentFirstHistorySearch,
+)
 from framework.memory.layers.config import ArchiveMemoryConfig, StorageFactory
 
 
@@ -23,7 +26,7 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
     ) -> None:
         self._storage_factory = storage_factory
         self._config = config or ArchiveMemoryConfig()
-        self._search_strategy = search_strategy or KeywordHistorySearch()
+        self._search_strategy = search_strategy or RecentFirstHistorySearch()
 
     def get_scope(self) -> MemoryScope:
         return self._config.scope
