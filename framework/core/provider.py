@@ -1,11 +1,15 @@
 """LLM Provider抽象基类"""
 
 import asyncio
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from typing import Any, Callable
 
+from .constants import FinishReason
 from .types import LLMResponse
+
+logger = logging.getLogger(__name__)
 
 
 class LLMProvider(ABC):
@@ -96,16 +100,69 @@ class LLMProvider(ABC):
         )
 
     async def _execute_with_retry(self, fn, messages, max_retries, **kwargs):
-        """带指数退避的重试执行器"""
-        backoff_delays = (1, 2, 4)
+        """带指数退避的重试执行器，同时处理异常和 error 响应。
+
+        当 fn() 返回 LLMResponse(finish_reason=ERROR) 时按 error_info.should_retry
+        决策是否重试；当 fn() 抛出异常时沿用原有 _is_transient 逻辑。
+        """
+        backoff_delays = (2.0, 8.0)
+        last_response: LLMResponse | None = None
+
         for attempt in range(max_retries + 1):
             try:
-                return await fn(messages, **kwargs)
+                response = await fn(messages, **kwargs)
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 if attempt >= max_retries or not self._is_transient(e):
                     raise
-                await asyncio.sleep(backoff_delays[min(attempt, 2)])
-        raise RuntimeError("unreachable")
+                delay = backoff_delays[min(attempt, len(backoff_delays) - 1)]
+                logger.warning(
+                    "LLM retry attempt %d/%d after %.1fs: %s",
+                    attempt + 1,
+                    max_retries + 1,
+                    delay,
+                    str(e)[:200],
+                )
+                await asyncio.sleep(delay)
+                continue
+
+            # 成功获取 response，检查是否为 error response
+            if response.finish_reason != FinishReason.ERROR.value:
+                return response
+
+            last_response = response
+            if attempt >= max_retries:
+                return response
+
+            should_retry = (
+                response.error_info.should_retry
+                if response.error_info is not None
+                else True   # 无 error_info 时保守重试一次
+            )
+            if not should_retry:
+                logger.warning(
+                    "LLM error response not retryable: finish_reason=%s error=%s",
+                    response.finish_reason,
+                    (response.error or "")[:200],
+                )
+                return response
+
+            delay = backoff_delays[min(attempt, len(backoff_delays) - 1)]
+            logger.warning(
+                "LLM error response retry attempt %d/%d after %.1fs: %s",
+                attempt + 1,
+                max_retries + 1,
+                delay,
+                (response.error or "")[:200],
+            )
+            await asyncio.sleep(delay)
+
+        return last_response or LLMResponse(
+            content=None,
+            finish_reason=FinishReason.ERROR.value,
+            error="LLM retry failed without response",
+        )
 
     @classmethod
     def _is_transient(cls, error: Exception) -> bool:
@@ -175,12 +232,16 @@ class StreamingLLMProvider(LLMProvider):
         temperature: float = 0.7,
         max_tokens: int | None = None,
         tools: list[dict] | None = None,
-        max_retries: int = 3,
+        max_retries: int = 0,
         on_content_delta: Callable[[str], Any] | None = None,
         on_reasoning_delta: Callable[[str], Any] | None = None,
         **kwargs
     ) -> LLMResponse:
-        """调用 chat_stream() 并在遇到临时错误时重试"""
+        """调用 chat_stream() 并在遇到临时错误时重试。
+
+        流式路径默认不参与自动重试（max_retries=0）。partial content 可能
+        已通过 on_content_delta 回调发送给用户，重试会造成重复 delta。
+        """
         return await self._execute_with_retry(
             self.chat_stream, messages, max_retries,
             model=model, temperature=temperature, max_tokens=max_tokens, tools=tools,

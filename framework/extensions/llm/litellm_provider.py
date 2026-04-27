@@ -213,7 +213,7 @@ class LiteLLMProvider(StreamingLLMProvider):
         temperature: float | None = 0.7,
         max_tokens: int | None = None,
         tools: list[dict] | None = None,
-        max_retries: int = 3,
+        max_retries: int = 1,
         **kwargs,
     ) -> LLMResponse:
         return await self._execute_with_retry(
@@ -348,7 +348,7 @@ class LiteLLMProvider(StreamingLLMProvider):
         temperature: float | None = 0.7,
         max_tokens: int | None = None,
         tools: list[dict] | None = None,
-        max_retries: int = 3,
+        max_retries: int = 0,
         on_content_delta: Callable[[str], Any] | None = None,
         on_reasoning_delta: Callable[[str], Any] | None = None,
         **kwargs,
