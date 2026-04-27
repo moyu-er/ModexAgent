@@ -104,6 +104,35 @@ async def _safe_clear_checkpoint(ctx_mgr: Any, session_id: str, *, timeout: floa
         logger.exception("Clear checkpoint failed for %s", session_id)
 
 
+async def safe_send_output(
+    adapter: Any,
+    message: Any,
+    session_id: str,
+    *,
+    timeout: float,
+) -> None:
+    """通过 OutputAdapter 发送消息，带 timeout 保护。
+
+    与 _safe_emit_error 不同，这个函数直接包装 adapter.send()，
+    供 StreamingAwareEmitter 和 BrokerBridgeService 等组件使用。
+    """
+    try:
+        await asyncio.wait_for(
+            adapter.send(message, session_id),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        logger.error(
+            "Output send timeout after %.1fs for session=%s adapter=%s",
+            timeout, session_id, getattr(adapter, "name", "unknown"),
+        )
+    except Exception:
+        logger.exception(
+            "Output send failed for session=%s adapter=%s",
+            session_id, getattr(adapter, "name", "unknown"),
+        )
+
+
 class AgentPipeline:
     """Agent 流水线 - 编排完整的端到端流程
 

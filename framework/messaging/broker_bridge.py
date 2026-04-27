@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -9,6 +10,8 @@ from ..core.constants import DefaultValues
 from ..core.types import InputMessage, OutputMessage
 from ..pipeline.adapters import InputAdapter, OutputAdapter
 from .broker import Address, BrokerMessage, MessageBroker
+
+logger = logging.getLogger(__name__)
 
 
 class BrokerInputAdapter(InputAdapter):
@@ -164,20 +167,41 @@ class BrokerBridgeService:
         broker: MessageBroker,
         input_bindings: dict[InputAdapter, Address] | None = None,
         output_routes: list[OutputRoute] | None = None,
+        *,
+        send_timeout: float | None = None,
     ):
         self.broker = broker
         self.input_bindings = dict(input_bindings or {})
         self.output_routes = list(output_routes or [])
+        self._send_timeout = send_timeout
         self._tasks: list[asyncio.Task] = []
+
+    def _bridge_done_callback(self, task: asyncio.Task, name: str) -> None:
+        """Record exception from completed bridge task."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error("Bridge task %s exited with error", name, exc_info=exc)
 
     async def start(self) -> None:
         await self.broker.start()
         for adapter, addr in self.input_bindings.items():
             await adapter.start()
-            self._tasks.append(asyncio.create_task(self._bridge_input(adapter, addr)))
+            task = asyncio.create_task(self._bridge_input(adapter, addr))
+            bridge_name = f"input:{getattr(adapter, 'name', addr)}"
+            task.add_done_callback(
+                lambda t, n=bridge_name: self._bridge_done_callback(t, n)
+            )
+            self._tasks.append(task)
         for route in self.output_routes:
             if route.match_topic:
-                self._tasks.append(asyncio.create_task(self._bridge_output_topic(route)))
+                task = asyncio.create_task(self._bridge_output_topic(route))
+                bridge_name = f"output:{route.match_topic}"
+                task.add_done_callback(
+                    lambda t, n=bridge_name: self._bridge_done_callback(t, n)
+                )
+                self._tasks.append(task)
             elif route.match_kind:
                 raise NotImplementedError(
                     "match_kind routing is not yet supported. "
@@ -227,7 +251,24 @@ class BrokerBridgeService:
                     metadata=broker_msg.payload.get("metadata", {}),
                 )
                 session_id = broker_msg.payload.get("session_id", "default")
-                await route.adapter.send(out_msg, session_id)
+                if self._send_timeout is not None:
+                    try:
+                        await asyncio.wait_for(
+                            route.adapter.send(out_msg, session_id),
+                            timeout=self._send_timeout,
+                        )
+                    except TimeoutError:
+                        logger.error(
+                            "Bridge output send timeout after %.1fs topic=%s session=%s",
+                            self._send_timeout, route.match_topic, session_id,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Bridge output send failed topic=%s session=%s",
+                            route.match_topic, session_id,
+                        )
+                else:
+                    await route.adapter.send(out_msg, session_id)
         except asyncio.CancelledError:
             pass
 

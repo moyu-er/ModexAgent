@@ -4,6 +4,7 @@
 以及 BufferingEmitter、BusEmitter、LoggingEmitter 实现。
 """
 
+import asyncio
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
@@ -204,10 +205,13 @@ class StreamingAwareEmitter(ContentEmitter[E]):
         output_adapter: "OutputAdapter",
         session_id: str,
         config: EmitterConfig | None = None,
+        *,
+        send_timeout: float | None = None,
     ):
         super().__init__(config)
         self.output_adapter = output_adapter
         self.session_id = session_id
+        self._send_timeout = send_timeout
         self._content_buffer = ""
         self._reasoning_buffer = ""
 
@@ -218,6 +222,29 @@ class StreamingAwareEmitter(ContentEmitter[E]):
     def is_true_streaming(self) -> bool:
         """是否是真流式（Adapter 支持）"""
         return self.output_adapter.supports_streaming
+
+    async def _safe_adapter_send(self, message: Any, log_label: str = "send") -> None:
+        """通过 output_adapter 发送消息，带 timeout 保护。"""
+        if self._send_timeout is None:
+            await self.output_adapter.send(message, self.session_id)
+            return
+        try:
+            await asyncio.wait_for(
+                self.output_adapter.send(message, self.session_id),
+                timeout=self._send_timeout,
+            )
+        except TimeoutError:
+            logger.error(
+                "Output adapter %s timeout after %.1fs for session=%s (op=%s)",
+                getattr(self.output_adapter, "name", "unknown"),
+                self._send_timeout, self.session_id, log_label,
+            )
+        except Exception:
+            logger.exception(
+                "Output adapter %s failed for session=%s (op=%s)",
+                getattr(self.output_adapter, "name", "unknown"),
+                self.session_id, log_label,
+            )
 
     async def emit_delta(self, delta: str) -> None:
         """处理内容片段
@@ -263,9 +290,9 @@ class StreamingAwareEmitter(ContentEmitter[E]):
         # 转发 result 中的 attachments（即使在流式模式下也需显式发送）
         if result.attachments:
             from ..core.types import OutputMessage
-            await self.output_adapter.send(
+            await self._safe_adapter_send(
                 OutputMessage(content="", attachments=result.attachments),
-                self.session_id,
+                log_label="attachments",
             )
         # 清理缓冲区
         self._content_buffer = ""
@@ -277,9 +304,9 @@ class StreamingAwareEmitter(ContentEmitter[E]):
         默认实现：通过 OutputAdapter 发送错误消息。
         """
         from ..core.types import OutputMessage
-        await self.output_adapter.send(
+        await self._safe_adapter_send(
             OutputMessage(content=f"Error: {error}"),
-            self.session_id
+            log_label="emit_error",
         )
 
     async def _on_event(self, event: E, data: Any = None) -> None:
@@ -293,9 +320,9 @@ class StreamingAwareEmitter(ContentEmitter[E]):
                 await self._flush_buffers()
         elif event_name == "error":
             from ..core.types import OutputMessage
-            await self.output_adapter.send(
+            await self._safe_adapter_send(
                 OutputMessage(content=f"Error: {data}"),
-                self.session_id
+                log_label="on_event_error",
             )
 
     async def _flush_buffers(self) -> None:
@@ -303,12 +330,12 @@ class StreamingAwareEmitter(ContentEmitter[E]):
         from ..core.types import OutputMessage
 
         if self._content_buffer or self._reasoning_buffer:
-            await self.output_adapter.send(
+            await self._safe_adapter_send(
                 OutputMessage(
                     content=self._content_buffer,
                     metadata={"reasoning": self._reasoning_buffer} if self._reasoning_buffer else {}
                 ),
-                self.session_id
+                log_label="flush_buffers",
             )
             self._content_buffer = ""
             self._reasoning_buffer = ""
