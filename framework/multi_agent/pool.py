@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -73,12 +74,18 @@ class AgentPool(AgentRegistry):
         if self._enable_inbox_polling:
             self._inbox_poll_task = asyncio.create_task(self._poll_inbox_for_idle_agents())
 
-    def _transition(self, name: str, new_state: AgentState) -> None:
+    def _transition(self, name: str, new_state: AgentState, reason: str = "") -> None:
         current = self._status.get(name, AgentState.SHUTDOWN)
         valid = self._valid_transitions.get(current, set())
         if new_state not in valid:
             logger.warning(
-                "Invalid state transition: %s -> %s for %s", current.value, new_state.value, name
+                "Invalid state transition: %s -> %s for %s (reason=%s)",
+                current.value, new_state.value, name, reason or "unspecified",
+            )
+        if current != new_state:
+            logger.info(
+                "Agent state transition: %s %s -> %s reason=%s",
+                name, current.value, new_state.value, reason or "unspecified",
             )
         self._status[name] = new_state
 
@@ -104,7 +111,7 @@ class AgentPool(AgentRegistry):
             context_manager_factory: 可选的 ContextManager 工厂函数，接收 session_id 返回 ContextManager
         """
         name = descriptor.address.name
-        self._transition(name, AgentState.INITIALIZING)
+        self._transition(name, AgentState.INITIALIZING, reason="register_resident")
         ctx_mgr = context_manager or self._default_context_manager
         if ctx_mgr is None and descriptor.context_manager is not None:
             ctx_mgr = descriptor.context_manager
@@ -120,7 +127,7 @@ class AgentPool(AgentRegistry):
             context_manager_factory=ctx_mgr_factory,
         )
         self._agents[name] = instance
-        self._transition(name, AgentState.IDLE)
+        self._transition(name, AgentState.IDLE, reason="register_resident_complete")
         self._consumers[name] = asyncio.create_task(self._consume_messages(instance, descriptor))
         return instance
 
@@ -136,21 +143,34 @@ class AgentPool(AgentRegistry):
         if task in tasks:
             tasks.remove(task)
 
+    # Watchdog: warn when dispatch exceeds this threshold (P0-a, seconds)
+    _DISPATCH_WARN_SECONDS: float = 300.0
+
     async def _run_dispatch(self, agent_name: str, coro) -> None:
         """包装 dispatch 协程，维护活跃计数和状态转换。
 
         consumer 循环快速 create_task，实际处理在后台执行，
         通过 per-session lock 保证同 session 串行，但不同 session 可以并发。
         """
-        self._active_session_counts[agent_name] = self._active_session_counts.get(agent_name, 0) + 1
+        active_count = self._active_session_counts.get(agent_name, 0) + 1
+        self._active_session_counts[agent_name] = active_count
+        start_time = time.time()
         if self._status.get(agent_name) != AgentState.WORKING:
-            self._transition(agent_name, AgentState.WORKING)
+            self._transition(agent_name, AgentState.WORKING, reason="dispatch_start")
+        logger.debug(
+            "Dispatch start: agent=%s active=%d",
+            agent_name, active_count,
+        )
         try:
             await coro
             self._error_counts.pop(agent_name, None)
         except Exception:
-            logger.exception("Error dispatching message for %s", agent_name)
-            self._transition(agent_name, AgentState.ERROR)
+            elapsed = time.time() - start_time
+            logger.exception(
+                "Error dispatching message for %s (elapsed=%.1fs active=%d)",
+                agent_name, elapsed, active_count,
+            )
+            self._transition(agent_name, AgentState.ERROR, reason="dispatch_error")
             error_count = self._error_counts.get(agent_name, 0) + 1
             self._error_counts[agent_name] = error_count
             sleep_seconds = min(30.0, 2**error_count)
@@ -159,16 +179,19 @@ class AgentPool(AgentRegistry):
             else:
                 await asyncio.sleep(sleep_seconds)
         finally:
-            self._active_session_counts[agent_name] = max(
-                0, self._active_session_counts.get(agent_name, 1) - 1
-            )
-            if self._active_session_counts[agent_name] == 0 and self._status.get(
-                agent_name
-            ) not in (
+            elapsed = time.time() - start_time
+            remaining = max(0, active_count - 1)
+            self._active_session_counts[agent_name] = remaining
+            if elapsed > self._DISPATCH_WARN_SECONDS:
+                logger.warning(
+                    "Dispatch watchdog: agent=%s elapsed=%.1fs active=%d threshold=%.0fs",
+                    agent_name, elapsed, remaining, self._DISPATCH_WARN_SECONDS,
+                )
+            if remaining == 0 and self._status.get(agent_name) not in (
                 AgentState.SHUTTING_DOWN,
                 AgentState.SHUTDOWN,
             ):
-                self._transition(agent_name, AgentState.IDLE)
+                self._transition(agent_name, AgentState.IDLE, reason="dispatch_idle")
 
     async def _consume_messages(self, instance: AgentInstance, descriptor: AgentDescriptor) -> None:
         """常驻 Agent 的消息消费循环（基于消息类型的分发器）。"""
@@ -252,7 +275,7 @@ class AgentPool(AgentRegistry):
                 break
             except Exception:
                 logger.exception("Error consuming messages for %s", address.name)
-                self._transition(address.name, AgentState.ERROR)
+                self._transition(address.name, AgentState.ERROR, reason="consume_error")
                 error_count = self._error_counts.get(address.name, 0) + 1
                 self._error_counts[address.name] = error_count
                 sleep_seconds = min(30.0, 2**error_count)
@@ -262,7 +285,7 @@ class AgentPool(AgentRegistry):
                     )
                     break
                 await asyncio.sleep(sleep_seconds)
-                self._transition(address.name, AgentState.IDLE)
+                self._transition(address.name, AgentState.IDLE, reason="consume_recover")
 
     async def _handle_inbox_wakeup(
         self,
@@ -613,7 +636,7 @@ class AgentPool(AgentRegistry):
         if self._inbox_poll_task is not None:
             self._inbox_poll_task.cancel()
         for name in list(self._agents.keys()):
-            self._transition(name, AgentState.SHUTTING_DOWN)
+            self._transition(name, AgentState.SHUTTING_DOWN, reason="shutdown_all")
         for _, task in list(self._consumers.items()):
             task.cancel()
         if self._consumers:
