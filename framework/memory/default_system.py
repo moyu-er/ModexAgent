@@ -241,6 +241,40 @@ class DefaultMemorySystem(MemorySystem):
         result = await storage.get(".auto_compact_summary")
         return result if isinstance(result, str) else None
 
+    async def set_pending_user_turn(
+        self, context: MemoryContext, message_id: str, created_at: float
+    ) -> None:
+        """Mark a pending user turn so it can be recovered after a crash."""
+        storage = await self._registry.resolve(
+            layer=MemoryLayerName.SESSION,
+            scope=SessionScope(),
+            context=context,
+        )
+        await storage.set(".pending_user_turn", {
+            "message_id": message_id,
+            "created_at": created_at,
+            "session_id": context.session_id,
+        })
+
+    async def clear_pending_user_turn(self, context: MemoryContext) -> None:
+        """Clear the pending user turn marker after successful processing."""
+        storage = await self._registry.resolve(
+            layer=MemoryLayerName.SESSION,
+            scope=SessionScope(),
+            context=context,
+        )
+        await storage.delete(".pending_user_turn")
+
+    async def get_pending_user_turn(self, context: MemoryContext) -> dict | None:
+        """Retrieve the pending user turn marker if present."""
+        storage = await self._registry.resolve(
+            layer=MemoryLayerName.SESSION,
+            scope=SessionScope(),
+            context=context,
+        )
+        result = await storage.get(".pending_user_turn")
+        return result if isinstance(result, dict) else None
+
     async def save_checkpoint(
         self, context: MemoryContext, messages: Sequence[ChatMessage | dict[str, Any]]
     ) -> None:

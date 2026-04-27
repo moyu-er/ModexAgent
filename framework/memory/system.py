@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,8 @@ from framework.memory.lifecycle import MemoryLifecyclePolicy
 from framework.memory.registry.file import DefaultMemoryStoreRegistry
 
 logger = logging.getLogger(__name__)
+
+_ERROR_PLACEHOLDER = "[Assistant reply unavailable due to model or runtime error.]"
 
 
 def create_memory_system(
@@ -146,7 +149,23 @@ class MemorySystemContextManager(ContextManager):
         if user_message:
             prefixed_message = self._apply_runtime_context_prefix(user_message, input_metadata)
             await self.memory_system.add_messages(ctx, [prefixed_message])
-        _ = assistant_result
+            # Mark pending user turn for crash recovery
+            try:
+                set_pending = getattr(self.memory_system, "set_pending_user_turn", None)
+                if set_pending is not None:
+                    msg_id = metadata.get("message_id", "") if metadata else ""
+                    await set_pending(ctx, msg_id, time.time())  # type: ignore[misc]
+            except Exception:
+                logger.debug("Failed to set pending user turn for %s", session_id, exc_info=True)
+
+        # Clear pending user turn since assistant completed (success or error placeholder handled separately)
+        if assistant_result.stop_reason != "error" or assistant_result.error:
+            try:
+                clear_pending = getattr(self.memory_system, "clear_pending_user_turn", None)
+                if clear_pending is not None:
+                    await clear_pending(ctx)  # type: ignore[misc]
+            except Exception:
+                logger.debug("Failed to clear pending user turn for %s", session_id, exc_info=True)
 
     async def flush(self, session_id: str) -> None:
         pass  # All messages written in real-time through ScopedMessageHistory
@@ -185,6 +204,40 @@ class MemorySystemContextManager(ContextManager):
                 agent_role=self.default_agent_role,
             )
         await self.memory_system.clear_checkpoint(ctx)
+
+    async def add_assistant_placeholder(self, session_id: str, error: str) -> None:
+        """Write an assistant error placeholder message to history.
+
+        Only writes when the last message in history is a user message,
+        preventing duplicate placeholders. Detailed error goes to metadata.
+        Also clears the pending user turn marker.
+        """
+        ctx = self._build_context(session_id)
+        try:
+            history = await self.memory_system.get_history(ctx, max_messages=1)
+        except Exception:
+            logger.warning("Failed to get history for placeholder check", exc_info=True)
+            return
+
+        if history and history[-1].role == "user":
+            placeholder_dict: dict[str, Any] = {
+                "role": "assistant",
+                "content": _ERROR_PLACEHOLDER,
+                "metadata": {"error": error, "is_error_placeholder": True},
+            }
+            placeholder = ChatMessage.coerce(placeholder_dict)
+            try:
+                await self.memory_system.add_messages(ctx, [placeholder])
+            except Exception:
+                logger.exception("Failed to write error placeholder for %s", session_id)
+
+        # Clear pending user turn regardless of whether we wrote the placeholder
+        try:
+            clear_pending = getattr(self.memory_system, "clear_pending_user_turn", None)
+            if clear_pending is not None:
+                await clear_pending(ctx)  # type: ignore[misc]
+        except Exception:
+            logger.debug("Failed to clear pending user turn for %s", session_id, exc_info=True)
 
     async def clear(self, session_id: str) -> None:
         ctx = self._context_cache.get(session_id)
