@@ -11,6 +11,7 @@ from enum import Enum
 from typing import Any
 
 from framework.core.agent import Agent, AgentContext, AgentResult
+from framework.core.constants import FinishReason
 from framework.core.emitter import ContentEmitter
 from framework.core.events import AgentEvent
 from framework.core.provider import LLMProvider
@@ -227,6 +228,12 @@ Rules:
         from framework.utils.helpers import strip_think
 
         if isinstance(response, LLMResponse):
+            if response.finish_reason == FinishReason.ERROR.value:
+                logger.warning(
+                    "SummarizerAgent received error response: %s",
+                    (response.error or "")[:200],
+                )
+                return ""
             raw = response.content or ""
         elif isinstance(response, str):
             raw = response.strip()
