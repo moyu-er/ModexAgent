@@ -6,14 +6,14 @@
 import asyncio
 import contextlib
 import logging
+import time
 from typing import Any
 
-from framework.core.llm_error import RuntimeSafetyPolicy, TurnTimeoutPolicy
+from framework.core.llm_error import RuntimeSafetyPolicy
 from framework.core.skills import SkillManager
 from framework.memory.core.message import ChatMessage
 
 from ..core.agent import Agent, AgentContext
-from ..core.constants import FinishReason
 from ..core.context import ContextManager
 from ..core.emitter import AgentResult, StreamingAwareEmitter
 from ..core.runtime_context import RuntimeContextManager
@@ -56,7 +56,7 @@ async def _safe_emit_error(
             emitter.emit_error(error_text),
             timeout=timeout,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.error("Emit error timeout after %.1fs", timeout)
     except Exception:
         logger.exception("Emit error failed")
@@ -76,7 +76,7 @@ async def _save_error_placeholder(
             await asyncio.wait_for(add_placeholder(session_id, error), timeout=timeout)
             return True
         return False
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.error("Save error placeholder timeout after %.1fs for %s", timeout, session_id)
         return False
     except Exception:
@@ -88,7 +88,7 @@ async def _safe_flush(ctx_mgr: Any, session_id: str, *, timeout: float) -> None:
     """Memory flush 带 timeout。"""
     try:
         await asyncio.wait_for(ctx_mgr.flush(session_id), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.error("Memory flush timeout for %s", session_id)
     except Exception:
         logger.exception("Memory flush failed for %s", session_id)
@@ -98,7 +98,7 @@ async def _safe_clear_checkpoint(ctx_mgr: Any, session_id: str, *, timeout: floa
     """Clear checkpoint 带 timeout。"""
     try:
         await asyncio.wait_for(ctx_mgr.clear_checkpoint(session_id), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.error("Clear checkpoint timeout for %s", session_id)
     except Exception:
         logger.exception("Clear checkpoint failed for %s", session_id)
@@ -121,7 +121,7 @@ async def safe_send_output(
             adapter.send(message, session_id),
             timeout=timeout,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.error(
             "Output send timeout after %.1fs for session=%s adapter=%s",
             timeout, session_id, getattr(adapter, "name", "unknown"),
@@ -341,7 +341,13 @@ class AgentPipeline:
 
         # 获取或创建 session 级别的锁，防止同一 session 并发处理
         lock = self._session_locks.setdefault(session_id, asyncio.Lock())
+        lock_wait_start = time.monotonic()
         async with lock:
+            lock_wait_ms = (time.monotonic() - lock_wait_start) * 1000
+            if lock_wait_ms > 1000:  # warn if lock wait exceeds 1s
+                logger.warning(
+                    "Session lock wait: session=%s wait=%.0fms", session_id, lock_wait_ms
+                )
             return await self._process_message_locked(input_msg, session_id, route_result)
 
     async def _process_message_locked(
@@ -590,6 +596,7 @@ class AgentPipeline:
         result: AgentResult | None = None
         turn_clean = False
         turn = self.safety.turn
+        turn_start = time.monotonic()
 
         try:
             result = await asyncio.wait_for(
@@ -610,21 +617,24 @@ class AgentPipeline:
                 metadata={"input_metadata": input_metadata},
             )
             turn_clean = True
+            elapsed = time.monotonic() - turn_start
             logger.info(
                 "turn_done session=%s agent=%s stop_reason=%s elapsed=%.1fs",
                 session_id,
                 agent_name,
                 result.stop_reason if result else "none",
-                0.0,  # elapsed tracked per-provider elsewhere
+                elapsed,
             )
             return result
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
+            elapsed = time.monotonic() - turn_start
             logger.error(
-                "Agent turn timeout after %.1fs session=%s agent=%s",
+                "Agent turn timeout after %.1fs session=%s agent=%s elapsed=%.1fs",
                 turn.agent_run_timeout_seconds,
                 session_id,
                 agent_name,
+                elapsed,
             )
             error_text = "Agent turn timed out"
             result = AgentResult(

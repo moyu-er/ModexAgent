@@ -9,7 +9,9 @@ import contextlib
 import json
 import logging
 import os
-from typing import Any, Callable
+import time
+from collections.abc import Callable
+from typing import Any
 
 os.environ["LITELLM_LOG"] = "ERROR"
 os.environ["LITELLM_SUPPRESS_DEBUG"] = "true"
@@ -30,10 +32,10 @@ for _name in _SUPPRESSED_LOGGERS:
 
 from framework.core.constants import DefaultValues, FinishReason, ToolChoice
 from framework.core.llm_error import (
-    LLMErrorKind,
     LLMErrorInfo,
-    classify_litellm_error,
+    LLMErrorKind,
     build_timeout_response,
+    classify_litellm_error,
 )
 from framework.core.provider import StreamingLLMProvider
 from framework.core.tool_call_accumulator import (
@@ -239,16 +241,20 @@ class LiteLLMProvider(StreamingLLMProvider):
             stream=False,
             **kwargs,
         )
+        t0 = time.monotonic()
+        logger.debug("LLM attempt start: model=%s stream=0", params.get("model"))
         try:
             response = await self._acompletion(**params)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            elapsed_ms = (time.monotonic() - t0) * 1000
             error_info = classify_litellm_error(exc)
             logger.warning(
-                "LiteLLM request failed: kind=%s provider=%s message=%s",
+                "LLM attempt failed: kind=%s provider=%s elapsed=%.0fms message=%s",
                 error_info.kind.value,
                 error_info.provider,
+                elapsed_ms,
                 error_info.message[:200],
             )
             return LLMResponse(
@@ -310,6 +316,12 @@ class LiteLLMProvider(StreamingLLMProvider):
             usage = dict(response.usage) if hasattr(response.usage, "__iter__") else {}
 
         finish_reason = choice.finish_reason if hasattr(choice, "finish_reason") else "stop"
+
+        elapsed_ms = (time.monotonic() - t0) * 1000
+        logger.debug(
+            "LLM attempt done: model=%s finish=%s elapsed=%.0fms",
+            params.get("model"), finish_reason, elapsed_ms,
+        )
 
         return LLMResponse(
             content=clean_content,
@@ -380,16 +392,20 @@ class LiteLLMProvider(StreamingLLMProvider):
             **kwargs,
         )
 
+        t0 = time.monotonic()
+        logger.debug("LLM stream attempt start: model=%s", params.get("model"))
         try:
             response = await self._acompletion(**params)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            elapsed_ms = (time.monotonic() - t0) * 1000
             error_info = classify_litellm_error(exc)
             logger.warning(
-                "LiteLLM stream request failed: kind=%s provider=%s message=%s",
+                "LLM stream attempt failed: kind=%s provider=%s elapsed=%.0fms message=%s",
                 error_info.kind.value,
                 error_info.provider,
+                elapsed_ms,
                 error_info.message[:200],
             )
             return LLMResponse(
@@ -422,7 +438,7 @@ class LiteLLMProvider(StreamingLLMProvider):
                 )
             except StopAsyncIteration:
                 break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 with contextlib.suppress(Exception):
                     close = getattr(iterator, "aclose", None)
                     if close is not None:
@@ -477,6 +493,12 @@ class LiteLLMProvider(StreamingLLMProvider):
         pending_tools = accumulator.flush_pending()
         for tool_call in pending_tools:
             _add_tool_call(tool_call)
+
+        elapsed_ms = (time.monotonic() - t0) * 1000
+        logger.debug(
+            "LLM stream attempt done: model=%s finish=%s content_len=%d elapsed=%.0fms",
+            params.get("model"), finish_reason, len("".join(content_parts)), elapsed_ms,
+        )
 
         return LLMResponse(
             content="".join(content_parts),
