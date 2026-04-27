@@ -33,6 +33,8 @@ class FinishReason(str, Enum):
     TOOL_CALLS = "tool_calls"
     LENGTH = "length"
     CONTENT_FILTER = "content_filter"
+    ERROR = "error"
+    CANCELLED = "cancelled"
 
 
 class ErrorMessages:

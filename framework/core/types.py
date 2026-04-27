@@ -1,11 +1,16 @@
 """基础类型定义"""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, StrEnum
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from .constants import DefaultValues
+
+if TYPE_CHECKING:
+    from .llm_error import LLMErrorInfo
 
 
 class MessageType(Enum):
@@ -129,6 +134,7 @@ class LLMResponse:
     finish_reason: str = "stop"
     usage: dict[str, int] = field(default_factory=dict)
     error: str | None = None
+    error_info: LLMErrorInfo | None = None
 
     @property
     def has_tool_calls(self) -> bool:
