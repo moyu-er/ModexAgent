@@ -298,6 +298,20 @@ class ReActAgent(Agent[ReActEvent]):
         if context.on_checkpoint:
             await context.on_checkpoint([])
 
+    def _resolve_hook_timeout(self, context: AgentContext) -> float:
+        """从 context.safety 读取 hook_timeout，带 fallback。"""
+        safety = getattr(context, "safety", None)
+        if safety is not None:
+            return safety.turn.hook_timeout_seconds
+        return self._hook_timeout
+
+    def _resolve_tool_timeout(self, context: AgentContext) -> float:
+        """从 context.safety 读取 tool_timeout，带 fallback。"""
+        safety = getattr(context, "safety", None)
+        if safety is not None:
+            return safety.turn.tool_timeout_seconds
+        return self._tool_timeout
+
     async def _call_hooks(
         self,
         method_name: str,
@@ -306,6 +320,7 @@ class ReActAgent(Agent[ReActEvent]):
         **kwargs: Any,
     ) -> None:
         """调用 AgentContext 中注册的所有 hooks 的指定方法，每个 hook 带独立 timeout。"""
+        hook_timeout = self._resolve_hook_timeout(context)
         for hook in context.hooks or []:
             if hook is None or not isinstance(hook, AgentRunHook):
                 continue
@@ -315,16 +330,16 @@ class ReActAgent(Agent[ReActEvent]):
             try:
                 await asyncio.wait_for(
                     method(context, *args, **kwargs),
-                    timeout=self._hook_timeout,
+                    timeout=hook_timeout,
                 )
             except asyncio.CancelledError:
                 raise
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(
                     "Hook %s.%s timed out after %.1fs",
                     type(hook).__name__,
                     method_name,
-                    self._hook_timeout,
+                    hook_timeout,
                 )
             except Exception:
                 logger.exception("Hook %s failed in %s", type(hook).__name__, method_name)
@@ -382,27 +397,28 @@ class ReActAgent(Agent[ReActEvent]):
         context: AgentContext,
     ) -> ToolResult:
         """执行工具（使用 ToolManager），带独立 timeout。"""
+        tool_timeout = self._resolve_tool_timeout(context)
         try:
             result = await asyncio.wait_for(
                 context.tool_manager.execute(
                     tool_call.tool_name,
                     tool_call.arguments or {},
                 ),
-                timeout=self._tool_timeout,
+                timeout=tool_timeout,
             )
             return result
         except asyncio.CancelledError:
             raise
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "Tool %s timed out after %.1fs",
                 tool_call.tool_name,
-                self._tool_timeout,
+                tool_timeout,
             )
             return ToolResult(
                 tool_name=tool_call.tool_name,
                 result=None,
-                error=f"Error: Tool execution timeout after {self._tool_timeout:.0f}s",
+                error=f"Error: Tool execution timeout after {tool_timeout:.0f}s",
             )
         except Exception as e:
             logger.warning("Tool %s execution failed: %s", tool_call.tool_name, e)

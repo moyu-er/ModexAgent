@@ -79,6 +79,16 @@ class SessionMemoryManager(ABC):
     async def get_revision(self, context: MemoryContext) -> StorageRevision:
         pass
 
+    @abstractmethod
+    async def get_checkpoint_id(self, context: MemoryContext) -> str | None:
+        """Return the checkpoint ID stored for this session, if any."""
+        pass
+
+    @abstractmethod
+    async def clear_checkpoint(self, context: MemoryContext) -> None:
+        """Remove checkpoint data for this session without touching message history."""
+        pass
+
     async def transform_messages(
         self,
         context: MemoryContext,

@@ -86,7 +86,12 @@ class ScopedSessionMemoryManager(SessionMemoryManager):
         Tool results can be very large (e.g. file reads). We preserve the
         message structure but truncate oversized ``content`` fields so the
         checkpoint stays lightweight while remaining recoverable.
+
+        The checkpoint payload includes a ``checkpoint_id`` for recovery
+        deduplication (14.1).
         """
+        import uuid
+
         storage = await self._storage_factory(context)
         chat_messages = self._to_chat_messages(messages)
         truncated: list[dict[str, object]] = []
@@ -99,9 +104,13 @@ class ScopedSessionMemoryManager(SessionMemoryManager):
                     + f"\n... (truncated, {len(content)} chars total)"
                 )
             truncated.append(d)
+        checkpoint_id = uuid.uuid4().hex
         await storage.set(
             self._config.checkpoint_key,
-            json.dumps({"messages": truncated}, ensure_ascii=False),
+            json.dumps(
+                {"messages": truncated, "checkpoint_id": checkpoint_id},
+                ensure_ascii=False,
+            ),
         )
 
     async def load_checkpoint(self, context: MemoryContext) -> list[ChatMessage] | None:
@@ -124,11 +133,52 @@ class ScopedSessionMemoryManager(SessionMemoryManager):
             return None
         return ChatMessage.from_dicts(messages)
 
+    async def get_checkpoint_id(self, context: MemoryContext) -> str | None:
+        """Return the checkpoint_id stored alongside the current checkpoint."""
+        storage = await self._storage_factory(context)
+        raw = await storage.get(self._config.checkpoint_key)
+        if raw is None:
+            return None
+        if isinstance(raw, str):
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                return None
+        elif isinstance(raw, dict):
+            payload = raw
+        else:
+            return None
+        return payload.get("checkpoint_id")
+
+    async def get_last_recovered_checkpoint_id(
+        self, context: MemoryContext
+    ) -> str | None:
+        """Return the checkpoint_id of the last successfully recovered checkpoint."""
+        storage = await self._storage_factory(context)
+        return await storage.get(self._config.last_recovered_key)
+
+    async def set_last_recovered_checkpoint_id(
+        self, context: MemoryContext, checkpoint_id: str
+    ) -> None:
+        """Record that a checkpoint with the given id was successfully recovered."""
+        storage = await self._storage_factory(context)
+        await storage.set(self._config.last_recovered_key, checkpoint_id)
+
+    async def clear_checkpoint(self, context: MemoryContext) -> None:
+        """Remove only the checkpoint and recovery tracking keys.
+
+        Does NOT touch the session message history.
+        """
+        storage = await self._storage_factory(context)
+        await storage.delete(self._config.checkpoint_key)
+        await storage.delete(self._config.last_recovered_key)
+
     async def clear(self, context: MemoryContext) -> None:
         storage = await self._storage_factory(context)
         async with storage.get_lock().write():
             await storage.save_messages([])
             await storage.delete(self._config.checkpoint_key)
+            await storage.delete(self._config.last_recovered_key)
 
     async def replace_messages(
         self,

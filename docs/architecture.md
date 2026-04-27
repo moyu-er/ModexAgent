@@ -44,7 +44,7 @@ framework/
 │       ├── manager.py        # SkillManager
 │       ├── source.py         # FileSkillSource
 │       ├── builder.py        # ProgressiveBuilder (渐进式 Skill 构建)
-│       ├── filter.py         # DependencyFilter
+│       ├── filter.py         # SkillFilter, AllowListFilter, DenyListFilter
 │       └── models.py         # Skill 数据模型
 │
 ├── agents/                   # Agent 推理模式实现

@@ -205,6 +205,63 @@ class MemorySystemContextManager(ContextManager):
             )
         await self.memory_system.clear_checkpoint(ctx)
 
+    async def recover_checkpoint(
+        self, session_id: str
+    ) -> tuple[list[ChatMessage] | None, bool]:
+        """Recover messages from checkpoint with deduplication (14.2).
+
+        Returns (messages, was_recovered):
+        - messages: the recovered messages, or None if no checkpoint / already recovered
+        - was_recovered: True if recovery was performed, False if skipped (dedup)
+        """
+        ctx = self._build_context(session_id)
+        checkpoint_id = await self.memory_system.get_checkpoint_id(ctx)
+        if checkpoint_id is None:
+            return None, False
+
+        last_recovered = await self.memory_system.get_last_recovered_checkpoint_id(ctx)
+        if last_recovered == checkpoint_id:
+            logger.debug(
+                "Checkpoint %s already recovered for %s, skipping dedup",
+                checkpoint_id,
+                session_id,
+            )
+            return None, False
+
+        recovered = await self.memory_system.load_checkpoint(ctx)
+        if recovered is None:
+            return None, False
+
+        # Overlap dedup: compare recovered messages with history tail
+        history = await self.memory_system.get_history(ctx)
+        if history and len(history) >= len(recovered):
+            # Check if the last N messages match the recovered ones
+            tail = history[-len(recovered):]
+            overlap = all(
+                h.role == r.role and h.content == r.content
+                for h, r in zip(tail, recovered)
+            )
+            if overlap:
+                logger.debug(
+                    "Checkpoint messages already present in history for %s, skipping",
+                    session_id,
+                )
+                await self.memory_system.set_last_recovered_checkpoint_id(
+                    ctx, checkpoint_id
+                )
+                await self.memory_system.clear_checkpoint(ctx)
+                return None, False
+
+        await self.memory_system.add_messages(ctx, recovered)
+        await self.memory_system.set_last_recovered_checkpoint_id(ctx, checkpoint_id)
+        await self.memory_system.clear_checkpoint(ctx)
+        logger.info(
+            "Recovered %d messages from checkpoint for %s",
+            len(recovered),
+            session_id,
+        )
+        return recovered, True
+
     async def add_assistant_placeholder(self, session_id: str, error: str) -> None:
         """Write an assistant error placeholder message to history.
 

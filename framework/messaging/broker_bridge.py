@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any
 
@@ -169,35 +169,87 @@ class BrokerBridgeService:
         output_routes: list[OutputRoute] | None = None,
         *,
         send_timeout: float | None = None,
+        restart_on_failure: bool = True,
+        restart_max_retries: int = 5,
+        restart_backoff_seconds: float = 5.0,
+        restart_max_window_seconds: float = 300.0,
     ):
         self.broker = broker
         self.input_bindings = dict(input_bindings or {})
         self.output_routes = list(output_routes or [])
         self._send_timeout = send_timeout
+        self._restart_on_failure = restart_on_failure
+        self._restart_max_retries = restart_max_retries
+        self._restart_backoff_seconds = restart_backoff_seconds
+        self._restart_max_window_seconds = restart_max_window_seconds
         self._tasks: list[asyncio.Task] = []
+        self._bridge_specs: dict[str, Callable[[], Coroutine[Any, Any, None]]] = {}
+        self._restart_counts: dict[str, int] = {}
+        self._restart_first_fail_time: dict[str, float] = {}
 
     def _bridge_done_callback(self, task: asyncio.Task, name: str) -> None:
-        """Record exception from completed bridge task."""
+        """Record exception from completed bridge task; optionally schedule restart."""
         if task.cancelled():
             return
         exc = task.exception()
         if exc is not None:
             logger.error("Bridge task %s exited with error", name, exc_info=exc)
+            if self._restart_on_failure:
+                self._schedule_restart(name)
+
+    def _schedule_restart(self, name: str) -> None:
+        now = asyncio.get_event_loop().time()
+        first_fail = self._restart_first_fail_time.get(name)
+        if first_fail is None or (now - first_fail) > self._restart_max_window_seconds:
+            self._restart_first_fail_time[name] = now
+            self._restart_counts[name] = 0
+
+        self._restart_counts[name] = self._restart_counts.get(name, 0) + 1
+        if self._restart_counts[name] > self._restart_max_retries:
+            logger.critical(
+                "Bridge task %s exceeded max restarts (%d), giving up",
+                name,
+                self._restart_max_retries,
+            )
+            return
+
+        delay = self._restart_backoff_seconds * (2 ** (self._restart_counts[name] - 1))
+        logger.info(
+            "Scheduling bridge task %s restart in %.1fs (attempt %d/%d)",
+            name,
+            delay,
+            self._restart_counts[name],
+            self._restart_max_retries,
+        )
+        asyncio.create_task(self._restart_bridge_after_delay(name, delay))
+
+    async def _restart_bridge_after_delay(self, name: str, delay: float) -> None:
+        await asyncio.sleep(delay)
+        spec = self._bridge_specs.get(name)
+        if spec is None:
+            logger.warning("No bridge spec found for %s, cannot restart", name)
+            return
+        logger.info("Restarting bridge task %s", name)
+        task = asyncio.create_task(spec())
+        task.add_done_callback(lambda t, n=name: self._bridge_done_callback(t, n))
+        self._tasks.append(task)
 
     async def start(self) -> None:
         await self.broker.start()
         for adapter, addr in self.input_bindings.items():
             await adapter.start()
-            task = asyncio.create_task(self._bridge_input(adapter, addr))
             bridge_name = f"input:{getattr(adapter, 'name', addr)}"
+            self._bridge_specs[bridge_name] = lambda a=adapter, ad=addr: self._bridge_input(a, ad)
+            task = asyncio.create_task(self._bridge_specs[bridge_name]())
             task.add_done_callback(
                 lambda t, n=bridge_name: self._bridge_done_callback(t, n)
             )
             self._tasks.append(task)
         for route in self.output_routes:
             if route.match_topic:
-                task = asyncio.create_task(self._bridge_output_topic(route))
                 bridge_name = f"output:{route.match_topic}"
+                self._bridge_specs[bridge_name] = lambda r=route: self._bridge_output_topic(r)
+                task = asyncio.create_task(self._bridge_specs[bridge_name]())
                 task.add_done_callback(
                     lambda t, n=bridge_name: self._bridge_done_callback(t, n)
                 )
@@ -213,6 +265,7 @@ class BrokerBridgeService:
             t.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
+        self._bridge_specs.clear()
         for adapter in self.input_bindings:
             await adapter.stop()
         await self.broker.stop()

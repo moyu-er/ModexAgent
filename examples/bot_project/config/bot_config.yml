@@ -351,6 +351,25 @@ plugins:
       operation_timeout: 20
       disable_telemetry: true
 
+# ==================== Runtime Safety ====================
+runtime_safety:
+  llm:
+    request_timeout_seconds: 45.0
+    stream_idle_timeout_seconds: 90.0
+    framework_max_retries: 1
+    retry_backoff_seconds: [2.0, 8.0]
+  circuit_breaker:
+    enabled: true
+    failure_threshold: 3
+    cooldown_seconds: 120.0
+  turn:
+    agent_run_timeout_seconds: 180.0
+    dispatch_timeout_seconds: 300.0
+    output_send_timeout_seconds: 20.0
+    memory_flush_timeout_seconds: 30.0
+    hook_timeout_seconds: 10.0
+    tool_timeout_seconds: 60.0
+
 # ==================== Observability ====================
 observability:
   run_logging:

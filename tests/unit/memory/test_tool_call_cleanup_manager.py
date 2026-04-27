@@ -86,6 +86,12 @@ class DummySessionManager(SessionMemoryManager):
     async def get_revision(self, context: MemoryContext) -> StorageRevision:
         return self.revision
 
+    async def get_checkpoint_id(self, context: MemoryContext) -> str | None:
+        return None
+
+    async def clear_checkpoint(self, context: MemoryContext) -> None:
+        pass
+
 
 async def test_tool_call_cleanup_returns_inner_storage_revision() -> None:
     inner = DummySessionManager()

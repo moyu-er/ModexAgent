@@ -238,19 +238,30 @@ class TestLiteLLMProviderRetryRouting:
         response.choices = []
         provider._acompletion.return_value = response
 
-        result = await provider.chat(messages=[{"role": "user", "content": "hi"}])
+        result = await provider.chat_with_retry(
+            messages=[{"role": "user", "content": "hi"}],
+            max_retries=0,
+        )
 
+        # max_retries=0 means no retry; error response returned directly
         assert provider._acompletion.call_count == 1
         assert isinstance(result, LLMResponse)
-        assert result.error == "Empty response from LLM"
+        assert result.finish_reason == "error"
 
     @pytest.mark.asyncio
     async def test_chat_retries_on_transient_error(self, provider):
-        response = MagicMock()
-        response.choices = []
+        # Build a proper response so _chat_raw doesn't treat it as an error
+        ok_msg = MagicMock()
+        ok_msg.content = "recovered"
+        ok_choice = MagicMock()
+        ok_choice.message = ok_msg
+        ok_choice.finish_reason = "stop"
+        ok_response = MagicMock()
+        ok_response.choices = [ok_choice]
+
         provider._acompletion.side_effect = [
             Exception("429 rate limit"),
-            response,
+            ok_response,
         ]
 
         result = await provider.chat_with_retry(
@@ -258,8 +269,11 @@ class TestLiteLLMProviderRetryRouting:
             max_retries=2,
         )
 
+        # Exception is caught by _chat_raw → error response → retried by
+        # _execute_with_retry → second call succeeds with proper response
         assert provider._acompletion.call_count == 2
         assert isinstance(result, LLMResponse)
+        assert result.content == "recovered"
 
     @pytest.mark.asyncio
     async def test_chat_stream_routes_through_retry_wrapper(self, provider):

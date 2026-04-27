@@ -24,8 +24,13 @@ from framework import (
     ToolManagerConfig,
 )
 from framework.core.emitter import ContentEmitter
+from framework.core.llm_error import (
+    CircuitBreakerPolicy,
+    LLMTimeoutPolicy,
+    RuntimeSafetyPolicy,
+    TurnTimeoutPolicy,
+)
 from framework.core.skills import (
-    DependencyFilter,
     FileSkillSource,
     ProgressiveBuilder,
     ResolutionContext,
@@ -133,6 +138,10 @@ class BotService(AgentBuilderMixin):
 
         # Auto-compact background task
         self._auto_compact_task: asyncio.Task | None = None
+
+        # RuntimeSafetyPolicy cache
+        self._safety_policy_cache: RuntimeSafetyPolicy | None = None
+        self._safety_policy_cache_key: int | None = None
 
         # Runtime control
         self._shutdown_event = asyncio.Event()
@@ -271,10 +280,9 @@ class BotService(AgentBuilderMixin):
                 layout="directory",
                 skill_filename="SKILL.md",
             )
-            skill_filter = DependencyFilter(mode="filter")
             builder = ProgressiveBuilder(base_path=self._project_dir)
             main_skill_manager = SkillManager(
-                source=source, skill_filter=skill_filter, builder=builder
+                source=source, builder=builder
             )
             available_skills = await main_skill_manager.list_skills(
                 ResolutionContext.from_runtime(tool_manager=self.tool_manager)
@@ -397,6 +405,7 @@ class BotService(AgentBuilderMixin):
             subagent_manager=self.subagent_manager,
             context_manager_factory=self._get_context_manager,
             governance=self._build_governance(),
+            safety=self.safety_policy,
         )
         print("[OK] AgentPipeline initialized")
         print(f"   Input: {self.input_adapter.name}")
@@ -453,6 +462,7 @@ class BotService(AgentBuilderMixin):
             inbox_poll_interval=multi_agent_config.get("inbox_poll_interval", 10.0),
             default_context_manager_factory=self._get_context_manager,
             session_strategy=DefaultSessionIdStrategy(main_agent_name=parent_name),
+            safety=self.safety_policy,
         )
 
         # Register main agent as resident
@@ -467,6 +477,7 @@ class BotService(AgentBuilderMixin):
             context_strategy="persistent",
             max_iterations=self.config["agent"].get("max_iterations", 20),
             execution_strategy="react",
+            safety_policy=self.safety_policy,
         )
         await self.agent_pool.register_resident(main_descriptor)
         print(f"[OK] AgentPool initialized, main agent '{parent_agent_name}' registered as resident")
@@ -506,6 +517,51 @@ class BotService(AgentBuilderMixin):
         config["mcp"] = mcp_config
         return config
 
+    @property
+    def safety_policy(self) -> RuntimeSafetyPolicy:
+        """Cached RuntimeSafetyPolicy built from bot_config.yml.
+
+        Cache is invalidated if the config dict itself changes (e.g. hot reload).
+        """
+        cache_key = id(self.config)
+        if self._safety_policy_cache is not None and self._safety_policy_cache_key == cache_key:
+            return self._safety_policy_cache
+        policy = self._build_safety_policy()
+        self._safety_policy_cache = policy
+        self._safety_policy_cache_key = cache_key
+        return policy
+
+    def _build_safety_policy(self) -> RuntimeSafetyPolicy:
+        """Build RuntimeSafetyPolicy from bot_config.yml runtime_safety section."""
+        rs_config = self.config.get("runtime_safety", {})
+        llm_config = rs_config.get("llm", {})
+        cb_config = rs_config.get("circuit_breaker", {})
+        turn_config = rs_config.get("turn", {})
+        backoff = llm_config.get("retry_backoff_seconds", [2.0, 8.0])
+        if isinstance(backoff, list):
+            backoff = tuple(backoff)
+        return RuntimeSafetyPolicy(
+            llm=LLMTimeoutPolicy(
+                request_timeout_seconds=llm_config.get("request_timeout_seconds", 45.0),
+                stream_idle_timeout_seconds=llm_config.get("stream_idle_timeout_seconds", 90.0),
+                framework_max_retries=llm_config.get("framework_max_retries", 1),
+                retry_backoff_seconds=backoff,
+            ),
+            circuit_breaker=CircuitBreakerPolicy(
+                enabled=cb_config.get("enabled", True),
+                failure_threshold=cb_config.get("failure_threshold", 3),
+                cooldown_seconds=cb_config.get("cooldown_seconds", 120.0),
+            ),
+            turn=TurnTimeoutPolicy(
+                agent_run_timeout_seconds=turn_config.get("agent_run_timeout_seconds", 180.0),
+                dispatch_timeout_seconds=turn_config.get("dispatch_timeout_seconds", 300.0),
+                output_send_timeout_seconds=turn_config.get("output_send_timeout_seconds", 20.0),
+                memory_flush_timeout_seconds=turn_config.get("memory_flush_timeout_seconds", 30.0),
+                hook_timeout_seconds=turn_config.get("hook_timeout_seconds", 10.0),
+                tool_timeout_seconds=turn_config.get("tool_timeout_seconds", 60.0),
+            ),
+        )
+
     def _create_provider(self) -> LiteLLMProvider:
         """Create LLM Provider."""
         llm_config = self.config["llm"]
@@ -515,6 +571,7 @@ class BotService(AgentBuilderMixin):
             base_url=llm_config.get("base_url"),
             temperature=llm_config.get("temperature", 0.7),
             max_tokens=llm_config.get("max_tokens", 2000),
+            safety=self.safety_policy,
         )
 
     def _collect_run_hooks(self) -> list[Any]:

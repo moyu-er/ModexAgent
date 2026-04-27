@@ -3,8 +3,8 @@
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from .constants import FinishReason
 from .types import LLMResponse
@@ -21,6 +21,7 @@ class LLMProvider(ABC):
     Example:
         class OpenAIProvider(LLMProvider):
             def __init__(self, api_key: str):
+                super().__init__()
                 self.client = OpenAI(api_key=api_key)
 
             async def chat(self, messages: List[Dict], **kwargs) -> LLMResponse:
@@ -34,6 +35,9 @@ class LLMProvider(ABC):
             def get_default_model(self) -> str:
                 return "gpt-4"
     """
+
+    def __init__(self, retry_backoff_seconds: tuple[float, ...] = (2.0, 8.0)):
+        self._retry_backoff_seconds = retry_backoff_seconds
 
     @abstractmethod
     async def chat(
@@ -105,7 +109,7 @@ class LLMProvider(ABC):
         当 fn() 返回 LLMResponse(finish_reason=ERROR) 时按 error_info.should_retry
         决策是否重试；当 fn() 抛出异常时沿用原有 _is_transient 逻辑。
         """
-        backoff_delays = (2.0, 8.0)
+        backoff_delays = getattr(self, "_retry_backoff_seconds", (2.0, 8.0))
         last_response: LLMResponse | None = None
 
         for attempt in range(max_retries + 1):
@@ -138,7 +142,7 @@ class LLMProvider(ABC):
             should_retry = (
                 response.error_info.should_retry
                 if response.error_info is not None
-                else True   # 无 error_info 时保守重试一次
+                else False  # 无 error_info 时不重试，避免对不可恢复错误反复重试
             )
             if not should_retry:
                 logger.warning(

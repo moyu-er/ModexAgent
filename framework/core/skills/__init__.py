@@ -9,7 +9,6 @@ from .filter import (
     AlwaysFilter,
     CompositeFilter,
     DenyListFilter,
-    DependencyFilter,
     SkillFilter,
 )
 from .manager import SkillManager
@@ -38,7 +37,6 @@ __all__ = [
     "InlineSkillSource",
     "CompositeSkillSource",
     "SkillFilter",
-    "DependencyFilter",
     "AlwaysFilter",
     "AllowListFilter",
     "DenyListFilter",

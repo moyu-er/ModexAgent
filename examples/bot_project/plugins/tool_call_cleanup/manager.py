@@ -76,6 +76,12 @@ class ToolCallAwareSessionManager(SessionMemoryManager):
     async def clear(self, context: MemoryContext) -> None:
         await self._inner.clear(context)
 
+    async def get_checkpoint_id(self, context: MemoryContext) -> str | None:
+        return await self._inner.get_checkpoint_id(context)
+
+    async def clear_checkpoint(self, context: MemoryContext) -> None:
+        await self._inner.clear_checkpoint(context)
+
     async def replace_messages(
         self,
         context: MemoryContext,

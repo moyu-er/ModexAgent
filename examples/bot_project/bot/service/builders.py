@@ -13,7 +13,6 @@ from framework import InMemoryToolManager, ToolManagerConfig
 from framework.core.context import ContextManager
 from framework.core.skills import (
     CompositeSkillSource,
-    DependencyFilter,
     FileSkillSource,
     ProgressiveBuilder,
     SkillManager,
@@ -312,9 +311,8 @@ class AgentBuilderMixin:
             else sources[0]
         )
 
-        skill_filter = DependencyFilter(mode="filter")
         builder = ProgressiveBuilder(base_path=project_dir)
-        mgr = SkillManager(source=source, skill_filter=skill_filter, builder=builder)
+        mgr = SkillManager(source=source, builder=builder)
         self._subagent_skill_managers[cache_key] = mgr
         return mgr
 
@@ -433,6 +431,7 @@ class AgentBuilderMixin:
         else:
             allowed_skills = sub_config.get("allowed_skills")
 
+        safety = getattr(self, "safety_policy", None) or self._build_safety_policy()
         descriptor = AgentDescriptor(
             address=AgentAddress(
                 name=sub_name,
@@ -455,6 +454,7 @@ class AgentBuilderMixin:
             context_strategy=sub_config.get("context_strategy", "ephemeral"),
             streaming_to_user=False,
             internal_streaming=False,
+            safety_policy=safety,
         )
         return descriptor, tool_manager, skill_manager
 
@@ -494,6 +494,7 @@ class AgentBuilderMixin:
         else:
             skill_manager = None
 
+        safety = getattr(self, "safety_policy", None) or self._build_safety_policy()
         descriptor = AgentDescriptor(
             address=AgentAddress(
                 name=peer_name,
@@ -513,6 +514,7 @@ class AgentBuilderMixin:
             max_tools_per_turn=peer_config.get("max_tools_per_turn", 10),
             execution_strategy=peer_config.get("execution_strategy", "react"),
             context_strategy=peer_config.get("context_strategy", "persistent"),
+            safety_policy=safety,
         )
         return descriptor, tool_manager, skill_manager
 

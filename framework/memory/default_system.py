@@ -283,13 +283,24 @@ class DefaultMemorySystem(MemorySystem):
     async def load_checkpoint(self, context: MemoryContext) -> list[ChatMessage] | None:
         return await self._layers.session.load_checkpoint(context)
 
+    async def get_checkpoint_id(self, context: MemoryContext) -> str | None:
+        return await self._layers.session.get_checkpoint_id(context)
+
+    async def get_last_recovered_checkpoint_id(self, context: MemoryContext) -> str | None:
+        return await self._layers.session.get_last_recovered_checkpoint_id(context)
+
+    async def set_last_recovered_checkpoint_id(
+        self, context: MemoryContext, checkpoint_id: str
+    ) -> None:
+        await self._layers.session.set_last_recovered_checkpoint_id(context, checkpoint_id)
+
     async def clear_checkpoint(self, context: MemoryContext) -> None:
-        storage = await self._registry.resolve(
-            layer=MemoryLayerName.SESSION,
-            scope=SessionScope(),
-            context=context,
-        )
-        await storage.delete(".checkpoint")
+        session_mgr = self._layers.session
+        if hasattr(session_mgr, "clear_checkpoint"):
+            await session_mgr.clear_checkpoint(context)
+        else:
+            # Fallback for implementations without clear_checkpoint
+            await session_mgr.clear(context)
 
     # -- Archive convenience --------------------------------------------
 

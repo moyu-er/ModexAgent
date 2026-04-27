@@ -65,6 +65,12 @@ class _SessionManager(SessionMemoryManager):
     async def get_revision(self, context: Any) -> Any:
         pass
 
+    async def get_checkpoint_id(self, context: Any) -> Any:
+        return None
+
+    async def clear_checkpoint(self, context: Any) -> None:
+        pass
+
 
 class _ArchiveManager(ArchiveMemoryManager):
     async def append(self, context: Any, entry: Any) -> Any:

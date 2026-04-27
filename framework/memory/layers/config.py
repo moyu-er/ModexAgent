@@ -15,6 +15,7 @@ StorageFactory = Callable[[MemoryContext], Awaitable[MemoryStorage]]
 class SessionMemoryConfig:
     max_messages: int | None = 100
     checkpoint_key: str = ".checkpoint"
+    last_recovered_key: str = ".last_recovered_checkpoint"
     scope: MemoryScope = field(default_factory=SessionScope)
 
 

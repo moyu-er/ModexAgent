@@ -44,46 +44,6 @@ _UNSET = object()
 _ERROR_PLACEHOLDER = "[Assistant reply unavailable due to model or runtime error.]"
 
 
-async def _safe_emit_error(
-    emitter: StreamingAwareEmitter,
-    error_text: str,
-    *,
-    timeout: float,
-) -> None:
-    """向用户发送错误提示，带 output timeout 保护。"""
-    try:
-        await asyncio.wait_for(
-            emitter.emit_error(error_text),
-            timeout=timeout,
-        )
-    except TimeoutError:
-        logger.error("Emit error timeout after %.1fs", timeout)
-    except Exception:
-        logger.exception("Emit error failed")
-
-
-async def _save_error_placeholder(
-    ctx_mgr: Any,
-    session_id: str,
-    error: str,
-    *,
-    timeout: float,
-) -> bool:
-    """写入 assistant error placeholder，仅当历史尾部为 user 时生效。"""
-    try:
-        add_placeholder = getattr(ctx_mgr, "add_assistant_placeholder", None)
-        if add_placeholder is not None:
-            await asyncio.wait_for(add_placeholder(session_id, error), timeout=timeout)
-            return True
-        return False
-    except TimeoutError:
-        logger.error("Save error placeholder timeout after %.1fs for %s", timeout, session_id)
-        return False
-    except Exception:
-        logger.exception("Failed to save error placeholder for %s", session_id)
-        return False
-
-
 async def _safe_flush(ctx_mgr: Any, session_id: str, *, timeout: float) -> None:
     """Memory flush 带 timeout。"""
     try:
@@ -356,7 +316,12 @@ class AgentPipeline:
         """在 session 锁保护内处理单个消息"""
         if self.on_session_start is not None:
             try:
-                await self.on_session_start(session_id)
+                await asyncio.wait_for(
+                    self.on_session_start(session_id),
+                    timeout=self.safety.turn.hook_timeout_seconds,
+                )
+            except TimeoutError:
+                logger.warning("on_session_start timeout for %s", session_id)
             except Exception:
                 logger.exception("on_session_start failed for %s", session_id)
         ctx_mgr = (
@@ -433,28 +398,35 @@ class AgentPipeline:
             metadata={"input_metadata": input_metadata},
         )
 
-        # 崩溃恢复
-        recovered = await ctx_mgr.load_checkpoint(session_id)
-        if recovered:
-            # ctx_mgr.save(user_message=None) 不会写入 assistant_result.messages，
-            # 因此 recovered 消息必须通过 memory_system.add_messages() 直接写入，
-            # 否则 clear_checkpoint() 后消息永久丢失。
-            memory_system = getattr(ctx_mgr, "memory_system", None)
-            if memory_system is not None:
-                ctx = getattr(ctx_mgr, "_context_cache", {}).get(session_id)
-                if ctx is None:
-                    from framework.memory.core.scope import MemoryContext
+        # 崩溃恢复（带 dedup，14.2）
+        recover_fn = getattr(ctx_mgr, "recover_checkpoint", None)
+        if recover_fn is not None:
+            recovered, was_recovered = await recover_fn(session_id)
+            if was_recovered:
+                context_state = await ctx_mgr.load_with_metadata(
+                    session_id,
+                    metadata={"input_metadata": input_metadata},
+                )
+        else:
+            # Fallback for older ctx_mgr without recover_checkpoint
+            recovered = await ctx_mgr.load_checkpoint(session_id)
+            if recovered:
+                memory_system = getattr(ctx_mgr, "memory_system", None)
+                if memory_system is not None:
+                    ctx = getattr(ctx_mgr, "_context_cache", {}).get(session_id)
+                    if ctx is None:
+                        from framework.memory.core.scope import MemoryContext
 
-                    ctx = MemoryContext(
-                        session_id=session_id,
-                        user_id=getattr(ctx_mgr, "default_user_id", "default"),
-                    )
-                await memory_system.add_messages(ctx, recovered)
-            await ctx_mgr.clear_checkpoint(session_id)
-            context_state = await ctx_mgr.load_with_metadata(
-                session_id,
-                metadata={"input_metadata": input_metadata},
-            )
+                        ctx = MemoryContext(
+                            session_id=session_id,
+                            user_id=getattr(ctx_mgr, "default_user_id", "default"),
+                        )
+                    await memory_system.add_messages(ctx, recovered)
+                await ctx_mgr.clear_checkpoint(session_id)
+                context_state = await ctx_mgr.load_with_metadata(
+                    session_id,
+                    metadata={"input_metadata": input_metadata},
+                )
 
         # 根据 source_agent 区分 agent 间通信消息和用户消息
         # 如果有媒体附件，构建多模态 content（OpenAI 兼容格式）
@@ -574,6 +546,7 @@ class AgentPipeline:
             hooks=self.hooks,
             runtime_context_manager=self.runtime_context_manager,
             governance=self.governance,
+            safety=self.safety,
         )
 
         # 选择 emitter：
@@ -585,6 +558,7 @@ class AgentPipeline:
             emitter = StreamingAwareEmitter(
                 output_adapter=self.output_adapter,
                 session_id=session_id,
+                send_timeout=self.safety.turn.output_send_timeout_seconds,
             )
 
         # 设置当前 conversation_id 上下文变量（供 peer 通信工具使用）
@@ -599,10 +573,7 @@ class AgentPipeline:
         turn_start = time.monotonic()
 
         try:
-            result = await asyncio.wait_for(
-                self.agent.run(agent_context, emitter),
-                timeout=turn.agent_run_timeout_seconds,
-            )
+            result = await self.agent.run(agent_context, emitter)
 
             # 为最后一条 assistant 消息注入 attachments metadata
             if result and result.attachments:
@@ -625,30 +596,6 @@ class AgentPipeline:
                 result.stop_reason if result else "none",
                 elapsed,
             )
-            return result
-
-        except TimeoutError:
-            elapsed = time.monotonic() - turn_start
-            logger.error(
-                "Agent turn timeout after %.1fs session=%s agent=%s elapsed=%.1fs",
-                turn.agent_run_timeout_seconds,
-                session_id,
-                agent_name,
-                elapsed,
-            )
-            error_text = "Agent turn timed out"
-            result = AgentResult(
-                error=error_text,
-                stop_reason="error",
-                messages=[],
-                attachments=agent_context.attachments if hasattr(agent_context, "attachments") else [],
-            )
-            await _safe_emit_error(emitter, error_text, timeout=turn.output_send_timeout_seconds)
-            placeholder_saved = await _save_error_placeholder(
-                ctx_mgr, session_id, error_text,
-                timeout=turn.memory_flush_timeout_seconds,
-            )
-            turn_clean = placeholder_saved
             return result
 
         except asyncio.CancelledError:
@@ -674,7 +621,7 @@ class AgentPipeline:
                         timeout=turn.hook_timeout_seconds,
                     )
                 except asyncio.CancelledError:
-                    raise
+                    logger.warning("on_session_end cancelled for %s", session_id)
                 except Exception:
                     logger.exception("on_session_end failed for %s", session_id)
 

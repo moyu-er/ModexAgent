@@ -206,7 +206,7 @@ Extension points: `MemoryProvider` (add/search/prefetch), Tools, Hooks, SkillSou
 
 ### 8. Skill System
 
-`FileSkillSource` discovers `SKILL.md` from directories → `DependencyFilter` checks tool availability → `ProgressiveBuilder` resolves dependencies → `AgentSkillManager` wraps with per-agent white/deny list.
+`FileSkillSource` discovers `SKILL.md` from directories → `ProgressiveBuilder` resolves dependencies → `AgentSkillManager` wraps with per-agent white/deny list.
 
 ## Type Structuring Best Practices
 

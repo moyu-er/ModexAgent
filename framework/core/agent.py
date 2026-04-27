@@ -3,11 +3,16 @@
 提供 Agent[E] 泛型抽象基类和 AgentContext 执行上下文。
 """
 
+from __future__ import annotations
+
 import contextvars
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
+
+if TYPE_CHECKING:
+    from .llm_error import RuntimeSafetyPolicy
 
 from framework.memory.core.message import ChatMessage
 from framework.memory.history import MessageHistory
@@ -43,6 +48,7 @@ class AgentContext:
     runtime_context_manager: RuntimeContextManager | None = None
     runtime_context: RuntimeContext | None = None
     governance: ContextGovernance | None = None
+    safety: RuntimeSafetyPolicy | None = None
 
     def add_attachment(self, path: str) -> None:
         """将文件路径添加到 attachments 列表（供 Tool 调用期间使用）。"""

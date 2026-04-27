@@ -8,6 +8,7 @@ from typing import Any
 
 from framework.core.context import ContextManager
 from framework.core.emitter import AgentResult
+from framework.core.llm_error import RuntimeSafetyPolicy
 from framework.core.tool_manager import InMemoryToolManager
 from framework.core.types import InputMessage
 from framework.messaging.broker import BrokerMessage, MessageBroker
@@ -45,6 +46,7 @@ class AgentPool(AgentRegistry):
         inbox_poll_interval: float = 10.0,
         default_context_manager_factory: Callable[[str], ContextManager] | None = None,
         session_strategy: SessionIdStrategy | None = None,
+        safety: RuntimeSafetyPolicy | None = None,
     ):
         self._agents: dict[str, AgentInstance] = {}
         self._status: dict[str, AgentState] = {}
@@ -57,6 +59,7 @@ class AgentPool(AgentRegistry):
         self._enable_inbox_polling = enable_inbox_polling
         self._inbox_poll_interval = inbox_poll_interval
         self._session_strategy = session_strategy or DefaultSessionIdStrategy()
+        self._safety = safety or RuntimeSafetyPolicy()
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._consumers: dict[str, asyncio.Task] = {}
         self._agent_tasks: dict[str, list[asyncio.Task]] = {}
@@ -154,18 +157,36 @@ class AgentPool(AgentRegistry):
         """
         active_count = self._active_session_counts.get(agent_name, 0) + 1
         self._active_session_counts[agent_name] = active_count
-        start_time = time.time()
+        start_time = time.monotonic()
         if self._status.get(agent_name) != AgentState.WORKING:
             self._transition(agent_name, AgentState.WORKING, reason="dispatch_start")
         logger.debug(
             "Dispatch start: agent=%s active=%d",
             agent_name, active_count,
         )
+        dispatch_timeout = self._safety.turn.dispatch_timeout_seconds
         try:
-            await coro
+            if dispatch_timeout > 0:
+                await asyncio.wait_for(coro, timeout=dispatch_timeout)
+            else:
+                await coro
             self._error_counts.pop(agent_name, None)
+        except TimeoutError:
+            elapsed = time.monotonic() - start_time
+            logger.error(
+                "Dispatch timeout for %s after %.1fs (threshold=%.0fs)",
+                agent_name, elapsed, dispatch_timeout,
+            )
+            self._transition(agent_name, AgentState.ERROR, reason="dispatch_timeout")
+            error_count = self._error_counts.get(agent_name, 0) + 1
+            self._error_counts[agent_name] = error_count
+            sleep_seconds = min(30.0, 2**error_count)
+            if error_count >= 10:
+                logger.error("Agent %s exceeded max error retries", agent_name)
+            else:
+                await asyncio.sleep(sleep_seconds)
         except Exception:
-            elapsed = time.time() - start_time
+            elapsed = time.monotonic() - start_time
             logger.exception(
                 "Error dispatching message for %s (elapsed=%.1fs active=%d)",
                 agent_name, elapsed, active_count,
@@ -179,7 +200,7 @@ class AgentPool(AgentRegistry):
             else:
                 await asyncio.sleep(sleep_seconds)
         finally:
-            elapsed = time.time() - start_time
+            elapsed = time.monotonic() - start_time
             remaining = max(0, active_count - 1)
             self._active_session_counts[agent_name] = remaining
             if elapsed > self._DISPATCH_WARN_SECONDS:

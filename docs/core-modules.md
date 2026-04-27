@@ -634,7 +634,6 @@ class RuntimeContextManager(ABC):
 | `SkillManager` | 技能管理器，协调技能发现和构建 |
 | `FileSkillSource` | 从文件系统加载 SKILL.md |
 | `ProgressiveBuilder` | 渐进式技能提示词构建 |
-| `DependencyFilter` | 按依赖过滤技能 |
 | `models.py` | Skill 数据模型 |
 
 ### 使用方式

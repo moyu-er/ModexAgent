@@ -227,6 +227,7 @@ class DefaultAgentFactory(AgentFactory):
                 hooks=agent_hooks,
                 context_manager_factory=context_manager_factory,
                 runtime_context_manager=self._runtime_context_manager,
+                safety=descriptor.safety_policy,
             )
             # Auto-inject InboxFlushHook for pipeline-mode resident agents
             if descriptor.inbox_strategy != "none" and self._inbox_consumer is not None:

@@ -10,7 +10,6 @@ from framework.core.skills.builder import (
     InlineBuilder,
     ProgressiveBuilder,
 )
-from framework.core.skills.filter import DependencyFilter
 from framework.core.skills.manager import SkillManager
 from framework.core.skills.models import (
     ResolutionContext,
@@ -135,14 +134,9 @@ class TestSkillManagerEdgeCases:
         assert prompt == ""
 
     @pytest.mark.asyncio
-    async def test_build_prompt_with_empty_result_from_builder(self):
-        # When filter removes everything, builder gets empty list -> empty prompt
-        sm = SkillManager(
-            source=InlineSkillSource([
-                Skill(name="x", content="c", metadata=SkillMetadata(requires_bins=["nonexistent_bin_xyz"]))
-            ]),
-            skill_filter=DependencyFilter(mode="filter"),
-        )
+    async def test_build_prompt_with_empty_source(self):
+        # Empty source -> empty prompt
+        sm = SkillManager(source=InlineSkillSource([]))
         prompt = await sm.build_prompt()
         assert prompt == ""
 
@@ -193,21 +187,18 @@ class TestSkillManagerEdgeCases:
         assert skills[0].content == "override"
 
     @pytest.mark.asyncio
-    async def test_filter_context_none_skips_tools_checks_bins_env(self):
+    async def test_list_skills_with_none_context(self):
         src = InlineSkillSource(
             [
-                Skill(name="a", content="A", metadata=SkillMetadata(requires_tools=["missing_tool"])),
-                Skill(name="b", content="B", metadata=SkillMetadata(requires_bins=["nonexistent_bin_xyz"])),
-                Skill(name="c", content="C", metadata=SkillMetadata(requires_env=["HOME"])),
+                Skill(name="a", content="A"),
+                Skill(name="b", content="B"),
+                Skill(name="c", content="C"),
             ]
         )
-        sm = SkillManager(source=src, skill_filter=DependencyFilter(mode="filter"))
-        # context=None -> tool checks skipped, bins missing -> b dropped, HOME likely exists -> c kept
+        sm = SkillManager(source=src)
         skills = await sm.list_skills(context=None)
         names = {s.name for s in skills}
-        assert "b" not in names
-        assert "a" in names
-        assert "c" in names
+        assert names == {"a", "b", "c"}
 
 
 class TestSkillMetadataEdgeCases:
