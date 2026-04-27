@@ -4,6 +4,8 @@
 支持: OpenAI, Anthropic, Azure, Cohere, Mistral, MiniMax等
 """
 
+import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -26,98 +28,22 @@ for _name in _SUPPRESSED_LOGGERS:
     for _h in _lg.handlers[:]:
         _lg.removeHandler(_h)
 
-from framework.core.constants import DefaultValues, ToolChoice
+from framework.core.constants import DefaultValues, FinishReason, ToolChoice
+from framework.core.llm_error import (
+    LLMErrorKind,
+    LLMErrorInfo,
+    classify_litellm_error,
+    build_timeout_response,
+)
 from framework.core.provider import StreamingLLMProvider
 from framework.core.tool_call_accumulator import (
     ToolCallAccumulator,
     parse_tool_call_chunks_from_delta,
 )
 from framework.core.types import LLMResponse, ToolCall
+from framework.utils.think_tag import ThinkTagExtractor
 
-
-class ThinkTagExtractor:
-    """Stateful streaming think-tag extractor.
-
-    Splits incoming text chunks into visible content and hidden reasoning.
-    Supports incomplete tags spanning chunk boundaries.
-    """
-
-    _OPEN_TAG = "<think>"
-    _CLOSE_TAG = "</think>"
-
-    def __init__(self):
-        self._in_think = False
-        self._pending = ""
-
-    def feed(self, text: str) -> tuple[str | None, str | None]:
-        """Process a new chunk and return (content_delta, reasoning_delta)."""
-        data = self._pending + text
-        self._pending = ""
-        content_parts: list[str] = []
-        reasoning_parts: list[str] = []
-        i = 0
-        n = len(data)
-
-        while i < n:
-            if self._in_think:
-                close_idx = data.find(self._CLOSE_TAG, i)
-                if close_idx != -1:
-                    reasoning_parts.append(data[i:close_idx])
-                    self._in_think = False
-                    i = close_idx + len(self._CLOSE_TAG)
-                    continue
-
-                remaining = data[i:]
-                max_prefix = min(len(remaining), len(self._CLOSE_TAG) - 1)
-                prefix_len = 0
-                for k in range(max_prefix, 0, -1):
-                    if remaining.endswith(self._CLOSE_TAG[:k]):
-                        prefix_len = k
-                        break
-                if prefix_len:
-                    keep_len = len(remaining) - prefix_len
-                    if keep_len > 0:
-                        reasoning_parts.append(remaining[:keep_len])
-                    self._pending = remaining[keep_len:]
-                    i = n
-                else:
-                    reasoning_parts.append(remaining)
-                    i = n
-            else:
-                open_idx = data.find(self._OPEN_TAG, i)
-                if open_idx != -1:
-                    content_parts.append(data[i:open_idx])
-                    self._in_think = True
-                    i = open_idx + len(self._OPEN_TAG)
-                    continue
-
-                remaining = data[i:]
-                max_prefix = min(len(remaining), len(self._OPEN_TAG) - 1)
-                prefix_len = 0
-                for k in range(max_prefix, 0, -1):
-                    if remaining.endswith(self._OPEN_TAG[:k]):
-                        prefix_len = k
-                        break
-                if prefix_len:
-                    keep_len = len(remaining) - prefix_len
-                    if keep_len > 0:
-                        content_parts.append(remaining[:keep_len])
-                    self._pending = remaining[keep_len:]
-                    i = n
-                else:
-                    content_parts.append(remaining)
-                    i = n
-
-        content = "".join(content_parts) if content_parts else None
-        reasoning = "".join(reasoning_parts) if reasoning_parts else None
-        return content, reasoning
-
-    @classmethod
-    def extract(cls, text: str) -> tuple[str, str | None]:
-        """One-shot extraction for complete non-streaming text."""
-        extractor = cls()
-        content, reasoning = extractor.feed(text)
-        return content or "", reasoning
+logger = logging.getLogger(__name__)
 
 
 class LiteLLMProvider(StreamingLLMProvider):
@@ -141,6 +67,7 @@ class LiteLLMProvider(StreamingLLMProvider):
         temperature: float = DefaultValues.TEMPERATURE,
         max_tokens: int | None = None,
         timeout: float = DefaultValues.TIMEOUT_SECONDS,
+        stream_idle_timeout: float = 90.0,
         parse_think_tags: bool = False,
         reasoning_effort: str | None = None,
         **kwargs,
@@ -163,6 +90,7 @@ class LiteLLMProvider(StreamingLLMProvider):
         self._temperature = temperature
         self._max_tokens = max_tokens
         self._timeout = timeout
+        self._stream_idle_timeout = stream_idle_timeout
         self._extra_kwargs = kwargs
         self._acompletion = acompletion
         self._think_extractor = ThinkTagExtractor() if parse_think_tags else None
@@ -245,6 +173,9 @@ class LiteLLMProvider(StreamingLLMProvider):
             **kwargs,
         }
 
+        # 关闭 LiteLLM 内部重试，由框架统一管理
+        params.setdefault("num_retries", 0)
+
         if stream:
             params["stream"] = True
 
@@ -308,15 +239,48 @@ class LiteLLMProvider(StreamingLLMProvider):
             stream=False,
             **kwargs,
         )
-        response = await self._acompletion(**params)
+        try:
+            response = await self._acompletion(**params)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            error_info = classify_litellm_error(exc)
+            logger.warning(
+                "LiteLLM request failed: kind=%s provider=%s message=%s",
+                error_info.kind.value,
+                error_info.provider,
+                error_info.message[:200],
+            )
+            return LLMResponse(
+                content=f"Error calling LLM: {error_info.message}",
+                finish_reason=FinishReason.ERROR.value,
+                error=error_info.message,
+                error_info=error_info,
+            )
 
         if not hasattr(response, "choices") or not response.choices:
-            return LLMResponse(content=None, error="Empty response from LLM")
+            error_info = LLMErrorInfo(
+                LLMErrorKind.UNKNOWN, "Empty response from LLM", "litellm", should_retry=True
+            )
+            return LLMResponse(
+                content=None,
+                finish_reason=FinishReason.ERROR.value,
+                error="Empty response from LLM",
+                error_info=error_info,
+            )
 
         choice = response.choices[0]
         msg = getattr(choice, "message", None)
         if not msg:
-            return LLMResponse(content=None, error="Empty message in response")
+            error_info = LLMErrorInfo(
+                LLMErrorKind.UNKNOWN, "Empty message in response", "litellm", should_retry=True
+            )
+            return LLMResponse(
+                content=None,
+                finish_reason=FinishReason.ERROR.value,
+                error="Empty message in response",
+                error_info=error_info,
+            )
 
         raw_content = self._get_attr_or_extra(msg, "content") or ""
         reasoning = self._get_attr_or_extra(msg, "reasoning_content")
@@ -416,7 +380,24 @@ class LiteLLMProvider(StreamingLLMProvider):
             **kwargs,
         )
 
-        response = await self._acompletion(**params)
+        try:
+            response = await self._acompletion(**params)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            error_info = classify_litellm_error(exc)
+            logger.warning(
+                "LiteLLM stream request failed: kind=%s provider=%s message=%s",
+                error_info.kind.value,
+                error_info.provider,
+                error_info.message[:200],
+            )
+            return LLMResponse(
+                content=f"Error calling LLM: {error_info.message}",
+                finish_reason=FinishReason.ERROR.value,
+                error=error_info.message,
+                error_info=error_info,
+            )
 
         accumulator = ToolCallAccumulator()
         emitted_tool_ids: set = set()
@@ -432,7 +413,32 @@ class LiteLLMProvider(StreamingLLMProvider):
                 emitted_tool_ids.add(tool_key)
                 tool_calls.append(tool_call)
 
-        async for chunk in response:
+        iterator = response.__aiter__()
+        while True:
+            try:
+                chunk = await asyncio.wait_for(
+                    anext(iterator),
+                    timeout=self._stream_idle_timeout,
+                )
+            except StopAsyncIteration:
+                break
+            except asyncio.TimeoutError:
+                with contextlib.suppress(Exception):
+                    close = getattr(iterator, "aclose", None)
+                    if close is not None:
+                        await close
+                partial_content = "".join(content_parts)
+                logger.warning(
+                    "LiteLLM stream idle timeout after %.1fs, partial_content_len=%d",
+                    self._stream_idle_timeout,
+                    len(partial_content),
+                )
+                return build_timeout_response(
+                    provider="litellm",
+                    message="LLM stream idle timeout",
+                    partial_content=partial_content,
+                )
+
             delta = self._extract_delta(chunk)
             if not delta:
                 continue
