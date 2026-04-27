@@ -3,12 +3,14 @@
 提供 ReActEvent 枚举和 ReActAgent 类，实现 Thought → Action → Observation 循环。
 """
 
+import asyncio
 import json
 import logging
 from enum import Enum
 from typing import Any
 
 from ...core.agent import Agent, AgentContext, current_agent_context
+from ...core.constants import DefaultValues, FinishReason
 from ...core.emitter import AgentResult, ContentEmitter, ToolCall
 from ...core.events import AgentEvent
 from ...core.hooks import AgentRunHook
@@ -17,6 +19,10 @@ from ...core.tool_manager import ToolResult
 from ...core.types import LLMResponse
 
 logger = logging.getLogger(__name__)
+
+# P0-a: 合理默认值
+_HOOK_TIMEOUT = 10.0
+_TOOL_TIMEOUT = DefaultValues.TOOL_TIMEOUT_SECONDS
 
 
 class ReActEvent(AgentEvent, Enum):
@@ -87,8 +93,15 @@ class ReActAgent(Agent[ReActEvent]):
     # 该 Agent 使用的事件类型枚举
     event_enum = ReActEvent
 
-    def __init__(self, provider: LLMProvider):
+    def __init__(
+        self,
+        provider: LLMProvider,
+        hook_timeout: float = _HOOK_TIMEOUT,
+        tool_timeout: float = _TOOL_TIMEOUT,
+    ):
         self.provider = provider
+        self._hook_timeout = hook_timeout
+        self._tool_timeout = tool_timeout
 
     @property
     def name(self) -> str:
@@ -138,6 +151,25 @@ class ReActAgent(Agent[ReActEvent]):
 
                 response = await self._request_llm(messages, context, emitter)
                 await self._call_hooks("after_llm_response", context, response)
+
+                # 4.1: provider error response → fail turn, don't use as normal content
+                if response.finish_reason == FinishReason.ERROR.value:
+                    error_text = response.error or response.content or "LLM request failed"
+                    logger.warning(
+                        "ReActAgent turn failed: finish_reason=%s error=%s",
+                        response.finish_reason,
+                        (error_text or "")[:200],
+                    )
+                    await emitter.emit(ReActEvent.ERROR, error_text)
+                    result = AgentResult(
+                        error=error_text,
+                        stop_reason="error",
+                        messages=all_new_messages,
+                        attachments=context.attachments,
+                    )
+                    await emitter.emit_complete(result)
+                    return result
+
                 content = response.content or ""
                 reasoning = response.reasoning_content
                 tool_calls = response.tool_calls
@@ -221,6 +253,23 @@ class ReActAgent(Agent[ReActEvent]):
             await emitter.emit_complete(result)
             return result
 
+        except asyncio.CancelledError:
+            logger.warning(
+                "ReActAgent cancelled (iteration=%d, messages=%d)",
+                iteration,
+                len(all_new_messages),
+            )
+            try:
+                await asyncio.shield(self._save_checkpoint(all_new_messages, context))
+            except Exception:
+                logger.warning("Checkpoint save failed during cancellation", exc_info=True)
+            result = AgentResult(
+                error="Agent cancelled",
+                stop_reason=FinishReason.CANCELLED.value,
+                messages=all_new_messages,
+                attachments=context.attachments,
+            )
+            raise
         except Exception as e:
             logger.exception("Agent execution error")
             await emitter.emit(ReActEvent.ERROR, str(e))
@@ -256,14 +305,27 @@ class ReActAgent(Agent[ReActEvent]):
         *args: Any,
         **kwargs: Any,
     ) -> None:
-        """调用 AgentContext 中注册的所有 hooks 的指定方法。"""
+        """调用 AgentContext 中注册的所有 hooks 的指定方法，每个 hook 带独立 timeout。"""
         for hook in context.hooks or []:
             if hook is None or not isinstance(hook, AgentRunHook):
                 continue
+            method = getattr(hook, method_name, None)
+            if method is None:
+                continue
             try:
-                method = getattr(hook, method_name, None)
-                if method is not None:
-                    await method(context, *args, **kwargs)
+                await asyncio.wait_for(
+                    method(context, *args, **kwargs),
+                    timeout=self._hook_timeout,
+                )
+            except asyncio.CancelledError:
+                raise
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Hook %s.%s timed out after %.1fs",
+                    type(hook).__name__,
+                    method_name,
+                    self._hook_timeout,
+                )
             except Exception:
                 logger.exception("Hook %s failed in %s", type(hook).__name__, method_name)
 
@@ -319,12 +381,36 @@ class ReActAgent(Agent[ReActEvent]):
         tool_call: ToolCall,
         context: AgentContext,
     ) -> ToolResult:
-        """执行工具（使用 ToolManager）"""
-        result = await context.tool_manager.execute(
-            tool_call.tool_name,
-            tool_call.arguments or {},
-        )
-        return result
+        """执行工具（使用 ToolManager），带独立 timeout。"""
+        try:
+            result = await asyncio.wait_for(
+                context.tool_manager.execute(
+                    tool_call.tool_name,
+                    tool_call.arguments or {},
+                ),
+                timeout=self._tool_timeout,
+            )
+            return result
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Tool %s timed out after %.1fs",
+                tool_call.tool_name,
+                self._tool_timeout,
+            )
+            return ToolResult(
+                tool_name=tool_call.tool_name,
+                result=None,
+                error=f"Error: Tool execution timeout after {self._tool_timeout:.0f}s",
+            )
+        except Exception as e:
+            logger.warning("Tool %s execution failed: %s", tool_call.tool_name, e)
+            return ToolResult(
+                tool_name=tool_call.tool_name,
+                result=None,
+                error=f"Error: {e}",
+            )
 
     @staticmethod
     def _format_tool_hint(tool_calls: list[ToolCall]) -> str:
