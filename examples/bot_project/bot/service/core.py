@@ -65,7 +65,15 @@ from framework.multi_agent import (
 )
 from framework.multi_agent.descriptor import AgentLLMConfig
 from framework.multi_agent.inbox.consumer import InboxConsumer
-from framework.multi_agent.inbox.hook import InboxFlushHook
+from framework.hook.builtin import InboxFlushHook
+from framework.interceptor.builtin import (
+    ControlDrainInterceptor,
+    ToolResultLimitInterceptor,
+    ToolTimeoutInterceptor,
+    TurnTimeoutInterceptor,
+)
+from framework.interceptor.chain import InterceptorChain
+from framework.control.channel import InMemoryControlChannel
 from framework.multi_agent.inbox.producer import InboxProducer
 from framework.multi_agent.inbox.server_local import LocalFileInboxServer
 from framework.pipeline.adapters import InputAdapter, OutputAdapter
@@ -138,6 +146,10 @@ class BotService(AgentBuilderMixin):
 
         # Auto-compact background task
         self._auto_compact_task: asyncio.Task | None = None
+
+        # Control plane components
+        self.control_channel: InMemoryControlChannel | None = None
+        self.interceptor_chain: InterceptorChain | None = None
 
         # RuntimeSafetyPolicy cache
         self._safety_policy_cache: RuntimeSafetyPolicy | None = None
@@ -304,13 +316,17 @@ class BotService(AgentBuilderMixin):
         # Collect runtime hooks for factory injection
         runtime_hooks = self._collect_run_hooks()
 
-        # 7. Create AgentFactory
+        # 7. Create AgentFactory (with runtime components)
+        hook_runner = self._build_hook_runner(runtime_hooks)
+        interceptor_chain = self._build_interceptor_chain()
         self.agent_factory = DefaultAgentFactory(
             default_llm_provider=provider,
             default_tool_manager=self.tool_manager,
             skill_manager=main_skill_manager,
             inbox_server=self.inbox_server,
             default_hooks=runtime_hooks,
+            default_hook_runner=hook_runner,
+            default_interceptor_chain=interceptor_chain,
         )
 
         # 8. Create ReActAgent
@@ -390,6 +406,8 @@ class BotService(AgentBuilderMixin):
         pipeline_hooks = [inbox_flush_hook]
         pipeline_hooks.extend(self._collect_run_hooks())
 
+        interceptor_chain = self._build_interceptor_chain()
+
         self.pipeline = AgentPipeline(
             agent=self.agent,
             context_manager=self.context_manager,
@@ -402,6 +420,8 @@ class BotService(AgentBuilderMixin):
             max_iterations=agent_config.get("max_iterations", 40),
             skill_manager=main_skill_manager,  # type: ignore[arg-type]
             hooks=pipeline_hooks,
+            hook_runner=self._build_hook_runner(pipeline_hooks),
+            interceptor_chain=interceptor_chain,
             subagent_manager=self.subagent_manager,
             context_manager_factory=self._get_context_manager,
             governance=self._build_governance(),
@@ -580,7 +600,7 @@ class BotService(AgentBuilderMixin):
         observability_config = self.config.get("observability", {})
         run_logging = observability_config.get("run_logging", {})
         if run_logging.get("enabled", False):
-            from framework.core.hooks import RunLoggingHook
+            from framework.hook.builtin import RunLoggingHook
 
             level_name = str(run_logging.get("level", "INFO")).upper()
             level = getattr(logging, level_name, logging.INFO)
@@ -593,6 +613,53 @@ class BotService(AgentBuilderMixin):
                 )
             )
         return hooks
+
+    def _build_hook_runner(self, hooks: list[Any]) -> Any:
+        """Build HookRunner from collected hooks with default HookSpec."""
+        from framework.hook import HookRunner, HookSpec, HookErrorPolicy
+
+        runner = HookRunner()
+        for hook in hooks:
+            runner.add(HookSpec(hook=hook, on_error=HookErrorPolicy.LOG))
+        return runner
+
+    def _build_control_channel(self) -> InMemoryControlChannel:
+        """Build the control channel for control commands."""
+        if self.control_channel is None:
+            self.control_channel = InMemoryControlChannel()
+        return self.control_channel
+
+    def _build_interceptor_chain(self) -> InterceptorChain:
+        """Build InterceptorChain with default runtime interceptors.
+
+        Installed interceptors (in order):
+          1. ControlDrainInterceptor  – consumes cancel/timeout commands
+          2. TurnTimeoutInterceptor   – enforces agent_run_timeout from YAML
+          3. ToolTimeoutInterceptor   – enforces tool_timeout from YAML
+          4. ToolResultLimitInterceptor – truncates long tool results
+        """
+        if self.interceptor_chain is not None:
+            return self.interceptor_chain
+
+        channel = self._build_control_channel()
+        chain = InterceptorChain()
+
+        # 1. Control drain – highest priority, processes cancel commands
+        chain.add(ControlDrainInterceptor(channel=channel, max_commands=3))
+
+        # 2. Turn timeout – reads agent_run_timeout_seconds from ctx.safety
+        chain.add(TurnTimeoutInterceptor())
+
+        # 3. Tool timeout – reads tool_timeout_seconds from ctx.safety
+        chain.add(ToolTimeoutInterceptor())
+
+        # 4. Tool result limit – prevents excessively long context
+        tools_config = self.config.get("tools", {})
+        max_result_chars = tools_config.get("max_tool_result_chars", 8000)
+        chain.add(ToolResultLimitInterceptor(max_chars=max_result_chars))
+
+        self.interceptor_chain = chain
+        return chain
 
     # ------------------------------------------------------------------ #
     # Start / Stop

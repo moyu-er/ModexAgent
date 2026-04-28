@@ -653,7 +653,7 @@ class AgentBuilderMixin:
 
             # 8. Inject PeerAutoSendHook as safety net
             if self.agent_bus is not None and instance and instance.pipeline:
-                from framework.multi_agent.hooks import PeerAutoSendHook
+                from framework.hook.builtin import PeerAutoSendHook
 
                 instance.pipeline.hooks.append(
                     PeerAutoSendHook(
