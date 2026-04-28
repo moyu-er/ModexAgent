@@ -1,5 +1,171 @@
 # Hook / Intercept / Intervention 三体系设计
 
+> 修订说明：本文早期章节中的 `framework/intercept`、`framework/intervention`、`Intercept`、`Intervention` 是历史草案命名。后续实现以本修订版约束为准：
+>
+> - 包名统一为 `framework.hooks`、`framework.interceptors`、`framework.control`。
+> - 组件名统一为 `Hook`、`Interceptor`、`Control`。
+> - `intervention` 只作为历史草案概念出现在旧章节中；实现时不保留兼容别名，不再作为顶层包名。
+> - `getattr` 可以保留；需要消除的是散落的硬编码字符串，而不是动态分发本身。
+> - Hook、Interceptor、Control 都可以触发受控终止；不能只有 Control/Intervention 才具备退出能力。
+> - 本次改造不做向后兼容：旧包名、旧导入、旧错误实现和旧错误使用方式应被移除，而不是 re-export 或 deprecated 保留。
+
+## 零、已确认的修订版目标设计
+
+### 0.1 三组件最终命名
+
+```text
+framework/hooks
+framework/interceptors
+framework/control
+```
+
+三者职责如下：
+
+| 组件 | 职责 | 典型能力 |
+|------|------|----------|
+| Hook | 生命周期扩展点 | 观察、记录、上下文注入、轻量修改、策略 veto、受控终止 |
+| Interceptor | 包裹明确调用边界 | around LLM/tool/turn/iteration、审批、超时、短路、重试、结果改写 |
+| Control | 运行时控制平面 | 外部输入、预配置策略、cancel、approval response、checkpoint、事件上报 |
+
+Hook 保留当前已有能力，不因引入受控终止而退化成“只能抛异常”的机制。现有 `RuntimeContextHook`、`InboxFlushHook`、`PeerAutoSendHook`、`RunLoggingHook` 等能力都应迁移到 `framework.hooks` 并继续可插拔使用。
+
+### 0.2 HookPoint 与 getattr
+
+`getattr` 可以继续作为 `HookRunner` 的内部多态分发方式。问题不是 `getattr`，而是 `_call_hooks("before_turn", ...)` 这种字符串散落在业务代码里。
+
+建议：
+
+```python
+class HookPoint(StrEnum):
+    BEFORE_TURN = "before_turn"
+    AFTER_TURN = "after_turn"
+    BEFORE_ITERATION = "before_iteration"
+    AFTER_ITERATION = "after_iteration"
+    BEFORE_TOOL_CALL = "before_tool_call"
+    AFTER_TOOL_CALL = "after_tool_call"
+```
+
+业务代码只传 `HookPoint`，`HookRunner` 内部可以执行：
+
+```python
+method = getattr(hook, hook_point.value, None)
+```
+
+这样既保留动态扩展能力，也避免硬编码扩散。
+
+### 0.3 统一受控终止模型
+
+Hook、Interceptor、Control 都可以触发退出或抛异常，但必须收敛到统一控制类型。
+
+建议：
+
+```python
+class AgentControlError(Exception): ...
+class AgentCancelled(AgentControlError): ...
+class AgentTimeout(AgentControlError): ...
+class ApprovalDenied(AgentControlError): ...
+class PolicyViolation(AgentControlError): ...
+```
+
+配套原因枚举：
+
+```python
+class TerminationReason(StrEnum):
+    CANCELLED = "cancelled"
+    TIMEOUT = "timeout"
+    APPROVAL_DENIED = "approval_denied"
+    POLICY_VIOLATION = "policy_violation"
+```
+
+处理规则：
+
+1. `HookRunner` 和 `InterceptorChain` 必须透传 `AgentControlError`、`asyncio.CancelledError`、`KeyboardInterrupt`、`SystemExit`。
+2. 普通 hook 异常按配置处理：`ignore`、`log`、`abort`。
+3. Hook 除异常外仍保留现有功能：可以观察、修改上下文、注入 runtime context、记录调用信息、flush inbox、自动转发 peer 内容。
+4. Interceptor 可以通过返回替代结果短路，也可以通过受控异常终止。
+5. ControlCommand 经 drain 后转换为同一套受控异常或上下文变更，不另起一套退出语义。
+
+### 0.4 Tool 审批两种拒绝模式
+
+tool 调用前审批建议实现为 `ToolApprovalInterceptor`，因为它需要包裹具体 tool call，并保证 provider 消息链和 session/history 一致。
+
+审批拒绝必须支持两套模式：
+
+| 模式 | 行为 | 使用场景 |
+|------|------|----------|
+| `deny_as_tool_error` | 生成合法的伪错误 `ToolResult`，保存到 session/history，告诉模型“审批失败，工具未执行”，agent 继续运行 | 默认模式，适合让模型解释、换方案或请求用户补充 |
+| `deny_as_cancel` | 写入终止状态或 checkpoint，抛出 `ApprovalDenied`/`AgentCancelled`，退出当前 agent run，等待下一次用户输入或恢复 | 高风险工具、强审批场景、拒绝后不希望模型继续尝试 |
+
+`deny_as_tool_error` 不是静默跳过。它必须补齐 assistant tool_call 对应的 tool result，例如：
+
+```python
+ToolResult(
+    tool_call_id=tool_call.id,
+    tool_name=tool_call.name,
+    is_error=True,
+    content="Tool execution was not approved. The tool was not run.",
+)
+```
+
+并且该结果必须进入 session/history，避免下一轮 LLM 请求时出现“assistant 发起了 tool_call，但缺少对应 tool result”的协议错误。
+
+如果一个 assistant 消息里包含多个 tool call，审批拒绝或取消时也必须处理批量一致性：
+
+1. `deny_as_tool_error`：被拒绝的 tool call 写入伪错误 result；未审批/未执行的 tool call 也要按策略补齐 result 或暂停整个 batch。
+2. `deny_as_cancel`：保存 pending tool calls 到 checkpoint 或 termination metadata；恢复时必须能补齐合法 tool result，或回滚到 tool_call 前的稳定状态。
+
+### 0.5 预配置与外部输入
+
+预配置策略和外部输入都统一为 `ControlCommand`，只通过 `source`、`scope`、`priority`、`ttl_seconds` 等字段区分来源。
+
+示例：
+
+```text
+source = "preset:token_budget"
+source = "preset:wall_clock_timeout"
+source = "external:user"
+source = "external:admin"
+source = "system:approval_timeout"
+```
+
+`ControlCommand` 建议包含：
+
+```python
+@dataclass
+class ControlCommand:
+    command_id: str
+    type: ControlCommandType
+    scope: ControlScope
+    source: str
+    priority: int
+    ttl_seconds: float | None
+    correlation_id: str | None
+    idempotency_key: str | None
+    payload: Mapping[str, object]
+```
+
+第一阶段不要求 pause/resume 做齐，优先支持：
+
+- cancel turn/run
+- tool approval request/response
+- approval timeout
+- loop/tool timeout
+- preset budget cancel
+- checkpoint/termination metadata 的最小一致性
+
+### 0.6 第一阶段落地范围
+
+第一阶段按以下范围实现：
+
+1. 新建或整理 `framework.hooks`，迁移并增强现有 hook 能力，加入 `HookPoint` 和 `HookRunner`。
+2. 新建 `framework.interceptors`，先支持 tool 和 turn/loop 边界。
+3. 新建 `framework.control`，定义 `ControlCommand`、channel、event bus、drain 的最小接口。
+4. 定义 `AgentControlError`、`TerminationReason`。
+5. 实现 `ToolApprovalInterceptor`，支持 `deny_as_tool_error` 和 `deny_as_cancel`。
+6. 实现 tool/turn timeout 的基础策略。
+7. 暂不把 pause/resume、stream interceptor、热更新配置放入第一阶段。
+8. 移除旧入口和旧错误实现，不为 `framework.hook`、`framework.intercept`、`framework.intervention` 或旧 `multi_agent/intervention.py` 提供兼容 re-export。
+
 ## 一、问题分析
 
 ### 1.1 当前问题
@@ -1833,7 +1999,7 @@ CANCEL(50) 残留 → 下一 turn 被 TTL 过滤丢弃
 
 ```
 Phase 1：新建三个 package（旧代码不动）
-  - framework/hooks/     ← abc, runner, composite, protocols, builtin/*
+  - framework/hook/     ← abc, runner, composite, protocols, builtin/*
   - framework/intercept/ ← abc, chain, builtin/*
   - framework/intervention/ ← abc, types, channel, bus, checkpoint, commands
 
@@ -1857,3 +2023,49 @@ Phase 5：适配 examples/bot_project
   - BotService 中可选的 Intercept / Intervention 装配
   - 验证 bot_service.py --mode pool 正常运行
 ```
+
+## 十、修订后的迁移计划（以本节为准）
+
+旧版 Phase 中出现的 `framework/hook`、`framework/intercept`、`framework/intervention` 命名不再作为目标实现。迁移按下面版本执行，并且不保留向后兼容入口。
+
+### Phase 1：基础契约
+
+- 新建 `framework/hooks`，迁移现有 hook 实现，保留当前 hook 的观察、上下文修改、runtime context、inbox flush、peer auto send 等功能。
+- 引入 `HookPoint`，业务代码不再手写 `"before_turn"` 等字符串；`HookRunner` 内部可继续使用 `getattr` 分发。
+- 定义 `AgentControlError`、`AgentCancelled`、`AgentTimeout`、`ApprovalDenied`、`PolicyViolation`、`TerminationReason`。
+- `HookRunner` 对控制异常直接透传；普通 hook 异常按配置处理。
+- 删除旧 hook 错误入口，不通过 re-export 保留 `framework.hook` 或旧散落调用方式。
+
+### Phase 2：Interceptor 调用边界
+
+- 新建 `framework/interceptors`。
+- 先支持 `around_tool_call` 和 `around_turn`/`around_loop`。
+- 实现 `InterceptorChain`，控制异常必须透传。
+- 实现 `ToolTimeoutInterceptor` 和 `TurnTimeoutInterceptor` 的基础版本。
+- 避免和 provider retry、runtime safety policy 重复处理同一超时 owner。
+- 删除旧 `framework/intercept` 草案命名，不提供兼容包。
+
+### Phase 3：ToolApprovalInterceptor
+
+- 审批请求发出前脱敏 tool args。
+- 审批请求携带 `agent_id`、`session_id`、`turn_id`、`tool_call_id`、`correlation_id`。
+- 默认拒绝模式为 `deny_as_tool_error`：写入合法伪错误 `ToolResult` 到 session/history，让模型继续运行。
+- 支持强拒绝模式 `deny_as_cancel`：保存 checkpoint 或 termination metadata 后退出当前 run。
+- 批量 tool calls 必须保持消息链一致：每个已声明的 tool_call 都要有结果、checkpoint 恢复策略或稳定回滚点。
+
+### Phase 4：Control 平面
+
+- 新建 `framework/control`。
+- 定义 `ControlCommand`、`ControlChannel`、`ControlEventBus`、`ControlDrain`、`CheckpointStore` 的最小接口。
+- 外部输入和预配置策略都转换成 `ControlCommand`。
+- 第一阶段只支持 cancel、approval response、approval timeout、preset budget cancel。
+- pause/resume 后续再做，不进入第一阶段。
+- 删除旧 `multi_agent/intervention.py` 及旧 `Intervention*` 对外入口；能力按新职责迁移，不做兼容别名。
+
+### Phase 5：ReActAgent 与 bot_project 适配
+
+- `ReActAgent` 使用 `HookRunner` 替换散落 `_call_hooks("...")` 字符串。
+- tool 调用通过 `InterceptorChain.around_tool_call` 包裹。
+- turn/loop 通过 interceptor 支持总超时和 control drain。
+- `examples/bot_project` 装配新 hook/interceptor/control 配置。
+- 重点验证 tool 审批拒绝后 session/history 中存在对应 tool result，不出现 provider 协议错误。
