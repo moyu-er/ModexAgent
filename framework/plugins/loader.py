@@ -7,7 +7,7 @@ Each inject_* method is independent and can be called separately.
 import logging
 from typing import Any
 
-from framework.core.hooks import AgentRunHook
+from framework.hook import Hook
 from framework.plugins.manager import PluginManager
 
 logger = logging.getLogger(__name__)
@@ -50,7 +50,7 @@ class PluginLoader:
             logger.info("Injected %d plugin tools: %s", len(injected), injected)
         return injected
 
-    def inject_hooks(self, hooks: list[AgentRunHook]) -> list[str]:
+    def inject_hooks(self, hooks: list[Hook]) -> list[str]:
         """Append plugin hooks to a hooks list.
 
         Args:

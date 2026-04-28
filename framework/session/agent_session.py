@@ -78,6 +78,9 @@ class AgentSession(Generic[E]):
         command_interceptor: Any | None = None,
         subagent_manager: Any | None = None,
         runtime_context_manager: Any | None = None,
+        hook_runner: Any | None = None,
+        interceptor_chain: Any | None = None,
+        checkpoint_store: Any | None = None,
     ):
         """初始化 AgentSession
 
@@ -116,7 +119,7 @@ class AgentSession(Generic[E]):
         self._dream_threshold = dream_threshold
         self._hooks = list(hooks) if hooks else []
         if runtime_context_manager is not None:
-            from ..core.hooks import RuntimeContextHook
+            from framework.hook.builtin import RuntimeContextHook
             if not any(isinstance(h, RuntimeContextHook) for h in self._hooks):
                 self._hooks.insert(0, RuntimeContextHook())
         self._router = router
@@ -127,6 +130,9 @@ class AgentSession(Generic[E]):
         self._command_interceptor = command_interceptor
         self._subagent_manager = subagent_manager
         self._runtime_context_manager = runtime_context_manager
+        self._hook_runner = hook_runner
+        self._interceptor_chain = interceptor_chain
+        self._checkpoint_store = checkpoint_store
 
     async def process_message(
         self,
@@ -369,6 +375,9 @@ class AgentSession(Generic[E]):
                 metadata={"session_id": session_id, "agent_name": agent_name},
                 on_checkpoint=on_checkpoint,
                 hooks=self._hooks,
+                hook_runner=self._hook_runner,
+                interceptor_chain=self._interceptor_chain,
+                checkpoint_store=self._checkpoint_store,
                 runtime_context_manager=self._runtime_context_manager,
             )
 

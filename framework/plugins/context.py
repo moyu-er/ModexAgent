@@ -7,7 +7,7 @@ Components are collected here and later injected by PluginLoader.
 from collections.abc import Callable
 from typing import Any
 
-from framework.core.hooks import AgentRunHook
+from framework.hook import Hook
 from framework.core.skills.source import SkillSource
 from framework.core.tool_manager import Tool
 from framework.plugins.abc import MemoryProvider
@@ -28,7 +28,7 @@ class PluginContext:
 
         # Collected components (not yet injected)
         self._tools: list[Tool] = []
-        self._hooks: list[AgentRunHook] = []
+        self._hooks: list[Hook] = []
         self._memory_providers: list[MemoryProvider] = []
         self._skill_sources: list[SkillSource] = []
         self._memory_system_modifiers: list[tuple[Callable[[Any], None], str]] = []
@@ -53,8 +53,8 @@ class PluginContext:
         """Register a tool to be injected into ToolManager."""
         self._tools.append(tool)
 
-    def register_hook(self, hook: AgentRunHook) -> None:
-        """Register an AgentRunHook to be injected into pipeline hooks."""
+    def register_hook(self, hook: Hook) -> None:
+        """Register a Hook to be injected into pipeline hooks."""
         self._hooks.append(hook)
 
     def register_memory_provider(self, provider: MemoryProvider) -> None:

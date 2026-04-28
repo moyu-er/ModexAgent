@@ -4,7 +4,7 @@
 """
 
 from .consumer import InboxConsumer
-from .hook import InboxFlushHook
+from framework.hook.builtin import InboxFlushHook
 from .producer import InboxProducer
 from .server import InboxServer
 from .server_local import LocalFileInboxServer

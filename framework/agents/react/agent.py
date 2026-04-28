@@ -9,11 +9,14 @@ import logging
 from enum import Enum
 from typing import Any
 
+from framework.control.exceptions import AgentControlError
+from framework.hook import HookPoint, HookPayload
+from framework.interceptor.abc import ToolCallContext
+
 from ...core.agent import Agent, AgentContext, current_agent_context
 from ...core.constants import DefaultValues, FinishReason
 from ...core.emitter import AgentResult, ContentEmitter, ToolCall
 from ...core.events import AgentEvent
-from ...core.hooks import AgentRunHook
 from ...core.provider import LLMProvider, StreamingLLMProvider
 from ...core.tool_manager import ToolResult
 from ...core.types import LLMResponse
@@ -134,13 +137,13 @@ class ReActAgent(Agent[ReActEvent]):
         result = AgentResult(content="", stop_reason="error")
 
         try:
-            await self._call_hooks("before_turn", context)
+            await self._call_hooks(HookPoint.BEFORE_TURN, context)
 
             while iteration < context.max_iterations:
                 iteration += 1
                 await emitter.emit(ReActEvent.ITERATION_START, {"iteration": iteration})
 
-                await self._call_hooks("before_iteration", context)
+                await self._call_hooks(HookPoint.BEFORE_ITERATION, context)
 
                 # 重新构建 messages，以便 Hook 注入的新消息被纳入上下文
                 messages = await context.to_messages()
@@ -150,7 +153,7 @@ class ReActAgent(Agent[ReActEvent]):
                     messages = await context.governance.apply(messages)
 
                 response = await self._request_llm(messages, context, emitter)
-                await self._call_hooks("after_llm_response", context, response)
+                await self._call_hooks(HookPoint.AFTER_LLM_RESPONSE, context, response)
 
                 # 4.1: provider error response → fail turn, don't use as normal content
                 if response.finish_reason == FinishReason.ERROR.value:
@@ -201,9 +204,12 @@ class ReActAgent(Agent[ReActEvent]):
 
                 if tool_calls:
                     progress_hint = self._format_tool_hint(tool_calls)
-                    await emitter.emit(ReActEvent.PROGRESS, {"hint": progress_hint, "tool_hint": True})
+                    await emitter.emit(
+                        ReActEvent.PROGRESS,
+                        {"hint": progress_hint, "tool_hint": True},
+                    )
 
-                    await self._call_hooks("before_tool_execution", context, tool_calls)
+                    await self._call_hooks(HookPoint.BEFORE_TOOL_EXECUTION, context, tool_calls)
 
                     for tool_call in tool_calls:
                         await emitter.emit(ReActEvent.TOOL_CALL_START, tool_call)
@@ -220,12 +226,12 @@ class ReActAgent(Agent[ReActEvent]):
                         await self._save_checkpoint(all_new_messages, context)
 
                     await self._call_hooks(
-                        "after_tool_execution",
+                        HookPoint.AFTER_TOOL_EXECUTION,
                         context,
                         [msg for msg in iteration_messages if msg.get("role") == "tool"],
                     )
 
-                    await self._call_hooks("after_iteration", context)
+                    await self._call_hooks(HookPoint.AFTER_ITERATION, context)
                     await emitter.emit(
                         ReActEvent.ITERATION_END,
                         {"iteration": iteration, "has_tool_calls": True}
@@ -270,6 +276,24 @@ class ReActAgent(Agent[ReActEvent]):
                 attachments=context.attachments,
             )
             raise
+        except AgentControlError as e:
+            logger.warning(
+                "ReActAgent control exit: %s iteration=%d messages=%d",
+                e.termination.value if e.termination else "error",
+                iteration,
+                len(all_new_messages),
+            )
+            try:
+                await asyncio.shield(self._save_checkpoint(all_new_messages, context))
+            except Exception:
+                logger.warning("Checkpoint save failed during control exit", exc_info=True)
+            result = AgentResult(
+                error=str(e),
+                stop_reason=e.termination.value if e.termination else "error",
+                messages=all_new_messages,
+                attachments=context.attachments,
+            )
+            raise
         except Exception as e:
             logger.exception("Agent execution error")
             await emitter.emit(ReActEvent.ERROR, str(e))
@@ -282,20 +306,28 @@ class ReActAgent(Agent[ReActEvent]):
             return result
         finally:
             current_agent_context.reset(ctx_token)
-            await self._call_hooks("after_turn", context, result)
+            await self._call_hooks(HookPoint.AFTER_TURN, context, result)
 
     async def _save_checkpoint(
         self,
         all_new_messages: list[dict[str, Any]],
         context: AgentContext,
     ) -> None:
-        """保存检查点。"""
-        if context.on_checkpoint:
+        """保存检查点，优先使用 checkpoint_store，回退到 on_checkpoint 回调。"""
+        if getattr(context, "checkpoint_store", None) is not None:
+            session_id = getattr(context, "session_id", "unknown")
+            checkpoint_id = f"{session_id}:latest"
+            await context.checkpoint_store.save(checkpoint_id, list(all_new_messages))
+        elif context.on_checkpoint:
             await context.on_checkpoint(list(all_new_messages))
 
     async def _clear_checkpoint(self, context: AgentContext) -> None:
-        """清空检查点。"""
-        if context.on_checkpoint:
+        """清空检查点，优先使用 checkpoint_store，回退到 on_checkpoint 回调。"""
+        if getattr(context, "checkpoint_store", None) is not None:
+            session_id = getattr(context, "session_id", "unknown")
+            checkpoint_id = f"{session_id}:latest"
+            await context.checkpoint_store.clear(checkpoint_id)
+        elif context.on_checkpoint:
             await context.on_checkpoint([])
 
     def _resolve_hook_timeout(self, context: AgentContext) -> float:
@@ -314,17 +346,41 @@ class ReActAgent(Agent[ReActEvent]):
 
     async def _call_hooks(
         self,
-        method_name: str,
+        hook_point: HookPoint,
         context: AgentContext,
         *args: Any,
         **kwargs: Any,
     ) -> None:
-        """调用 AgentContext 中注册的所有 hooks 的指定方法，每个 hook 带独立 timeout。"""
+        """调用 context 中注册的所有 hooks 的指定方法。
+
+        优先使用 HookRunner（ctx.hook_runner），否则回退到旧路径。
+        """
+        if getattr(context, "hook_runner", None) is not None:
+            payload_data: dict[str, Any] = {}
+            method_name = hook_point.value
+            if args:
+                if method_name == "after_turn":
+                    payload_data = {"result": args[0]} if args else {}
+                elif method_name == "after_llm_response":
+                    payload_data = {"response": args[0]} if args else {}
+                elif method_name in ("before_tool_execution", "after_tool_execution"):
+                    if method_name == "before_tool_execution":
+                        payload_data = {"tool_calls": args[0]}
+                    else:
+                        payload_data = {"results": args[0]}
+            await context.hook_runner.dispatch(
+                hook_point,
+                context,
+                HookPayload(data=payload_data),
+                hook_timeout=self._resolve_hook_timeout(context),
+            )
+            return
+
         hook_timeout = self._resolve_hook_timeout(context)
         for hook in context.hooks or []:
-            if hook is None or not isinstance(hook, AgentRunHook):
+            if hook is None:
                 continue
-            method = getattr(hook, method_name, None)
+            method = getattr(hook, hook_point.value, None)
             if method is None:
                 continue
             try:
@@ -338,11 +394,11 @@ class ReActAgent(Agent[ReActEvent]):
                 logger.warning(
                     "Hook %s.%s timed out after %.1fs",
                     type(hook).__name__,
-                    method_name,
+                    hook_point.value,
                     hook_timeout,
                 )
             except Exception:
-                logger.exception("Hook %s failed in %s", type(hook).__name__, method_name)
+                logger.exception("Hook %s failed in %s", type(hook).__name__, hook_point.value)
 
     async def _request_llm(
         self,
@@ -392,6 +448,31 @@ class ReActAgent(Agent[ReActEvent]):
             return response
 
     async def _execute_tool(
+        self,
+        tool_call: ToolCall,
+        context: AgentContext,
+    ) -> ToolResult:
+        """执行工具，优先使用 InterceptorChain 包裹。"""
+        if getattr(context, "interceptor_chain", None) is not None:
+            call_ctx = ToolCallContext(
+                tool_call=tool_call,
+                tool_name=tool_call.tool_name,
+                arguments=tool_call.arguments or {},
+                session_id=context.session_id,
+            )
+
+            async def _actual() -> ToolResult:
+                return await self._execute_tool_raw(tool_call, context)
+
+            return await context.interceptor_chain.around_tool_call(
+                context,
+                call_ctx,
+                _actual,
+            )
+
+        return await self._execute_tool_raw(tool_call, context)
+
+    async def _execute_tool_raw(
         self,
         tool_call: ToolCall,
         context: AgentContext,

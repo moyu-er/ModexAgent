@@ -13,13 +13,16 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 if TYPE_CHECKING:
     from .llm_error import RuntimeSafetyPolicy
+    from framework.control.checkpoint import CheckpointStore
+    from framework.hook.runner import HookRunner
+    from framework.interceptor.chain import InterceptorChain
 
 from framework.memory.core.message import ChatMessage
 from framework.memory.history import MessageHistory
 
 from .emitter import AgentResult, ContentEmitter
 from .events import AgentEvent
-from .hooks import AgentRunHook
+from framework.hook import Hook
 from .message_utils import AGENT_COMMUNICATION_SYSTEM_NOTE, normalize_agent_messages_for_llm
 from .runtime_context import RuntimeContext, RuntimeContextManager
 from .tool_manager import ToolManager
@@ -43,12 +46,15 @@ class AgentContext:
     max_tokens: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     on_checkpoint: Callable[[list[ChatMessage | dict[str, Any]]], Awaitable[None]] | None = None
-    hooks: list[AgentRunHook] = field(default_factory=list)
+    hooks: list[Hook] = field(default_factory=list)
     attachments: list[str] = field(default_factory=list)  # Agent->User 方向的附件路径列表
     runtime_context_manager: RuntimeContextManager | None = None
     runtime_context: RuntimeContext | None = None
     governance: ContextGovernance | None = None
     safety: RuntimeSafetyPolicy | None = None
+    hook_runner: HookRunner | None = None
+    interceptor_chain: InterceptorChain | None = None
+    checkpoint_store: CheckpointStore | None = None
 
     def add_attachment(self, path: str) -> None:
         """将文件路径添加到 attachments 列表（供 Tool 调用期间使用）。"""

@@ -292,7 +292,7 @@ class SubagentManager:
                 base_system_prompt=descriptor.system_prompt_template or ""
             )
 
-        from .hooks import SubagentMemoryCleanupHook
+        from framework.hook.builtin import SubagentMemoryCleanupHook
 
         hooks: list[Any] = [
             SubagentMemoryCleanupHook(

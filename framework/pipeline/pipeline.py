@@ -136,6 +136,9 @@ class AgentPipeline:
         runtime_context_manager: RuntimeContextManager | None = None,
         governance: ContextGovernance | None = None,
         safety: RuntimeSafetyPolicy | None = None,
+        hook_runner: Any | None = None,
+        interceptor_chain: Any | None = None,
+        checkpoint_store: Any | None = None,
     ):
         """
         Args:
@@ -160,7 +163,7 @@ class AgentPipeline:
         self.skill_manager = skill_manager
         self.hooks = list(hooks) if hooks else []
         if runtime_context_manager is not None:
-            from ..core.hooks import RuntimeContextHook
+            from framework.hook.builtin import RuntimeContextHook
             if not any(isinstance(h, RuntimeContextHook) for h in self.hooks):
                 self.hooks.insert(0, RuntimeContextHook())
         self.subagent_manager = subagent_manager
@@ -176,6 +179,9 @@ class AgentPipeline:
         self.runtime_context_manager = runtime_context_manager
         self.governance = governance
         self.safety = safety or RuntimeSafetyPolicy()
+        self.hook_runner = hook_runner
+        self.interceptor_chain = interceptor_chain
+        self.checkpoint_store = checkpoint_store
         self._running = False
         self._dream_task: asyncio.Task | None = None
         self._session_locks: dict[str, asyncio.Lock] = {}
@@ -544,6 +550,9 @@ class AgentPipeline:
             metadata={"session_id": session_id},
             on_checkpoint=on_checkpoint,
             hooks=self.hooks,
+            hook_runner=self.hook_runner,
+            interceptor_chain=self.interceptor_chain,
+            checkpoint_store=self.checkpoint_store,
             runtime_context_manager=self.runtime_context_manager,
             governance=self.governance,
             safety=self.safety,

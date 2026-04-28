@@ -25,7 +25,7 @@ from .agent_skill_manager import AgentSkillManager
 from .descriptor import AgentDescriptor, AgentInstance
 from .filtered_tool_manager import FilteredToolManager
 from .inbox.consumer import InboxConsumer
-from .inbox.hook import InboxFlushHook
+from framework.hook.builtin import InboxFlushHook
 from .inbox.producer import InboxProducer
 from .inbox.server import InboxServer
 
@@ -73,6 +73,9 @@ class DefaultAgentFactory(AgentFactory):
         subagent_manager: Any | None = None,
         inbox_server: InboxServer | None = None,
         default_hooks: list[Any] | None = None,
+        default_hook_runner: Any | None = None,
+        default_interceptor_chain: Any | None = None,
+        default_checkpoint_store: Any | None = None,
     ):
         self._default_llm_provider = default_llm_provider
         self._default_tool_manager = default_tool_manager
@@ -82,6 +85,9 @@ class DefaultAgentFactory(AgentFactory):
         self._subagent_manager = subagent_manager
         self._inbox_server = inbox_server
         self._default_hooks = list(default_hooks) if default_hooks else []
+        self._default_hook_runner = default_hook_runner
+        self._default_interceptor_chain = default_interceptor_chain
+        self._default_checkpoint_store = default_checkpoint_store
         self._inbox_producer = InboxProducer(inbox_server) if inbox_server else None
         self._inbox_consumer = InboxConsumer(inbox_server) if inbox_server else None
         # Shared runtime-context manager across all agents created by this factory.
@@ -180,6 +186,9 @@ class DefaultAgentFactory(AgentFactory):
         session: AgentSession | None = None
         agent_hooks: list[Any] = list(self._default_hooks) + list(hooks or [])
 
+        # Auto-inject InboxFlushHook for pipeline-mode resident agents (BEFORE pipeline construction)
+        inbox_address_name = ""
+
         if mode == "pipeline":
             from framework.pipeline.pipeline import AgentPipeline
             from framework.messaging.broker_bridge import (
@@ -196,6 +205,14 @@ class DefaultAgentFactory(AgentFactory):
                 broker = InMemoryMessageBroker()
                 await broker.start()
             address = descriptor.address
+            inbox_address_name = address.name
+            if descriptor.inbox_strategy != "none" and self._inbox_consumer is not None:
+                agent_hooks.append(
+                    InboxFlushHook(
+                        consumer=self._inbox_consumer,
+                        agent_name=inbox_address_name,
+                    )
+                )
             input_adapter = BrokerInputAdapter(broker=broker, address=address)
             from framework.pipeline.adapters import OutputAdapter
 
@@ -225,19 +242,22 @@ class DefaultAgentFactory(AgentFactory):
                 max_iterations=descriptor.max_iterations,
                 skill_manager=skill_mgr,
                 hooks=agent_hooks,
+                hook_runner=self._default_hook_runner,
+                interceptor_chain=self._default_interceptor_chain,
+                checkpoint_store=self._default_checkpoint_store,
                 context_manager_factory=context_manager_factory,
                 runtime_context_manager=self._runtime_context_manager,
                 safety=descriptor.safety_policy,
             )
-            # Auto-inject InboxFlushHook for pipeline-mode resident agents
+        elif mode in ("session", "ephemeral"):
+            # Auto-inject InboxFlushHook for session-mode agents (BEFORE session construction)
             if descriptor.inbox_strategy != "none" and self._inbox_consumer is not None:
                 agent_hooks.append(
                     InboxFlushHook(
                         consumer=self._inbox_consumer,
-                        agent_name=address.name,
+                        agent_name=descriptor.address.name,
                     )
                 )
-        elif mode in ("session", "ephemeral"):
             from framework.session.agent_session import AgentSession
             session = AgentSession(
                 agent=agent,
@@ -250,14 +270,6 @@ class DefaultAgentFactory(AgentFactory):
                 subagent_manager=subagent_manager or self._subagent_manager,
                 runtime_context_manager=self._runtime_context_manager,
             )
-            # Auto-inject InboxFlushHook for session-mode agents
-            if descriptor.inbox_strategy != "none" and self._inbox_consumer is not None:
-                agent_hooks.append(
-                    InboxFlushHook(
-                        consumer=self._inbox_consumer,
-                        agent_name=descriptor.address.name,
-                    )
-                )
 
         return AgentInstance(
             descriptor=descriptor,

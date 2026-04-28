@@ -37,7 +37,7 @@ from framework.multi_agent.governance import (
     FullGovernance,
     NoOpGovernance,
 )
-from framework.core.hooks import AgentRunHook, CompositeRunHook
+from framework.hook import Hook, HookRunner
 from framework.core.runner import InterruptibleRunner
 from framework.core.strategy import ExecutionStrategy, ReActStrategy, SingleTurnStrategy
 from framework.multi_agent.hooks import (
