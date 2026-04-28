@@ -1,0 +1,118 @@
+"""PeerAutoSendHook — peer agent 自动转发 Hook。
+
+确保 peer agent 内容总是转发给父 agent（main），即使 LLM 忘记调用 send_message_async。
+这是一个安全网，不替代系统提示词指引。
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from framework.core.agent import AgentContext
+    from framework.multi_agent.bus import AgentMessageBus
+
+logger = logging.getLogger(__name__)
+
+
+class PeerAutoSendHook:
+    """Peer agent auto-send hook。
+
+    在 peer agent turn 结束后自动将内容转发给父 agent。
+    """
+
+    _THINK_PAIRED_RE = re.compile(
+        r"<\s*(?:think|reasoning|reflection)\b[^>]*(?:>|\n)"
+        r"(.*?)</\s*(?:think|reasoning|reflection)\b[^>]*(?:>|\n)",
+        re.IGNORECASE | re.DOTALL,
+    )
+    _THINK_TAG_RE = re.compile(
+        r"<\s*/?\s*(?:think|reasoning|reflection)\b[^>]*>?",
+        re.IGNORECASE,
+    )
+
+    def __init__(
+        self,
+        agent_bus: AgentMessageBus,
+        self_name: str,
+        parent_name: str = "main",
+    ) -> None:
+        self._agent_bus = agent_bus
+        self._self_name = self_name
+        self._parent_name = parent_name
+
+    async def before_turn(self, ctx: AgentContext) -> None:
+        pass
+
+    async def after_turn(self, ctx: AgentContext, result: Any = None) -> None:
+        if not result or not getattr(result, "content", None):
+            return
+
+        rc = ctx.runtime_context
+        if rc is None and ctx.runtime_context_manager is not None:
+            rc = await ctx.runtime_context_manager.get_context(
+                ctx.session_id, ctx.metadata
+            )
+        if rc is not None:
+            calls = await rc.get_tool_calls()
+            sent_tools = {"send_message", "send_message_async"}
+            if any(c.tool_name in sent_tools for c in calls):
+                logger.debug(
+                    "PeerAutoSendHook: skipped, message already sent via tool (peer=%s)",
+                    self._self_name,
+                )
+                return
+
+        logger.info(
+            "PeerAutoSendHook: auto-forwarding peer %s content to %s (len=%d)",
+            self._self_name,
+            self._parent_name,
+            len(result.content),
+        )
+
+        session_id = ctx.metadata.get("session_id", "")
+        from framework.multi_agent.address import AgentAddress
+        from framework.multi_agent.envelope import AgentMessageEnvelope
+        from framework.multi_agent.session_id import DefaultSessionIdStrategy
+
+        strategy = DefaultSessionIdStrategy(main_agent_name=self._parent_name)
+        conversation_id, _ = strategy.parse(session_id)
+        inbox_key = strategy.main_session(conversation_id)
+
+        sanitized = self._sanitize_forward_content(result.content)
+
+        envelope = AgentMessageEnvelope(
+            payload={"content": sanitized, "message_type": "agent_message"},
+            source=AgentAddress(name=self._self_name),
+            target=AgentAddress(name=self._parent_name),
+            message_type="agent_message",
+            conversation_id=conversation_id,
+            agent_session_id=inbox_key,
+        )
+
+        try:
+            await self._agent_bus.send(inbox_key, envelope)
+            logger.info(
+                "Auto-forwarded peer %s content to %s (session=%s)",
+                self._self_name,
+                self._parent_name,
+                session_id,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to auto-forward peer %s content to %s",
+                self._self_name,
+                self._parent_name,
+            )
+
+    @classmethod
+    def _sanitize_forward_content(cls, content: str) -> str:
+        """Strip LLM reasoning tags and apply inbox sanitization."""
+        from framework.hook.builtin.inbox_flush import InboxFlushHook
+
+        content = cls._THINK_PAIRED_RE.sub("", content)
+        content = cls._THINK_TAG_RE.sub("", content)
+        content = InboxFlushHook._sanitize_content(content)
+        return content

@@ -1,0 +1,98 @@
+"""ControlDrainInterceptor — 控制命令消费拦截器。
+
+在 turn 和 iteration 边界消费控制命令并转为运行时动作。
+通过 CommandHandlerRegistry 注册处理器，支持扩展命令类型。
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING
+
+from framework.control.types import ControlScope
+from framework.interceptor.abc import (
+    InterceptorScope,
+    IterationContext,
+    IterationNext,
+    TurnNext,
+)
+from framework.interceptor.handler import (
+    CommandHandlerRegistry,
+    DefaultCancelHandler,
+)
+
+if TYPE_CHECKING:
+    from framework.core.agent import AgentContext
+    from framework.core.emitter import AgentResult
+    from framework.control.channel import ControlChannel
+
+logger = logging.getLogger(__name__)
+
+
+class ControlDrainInterceptor:
+    """控制命令消费拦截器。
+
+    通过 handler 注册机制处理控制命令，默认注册 DefaultCancelHandler。
+    后续可通过 register_handler() 添加自定义处理器（如 INJECT_USER_MESSAGE）。
+    """
+
+    scopes = frozenset([InterceptorScope.TURN, InterceptorScope.ITERATION])
+
+    def __init__(
+        self,
+        channel: ControlChannel,
+        max_commands: int = 5,
+        registry: CommandHandlerRegistry | None = None,
+    ) -> None:
+        self._channel = channel
+        self._max_commands = max_commands
+        self._registry = registry or CommandHandlerRegistry()
+        if not self._registry.get(DefaultCancelHandler.command_type):
+            self._registry.register(DefaultCancelHandler())
+
+    def register_handler(self, handler) -> None:
+        """注册额外的命令处理器。"""
+        self._registry.register(handler)
+
+    async def around_turn(
+        self,
+        ctx: AgentContext,
+        next_call: TurnNext,
+    ) -> AgentResult:
+        scope = ControlScope(session_id=ctx.session_id)
+        await self._drain_and_handle(ctx, scope)
+        return await next_call()
+
+    async def around_iteration(
+        self,
+        ctx: AgentContext,
+        call: IterationContext,
+        next_call: IterationNext,
+    ) -> None:
+        scope = ControlScope(session_id=ctx.session_id)
+        await self._drain_and_handle(ctx, scope)
+        await next_call()
+
+    async def _drain_and_handle(
+        self,
+        ctx: AgentContext,
+        scope: ControlScope,
+    ) -> None:
+        commands = await self._channel.drain(scope, limit=self._max_commands)
+        for cmd in commands:
+            handlers = self._registry.get(cmd.type)
+            handled = False
+            for handler in handlers:
+                try:
+                    handled = await handler.handle(ctx, cmd)
+                    if handled:
+                        break
+                except Exception:
+                    # handler raised a control exception (e.g. AgentCancelled) — propagate
+                    raise
+            if not handled:
+                logger.debug(
+                    "ControlDrain: unhandled command type=%s session=%s",
+                    cmd.type.value,
+                    ctx.session_id,
+                )
