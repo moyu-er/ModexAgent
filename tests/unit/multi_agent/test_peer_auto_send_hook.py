@@ -16,7 +16,7 @@ from framework.core.emitter import AgentResult
 from framework.core.runtime_context import InMemoryRuntimeContext, RuntimeContextManager
 from framework.core.tool_manager import ToolManager
 from framework.memory.history import ListMessageHistory
-from framework.multi_agent.hooks import PeerAutoSendHook
+from framework.hook.builtin import PeerAutoSendHook
 
 
 class TestPeerAutoSendHook:

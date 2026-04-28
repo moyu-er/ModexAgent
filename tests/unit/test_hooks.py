@@ -1,17 +1,18 @@
-"""Tests for CompositeRunHook exception logging."""
+"""Tests for HookRunner dispatching and error handling."""
 
 import logging
 
 import pytest
 
 from framework.core.agent import AgentContext
-from framework.core.hooks import AgentRunHook, CompositeRunHook, RunLoggingHook
 from framework.core.tool_manager import ToolResult
 from framework.core.types import LLMResponse, ToolCall
+from framework.hook import HookPoint, HookPayload, HookRunner, HookSpec, HookErrorPolicy
+from framework.hook.builtin import RunLoggingHook
 
 
-class BrokenHook(AgentRunHook):
-    """Hook that raises in every method."""
+class BrokenHook:
+    """Hook that raises in every async method."""
 
     async def before_turn(self, ctx):
         raise RuntimeError("before_turn boom")
@@ -29,69 +30,80 @@ class BrokenHook(AgentRunHook):
         raise RuntimeError("after_llm_response boom")
 
 
-class TestCompositeRunHookLogging:
-    """P1-3: CompositeRunHook logs exceptions instead of silently swallowing."""
+class TestHookRunnerLogging:
+    """HookRunner logs exceptions instead of silently swallowing."""
 
     @pytest.mark.asyncio
     async def test_exception_logged_not_swallowed(self, caplog):
-        hook = CompositeRunHook([BrokenHook()])
-        async_ctx = None  # BrokenHook doesn't use ctx
+        hooks = [HookSpec(hook=BrokenHook(), on_error=HookErrorPolicy.LOG)]
+        runner = HookRunner(hooks)
+        async_ctx = None
 
-        with caplog.at_level(logging.DEBUG, logger="framework.core.hooks"):
-            await hook.before_turn(async_ctx)
-            await hook.before_iteration(async_ctx)
-            await hook.after_llm_response(async_ctx, LLMResponse(content="hello"))
-            await hook.after_iteration(async_ctx)
-            await hook.after_turn(async_ctx, None)
+        with caplog.at_level(logging.DEBUG, logger="framework.hook.runner"):
+            await runner.dispatch(HookPoint.BEFORE_TURN, async_ctx)
+            await runner.dispatch(HookPoint.BEFORE_ITERATION, async_ctx)
+            await runner.dispatch(
+                HookPoint.AFTER_LLM_RESPONSE,
+                async_ctx,
+                HookPayload(data={"response": LLMResponse(content="hello")}),
+            )
+            await runner.dispatch(HookPoint.AFTER_ITERATION, async_ctx)
+            await runner.dispatch(HookPoint.AFTER_TURN, async_ctx, HookPayload(data={"result": None}))
 
         assert len(caplog.records) == 5
         for record in caplog.records:
-            assert "failed" in record.message
             assert "BrokenHook" in record.message
 
     @pytest.mark.asyncio
     async def test_other_hooks_still_run_after_exception(self):
         calls: list[str] = []
 
-        class TrackingHook(AgentRunHook):
+        class TrackingHook:
             async def before_turn(self, ctx):
                 calls.append("track")
 
-        hook = CompositeRunHook([BrokenHook(), TrackingHook()])
-        await hook.before_turn(None)
+        hooks = [
+            HookSpec(hook=BrokenHook(), on_error=HookErrorPolicy.LOG),
+            HookSpec(hook=TrackingHook(), on_error=HookErrorPolicy.LOG),
+        ]
+        runner = HookRunner(hooks)
+        await runner.dispatch(HookPoint.BEFORE_TURN, None)
         assert calls == ["track"]
 
-    def test_finalize_content_delegates_to_all_hooks(self):
-        """P1: CompositeRunHook.finalize_content chains through all hooks."""
-
-        class UpperHook(AgentRunHook):
+    def test_finalize_content_chains_through_all_hooks(self):
+        class UpperHook:
             def finalize_content(self, ctx, content):
                 return content.upper() if content else content
 
-        class PrefixHook(AgentRunHook):
+        class PrefixHook:
             def finalize_content(self, ctx, content):
                 return f"[{content}]" if content else content
 
-        hook = CompositeRunHook([UpperHook(), PrefixHook()])
-        result = hook.finalize_content(None, "hello")
-        # Upper first → "HELLO", then Prefix → "[HELLO]"
+        hooks = [
+            HookSpec(hook=UpperHook(), on_error=HookErrorPolicy.LOG),
+            HookSpec(hook=PrefixHook(), on_error=HookErrorPolicy.LOG),
+        ]
+        runner = HookRunner(hooks)
+        result = runner.dispatch_finalize(None, "hello")
         assert result == "[HELLO]"
 
     def test_finalize_content_logs_errors(self, caplog):
-        """P1: finalize_content logs exceptions and continues."""
-
-        class BrokenFinalizeHook(AgentRunHook):
+        class BrokenFinalizeHook:
             def finalize_content(self, ctx, content):
                 raise RuntimeError("finalize boom")
 
-        class GoodFinalizeHook(AgentRunHook):
+        class GoodFinalizeHook:
             def finalize_content(self, ctx, content):
                 return content + "!"
 
-        hook = CompositeRunHook([BrokenFinalizeHook(), GoodFinalizeHook()])
+        hooks = [
+            HookSpec(hook=BrokenFinalizeHook(), on_error=HookErrorPolicy.LOG),
+            HookSpec(hook=GoodFinalizeHook(), on_error=HookErrorPolicy.LOG),
+        ]
+        runner = HookRunner(hooks)
 
-        with caplog.at_level(logging.DEBUG, logger="framework.core.hooks"):
-            result = hook.finalize_content(None, "hello")
+        with caplog.at_level(logging.DEBUG, logger="framework.hook.runner"):
+            result = runner.dispatch_finalize(None, "hello")
 
         assert result == "hello!"
         assert any("finalize_content failed" in r.message for r in caplog.records)
@@ -100,11 +112,14 @@ class TestCompositeRunHookLogging:
     async def test_after_llm_response_delegates_to_all_hooks(self):
         calls: list[str] = []
 
-        class TrackingHook(AgentRunHook):
+        class TrackingHook:
             async def after_llm_response(self, ctx, response):
                 calls.append(f"{ctx.session_id}:{response.content}")
 
-        hook = CompositeRunHook([TrackingHook()])
+        hooks = [
+            HookSpec(hook=TrackingHook(), on_error=HookErrorPolicy.LOG),
+        ]
+        runner = HookRunner(hooks)
         ctx = AgentContext(
             system_prompt="",
             history=None,  # type: ignore[arg-type]
@@ -112,7 +127,11 @@ class TestCompositeRunHookLogging:
             session_id="session-1",
         )
 
-        await hook.after_llm_response(ctx, LLMResponse(content="model text"))
+        await runner.dispatch(
+            HookPoint.AFTER_LLM_RESPONSE,
+            ctx,
+            HookPayload(data={"response": LLMResponse(content="model text")}),
+        )
 
         assert calls == ["session-1:model text"]
 

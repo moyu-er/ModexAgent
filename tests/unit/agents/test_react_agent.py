@@ -15,7 +15,7 @@ import pytest
 from framework.agents.react import ReActAgent, ReActEvent
 from framework.core.agent import AgentContext
 from framework.core.emitter import BufferingEmitter, StreamingAwareEmitter
-from framework.core.hooks import AgentRunHook
+from framework.hook import Hook
 from framework.core.provider import StreamingLLMProvider
 from framework.core.tool_manager import ToolResult
 from framework.core.types import LLMResponse, ToolCall
@@ -168,7 +168,7 @@ class TestReActAgentUnifiedLoop:
     async def test_streaming_calls_after_llm_response_hook(self, streaming_provider, context, streaming_emitter):
         responses: list[str | None] = []
 
-        class TrackingHook(AgentRunHook):
+        class TrackingHook:
             async def after_llm_response(self, ctx, response):
                 responses.append(response.content)
 
@@ -285,7 +285,7 @@ class TestReActAgentUnifiedLoop:
     async def test_non_streaming_calls_after_llm_response_hook(self, non_streaming_provider, context, emitter):
         responses: list[str | None] = []
 
-        class TrackingHook(AgentRunHook):
+        class TrackingHook:
             async def after_llm_response(self, ctx, response):
                 responses.append(response.content)
 

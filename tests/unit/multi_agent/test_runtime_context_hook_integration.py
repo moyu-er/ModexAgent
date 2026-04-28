@@ -14,11 +14,12 @@ import pytest
 from framework.core.agent import AgentContext
 from framework.core.context import InMemoryContextManager
 from framework.core.emitter import AgentResult, ContentEmitter
-from framework.core.hooks import AgentRunHook, RuntimeContextHook
+from framework.hook import Hook
+from framework.hook.builtin import RuntimeContextHook
 from framework.core.runtime_context import RuntimeContextManager
 from framework.core.tool_manager import InMemoryToolManager
 from framework.memory.history import ListMessageHistory
-from framework.multi_agent.hooks import PeerAutoSendHook
+from framework.hook.builtin import PeerAutoSendHook, RuntimeContextHook
 from framework.pipeline.pipeline import AgentPipeline
 from framework.session.agent_session import AgentSession
 
@@ -96,7 +97,7 @@ class TestRuntimeContextHookAutoInjection:
             tool_manager=InMemoryToolManager(),
             input_adapter=FakeInputAdapter(),
             output_adapter=FakeOutputAdapter(),
-            hooks=[MagicMock(spec=AgentRunHook)],
+            hooks=[MagicMock(spec=Hook)],
             runtime_context_manager=mgr,
         )
         assert len(pipeline.hooks) >= 1
@@ -135,7 +136,7 @@ class TestRuntimeContextHookAutoInjection:
             agent=FakeAgent(),
             context_manager=InMemoryContextManager(),
             tool_manager=InMemoryToolManager(),
-            hooks=[MagicMock(spec=AgentRunHook)],
+            hooks=[MagicMock(spec=Hook)],
             runtime_context_manager=mgr,
         )
         assert len(session._hooks) >= 1
@@ -279,7 +280,7 @@ class TestHookCollaboration:
         bus = self._make_bus()
         runtime_mgr = RuntimeContextManager()
 
-        custom_hook = MagicMock(spec=AgentRunHook)
+        custom_hook = MagicMock(spec=Hook)
         custom_hook.before_turn = AsyncMock()
         custom_hook.after_tool_execution = AsyncMock()
         custom_hook.after_turn = AsyncMock()

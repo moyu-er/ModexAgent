@@ -2,7 +2,7 @@
 
 import pytest
 
-from framework.core.hooks import AgentRunHook
+from framework.hook import Hook
 from framework.core.skills.source import SkillSource
 from framework.core.tool_manager import Tool
 from framework.plugins.abc import MemoryProvider
@@ -18,7 +18,7 @@ class FakeTool(Tool):
         return "ok"
 
 
-class FakeHook(AgentRunHook):
+class FakeHook:
     pass
 
 

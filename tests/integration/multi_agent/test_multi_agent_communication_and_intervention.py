@@ -30,7 +30,6 @@ from framework.messaging.broker_memory import InMemoryMessageBroker
 from framework.multi_agent import (
     AgentDescriptor,
     AgentLLMConfig,
-    CompositeRunHook,
     DefaultAgentFactory,
     InMemoryTaskCoordinator,
     NullTaskCoordinator,
@@ -45,7 +44,7 @@ from framework.multi_agent import (
     TaskSupervisor,
     TimeoutCancellationPolicy,
 )
-from framework.multi_agent.inbox.hook import InboxFlushHook
+from framework.hook.builtin import InboxFlushHook
 from framework.multi_agent.inbox.producer import InboxProducer
 from framework.multi_agent.inbox.consumer import InboxConsumer
 from framework.multi_agent.inbox.server_memory import InMemoryInboxServer
@@ -525,7 +524,11 @@ async def test_composite_run_hook_with_inbox_and_intervention(broker, mock_provi
     await coord.bind_policy("turn_ok", TimeoutCancellationPolicy(deadline=time.time() + 100))
     intervention_hook = TaskInterventionHook("turn_ok", coord)
 
-    composite = CompositeRunHook([inbox_hook, intervention_hook])
+    from framework.hook import HookRunner, HookSpec, HookErrorPolicy
+    runner = HookRunner([
+        HookSpec(hook=inbox_hook, on_error=HookErrorPolicy.LOG),
+        HookSpec(hook=intervention_hook, on_error=HookErrorPolicy.LOG),
+    ])
 
     mock_provider.set_responses([LLMResponse(content="ack")])
     agent = ReActAgent(provider=mock_provider)
@@ -536,7 +539,8 @@ async def test_composite_run_hook_with_inbox_and_intervention(broker, mock_provi
         history=ListMessageHistory([{"role": "user", "content": "start"}]),
         tool_manager=MagicMock(),
         max_iterations=1,
-        hooks=[composite],
+        hooks=[inbox_hook, intervention_hook],
+        hook_runner=runner,
         metadata={"session_id": "c1:main"},
     )
 

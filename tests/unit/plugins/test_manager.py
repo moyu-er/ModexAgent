@@ -113,7 +113,7 @@ def register(ctx):
         assert len(pm.tools) == 2
 
     def test_collect_hooks(self, tmp_path: Path):
-        from framework.core.hooks import AgentRunHook
+        from framework.hook import Hook
 
         code = '''
 class FakeHook:

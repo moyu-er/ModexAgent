@@ -6,7 +6,7 @@ from framework.core.agent import AgentContext
 from framework.core.tool_manager import ToolManager
 from framework.memory.history import ListMessageHistory
 from framework.multi_agent.inbox.consumer import InboxConsumer
-from framework.multi_agent.inbox.hook import InboxFlushHook
+from framework.hook.builtin import InboxFlushHook
 from framework.multi_agent.inbox.server_memory import InMemoryInboxServer
 from framework.multi_agent.inbox.types import InboxMessage
 

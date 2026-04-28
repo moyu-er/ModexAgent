@@ -4,14 +4,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from framework.core.hooks import AgentRunHook
+from framework.hook import Hook
 from framework.plugins.abc import MemoryProvider
 from framework.plugins.context import PluginContext
 from framework.plugins.loader import PluginLoader
 from framework.plugins.manager import PluginManager
 
 
-class FakeHook(AgentRunHook):
+class FakeHook:
     pass
 
 
@@ -93,7 +93,7 @@ class TestPluginLoader:
         pm._contexts["test"] = ctx
         pm._collect_all()
 
-        hooks: list[AgentRunHook] = []
+        hooks: list[Hook] = []
         loader = PluginLoader(pm)
         injected = loader.inject_hooks(hooks)
 
