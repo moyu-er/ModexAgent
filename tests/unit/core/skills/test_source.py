@@ -30,7 +30,7 @@ class TestFileSkillSource:
         summaries = await source.list_skills()
         assert len(summaries) == 1
         assert summaries[0].name == "demo_skill"
-        assert summaries[0].location == str(skill_dir / "SKILL.md")
+        assert Path(summaries[0].location).resolve() == (skill_dir / "SKILL.md").resolve()
 
     @pytest.mark.asyncio
     async def test_list_skills_auto_scans_resources(self, tmp_dir):
@@ -91,7 +91,7 @@ class TestFileSkillSource:
         summaries = await source.list_skills()
         assert len(summaries) == 1
         assert summaries[0].name == "demo"
-        assert summaries[0].location == str(skill_dir / "SKILL.md")
+        assert Path(summaries[0].location).resolve() == (skill_dir / "SKILL.md").resolve()
 
     @pytest.mark.asyncio
     async def test_directory_layout_uses_frontmatter_name(self, tmp_dir):

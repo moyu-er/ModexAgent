@@ -208,7 +208,10 @@ class FileStorageLock(StorageLock):
                 "Install it with: pip install filelock"
             ) from exc
         self._lock_file = Path(lock_file)
-        self._lock = filelock.FileLock(str(self._lock_file))
+        # thread_local=False is required because run_in_executor dispatches
+        # acquire/release to different worker threads; thread-local state would
+        # hide the lock from the releasing thread and deadlock concurrent waiters.
+        self._lock = filelock.FileLock(str(self._lock_file), thread_local=False)
         self._writer_task: asyncio.Task[Any] | None = None
         self._writer_depth: int = 0
 

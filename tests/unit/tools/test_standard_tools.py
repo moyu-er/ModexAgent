@@ -220,6 +220,7 @@ class TestShellTool:
         result = await safe_shell.execute(command="format C:")
         assert "blocked by safety guard" in result.lower()
 
+    @pytest.mark.skipif(os.name != "nt", reason="Windows-specific format command test")
     @pytest.mark.asyncio
     async def test_shell_safety_guard_blocks_format(self, safe_shell):
         result = await safe_shell.execute(command="format C:")
