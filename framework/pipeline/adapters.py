@@ -149,7 +149,7 @@ class NullOutputAdapter(OutputAdapter):
 
     @property
     def supports_streaming(self) -> bool:
-        return True
+        return False
 
 
 class LoggingOutputAdapter(OutputAdapter):

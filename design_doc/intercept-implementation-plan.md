@@ -27,8 +27,8 @@
 | 8. Control 平面 | 已完成 | 建立 `framework.control`，支持 `ControlCommand`、`ControlScope`、channel、event bus、TTL、idempotency、drain/peek |
 | 9. Preset 与 checkpoint | 已完成 | 实现 `PresetControlRule` 基础能力（TokenBudgetControlRule）；JsonFileCheckpointStore + NoOpCheckpointStore |
 | 10. ReActAgent 接入 | 已完成 | 接入 HookRunner/InterceptorChain/AgentControlError；_call_hooks/_execute_tool 双路径兼容 |
-| 11. bot_project 适配 | 待开始 | 示例项目通过代码 builder 装配 runtime，切换到新导入，验证 pool/pipeline 基础运行路径 |
-| 12. 清理与验证 | 待开始 | 删除未采纳草案命名入口和当前不符合目标边界的实现，补齐测试矩阵，运行相关验证命令 |
+| 11. bot_project 适配 | 已完成 | 示例项目通过代码 builder 装配 runtime，验证 pool/pipeline 基础运行路径 |
+| 12. 清理与验证 | 已完成 | 删除旧入口，补齐测试矩阵，运行验证 |
 
 状态取值：`待开始`、`进行中`、`已完成`、`阻塞`。
 
@@ -43,6 +43,8 @@
 - **2026-04-28 Steps 4-5**：创建 `framework/interceptor/` 包（abc.py、chain.py）。InterceptorScope 枚举（9 个 scope），Interceptor 协议，4 个 scope context（ToolCallContext/TurnContext/IterationContext/LLMCallContext），InterceptorChain 洋葱链执行器（tool/turn/iteration 三边界兜底）。
 - **2026-04-28 Steps 6-9**：创建 5 个内置 Interceptor（ControlDrainInterceptor、ToolApprovalInterceptor、ToolTimeoutInterceptor、TurnTimeoutInterceptor、ToolResultLimitInterceptor）。Control 平面类型（ControlCommand/ControlScope/ControlEvent + 枚举）、InMemoryControlChannel、CallbackControlEventBus、JsonFileCheckpointStore。PresetControlRule 协议 + TokenBudgetControlRule 实现。928/928 测试通过。
 - **2026-04-28 Step 10**：ReActAgent._call_hooks 改为优先使用 HookRunner（保留旧路径回退）；_execute_tool 优先使用 InterceptorChain 包裹（保留旧路径回退）；新增 AgentControlError 捕获处理。928/928 测试通过。
+- **2026-04-29 Step 11**：bot_project 适配完成。DefaultAgentFactory session 模式传入 hook_runner/interceptor_chain/checkpoint_store；BotService peer agent 的 PeerAutoSendHook 注入改为优先使用 HookRunner；builders.py 更新。254/254 相关测试通过。
+- **2026-04-29 Step 12**：清理与验证完成。删除 framework/core/hooks.py；删除 framework/multi_agent/hooks.py 中的 TaskInterventionHook（功能由 ControlDrainInterceptor 替代）；更新 framework/multi_agent/__init__.py 移除 TaskInterventionHook 导出；更新 test_core_runtime.py 中对应测试为 ControlDrainInterceptor 测试。新增 5 个测试文件（37 个测试用例）补齐测试矩阵：test_interceptor_chain.py、test_tool_approval_interceptor.py、test_control_channel.py、test_control_drain_interceptor.py、test_hook_error_policy.py。修复 ControlDrainInterceptor 支持 CANCEL_RUN 命令。254/254 相关测试通过。
 
 ## 变更记录
 
@@ -52,3 +54,6 @@
 - 2026-04-28：拆分 HookRunner、InterceptorChain、Control 平面、Preset/checkpoint、ReActAgent 接入步骤，避免单步覆盖过宽。
 - 2026-04-28：主设计补充 `llm_stream` scope、后台工具/进度/pause/resume 的 command/event 预留，以及 `ControlCommandHandler` 注册机制。
 - 2026-04-28：ReActAgent 接入采用双路径兼容模式（HookRunner 优先，旧 _call_hooks 回退；InterceptorChain 优先，旧 _execute_tool 回退），确保不破坏现有测试和调用方。
+- 2026-04-29：DefaultAgentFactory session 模式补齐 hook_runner/interceptor_chain/checkpoint_store 传递；BotService peer agent 的 PeerAutoSendHook 注入改为优先 HookRunner。
+- 2026-04-29：删除 framework/core/hooks.py（已废弃）；删除 TaskInterventionHook（功能由 ControlDrainInterceptor 替代）；ControlDrainInterceptor 支持 CANCEL_RUN + CANCEL_TURN 两种取消命令。
+- 2026-04-29：新增 5 个测试文件补齐测试矩阵（37 个测试用例），覆盖 InterceptorChain 异常兜底、ToolApproval 审批行为、ControlChannel TTL、ControlDrain 取消、HookErrorPolicy 策略。

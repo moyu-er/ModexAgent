@@ -40,10 +40,7 @@ from framework.multi_agent.governance import (
 from framework.hook import Hook, HookRunner
 from framework.core.runner import InterruptibleRunner
 from framework.core.strategy import ExecutionStrategy, ReActStrategy, SingleTurnStrategy
-from framework.multi_agent.hooks import (
-    TaskInterventionHook,
-    TaskProgressHook,
-)
+from framework.multi_agent.hooks import TaskProgressHook
 from framework.multi_agent.intervention import (
     InterventionAction,
     InterventionResult,
@@ -138,7 +135,6 @@ __all__ = [
     "TaskEventBus",
     "TaskEventReporter",
     "TaskEventType",
-    "TaskInterventionHook",
     "TaskInterventionPolicy",
     "TaskInterventionPolicySpec",
     "TaskProgressHook",

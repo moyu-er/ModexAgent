@@ -1,0 +1,288 @@
+"""Tests for InterceptorChain — AOP onion chain execution."""
+
+from __future__ import annotations
+
+import pytest
+
+from framework.control.exceptions import AgentCancelled, AgentControlError, AgentTimeout
+from framework.core.agent import AgentContext
+from framework.core.emitter import AgentResult
+from framework.core.tool_manager import ToolResult
+from framework.core.types import ToolCall
+from framework.interceptor.abc import (
+    Interceptor,
+    InterceptorScope,
+    IterationContext,
+    ToolCallContext,
+    ToolCallNext,
+    TurnContext,
+    TurnNext,
+)
+from framework.interceptor.chain import InterceptorChain
+
+
+class BoomInterceptor:
+    """Interceptor that raises a plain exception."""
+
+    scopes = frozenset([InterceptorScope.TOOL_CALL])
+
+    async def around_tool_call(
+        self,
+        ctx: AgentContext,
+        call: ToolCallContext,
+        next_call: ToolCallNext,
+    ) -> ToolResult:
+        raise RuntimeError("boom")
+
+
+class ControlErrorInterceptor:
+    """Interceptor that raises an AgentControlError subclass."""
+
+    scopes = frozenset([InterceptorScope.TOOL_CALL])
+
+    def __init__(self, exc: AgentControlError) -> None:
+        self._exc = exc
+
+    async def around_tool_call(
+        self,
+        ctx: AgentContext,
+        call: ToolCallContext,
+        next_call: ToolCallNext,
+    ) -> ToolResult:
+        raise self._exc
+
+
+class OrderInterceptor:
+    """Records enter/exit order to verify onion wrapping."""
+
+    scopes = frozenset([InterceptorScope.TOOL_CALL])
+
+    def __init__(self, name: str, log: list[str]) -> None:
+        self._name = name
+        self._log = log
+
+    async def around_tool_call(
+        self,
+        ctx: AgentContext,
+        call: ToolCallContext,
+        next_call: ToolCallNext,
+    ) -> ToolResult:
+        self._log.append(f"{self._name}_in")
+        result = await next_call()
+        self._log.append(f"{self._name}_out")
+        return result
+
+
+class ShortCircuitInterceptor:
+    """Returns a substitute result without calling next_call."""
+
+    scopes = frozenset([InterceptorScope.TOOL_CALL])
+
+    def __init__(self, result: ToolResult) -> None:
+        self._result = result
+
+    async def around_tool_call(
+        self,
+        ctx: AgentContext,
+        call: ToolCallContext,
+        next_call: ToolCallNext,
+    ) -> ToolResult:
+        return self._result
+
+
+class FakeCtx:
+    """Minimal fake AgentContext for testing."""
+
+    def __init__(self) -> None:
+        self.session_id = "test-session"
+        self.metadata = {}
+
+
+def _make_tool_call_ctx(tool_name: str = "test_tool") -> ToolCallContext:
+    return ToolCallContext(
+        tool_call=ToolCall(tool_name=tool_name, arguments={}, call_id="call-1"),
+        tool_name=tool_name,
+        arguments={},
+        session_id="test-session",
+        turn_id="turn-1",
+    )
+
+
+@pytest.fixture
+def fake_ctx():
+    return FakeCtx()
+
+
+class TestInterceptorChainToolFallback:
+    """InterceptorChain.around_tool_call must return a valid ToolResult
+    even when an interceptor raises a plain exception.
+    """
+
+    @pytest.mark.asyncio
+    async def test_plain_exception_converted_to_tool_result(self, fake_ctx):
+        chain = InterceptorChain([BoomInterceptor()])
+        call_ctx = _make_tool_call_ctx()
+
+        async def actual() -> ToolResult:
+            return ToolResult(tool_name="test_tool", result="ok")
+
+        result = await chain.around_tool_call(fake_ctx, call_ctx, actual)
+
+        assert isinstance(result, ToolResult)
+        assert result.tool_name == "test_tool"
+        assert result.error is not None
+        assert "boom" in result.error
+
+    @pytest.mark.asyncio
+    async def test_cancelled_error_propagates(self, fake_ctx):
+        """asyncio.CancelledError must propagate, not be swallowed."""
+        exc = AgentCancelled("user cancelled")
+        chain = InterceptorChain([ControlErrorInterceptor(exc)])
+        call_ctx = _make_tool_call_ctx()
+
+        async def actual() -> ToolResult:
+            return ToolResult(tool_name="test_tool", result="ok")
+
+        with pytest.raises(AgentCancelled):
+            await chain.around_tool_call(fake_ctx, call_ctx, actual)
+
+    @pytest.mark.asyncio
+    async def test_timeout_error_propagates(self, fake_ctx):
+        """AgentTimeout must propagate, not be swallowed."""
+        exc = AgentTimeout("turn timed out")
+        chain = InterceptorChain([ControlErrorInterceptor(exc)])
+        call_ctx = _make_tool_call_ctx()
+
+        async def actual() -> ToolResult:
+            return ToolResult(tool_name="test_tool", result="ok")
+
+        with pytest.raises(AgentTimeout):
+            await chain.around_tool_call(fake_ctx, call_ctx, actual)
+
+    @pytest.mark.asyncio
+    async def test_agent_control_error_propagates(self, fake_ctx):
+        """AgentControlError base class must propagate."""
+        exc = AgentControlError("generic control", termination="cancelled")
+        chain = InterceptorChain([ControlErrorInterceptor(exc)])
+        call_ctx = _make_tool_call_ctx()
+
+        async def actual() -> ToolResult:
+            return ToolResult(tool_name="test_tool", result="ok")
+
+        with pytest.raises(AgentControlError):
+            await chain.around_tool_call(fake_ctx, call_ctx, actual)
+
+
+class TestInterceptorChainOnionOrder:
+    """Verify outermost interceptor enters first and exits last."""
+
+    @pytest.mark.asyncio
+    async def test_onion_wrapping_order(self, fake_ctx):
+        log: list[str] = []
+        chain = InterceptorChain([
+            OrderInterceptor("outer", log),
+            OrderInterceptor("inner", log),
+        ])
+        call_ctx = _make_tool_call_ctx()
+
+        async def actual() -> ToolResult:
+            log.append("actual")
+            return ToolResult(tool_name="test_tool", result="ok")
+
+        await chain.around_tool_call(fake_ctx, call_ctx, actual)
+
+        assert log == ["outer_in", "inner_in", "actual", "inner_out", "outer_out"]
+
+    @pytest.mark.asyncio
+    async def test_shortcircuit_skips_inner_and_actual(self, fake_ctx):
+        log: list[str] = []
+        chain = InterceptorChain([
+            OrderInterceptor("outer", log),
+            ShortCircuitInterceptor(
+                ToolResult(tool_name="test_tool", result="shortcut")
+            ),
+            OrderInterceptor("inner", log),
+        ])
+        call_ctx = _make_tool_call_ctx()
+
+        async def actual() -> ToolResult:
+            log.append("actual")
+            return ToolResult(tool_name="test_tool", result="ok")
+
+        result = await chain.around_tool_call(fake_ctx, call_ctx, actual)
+
+        assert result.result == "shortcut"
+        assert log == ["outer_in", "outer_out"]
+        assert "actual" not in log
+
+
+class TestInterceptorChainTurn:
+    """around_turn behaviour — plain exceptions propagate, control exceptions propagate."""
+
+    @pytest.mark.asyncio
+    async def test_turn_plain_exception_propagates(self, fake_ctx):
+        class BoomTurnInterceptor:
+            scopes = frozenset([InterceptorScope.TURN])
+
+            async def around_turn(self, ctx, next_call: TurnNext) -> AgentResult:
+                raise RuntimeError("turn boom")
+
+        chain = InterceptorChain([BoomTurnInterceptor()])
+
+        async def actual() -> AgentResult:
+            return AgentResult(content="ok")
+
+        with pytest.raises(RuntimeError, match="turn boom"):
+            await chain.around_turn(fake_ctx, actual)
+
+    @pytest.mark.asyncio
+    async def test_turn_control_error_propagates(self, fake_ctx):
+        class CancelTurnInterceptor:
+            scopes = frozenset([InterceptorScope.TURN])
+
+            async def around_turn(self, ctx, next_call: TurnNext) -> AgentResult:
+                raise AgentCancelled("admin cancel")
+
+        chain = InterceptorChain([CancelTurnInterceptor()])
+
+        async def actual() -> AgentResult:
+            return AgentResult(content="ok")
+
+        with pytest.raises(AgentCancelled):
+            await chain.around_turn(fake_ctx, actual)
+
+
+class TestInterceptorChainIteration:
+    """around_iteration behaviour."""
+
+    @pytest.mark.asyncio
+    async def test_iteration_plain_exception_propagates(self, fake_ctx):
+        class BoomIterationInterceptor:
+            scopes = frozenset([InterceptorScope.ITERATION])
+
+            async def around_iteration(self, ctx, call: IterationContext, next_call) -> None:
+                raise RuntimeError("iteration boom")
+
+        chain = InterceptorChain([BoomIterationInterceptor()])
+
+        async def actual() -> None:
+            pass
+
+        with pytest.raises(RuntimeError, match="iteration boom"):
+            await chain.around_iteration(fake_ctx, IterationContext(1, "t1"), actual)
+
+    @pytest.mark.asyncio
+    async def test_iteration_cancelled_propagates(self, fake_ctx):
+        class CancelIterationInterceptor:
+            scopes = frozenset([InterceptorScope.ITERATION])
+
+            async def around_iteration(self, ctx, call: IterationContext, next_call) -> None:
+                raise AgentCancelled("cancel")
+
+        chain = InterceptorChain([CancelIterationInterceptor()])
+
+        async def actual() -> None:
+            pass
+
+        with pytest.raises(AgentCancelled):
+            await chain.around_iteration(fake_ctx, IterationContext(1, "t1"), actual)

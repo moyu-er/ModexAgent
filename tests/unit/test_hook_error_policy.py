@@ -1,0 +1,150 @@
+"""Tests for HookErrorPolicy — ignore, log, abort behaviour."""
+
+from __future__ import annotations
+
+import pytest
+
+from framework.control.exceptions import PolicyViolation
+from framework.hook import HookErrorPolicy, HookPoint, HookPayload, HookRunner, HookSpec
+
+
+class BrokenHook:
+    async def before_turn(self, ctx):
+        raise RuntimeError("boom")
+
+    async def before_iteration(self, ctx):
+        raise RuntimeError("boom")
+
+
+class GoodHook:
+    async def before_turn(self, ctx):
+        pass
+
+
+class TestHookErrorPolicyIgnore:
+    """IGNORE: exception is silently swallowed, subsequent hooks run."""
+
+    @pytest.mark.asyncio
+    async def test_ignore_swallows_exception(self):
+        runner = HookRunner([
+            HookSpec(hook=BrokenHook(), on_error=HookErrorPolicy.IGNORE),
+        ])
+        # Should not raise
+        result = await runner.dispatch(HookPoint.BEFORE_TURN, None)
+        assert not result.veto
+
+    @pytest.mark.asyncio
+    async def test_ignore_allows_subsequent_hooks(self):
+        calls: list[str] = []
+
+        class TrackingHook:
+            async def before_turn(self, ctx):
+                calls.append("track")
+
+        runner = HookRunner([
+            HookSpec(hook=BrokenHook(), on_error=HookErrorPolicy.IGNORE),
+            HookSpec(hook=TrackingHook(), on_error=HookErrorPolicy.IGNORE),
+        ])
+        await runner.dispatch(HookPoint.BEFORE_TURN, None)
+        assert calls == ["track"]
+
+
+class TestHookErrorPolicyLog:
+    """LOG: exception is logged but not raised, subsequent hooks run."""
+
+    @pytest.mark.asyncio
+    async def test_log_does_not_raise(self, caplog):
+        import logging
+
+        runner = HookRunner([
+            HookSpec(hook=BrokenHook(), on_error=HookErrorPolicy.LOG),
+        ])
+        with caplog.at_level(logging.WARNING, logger="framework.hook.runner"):
+            result = await runner.dispatch(HookPoint.BEFORE_TURN, None)
+        assert not result.veto
+        assert any("BrokenHook" in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_log_allows_subsequent_hooks(self):
+        calls: list[str] = []
+
+        class TrackingHook:
+            async def before_turn(self, ctx):
+                calls.append("track")
+
+        runner = HookRunner([
+            HookSpec(hook=BrokenHook(), on_error=HookErrorPolicy.LOG),
+            HookSpec(hook=TrackingHook(), on_error=HookErrorPolicy.LOG),
+        ])
+        await runner.dispatch(HookPoint.BEFORE_TURN, None)
+        assert calls == ["track"]
+
+
+class TestHookErrorPolicyAbort:
+    """ABORT: exception is converted to PolicyViolation and raised."""
+
+    @pytest.mark.asyncio
+    async def test_abort_raises_policy_violation(self):
+        runner = HookRunner([
+            HookSpec(hook=BrokenHook(), on_error=HookErrorPolicy.ABORT),
+        ])
+        with pytest.raises(PolicyViolation):
+            await runner.dispatch(HookPoint.BEFORE_TURN, None)
+
+    @pytest.mark.asyncio
+    async def test_abort_stops_subsequent_hooks(self):
+        calls: list[str] = []
+
+        class TrackingHook:
+            async def before_turn(self, ctx):
+                calls.append("track")
+
+        runner = HookRunner([
+            HookSpec(hook=BrokenHook(), on_error=HookErrorPolicy.ABORT),
+            HookSpec(hook=TrackingHook(), on_error=HookErrorPolicy.ABORT),
+        ])
+        with pytest.raises(PolicyViolation):
+            await runner.dispatch(HookPoint.BEFORE_TURN, None)
+        assert calls == []
+
+    @pytest.mark.asyncio
+    async def test_abort_distinguishes_timeout_vs_error(self):
+        import asyncio
+
+        class SlowHook:
+            async def before_turn(self, ctx):
+                await asyncio.sleep(100)
+
+        runner = HookRunner([
+            HookSpec(hook=SlowHook(), on_error=HookErrorPolicy.ABORT),
+        ])
+        with pytest.raises(PolicyViolation) as exc_info:
+            await runner.dispatch(
+                HookPoint.BEFORE_TURN, None, hook_timeout=0.01
+            )
+        assert "timeout" in str(exc_info.value)
+
+
+class TestHookErrorPolicyMixed:
+    """Mixed policies in the same runner."""
+
+    @pytest.mark.asyncio
+    async def test_mixed_policies(self, caplog):
+        import logging
+
+        calls: list[str] = []
+
+        class TrackingHook:
+            async def before_turn(self, ctx):
+                calls.append("track")
+
+        runner = HookRunner([
+            HookSpec(hook=BrokenHook(), on_error=HookErrorPolicy.IGNORE),
+            HookSpec(hook=BrokenHook(), on_error=HookErrorPolicy.LOG),
+            HookSpec(hook=TrackingHook(), on_error=HookErrorPolicy.ABORT),
+        ])
+        with caplog.at_level(logging.WARNING, logger="framework.hook.runner"):
+            await runner.dispatch(HookPoint.BEFORE_TURN, None)
+        assert calls == ["track"]
+        # LOG policy should have produced a record
+        assert any("BrokenHook" in r.message for r in caplog.records)

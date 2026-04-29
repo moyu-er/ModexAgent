@@ -269,6 +269,9 @@ class DefaultAgentFactory(AgentFactory):
                 command_interceptor=command_interceptor or self._command_interceptor,
                 subagent_manager=subagent_manager or self._subagent_manager,
                 runtime_context_manager=self._runtime_context_manager,
+                hook_runner=self._default_hook_runner,
+                interceptor_chain=self._default_interceptor_chain,
+                checkpoint_store=self._default_checkpoint_store,
             )
 
         return AgentInstance(

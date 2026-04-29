@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from framework.control.types import ControlScope
+from framework.control.types import ControlCommandType, ControlScope
 from framework.interceptor.abc import (
     InterceptorScope,
     IterationContext,
@@ -49,6 +49,10 @@ class ControlDrainInterceptor:
         self._registry = registry or CommandHandlerRegistry()
         if not self._registry.get(DefaultCancelHandler.command_type):
             self._registry.register(DefaultCancelHandler())
+            # Also register for CANCEL_RUN since DefaultCancelHandler handles both
+            self._registry.register_for(
+                ControlCommandType.CANCEL_RUN, DefaultCancelHandler()
+            )
 
     def register_handler(self, handler) -> None:
         """注册额外的命令处理器。"""

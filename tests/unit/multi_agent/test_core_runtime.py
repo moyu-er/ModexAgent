@@ -39,7 +39,6 @@ from framework.multi_agent import (
     TaskEventBus,
     TaskEventReporter,
     TaskEventType,
-    TaskInterventionHook,
     TaskInterventionPolicy,
     TaskInterventionPolicySpec,
     TaskProgressHook,
@@ -436,16 +435,35 @@ def test_single_turn_strategy_requires_llm_provider():
 
 
 @pytest.mark.asyncio
-async def test_task_intervention_hook_raises_on_cancel():
-    coord = InMemoryTaskCoordinator()
-    record = TaskRecord(task_id="turn1", task_type="turn", created_at=time.time())
-    await coord.register_task("turn1", record)
-    await coord.bind_policy("turn1", TimeoutCancellationPolicy(deadline=time.time() - 1))
+async def test_control_drain_interceptor_raises_on_cancel():
+    """ControlDrainInterceptor 替代 TaskInterventionHook 的功能。
 
-    hook = TaskInterventionHook("turn1", coord)
+    在 iteration 边界消费 cancel 命令并抛出 AgentCancelled。
+    """
+    from framework.control.channel import InMemoryControlChannel
+    from framework.control.exceptions import AgentCancelled
+    from framework.control.types import ControlCommand, ControlCommandType, ControlScope
+    from framework.interceptor.abc import IterationContext
+    from framework.interceptor.builtin.control_drain import ControlDrainInterceptor
+
+    channel = InMemoryControlChannel()
+    interceptor = ControlDrainInterceptor(channel=channel)
+    await channel.send(
+        ControlCommand(
+            command_id="cmd-1",
+            type=ControlCommandType.CANCEL_TURN,
+            scope=ControlScope(session_id="s1"),
+        )
+    )
+
     ctx = MagicMock()
-    with pytest.raises(asyncio.CancelledError):
-        await hook.before_iteration(ctx)
+    ctx.session_id = "s1"
+
+    async def next_call() -> None:
+        pass
+
+    with pytest.raises(AgentCancelled):
+        await interceptor.around_iteration(ctx, IterationContext(iteration=1, turn_id="t1"), next_call)
 
 
 @pytest.mark.asyncio

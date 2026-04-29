@@ -653,15 +653,21 @@ class AgentBuilderMixin:
 
             # 8. Inject PeerAutoSendHook as safety net
             if self.agent_bus is not None and instance and instance.pipeline:
+                from framework.hook import HookSpec, HookErrorPolicy
                 from framework.hook.builtin import PeerAutoSendHook
 
-                instance.pipeline.hooks.append(
-                    PeerAutoSendHook(
-                        agent_bus=self.agent_bus,
-                        self_name=peer_name,
-                        parent_name=parent_name,
-                    )
+                peer_hook = PeerAutoSendHook(
+                    agent_bus=self.agent_bus,
+                    self_name=peer_name,
+                    parent_name=parent_name,
                 )
+                # Prefer HookRunner if available; fallback to legacy hooks list
+                if instance.pipeline.hook_runner is not None:
+                    instance.pipeline.hook_runner.add(
+                        HookSpec(hook=peer_hook, on_error=HookErrorPolicy.LOG)
+                    )
+                else:
+                    instance.pipeline.hooks.append(peer_hook)
                 print(f"   [OK] PeerAutoSendHook injected (peer={peer_name} -> main)")
 
             print(f"[OK] Peer agent '{peer_name}' registered as resident")
