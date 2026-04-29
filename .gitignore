@@ -47,10 +47,9 @@ Thumbs.db
 .omc/
 examples/*/.omc/
 references
-.claude
 .*
 !.gitignore
 !.python-version
 uv.lock
-agent_docs/
+
 openspec
