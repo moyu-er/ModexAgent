@@ -679,6 +679,7 @@ class AgentPool(AgentRegistry):
         self._consumers.clear()
         self._agent_tasks.clear()
         self._active_session_counts.clear()
+        self._session_locks.clear()
         for name in list(self._status.keys()):
             self._status[name] = AgentState.SHUTDOWN
 

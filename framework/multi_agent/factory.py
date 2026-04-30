@@ -21,11 +21,13 @@ try:
 except ImportError:
     LiteLLMProvider = None  # type: ignore[misc,assignment]
 
+from framework.hook import HookRunner
+from framework.hook.builtin import InboxFlushHook
+
 from .agent_skill_manager import AgentSkillManager
 from .descriptor import AgentDescriptor, AgentInstance
 from .filtered_tool_manager import FilteredToolManager
 from .inbox.consumer import InboxConsumer
-from framework.hook.builtin import InboxFlushHook
 from .inbox.producer import InboxProducer
 from .inbox.server import InboxServer
 
@@ -190,12 +192,12 @@ class DefaultAgentFactory(AgentFactory):
         inbox_address_name = ""
 
         if mode == "pipeline":
-            from framework.pipeline.pipeline import AgentPipeline
             from framework.messaging.broker_bridge import (
                 BrokerInputAdapter,
                 BrokerOutputAdapter,
             )
             from framework.messaging.broker_memory import InMemoryMessageBroker
+            from framework.pipeline.pipeline import AgentPipeline
 
             if broker is None:
                 logger.warning(
@@ -232,6 +234,21 @@ class DefaultAgentFactory(AgentFactory):
             if builder is None:
                 raise ValueError(f"Unsupported execution_strategy: {descriptor.execution_strategy}")
             emitter_factory = builder.build_emitter_factory(emitter_output_adapter)
+            # Each agent needs its own HookRunner so that agent-specific hooks
+            # (e.g. PeerAutoSendHook) don't leak across agents.
+            hook_runner = (
+                HookRunner(self._default_hook_runner.hook_specs)
+                if self._default_hook_runner is not None
+                else None
+            )
+            # Per-agent InterceptorChain copy to prevent cross-agent state leakage.
+            # Mirrors the HookRunner copy pattern above.
+            agent_interceptor_chain = None
+            if self._default_interceptor_chain is not None:
+                from framework.interceptor.chain import InterceptorChain
+                agent_interceptor_chain = InterceptorChain(
+                    self._default_interceptor_chain.interceptors
+                )
             pipeline = AgentPipeline(
                 agent=agent,
                 context_manager=ctx_mgr,
@@ -242,8 +259,8 @@ class DefaultAgentFactory(AgentFactory):
                 max_iterations=descriptor.max_iterations,
                 skill_manager=skill_mgr,
                 hooks=agent_hooks,
-                hook_runner=self._default_hook_runner,
-                interceptor_chain=self._default_interceptor_chain,
+                hook_runner=hook_runner,
+                interceptor_chain=agent_interceptor_chain,
                 checkpoint_store=self._default_checkpoint_store,
                 context_manager_factory=context_manager_factory,
                 runtime_context_manager=self._runtime_context_manager,
@@ -258,6 +275,20 @@ class DefaultAgentFactory(AgentFactory):
                         agent_name=descriptor.address.name,
                     )
                 )
+            # Each agent needs its own HookRunner so that agent-specific hooks
+            # don't leak across agents.
+            hook_runner = (
+                HookRunner(self._default_hook_runner.hook_specs)
+                if self._default_hook_runner is not None
+                else None
+            )
+            # Per-agent InterceptorChain copy for session mode as well
+            session_interceptor_chain = None
+            if self._default_interceptor_chain is not None:
+                from framework.interceptor.chain import InterceptorChain
+                session_interceptor_chain = InterceptorChain(
+                    self._default_interceptor_chain.interceptors
+                )
             from framework.session.agent_session import AgentSession
             session = AgentSession(
                 agent=agent,
@@ -269,8 +300,8 @@ class DefaultAgentFactory(AgentFactory):
                 command_interceptor=command_interceptor or self._command_interceptor,
                 subagent_manager=subagent_manager or self._subagent_manager,
                 runtime_context_manager=self._runtime_context_manager,
-                hook_runner=self._default_hook_runner,
-                interceptor_chain=self._default_interceptor_chain,
+                hook_runner=hook_runner,
+                interceptor_chain=session_interceptor_chain,
                 checkpoint_store=self._default_checkpoint_store,
             )
 

@@ -19,19 +19,29 @@ logger = logging.getLogger(__name__)
 
 
 class TaskProgressHook:
-    """任务进度 Hook：向 TaskEventBus 报告进度。"""
+    """任务进度 Hook：向 TaskEventBus 报告进度。
+
+    按 session_id 隔离计数器，防止 pool 模式下多 session 竞态。
+    """
 
     def __init__(self, task_id: str, event_bus: TaskEventBus):
         self._task_id = task_id
         self._event_bus = event_bus
-        self._iteration = 0
-        self._tool_calls = 0
+        # session_id → {"iteration": int, "tool_calls": int}
+        self._state: dict[str, dict[str, int]] = {}
+
+    def _get_state(self, ctx: AgentContext) -> dict[str, int]:
+        sid = ctx.session_id or "default"
+        if sid not in self._state:
+            self._state[sid] = {"iteration": 0, "tool_calls": 0}
+        return self._state[sid]
 
     async def before_iteration(self, ctx: AgentContext) -> None:
-        self._iteration += 1
+        self._get_state(ctx)["iteration"] += 1
 
     async def before_tool_execution(self, ctx: AgentContext, tool_calls: list[Any]) -> None:
-        self._tool_calls += len(tool_calls)
+        state = self._get_state(ctx)
+        state["tool_calls"] += len(tool_calls)
         if self._event_bus:
             from .event_bus import TaskEvent, TaskEventType
 
@@ -41,9 +51,9 @@ class TaskProgressHook:
                         task_id=self._task_id,
                         event_type=TaskEventType.PROGRESS,
                         payload={
-                            "iteration": self._iteration,
-                            "tool_calls": self._tool_calls,
-                            "progress_percent": min(95, self._iteration * 10),
+                            "iteration": state["iteration"],
+                            "tool_calls": state["tool_calls"],
+                            "progress_percent": min(95, state["iteration"] * 10),
                         },
                     )
                 )

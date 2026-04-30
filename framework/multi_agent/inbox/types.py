@@ -1,7 +1,7 @@
 """Inbox 消息类型定义。"""
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -14,5 +14,5 @@ class InboxMessage:
     content: str
     message_type: str
     message_id: str = field(default_factory=lambda: __import__("uuid").uuid4().hex)
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     metadata: dict[str, Any] = field(default_factory=dict)

@@ -201,7 +201,7 @@ class SubagentManager:
                 return await asyncio.wait_for(
                     future, timeout=timeout or self._config.default_timeout_seconds
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 if not future.done():
                     future.cancel()
                 return AgentResult(
@@ -237,7 +237,7 @@ class SubagentManager:
                     timeout=timeout or self._config.default_timeout_seconds,
                 ),
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             if not future.done():
                 future.cancel()
             return AgentResult(
@@ -320,8 +320,8 @@ class SubagentManager:
                 hooks=hooks,
             )
 
-            from framework.core.types import InputMessage
             from framework.core.events import EmitterConfig
+            from framework.core.types import InputMessage
 
             assert instance.session is not None, "session agent must have a session"
             # 同步 subagent 必须使用真正的非流式输出：

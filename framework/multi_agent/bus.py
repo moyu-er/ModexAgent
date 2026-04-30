@@ -8,15 +8,14 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 from framework.messaging.broker import Address, BrokerMessage
-
 from framework.multi_agent.address import AgentAddress
 from framework.multi_agent.session_id import DefaultSessionIdStrategy
 
 if TYPE_CHECKING:
+    from framework.messaging.broker import MessageBroker
     from framework.multi_agent.envelope import AgentMessageEnvelope
     from framework.multi_agent.inbox.consumer import BaseInboxConsumer
     from framework.multi_agent.inbox.producer import BaseInboxProducer
-    from framework.messaging.broker import MessageBroker
 
 logger = logging.getLogger(__name__)
 
@@ -28,19 +27,19 @@ class AgentMessageBus(ABC):
     """
 
     @abstractmethod
-    async def send(self, session_id: str, envelope: "AgentMessageEnvelope") -> None:
+    async def send(self, session_id: str, envelope: AgentMessageEnvelope) -> None:
         """Send an envelope to the given session and signal the consumer."""
         ...
 
     @abstractmethod
-    async def send_silent(self, session_id: str, envelope: "AgentMessageEnvelope") -> None:
+    async def send_silent(self, session_id: str, envelope: AgentMessageEnvelope) -> None:
         """Persist the envelope without signaling/waking up the consumer."""
         ...
 
     @abstractmethod
     async def consume(
         self, session_id: str, limit: int = 100, *, block: bool = True
-    ) -> list["AgentMessageEnvelope"]:
+    ) -> list[AgentMessageEnvelope]:
         """Consume envelopes for the given session.
 
         When ``block=True``, the caller may block until messages are available.
@@ -48,7 +47,7 @@ class AgentMessageBus(ABC):
         ...
 
     @abstractmethod
-    async def poll(self, session_id: str, limit: int = 100) -> list["AgentMessageEnvelope"]:
+    async def poll(self, session_id: str, limit: int = 100) -> list[AgentMessageEnvelope]:
         """Poll pending envelopes without blocking."""
         ...
 
@@ -78,9 +77,9 @@ class LocalAgentMessageBus(AgentMessageBus):
 
     def __init__(
         self,
-        producer: "BaseInboxProducer",
-        consumer: "BaseInboxConsumer",
-        broker: "MessageBroker | None" = None,
+        producer: BaseInboxProducer,
+        consumer: BaseInboxConsumer,
+        broker: MessageBroker | None = None,
     ) -> None:
         self._producer = producer
         self._consumer = consumer
@@ -95,7 +94,7 @@ class LocalAgentMessageBus(AgentMessageBus):
             self._events[session_id] = asyncio.Event()
         return self._events[session_id]
 
-    async def send(self, session_id: str, envelope: "AgentMessageEnvelope") -> None:
+    async def send(self, session_id: str, envelope: AgentMessageEnvelope) -> None:
         """Persist the envelope, then signal consumers through all available channels."""
         await self._producer.send(session_id, envelope)
 
@@ -120,7 +119,7 @@ class LocalAgentMessageBus(AgentMessageBus):
         self._pending_counts[session_id] = self._pending_counts.get(session_id, 0) + 1
         event.set()
 
-    async def send_silent(self, session_id: str, envelope: "AgentMessageEnvelope") -> None:
+    async def send_silent(self, session_id: str, envelope: AgentMessageEnvelope) -> None:
         """Persist the envelope without signaling/waking up the consumer.
 
         Updates pending_counts so that consume() correctly detects
@@ -131,7 +130,7 @@ class LocalAgentMessageBus(AgentMessageBus):
 
     async def consume(
         self, session_id: str, limit: int = 100, *, block: bool = True
-    ) -> list["AgentMessageEnvelope"]:
+    ) -> list[AgentMessageEnvelope]:
         """Return messages for ``session_id``, optionally blocking until available."""
         if block and not self._closed:
             event = self._get_event(session_id)
@@ -174,7 +173,7 @@ class LocalAgentMessageBus(AgentMessageBus):
 
         return envelopes
 
-    async def poll(self, session_id: str, limit: int = 100) -> list["AgentMessageEnvelope"]:
+    async def poll(self, session_id: str, limit: int = 100) -> list[AgentMessageEnvelope]:
         """Poll pending messages without blocking."""
         return await self.consume(session_id, limit=limit, block=False)
 
