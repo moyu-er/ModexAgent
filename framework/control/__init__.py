@@ -10,6 +10,8 @@
 
 from framework.control.channel import ControlChannel, InMemoryControlChannel
 from framework.control.checkpoint import (
+    AgentCheckpoint,
+    ApprovalDenialContext,
     CheckpointStore,
     JsonFileCheckpointStore,
     NoOpCheckpointStore,
@@ -18,6 +20,7 @@ from framework.control.event_bus import (
     CallbackControlEventBus,
     ControlEventBus,
     ControlEventHandler,
+    Subscription,
 )
 from framework.control.exceptions import (
     AgentCancelled,
@@ -40,9 +43,11 @@ from framework.control.types import (
 
 __all__ = [
     # 异常
+    "AgentCheckpoint",
     "AgentCancelled",
     "AgentControlError",
     "AgentTimeout",
+    "ApprovalDenialContext",
     "ApprovalDenied",
     "PolicyViolation",
     "TerminationReason",
@@ -63,6 +68,7 @@ __all__ = [
     "InMemoryControlChannel",
     "JsonFileCheckpointStore",
     "NoOpCheckpointStore",
+    "Subscription",
     # 预设规则
     "PresetControlRule",
     "TokenBudgetControlRule",

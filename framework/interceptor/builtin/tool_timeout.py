@@ -46,7 +46,7 @@ class ToolTimeoutInterceptor:
         try:
             result = await asyncio.wait_for(next_call(), timeout=timeout)
             return result
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "Tool %s timed out after %.1fs (interceptor)",
                 call.tool_name,

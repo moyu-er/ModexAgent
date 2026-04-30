@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import MutableMapping
+
 from typing import TYPE_CHECKING, Protocol
 
 from framework.control.types import ControlCommand, ControlCommandType

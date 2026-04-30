@@ -15,9 +15,12 @@ class ControlCommandType(str, Enum):
 
     CANCEL_RUN = "cancel_run"
     CANCEL_TURN = "cancel_turn"
+    CANCEL_TOOL = "cancel_tool"
     INJECT_USER_MESSAGE = "inject_user_message"
+    INJECT_STEER = "inject_steer"
     APPROVAL_RESPONSE = "approval_response"
     SET_BUDGET_LIMIT = "set_budget_limit"
+    SET_DYNAMIC_CONFIG = "set_dynamic_config"
     CHECKPOINT_SAVE = "checkpoint_save"
     BACKGROUND_TOOL_RESULT = "background_tool_result"
     BACKGROUND_TOOL_PROGRESS = "background_tool_progress"
@@ -37,6 +40,10 @@ class ControlEventType(str, Enum):
     RUN_PAUSED = "run_paused"
     RUN_RESUMED = "run_resumed"
     TURN_TIMEOUT = "turn_timeout"
+    TOOL_CANCELLED = "tool_cancelled"
+    STREAMING_CANCELLED = "streaming_cancelled"
+    STEER_INJECTED = "steer_injected"
+    AGENT_PROGRESS = "agent_progress"
     CHECKPOINT_SAVED = "checkpoint_saved"
 
 

@@ -22,9 +22,9 @@ from framework.interceptor.handler import (
 )
 
 if TYPE_CHECKING:
+    from framework.control.channel import ControlChannel
     from framework.core.agent import AgentContext
     from framework.core.emitter import AgentResult
-    from framework.control.channel import ControlChannel
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,15 @@ class ControlDrainInterceptor:
         ctx: AgentContext,
         scope: ControlScope,
     ) -> None:
-        commands = await self._channel.drain(scope, limit=self._max_commands)
+        commands = await self._channel.drain(
+            scope, limit=self._max_commands,
+            command_types={
+                ControlCommandType.CANCEL_RUN,
+                ControlCommandType.CANCEL_TURN,
+                ControlCommandType.INJECT_USER_MESSAGE,
+                ControlCommandType.SET_DYNAMIC_CONFIG,
+            },
+        )
         for cmd in commands:
             handlers = self._registry.get(cmd.type)
             handled = False

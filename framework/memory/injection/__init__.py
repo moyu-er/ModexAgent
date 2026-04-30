@@ -20,6 +20,7 @@ from framework.memory.core.scope import MemoryContext
 from framework.memory.core.system import InjectableMemorySystem, MemorySystem
 from framework.memory.injection.filter import (
     InjectionFilterStrategy,
+    NoopFilterStrategy,
     ToolMessageFilterStrategy,
 )
 from framework.memory.utils import estimate_text_tokens
@@ -30,6 +31,7 @@ __all__ = [
     "FullInjectionPolicy",
     "InjectionFilterStrategy",
     "MemoryInjectionPolicy",
+    "NoopFilterStrategy",
     "RestrictedInjectionPolicy",
     "ToolMessageFilterStrategy",
 ]

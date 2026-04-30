@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol
@@ -76,6 +76,28 @@ class LLMCallContext:
     stream: bool = False
 
 
+@dataclass(frozen=True)
+class LLMStreamContext:
+    """LLM 流式调用上下文。"""
+
+    messages: Sequence[dict[str, Any]]
+    model: str | None = None
+    session_id: str = ""
+
+
+@dataclass
+class LLMStreamChunk:
+    """LLM 流式输出的单个 chunk。"""
+
+    content_delta: str | None = None
+    reasoning_delta: str | None = None
+    finish_reason: str | None = None
+    control_action: str | None = None  # None | "cancel"
+
+
+LLMStreamNext = Callable[[], AsyncIterator[LLMStreamChunk]]
+"""LLM 流式 next 函数：返回异步迭代器。"""
+
 # ---------------------------------------------------------------------------
 # Next-call 协议
 # ---------------------------------------------------------------------------
@@ -130,3 +152,14 @@ class Interceptor(Protocol):
     ) -> None:
         """包裹单次迭代。"""
         ...
+
+    async def around_llm_stream(
+        self,
+        ctx: AgentContext,
+        call: LLMStreamContext,
+        next_stream: LLMStreamNext,
+    ) -> AsyncIterator[LLMStreamChunk]:
+        """包裹 LLM 流式调用。yield 每个 chunk，可注入控制信号。"""
+        async for chunk in next_stream():
+            yield chunk
+        return

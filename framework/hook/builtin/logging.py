@@ -9,7 +9,6 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
     from framework.core.types import LLMResponse

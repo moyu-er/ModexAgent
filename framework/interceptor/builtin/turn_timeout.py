@@ -53,7 +53,7 @@ class TurnTimeoutInterceptor:
         try:
             result = await asyncio.wait_for(next_call(), timeout=timeout)
             return result
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("Turn timed out after %.1fs", timeout)
             if self._on_timeout == TimeoutAction.CANCEL_TURN:
                 raise AgentTimeout(f"Turn timed out after {timeout:.0f}s")

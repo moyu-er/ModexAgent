@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
 from framework.control.exceptions import AgentControlError
@@ -14,10 +15,13 @@ from framework.interceptor.abc import (
     Interceptor,
     InterceptorScope,
     IterationContext,
+    IterationNext,
+    LLMStreamChunk,
+    LLMStreamContext,
+    LLMStreamNext,
     ToolCallContext,
     ToolCallNext,
     TurnNext,
-    IterationNext,
 )
 
 if TYPE_CHECKING:
@@ -33,7 +37,7 @@ class InterceptorChain:
 
     拦截器按列表顺序排列，索引 0 为最外层（先进入、后退出）。
 
-    Phase 1 接入的作用域：TOOL_CALL, TURN, ITERATION。
+    接入的作用域：TOOL_CALL, TURN, ITERATION, LLM_STREAM。
     """
 
     def __init__(self, interceptors: list[Interceptor] | None = None) -> None:
@@ -55,6 +59,10 @@ class InterceptorChain:
     def extend(self, interceptors: list[Interceptor]) -> None:
         """批量追加拦截器。"""
         self._interceptors.extend(interceptors)
+
+    def has_scope(self, scope: InterceptorScope) -> bool:
+        """检查是否有注册了指定 scope 的拦截器。"""
+        return any(scope in i.scopes for i in self._interceptors)
 
     # -------------------------------------------------------------------
     # 分作用域执行
@@ -111,6 +119,26 @@ class InterceptorChain:
         """
         chain = self._build_iteration_chain(call, actual_call)
         await chain(ctx, call)
+
+    async def around_llm_stream(
+        self,
+        ctx: AgentContext,
+        call: LLMStreamContext,
+        actual_stream: LLMStreamNext,
+    ) -> AsyncIterator[LLMStreamChunk]:
+        """包裹 LLM 流式调用。
+
+        按洋葱链顺序 yield chunk。控制异常透传。
+        """
+        chain = self._build_llm_stream_chain(call, actual_stream)
+        try:
+            async for chunk in chain(ctx, call):
+                yield chunk
+        except AgentControlError:
+            raise
+        except Exception as e:
+            logger.exception("InterceptorChain llm_stream error: %s", e)
+            yield LLMStreamChunk(finish_reason="error", control_action="cancel")
 
     # -------------------------------------------------------------------
     # 链构建
@@ -182,5 +210,35 @@ class InterceptorChain:
                 )
 
             await _next(0)
+
+        return _dispatch
+
+    def _build_llm_stream_chain(
+        self, call: LLMStreamContext, actual: LLMStreamNext,
+    ) -> Any:
+        resolved = self._resolved(InterceptorScope.LLM_STREAM)
+
+        async def _dispatch(
+            ctx: AgentContext, c: LLMStreamContext,
+        ) -> AsyncIterator[LLMStreamChunk]:
+            if not resolved:
+                async for chunk in actual():
+                    yield chunk
+                return
+
+            async def _next(index: int) -> AsyncIterator[LLMStreamChunk]:
+                if index >= len(resolved):
+                    async for chunk in actual():
+                        yield chunk
+                    return
+                async for chunk in resolved[index].around_llm_stream(
+                    ctx,
+                    c,
+                    lambda: _next(index + 1),
+                ):
+                    yield chunk
+
+            async for chunk in _next(0):
+                yield chunk
 
         return _dispatch
