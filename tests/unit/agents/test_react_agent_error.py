@@ -79,6 +79,7 @@ class _FakeContext:
         self.governance = None
         self.checkpoint: list | None = None
         self.on_checkpoint = None
+        self.metadata: dict = {}
 
     async def to_messages(self):
         return list(self.messages)

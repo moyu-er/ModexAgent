@@ -475,10 +475,12 @@ async def test_task_progress_hook_reports():
     bus = TaskEventBus(reporter)
     hook = TaskProgressHook("t1", bus)
     ctx = MagicMock()
+    ctx.session_id = "s1"
     await hook.before_iteration(ctx)
     await hook.before_tool_execution(ctx, [MagicMock()])
-    assert hook._iteration == 1
-    assert hook._tool_calls == 1
+    state = hook._state["s1"]
+    assert state["iteration"] == 1
+    assert state["tool_calls"] == 1
     reporter.report.assert_awaited()
 
 
