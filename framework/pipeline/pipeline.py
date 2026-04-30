@@ -7,8 +7,10 @@ import asyncio
 import contextlib
 import logging
 import time
+import uuid
 from typing import Any
 
+from framework.core.agent_runtime_config import BusyInputMode
 from framework.core.llm_error import RuntimeSafetyPolicy
 from framework.core.skills import SkillManager
 from framework.memory.core.message import ChatMessage
@@ -139,6 +141,8 @@ class AgentPipeline:
         hook_runner: Any | None = None,
         interceptor_chain: Any | None = None,
         checkpoint_store: Any | None = None,
+        control_channel: Any | None = None,
+        busy_input_mode: BusyInputMode = BusyInputMode.QUEUE,
     ):
         """
         Args:
@@ -182,9 +186,13 @@ class AgentPipeline:
         self.hook_runner = hook_runner
         self.interceptor_chain = interceptor_chain
         self.checkpoint_store = checkpoint_store
+        self.control_channel = control_channel
+        self.busy_input_mode = busy_input_mode
         self._running = False
         self._dream_task: asyncio.Task | None = None
         self._session_locks: dict[str, asyncio.Lock] = {}
+        self._session_tasks: dict[str, asyncio.Task] = {}
+        self._injection_queues: dict[str, asyncio.Queue[str]] = {}
 
     async def run(self) -> None:
         """运行流水线"""
@@ -304,6 +312,44 @@ class AgentPipeline:
             if self.deduplicator.is_duplicate(message_id):
                 logger.info("Duplicate message skipped: %s", message_id)
                 return None
+
+        # 忙碌状态处理
+        existing_task = self._session_tasks.get(session_id)
+        if existing_task is not None and not existing_task.done():
+            # Agent 正在执行中
+            if self.busy_input_mode == BusyInputMode.INTERRUPT:
+                existing_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await existing_task
+                # yield 事件循环给旧 task 的 finally 块一个执行机会
+                await asyncio.sleep(0)
+                # 任务已结束，fall through 到正常流程
+            elif self.busy_input_mode == BusyInputMode.QUEUE:
+                queue = self._injection_queues.get(session_id)
+                if queue:
+                    await queue.put(input_msg.content or "")
+                else:
+                    logger.warning(
+                        "No injection queue for session %s, dropping message", session_id
+                    )
+                return None
+            elif self.busy_input_mode == BusyInputMode.STEER:
+                if self.control_channel is not None:
+                    from framework.control.types import (
+                        ControlCommand,
+                        ControlCommandType,
+                        ControlScope,
+                    )
+                    await self.control_channel.send(ControlCommand(
+                        command_id=str(uuid.uuid4()),
+                        type=ControlCommandType.INJECT_STEER,
+                        scope=ControlScope(session_id=session_id),
+                        payload={"text": input_msg.content or ""},
+                    ))
+                return None
+            else:
+                # Unknown mode, fall through (queue)
+                pass
 
         # 获取或创建 session 级别的锁，防止同一 session 并发处理
         lock = self._session_locks.setdefault(session_id, asyncio.Lock())
@@ -541,6 +587,11 @@ class AgentPipeline:
         async def on_checkpoint(messages: list[ChatMessage | dict[str, Any]]) -> None:
             await ctx_mgr.save_checkpoint(session_id, messages)
 
+        # 获取或创建 per-session injection queue
+        injection_queue = self._injection_queues.setdefault(
+            session_id, asyncio.Queue(maxsize=50)
+        )
+
         agent_context = AgentContext(
             system_prompt=context_state.system_prompt,
             history=context_state.history,
@@ -556,6 +607,7 @@ class AgentPipeline:
             runtime_context_manager=self.runtime_context_manager,
             governance=self.governance,
             safety=self.safety,
+            injection_queue=injection_queue,
         )
 
         # 选择 emitter：
@@ -582,6 +634,11 @@ class AgentPipeline:
         turn_start = time.monotonic()
 
         try:
+            # Track this task for busy_input_mode handling
+            turn_task = asyncio.current_task()
+            if turn_task is not None:
+                self._session_tasks[session_id] = turn_task
+
             result = await self.agent.run(agent_context, emitter)
 
             # 为最后一条 assistant 消息注入 attachments metadata
@@ -617,6 +674,8 @@ class AgentPipeline:
 
         finally:
             current_conversation_id.reset(conv_token)
+            # Clean up session task tracking
+            self._session_tasks.pop(session_id, None)
             await _safe_flush(ctx_mgr, session_id, timeout=turn.memory_flush_timeout_seconds)
             if turn_clean:
                 await _safe_clear_checkpoint(ctx_mgr, session_id, timeout=turn.memory_flush_timeout_seconds)
@@ -634,9 +693,31 @@ class AgentPipeline:
                 except Exception:
                     logger.exception("on_session_end failed for %s", session_id)
 
+    async def cleanup_session_resources(self, session_id: str) -> None:
+        """清理 per-session 资源（长时间运行避免内存泄漏）。
+
+        应在 session 彻底结束时调用（用户断开、超时等），不应每个 turn 调用。
+        """
+        self._session_locks.pop(session_id, None)
+        self._injection_queues.pop(session_id, None)
+        self._session_tasks.pop(session_id, None)
+        if self.control_channel is not None:
+            try:
+                await asyncio.wait_for(
+                    self.control_channel.cleanup_session(session_id),
+                    timeout=5.0,
+                )
+            except TimeoutError:
+                logger.warning("cleanup_session timeout for %s", session_id)
+            except Exception:
+                logger.debug("cleanup_session failed for %s", session_id, exc_info=True)
+
     async def stop(self) -> None:
         """停止流水线"""
         self._running = False
+        # 清理所有 lingering session 资源
+        for sid in list(self._session_locks.keys()):
+            await self.cleanup_session_resources(sid)
         logger.info("Pipeline stop requested, waiting for current message to complete...")
 
 
