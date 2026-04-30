@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
@@ -12,21 +13,22 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 if TYPE_CHECKING:
-    from .llm_error import RuntimeSafetyPolicy
     from framework.control.checkpoint import CheckpointStore
     from framework.hook.runner import HookRunner
     from framework.interceptor.chain import InterceptorChain
 
+    from .llm_error import RuntimeSafetyPolicy
+
+from framework.hook import Hook
 from framework.memory.core.message import ChatMessage
 from framework.memory.history import MessageHistory
 
+from ..memory import ContextGovernance
 from .emitter import AgentResult, ContentEmitter
 from .events import AgentEvent
-from framework.hook import Hook
 from .message_utils import AGENT_COMMUNICATION_SYSTEM_NOTE, normalize_agent_messages_for_llm
 from .runtime_context import RuntimeContext, RuntimeContextManager
 from .tool_manager import ToolManager
-from ..memory import ContextGovernance
 
 
 @dataclass
@@ -48,6 +50,7 @@ class AgentContext:
     on_checkpoint: Callable[[list[ChatMessage | dict[str, Any]]], Awaitable[None]] | None = None
     hooks: list[Hook] = field(default_factory=list)
     attachments: list[str] = field(default_factory=list)  # Agent->User 方向的附件路径列表
+    injection_queue: asyncio.Queue[str] | None = None  # 执行中注入消息队列
     runtime_context_manager: RuntimeContextManager | None = None
     runtime_context: RuntimeContext | None = None
     governance: ContextGovernance | None = None
@@ -94,7 +97,7 @@ class AgentContext:
         return self.tool_manager.get_tool_descriptions()
 
 
-current_agent_context: contextvars.ContextVar["AgentContext"] = contextvars.ContextVar(
+current_agent_context: contextvars.ContextVar[AgentContext] = contextvars.ContextVar(
     "current_agent_context"
 )
 

@@ -4,14 +4,20 @@
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 from enum import Enum
 from typing import Any
 
-from framework.control.exceptions import AgentControlError
-from framework.hook import HookPoint, HookPayload
-from framework.interceptor.abc import ToolCallContext
+from framework.control.exceptions import AgentControlError, ApprovalDenied
+from framework.hook import HookPayload, HookPoint
+from framework.interceptor.abc import (
+    InterceptorScope,
+    LLMStreamChunk,
+    LLMStreamContext,
+    ToolCallContext,
+)
 
 from ...core.agent import Agent, AgentContext, current_agent_context
 from ...core.constants import DefaultValues, FinishReason
@@ -26,6 +32,10 @@ logger = logging.getLogger(__name__)
 # P0-a: 合理默认值
 _HOOK_TIMEOUT = 10.0
 _TOOL_TIMEOUT = DefaultValues.TOOL_TIMEOUT_SECONDS
+
+# Injection drain limits (ref: nanobot design)
+_MAX_INJECTIONS_PER_PHASE = 3
+_MAX_INJECTION_CYCLES = 5
 
 
 class ReActEvent(AgentEvent, Enum):
@@ -145,6 +155,9 @@ class ReActAgent(Agent[ReActEvent]):
 
                 await self._call_hooks(HookPoint.BEFORE_ITERATION, context)
 
+                # drain 注入积压消息
+                await self._drain_injections(context)
+
                 # 重新构建 messages，以便 Hook 注入的新消息被纳入上下文
                 messages = await context.to_messages()
 
@@ -211,7 +224,7 @@ class ReActAgent(Agent[ReActEvent]):
 
                     await self._call_hooks(HookPoint.BEFORE_TOOL_EXECUTION, context, tool_calls)
 
-                    for tool_call in tool_calls:
+                    for idx, tool_call in enumerate(tool_calls):
                         await emitter.emit(ReActEvent.TOOL_CALL_START, tool_call)
 
                         result = await self._execute_tool(tool_call, context)
@@ -225,11 +238,39 @@ class ReActAgent(Agent[ReActEvent]):
                         iteration_messages.append(tool_message)
                         await self._save_checkpoint(all_new_messages, context)
 
+                        # deny_as_cancel 批内补齐
+                        if context.metadata.get("_deny_as_cancel"):
+                            for remaining_tc in tool_calls[idx + 1:]:
+                                synthetic_result = ToolResult(
+                                    tool_name=remaining_tc.tool_name,
+                                    result=None,
+                                    error=(
+                                        "Error: Not executed — turn was cancelled because "
+                                        "a prior tool call was denied."
+                                    ),
+                                )
+                                tool_message = self._build_tool_message(
+                                    synthetic_result, remaining_tc.call_id,
+                                )
+                                messages.append(tool_message)
+                                await context.history.append(tool_message)
+                                all_new_messages.append(tool_message)
+                                iteration_messages.append(tool_message)
+
+                            await self._save_denial_checkpoint(all_new_messages, context)
+                            denial = context.metadata.get("_approval_denial")
+                            raise ApprovalDenied(
+                                denial.reason if denial else "Tool approval denied"
+                            )
+
                     await self._call_hooks(
                         HookPoint.AFTER_TOOL_EXECUTION,
                         context,
                         [msg for msg in iteration_messages if msg.get("role") == "tool"],
                     )
+
+                    # drain injections after tool execution
+                    await self._drain_injections(context)
 
                     await self._call_hooks(HookPoint.AFTER_ITERATION, context)
                     await emitter.emit(
@@ -305,8 +346,41 @@ class ReActAgent(Agent[ReActEvent]):
             await emitter.emit_complete(result)
             return result
         finally:
+            # 清理 deny_as_cancel 标记和注入计数器，防止下一 turn 误触发
+            context.metadata.pop("_deny_as_cancel", None)
+            context.metadata.pop("_approval_denial", None)
+            context.metadata.pop("_injection_cycle_count", None)
             current_agent_context.reset(ctx_token)
             await self._call_hooks(HookPoint.AFTER_TURN, context, result)
+
+    async def _save_denial_checkpoint(
+        self,
+        all_messages: list[dict[str, Any]],
+        context: AgentContext,
+    ) -> None:
+        """保存被拒绝时的完整 checkpoint（含所有 tool 结果 + 拒绝上下文）。"""
+        denial: Any = context.metadata.get("_approval_denial")
+        checkpoint_data: dict[str, Any] = {
+            "messages": list(all_messages),
+            "termination": "approval_denied",
+            "cancelled_tool_ids": list(
+                context.metadata.get("_cancelled_tool_records", {}).keys()
+            ),
+            "iteration": context.metadata.get("_iteration", 0),
+        }
+        if denial is not None:
+            checkpoint_data["denial_context"] = {
+                "tool_name": denial.tool_name,
+                "tool_call_id": denial.tool_call_id,
+                "arguments": dict(denial.arguments),
+                "tier": denial.tier,
+                "reason": denial.reason,
+                "iteration": denial.iteration,
+            }
+        if getattr(context, "checkpoint_store", None) is not None:
+            session_id = getattr(context, "session_id", "unknown")
+            checkpoint_id = f"{session_id}:denial"
+            await context.checkpoint_store.save(checkpoint_id, checkpoint_data)
 
     async def _save_checkpoint(
         self,
@@ -314,10 +388,11 @@ class ReActAgent(Agent[ReActEvent]):
         context: AgentContext,
     ) -> None:
         """保存检查点，优先使用 checkpoint_store，回退到 on_checkpoint 回调。"""
+        data = {"messages": list(all_new_messages)}
         if getattr(context, "checkpoint_store", None) is not None:
             session_id = getattr(context, "session_id", "unknown")
             checkpoint_id = f"{session_id}:latest"
-            await context.checkpoint_store.save(checkpoint_id, list(all_new_messages))
+            await context.checkpoint_store.save(checkpoint_id, data)
         elif context.on_checkpoint:
             await context.on_checkpoint(list(all_new_messages))
 
@@ -411,6 +486,9 @@ class ReActAgent(Agent[ReActEvent]):
         is_streaming_provider = isinstance(self.provider, StreamingLLMProvider)
 
         if wants_streaming and is_streaming_provider:
+            if (getattr(context, "interceptor_chain", None)
+                    and context.interceptor_chain.has_scope(InterceptorScope.LLM_STREAM)):
+                return await self._stream_with_control(messages, context, emitter)
 
             async def _on_content_delta(delta: str) -> None:
                 if delta:
@@ -508,6 +586,125 @@ class ReActAgent(Agent[ReActEvent]):
                 result=None,
                 error=f"Error: {e}",
             )
+
+    async def _stream_with_control(
+        self,
+        messages: list[dict[str, Any]],
+        context: AgentContext,
+        emitter: ContentEmitter[ReActEvent],
+    ) -> LLMResponse:
+        """通过 InterceptorChain 包裹的 LLM 流式调用。"""
+        assert isinstance(self.provider, StreamingLLMProvider)
+
+        stream_ctx = LLMStreamContext(
+            messages=messages,
+            model=getattr(self.provider, "model", None),
+            session_id=context.session_id,
+        )
+
+        accumulated_content = ""
+        accumulated_reasoning = ""
+        finish_reason = "stop"
+        tool_calls_list: list[ToolCall] = []
+
+        async def _actual_stream():
+            """实际调用 provider.chat_stream，将 chunk 转为 LLMStreamChunk。"""
+            nonlocal tool_calls_list
+
+            async def _on_content_delta(delta: str) -> None:
+                if delta:
+                    await emitter.emit_delta(delta)
+                    await emitter.emit(ReActEvent.MODEL_OUTPUT, delta)
+
+            async def _on_reasoning_delta(delta: str) -> None:
+                if delta:
+                    await emitter.emit(ReActEvent.MODEL_REASONING, delta)
+
+            response = await self.provider.chat_stream(
+                messages=messages,
+                tools=context.get_tool_descriptions() if context.tool_manager else None,
+                temperature=context.temperature or 0.7,
+                max_tokens=context.max_tokens,
+                on_content_delta=_on_content_delta,
+                on_reasoning_delta=_on_reasoning_delta,
+            )
+            tool_calls_list = list(response.tool_calls or [])
+            yield LLMStreamChunk(
+                content_delta=response.content,
+                reasoning_delta=response.reasoning_content,
+                finish_reason=response.finish_reason,
+            )
+
+        async for chunk in context.interceptor_chain.around_llm_stream(
+            context, stream_ctx, _actual_stream,
+        ):
+            if chunk.control_action == "cancel":
+                finish_reason = chunk.finish_reason or "cancelled"
+                logger.warning(
+                    "LLM stream cancelled session=%s finish_reason=%s",
+                    context.session_id, finish_reason,
+                )
+                break
+            if chunk.content_delta:
+                accumulated_content += chunk.content_delta
+            if chunk.reasoning_delta:
+                accumulated_reasoning += chunk.reasoning_delta
+            if chunk.finish_reason:
+                finish_reason = chunk.finish_reason
+
+        has_tool_calls = bool(tool_calls_list)
+        await emitter.emit_stream_end(resuming=has_tool_calls)
+        return LLMResponse(
+            content=accumulated_content or None,
+            reasoning_content=accumulated_reasoning or None,
+            finish_reason=finish_reason,
+            tool_calls=tool_calls_list,
+        )
+
+    async def _drain_injections(
+        self,
+        context: AgentContext,
+        max_per_phase: int = _MAX_INJECTIONS_PER_PHASE,
+    ) -> list[str]:
+        """消费注入队列中的用户消息，追加到 history。"""
+        q = getattr(context, "injection_queue", None)
+        if q is None:
+            return []
+
+        cycle_count: int = context.metadata.get("_injection_cycle_count", 0)
+        if cycle_count >= _MAX_INJECTION_CYCLES:
+            while True:
+                try:
+                    q.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+            return []
+
+        injected: list[str] = []
+        for _ in range(max_per_phase):
+            try:
+                msg: str = q.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            try:
+                await context.history.append({
+                    "role": "user",
+                    "content": f"[Injected during execution]: {msg}",
+                })
+            except Exception:
+                logger.warning(
+                    "Failed to inject message into history, returning to queue: %s",
+                    msg[:100],
+                )
+                with contextlib.suppress(asyncio.QueueFull):
+                    q.put_nowait(msg)
+                break
+            injected.append(msg)
+
+        if injected:
+            context.metadata["_injection_cycle_count"] = cycle_count + 1
+
+        return injected
 
     @staticmethod
     def _format_tool_hint(tool_calls: list[ToolCall]) -> str:
