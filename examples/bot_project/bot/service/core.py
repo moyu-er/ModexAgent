@@ -73,7 +73,14 @@ from framework.interceptor.builtin import (
     TurnTimeoutInterceptor,
 )
 from framework.interceptor.chain import InterceptorChain
+from framework.approval.store import LocalFileApprovalStateStore
 from framework.control.channel import InMemoryControlChannel
+from framework.control.checkpoint import JsonFileCheckpointStore
+from framework.control.ui.im import IMUserInterface
+from framework.interceptor.builtin.tool_approval import (
+    TieredToolApprovalInterceptor,
+    ToolNameMatcher,
+)
 from framework.multi_agent.inbox.producer import InboxProducer
 from framework.multi_agent.inbox.server_local import LocalFileInboxServer
 from framework.pipeline.adapters import InputAdapter, OutputAdapter
@@ -154,6 +161,11 @@ class BotService(AgentBuilderMixin):
         # RuntimeSafetyPolicy cache
         self._safety_policy_cache: RuntimeSafetyPolicy | None = None
         self._safety_policy_cache_key: int | None = None
+
+        # Approval components
+        self._approval_workspace: Path | None = None
+        self._checkpoint_store: Any | None = None
+        self._im_ui: IMUserInterface | None = None
 
         # Runtime control
         self._shutdown_event = asyncio.Event()
@@ -329,8 +341,21 @@ class BotService(AgentBuilderMixin):
             default_interceptor_chain=interceptor_chain,
         )
 
-        # 8. Create ReActAgent
-        self.agent = ReActAgent(provider=provider)
+        # 7.5. Initialize approval infrastructure
+        self._approval_workspace = (
+            self._project_dir / self.config.get("approval_workspace", ".modex_approval")
+        )
+        self._checkpoint_store = JsonFileCheckpointStore(
+            self._approval_workspace / "checkpoints"
+        )
+        self._im_ui = IMUserInterface(
+            output_adapter=self.output_adapter,
+            channel=self.control_channel,
+        )
+        print(f"[OK] Approval infrastructure initialized (workspace: {self._approval_workspace})")
+
+        # 8. Create ReActAgent (main agent in full mode with approval)
+        self.agent = ReActAgent(provider=provider, mode="full")
         print("[OK] ReActAgent initialized")
 
         # 9. Initialize runtime by mode
@@ -406,7 +431,22 @@ class BotService(AgentBuilderMixin):
         pipeline_hooks = [inbox_flush_hook]
         pipeline_hooks.extend(self._collect_run_hooks())
 
-        interceptor_chain = self._build_interceptor_chain()
+        # Build main agent interceptor chain WITH approval
+        # (factory default chain without approval is used for peers/subagents)
+        main_interceptor_chain = InterceptorChain()
+        for interceptor in self.interceptor_chain.interceptors:
+            main_interceptor_chain.add(interceptor)
+        # Add TieredToolApprovalInterceptor for main agent only
+        approval_config = self.config.get("approval", {})
+        dangerous_tools = approval_config.get("dangerous_tools", ["shell", "write_file", "edit_file"])
+        main_interceptor_chain.add(
+            TieredToolApprovalInterceptor(
+                channel=self.control_channel,
+                dangerous_matcher=ToolNameMatcher(set(dangerous_tools)),
+            )
+        )
+        print(f"[OK] Main agent interceptor chain includes TieredToolApprovalInterceptor "
+              f"(dangerous_tools={dangerous_tools})")
 
         self.pipeline = AgentPipeline(
             agent=self.agent,
@@ -421,11 +461,14 @@ class BotService(AgentBuilderMixin):
             skill_manager=main_skill_manager,  # type: ignore[arg-type]
             hooks=pipeline_hooks,
             hook_runner=self._build_hook_runner(pipeline_hooks),
-            interceptor_chain=interceptor_chain,
+            interceptor_chain=main_interceptor_chain,
             subagent_manager=self.subagent_manager,
             context_manager_factory=self._get_context_manager,
             governance=self._build_governance(),
             safety=self.safety_policy,
+            checkpoint_store=self._checkpoint_store,
+            approval_workspace=str(self._approval_workspace),
+            user_interface=self._im_ui,
         )
         print("[OK] AgentPipeline initialized")
         print(f"   Input: {self.input_adapter.name}")
