@@ -12,6 +12,9 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
 
+from framework.core.agent import ctx_ext
+from framework.core.context_extensions import ExtensionKey
+
 
 class RuntimeContextHook:
     """通过 hook 接口管理 per-turn RuntimeContext 生命周期。"""
@@ -19,29 +22,34 @@ class RuntimeContextHook:
     _PENDING_KEY = "_pending_tool_calls"
 
     async def before_turn(self, ctx: AgentContext) -> None:
-        if ctx.runtime_context is None and ctx.runtime_context_manager is not None:
-            ctx.runtime_context = await ctx.runtime_context_manager.get_context(
+        rt_mgr = ctx_ext(ctx, ExtensionKey.RUNTIME_CTX_MGR)
+        rc = ctx_ext(ctx, ExtensionKey.RUNTIME_CTX)
+        if rc is None and rt_mgr is not None:
+            rc = await rt_mgr.get_context(
                 ctx.session_id, ctx.metadata
             )
-        if ctx.runtime_context is not None:
-            await ctx.runtime_context.clear()
+            ctx.extensions[ExtensionKey.RUNTIME_CTX] = rc
+        if rc is not None:
+            await rc.clear()
 
     async def before_tool_execution(
         self,
         ctx: AgentContext,
         tool_calls: list[Any] | None = None,
     ) -> None:
-        if ctx.runtime_context is not None and tool_calls:
-            await ctx.runtime_context.set(self._PENDING_KEY, list(tool_calls))
+        rc = ctx_ext(ctx, ExtensionKey.RUNTIME_CTX)
+        if rc is not None and tool_calls:
+            await rc.set(self._PENDING_KEY, list(tool_calls))
 
     async def after_tool_execution(
         self,
         ctx: AgentContext,
         results: list[Any] | None = None,
     ) -> None:
-        if ctx.runtime_context is None or results is None:
+        rc = ctx_ext(ctx, ExtensionKey.RUNTIME_CTX)
+        if rc is None or results is None:
             return
-        pending = await ctx.runtime_context.get(self._PENDING_KEY, [])
+        pending = await rc.get(self._PENDING_KEY, [])
         if not pending:
             return
 
@@ -56,10 +64,10 @@ class RuntimeContextHook:
             tool_name = getattr(tool_call, "tool_name", None)
             arguments = getattr(tool_call, "arguments", None) or {}
             if tool_name:
-                await ctx.runtime_context.record_tool_call(
+                await rc.record_tool_call(
                     tool_name=tool_name,
                     arguments=dict(arguments),
                     result=result_map.get(call_id, ""),
                 )
 
-        await ctx.runtime_context.set(self._PENDING_KEY, [])
+        await rc.set(self._PENDING_KEY, [])

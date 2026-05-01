@@ -12,6 +12,7 @@ from framework.core.skills import SkillManager
 
 from ..core.agent import Agent, AgentContext
 from ..core.context import ContextManager
+from ..core.context_extensions import ExtensionKey
 from ..core.emitter import AgentResult, ContentEmitter
 from ..core.events import AgentEvent
 from ..core.tool_manager import ToolManager
@@ -373,12 +374,14 @@ class AgentSession(Generic[E]):
                 temperature=getattr(message, "metadata", {}).get("temperature"),
                 max_tokens=getattr(message, "metadata", {}).get("max_tokens"),
                 metadata={"session_id": session_id, "agent_name": agent_name},
-                on_checkpoint=on_checkpoint,
-                hooks=self._hooks,
-                hook_runner=self._hook_runner,
-                interceptor_chain=self._interceptor_chain,
-                checkpoint_store=self._checkpoint_store,
-                runtime_context_manager=self._runtime_context_manager,
+                extensions={
+                    ExtensionKey.HOOKS: self._hooks,
+                    ExtensionKey.HOOK_RUNNER: self._hook_runner,
+                    ExtensionKey.INTERCEPTOR_CHAIN: self._interceptor_chain,
+                    ExtensionKey.CHECKPOINT_STORE: self._checkpoint_store,
+                    ExtensionKey.RUNTIME_CTX_MGR: self._runtime_context_manager,
+                    ExtensionKey.ON_CHECKPOINT: on_checkpoint,
+                },
             )
 
             # 5.5 设置当前 conversation_id 上下文变量（供 peer 通信工具使用）

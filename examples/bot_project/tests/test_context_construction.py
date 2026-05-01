@@ -48,19 +48,20 @@ class TestAgentContextConstruction:
         assert ctx.session_id == "s1"
         assert ctx.system_prompt == "test"
         assert ctx.max_iterations == 10
-        assert ctx.injection_queue is None
+        assert ctx.extensions.get("injection_queue") is None
 
     def test_agent_context_with_injection_queue(self):
         import asyncio
+        from framework.core.context_extensions import ExtensionKey
         q = asyncio.Queue()
         ctx = AgentContext(
             system_prompt="test",
             history=ListMessageHistory([]),
             tool_manager=MagicMock(),
             session_id="s1",
-            injection_queue=q,
+            extensions={ExtensionKey.INJECTION_QUEUE: q},
         )
-        assert ctx.injection_queue is q
+        assert ctx.extensions.get(ExtensionKey.INJECTION_QUEUE) is q
 
     def test_agent_context_metadata(self):
         ctx = AgentContext(
@@ -72,15 +73,16 @@ class TestAgentContextConstruction:
         assert ctx.metadata["user_id"] == "u1"
 
     def test_agent_context_with_hooks(self):
+        from framework.core.context_extensions import ExtensionKey
         hook1 = MagicMock()
         hook2 = MagicMock()
         ctx = AgentContext(
             system_prompt="test",
             history=ListMessageHistory([]),
             tool_manager=MagicMock(),
-            hooks=[hook1, hook2],
+            extensions={ExtensionKey.HOOKS: [hook1, hook2]},
         )
-        assert len(ctx.hooks) == 2
+        assert len(ctx.extensions.get(ExtensionKey.HOOKS, [])) == 2
 
 
 class TestAgentContextIsolation:

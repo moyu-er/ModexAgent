@@ -1,11 +1,13 @@
 """Tests for ReActAgent._drain_injections — message loss prevention (P1-2r2)."""
 
 import asyncio
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from framework.agents.react.agent import ReActAgent
+from framework.core.context_extensions import ExtensionKey
 from framework.core.types import LLMResponse
 
 
@@ -34,20 +36,26 @@ class _FakeContext:
     def __init__(self, *, history=None, injection_queue=None):
         self.messages = [{"role": "user", "content": "hello"}]
         self.history = history or _FakeHistory()
-        self.hooks: list = []
         self.max_iterations = 5
-        self.max_tools_per_turn = None
         self.attachments: list = []
         self.tool_manager = None
         self.temperature = 0.7
         self.max_tokens = None
-        self.governance = None
-        self.on_checkpoint = None
         self.session_id = "test-session"
         self.metadata: dict = {}
-        self.injection_queue = injection_queue
-        self.interceptor_chain = None
-        self.checkpoint_store = None
+        self.extensions: dict[str, Any] = {
+            ExtensionKey.HOOKS: [],
+            ExtensionKey.MAX_TOOLS_PER_TURN: None,
+            ExtensionKey.GOVERNANCE: None,
+            ExtensionKey.ON_CHECKPOINT: None,
+            ExtensionKey.SAFETY: None,
+            ExtensionKey.HOOK_RUNNER: None,
+            ExtensionKey.INTERCEPTOR_CHAIN: None,
+            ExtensionKey.CHECKPOINT_STORE: None,
+            ExtensionKey.INJECTION_QUEUE: injection_queue,
+            ExtensionKey.RUNTIME_CTX_MGR: None,
+            ExtensionKey.RUNTIME_CTX: None,
+        }
 
     async def to_messages(self):
         return list(self.messages)

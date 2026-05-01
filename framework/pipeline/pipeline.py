@@ -17,6 +17,7 @@ from framework.memory.core.message import ChatMessage
 
 from ..core.agent import Agent, AgentContext
 from ..core.context import ContextManager
+from ..core.context_extensions import ExtensionKey
 from ..core.emitter import AgentResult, StreamingAwareEmitter
 from ..core.runtime_context import RuntimeContextManager
 from ..core.tool_manager import ToolManager
@@ -599,15 +600,17 @@ class AgentPipeline:
             session_id=session_id,
             max_iterations=self.max_iterations,
             metadata={"session_id": session_id},
-            on_checkpoint=on_checkpoint,
-            hooks=self.hooks,
-            hook_runner=self.hook_runner,
-            interceptor_chain=self.interceptor_chain,
-            checkpoint_store=self.checkpoint_store,
-            runtime_context_manager=self.runtime_context_manager,
-            governance=self.governance,
-            safety=self.safety,
-            injection_queue=injection_queue,
+            extensions={
+                ExtensionKey.HOOKS: self.hooks,
+                ExtensionKey.HOOK_RUNNER: self.hook_runner,
+                ExtensionKey.INTERCEPTOR_CHAIN: self.interceptor_chain,
+                ExtensionKey.CHECKPOINT_STORE: self.checkpoint_store,
+                ExtensionKey.RUNTIME_CTX_MGR: self.runtime_context_manager,
+                ExtensionKey.GOVERNANCE: self.governance,
+                ExtensionKey.SAFETY: self.safety,
+                ExtensionKey.INJECTION_QUEUE: injection_queue,
+                ExtensionKey.ON_CHECKPOINT: on_checkpoint,
+            },
         )
 
         # 选择 emitter：

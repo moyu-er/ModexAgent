@@ -13,6 +13,7 @@ import pytest
 
 from framework.core.agent import AgentContext
 from framework.core.context import InMemoryContextManager
+from framework.core.context_extensions import ExtensionKey
 from framework.core.emitter import AgentResult, ContentEmitter
 from framework.hook import Hook
 from framework.hook.builtin import RuntimeContextHook
@@ -35,26 +36,26 @@ class FakeAgent:
 
     async def run(self, context: AgentContext, emitter: ContentEmitter) -> AgentResult:
         # Simulate hook lifecycle manually (as ReActAgent would)
-        for hook in context.hooks or []:
+        for hook in context.extensions.get(ExtensionKey.HOOKS, []):
             if hasattr(hook, "before_turn"):
                 await hook.before_turn(context)
 
         # Simulate tool execution if configured
         for tc in self._tool_calls:
-            for hook in context.hooks or []:
+            for hook in context.extensions.get(ExtensionKey.HOOKS, []):
                 if hasattr(hook, "before_tool_execution"):
                     await hook.before_tool_execution(context, [tc])
 
             # Simulate tool result
             tool_result = {"role": "tool", "tool_call_id": tc.call_id, "content": "ok"}
 
-            for hook in context.hooks or []:
+            for hook in context.extensions.get(ExtensionKey.HOOKS, []):
                 if hasattr(hook, "after_tool_execution"):
                     await hook.after_tool_execution(context, [tool_result])
 
         result = AgentResult(content="Task done.", stop_reason="final")
 
-        for hook in context.hooks or []:
+        for hook in context.extensions.get(ExtensionKey.HOOKS, []):
             if hasattr(hook, "after_turn"):
                 await hook.after_turn(context, result)
 
@@ -196,8 +197,10 @@ class TestHookCollaboration:
             tool_manager=InMemoryToolManager(),
             session_id="conv_001:main:doc-expert",
             metadata={"session_id": "conv_001:main:doc-expert"},
-            hooks=pipeline.hooks,
-            runtime_context_manager=runtime_mgr,
+            extensions={
+                ExtensionKey.HOOKS: pipeline.hooks,
+                ExtensionKey.RUNTIME_CTX_MGR: runtime_mgr,
+            },
         )
         await FakeAgent(tool_calls=[
             FakeToolCall("send_message_async", "tc_1", {"target_agent": "main"})
@@ -232,8 +235,10 @@ class TestHookCollaboration:
             tool_manager=InMemoryToolManager(),
             session_id="conv_001:main:doc-expert",
             metadata={"session_id": "conv_001:main:doc-expert"},
-            hooks=pipeline.hooks,
-            runtime_context_manager=runtime_mgr,
+            extensions={
+                ExtensionKey.HOOKS: pipeline.hooks,
+                ExtensionKey.RUNTIME_CTX_MGR: runtime_mgr,
+            },
         )
         await FakeAgent(tool_calls=[
             FakeToolCall("search", "tc_1", {"q": "foo"})
@@ -254,13 +259,16 @@ class TestHookCollaboration:
             tool_manager=InMemoryToolManager(),
             session_id="test_session",
             metadata={},
-            hooks=[rch],
-            runtime_context_manager=runtime_mgr,
+            extensions={
+                ExtensionKey.HOOKS: [rch],
+                ExtensionKey.RUNTIME_CTX_MGR: runtime_mgr,
+            },
         )
 
         # Resolve context
         await rch.before_turn(ctx)
-        assert ctx.runtime_context is not None
+        runtime_ctx = ctx.extensions.get(ExtensionKey.RUNTIME_CTX)
+        assert runtime_ctx is not None
 
         # Simulate tool execution
         tool_call = FakeToolCall("weather", "tc_1", {"city": "Beijing"})
@@ -269,7 +277,7 @@ class TestHookCollaboration:
         result_msg = {"role": "tool", "tool_call_id": "tc_1", "content": "Sunny 25C"}
         await rch.after_tool_execution(ctx, [result_msg])
 
-        calls = await ctx.runtime_context.get_tool_calls()
+        calls = await runtime_ctx.get_tool_calls()
         assert len(calls) == 1
         assert calls[0].tool_name == "weather"
         assert calls[0].arguments == {"city": "Beijing"}
@@ -305,8 +313,10 @@ class TestHookCollaboration:
             tool_manager=InMemoryToolManager(),
             session_id="conv_001:main:doc-expert",
             metadata={"session_id": "conv_001:main:doc-expert"},
-            hooks=pipeline.hooks,
-            runtime_context_manager=runtime_mgr,
+            extensions={
+                ExtensionKey.HOOKS: pipeline.hooks,
+                ExtensionKey.RUNTIME_CTX_MGR: runtime_mgr,
+            },
         )
 
         await FakeAgent().run(ctx, MagicMock(spec=ContentEmitter))

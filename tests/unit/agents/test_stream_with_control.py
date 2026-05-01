@@ -1,10 +1,12 @@
 """Tests for ReActAgent._stream_with_control — LLM_STREAM interceptor path."""
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from framework.agents.react.agent import ReActEvent, ReActAgent
+from framework.core.context_extensions import ExtensionKey
 from framework.core.provider import StreamingLLMProvider
 from framework.core.types import LLMResponse, ToolCall
 from framework.interceptor.abc import InterceptorScope
@@ -60,19 +62,26 @@ class _FakeContext:
     def __init__(self, *, interceptor_chain=None):
         self.messages = [{"role": "user", "content": "run a tool"}]
         self.history = _FakeHistory()
-        self.hooks: list = []
         self.max_iterations = 3
-        self.max_tools_per_turn = None
         self.attachments: list = []
         self.tool_manager = None
         self.temperature = 0.7
         self.max_tokens = None
-        self.governance = None
-        self.on_checkpoint = None
         self.metadata: dict = {}
         self.session_id = "test-session-001"
-        self.interceptor_chain = interceptor_chain
-        self.checkpoint_store = None
+        self.extensions: dict[str, Any] = {
+            ExtensionKey.HOOKS: [],
+            ExtensionKey.MAX_TOOLS_PER_TURN: None,
+            ExtensionKey.GOVERNANCE: None,
+            ExtensionKey.ON_CHECKPOINT: None,
+            ExtensionKey.SAFETY: None,
+            ExtensionKey.HOOK_RUNNER: None,
+            ExtensionKey.INTERCEPTOR_CHAIN: interceptor_chain,
+            ExtensionKey.CHECKPOINT_STORE: None,
+            ExtensionKey.INJECTION_QUEUE: None,
+            ExtensionKey.RUNTIME_CTX_MGR: None,
+            ExtensionKey.RUNTIME_CTX: None,
+        }
 
     async def to_messages(self):
         return list(self.messages)

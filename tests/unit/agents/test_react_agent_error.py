@@ -1,12 +1,14 @@
 """Tests for ReActAgent error response and cancellation handling (P0-a)."""
 
 import asyncio
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from framework.agents.react.agent import ReActAgent
 from framework.core.constants import FinishReason
+from framework.core.context_extensions import ExtensionKey
 from framework.core.emitter import AgentResult
 from framework.core.types import LLMResponse, ToolCall
 from framework.core.tool_manager import ToolResult
@@ -69,17 +71,27 @@ class _FakeContext:
     def __init__(self):
         self.messages = [{"role": "user", "content": "hello"}]
         self.history = _FakeHistory()
-        self.hooks: list = []
         self.max_iterations = 5
-        self.max_tools_per_turn = None
         self.attachments: list = []
         self.tool_manager = None
         self.temperature = 0.7
         self.max_tokens = None
-        self.governance = None
         self.checkpoint: list | None = None
-        self.on_checkpoint = None
         self.metadata: dict = {}
+        self.session_id = "error-test"
+        self.extensions: dict[str, Any] = {
+            ExtensionKey.HOOKS: [],
+            ExtensionKey.MAX_TOOLS_PER_TURN: None,
+            ExtensionKey.GOVERNANCE: None,
+            ExtensionKey.ON_CHECKPOINT: None,
+            ExtensionKey.SAFETY: None,
+            ExtensionKey.HOOK_RUNNER: None,
+            ExtensionKey.INTERCEPTOR_CHAIN: None,
+            ExtensionKey.CHECKPOINT_STORE: None,
+            ExtensionKey.INJECTION_QUEUE: None,
+            ExtensionKey.RUNTIME_CTX_MGR: None,
+            ExtensionKey.RUNTIME_CTX: None,
+        }
 
     async def to_messages(self):
         return list(self.messages)
@@ -148,7 +160,7 @@ class TestReActAgentCancelledError:
             nonlocal saved_checkpoint
             saved_checkpoint = list(messages)
 
-        ctx.on_checkpoint = save_ckpt
+        ctx.extensions[ExtensionKey.ON_CHECKPOINT] = save_ckpt
 
         with pytest.raises(asyncio.CancelledError):
             await agent.run(ctx, emitter)
@@ -211,7 +223,7 @@ class TestReActAgentHookTimeout:
         agent = ReActAgent(provider=provider, hook_timeout=0.01)
         emitter = _FakeEmitter()
         ctx = _FakeContext()
-        ctx.hooks = [SlowHook()]
+        ctx.extensions[ExtensionKey.HOOKS] = [SlowHook()]
 
         # Should not raise — hook timeout is caught and logged
         result = await agent.run(ctx, emitter)

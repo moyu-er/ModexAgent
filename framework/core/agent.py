@@ -5,96 +5,55 @@
 
 from __future__ import annotations
 
-import asyncio
 import contextvars
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
-if TYPE_CHECKING:
-    from framework.control.checkpoint import CheckpointStore
-    from framework.hook.runner import HookRunner
-    from framework.interceptor.chain import InterceptorChain
-
-    from .llm_error import RuntimeSafetyPolicy
-
-from framework.hook import Hook
-from framework.memory.core.message import ChatMessage
 from framework.memory.history import MessageHistory
 
-from ..memory import ContextGovernance
 from .emitter import AgentResult, ContentEmitter
 from .events import AgentEvent
-from .message_utils import AGENT_COMMUNICATION_SYSTEM_NOTE, normalize_agent_messages_for_llm
-from .runtime_context import RuntimeContext, RuntimeContextManager
+from .message_utils import normalize_agent_messages_for_llm
 from .tool_manager import ToolManager
 
 
 @dataclass
 class AgentContext:
-    """Agent 执行上下文
-
-    包含执行所需的所有信息。
-    """
+    """Agent execution context — core fields only. Extensions for agent-type-specific services."""
 
     system_prompt: str
     history: MessageHistory
     tool_manager: ToolManager
     session_id: str = ""
     max_iterations: int = 10
-    max_tools_per_turn: int = 10
     temperature: float | None = None
     max_tokens: int | None = None
+    attachments: list[str] = field(default_factory=list)
+    extensions: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
-    on_checkpoint: Callable[[list[ChatMessage | dict[str, Any]]], Awaitable[None]] | None = None
-    hooks: list[Hook] = field(default_factory=list)
-    attachments: list[str] = field(default_factory=list)  # Agent->User 方向的附件路径列表
-    injection_queue: asyncio.Queue[str] | None = None  # 执行中注入消息队列
-    runtime_context_manager: RuntimeContextManager | None = None
-    runtime_context: RuntimeContext | None = None
-    governance: ContextGovernance | None = None
-    safety: RuntimeSafetyPolicy | None = None
-    hook_runner: HookRunner | None = None
-    interceptor_chain: InterceptorChain | None = None
-    checkpoint_store: CheckpointStore | None = None
+    emitter: ContentEmitter | None = None
 
     def add_attachment(self, path: str) -> None:
-        """将文件路径添加到 attachments 列表（供 Tool 调用期间使用）。"""
         self.attachments.append(path)
 
     async def to_messages(self) -> list[dict[str, Any]]:
-        """转换为 LLM 消息列表
-
-        内部存储的 role: "agent" 消息会在此处转换为 role: "user" 并添加来源前缀，
-        同时在系统提示词中注入 Agent 通信说明（仅当存在 agent 消息时）。
-        """
-        # 过滤掉 history 中已有的 system 消息，避免重复系统提示词
         history_list = await self.history.to_list()
-
-        # 将内部 agent 角色转换为 LLM 兼容格式
-        history_list, has_agent_msgs = normalize_agent_messages_for_llm(history_list)
+        history_list, _has_agent_msgs = normalize_agent_messages_for_llm(history_list)
         non_system = [msg for msg in history_list if msg.get("role") != "system"]
 
-        messages: list[dict[str, Any]] = []
-        # 只在 system_prompt 非空时添加，避免 API 报错
-        if self.system_prompt:
-            system_content = self.system_prompt
-            # 存在 agent 消息时，追加通信说明到系统提示词
-            if has_agent_msgs and AGENT_COMMUNICATION_SYSTEM_NOTE not in system_content:
-                system_content += AGENT_COMMUNICATION_SYSTEM_NOTE
-            messages.append({"role": "system", "content": system_content})
-
-        # Strip None values to keep output clean and compatible with tests
         def _strip_none(d: dict[str, Any]) -> dict[str, Any]:
             return {k: v for k, v in d.items() if v is not None}
 
-        messages.extend(_strip_none(msg) for msg in non_system)
-        return messages
+        return [_strip_none(msg) for msg in non_system]
 
     def get_tool_descriptions(self) -> list[dict[str, Any]]:
-        """获取工具描述（供 LLM 使用）"""
         return self.tool_manager.get_tool_descriptions()
+
+
+def ctx_ext(ctx: AgentContext, key: str, default: Any = None) -> Any:
+    """Safe accessor for AgentContext.extensions."""
+    return ctx.extensions.get(key, default)
 
 
 current_agent_context: contextvars.ContextVar[AgentContext] = contextvars.ContextVar(

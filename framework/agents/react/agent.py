@@ -19,8 +19,9 @@ from framework.interceptor.abc import (
     ToolCallContext,
 )
 
-from ...core.agent import Agent, AgentContext, current_agent_context
+from ...core.agent import Agent, AgentContext, current_agent_context, ctx_ext
 from ...core.constants import DefaultValues, FinishReason
+from ...core.context_extensions import ExtensionKey
 from ...core.emitter import AgentResult, ContentEmitter, ToolCall
 from ...core.events import AgentEvent
 from ...core.provider import LLMProvider, StreamingLLMProvider
@@ -162,8 +163,9 @@ class ReActAgent(Agent[ReActEvent]):
                 messages = await context.to_messages()
 
                 # 应用上下文治理（token 预算、tool 链修复等）
-                if context.governance is not None:
-                    messages = await context.governance.apply(messages)
+                governance = ctx_ext(context, ExtensionKey.GOVERNANCE)
+                if governance is not None:
+                    messages = await governance.apply(messages)
 
                 response = await self._request_llm(messages, context, emitter)
                 await self._call_hooks(HookPoint.AFTER_LLM_RESPONSE, context, response)
@@ -191,7 +193,7 @@ class ReActAgent(Agent[ReActEvent]):
                 tool_calls = response.tool_calls
 
                 # 限制每轮最大工具调用数
-                max_tools = context.max_tools_per_turn
+                max_tools = ctx_ext(context, ExtensionKey.MAX_TOOLS_PER_TURN, 10)
                 if max_tools is not None and tool_calls and len(tool_calls) > max_tools:
                     error_msg = f"Exceeded max_tools_per_turn limit ({max_tools})"
                     logger.warning(error_msg)
@@ -377,10 +379,11 @@ class ReActAgent(Agent[ReActEvent]):
                 "reason": denial.reason,
                 "iteration": denial.iteration,
             }
-        if getattr(context, "checkpoint_store", None) is not None:
+        checkpoint_store = ctx_ext(context, ExtensionKey.CHECKPOINT_STORE)
+        if checkpoint_store is not None:
             session_id = getattr(context, "session_id", "unknown")
             checkpoint_id = f"{session_id}:denial"
-            await context.checkpoint_store.save(checkpoint_id, checkpoint_data)
+            await checkpoint_store.save(checkpoint_id, checkpoint_data)
 
     async def _save_checkpoint(
         self,
@@ -389,32 +392,38 @@ class ReActAgent(Agent[ReActEvent]):
     ) -> None:
         """保存检查点，优先使用 checkpoint_store，回退到 on_checkpoint 回调。"""
         data = {"messages": list(all_new_messages)}
-        if getattr(context, "checkpoint_store", None) is not None:
+        checkpoint_store = ctx_ext(context, ExtensionKey.CHECKPOINT_STORE)
+        if checkpoint_store is not None:
             session_id = getattr(context, "session_id", "unknown")
             checkpoint_id = f"{session_id}:latest"
-            await context.checkpoint_store.save(checkpoint_id, data)
-        elif context.on_checkpoint:
-            await context.on_checkpoint(list(all_new_messages))
+            await checkpoint_store.save(checkpoint_id, data)
+        else:
+            on_checkpoint = ctx_ext(context, ExtensionKey.ON_CHECKPOINT)
+            if on_checkpoint:
+                await on_checkpoint(list(all_new_messages))
 
     async def _clear_checkpoint(self, context: AgentContext) -> None:
         """清空检查点，优先使用 checkpoint_store，回退到 on_checkpoint 回调。"""
-        if getattr(context, "checkpoint_store", None) is not None:
+        checkpoint_store = ctx_ext(context, ExtensionKey.CHECKPOINT_STORE)
+        if checkpoint_store is not None:
             session_id = getattr(context, "session_id", "unknown")
             checkpoint_id = f"{session_id}:latest"
-            await context.checkpoint_store.clear(checkpoint_id)
-        elif context.on_checkpoint:
-            await context.on_checkpoint([])
+            await checkpoint_store.clear(checkpoint_id)
+        else:
+            on_checkpoint = ctx_ext(context, ExtensionKey.ON_CHECKPOINT)
+            if on_checkpoint:
+                await on_checkpoint([])
 
     def _resolve_hook_timeout(self, context: AgentContext) -> float:
-        """从 context.safety 读取 hook_timeout，带 fallback。"""
-        safety = getattr(context, "safety", None)
+        """从 ctx.extensions 读取 hook_timeout，带 fallback。"""
+        safety = ctx_ext(context, ExtensionKey.SAFETY)
         if safety is not None:
             return safety.turn.hook_timeout_seconds
         return self._hook_timeout
 
     def _resolve_tool_timeout(self, context: AgentContext) -> float:
-        """从 context.safety 读取 tool_timeout，带 fallback。"""
-        safety = getattr(context, "safety", None)
+        """从 ctx.extensions 读取 tool_timeout，带 fallback。"""
+        safety = ctx_ext(context, ExtensionKey.SAFETY)
         if safety is not None:
             return safety.turn.tool_timeout_seconds
         return self._tool_timeout
@@ -428,9 +437,10 @@ class ReActAgent(Agent[ReActEvent]):
     ) -> None:
         """调用 context 中注册的所有 hooks 的指定方法。
 
-        优先使用 HookRunner（ctx.hook_runner），否则回退到旧路径。
+        优先使用 HookRunner（extensions[HOOK_RUNNER]），否则回退到旧路径。
         """
-        if getattr(context, "hook_runner", None) is not None:
+        hook_runner = ctx_ext(context, ExtensionKey.HOOK_RUNNER)
+        if hook_runner is not None:
             payload_data: dict[str, Any] = {}
             method_name = hook_point.value
             if args:
@@ -443,7 +453,7 @@ class ReActAgent(Agent[ReActEvent]):
                         payload_data = {"tool_calls": args[0]}
                     else:
                         payload_data = {"results": args[0]}
-            await context.hook_runner.dispatch(
+            await hook_runner.dispatch(
                 hook_point,
                 context,
                 HookPayload(data=payload_data),
@@ -452,7 +462,8 @@ class ReActAgent(Agent[ReActEvent]):
             return
 
         hook_timeout = self._resolve_hook_timeout(context)
-        for hook in context.hooks or []:
+        hooks = ctx_ext(context, ExtensionKey.HOOKS, [])
+        for hook in hooks:
             if hook is None:
                 continue
             method = getattr(hook, hook_point.value, None)
@@ -486,8 +497,9 @@ class ReActAgent(Agent[ReActEvent]):
         is_streaming_provider = isinstance(self.provider, StreamingLLMProvider)
 
         if wants_streaming and is_streaming_provider:
-            if (getattr(context, "interceptor_chain", None)
-                    and context.interceptor_chain.has_scope(InterceptorScope.LLM_STREAM)):
+            interceptor_chain = ctx_ext(context, ExtensionKey.INTERCEPTOR_CHAIN)
+            if (interceptor_chain is not None
+                    and interceptor_chain.has_scope(InterceptorScope.LLM_STREAM)):
                 return await self._stream_with_control(messages, context, emitter)
 
             async def _on_content_delta(delta: str) -> None:
@@ -531,7 +543,8 @@ class ReActAgent(Agent[ReActEvent]):
         context: AgentContext,
     ) -> ToolResult:
         """执行工具，优先使用 InterceptorChain 包裹。"""
-        if getattr(context, "interceptor_chain", None) is not None:
+        interceptor_chain = ctx_ext(context, ExtensionKey.INTERCEPTOR_CHAIN)
+        if interceptor_chain is not None:
             call_ctx = ToolCallContext(
                 tool_call=tool_call,
                 tool_name=tool_call.tool_name,
@@ -542,7 +555,7 @@ class ReActAgent(Agent[ReActEvent]):
             async def _actual() -> ToolResult:
                 return await self._execute_tool_raw(tool_call, context)
 
-            return await context.interceptor_chain.around_tool_call(
+            return await interceptor_chain.around_tool_call(
                 context,
                 call_ctx,
                 _actual,
@@ -635,7 +648,8 @@ class ReActAgent(Agent[ReActEvent]):
                 finish_reason=response.finish_reason,
             )
 
-        async for chunk in context.interceptor_chain.around_llm_stream(
+        interceptor_chain = ctx_ext(context, ExtensionKey.INTERCEPTOR_CHAIN)
+        async for chunk in interceptor_chain.around_llm_stream(
             context, stream_ctx, _actual_stream,
         ):
             if chunk.control_action == "cancel":
@@ -667,7 +681,7 @@ class ReActAgent(Agent[ReActEvent]):
         max_per_phase: int = _MAX_INJECTIONS_PER_PHASE,
     ) -> list[str]:
         """消费注入队列中的用户消息，追加到 history。"""
-        q = getattr(context, "injection_queue", None)
+        q = ctx_ext(context, ExtensionKey.INJECTION_QUEUE)
         if q is None:
             return []
 

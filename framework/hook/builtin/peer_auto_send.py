@@ -10,6 +10,9 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
+from framework.core.agent import ctx_ext
+from framework.core.context_extensions import ExtensionKey
+
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
     from framework.multi_agent.bus import AgentMessageBus
@@ -50,11 +53,13 @@ class PeerAutoSendHook:
         if not result or not getattr(result, "content", None):
             return
 
-        rc = ctx.runtime_context
-        if rc is None and ctx.runtime_context_manager is not None:
-            rc = await ctx.runtime_context_manager.get_context(
-                ctx.session_id, ctx.metadata
-            )
+        rc = ctx_ext(ctx, ExtensionKey.RUNTIME_CTX)
+        if rc is None:
+            rt_mgr = ctx_ext(ctx, ExtensionKey.RUNTIME_CTX_MGR)
+            if rt_mgr is not None:
+                rc = await rt_mgr.get_context(
+                    ctx.session_id, ctx.metadata
+                )
         if rc is not None:
             calls = await rc.get_tool_calls()
             sent_tools = {"send_message", "send_message_async"}

@@ -16,9 +16,7 @@ class TestAgentContextToMessages:
             tool_manager=InMemoryToolManager(),
         )
         msgs = await ctx.to_messages()
-        assert len(msgs) == 1
-        assert msgs[0]["role"] == "system"
-        assert msgs[0]["content"] == "You are a bot"
+        assert len(msgs) == 0  # system prompt no longer included
 
     @pytest.mark.asyncio
     async def test_filters_existing_system_messages_from_history(self):
@@ -34,9 +32,7 @@ class TestAgentContextToMessages:
         )
         msgs = await ctx.to_messages()
         roles = [m["role"] for m in msgs]
-        assert roles.count("system") == 1
-        assert msgs[0]["role"] == "system"
-        assert msgs[0]["content"] == "Live system prompt"
+        assert "system" not in roles  # system messages not in to_messages() output
         assert {"role": "user", "content": "hi"} in msgs
         assert {"role": "assistant", "content": "hello"} in msgs
         assert all(
@@ -70,4 +66,4 @@ class TestAgentContextToMessages:
         )
         msgs = await ctx.to_messages()
         roles = [m["role"] for m in msgs]
-        assert roles == ["system", "user", "assistant", "tool"]
+        assert roles == ["user", "assistant", "tool"]  # system prompt no longer included

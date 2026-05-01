@@ -14,6 +14,7 @@ import pytest
 
 from framework.agents.react import ReActAgent, ReActEvent
 from framework.core.agent import AgentContext
+from framework.core.context_extensions import ExtensionKey
 from framework.core.emitter import BufferingEmitter, StreamingAwareEmitter
 from framework.hook import Hook
 from framework.core.provider import StreamingLLMProvider
@@ -173,7 +174,7 @@ class TestReActAgentUnifiedLoop:
                 responses.append(response.content)
 
         streaming_provider._stream_content = ["Hello ", "World"]
-        context.hooks = [TrackingHook()]
+        context.extensions[ExtensionKey.HOOKS] = [TrackingHook()]
         agent = ReActAgent(provider=streaming_provider)
 
         await agent.run(context, streaming_emitter)
@@ -293,7 +294,7 @@ class TestReActAgentUnifiedLoop:
             return LLMResponse(content="Complete response")
 
         non_streaming_provider.chat = mock_chat
-        context.hooks = [TrackingHook()]
+        context.extensions[ExtensionKey.HOOKS] = [TrackingHook()]
         agent = ReActAgent(provider=non_streaming_provider)
 
         await agent.run(context, emitter)
@@ -586,7 +587,7 @@ class TestReActAgentCheckpoint:
         async def on_checkpoint(msgs: list[dict[str, Any]]) -> None:
             checkpoints.append(list(msgs))
 
-        context.on_checkpoint = on_checkpoint
+        context.extensions[ExtensionKey.ON_CHECKPOINT] = on_checkpoint
         agent = ReActAgent(provider=streaming_provider)
         streaming_emitter = StreamingEmitter()
 
@@ -610,7 +611,7 @@ class TestReActAgentCheckpoint:
         async def on_checkpoint(msgs: list[dict[str, Any]]) -> None:
             checkpoints.append(list(msgs))
 
-        context.on_checkpoint = on_checkpoint
+        context.extensions[ExtensionKey.ON_CHECKPOINT] = on_checkpoint
         agent = ReActAgent(provider=non_streaming_provider)
 
         await agent.run(context, emitter)
@@ -630,7 +631,7 @@ class TestReActAgentCheckpoint:
         async def on_checkpoint(msgs: list[dict[str, Any]]) -> None:
             checkpoints.append(list(msgs))
 
-        context.on_checkpoint = on_checkpoint
+        context.extensions[ExtensionKey.ON_CHECKPOINT] = on_checkpoint
         agent = ReActAgent(provider=non_streaming_provider)
 
         result = await agent.run(context, emitter)

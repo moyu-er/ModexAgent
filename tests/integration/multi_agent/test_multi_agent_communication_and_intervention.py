@@ -22,6 +22,7 @@ import pytest
 from framework.agents.react import ReActAgent, ReActEvent
 from framework.core.agent import AgentContext
 from framework.core.context import InMemoryContextManager
+from framework.core.context_extensions import ExtensionKey
 from framework.core.emitter import AgentResult, BufferingEmitter
 from framework.core.provider import StreamingLLMProvider
 from framework.core.tool_manager import InMemoryToolManager, Tool, ToolConfig, ToolResult
@@ -221,8 +222,8 @@ async def test_inbox_flush_hook_injects_before_react_iteration(mock_provider):
         history=ListMessageHistory([{"role": "user", "content": "start"}]),
         tool_manager=MagicMock(),
         max_iterations=1,
-        hooks=[hook],
         metadata={"session_id": "conv1:main"},
+        extensions={ExtensionKey.HOOKS: [hook]},
     )
 
     emitter = BufferingEmitter[ReActEvent]()
@@ -357,7 +358,7 @@ async def test_task_intervention_hook_cancels_react_iteration():
         history=ListMessageHistory([{"role": "user", "content": "start"}]),
         tool_manager=MagicMock(),
         max_iterations=3,
-        hooks=[hook],
+        extensions={ExtensionKey.HOOKS: [hook]},
     )
 
     # 稍微等待让策略 deadline 过期
@@ -438,7 +439,7 @@ async def test_task_progress_hook_reports_to_platform_during_react(broker, memor
         history=ListMessageHistory([{"role": "user", "content": "1+1"}]),
         tool_manager=tm,
         max_iterations=3,
-        hooks=[progress_hook],
+        extensions={ExtensionKey.HOOKS: [progress_hook]},
     )
 
     emitter = BufferingEmitter[ReActEvent]()
@@ -539,9 +540,11 @@ async def test_composite_run_hook_with_inbox_and_intervention(broker, mock_provi
         history=ListMessageHistory([{"role": "user", "content": "start"}]),
         tool_manager=MagicMock(),
         max_iterations=1,
-        hooks=[inbox_hook, intervention_hook],
-        hook_runner=runner,
         metadata={"session_id": "c1:main"},
+        extensions={
+            ExtensionKey.HOOKS: [inbox_hook, intervention_hook],
+            ExtensionKey.HOOK_RUNNER: runner,
+        },
     )
 
     emitter = BufferingEmitter[ReActEvent]()

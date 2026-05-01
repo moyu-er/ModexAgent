@@ -8,6 +8,8 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 from framework.control.exceptions import AgentTimeout
+from framework.core.agent import ctx_ext
+from framework.core.context_extensions import ExtensionKey
 from framework.interceptor.abc import InterceptorScope, TurnNext
 
 if TYPE_CHECKING:
@@ -30,7 +32,7 @@ class TurnTimeoutInterceptor:
     """Turn 超时拦截器。
 
     包裹整个 turn，超时时按配置取消或通知。
-    读取 ctx.safety.turn.turn_timeout_seconds 作为默认值。
+    读取 ctx.extensions[ExtensionKey.SAFETY].turn.turn_timeout_seconds 作为默认值。
     """
 
     scopes = frozenset([InterceptorScope.TURN])
@@ -68,7 +70,7 @@ class TurnTimeoutInterceptor:
     def _resolve_timeout(self, ctx: AgentContext) -> float:
         if self._timeout is not None:
             return self._timeout
-        safety = getattr(ctx, "safety", None)
+        safety = ctx_ext(ctx, ExtensionKey.SAFETY)
         if safety is not None:
             return safety.turn.agent_run_timeout_seconds
         return _DEFAULT_TURN_TIMEOUT
