@@ -58,19 +58,32 @@ class SuspendResumeStrategy(SuspendStrategy):
         approval_state = ApprovalState(session_id=ctx.session_id, requests=list(requests))
         await self._approval_store.save(approval_state)
 
+        # Read LLM response BEFORE ToolNode pops it — save ALL tool calls
+        llm_response = ctx.metadata.get(ReActMetaKey.LLM_RESPONSE)
+        all_tool_calls: list[dict[str, Any]] = []
+        llm_content = ""
+        llm_reasoning = None
+        if llm_response is not None:
+            for tc in (llm_response.tool_calls or []):
+                all_tool_calls.append({
+                    "id": getattr(tc, "call_id", "") or "",
+                    "type": "function",
+                    "function": {
+                        "name": getattr(tc, "tool_name", ""),
+                        "arguments": getattr(tc, "arguments", {}) or {},
+                    },
+                })
+            llm_content = getattr(llm_response, "content", "") or ""
+            llm_reasoning = getattr(llm_response, "reasoning_content", None)
+
         resume_state = TurnResumeState(
             iteration=ctx.metadata[ReActMetaKey.ITERATION],
-            tool_calls=[self._tc_to_dict(r) for r in requests],
+            tool_calls=all_tool_calls,
             tool_decisions=[ApprovalDecision.PENDING] * len(requests),
             all_new_messages=list(ctx.metadata.get(ReActMetaKey.ITERATION_MSGS, [])),
+            llm_content=llm_content,
+            llm_reasoning=llm_reasoning,
         )
         await self._resume_store.save(ctx.session_id, resume_state)
 
         return interrupt(requests)
-
-    @staticmethod
-    def _tc_to_dict(r: ApprovalRequest) -> dict[str, Any]:
-        return {
-            "id": r.tool_call_id, "type": "function",
-            "function": {"name": r.tool_name, "arguments": r.arguments},
-        }

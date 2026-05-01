@@ -9,7 +9,7 @@ import contextvars
 from typing import Any
 
 
-class GraphInterrupt(Exception):
+class GraphInterrupt(Exception):  # noqa: N818
     """Graph execution interrupt raised by interrupt().
 
     Carries the value the node wanted to pass upward (e.g. approval requests),

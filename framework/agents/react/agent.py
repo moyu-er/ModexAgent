@@ -201,7 +201,7 @@ class ReActAgent(Agent[ReActEvent]):
         context: AgentContext,
     ) -> None:
         """保存被拒绝时的完整 checkpoint（含所有 tool 结果 + 拒绝上下文）。"""
-        denial: Any = context.metadata.get("_approval_denial")
+        denial: Any = context.metadata.get(ReActMetaKey.APPROVAL_DENIAL)
         checkpoint_data: dict[str, Any] = {
             "messages": list(all_messages),
             "termination": "approval_denied",

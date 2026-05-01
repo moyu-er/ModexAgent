@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from framework.agents.react.constants import ReActMetaKey
 from framework.control.checkpoint import ApprovalDenialContext
 from framework.control.types import (
     ControlCommand,
@@ -59,11 +60,6 @@ class TimeoutAction(str, Enum):
 
     TOOL_ERROR = "timeout_as_tool_error"
     CANCEL_TURN = "timeout_as_cancel"
-
-
-# Metadata keys for deny_as_cancel coordination with ReActAgent
-_DENY_AS_CANCEL_FLAG = "_deny_as_cancel"
-_DENIAL_CTX_KEY = "_approval_denial"
 
 
 class ToolNameMatcher:
@@ -219,6 +215,24 @@ class TieredToolApprovalInterceptor:
         self._on_denied = on_denied
         self._on_timeout = on_timeout
 
+    def classify_tier(self, tool_call) -> str:
+        """Classify a tool's tier without invoking the full interceptor chain.
+
+        Returns one of: normal, dangerous, sensitive, hardline.
+        """
+        tool_name = tool_call.tool_name
+
+        if self._hardline is not None and self._hardline.matches(tool_name):
+            return ApprovalTier.HARDLINE
+
+        if self._dangerous is not None and self._dangerous.matches(tool_name):
+            return ApprovalTier.DANGEROUS
+
+        if self._sensitive is not None and self._sensitive.matches(tool_name):
+            return ApprovalTier.SENSITIVE
+
+        return ApprovalTier.NORMAL
+
     async def around_tool_call(
         self,
         ctx: AgentContext,
@@ -316,7 +330,7 @@ class TieredToolApprovalInterceptor:
         call_id = call.tool_call.call_id or ""
 
         if self._on_denied == DenyAction.CANCEL_TURN:
-            ctx.metadata[_DENIAL_CTX_KEY] = ApprovalDenialContext(
+            ctx.metadata[ReActMetaKey.APPROVAL_DENIAL] = ApprovalDenialContext(
                 tool_name=call.tool_name,
                 tool_call_id=call_id,
                 arguments=dict(_redact_args(call.arguments)),
@@ -327,7 +341,7 @@ class TieredToolApprovalInterceptor:
                 turn_id=call.turn_id,
                 iteration=ctx.metadata.get("iteration", 0),
             )
-            ctx.metadata[_DENY_AS_CANCEL_FLAG] = True
+            ctx.metadata[ReActMetaKey.DENY_AS_CANCEL] = True
             return ToolResult(
                 tool_name=call.tool_name, call_id=call_id,
                 error=(
@@ -349,7 +363,7 @@ class TieredToolApprovalInterceptor:
     ) -> ToolResult:
         call_id = call.tool_call.call_id or ""
         if self._on_timeout == TimeoutAction.CANCEL_TURN:
-            ctx.metadata[_DENY_AS_CANCEL_FLAG] = True
+            ctx.metadata[ReActMetaKey.DENY_AS_CANCEL] = True
             return ToolResult(
                 tool_name=call.tool_name, call_id=call_id,
                 error="Error: Tool approval timed out (cancel_turn).",

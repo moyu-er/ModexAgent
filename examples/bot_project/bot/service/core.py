@@ -23,6 +23,9 @@ from framework import (
     ReActAgent,
     ToolManagerConfig,
 )
+from framework.control.channel import InMemoryControlChannel
+from framework.control.checkpoint import JsonFileCheckpointStore
+from framework.control.ui.im import IMUserInterface
 from framework.core.emitter import ContentEmitter
 from framework.core.llm_error import (
     CircuitBreakerPolicy,
@@ -37,6 +40,18 @@ from framework.core.skills import (
     SkillManager,
 )
 from framework.extensions.llm.litellm_provider import LiteLLMProvider
+from framework.hook.builtin import InboxFlushHook
+from framework.interceptor.builtin import (
+    ControlDrainInterceptor,
+    ToolResultLimitInterceptor,
+    ToolTimeoutInterceptor,
+    TurnTimeoutInterceptor,
+)
+from framework.interceptor.builtin.tool_approval import (
+    TieredToolApprovalInterceptor,
+    ToolNameMatcher,
+)
+from framework.interceptor.chain import InterceptorChain
 from framework.memory.context_governance import (
     CompositeGovernance,
     MicrocompactGovernance,
@@ -65,22 +80,6 @@ from framework.multi_agent import (
 )
 from framework.multi_agent.descriptor import AgentLLMConfig
 from framework.multi_agent.inbox.consumer import InboxConsumer
-from framework.hook.builtin import InboxFlushHook
-from framework.interceptor.builtin import (
-    ControlDrainInterceptor,
-    ToolResultLimitInterceptor,
-    ToolTimeoutInterceptor,
-    TurnTimeoutInterceptor,
-)
-from framework.interceptor.chain import InterceptorChain
-from framework.approval.store import LocalFileApprovalStateStore
-from framework.control.channel import InMemoryControlChannel
-from framework.control.checkpoint import JsonFileCheckpointStore
-from framework.control.ui.im import IMUserInterface
-from framework.interceptor.builtin.tool_approval import (
-    TieredToolApprovalInterceptor,
-    ToolNameMatcher,
-)
 from framework.multi_agent.inbox.producer import InboxProducer
 from framework.multi_agent.inbox.server_local import LocalFileInboxServer
 from framework.pipeline.adapters import InputAdapter, OutputAdapter
@@ -659,7 +658,7 @@ class BotService(AgentBuilderMixin):
 
     def _build_hook_runner(self, hooks: list[Any]) -> Any:
         """Build HookRunner from collected hooks with default HookSpec."""
-        from framework.hook import HookRunner, HookSpec, HookErrorPolicy
+        from framework.hook import HookErrorPolicy, HookRunner, HookSpec
 
         runner = HookRunner()
         for hook in hooks:

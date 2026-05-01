@@ -13,9 +13,11 @@ if TYPE_CHECKING:
 class TurnResumeState:
     """Snapshot captured when ToolNode suspends for approval."""
     iteration: int
-    tool_calls: list[dict[str, Any]]
-    tool_decisions: list[str]
+    tool_calls: list[dict[str, Any]]          # ALL tool calls (NORMAL + PENDING)
+    tool_decisions: list[str]                  # decisions for ALL tool calls
     all_new_messages: list[dict[str, Any]]
+    llm_content: str = ""                      # LLM response content (if any)
+    llm_reasoning: str | None = None           # LLM reasoning content (if any)
 
 
 class TurnResumeStateStore(ABC):
@@ -62,6 +64,8 @@ class StateStoreTurnResumeStateStore(TurnResumeStateStore):
             "tool_calls": state.tool_calls,
             "tool_decisions": state.tool_decisions,
             "all_new_messages": state.all_new_messages,
+            "llm_content": state.llm_content,
+            "llm_reasoning": state.llm_reasoning,
         })
 
     async def load(self, session_id: str) -> TurnResumeState | None:
@@ -73,6 +77,8 @@ class StateStoreTurnResumeStateStore(TurnResumeStateStore):
             tool_calls=data["tool_calls"],
             tool_decisions=data["tool_decisions"],
             all_new_messages=data["all_new_messages"],
+            llm_content=data.get("llm_content", ""),
+            llm_reasoning=data.get("llm_reasoning"),
         )
 
     async def delete(self, session_id: str) -> None:

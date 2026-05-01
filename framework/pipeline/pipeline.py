@@ -16,6 +16,14 @@ from framework.core.llm_error import RuntimeSafetyPolicy
 from framework.core.skills import SkillManager
 from framework.memory.core.message import ChatMessage
 
+from ..agents.react.constants import ReActMetaKey
+from ..agents.react.state import StateStoreTurnResumeStateStore
+from ..agents.react.strategy import SuspendResumeStrategy
+from ..approval.constants import ApprovalDecision
+from ..approval.response import parse_approval_action
+from ..approval.store import LocalFileApprovalStateStore
+from ..approval.types import ApprovalAction
+from ..control.ui.abc import ControlUserInterface
 from ..core.agent import Agent, AgentContext
 from ..core.context import ContextManager
 from ..core.context_extensions import ExtensionKey
@@ -40,14 +48,6 @@ from ..multi_agent import (
     SubagentManager,
 )
 from ..session.agent_session import _dream_locks
-from ..agents.react.constants import ReActMetaKey
-from ..agents.react.strategy import SuspendResumeStrategy
-from ..agents.react.state import StateStoreTurnResumeStateStore
-from ..approval.store import LocalFileApprovalStateStore
-from ..approval.response import parse_approval_action
-from ..approval.types import ApprovalAction
-from ..approval.constants import ApprovalDecision
-from ..control.ui.abc import ControlUserInterface
 from .adapters import InputAdapter, OutputAdapter, OutputMessage
 
 logger = logging.getLogger(__name__)
@@ -116,6 +116,7 @@ def _format_approval_prompt(req) -> str:
     return (
         f"Approval Required [{tier.upper()}]\n"
         f"Tool: {tool_name}\n"
+        f"ID: {call_id}\n"
         f"Args: {args_str}\n"
         f"Reply /approve or /deny"
     )
@@ -480,15 +481,16 @@ class AgentPipeline:
                 )
                 return
 
-        # Ensure approval/resume stores exist for this session
-        if session_id not in self._approval_stores:
-            self._approval_stores[session_id] = LocalFileApprovalStateStore(
-                self._approval_workspace
-            )
-        if session_id not in self._resume_stores:
-            self._resume_stores[session_id] = StateStoreTurnResumeStateStore(
-                self.checkpoint_store
-            )
+        # Ensure approval/resume stores exist for this session (only when needed)
+        if self.checkpoint_store is not None:
+            if session_id not in self._approval_stores:
+                self._approval_stores[session_id] = LocalFileApprovalStateStore(
+                    self._approval_workspace
+                )
+            if session_id not in self._resume_stores:
+                self._resume_stores[session_id] = StateStoreTurnResumeStateStore(
+                    self.checkpoint_store
+                )
 
         # Preliminary approval check: is this message an approval command?
         _is_approval_cmd = False
@@ -674,10 +676,11 @@ class AgentPipeline:
 
         # Inject SuspendResumeStrategy if not already set
         if ExtensionKey.SUSPEND_STRATEGY not in agent_context.extensions:
-            _approval_store = self._approval_stores[session_id]
-            _resume_store = self._resume_stores[session_id]
-            strategy = SuspendResumeStrategy(_approval_store, _resume_store)
-            agent_context.extensions[ExtensionKey.SUSPEND_STRATEGY] = strategy
+            _approval_store = self._approval_stores.get(session_id)
+            _resume_store = self._resume_stores.get(session_id)
+            if _approval_store is not None and _resume_store is not None:
+                strategy = SuspendResumeStrategy(_approval_store, _resume_store)
+                agent_context.extensions[ExtensionKey.SUSPEND_STRATEGY] = strategy
 
         # Emitter selection (must be before approval consumption, which may call agent.run)
         if self.emitter_factory:
@@ -723,7 +726,7 @@ class AgentPipeline:
                         await _resume_store.delete(session_id)
 
                         # Drain buffered messages
-                        await self._drain_approval_buffer(session_id, agent_context, emitter)
+                        await self._drain_approval_buffer(session_id)
 
                         # Save result
                         if result and result.attachments:
@@ -847,6 +850,9 @@ class AgentPipeline:
         self._session_locks.pop(session_id, None)
         self._injection_queues.pop(session_id, None)
         self._session_tasks.pop(session_id, None)
+        self._approval_pending.pop(session_id, None)
+        self._approval_stores.pop(session_id, None)
+        self._resume_stores.pop(session_id, None)
         if self.control_channel is not None:
             try:
                 await asyncio.wait_for(
@@ -858,13 +864,10 @@ class AgentPipeline:
             except Exception:
                 logger.debug("cleanup_session failed for %s", session_id, exc_info=True)
 
-    async def _drain_approval_buffer(
-        self, session_id: str, agent_context: Any, emitter: Any
-    ) -> None:
+    async def _drain_approval_buffer(self, session_id: str) -> None:
         """Replay buffered agent messages after approval completes."""
         pending = self._approval_pending.pop(session_id, [])
         for msg in pending:
-            # Process buffered agent messages (they bypass approval check)
             await self._process_message(msg)
 
     async def stop(self) -> None:
