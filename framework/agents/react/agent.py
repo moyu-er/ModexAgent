@@ -8,19 +8,19 @@ import contextlib
 import json
 import logging
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
-from framework.control.exceptions import AgentControlError, ApprovalDenied
+from framework.agents.react.constants import ReActMetaKey
+from framework.control.exceptions import AgentControlError
 from framework.hook import HookPayload, HookPoint
 from framework.interceptor.abc import (
-    InterceptorScope,
     LLMStreamChunk,
     LLMStreamContext,
     ToolCallContext,
 )
 
-from ...core.agent import Agent, AgentContext, current_agent_context, ctx_ext
-from ...core.constants import DefaultValues, FinishReason
+from ...core.agent import Agent, AgentContext, ctx_ext, current_agent_context
+from ...core.constants import DefaultValues
 from ...core.context_extensions import ExtensionKey
 from ...core.emitter import AgentResult, ContentEmitter, ToolCall
 from ...core.events import AgentEvent
@@ -112,10 +112,17 @@ class ReActAgent(Agent[ReActEvent]):
         provider: LLMProvider,
         hook_timeout: float = _HOOK_TIMEOUT,
         tool_timeout: float = _TOOL_TIMEOUT,
+        *,
+        mode: Literal["clean", "full"] = "full",
     ):
+        from framework.agents.react.graph import ReActGraph
+        from framework.core.graph.engine import GraphEngine
+
         self.provider = provider
         self._hook_timeout = hook_timeout
         self._tool_timeout = tool_timeout
+        self.graph = ReActGraph(self, mode=mode)
+        self.engine = GraphEngine(self.graph)
 
     @property
     def name(self) -> str:
@@ -126,234 +133,67 @@ class ReActAgent(Agent[ReActEvent]):
         context: AgentContext,
         emitter: ContentEmitter[ReActEvent],
     ) -> AgentResult:
-        """执行 ReAct 循环
+        """Delegate to GraphEngine (thin shell).
 
         Args:
-            context: Agent 执行上下文
-            emitter: 内容发射器
+            context: Agent execution context
+            emitter: content emitter
 
         Returns:
-            AgentResult: 执行结果
+            AgentResult: execution result
         """
+        from framework.core.graph.interrupt import GraphInterrupt
+
         # 每轮开始时清空 attachments，避免跨轮污染
         context.attachments = []
-        # 将当前 AgentContext 绑定到 contextvar，供 Tool 内部访问
+        context.emitter = emitter
         ctx_token = current_agent_context.set(context)
 
-        iteration = 0
-
-        await emitter.emit(ReActEvent.START)
-
-        all_new_messages: list[dict[str, Any]] = []
         result = AgentResult(content="", stop_reason="error")
 
         try:
             await self._call_hooks(HookPoint.BEFORE_TURN, context)
-
-            while iteration < context.max_iterations:
-                iteration += 1
-                await emitter.emit(ReActEvent.ITERATION_START, {"iteration": iteration})
-
-                await self._call_hooks(HookPoint.BEFORE_ITERATION, context)
-
-                # drain 注入积压消息
-                await self._drain_injections(context)
-
-                # 重新构建 messages，以便 Hook 注入的新消息被纳入上下文
-                messages = await context.to_messages()
-
-                # 应用上下文治理（token 预算、tool 链修复等）
-                governance = ctx_ext(context, ExtensionKey.GOVERNANCE)
-                if governance is not None:
-                    messages = await governance.apply(messages)
-
-                response = await self._request_llm(messages, context, emitter)
-                await self._call_hooks(HookPoint.AFTER_LLM_RESPONSE, context, response)
-
-                # 4.1: provider error response → fail turn, don't use as normal content
-                if response.finish_reason == FinishReason.ERROR.value:
-                    error_text = response.error or response.content or "LLM request failed"
-                    logger.warning(
-                        "ReActAgent turn failed: finish_reason=%s error=%s",
-                        response.finish_reason,
-                        (error_text or "")[:200],
-                    )
-                    await emitter.emit(ReActEvent.ERROR, error_text)
-                    result = AgentResult(
-                        error=error_text,
-                        stop_reason="error",
-                        messages=all_new_messages,
-                        attachments=context.attachments,
-                    )
-                    await emitter.emit_complete(result)
-                    return result
-
-                content = response.content or ""
-                reasoning = response.reasoning_content
-                tool_calls = response.tool_calls
-
-                # 限制每轮最大工具调用数
-                max_tools = ctx_ext(context, ExtensionKey.MAX_TOOLS_PER_TURN, 10)
-                if max_tools is not None and tool_calls and len(tool_calls) > max_tools:
-                    error_msg = f"Exceeded max_tools_per_turn limit ({max_tools})"
-                    logger.warning(error_msg)
-                    await emitter.emit(ReActEvent.ERROR, error_msg)
-                    result = AgentResult(
-                        content=error_msg,
-                        stop_reason="error",
-                        messages=all_new_messages,
-                        attachments=context.attachments,
-                    )
-                    await emitter.emit_complete(result)
-                    return result
-
-                # 本轮新增的消息列表（用于 after_tool_execution hook 参数）
-                iteration_messages: list[dict[str, Any]] = []
-
-                assistant_message = self._build_assistant_message(content, tool_calls)
-                messages.append(assistant_message)
-                await context.history.append(assistant_message)
-                all_new_messages.append(assistant_message)
-                iteration_messages.append(assistant_message)
-                await self._save_checkpoint(all_new_messages, context)
-
-                if tool_calls:
-                    progress_hint = self._format_tool_hint(tool_calls)
-                    await emitter.emit(
-                        ReActEvent.PROGRESS,
-                        {"hint": progress_hint, "tool_hint": True},
-                    )
-
-                    await self._call_hooks(HookPoint.BEFORE_TOOL_EXECUTION, context, tool_calls)
-
-                    for idx, tool_call in enumerate(tool_calls):
-                        await emitter.emit(ReActEvent.TOOL_CALL_START, tool_call)
-
-                        result = await self._execute_tool(tool_call, context)
-
-                        await emitter.emit(ReActEvent.TOOL_CALL_END, (tool_call, result))
-
-                        tool_message = self._build_tool_message(result, tool_call.call_id)
-                        messages.append(tool_message)
-                        await context.history.append(tool_message)
-                        all_new_messages.append(tool_message)
-                        iteration_messages.append(tool_message)
-                        await self._save_checkpoint(all_new_messages, context)
-
-                        # deny_as_cancel 批内补齐
-                        if context.metadata.get("_deny_as_cancel"):
-                            for remaining_tc in tool_calls[idx + 1:]:
-                                synthetic_result = ToolResult(
-                                    tool_name=remaining_tc.tool_name,
-                                    result=None,
-                                    error=(
-                                        "Error: Not executed — turn was cancelled because "
-                                        "a prior tool call was denied."
-                                    ),
-                                )
-                                tool_message = self._build_tool_message(
-                                    synthetic_result, remaining_tc.call_id,
-                                )
-                                messages.append(tool_message)
-                                await context.history.append(tool_message)
-                                all_new_messages.append(tool_message)
-                                iteration_messages.append(tool_message)
-
-                            await self._save_denial_checkpoint(all_new_messages, context)
-                            denial = context.metadata.get("_approval_denial")
-                            raise ApprovalDenied(
-                                denial.reason if denial else "Tool approval denied"
-                            )
-
-                    await self._call_hooks(
-                        HookPoint.AFTER_TOOL_EXECUTION,
-                        context,
-                        [msg for msg in iteration_messages if msg.get("role") == "tool"],
-                    )
-
-                    # drain injections after tool execution
-                    await self._drain_injections(context)
-
-                    await self._call_hooks(HookPoint.AFTER_ITERATION, context)
-                    await emitter.emit(
-                        ReActEvent.ITERATION_END,
-                        {"iteration": iteration, "has_tool_calls": True}
-                    )
-                else:
-                    result = AgentResult(
-                        content=content,
-                        reasoning=reasoning,
-                        messages=all_new_messages,
-                        attachments=context.attachments,
-                    )
-                    await self._clear_checkpoint(context)
-                    await emitter.emit(ReActEvent.FINAL_OUTPUT, result)
-                    await emitter.emit_complete(result)
-                    return result
-
-            result = AgentResult(
-                content="达到最大迭代次数",
-                stop_reason="max_iterations",
-                messages=all_new_messages,
-                attachments=context.attachments,
-            )
-            await self._clear_checkpoint(context)
-            await emitter.emit(ReActEvent.MAX_ITERATIONS, result)
-            await emitter.emit_complete(result)
+            result = await self.engine.run(context)
+            await self._call_hooks(HookPoint.AFTER_TURN, context, result)
             return result
-
-        except asyncio.CancelledError:
-            logger.warning(
-                "ReActAgent cancelled (iteration=%d, messages=%d)",
-                iteration,
-                len(all_new_messages),
-            )
-            try:
-                await asyncio.shield(self._save_checkpoint(all_new_messages, context))
-            except Exception:
-                logger.warning("Checkpoint save failed during cancellation", exc_info=True)
-            result = AgentResult(
-                error="Agent cancelled",
-                stop_reason=FinishReason.CANCELLED.value,
-                messages=all_new_messages,
-                attachments=context.attachments,
-            )
+        except GraphInterrupt:
             raise
         except AgentControlError as e:
             logger.warning(
-                "ReActAgent control exit: %s iteration=%d messages=%d",
+                "ReActAgent control exit: %s",
                 e.termination.value if e.termination else "error",
-                iteration,
-                len(all_new_messages),
             )
             try:
-                await asyncio.shield(self._save_checkpoint(all_new_messages, context))
+                all_new = context.metadata.get(ReActMetaKey.ITERATION_MSGS, [])
+                await asyncio.shield(self._save_checkpoint(all_new, context))
             except Exception:
-                logger.warning("Checkpoint save failed during control exit", exc_info=True)
-            result = AgentResult(
-                error=str(e),
-                stop_reason=e.termination.value if e.termination else "error",
-                messages=all_new_messages,
-                attachments=context.attachments,
-            )
+                pass
+            raise
+        except asyncio.CancelledError:
+            logger.warning("ReActAgent cancelled")
+            try:
+                all_new = context.metadata.get(ReActMetaKey.ITERATION_MSGS, [])
+                await asyncio.shield(self._save_checkpoint(all_new, context))
+            except Exception:
+                pass
             raise
         except Exception as e:
             logger.exception("Agent execution error")
             await emitter.emit(ReActEvent.ERROR, str(e))
-            await self._save_checkpoint(all_new_messages, context)
+            all_new = context.metadata.get(ReActMetaKey.ITERATION_MSGS, [])
+            await self._save_checkpoint(all_new, context)
             result = AgentResult(
-                error=str(e), stop_reason="error", messages=all_new_messages,
-                attachments=context.attachments,
+                error=str(e), stop_reason="error",
+                messages=all_new, attachments=context.attachments,
             )
             await emitter.emit_complete(result)
             return result
         finally:
-            # 清理 deny_as_cancel 标记和注入计数器，防止下一 turn 误触发
-            context.metadata.pop("_deny_as_cancel", None)
-            context.metadata.pop("_approval_denial", None)
-            context.metadata.pop("_injection_cycle_count", None)
+            context.metadata.pop(ReActMetaKey.DENY_AS_CANCEL, None)
+            context.metadata.pop(ReActMetaKey.APPROVAL_DENIAL, None)
+            context.metadata.pop(ReActMetaKey.INJECTION_CYCLE, None)
+            context.emitter = None
             current_agent_context.reset(ctx_token)
-            await self._call_hooks(HookPoint.AFTER_TURN, context, result)
 
     async def _save_denial_checkpoint(
         self,
@@ -486,57 +326,6 @@ class ReActAgent(Agent[ReActEvent]):
             except Exception:
                 logger.exception("Hook %s failed in %s", type(hook).__name__, hook_point.value)
 
-    async def _request_llm(
-        self,
-        messages: list[dict[str, Any]],
-        context: AgentContext,
-        emitter: ContentEmitter[ReActEvent],
-    ) -> LLMResponse:
-        """请求 LLM，根据 emitter 偏好选择流式或非流式路径。"""
-        wants_streaming = emitter.wants_streaming()
-        is_streaming_provider = isinstance(self.provider, StreamingLLMProvider)
-
-        if wants_streaming and is_streaming_provider:
-            interceptor_chain = ctx_ext(context, ExtensionKey.INTERCEPTOR_CHAIN)
-            if (interceptor_chain is not None
-                    and interceptor_chain.has_scope(InterceptorScope.LLM_STREAM)):
-                return await self._stream_with_control(messages, context, emitter)
-
-            async def _on_content_delta(delta: str) -> None:
-                if delta:
-                    await emitter.emit_delta(delta)
-                    await emitter.emit(ReActEvent.MODEL_OUTPUT, delta)
-
-            async def _on_reasoning_delta(delta: str) -> None:
-                if delta:
-                    await emitter.emit(ReActEvent.MODEL_REASONING, delta)
-
-            assert isinstance(self.provider, StreamingLLMProvider)
-            response = await self.provider.chat_stream(
-                messages=messages,
-                tools=context.get_tool_descriptions() if context.tool_manager else None,
-                temperature=context.temperature or 0.7,
-                max_tokens=context.max_tokens,
-                on_content_delta=_on_content_delta,
-                on_reasoning_delta=_on_reasoning_delta,
-            )
-            await emitter.emit_stream_end(resuming=bool(response.tool_calls))
-            return response
-        else:
-            response = await self.provider.chat(
-                messages=messages,
-                tools=context.get_tool_descriptions() if context.tool_manager else None,
-                temperature=context.temperature or 0.7,
-                max_tokens=context.max_tokens,
-            )
-            if response.content:
-                await emitter.emit_content(response.content)
-                await emitter.emit(ReActEvent.MODEL_OUTPUT, response.content)
-            if response.reasoning_content:
-                await emitter.emit(ReActEvent.MODEL_REASONING, response.reasoning_content)
-            await emitter.emit_stream_end(resuming=bool(response.tool_calls))
-            return response
-
     async def _execute_tool(
         self,
         tool_call: ToolCall,
@@ -604,10 +393,10 @@ class ReActAgent(Agent[ReActEvent]):
         self,
         messages: list[dict[str, Any]],
         context: AgentContext,
-        emitter: ContentEmitter[ReActEvent],
     ) -> LLMResponse:
         """通过 InterceptorChain 包裹的 LLM 流式调用。"""
         assert isinstance(self.provider, StreamingLLMProvider)
+        emitter = context.emitter
 
         stream_ctx = LLMStreamContext(
             messages=messages,
@@ -719,16 +508,6 @@ class ReActAgent(Agent[ReActEvent]):
             context.metadata["_injection_cycle_count"] = cycle_count + 1
 
         return injected
-
-    @staticmethod
-    def _format_tool_hint(tool_calls: list[ToolCall]) -> str:
-        """格式化工具调用提示。"""
-        if not tool_calls:
-            return "准备执行工具..."
-        if len(tool_calls) == 1:
-            return f"正在调用 {tool_calls[0].tool_name}..."
-        names = ", ".join(tc.tool_name for tc in tool_calls)
-        return f"正在调用工具: {names}..."
 
     def _build_assistant_message(
         self,

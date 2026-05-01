@@ -71,6 +71,7 @@ class _FakeContext:
     def __init__(self):
         self.messages = [{"role": "user", "content": "hello"}]
         self.history = _FakeHistory()
+        self.system_prompt = ""
         self.max_iterations = 5
         self.attachments: list = []
         self.tool_manager = None

@@ -62,6 +62,7 @@ class _FakeContext:
     def __init__(self, *, interceptor_chain=None):
         self.messages = [{"role": "user", "content": "run a tool"}]
         self.history = _FakeHistory()
+        self.system_prompt = ""
         self.max_iterations = 3
         self.attachments: list = []
         self.tool_manager = None

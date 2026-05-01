@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from .constants import GraphNode, GraphMetaKey
+from .constants import GraphMetaKey, GraphNode
 from .graph import Graph
 from .interrupt import GraphInterrupt
 

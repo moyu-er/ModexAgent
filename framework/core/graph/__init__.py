@@ -1,8 +1,8 @@
 """Core graph abstractions."""
-from .constants import GraphNode, GraphMetaKey
+from .constants import GraphMetaKey, GraphNode
 from .engine import GraphEngine
 from .graph import Edge, Graph
-from .interrupt import GraphInterrupt, interrupt, _current_resume
+from .interrupt import GraphInterrupt, _current_resume, interrupt
 from .node import Node, NodeTransition
 
 __all__ = [
