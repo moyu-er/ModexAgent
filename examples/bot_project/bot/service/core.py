@@ -583,11 +583,23 @@ class BotService(AgentBuilderMixin):
             # Replace the pipeline's interceptor chain
             main_instance.pipeline.interceptor_chain = main_chain
 
-            # Inject approval infrastructure
+            # Build SuspendResumeStrategy with persistent stores
+            from framework.agents.react.strategy import SuspendResumeStrategy
+            from framework.agents.react.state import StateStoreTurnResumeStateStore
+            from framework.approval.store import LocalFileApprovalStateStore
+
+            approval_store = LocalFileApprovalStateStore(self._approval_workspace)
+            resume_store = StateStoreTurnResumeStateStore(self._checkpoint_store)
+            strategy = SuspendResumeStrategy(approval_store, resume_store)
+
+            # Inject into pipeline for AgentContext construction
+            main_instance.pipeline.interceptor_chain = main_chain
             main_instance.pipeline.checkpoint_store = self._checkpoint_store
             main_instance.pipeline._approval_workspace = self._approval_workspace
             main_instance.pipeline._user_interface = self._im_ui
+            main_instance.pipeline._prebuilt_strategy = strategy
             print(f"[OK] Main agent pool pipeline injected with TieredToolApprovalInterceptor "
+                  f"and SuspendResumeStrategy "
                   f"(dangerous_tools={dangerous_tools}, allowed_dirs={allowed_dirs})")
 
         # Register subagents as residents (pool mode requires all targets to be resident)

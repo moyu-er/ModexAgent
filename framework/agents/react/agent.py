@@ -192,8 +192,13 @@ class ReActAgent(Agent[ReActEvent]):
             context.metadata.pop(ReActMetaKey.DENY_AS_CANCEL, None)
             context.metadata.pop(ReActMetaKey.APPROVAL_DENIAL, None)
             context.metadata.pop(ReActMetaKey.INJECTION_CYCLE, None)
+            context.metadata.pop(ReActMetaKey.RESUME_STATE, None)
+            context.metadata.pop(ReActMetaKey.TOOL_DECISIONS, None)
             context.emitter = None
             current_agent_context.reset(ctx_token)
+            # Reset resume contextvar to prevent cross-turn approval state leaks
+            from framework.core.graph.interrupt import _current_resume
+            _current_resume.set(None)
 
     async def _save_denial_checkpoint(
         self,

@@ -678,11 +678,16 @@ class AgentPipeline:
 
         # Inject SuspendResumeStrategy if not already set
         if ExtensionKey.SUSPEND_STRATEGY not in agent_context.extensions:
-            _approval_store = self._approval_stores.get(session_id)
-            _resume_store = self._resume_stores.get(session_id)
-            if _approval_store is not None and _resume_store is not None:
-                strategy = SuspendResumeStrategy(_approval_store, _resume_store)
-                agent_context.extensions[ExtensionKey.SUSPEND_STRATEGY] = strategy
+            # Pre-built strategy (injected by bot_project pool mode)
+            prebuilt = getattr(self, "_prebuilt_strategy", None)
+            if prebuilt is not None:
+                agent_context.extensions[ExtensionKey.SUSPEND_STRATEGY] = prebuilt
+            else:
+                _approval_store = self._approval_stores.get(session_id)
+                _resume_store = self._resume_stores.get(session_id)
+                if _approval_store is not None and _resume_store is not None:
+                    strategy = SuspendResumeStrategy(_approval_store, _resume_store)
+                    agent_context.extensions[ExtensionKey.SUSPEND_STRATEGY] = strategy
 
         # Emitter selection (must be before approval consumption, which may call agent.run)
         if self.emitter_factory:
