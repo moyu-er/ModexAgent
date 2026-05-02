@@ -1,6 +1,8 @@
 """StartNode — entry point for ReAct graph."""
 from __future__ import annotations
 
+from typing import Any
+
 from framework.agents.react.agent import ReActEvent
 from framework.agents.react.constants import ReActMetaKey, ReActNode, ReActReason
 from framework.core.agent import AgentContext
@@ -14,7 +16,7 @@ class StartNode(Node):
     def __init__(self) -> None:
         super().__init__(ReActNode.START)
 
-    async def execute(self, ctx: AgentContext) -> NodeTransition:
+    async def execute(self, ctx: AgentContext[Any]) -> NodeTransition:
         resume_state = ctx.metadata.get(ReActMetaKey.RESUME_STATE)
 
         if resume_state is not None:

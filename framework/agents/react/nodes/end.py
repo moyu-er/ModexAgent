@@ -1,7 +1,7 @@
 """EndNode — builds AgentResult and marks completion."""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 from framework.agents.react.agent import ReActEvent
 from framework.agents.react.constants import ReActMetaKey, ReActNode, ReActReason
@@ -22,7 +22,7 @@ class EndNode(Node):
         super().__init__(ReActNode.END)
         self._agent = agent
 
-    async def execute(self, ctx: AgentContext) -> NodeTransition:
+    async def execute(self, ctx: AgentContext[Any]) -> NodeTransition:
         response = ctx.metadata.pop(ReActMetaKey.LLM_RESPONSE, None)
         messages = ctx.metadata.pop(ReActMetaKey.ITERATION_MSGS, [])
         end_reason = ctx.metadata.pop(ReActMetaKey.END_REASON, None)
