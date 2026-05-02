@@ -58,7 +58,6 @@ class LLMNode(Node):
         ctx.metadata[ReActMetaKey.LLM_RESPONSE] = response
         msgs: list = ctx.metadata.setdefault(ReActMetaKey.ITERATION_MSGS, [])
         msgs.append(assistant_msg)
-        await self._agent._save_checkpoint(msgs, ctx)
 
         if response.tool_calls:
             return NodeTransition(ReActNode.TOOL, ReActReason.HAS_TOOLS)
