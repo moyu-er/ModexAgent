@@ -733,10 +733,21 @@ class AgentPipeline:
                         _current_resume.set(approval_state_early.final_decisions())
                         try:
                             result = await self.agent.run(agent_context, emitter)
+                        except GraphInterrupt as interrupt_exc:
+                            # New tools triggered during resume — send approval prompt
+                            if self._user_interface is not None:
+                                requests = interrupt_exc.value
+                                if isinstance(requests, list):
+                                    for req in requests:
+                                        await self._user_interface.render_message(
+                                            session_id, _format_approval_prompt(req),
+                                        )
+                                        break
+                            return None
                         finally:
                             _current_resume.set(None)
 
-                        # Cleanup
+                        # Cleanup old approval state (new state saved by strategy if another interrupt)
                         await approval_store.delete(session_id)
                         if _resume_store:
                             await _resume_store.delete(session_id)
