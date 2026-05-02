@@ -10,7 +10,7 @@ name = "ModexAgent"
 version = "0.1.0"
 description = "DIY Agent Framework - A flexible multi-agent system framework"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = "MIT"
 authors = [
     { name = "GYT", email = "gyt8193@qq.com" },
