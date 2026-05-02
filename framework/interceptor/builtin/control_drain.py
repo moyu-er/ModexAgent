@@ -60,7 +60,7 @@ class ControlDrainInterceptor:
 
     async def around_turn(
         self,
-        ctx: AgentContext,
+        ctx: AgentContext[Any],
         next_call: TurnNext,
     ) -> AgentResult:
         scope = ControlScope(session_id=ctx.session_id)
@@ -69,7 +69,7 @@ class ControlDrainInterceptor:
 
     async def around_iteration(
         self,
-        ctx: AgentContext,
+        ctx: AgentContext[Any],
         call: IterationContext,
         next_call: IterationNext,
     ) -> None:
@@ -79,7 +79,7 @@ class ControlDrainInterceptor:
 
     async def _drain_and_handle(
         self,
-        ctx: AgentContext,
+        ctx: AgentContext[Any],
         scope: ControlScope,
     ) -> None:
         commands = await self._channel.drain(

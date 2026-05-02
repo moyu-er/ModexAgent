@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
 
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
@@ -112,12 +112,15 @@ IterationNext = Callable[[], None]
 """迭代 next 函数：调用即执行下一个 interceptor 或实际迭代。"""
 
 
+R = TypeVar("R", default=Any)
+
+
 # ---------------------------------------------------------------------------
 # Interceptor 协议
 # ---------------------------------------------------------------------------
 
 
-class Interceptor(Protocol):
+class Interceptor(Protocol, Generic[R]):
     """拦截器协议 —— 调用边界 AOP 包裹。
 
     拦截器按配置顺序形成洋葱链。外层先进入、后退出。
@@ -129,7 +132,7 @@ class Interceptor(Protocol):
 
     async def around_tool_call(
         self,
-        ctx: AgentContext,
+        ctx: AgentContext[R],
         call: ToolCallContext,
         next_call: ToolCallNext,
     ) -> ToolResult:
@@ -138,7 +141,7 @@ class Interceptor(Protocol):
 
     async def around_turn(
         self,
-        ctx: AgentContext,
+        ctx: AgentContext[R],
         next_call: TurnNext,
     ) -> AgentResult:
         """包裹单个 turn。"""
@@ -146,7 +149,7 @@ class Interceptor(Protocol):
 
     async def around_iteration(
         self,
-        ctx: AgentContext,
+        ctx: AgentContext[R],
         call: IterationContext,
         next_call: IterationNext,
     ) -> None:
@@ -155,7 +158,7 @@ class Interceptor(Protocol):
 
     async def around_llm_stream(
         self,
-        ctx: AgentContext,
+        ctx: AgentContext[R],
         call: LLMStreamContext,
         next_stream: LLMStreamNext,
     ) -> AsyncIterator[LLMStreamChunk]:

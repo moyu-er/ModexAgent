@@ -179,7 +179,7 @@ class ToolApprovalInterceptor:
 
     async def around_tool_call(
         self,
-        ctx: AgentContext,
+        ctx: AgentContext[Any],
         call: ToolCallContext,
         next_call: ToolCallNext,
     ) -> ToolResult:
@@ -298,7 +298,7 @@ class TieredToolApprovalInterceptor:
 
     async def around_tool_call(
         self,
-        ctx: AgentContext,
+        ctx: AgentContext[Any],
         call: ToolCallContext,
         next_call: ToolCallNext,
     ) -> ToolResult:
@@ -335,7 +335,7 @@ class TieredToolApprovalInterceptor:
 
     async def _request_approval(
         self,
-        ctx: AgentContext,
+        ctx: AgentContext[Any],
         call: ToolCallContext,
         next_call: ToolCallNext,
         tier: ApprovalTier,
@@ -396,7 +396,7 @@ class TieredToolApprovalInterceptor:
         raise TimeoutError()
 
     def _handle_denied(
-        self, ctx: AgentContext, call: ToolCallContext, tier: ApprovalTier,
+        self, ctx: AgentContext[Any], call: ToolCallContext, tier: ApprovalTier,
     ) -> ToolResult:
         call_id = call.tool_call.call_id or ""
 
@@ -430,7 +430,7 @@ class TieredToolApprovalInterceptor:
         )
 
     def _handle_timeout(
-        self, ctx: AgentContext, call: ToolCallContext,
+        self, ctx: AgentContext[Any], call: ToolCallContext,
     ) -> ToolResult:
         call_id = call.tool_call.call_id or ""
         if self._on_timeout == TimeoutAction.CANCEL_TURN:

@@ -37,7 +37,7 @@ class ToolTimeoutInterceptor:
 
     async def around_tool_call(
         self,
-        ctx: AgentContext,
+        ctx: AgentContext[Any],
         call: ToolCallContext,
         next_call: ToolCallNext,
     ) -> ToolResult:
@@ -60,7 +60,7 @@ class ToolTimeoutInterceptor:
                 error=f"Error: Tool execution timeout after {timeout:.0f}s",
             )
 
-    def _resolve_timeout(self, ctx: AgentContext) -> float:
+    def _resolve_timeout(self, ctx: AgentContext[Any]) -> float:
         if self._timeout is not None:
             return self._timeout
         safety = ctx_ext(ctx, ExtensionKey.SAFETY)

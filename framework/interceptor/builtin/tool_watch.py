@@ -53,7 +53,7 @@ class ToolWatchInterceptor:
 
     async def around_tool_call(
         self,
-        ctx: AgentContext,
+        ctx: AgentContext[Any],
         call: ToolCallContext,
         next_call: ToolCallNext,
     ) -> ToolResult:

@@ -47,7 +47,7 @@ class TurnTimeoutInterceptor:
 
     async def around_turn(
         self,
-        ctx: AgentContext,
+        ctx: AgentContext[Any],
         next_call: TurnNext,
     ) -> AgentResult:
         timeout = self._resolve_timeout(ctx)
@@ -67,7 +67,7 @@ class TurnTimeoutInterceptor:
             stop_reason="timeout",
         )
 
-    def _resolve_timeout(self, ctx: AgentContext) -> float:
+    def _resolve_timeout(self, ctx: AgentContext[Any]) -> float:
         if self._timeout is not None:
             return self._timeout
         safety = ctx_ext(ctx, ExtensionKey.SAFETY)

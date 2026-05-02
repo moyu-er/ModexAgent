@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from framework.control.exceptions import AgentControlError
 from framework.interceptor.abc import (
@@ -22,6 +22,7 @@ from framework.interceptor.abc import (
     ToolCallContext,
     ToolCallNext,
     TurnNext,
+    R,
 )
 
 if TYPE_CHECKING:
@@ -32,7 +33,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class InterceptorChain:
+class InterceptorChain(Generic[R]):
     """通用 AOP 洋葱链。
 
     拦截器按列表顺序排列，索引 0 为最外层（先进入、后退出）。
@@ -40,23 +41,23 @@ class InterceptorChain:
     接入的作用域：TOOL_CALL, TURN, ITERATION, LLM_STREAM。
     """
 
-    def __init__(self, interceptors: list[Interceptor] | None = None) -> None:
-        self._interceptors: list[Interceptor] = list(interceptors) if interceptors else []
+    def __init__(self, interceptors: list[Interceptor[R]] | None = None) -> None:
+        self._interceptors: list[Interceptor[R]] = list(interceptors) if interceptors else []
 
     @property
-    def interceptors(self) -> list[Interceptor]:
+    def interceptors(self) -> list[Interceptor[R]]:
         """返回当前注册的拦截器列表。"""
         return list(self._interceptors)
 
-    def add(self, interceptor: Interceptor) -> None:
+    def add(self, interceptor: Interceptor[R]) -> None:
         """追加一个拦截器。"""
         self._interceptors.append(interceptor)
 
-    def insert(self, index: int, interceptor: Interceptor) -> None:
+    def insert(self, index: int, interceptor: Interceptor[R]) -> None:
         """在指定位置插入拦截器。"""
         self._interceptors.insert(index, interceptor)
 
-    def extend(self, interceptors: list[Interceptor]) -> None:
+    def extend(self, interceptors: list[Interceptor[R]]) -> None:
         """批量追加拦截器。"""
         self._interceptors.extend(interceptors)
 
@@ -70,7 +71,7 @@ class InterceptorChain:
 
     async def around_tool_call(
         self,
-        ctx: AgentContext,
+        ctx: AgentContext[R],
         call: ToolCallContext,
         actual_call: ToolCallNext,
     ) -> ToolResult:
@@ -97,7 +98,7 @@ class InterceptorChain:
 
     async def around_turn(
         self,
-        ctx: AgentContext,
+        ctx: AgentContext[R],
         actual_call: TurnNext,
     ) -> AgentResult:
         """包裹单个 turn。
@@ -109,7 +110,7 @@ class InterceptorChain:
 
     async def around_iteration(
         self,
-        ctx: AgentContext,
+        ctx: AgentContext[R],
         call: IterationContext,
         actual_call: IterationNext,
     ) -> None:
@@ -122,7 +123,7 @@ class InterceptorChain:
 
     async def around_llm_stream(
         self,
-        ctx: AgentContext,
+        ctx: AgentContext[R],
         call: LLMStreamContext,
         actual_stream: LLMStreamNext,
     ) -> AsyncIterator[LLMStreamChunk]:
@@ -144,7 +145,7 @@ class InterceptorChain:
     # 链构建
     # -------------------------------------------------------------------
 
-    def _resolved(self, scope: InterceptorScope) -> list[Interceptor]:
+    def _resolved(self, scope: InterceptorScope) -> list[Interceptor[R]]:
         """返回声明了指定 scope 的拦截器列表（保持注册顺序）。"""
         return [i for i in self._interceptors if scope in i.scopes]
 
@@ -155,7 +156,7 @@ class InterceptorChain:
     ) -> Any:
         resolved = self._resolved(InterceptorScope.TOOL_CALL)
 
-        async def _dispatch(ctx: AgentContext, c: ToolCallContext) -> ToolResult:
+        async def _dispatch(ctx: AgentContext[R], c: ToolCallContext) -> ToolResult:
             if not resolved:
                 return await actual()
 
@@ -175,7 +176,7 @@ class InterceptorChain:
     def _build_turn_chain(self, actual: TurnNext) -> Any:
         resolved = self._resolved(InterceptorScope.TURN)
 
-        async def _dispatch(ctx: AgentContext) -> AgentResult:
+        async def _dispatch(ctx: AgentContext[R]) -> AgentResult:
             if not resolved:
                 return await actual()
 
@@ -194,7 +195,7 @@ class InterceptorChain:
     def _build_iteration_chain(self, call: IterationContext, actual: IterationNext) -> Any:
         resolved = self._resolved(InterceptorScope.ITERATION)
 
-        async def _dispatch(ctx: AgentContext, c: IterationContext) -> None:
+        async def _dispatch(ctx: AgentContext[R], c: IterationContext) -> None:
             if not resolved:
                 await actual()
                 return
@@ -219,7 +220,7 @@ class InterceptorChain:
         resolved = self._resolved(InterceptorScope.LLM_STREAM)
 
         async def _dispatch(
-            ctx: AgentContext, c: LLMStreamContext,
+            ctx: AgentContext[R], c: LLMStreamContext,
         ) -> AsyncIterator[LLMStreamChunk]:
             if not resolved:
                 async for chunk in actual():

@@ -35,7 +35,7 @@ class LLMStreamWatchInterceptor:
 
     async def around_llm_stream(
         self,
-        ctx: AgentContext,
+        ctx: AgentContext[Any],
         call: LLMStreamContext,
         next_stream: LLMStreamNext,
     ) -> AsyncIterator[LLMStreamChunk]:
