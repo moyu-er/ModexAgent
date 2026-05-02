@@ -3,10 +3,11 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import Any, Generic, TypeVar
 
-if TYPE_CHECKING:
-    from framework.core.agent import AgentContext
+from framework.core.agent import AgentContext
+
+R = TypeVar("R", default=Any)
 
 
 @dataclass(frozen=True)
@@ -16,13 +17,13 @@ class NodeTransition:
     reason: str
 
 
-class Node(ABC):
+class Node(ABC, Generic[R]):
     """Abstract graph node. Executes logic and returns a routing transition."""
 
     def __init__(self, name: str) -> None:
         self.name = name
 
     @abstractmethod
-    async def execute(self, ctx: AgentContext) -> NodeTransition:
+    async def execute(self, ctx: AgentContext[R]) -> NodeTransition:
         """Execute node logic and return the next node transition."""
         ...

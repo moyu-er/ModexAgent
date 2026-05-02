@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, Generic, TypeVar
 
 from .node import Node
+
+R = TypeVar("R", default=Any)
 
 
 @dataclass(frozen=True)
@@ -14,16 +17,16 @@ class Edge:
     reason: str | None = None
 
 
-class Graph:
+class Graph(Generic[R]):
     """A directed graph of named nodes and edges."""
 
     def __init__(self, name: str = "graph") -> None:
         self.name = name
-        self._nodes: dict[str, Node] = {}
+        self._nodes: dict[str, Node[R]] = {}
         self._edges: dict[str, list[Edge]] = {}
         self.entry_node: str = "start"
 
-    def add_node(self, node: Node) -> None:
+    def add_node(self, node: Node[R]) -> None:
         self._nodes[node.name] = node
 
     def add_edge(self, source: str, target: str, reason: str | None = None) -> None:

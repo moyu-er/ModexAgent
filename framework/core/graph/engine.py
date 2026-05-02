@@ -1,25 +1,26 @@
 """GraphEngine — drives node execution and edge routing."""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any, Generic, TypeVar
+
+from framework.core.agent import AgentContext
 
 from .constants import GraphMetaKey, GraphNode
 from .graph import Graph
 from .interrupt import GraphInterrupt
 
-if TYPE_CHECKING:
-    from framework.core.agent import AgentContext
+R = TypeVar("R", default=Any)
 
 
-class GraphEngine:
+class GraphEngine(Generic[R]):
     """Executes a Graph by iterating nodes and following edges.
     Agnostic to ReAct / Hook / Interceptor / Approval.
     """
 
-    def __init__(self, graph: Graph) -> None:
+    def __init__(self, graph: Graph[R]) -> None:
         self.graph = graph
 
-    async def run(self, ctx: AgentContext) -> Any:
+    async def run(self, ctx: AgentContext[R]) -> Any:
         """Single entry point. Runs from entry_node until GraphNode.END."""
         current: str = self.graph.entry_node
         while current != GraphNode.END:
@@ -34,6 +35,6 @@ class GraphEngine:
                 current = self.graph.next_node(current, transition.reason)
         return self.build_result(ctx)
 
-    def build_result(self, ctx: AgentContext) -> Any:
+    def build_result(self, ctx: AgentContext[R]) -> Any:
         """Extract final result from ctx. Override for typed returns."""
         return ctx.metadata.get(GraphMetaKey.GRAPH_RESULT)
