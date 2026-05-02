@@ -1,5 +1,20 @@
 # Graph Architecture, Hooks, Interceptors & Approval System
 
+## Current Implementation Status
+
+This document should be read with the current runtime summary in
+`docs/current-runtime.md`. The active ReAct runtime is graph-based and uses
+`StartNode`, `LLMNode`, `ToolNode`, and `EndNode`. `clean` mode is intended to
+strip hooks, approval, interceptors/control, suspend/resume, runtime state store,
+and injection queues at turn entry, with one log line. `full` mode wires those
+services explicitly.
+
+The bot project default interceptor chain currently includes
+`ControlDrainInterceptor` and `ToolResultLimitInterceptor` only. `TurnTimeoutInterceptor`
+and `ToolTimeoutInterceptor` are not default wiring. Runtime persistence should
+prefer `RuntimeStateStore` / `JsonFileRuntimeStateStore` naming; the
+`CheckpointStore` names remain compatible for generic control checkpoints.
+
 本文档描述 ModexAgent 从 monolithic `run()` 重构为 LangGraph 风格的图架构后，Hook / Interceptor / Control / Approval 四大横切关注点的设计与协作方式。
 
 ---
@@ -715,9 +730,8 @@ ToolNode.execute(ctx)
 
 ```yaml
 # bot_config.yml
-approval:
-  dangerous_tools: ["shell", "write_file", "edit_file"]
-  workspace: "data/approval"
+# Approval defaults are assembled by runtime construction.
+# Do not duplicate default approval policy in bot_config.yml.
 ```
 
 ### 10.2 初始化流程
@@ -731,7 +745,7 @@ interceptor_chain = self._build_interceptor_chain()
 
 # 2. 初始化审批基础设施
 self._approval_workspace = project_dir / "data/approval"
-self._checkpoint_store = JsonFileCheckpointStore(approval_workspace / "checkpoints")
+self._runtime_state_store = JsonFileRuntimeStateStore(approval_workspace / "checkpoints")
 self._im_ui = IMUserInterface(output_adapter, control_channel)
 
 # 3. 创建 ReActAgent（full mode）

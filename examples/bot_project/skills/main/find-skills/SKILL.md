@@ -142,3 +142,7 @@ If you hit rate limits with clawhub:
 - `clawhub` - ClawHub CLI tool
 - `skill-creator` - Create new skills
 - `healthcheck` - System health checks
+## Runtime Boundary
+
+This skill is runtime-agnostic. Hook, interceptor, control, approval, and
+runtime-state services are assembled by the bot runtime, not by skill content.

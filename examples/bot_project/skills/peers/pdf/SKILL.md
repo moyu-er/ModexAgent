@@ -312,3 +312,7 @@ with open("encrypted.pdf", "wb") as output:
 - For JavaScript libraries (pdf-lib), see REFERENCE.md
 - If you need to fill out a PDF form, follow the instructions in FORMS.md
 - For troubleshooting guides, see REFERENCE.md
+## Runtime Boundary
+
+This skill is runtime-agnostic. Hook, interceptor, control, approval, and
+runtime-state services are assembled by the bot runtime, not by skill content.

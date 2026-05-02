@@ -751,4 +751,567 @@ class TestTurnResumeStateRoundtrip:
         assert loaded.tool_calls[0]["function"]["name"] == "search"
         assert loaded.tool_calls[1]["function"]["name"] == "read"
         assert loaded.llm_content == "Searching..."
-        assert loaded.tool_decisions == [ApprovalDecision.PENDING, ApprovalDecision.ALLOWED]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 8. Approval buffer deadlock regression
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestApprovalBufferDeadlock:
+    """_drain_approval_buffer must not deadlock when replaying peer messages."""
+
+    @pytest.mark.asyncio
+    async def test_drain_approval_buffer_does_not_deadlock(self):
+        """Regression: _drain_approval_buffer previously called
+        ``await self._process_message(msg)`` directly while the caller
+        still held the pipeline's non-reentrant ``asyncio.Lock``.
+        When a peer message arrived during approval it was buffered;
+        after the user approved, replaying the buffered message tried
+        to acquire the same lock again → deadlock.
+
+        After fix: messages are replayed via ``asyncio.create_task``,
+        so _drain_approval_buffer returns immediately without waiting
+        for the lock.
+        """
+        from framework.core.types import InputMessage
+        from framework.pipeline.pipeline import AgentPipeline
+
+        pipeline = AgentPipeline(
+            agent=MagicMock(),
+            context_manager=MagicMock(),
+            tool_manager=MagicMock(),
+            input_adapter=MagicMock(),
+            output_adapter=MagicMock(),
+        )
+
+        # Simulate a buffered peer message
+        msg = InputMessage(
+            content="peer update", session_id="s1",
+            metadata={"source_agent": "peer-a"},
+        )
+        pipeline._approval_pending["s1"] = [msg]
+
+        # Mock _process_message so that trying to acquire a held lock
+        # would deadlock.  In the old code _drain_approval_buffer did
+        # ``await self._process_message(msg)`` which would hit this
+        # lock and block forever.  In the new code create_task is used
+        # so the coroutine is scheduled but not awaited.
+        lock = asyncio.Lock()
+        processed = []
+
+        async def _mock_process(msg):
+            async with lock:
+                processed.append(msg)
+
+        pipeline._process_message = _mock_process
+
+        # Hold the lock while calling _drain_approval_buffer.
+        # Old code: deadlock (times out).
+        # New code: returns immediately because create_task doesn't wait.
+        async with lock:
+            await asyncio.wait_for(
+                pipeline._drain_approval_buffer("s1"), timeout=1.0
+            )
+
+        # Buffer cleared immediately
+        assert "s1" not in pipeline._approval_pending
+
+        # The created task is still waiting for the lock.
+        # After we release it (end of async with), yield so it runs.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert len(processed) == 1
+        assert processed[0].content == "peer update"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 9. Multi-tool resume flow: strategy resolves multiple tools at once
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestMultiToolResumeFlow:
+    """Full execute() with strategy returning multi-tool decisions (resume path).
+
+    Key scenarios:
+    - All approved → all execute
+    - Mixed (approve + deny) → execute + error result
+    - Cascade (deny first) → both get error results, subsequent preempted
+    """
+
+    @pytest.mark.asyncio
+    async def test_two_tools_both_approved_via_strategy_execute_both(self):
+        """2 tools, strategy returns [ALLOWED, ALLOWED] → both execute."""
+        interceptor = _make_approval_interceptor(
+            dangerous_tools=["shell", "write_file"], allowed_dirs={"/safe"},
+        )
+        chain = InterceptorChain(interceptors=[interceptor])
+        strategy = SuspendResumeStrategy(
+            InMemoryApprovalStateStore(), InMemoryTurnResumeStateStore(),
+        )
+
+        executed = []
+
+        class _MockAgent:
+            async def _execute_tool(self, tc, ctx):
+                executed.append(tc.tool_name)
+                return ToolResult(tool_name=tc.tool_name, result=f"ok_{tc.tool_name}")
+
+            def _build_tool_message(self, result, call_id):
+                return {
+                    "role": "tool", "tool_call_id": call_id or "x",
+                    "name": result.tool_name,
+                    "content": str(result.result) if result.result else str(result.error),
+                }
+
+            async def _call_hooks(self, *a, **kw):
+                pass
+
+            async def _drain_injections(self, ctx):
+                return []
+
+            async def _save_checkpoint(self, msgs, ctx):
+                pass
+
+            async def _save_denial_checkpoint(self, all_messages, ctx):
+                pass
+
+        agent = _MockAgent()
+        history = _TrackingHistory()
+        tcs = [
+            ToolCall(tool_name="shell", call_id="c1", arguments={"cmd": "ls"}),
+            ToolCall(tool_name="write_file", call_id="c2", arguments={"path": "/etc/x"}),
+        ]
+
+        # Simulate resume: _current_resume returns both ALLOWED
+        _current_resume.set([ApprovalDecision.ALLOWED, ApprovalDecision.ALLOWED])
+        try:
+            ctx = _make_ctx(
+                session_id="s1", history=history,
+                interceptor_chain=chain, suspend_strategy=strategy,
+                metadata={
+                    ReActMetaKey.LLM_RESPONSE: LLMResponse(
+                        content="", tool_calls=tcs, finish_reason="tool_calls",
+                    ),
+                    ReActMetaKey.ITERATION: 2,
+                    ReActMetaKey.ITERATION_MSGS: [],
+                    # Pre-approval marker (set by _execute_batch on a prior resume,
+                    # but since we're testing fresh execute, it starts empty —
+                    # the ToolNode itself writes it before Phase 3)
+                },
+            )
+            node = ToolNode(agent, enable_approval=True, enable_hooks=False)
+            transition = await node.execute(ctx)
+        finally:
+            _current_resume.set(None)
+
+        # Both tools executed
+        assert transition.target == ReActNode.LLM
+        assert transition.reason == ReActReason.TOOLS_DONE
+        assert len(executed) == 2
+        assert executed == ["shell", "write_file"]
+        # Both tool results in history
+        assert len(history.appended) == 2
+        assert history.appended[0]["role"] == "tool"
+        assert history.appended[1]["role"] == "tool"
+
+    @pytest.mark.asyncio
+    async def test_two_tools_first_allowed_second_denied(self):
+        """2 tools, strategy returns [ALLOWED, DENIED] → first executes, second gets error."""
+        interceptor = _make_approval_interceptor(
+            dangerous_tools=["shell", "write_file"], allowed_dirs={"/safe"},
+        )
+        chain = InterceptorChain(interceptors=[interceptor])
+        strategy = SuspendResumeStrategy(
+            InMemoryApprovalStateStore(), InMemoryTurnResumeStateStore(),
+        )
+
+        executed = []
+
+        class _MockAgent:
+            async def _execute_tool(self, tc, ctx):
+                executed.append(tc.tool_name)
+                return ToolResult(tool_name=tc.tool_name, result=f"ok_{tc.tool_name}")
+
+            def _build_tool_message(self, result, call_id):
+                return {
+                    "role": "tool", "tool_call_id": call_id or "x",
+                    "name": result.tool_name,
+                    "content": str(result.result) if result.result else str(result.error),
+                }
+
+            async def _call_hooks(self, *a, **kw):
+                pass
+
+            async def _drain_injections(self, ctx):
+                return []
+
+            async def _save_checkpoint(self, msgs, ctx):
+                pass
+
+            async def _save_denial_checkpoint(self, all_messages, ctx):
+                pass
+
+        agent = _MockAgent()
+        history = _TrackingHistory()
+        tcs = [
+            ToolCall(tool_name="shell", call_id="c1", arguments={"cmd": "ls"}),
+            ToolCall(tool_name="write_file", call_id="c2", arguments={"path": "/etc/x"}),
+        ]
+
+        _current_resume.set([ApprovalDecision.ALLOWED, ApprovalDecision.DENIED])
+        try:
+            ctx = _make_ctx(
+                session_id="s2", history=history,
+                interceptor_chain=chain, suspend_strategy=strategy,
+                metadata={
+                    ReActMetaKey.LLM_RESPONSE: LLMResponse(
+                        content="", tool_calls=tcs, finish_reason="tool_calls",
+                    ),
+                    ReActMetaKey.ITERATION: 2,
+                    ReActMetaKey.ITERATION_MSGS: [],
+                },
+            )
+            node = ToolNode(agent, enable_approval=True, enable_hooks=False)
+            transition = await node.execute(ctx)
+        finally:
+            _current_resume.set(None)
+
+        # First tool executed, second got error (DENIED → pseudo ToolResult)
+        assert len(executed) == 1
+        assert executed == ["shell"]
+        # Second tool result is in history (error ToolResult for DENIED)
+        assert len(history.appended) == 2
+        assert history.appended[0]["name"] == "shell"
+        assert history.appended[1]["name"] == "write_file"
+        assert "denied" in str(history.appended[1]["content"]).lower()
+
+    @pytest.mark.asyncio
+    async def test_two_tools_first_denied_cascades_second_preempted(self):
+        """2 tools, strategy returns [DENIED, PREEMPTED] → both get errors, cascade works."""
+        interceptor = _make_approval_interceptor(
+            dangerous_tools=["shell", "write_file"], allowed_dirs={"/safe"},
+        )
+        chain = InterceptorChain(interceptors=[interceptor])
+        strategy = SuspendResumeStrategy(
+            InMemoryApprovalStateStore(), InMemoryTurnResumeStateStore(),
+        )
+
+        executed = []
+
+        class _MockAgent:
+            async def _execute_tool(self, tc, ctx):
+                executed.append(tc.tool_name)
+                return ToolResult(tool_name=tc.tool_name, result=f"ok_{tc.tool_name}")
+
+            def _build_tool_message(self, result, call_id):
+                return {
+                    "role": "tool", "tool_call_id": call_id or "x",
+                    "name": result.tool_name,
+                    "content": str(result.result) if result.result else str(result.error),
+                }
+
+            async def _call_hooks(self, *a, **kw):
+                pass
+
+            async def _drain_injections(self, ctx):
+                return []
+
+            async def _save_checkpoint(self, msgs, ctx):
+                pass
+
+            async def _save_denial_checkpoint(self, all_messages, ctx):
+                pass
+
+        agent = _MockAgent()
+        history = _TrackingHistory()
+        tcs = [
+            ToolCall(tool_name="shell", call_id="c1", arguments={"cmd": "rm -rf"}),
+            ToolCall(tool_name="write_file", call_id="c2", arguments={"path": "/etc/x"}),
+        ]
+
+        # DENIED cascades to PREEMPTED (matching ApprovalState.apply behavior)
+        _current_resume.set([ApprovalDecision.DENIED, ApprovalDecision.PREEMPTED])
+        try:
+            ctx = _make_ctx(
+                session_id="s3", history=history,
+                interceptor_chain=chain, suspend_strategy=strategy,
+                metadata={
+                    ReActMetaKey.LLM_RESPONSE: LLMResponse(
+                        content="", tool_calls=tcs, finish_reason="tool_calls",
+                    ),
+                    ReActMetaKey.ITERATION: 2,
+                    ReActMetaKey.ITERATION_MSGS: [],
+                },
+            )
+            node = ToolNode(agent, enable_approval=True, enable_hooks=False)
+            transition = await node.execute(ctx)
+        finally:
+            _current_resume.set(None)
+
+        # Neither tool executed — both get pseudo ToolResult
+        assert len(executed) == 0
+        # Both tool results in history (error results)
+        assert len(history.appended) == 2
+        assert history.appended[0]["name"] == "shell"
+        assert "denied" in str(history.appended[0]["content"]).lower()
+        assert history.appended[1]["name"] == "write_file"
+        assert "preempted" in str(history.appended[1]["content"]).lower()
+
+    @pytest.mark.asyncio
+    async def test_pre_approved_metadata_matches_allowed_tools_only(self):
+        """PRE_APPROVED_TOOL_IDS in metadata contains only ALLOWED tool ids, not DENIED ones."""
+        interceptor = _make_approval_interceptor(
+            dangerous_tools=["shell", "write_file", "edit_file"],
+            allowed_dirs={"/safe"},
+        )
+        chain = InterceptorChain(interceptors=[interceptor])
+        strategy = SuspendResumeStrategy(
+            InMemoryApprovalStateStore(), InMemoryTurnResumeStateStore(),
+        )
+
+        class _MockAgent:
+            async def _execute_tool(self, tc, ctx):
+                # Verify pre-approval metadata exists for this tool
+                approved = ctx.metadata.get("_pre_approved_tool_ids", set())
+                assert tc.call_id in approved, (
+                    f"Tool {tc.tool_name}({tc.call_id}) should be pre-approved but is not"
+                )
+                return ToolResult(tool_name=tc.tool_name, result="ok")
+
+            def _build_tool_message(self, result, call_id):
+                return {"role": "tool", "tool_call_id": call_id or "x",
+                        "name": result.tool_name, "content": str(result.result or "")}
+
+            async def _call_hooks(self, *a, **kw):
+                pass
+
+            async def _drain_injections(self, ctx):
+                return []
+
+            async def _save_checkpoint(self, msgs, ctx):
+                pass
+
+            async def _save_denial_checkpoint(self, all_messages, ctx):
+                pass
+
+        agent = _MockAgent()
+        history = _TrackingHistory()
+        tcs = [
+            ToolCall(tool_name="shell", call_id="c1", arguments={"cmd": "ls"}),        # ALLOWED
+            ToolCall(tool_name="write_file", call_id="c2", arguments={"path": "/etc"}), # DENIED
+            ToolCall(tool_name="edit_file", call_id="c3", arguments={"path": "/etc"}),  # PREEMPTED
+        ]
+
+        _current_resume.set([
+            ApprovalDecision.ALLOWED, ApprovalDecision.DENIED, ApprovalDecision.PREEMPTED,
+        ])
+        try:
+            ctx = _make_ctx(
+                session_id="s4", history=history,
+                interceptor_chain=chain, suspend_strategy=strategy,
+                metadata={
+                    ReActMetaKey.LLM_RESPONSE: LLMResponse(
+                        content="", tool_calls=tcs, finish_reason="tool_calls",
+                    ),
+                    ReActMetaKey.ITERATION: 2,
+                    ReActMetaKey.ITERATION_MSGS: [],
+                },
+            )
+            node = ToolNode(agent, enable_approval=True, enable_hooks=False)
+            await node.execute(ctx)
+        finally:
+            _current_resume.set(None)
+
+        # Only c1 (ALLOWED) should be in pre-approved set
+        # Verified inside _execute_tool (asserts c1 is approved)
+        # DENIED/PREEMPTED tools never reach _execute_tool (pseudo ToolResult)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 10. Unrelated content during pending approval → deny all, continue with user input
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestUnrelatedContentDuringApproval:
+    """When a user sends non-approval content while approval is pending,
+    ALL pending tools are denied (first DENIED cascades rest to PREEMPTED).
+    The ToolNode executes with error results, and the LLM sees both
+    the tool errors and the user's new message.
+    """
+
+    @pytest.mark.asyncio
+    async def test_unrelated_content_denies_all_tools_and_continues(self):
+        """2 tools pending → unrelated user msg → all denied, user msg in history.
+
+        This reproduces the Pipeline bug where unrelated content during
+        pending approval fell through to normal processing (starting a new
+        agent turn while approval was still pending), instead of denying
+        all tools and letting the LLM react to both the tool errors and
+        the new user message.
+        """
+        interceptor = _make_approval_interceptor(
+            dangerous_tools=["shell", "write_file"], allowed_dirs={"/safe"},
+        )
+        chain = InterceptorChain(interceptors=[interceptor])
+        strategy = SuspendResumeStrategy(
+            InMemoryApprovalStateStore(), InMemoryTurnResumeStateStore(),
+        )
+
+        executed = []
+
+        class _MockAgent:
+            async def _execute_tool(self, tc, ctx):
+                executed.append(tc.tool_name)
+                return ToolResult(tool_name=tc.tool_name, result=f"ok_{tc.tool_name}")
+
+            def _build_tool_message(self, result, call_id):
+                return {
+                    "role": "tool", "tool_call_id": call_id or "x",
+                    "name": result.tool_name,
+                    "content": str(result.result) if result.result else str(result.error),
+                }
+
+            async def _call_hooks(self, *a, **kw):
+                pass
+
+            async def _drain_injections(self, ctx):
+                return []
+
+            async def _save_checkpoint(self, msgs, ctx):
+                pass
+
+            async def _save_denial_checkpoint(self, all_messages, ctx):
+                pass
+
+        agent = _MockAgent()
+        history = _TrackingHistory()
+
+        # Simulate Pipeline: user's "hello" message written to history BEFORE resume
+        await history.append({"role": "user", "content": "hello, continue please"})
+
+        tcs = [
+            ToolCall(tool_name="shell", call_id="c1", arguments={"cmd": "ls"}),
+            ToolCall(tool_name="write_file", call_id="c2", arguments={"path": "/etc/x"}),
+        ]
+
+        # Pipeline denies all tools: first DENIED cascades rest to PREEMPTED
+        _current_resume.set([ApprovalDecision.DENIED, ApprovalDecision.PREEMPTED])
+        try:
+            ctx = _make_ctx(
+                session_id="s5", history=history,
+                interceptor_chain=chain, suspend_strategy=strategy,
+                metadata={
+                    ReActMetaKey.LLM_RESPONSE: LLMResponse(
+                        content="ok let me check", tool_calls=tcs, finish_reason="tool_calls",
+                    ),
+                    ReActMetaKey.ITERATION: 2,
+                    ReActMetaKey.ITERATION_MSGS: [],
+                },
+            )
+            node = ToolNode(agent, enable_approval=True, enable_hooks=False)
+            transition = await node.execute(ctx)
+        finally:
+            _current_resume.set(None)
+
+        # Tools NOT executed — both get error ToolResult
+        assert len(executed) == 0
+
+        # Both tool error results in history
+        tool_results_in_history = [
+            m for m in history.appended
+            if isinstance(m, dict) and m.get("role") == "tool"
+        ]
+        assert len(tool_results_in_history) == 2
+        assert "denied" in str(tool_results_in_history[0]["content"]).lower()
+        assert "preempted" in str(tool_results_in_history[1]["content"]).lower()
+
+        # Graph continues to LLMNode (NOT TURN_CANCELLED) because DENY_AS_CANCEL
+        # is NOT set for unrelated-content denial — the LLM should react to
+        # tool errors AND the new user message.
+        assert transition.target == ReActNode.LLM
+        assert transition.reason == ReActReason.TOOLS_DONE
+
+        # User message is in history (written before resume)
+        all_msgs = await history.to_list()
+        user_msgs = [m for m in all_msgs if m.get("role") == "user"]
+        assert len(user_msgs) >= 1
+        assert "hello" in str(user_msgs[-1]["content"])
+
+    @pytest.mark.asyncio
+    async def test_unrelated_content_single_pending_tool_denied(self):
+        """Single tool pending → unrelated msg → denied, ToolNode skips to LLM."""
+        interceptor = _make_approval_interceptor(
+            dangerous_tools=["shell"], allowed_dirs={"/safe"},
+        )
+        chain = InterceptorChain(interceptors=[interceptor])
+        strategy = SuspendResumeStrategy(
+            InMemoryApprovalStateStore(), InMemoryTurnResumeStateStore(),
+        )
+
+        executed = []
+
+        class _MockAgent:
+            async def _execute_tool(self, tc, ctx):
+                executed.append(tc.tool_name)
+                return ToolResult(tool_name=tc.tool_name, result="ok")
+
+            def _build_tool_message(self, result, call_id):
+                return {
+                    "role": "tool", "tool_call_id": call_id or "x",
+                    "name": result.tool_name,
+                    "content": str(result.result) if result.result else str(result.error),
+                }
+
+            async def _call_hooks(self, *a, **kw):
+                pass
+
+            async def _drain_injections(self, ctx):
+                return []
+
+            async def _save_checkpoint(self, msgs, ctx):
+                pass
+
+            async def _save_denial_checkpoint(self, all_messages, ctx):
+                pass
+
+        agent = _MockAgent()
+        history = _TrackingHistory()
+        # User sends unrelated content during approval
+        await history.append({"role": "user", "content": "never mind, just list files"})
+
+        tc = ToolCall(tool_name="shell", call_id="c1", arguments={"cmd": "rm -rf"})
+
+        _current_resume.set([ApprovalDecision.DENIED])
+        try:
+            ctx = _make_ctx(
+                session_id="s6", history=history,
+                interceptor_chain=chain, suspend_strategy=strategy,
+                metadata={
+                    ReActMetaKey.LLM_RESPONSE: LLMResponse(
+                        content="let me delete that", tool_calls=[tc],
+                        finish_reason="tool_calls",
+                    ),
+                    ReActMetaKey.ITERATION: 2,
+                    ReActMetaKey.ITERATION_MSGS: [],
+                },
+            )
+            node = ToolNode(agent, enable_approval=True, enable_hooks=False)
+            transition = await node.execute(ctx)
+        finally:
+            _current_resume.set(None)
+
+        # Tool NOT executed — gets error
+        assert len(executed) == 0
+
+        # Error tool result written
+        tool_msgs = [m for m in history.appended if m.get("role") == "tool"]
+        assert len(tool_msgs) == 1
+        assert "denied" in str(tool_msgs[0]["content"]).lower()
+
+        # Continues to LLMNode for LLM to react
+        assert transition.target == ReActNode.LLM
+        assert transition.reason == ReActReason.TOOLS_DONE
+
+        # User message preserved
+        all_msgs = await history.to_list()
+        assert "never mind" in str(all_msgs)

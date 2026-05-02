@@ -15,6 +15,7 @@ from ..core.context import ContextManager
 from ..core.context_extensions import ExtensionKey
 from ..core.emitter import AgentResult, ContentEmitter
 from ..core.events import AgentEvent
+from ..core.graph.interrupt import GraphInterrupt
 from ..core.tool_manager import ToolManager
 from ..core.types import InputMessage
 from ..memory.core.scope import MemoryContext
@@ -419,6 +420,10 @@ class AgentSession(Generic[E]):
 
             return result
 
+        except GraphInterrupt:
+            # Approval interrupt must propagate to the caller,
+            # not be treated as a generic execution error.
+            raise
         except Exception as e:
             # 错误处理：通过 emitter 发送错误事件
             await emitter.emit_error(str(e))

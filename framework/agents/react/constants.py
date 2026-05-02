@@ -32,3 +32,4 @@ class ReActMetaKey:
     INJECTION_CYCLE = "_injection_cycle_count"
     END_REASON = "_react_end_reason"
     CANCEL_REASON = "_react_cancel_reason"
+    PRE_APPROVED_TOOL_IDS = "_pre_approved_tool_ids"

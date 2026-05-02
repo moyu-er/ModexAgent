@@ -1,49 +1,64 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-04-30 -->
+<!-- Updated: 2026-05-02 -->
 
 # react
 
 ## Purpose
-ReAct agent implementation — the primary reasoning strategy. Implements Thought → Action → Observation loop with full Hook/Interceptor/Control integration.
+
+Graph-based ReAct agent runtime. This package owns the turn loop, model calls,
+tool execution, approval suspend/resume, clean/full modes, runtime state, and
+the integration points for hooks, interceptors, and control.
 
 ## Key Files
+
 | File | Description |
 |------|-------------|
-| `agent.py` | `ReActAgent` class — full loop with streaming, tool execution, hook dispatch, interceptor chain, checkpoint, injection |
-| `builder.py` | `ReActAgentBuilder` — factory for constructing ReActAgent instances with configuration |
+| `agent.py` | `ReActAgent` entry point. Builds turn context and delegates execution to the graph. |
+| `graph.py` | `ReActGraph` composition for `start -> llm -> tool -> end`. |
+| `state.py` | Runtime state types, including `TurnResumeState` and runtime store aliases. |
+| `strategy.py` | Suspend/resume strategy used by approval flows. |
+| `constants.py` | Metadata keys and runtime constants shared by nodes. |
+| `nodes/start.py` | Start/resume node. Restores state and routes to the stored resume target. |
+| `nodes/llm.py` | Model node. Handles prompt/model execution and streaming integration. |
+| `nodes/tool.py` | Tool node. Handles tool execution, approval suspend/resume, and cancellation metadata. |
+| `nodes/end.py` | End node. Builds `AgentResult`, including `turn_cancelled` results. |
 
-## For AI Agents
+## Runtime Modes
 
-### Working In This Directory
-- `ReActAgent.run()` is the main entry — calls hooks, drain injections, iterates, executes tools
-- `deny_as_cancel` flow: interceptor sets `_deny_as_cancel` flag → ReActAgent pads remaining tools in batch → raises `ApprovalDenied`
-- `_stream_with_control()`: active only when `interceptor_chain.has_scope(LLM_STREAM)` — uses `around_llm_stream` onion
-- `_drain_injections()`: consumes from `ctx.injection_queue` with `_MAX_INJECTION_CYCLES` limit
-- Checkpoint save on each assistant message, tool result, and cancellation
+- `clean`: should execute as a plain ReAct graph. Hooks, approval, interceptors,
+  control services, suspend/resume strategy, runtime state store, and injection
+  queues should be stripped at turn entry, with one concise log line explaining
+  the sanitization. Do not add repeated clean-mode conditionals in every node.
+- `full`: wires hook, interceptor, control, approval, and runtime state services
+  through `AgentContext` extensions.
 
-### Key Constants
-| Constant | Value | Purpose |
-|----------|-------|---------|
-| `_HOOK_TIMEOUT` | 10.0s | Per-hook execution timeout |
-| `_TOOL_TIMEOUT` | from DefaultValues | Per-tool execution timeout |
-| `_MAX_INJECTION_CYCLES` | 5 | Max injection loops per turn |
-| `_MAX_INJECTIONS_PER_PHASE` | 3 | Max injections per drain phase |
-| `_MAX_TOOL_RESULT_CHARS` | 20000 | Tool result truncation |
+## Hook / Interceptor / Control Rules
 
-### ReActEvent Enum
-| Event | Emitted When |
-|-------|-------------|
-| `MODEL_OUTPUT` | LLM text delta (streaming) |
-| `MODEL_REASONING` | LLM reasoning delta |
-| `TOOL_CALL_START` | Before tool execution |
-| `TOOL_CALL_END` | After tool execution (with result) |
-| `ITERATION_START` / `ITERATION_END` | Per ReAct iteration |
-| `FINAL_OUTPUT` | Confirmed final response |
-| `START` / `ERROR` / `MAX_ITERATIONS` / `PROGRESS` | Lifecycle events |
+- Hooks observe or transform lifecycle payloads. Store per-turn hook state in
+  `ctx.metadata`, never in shared hook instance attributes.
+- Interceptors wrap execution boundaries such as turn, iteration, LLM stream, and
+  tool call. Tool call wrapping is active; turn/iteration wrapping should only be
+  enabled when `ReActAgent` owns those scopes explicitly.
+- Control is the runtime command plane. Current handling is safe-boundary based;
+  future live intervention should target operation IDs for LLM streams and tool
+  calls.
 
-### Testing Requirements
-- Tests in `tests/unit/agents/`
-- Mock `LLMProvider` and `ContentEmitter` for unit tests
-- Test `deny_as_cancel` batch completion (all remaining tools padded)
-- Test `CancelledError` checkpoint preservation
-- Test `AgentControlError` handling
+## Resume And Cancellation
+
+`TurnResumeState` stores both `resume_node` and `resume_reason`. Approval resume
+currently returns to `ToolNode`, but new suspend points should set their own
+target instead of relying on approval-specific defaults.
+
+Tool cancellation paths should set `ReActMetaKey.END_REASON` and
+`ReActMetaKey.CANCEL_REASON`. `EndNode` maps those values to an
+`AgentResult(stop_reason="turn_cancelled")`.
+
+## Testing Requirements
+
+- Unit tests live under `tests/unit/agents/react/`.
+- Mock `LLMProvider`, tools, and emitters directly; avoid broad integration
+  setup for node-level behavior.
+- Cover resume target/reason, approval deny checkpoint signatures, cancellation
+  result mapping, and clean/full mode boundaries when those paths change.
+
+See `docs/current-runtime.md` for the cross-project runtime summary.

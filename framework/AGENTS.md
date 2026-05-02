@@ -60,3 +60,8 @@ Core multi-agent framework package. Contains all abstractions, implementations, 
 - `fastapi` — Gateway adapters
 - `chromadb`, `faiss`, `sentence-transformers` — Vector memory
 - `sqlalchemy[asyncio]` — SQLAlchemy sessions
+## Current Runtime Status
+
+The current ReAct runtime is graph-based and integrates hooks, interceptors,
+control, approval, and runtime state through explicit runtime services. See
+`docs/current-runtime.md` before changing cross-cutting runtime behavior.

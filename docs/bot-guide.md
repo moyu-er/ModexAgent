@@ -532,3 +532,9 @@ service = BotService(
 - 限制 `allowed_directories` 防止文件越界访问
 - 启用 `restrict_to_workspace` 限制 Shell 工具
 - 配置 `allow_from` 限制可访问的用户
+## Current Runtime Status
+
+`examples.bot_project` currently runs ReAct in full mode with explicit runtime
+services. Its default interceptor chain contains `ControlDrainInterceptor` and
+`ToolResultLimitInterceptor` only; timeout interceptors are not default wiring.
+See `docs/current-runtime.md` for the current architecture summary.

@@ -13,6 +13,7 @@ from framework.core.agent import Agent, AgentContext
 from framework.core.context import InMemoryContextManager
 from framework.core.emitter import AgentResult, ContentEmitter
 from framework.core.events import AgentEvent, EmitterConfig
+from framework.core.graph.interrupt import GraphInterrupt
 from framework.core.tool_manager import FunctionalTool, InMemoryToolManager
 from framework.core.types import InputMessage
 from framework.session.agent_session import AgentSession
@@ -71,6 +72,20 @@ class _FailingAgent(Agent[_FakeEvent]):
         raise RuntimeError("agent boom")
 
 
+class _GraphInterruptAgent(Agent[_FakeEvent]):
+    """Agent that raises GraphInterrupt to simulate tool-approval suspension."""
+
+    event_enum = _FakeEvent
+    max_iterations = 3
+
+    @property
+    def name(self) -> str:
+        return "interrupt_agent"
+
+    async def run(self, context: AgentContext, emitter: ContentEmitter[_FakeEvent], streaming: bool = True):
+        raise GraphInterrupt(value=["test"])
+
+
 class TestAgentSession:
     @pytest.fixture
     def components(self):
@@ -120,6 +135,23 @@ class TestAgentSession:
         assert "agent boom" in result.error.lower()
         assert len(emitter.errors) == 1
         assert "agent boom" in emitter.errors[0].lower()
+
+    @pytest.mark.asyncio
+    async def test_process_message_propagates_graph_interrupt(self, components):
+        """Regression: GraphInterrupt must propagate, not be swallowed as error.
+
+        Before fix: caught by ``except Exception`` → returned error result.
+        After fix: re-raised so the caller can handle approval suspension.
+        """
+        cm, tm = components
+        session = AgentSession(
+            agent=_GraphInterruptAgent(), context_manager=cm, tool_manager=tm
+        )
+        emitter = _FakeEmitter()
+        msg = InputMessage(content="run dangerous tool")
+
+        with pytest.raises(GraphInterrupt):
+            await session.process_message(msg, emitter, session_id="u3")
 
     @pytest.mark.asyncio
     async def test_clear_session(self, components):

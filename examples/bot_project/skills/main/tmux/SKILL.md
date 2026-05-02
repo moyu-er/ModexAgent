@@ -119,3 +119,7 @@ tmux -S "$SOCKET" capture-pane -p -t agent-1 -S -500
 - `-T` timeout seconds (integer, default 15)
 - `-i` poll interval seconds (default 0.5)
 - `-l` history lines to search (integer, default 1000)
+## Runtime Boundary
+
+This skill is runtime-agnostic. Hook, interceptor, control, approval, and
+runtime-state services are assembled by the bot runtime, not by skill content.

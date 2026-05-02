@@ -27,3 +27,8 @@ class MyAgent(Agent[MyEvent]):
     async def run(self, context: AgentContext, emitter: ContentEmitter[MyEvent]) -> AgentResult:
         ...
 ```
+## Current Runtime Status
+
+`framework.agents.react` is graph-based (`StartNode`, `LLMNode`, `ToolNode`,
+`EndNode`). Clean/full mode behavior and runtime service boundaries are
+documented in `docs/current-runtime.md`.

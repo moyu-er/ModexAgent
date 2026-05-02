@@ -18,3 +18,8 @@ Message broker and bridge service for agent communication. Supports pub/sub patt
 - `MessageBroker`: pub/sub messaging backbone
 - `BrokerBridgeService`: connects agents via broker in pool mode
 - `InMemoryMessageBroker`: lightweight implementation for testing and single-process use
+## Current Runtime Status
+
+Messaging and broker code should pass runtime control messages into the control
+plane instead of embedding ReAct-specific handling. Current boundaries are
+summarized in `docs/current-runtime.md`.

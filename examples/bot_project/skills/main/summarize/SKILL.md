@@ -65,3 +65,7 @@ Optional config file: `~/.summarize/config.json`
 Optional services:
 - `FIRECRAWL_API_KEY` for blocked sites
 - `APIFY_API_TOKEN` for YouTube fallback
+## Runtime Boundary
+
+This skill is runtime-agnostic. Hook, interceptor, control, approval, and
+runtime-state services are assembled by the bot runtime, not by skill content.

@@ -610,3 +610,7 @@ def extract_text_with_ocr(pdf_path):
 - **qpdf**: Apache License
 - **pdf-lib**: MIT License
 - **pdfjs-dist**: Apache License
+## Runtime Boundary
+
+This reference is runtime-agnostic. Hook, interceptor, control, approval, and
+runtime-state services are assembled by the bot runtime, not by reference docs.

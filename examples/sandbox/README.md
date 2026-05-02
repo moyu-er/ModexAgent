@@ -141,3 +141,8 @@ for path, content in artifacts_content.items():
 - E2B: /home/user/artifacts
 
 代码中通过环境变量 `SANDBOX_ARTIFACTS_DIR` 获取实际路径。
+## Current Runtime Status
+
+Sandbox examples exercise tool execution below the ReAct `ToolNode`. Runtime
+approval, cancellation, and control boundaries are summarized in
+`docs/current-runtime.md`.

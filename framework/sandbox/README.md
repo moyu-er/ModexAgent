@@ -65,3 +65,7 @@ config = SandboxConfig(
 
 - `E2B_API_KEY` - E2B cloud sandbox API key
 - `DOCKER_SOCKET` - Docker socket path
+## Current Runtime Status
+
+Sandbox adapters are used by tools under the ReAct tool execution path. Runtime
+control and approval boundaries are documented in `docs/current-runtime.md`.

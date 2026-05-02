@@ -38,3 +38,8 @@ Framework-provided hooks — ready-to-use lifecycle extensions. There are 10 bui
 - `framework.core` — `AgentContext`
 - `framework.control` — `ControlEventBus`, `ControlEventType` (for `ProgressReportHook`)
 - `framework.multi_agent.filtered_tool_manager` — `FilteredToolManager` (for `DynamicToolFilterHook`)
+## Current Runtime Status
+
+Built-in hooks must remain pool-safe: per-turn state belongs in `ctx.metadata`.
+Hooks should not wrap execution or implement control flow that belongs to
+interceptors/control services. See `docs/current-runtime.md`.

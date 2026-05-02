@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import time as _time
 from collections.abc import Mapping, Sequence
 from uuid import uuid4
@@ -13,6 +14,8 @@ from framework.control.types import ControlCommandType, ControlScope
 from framework.control.ui.abc import ControlUserInterface
 from framework.core.types import OutputMessage
 from framework.pipeline.adapters import OutputAdapter
+
+logger = logging.getLogger(__name__)
 
 
 class IMUserInterface(ControlUserInterface):
@@ -44,7 +47,9 @@ class IMUserInterface(ControlUserInterface):
             )
             await self._output.send(msg, session_id)
         except Exception:
-            pass
+            logger.exception(
+                "IMUserInterface.render_message failed: session=%s", session_id
+            )
         return msg_id
 
     async def render_question(

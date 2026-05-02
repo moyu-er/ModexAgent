@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 import time
 from collections.abc import Callable
 from typing import Any
 
 from framework.core.context import ContextManager
+from framework.core.graph.interrupt import GraphInterrupt
 from framework.core.emitter import AgentResult
 from framework.core.llm_error import RuntimeSafetyPolicy
 from framework.core.tool_manager import InMemoryToolManager
@@ -186,6 +188,10 @@ class AgentPool(AgentRegistry):
             else:
                 await asyncio.sleep(sleep_seconds)
         except Exception:
+            # GraphInterrupt must propagate to the pipeline's approval handler;
+            # do not treat it as a dispatch error.
+            if isinstance(sys.exc_info()[1], GraphInterrupt):
+                raise
             elapsed = time.monotonic() - start_time
             logger.exception(
                 "Error dispatching message for %s (elapsed=%.1fs active=%d)",
@@ -294,6 +300,10 @@ class AgentPool(AgentRegistry):
                 self._track_agent_task(address.name, task)
             except asyncio.CancelledError:
                 break
+            except GraphInterrupt:
+                # Approval interrupt must propagate to the pipeline handler,
+                # not be treated as a consumer-level error.
+                raise
             except Exception:
                 logger.exception("Error consuming messages for %s", address.name)
                 self._transition(address.name, AgentState.ERROR, reason="consume_error")

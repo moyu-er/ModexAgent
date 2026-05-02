@@ -46,3 +46,8 @@ InputAdapter.receive()
 - Mock InputAdapter/OutputAdapter
 - Test busy mode handling
 - Test session isolation under concurrent messages
+## Current Runtime Status
+
+Pipeline should assemble runtime services and handle platform I/O; ReAct owns
+turn, LLM, tool, approval, and resume boundaries. Keep hook/interceptor/control
+policy out of pipeline glue where possible. See `docs/current-runtime.md`.

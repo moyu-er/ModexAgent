@@ -25,3 +25,8 @@ Optional integrations — LLM providers, memory backends, session storage. Not r
 - `litellm` — LLM provider
 - `chromadb`, `faiss-cpu`, `sentence-transformers` — Vector memory
 - `sqlalchemy[asyncio]` — Session persistence
+## Current Runtime Status
+
+Optional extensions should not assume full-mode services are present. ReAct clean
+mode should run without hooks, interceptors/control, approval, runtime store, or
+injection services. See `docs/current-runtime.md`.

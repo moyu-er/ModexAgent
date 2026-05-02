@@ -33,3 +33,8 @@ Test suites for the ModexAgent framework, organized by test level: unit, integra
 | Interceptor chain | `test_interceptor_chain.py` |
 | Hooks | `test_hooks.py`, `test_hook_error_policy.py` |
 | ReAct error handling | `test_react_agent_error.py` |
+## Current Runtime Status
+
+Runtime tests should cover graph node behavior, resume target/reason, cancellation
+result mapping, runtime-store aliases, and default bot interceptor wiring. See
+`docs/current-runtime.md`.

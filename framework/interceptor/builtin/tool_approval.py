@@ -63,6 +63,15 @@ class TimeoutAction(str, Enum):
     CANCEL_TURN = "timeout_as_cancel"
 
 
+def _looks_like_path(val: str) -> bool:
+    """Heuristic: does the value look like a filesystem path?"""
+    if "/" in val or "\\" in val:
+        return True
+    if len(val) >= 2 and val[1] == ":" and val[0].isalpha():
+        return True  # Windows drive letter: C:...
+    return val.endswith((".txt", ".py", ".json", ".yml", ".yaml", ".md", ".csv"))
+
+
 class ArgumentMatcher:
     """Match tool arguments against allowed directories for path-based approval.
 
@@ -72,7 +81,7 @@ class ArgumentMatcher:
 
     def __init__(self, allowed_directories: set[str], workspace: str = ".") -> None:
         self._allowed = allowed_directories
-        self._workspace = str(Path(workspace).resolve())
+        self._workspace = str(Path(workspace).expanduser().resolve())
 
     def is_allowed(self, tool_call) -> bool:
         """Returns True if the tool's path argument is within allowed directories."""
@@ -87,15 +96,16 @@ class ArgumentMatcher:
             # No path argument — check other arguments for path-like values
             for val in args.values():
                 val_str = str(val)
-                if "/" in val_str or val_str.endswith((".txt", ".py", ".json", ".yml", ".yaml", ".md", ".csv")):
+                if _looks_like_path(val_str):
                     path_arg = val_str
                     break
         if path_arg is None:
             return True  # No path to check — allow
 
-        resolved = str(Path(path_arg).resolve())
+        # expanduser() handles ~ on both Unix and Windows; resolve() normalizes
+        resolved = str(Path(path_arg).expanduser().resolve())
         for allowed in self._allowed:
-            allowed_resolved = str(Path(allowed).resolve())
+            allowed_resolved = str(Path(allowed).expanduser().resolve())
             if resolved.startswith(allowed_resolved):
                 return True
         return False
@@ -293,6 +303,14 @@ class TieredToolApprovalInterceptor:
         next_call: ToolCallNext,
     ) -> ToolResult:
         tool_name = call.tool_name
+        call_id = call.tool_call.call_id or "" if call.tool_call else ""
+
+        # If the ToolNode already resolved approval (Phase 2), skip redundant
+        # control-channel approval here.  Pre-approved ids are written by
+        # ToolNode._execute_batch before Phase 3.
+        pre_approved: set[str] = ctx.metadata.get("_pre_approved_tool_ids", set())  # type: ignore[assignment]
+        if call_id in pre_approved:
+            return await next_call()
 
         # 1) Hardline: 无条件拒绝
         if self._hardline and self._hardline.matches(tool_name):

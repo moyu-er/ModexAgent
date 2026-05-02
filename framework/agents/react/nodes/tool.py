@@ -176,58 +176,69 @@ class ToolNode(Node):
         if self._enable_hooks:
             await self._agent._call_hooks(HookPoint.BEFORE_TOOL_EXECUTION, ctx, tool_calls)
 
-        denied_encountered = False
-        for tc, dec in zip(tool_calls, decisions, strict=False):
-            if denied_encountered:
-                dec = ApprovalDecision.PREEMPTED
+        # Mark pre-approved tools so TieredToolApprovalInterceptor.around_tool_call
+        # skips redundant control-channel approval (already resolved in Phase 2).
+        approved_ids: set[str] = {
+            tc.call_id or ""
+            for tc, d in zip(tool_calls, decisions, strict=False)
+            if d == ApprovalDecision.ALLOWED
+        }
+        ctx.metadata[ReActMetaKey.PRE_APPROVED_TOOL_IDS] = approved_ids
+        try:
+            denied_encountered = False
+            for tc, dec in zip(tool_calls, decisions, strict=False):
+                if denied_encountered:
+                    dec = ApprovalDecision.PREEMPTED
 
-            if ctx.emitter is not None:
-                await ctx.emitter.emit(ReActEvent.TOOL_CALL_START, tc)
+                if ctx.emitter is not None:
+                    await ctx.emitter.emit(ReActEvent.TOOL_CALL_START, tc)
 
-            if dec == ApprovalDecision.ALLOWED:
-                result = await self._agent._execute_tool(tc, ctx)
-            else:
-                result = ToolResult(
-                    tool_name=tc.tool_name, result=None,
-                    error=f"Error: {dec}",
+                if dec == ApprovalDecision.ALLOWED:
+                    result = await self._agent._execute_tool(tc, ctx)
+                else:
+                    result = ToolResult(
+                        tool_name=tc.tool_name, result=None,
+                        error=f"Error: {dec}",
+                    )
+
+                if ctx.emitter is not None:
+                    await ctx.emitter.emit(ReActEvent.TOOL_CALL_END, (tc, result))
+
+                tool_msg = self._agent._build_tool_message(result, tc.call_id)
+                await ctx.history.append(tool_msg)
+                msgs: list = ctx.metadata.setdefault(ReActMetaKey.ITERATION_MSGS, [])
+                msgs.append(tool_msg)
+                await self._agent._save_checkpoint(msgs, ctx)
+
+                if dec in (ApprovalDecision.DENIED, ApprovalDecision.PREEMPTED):
+                    denied_encountered = True
+
+            if self._enable_hooks:
+                await self._agent._call_hooks(
+                    HookPoint.AFTER_TOOL_EXECUTION, ctx,
+                    [m for m in ctx.metadata.get(ReActMetaKey.ITERATION_MSGS, [])
+                     if isinstance(m, dict) and m.get("role") == "tool"],
                 )
+                await self._agent._drain_injections(ctx)
 
             if ctx.emitter is not None:
-                await ctx.emitter.emit(ReActEvent.TOOL_CALL_END, (tc, result))
+                await ctx.emitter.emit(ReActEvent.ITERATION_END, {
+                    "iteration": ctx.metadata.get(ReActMetaKey.ITERATION),
+                    "has_tool_calls": True,
+                })
 
-            tool_msg = self._agent._build_tool_message(result, tc.call_id)
-            await ctx.history.append(tool_msg)
-            msgs: list = ctx.metadata.setdefault(ReActMetaKey.ITERATION_MSGS, [])
-            msgs.append(tool_msg)
-            await self._agent._save_checkpoint(msgs, ctx)
+            if denied_encountered and ctx.metadata.get(ReActMetaKey.DENY_AS_CANCEL):
+                await self._agent._save_denial_checkpoint(
+                    list(ctx.metadata.get(ReActMetaKey.ITERATION_MSGS, [])),
+                    ctx,
+                )
+                ctx.metadata[ReActMetaKey.END_REASON] = ReActReason.TURN_CANCELLED
+                ctx.metadata[ReActMetaKey.CANCEL_REASON] = "approval_denied"
+                return NodeTransition(ReActNode.END, ReActReason.TURN_CANCELLED)
 
-            if dec in (ApprovalDecision.DENIED, ApprovalDecision.PREEMPTED):
-                denied_encountered = True
-
-        if self._enable_hooks:
-            await self._agent._call_hooks(
-                HookPoint.AFTER_TOOL_EXECUTION, ctx,
-                [m for m in ctx.metadata.get(ReActMetaKey.ITERATION_MSGS, [])
-                 if isinstance(m, dict) and m.get("role") == "tool"],
-            )
-            await self._agent._drain_injections(ctx)
-
-        if ctx.emitter is not None:
-            await ctx.emitter.emit(ReActEvent.ITERATION_END, {
-                "iteration": ctx.metadata.get(ReActMetaKey.ITERATION),
-                "has_tool_calls": True,
-            })
-
-        if denied_encountered and ctx.metadata.get(ReActMetaKey.DENY_AS_CANCEL):
-            await self._agent._save_denial_checkpoint(
-                list(ctx.metadata.get(ReActMetaKey.ITERATION_MSGS, [])),
-                ctx,
-            )
-            ctx.metadata[ReActMetaKey.END_REASON] = ReActReason.TURN_CANCELLED
-            ctx.metadata[ReActMetaKey.CANCEL_REASON] = "approval_denied"
-            return NodeTransition(ReActNode.END, ReActReason.TURN_CANCELLED)
-
-        return NodeTransition(ReActNode.LLM, ReActReason.TOOLS_DONE)
+            return NodeTransition(ReActNode.LLM, ReActReason.TOOLS_DONE)
+        finally:
+            ctx.metadata.pop(ReActMetaKey.PRE_APPROVED_TOOL_IDS, None)
 
     @staticmethod
     def _format_hint(tool_calls: list[ToolCall]) -> str:

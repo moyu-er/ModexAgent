@@ -723,3 +723,9 @@ my_extension/
 │   └── test_tools.py
 └── README.md
 ```
+## Current Runtime Status
+
+Extensions should respect the current runtime layering in `docs/current-runtime.md`:
+hooks observe/transform payloads, interceptors wrap execution scopes, and control
+is the runtime command plane. ReAct clean mode should not receive extension
+services.

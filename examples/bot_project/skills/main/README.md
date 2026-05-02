@@ -23,3 +23,8 @@ The skill format and metadata structure follow OpenClaw's conventions to maintai
 | `tmux` | Remote-control tmux sessions |
 | `clawhub` | Search and install skills from ClawHub registry |
 | `skill-creator` | Create new skills |
+## Runtime Boundary
+
+Skills are runtime-agnostic content. They should not depend directly on ReAct
+hooks, interceptors, control services, approval stores, or runtime-state stores;
+those are assembled by the bot runtime described in `docs/current-runtime.md`.

@@ -51,3 +51,9 @@ QQ Gateway → QQInputAdapter → AgentPipeline
 - `qq-botpy` — QQ Bot SDK
 - `litellm` — LLM provider
 - `fastapi` — HTTP gateway
+## Current Runtime Status
+
+The bot project is the primary full-mode reference. Its default interceptor chain
+currently wires `ControlDrainInterceptor` and `ToolResultLimitInterceptor` only,
+and runtime persistence should use `JsonFileRuntimeStateStore`. See
+`docs/current-runtime.md`.

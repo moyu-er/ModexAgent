@@ -739,3 +739,8 @@ AgentPool
 7. **注意 Inbox 延迟**：在 `AgentPipeline` 模式下，异步 Subagent 结果通常要等**下一条用户消息**才能被父 Agent 消费到
 8. **使用 AgentPool**：对于需要长期运行的 Agent，使用 `AgentPool` 管理生命周期
 9. **状态监控**：定期检查 Agent 状态，处理 ERROR 状态的 Agent
+## Current Runtime Status
+
+Multi-agent and pool integrations must treat hooks as shared objects. Store
+per-turn hook state in `ctx.metadata`, not instance attributes. Current ReAct
+runtime and control boundaries are summarized in `docs/current-runtime.md`.

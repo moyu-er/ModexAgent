@@ -1,159 +1,162 @@
 # ModexAgent
 
-**ModexAgent** — **Mod**ular + N**ex**us + **Agent**，一个以模块化为核心设计理念的轻量级多 Agent 框架。
+ModexAgent 是一个用于搭建 AI Agent 应用的 Python 框架。它把模型、工具、记忆、输入输出适配器、插件和多 Agent 协作拆成可以组合的模块，让你可以从一个简单 Agent 开始，逐步扩展成更完整的应用。
 
-> **Modex** = **Mod**ular（模块化）+ **Nex**us（枢纽/连接点）。每个组件（记忆、工具、Agent、适配器、插件）都是独立的积木模块，通过清晰的接口协议连接组合，像拼装积木一样构建你需要的 Agent 系统。
+项目仍处在早期开发阶段，接口和文档会继续调整。当前最完整的用法参考是 `examples/bot_project/`，但它只是一个示例项目，不是框架本身。
 
-## 为什么叫 ModexAgent？
+## 适合做什么
 
-| 词根 | 含义 | 映射到框架 |
-|------|------|-----------|
-| **Mod** | Modular — 模块化、可插拔 | Memory、Tool、Agent、Emitter、Adapter 均可独立替换 |
-| **Nex** | Nexus — 枢纽、连接点 | AgentPipeline 作为编排枢纽，将所有模块组装在一起 |
-| **Agent** | 智能体 | 框架的核心：ReAct Agent、Subagent、Peer Agent |
+- 构建一个可以调用工具的 ReAct Agent。
+- 接入不同的输入输出方式，例如 CLI、HTTP、QQ Bot 或自定义平台。
+- 给 Agent 增加短期记忆、历史记忆、长期记忆和上下文压缩。
+- 通过 hook、interceptor、plugin 扩展运行过程。
+- 组织多个 Agent 协作，包括主 Agent、子 Agent、peer Agent 和消息路由。
+- 在工具执行时加入安全策略、沙箱、审批和运行时控制。
 
-**设计哲学**：不造轮子，只做连接。ModexAgent 把 Agent 开发中需要的每个环节拆成独立模块，开发者按需取用、自由组合。
+## 核心概念
 
-## 核心特性
-
-- **🧩 积木式架构** — Memory / Tool / Agent / Emitter / Adapter 全部可插拔替换，按需组合
-- **🧠 三层记忆系统** — Short-term → History → Long-term，每层独立配置存储后端和压缩策略
-- **🤖 多 Agent 协作** — SubagentManager（临时派生）+ AgentPool（常驻 Peer），支持跨 Agent 消息路由
-- **🔧 工具生态** — 内置工具注册表、并行执行调度、MCP 协议客户端集成
-- **📦 插件系统** — 基于约定的插件发现机制，支持注入 MemoryProvider、Hook 和工具
-- **🔌 多平台接入** — 通过 Adapter 机制对接 QQ Bot、CLI、HTTP API 等任意平台
-- **🔒 安全沙箱** — 支持 Subprocess / Landlock / Docker / E2B 多种隔离适配器
-- **⚡ 流式支持** — StreamingAwareEmitter 统一处理流式与非流式输出
-
-## 架构概览
-
-```
-┌──────────────────────────────────────────────────────────┐
-│                     AgentPipeline                        │
-│                   （编排枢纽 / Nexus）                     │
-├──────────┬──────────┬──────────┬────────────────────────┤
-│  Input   │  Agent   │  Tool    │      Output            │
-│  Adapter │ (ReAct)  │ Manager  │      Adapter           │
-├──────────┼──────────┼──────────┼────────────────────────┤
-│          │          │          │                        │
-│  ┌──────┴──────┐   │          │                        │
-│  │   Memory    │   │          │                        │
-│  │   System    │   │          │                        │
-│  │ (三层记忆)   │   │          │                        │
-│  └─────────────┘   │          │                        │
-│                    │          │                        │
-│  ┌─────────────┐   │          │   ┌────────────────┐  │
-│  │  Emitter    │◀──┘          │   │  Plugin        │  │
-│  │ (事件分发)   │              │   │  System        │  │
-│  └─────────────┘              │   │ (MemoryProvider)│  │
-│                               │   └────────────────┘  │
-├───────────────────────────────┴────────────────────────┤
-│                   Multi-Agent Layer                     │
-│  ┌───────────────┐  ┌───────────┐  ┌───────────────┐  │
-│  │ SubagentMgr   │  │ AgentPool │  │ MessageBroker │  │
-│  │ (临时派生)     │  │ (常驻Peer) │  │ (消息路由)     │  │
-│  └───────────────┘  └───────────┘  └───────────────┘  │
-└────────────────────────────────────────────────────────┘
-```
+| 概念 | 作用 |
+|------|------|
+| `Agent` | 负责推理和决策，例如 ReAct Agent。 |
+| `Tool` / `ToolManager` | 注册和执行工具。 |
+| `Memory` | 管理会话、历史、长期记忆和上下文压缩。 |
+| `InputAdapter` / `OutputAdapter` | 把外部平台接入框架，例如命令行、HTTP、QQ。 |
+| `AgentPipeline` | 串起输入、上下文、Agent、输出的完整流程。 |
+| `Hook` | 在生命周期节点观察或调整上下文。 |
+| `Interceptor` | 包裹工具、模型流、回合等执行边界。 |
+| `Control` | 运行时控制通道，用于取消、审批、注入指令等流程控制。 |
+| `Plugin` | 以插件形式扩展工具、记忆、hook 或其他能力。 |
 
 ## 快速开始
 
 ### 环境要求
 
-- Python >= 3.11
-- [uv](https://docs.astral.sh/uv/) 包管理器（推荐）
+- Python 3.11+
+- [uv](https://docs.astral.sh/uv/)
 
-### 1. 安装
+### 安装
 
 ```bash
-# 安装 uv（如果还没有）
-# Windows (PowerShell):
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-# macOS / Linux:
-# curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 克隆项目
 git clone git@github.com:moyu-er/ModexAgent.git
 cd ModexAgent
 
-# 创建虚拟环境并安装依赖
 uv venv
-# Windows:
+
+# Windows
 .venv\Scripts\activate
-# macOS/Linux:
+
+# macOS / Linux
 # source .venv/bin/activate
 
-# 安装全部依赖
 uv pip install -e ".[all]"
 ```
 
-### 2. 配置
+只安装开发依赖：
+
+```bash
+uv pip install -e ".[dev]"
+```
+
+## 示例项目：bot_project
+
+`examples/bot_project/` 是一个用 ModexAgent 搭出来的 QQ Bot 示例。它覆盖了很多框架能力，包括：
+
+- 单 Agent pipeline 模式；
+- AgentPool 和消息 broker 模式；
+- ReAct Agent；
+- 工具调用；
+- 记忆系统；
+- 插件；
+- 多 Agent 协作；
+- 审批、控制和运行时状态示例。
+
+它的作用是展示“如何使用框架搭一个完整应用”。不要把它理解成框架唯一推荐形态；你可以只使用其中很小一部分能力。
+
+运行示例：
 
 ```bash
 cd examples/bot_project
 cp .env.example .env
 ```
 
-编辑 `.env`，填入必要的配置：
+编辑 `.env`，填入模型和平台配置：
 
 ```bash
-# LLM — 兼容任意 OpenAI 格式 API
 LLM_API_KEY=your_api_key
-LLM_BASE_URL=https://api.minimaxi.com/v1
-LLM_MODEL=openai/MiniMax-M2.5
+LLM_BASE_URL=https://api.example.com/v1
+LLM_MODEL=openai/your-model
 
-# QQ Bot（如需接入 QQ 平台）
+# 如果要接 QQ Bot，再配置平台凭据
 QQ_APP_ID=your_app_id
 QQ_SECRET=your_secret
 ```
 
-### 3. 启动
+启动：
 
 ```bash
-cd examples/bot_project
+# 单 Agent pipeline
+python bot_service.py --mode pipeline
 
-# Pool 模式（多 Agent 常驻协作）
+# AgentPool + broker，多 Agent 示例
 python bot_service.py --mode pool
 ```
 
-所有运行时配置集中在 `config/bot_config.yml`，通过 `${ENV_VAR}` 语法从 `.env` 读取密钥，无需改代码即可切换 LLM 供应商。
-
-#### 使用截图
-
-<img src="./assets/qq_bot.jpg" alt="使用截图" style="zoom:25%;" />
-
-## 文档
-
-| 文档 | 说明 |
-|------|------|
-| [架构概览](docs/architecture.md) | 整体架构设计、组件关系、数据流 |
-| [核心模块](docs/core-modules.md) | Agent、Emitter、ToolManager、ContextManager 详解 |
-| [记忆系统](docs/memory-system.md) | 三层记忆架构、Scope 体系、压缩策略 |
-| [多 Agent 协作](docs/multi-agent-guide.md) | SubagentManager、AgentPool、Inbox 系统 |
-| [扩展开发](docs/extension-guide.md) | 添加工具、Agent、插件、适配器 |
-| [Bot 示例](docs/bot-guide.md) | QQ Bot 示例项目完整指南 |
+更多说明见 [examples/bot_project/README.md](examples/bot_project/README.md)。
 
 ## 项目结构
 
-```
+```text
 framework/
-├── core/                  # 基础抽象：Agent, ContextManager, Emitter, Tool, Skills
-├── agents/react/          # ReActAgent 实现
-├── pipeline/              # AgentPipeline 编排、InputAdapter、OutputAdapter
-├── session/               # AgentSession（请求/响应模式）
-├── memory/                # 三层记忆系统
-│   ├── core/              # 抽象基类：MemoryScope, Storage, Compression
-│   ├── managers/          # Working, ShortTerm, History, LongTerm 管理器
-│   ├── compression/       # 压缩策略：ToolChain, Importance, TokenWindow, Hybrid
-│   ├── consolidation/     # Consolidator + DreamEngine
-│   └── injection/         # 记忆注入策略
-├── multi_agent/           # 多 Agent 协作
-│   └── inbox/             # Inbox 系统：Producer, Consumer, FlushHook
-├── plugins/               # 插件系统：MemoryProvider, PluginManager
-├── messaging/             # MessageBroker 消息总线
-├── extensions/            # 可选扩展：LiteLLM, 沙箱适配器
-└── sandbox/               # 安全沙箱：Subprocess, Landlock, Docker, E2B
+  core/              核心抽象：Agent、Context、Emitter、Provider、Tool 等
+  agents/react/      ReAct Agent 实现
+  pipeline/          输入、处理、输出编排
+  memory/            记忆系统
+  tools/             工具注册、执行和标准工具
+  hook/              生命周期扩展点
+  interceptor/       执行边界拦截器
+  control/           运行时控制、事件和状态存储
+  multi_agent/       多 Agent 协作
+  messaging/         消息 broker 和路由
+  plugins/           插件系统
+  sandbox/           沙箱适配器
+  security/          安全策略
+  extensions/        可选扩展，例如 LiteLLM、Chroma、FAISS、SQLAlchemy
+
+examples/
+  bot_project/       功能较完整的 Bot 示例项目
+  sandbox/           沙箱相关示例
+
+docs/                框架文档
+tests/               单元、集成和端到端测试
 ```
+
+## 文档入口
+
+| 文档 | 内容 |
+|------|------|
+| [docs/architecture.md](docs/architecture.md) | 框架整体架构。 |
+| [docs/core-modules.md](docs/core-modules.md) | 核心模块说明。 |
+| [docs/memory-system.md](docs/memory-system.md) | 记忆系统说明。 |
+| [docs/multi-agent-guide.md](docs/multi-agent-guide.md) | 多 Agent 协作说明。 |
+| [docs/extension-guide.md](docs/extension-guide.md) | 扩展和插件开发说明。 |
+| [docs/bot-guide.md](docs/bot-guide.md) | Bot 示例使用说明。 |
+| [docs/current-runtime.md](docs/current-runtime.md) | 当前 ReAct、hook、interceptor、control 的运行时设计说明。 |
+
+## 开发命令
+
+```bash
+pytest
+pytest tests/unit
+pytest -m "not integration"
+
+ruff check framework tests
+ruff format framework
+mypy framework
+```
+
+## 当前状态
+
+这个仓库目前更像一个框架工作台：核心能力已经拆分成模块，`bot_project` 展示了较完整的组合方式，但部分高级能力仍在演进中。新用户建议先从示例运行和核心模块文档开始，再阅读运行时设计文档。
 
 ## License
 

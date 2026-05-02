@@ -55,3 +55,8 @@ Abstract base classes and shared types forming the framework's type-safe foundat
 
 ### External
 - None (no external runtime deps at the core level)
+## Current Runtime Status
+
+Core graph primitives support durable ReAct macro steps, but hook/interceptor/control
+should remain layered runtime services. Do not model low-latency control only as
+ordinary graph nodes. See `docs/current-runtime.md`.

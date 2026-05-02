@@ -18,3 +18,8 @@ Plugin system — convention-based extensibility. Three discovery sources: bundl
 - Plugin contract: `def register(ctx: PluginContext) -> None:`
 - `ctx.register_tool(...)`, `ctx.register_memory_provider(...)`, `ctx.register_hook(...)`
 - `MemoryProvider` ABC: `add()`, `search()`, `prefetch()` methods
+## Current Runtime Status
+
+Plugins may contribute hooks, tools, or policies, but ReAct clean mode should run
+without plugin-provided runtime services unless explicitly re-enabled by full
+mode assembly. See `docs/current-runtime.md`.

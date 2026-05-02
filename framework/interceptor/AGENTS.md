@@ -48,3 +48,9 @@ AOP (Aspect-Oriented Programming) call-boundary wrapping layer. Interceptors for
 ### Internal
 - `framework.control` — `ControlChannel`, `ControlEventBus`, `ControlCommandType`, `AgentCancelled`/`ApprovalDenied`
 - `framework.core.agent` — `AgentContext`
+## Current Runtime Status
+
+Interceptors wrap execution scopes such as tool calls, LLM streams, turns, and
+iterations. The bot project default chain currently includes
+`ControlDrainInterceptor` and `ToolResultLimitInterceptor` only. See
+`docs/current-runtime.md`.

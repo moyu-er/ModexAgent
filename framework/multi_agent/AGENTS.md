@@ -54,3 +54,8 @@ Multi-agent orchestration — factory, pool, inbox, subagent management, and sta
 ### Internal
 - All `framework.*` sub-packages
 - `framework.agents.react` — `ReActAgentBuilder`
+## Current Runtime Status
+
+Pool and multi-agent code may share hook/interceptor instances. Keep per-turn
+state in `ctx.metadata` and follow the current ReAct runtime boundaries in
+`docs/current-runtime.md`.

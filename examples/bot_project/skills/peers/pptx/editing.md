@@ -203,3 +203,7 @@ Handled automatically by unpack/pack. But the Edit tool converts smart quotes to
 
 - **Whitespace**: Use `xml:space="preserve"` on `<a:t>` with leading/trailing spaces
 - **XML parsing**: Use `defusedxml.minidom`, not `xml.etree.ElementTree` (corrupts namespaces)
+## Runtime Boundary
+
+This reference is runtime-agnostic. Hook, interceptor, control, approval, and
+runtime-state services are assembled by the bot runtime, not by reference docs.

@@ -19,3 +19,8 @@ Sandboxed code execution — isolates tool execution from the agent runtime. Mul
 - `E2B`: cloud-based sandbox (requires `E2B_API_KEY`)
 - `Docker`: container-based isolation
 - `Subprocess`: process-level isolation
+## Current Runtime Status
+
+Sandbox tool execution is invoked from the ReAct tool node path. Tool timeout is
+owned by ReAct tool execution/runtime safety policy, not by the default bot
+interceptor chain. See `docs/current-runtime.md`.

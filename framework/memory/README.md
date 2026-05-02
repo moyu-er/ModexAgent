@@ -179,3 +179,8 @@ This pattern cleanly separates the **storage backend** (ChromaDB), the **retriev
 - `MemorySystemContextManager` is a **transitional adapter** that wraps `MemorySystem` to satisfy the legacy `ContextManager` ABC.
 - Existing `AgentSession` and `AgentPipeline` code continues to work unchanged.
 - New code should prefer consuming `MemorySystem` directly.
+## Current Runtime Status
+
+This memory package documents conversation and long-term memory. ReAct
+suspend/resume persistence is runtime state, not user memory; use the
+`RuntimeStateStore` aliases described in `docs/current-runtime.md`.

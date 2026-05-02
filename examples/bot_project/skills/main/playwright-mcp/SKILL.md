@@ -163,3 +163,7 @@ playwright-mcp --version
 - [Playwright Docs](https://playwright.dev)
 - [MCP Protocol](https://modelcontextprotocol.io)
 - [NPM Package](https://www.npmjs.com/package/@playwright/mcp)
+## Runtime Boundary
+
+This skill is runtime-agnostic. Hook, interceptor, control, approval, and
+runtime-state services are assembled by the bot runtime, not by skill content.

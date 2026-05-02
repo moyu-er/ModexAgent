@@ -48,3 +48,9 @@ Framework-provided interceptors — ready-to-use AOP wrappers for common control
 ### Internal
 - `framework.control` — `ControlChannel`, `ControlEventBus`, `AgentCancelled`/`ApprovalDenied`, `ControlCommandType`, `ApprovalDenialContext`
 - `framework.interceptor.abc` — `InterceptorScope`, context types
+## Current Runtime Status
+
+Built-in interceptors should keep scope ownership explicit. The current bot
+project default chain uses `ControlDrainInterceptor` and `ToolResultLimitInterceptor`
+only; turn/tool timeout interceptors are not default wiring. See
+`docs/current-runtime.md`.

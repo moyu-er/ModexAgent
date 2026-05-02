@@ -62,3 +62,8 @@ class MyHook:
 
 ### External
 - None
+## Current Runtime Status
+
+Hooks observe or transform lifecycle payloads; they do not wrap execution.
+Per-turn state belongs in `ctx.metadata`, especially in pool mode. ReAct clean
+mode should run without hook services. See `docs/current-runtime.md`.

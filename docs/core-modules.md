@@ -688,3 +688,9 @@ for tool in mcp_manager.get_tools():
 | `metadata_parser.py` | 工具元数据解析 |
 | `secure_wrapper.py` | 安全包装 |
 | `types.py` | 工具类型定义 |
+## Current Runtime Status
+
+For current ReAct hook/interceptor/control behavior, read
+`docs/current-runtime.md`. Runtime-state names should prefer
+`RuntimeStateStore`, `JsonFileRuntimeStateStore`, and `NoOpRuntimeStateStore`.
+The older checkpoint names remain compatible.

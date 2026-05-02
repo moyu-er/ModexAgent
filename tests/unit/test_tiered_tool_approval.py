@@ -194,3 +194,77 @@ class TestTimeout:
         assert result.error is not None
         assert "timed out" in result.error.lower()
         assert ctx.metadata.get("_deny_as_cancel") is True
+
+
+class TestPreApprovedSkip:
+    """Pre-approved tools (via ToolNode Phase 2) must NOT be re-intercepted.
+
+    This reproduces the regression where TieredToolApprovalInterceptor.around_tool_call
+    independently re-requests approval via ControlChannel for tools already resolved
+    by the ToolNode's SuspendResumeStrategy, causing the resume path to hang.
+    """
+
+    async def test_pre_approved_tool_bypasses_control_channel_approval(self):
+        """A dangerous tool marked in _pre_approved_tool_ids executes directly.
+
+        Without the fix, around_tool_call re-matches 'shell' as DANGEROUS and
+        calls _request_approval → _wait_response, blocking on the control channel
+        until timeout.  With the fix, the pre-approved check at the top of
+        around_tool_call returns next_call() immediately.
+        """
+        ch = InMemoryControlChannel()
+        interceptor = TieredToolApprovalInterceptor(
+            channel=ch,
+            dangerous_matcher=ToolNameMatcher({"shell"}),
+            approval_timeout_seconds=0.05,  # short but distinguishable from pre-approved fast path
+            on_timeout=TimeoutAction.TOOL_ERROR,
+        )
+        ctx = _make_ctx()
+        # Simulate ToolNode._execute_batch marking this tool as pre-approved
+        ctx.metadata["_pre_approved_tool_ids"] = {"tc1"}
+
+        call = ToolCallContext(
+            tool_call=_make_tool_call("shell", "tc1"),
+            tool_name="shell",
+            arguments={"cmd": "dir"},
+            session_id="s1",
+        )
+
+        async def _next() -> ToolResult:
+            return ToolResult(tool_name="shell", result="ok")
+
+        result = await interceptor.around_tool_call(ctx, call, _next)
+        # Pre-approved → tool executes immediately, no control-channel wait
+        assert result.result == "ok"
+        assert result.error is None
+
+    async def test_non_pre_approved_tool_still_goes_through_approval(self):
+        """Without the pre-approved marker, the same dangerous tool times out.
+
+        This confirms the pre-approval check is the ONLY reason the test above
+        succeeds, not a side effect of the interceptor config.
+        """
+        ch = InMemoryControlChannel()
+        interceptor = TieredToolApprovalInterceptor(
+            channel=ch,
+            dangerous_matcher=ToolNameMatcher({"shell"}),
+            approval_timeout_seconds=0.001,
+            on_timeout=TimeoutAction.TOOL_ERROR,
+        )
+        ctx = _make_ctx()
+        # NO _pre_approved_tool_ids — tool must go through control channel
+
+        call = ToolCallContext(
+            tool_call=_make_tool_call("shell", "tc2"),
+            tool_name="shell",
+            arguments={"cmd": "dir"},
+            session_id="s1",
+        )
+
+        async def _next() -> ToolResult:
+            return ToolResult(tool_name="shell", result="ok")
+
+        result = await interceptor.around_tool_call(ctx, call, _next)
+        # No pre-approval → control channel wait → timeout
+        assert result.error is not None
+        assert "timed out" in result.error.lower()

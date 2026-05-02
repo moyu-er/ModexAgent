@@ -615,3 +615,15 @@ class MemoryProvider(ABC):
 | 沙箱 | Subprocess / Landlock / Docker / E2B |
 | 异步 | asyncio |
 | 包管理 | uv（推荐） |
+## Current Runtime Status
+
+The ReAct runtime is now graph-based. `ReActAgent` delegates turn execution to
+`ReActGraph`, whose durable nodes are `StartNode`, `LLMNode`, `ToolNode`, and
+`EndNode`. Hook, interceptor, and control integration is layered around those
+runtime boundaries rather than implemented as ordinary graph nodes only.
+
+`clean` mode should sanitize hook/approval/interceptor/control/runtime-store
+services at turn entry. `full` mode wires those services explicitly. The current
+bot project default interceptor chain contains `ControlDrainInterceptor` and
+`ToolResultLimitInterceptor`; timeout interceptors are not default wiring. See
+`docs/current-runtime.md` for the up-to-date runtime summary.

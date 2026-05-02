@@ -9,6 +9,8 @@
 - `framework/hook/` — Lifecycle extension points: `HookPoint` enum (9 points), `Hook` Protocol, `HookRunner`. Hooks observe and modify context; do NOT wrap execution.
 - `framework/interceptor/` — AOP onion-chain wrapping: `Interceptor` Protocol, `InterceptorChain` (around tool_calls, turns, iterations, LLM streams). Interceptors wrap; they can approve/deny/timeout/transform.
 
+**Current runtime note**: ReAct is now graph-based (`StartNode`, `LLMNode`, `ToolNode`, `EndNode`). Runtime-state naming should prefer `RuntimeStateStore`, `JsonFileRuntimeStateStore`, and `NoOpRuntimeStateStore`; the older `CheckpointStore` names remain compatible. The bot project default interceptor chain currently wires `ControlDrainInterceptor` and `ToolResultLimitInterceptor`; turn/tool timeout interceptors are not default runtime wiring. See `docs/current-runtime.md` for the current hook/interceptor/control integration boundaries.
+
 Other packages: `framework/adapters/` (PlatformAdapter, AdapterRegistry), `framework/messaging/` (MessageBroker star-topology), `framework/registry/` (component registry), `framework/extensions/` (optional: LiteLLM, ChromaDB, FAISS, SQLAlchemy), `framework/security/` (SecurityPolicy).
 
 Tests are under `tests/unit/`, `tests/integration/`, and `tests/e2e/`. Documentation in `docs/`, examples in `examples/`, design docs in `agent_docs/`.
@@ -78,3 +80,11 @@ Pytest discovers `test_*.py` and `*_test.py`, `Test*` classes, and `test_*` func
 ## Commit & Pull Request Guidelines
 
 Recent commits use concise imperative subjects, often with prefixes such as `docs:` or milestone labels like `P6:`. Keep the first line specific, for example `docs: update memory system guide` or `P8: add auto compact service`. Pull requests should describe behavior changes, list verification commands run, link related issues or design notes, and include screenshots only for user-visible bot or documentation changes.
+
+# Type Safety
+
+1. 用枚举/常量代替硬编码字符串（MessageRole、MessageType、FinishReason、DefaultValues 等）
+2. 用结构体代替 dict（ChatMessage、ToolCall、LLMResponse、InputMessage、OutputMessage 等）
+3. 函数签名必须写参数和返回值类型，禁止 bare Any / list / dict / list[Any]
+4. 类设计必须做好抽象化, 禁止直接使用具体实现类, 而是应该使用抽象类或接口, 便于扩展/拔插/自定义
+4. framework目录中的都是框架代码, examples中的都是业务代码使用示例, 必须按照业务需求和框架设计/通用性区分修改内容, 例如不能将业务代码中的配置写死到框架中

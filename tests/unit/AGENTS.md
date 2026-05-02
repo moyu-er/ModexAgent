@@ -42,3 +42,8 @@ async def test_something():
     # Assert
     assert result.content == "expected"
 ```
+## Current Runtime Status
+
+Unit tests for ReAct runtime should live under `tests/unit/agents/react/` and
+mock providers/tools directly. Include regressions for clean/full boundaries,
+runtime state aliases, and cancellation metadata when those areas change.

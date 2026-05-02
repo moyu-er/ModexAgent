@@ -246,6 +246,11 @@ class AgentPipeline:
 
                 try:
                     await self._process_message(input_msg)
+                except GraphInterrupt:
+                    # Defense in depth: if GraphInterrupt somehow escapes
+                    # _process_message_locked, propagate it rather than
+                    # swallowing as a generic error.
+                    raise
                 except Exception as e:
                     logger.exception(f"Failed to process message: {e}")
                     # 发送错误响应
@@ -506,6 +511,15 @@ class AgentPipeline:
                 elif input_metadata.get("source_agent"):
                     self._approval_pending.setdefault(session_id, []).append(input_msg)
                     return None
+                else:
+                    # Unrelated user content during pending approval → deny all
+                    # tools. apply(DENIED) cascades remaining to PREEMPTED.
+                    for req in approval_state_early.requests:
+                        if req.tool_call_id not in approval_state_early.decisions or \
+                           approval_state_early.decisions[req.tool_call_id] == ApprovalDecision.PENDING:
+                            approval_state_early.apply(req.tool_call_id, ApprovalDecision.DENIED)
+                            break
+                    await approval_store.save(approval_state_early)
 
         context_state = await ctx_mgr.load_with_metadata(
             session_id,
@@ -701,7 +715,9 @@ class AgentPipeline:
             )
 
         # Approval consumption: handle pending approval commands
-        if _is_approval_cmd and approval_state_early is not None:
+        # Also triggered by unrelated user content during pending approval
+        # (all tools were already denied in the approval check above).
+        if approval_state_early is not None:
             action = parse_approval_action(input_msg.content or "")
             if action is not None:
                 # Apply decision to the first unresolved tool
@@ -739,6 +755,9 @@ class AgentPipeline:
                                             session_id, _format_approval_prompt(req),
                                         )
                                         break
+                            # Drain buffered peer messages even when a new approval
+                            # interrupt is triggered, otherwise they are lost forever.
+                            await self._drain_approval_buffer(session_id)
                             return None
                         finally:
                             _current_resume.set(None)
@@ -887,10 +906,16 @@ class AgentPipeline:
                 logger.debug("cleanup_session failed for %s", session_id, exc_info=True)
 
     async def _drain_approval_buffer(self, session_id: str) -> None:
-        """Replay buffered agent messages after approval completes."""
+        """Replay buffered agent messages after approval completes.
+
+        Must not call _process_message directly because the session lock is
+        still held by the caller (_process_message_locked).  Scheduling each
+        replay as a background task avoids reentrancy deadlock on the
+        non-reentrant asyncio.Lock.
+        """
         pending = self._approval_pending.pop(session_id, [])
         for msg in pending:
-            await self._process_message(msg)
+            asyncio.create_task(self._process_message(msg))
 
     async def stop(self) -> None:
         """停止流水线"""

@@ -790,3 +790,9 @@ qq:
 
 - [ModexAgent 文档](../../CLAUDE.md)
 - [AGENTS.md](../../AGENTS.md)
+## Current Runtime Status
+
+This example demonstrates full-mode ReAct runtime assembly. The default
+interceptor chain contains `ControlDrainInterceptor` and `ToolResultLimitInterceptor`
+only. Redundant default `approval:` config has been removed; approval policy
+belongs to runtime construction. See `docs/current-runtime.md`.

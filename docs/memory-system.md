@@ -475,3 +475,9 @@ config = ShortTermConfig(
     content_transformer=Base64SanitizeTransformer(),
 )
 ```
+## Current Runtime Status
+
+Memory docs are separate from ReAct runtime persistence. For suspend/resume and
+runtime state, use the `RuntimeStateStore` naming described in
+`docs/current-runtime.md`; do not confuse it with long-term or conversation
+memory providers.
