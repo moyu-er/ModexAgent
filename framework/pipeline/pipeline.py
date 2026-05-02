@@ -494,7 +494,13 @@ class AgentPipeline:
 
         # Preliminary approval check: is this message an approval command?
         _is_approval_cmd = False
-        approval_store = self._approval_stores.get(session_id)
+        approval_state_early = None
+        # Check prebuilt strategy first, then lazy stores
+        strategy = getattr(self, "_prebuilt_strategy", None)
+        if strategy is None:
+            approval_store = self._approval_stores.get(session_id)
+        else:
+            approval_store = getattr(strategy, "_approval_store", None)
         if approval_store is not None:
             approval_state_early = await approval_store.load(session_id)
             if approval_state_early is not None:
@@ -502,7 +508,6 @@ class AgentPipeline:
                 if action is not None:
                     _is_approval_cmd = True
                 elif input_metadata.get("source_agent"):
-                    # Agent message during pending approval — buffer it
                     self._approval_pending.setdefault(session_id, []).append(input_msg)
                     return None
 
@@ -712,9 +717,12 @@ class AgentPipeline:
                         break
 
                 if approval_state_early.every_tool_decided:
-                    # All tools decided — resume execution
-                    _resume_store = self._resume_stores[session_id]
-                    resume_state = await _resume_store.load(session_id)
+                    # Get resume store from strategy or lazy stores
+                    if strategy is not None:
+                        _resume_store = getattr(strategy, "_resume_store", None)
+                    else:
+                        _resume_store = self._resume_stores.get(session_id)
+                    resume_state = await _resume_store.load(session_id) if _resume_store else None
                     if resume_state is not None:
                         # Rebuild context with resume state
                         agent_context.metadata[ReActMetaKey.RESUME_STATE] = resume_state
@@ -729,8 +737,9 @@ class AgentPipeline:
                             _current_resume.set(None)
 
                         # Cleanup
-                        await _approval_store.delete(session_id)
-                        await _resume_store.delete(session_id)
+                        await approval_store.delete(session_id)
+                        if _resume_store:
+                            await _resume_store.delete(session_id)
 
                         # Drain buffered messages
                         await self._drain_approval_buffer(session_id)
@@ -748,10 +757,9 @@ class AgentPipeline:
                         )
                         turn_clean = True
                         return result
-                    # If no resume state, fall through (shouldn't happen)
                 else:
                     # Partial decision — save progress and send next prompt
-                    await _approval_store.save(approval_state_early)
+                    await approval_store.save(approval_state_early)
                     if self._user_interface is not None:
                         for req in approval_state_early.requests:
                             if req.tool_call_id not in approval_state_early.decisions:
