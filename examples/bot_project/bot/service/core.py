@@ -556,7 +556,7 @@ class BotService(AgentBuilderMixin):
         print(f"[OK] AgentPool initialized, main agent '{parent_agent_name}' registered as resident")
 
         # Inject approval pipeline into main agent's pool instance
-        main_instance = self.agent_pool.get_agent(parent_agent_name)
+        main_instance = self.agent_pool._agents.get(parent_agent_name)
         if main_instance is not None and main_instance.pipeline is not None:
             # Build main interceptor chain with TieredToolApprovalInterceptor
             main_chain = InterceptorChain()
