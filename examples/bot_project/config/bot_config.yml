@@ -311,7 +311,7 @@ plugins:
 
   configurations:
     tool_call_cleanup:
-      enabled: true
+      enabled: false
 
     # Mem0 semantic memory plugin — vector-retrieval-enhanced conversation memory.
     # Requires: pip install mem0ai chromadb sentence-transformers
