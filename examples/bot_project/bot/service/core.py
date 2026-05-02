@@ -342,8 +342,9 @@ class BotService(AgentBuilderMixin):
         )
 
         # 7.5. Initialize approval infrastructure
-        self._approval_workspace = (
-            self._project_dir / self.config.get("approval_workspace", ".modex_approval")
+        approval_cfg = self.config.get("approval", {})
+        self._approval_workspace = self._project_dir / approval_cfg.get(
+            "workspace", "data/approval"
         )
         self._checkpoint_store = JsonFileCheckpointStore(
             self._approval_workspace / "checkpoints"
