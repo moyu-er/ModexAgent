@@ -555,6 +555,41 @@ class BotService(AgentBuilderMixin):
         await self.agent_pool.register_resident(main_descriptor)
         print(f"[OK] AgentPool initialized, main agent '{parent_agent_name}' registered as resident")
 
+        # Inject approval pipeline into main agent's pool instance
+        main_instance = self.agent_pool.get_agent(parent_agent_name)
+        if main_instance is not None and main_instance.pipeline is not None:
+            # Build main interceptor chain with TieredToolApprovalInterceptor
+            main_chain = InterceptorChain()
+            for interceptor in self.interceptor_chain.interceptors:
+                main_chain.add(interceptor)
+
+            approval_config = self.config.get("approval", {})
+            dangerous_tools = approval_config.get("dangerous_tools", ["shell", "write_file", "edit_file"])
+            # Build ArgumentMatcher from config
+            tools_config = self.config.get("tools", {})
+            file_tools_cfg = tools_config.get("file_tools", {})
+            allowed_dirs = set(file_tools_cfg.get("allowed_directories", ["."]))
+            shell_cfg = tools_config.get("shell_tools", {})
+            if shell_cfg.get("restrict_to_workspace", False):
+                allowed_dirs.add(".")
+            argument_matcher = ArgumentMatcher(allowed_dirs)
+
+            main_chain.add(TieredToolApprovalInterceptor(
+                channel=self.control_channel,
+                dangerous_matcher=ToolNameMatcher(set(dangerous_tools)),
+                argument_matcher=argument_matcher,
+            ))
+
+            # Replace the pipeline's interceptor chain
+            main_instance.pipeline.interceptor_chain = main_chain
+
+            # Inject approval infrastructure
+            main_instance.pipeline.checkpoint_store = self._checkpoint_store
+            main_instance.pipeline._approval_workspace = self._approval_workspace
+            main_instance.pipeline._user_interface = self._im_ui
+            print(f"[OK] Main agent pool pipeline injected with TieredToolApprovalInterceptor "
+                  f"(dangerous_tools={dangerous_tools}, allowed_dirs={allowed_dirs})")
+
         # Register subagents as residents (pool mode requires all targets to be resident)
         for sub_key in ("subagent_sync", "subagent"):
             sub_config = multi_agent_config.get(sub_key, {})
