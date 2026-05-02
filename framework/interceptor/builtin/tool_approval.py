@@ -260,20 +260,28 @@ class TieredToolApprovalInterceptor:
         """Classify a tool's tier without invoking the full interceptor chain.
 
         Returns one of: normal, dangerous, sensitive, hardline.
+
+        Priority:
+        1. HARDLINE matcher overrides everything
+        2. argument_matcher: ANY tool operating outside allowed dirs → DANGEROUS
+        3. Name-based dangerous/sensitive matchers
+        4. Default → NORMAL
         """
         tool_name = tool_call.tool_name
 
         if self._hardline is not None and self._hardline.matches(tool_name):
             return ApprovalTier.HARDLINE
 
+        # Path-based check applies to ALL tools (not just dangerous-named ones)
+        if self._argument_matcher is not None:
+            if not self._argument_matcher.is_allowed(tool_call):
+                return ApprovalTier.DANGEROUS  # path outside allowed → needs approval
+            # Path is safe — fall through to name-based check
+
         if self._dangerous is not None and self._dangerous.matches(tool_name):
-            if self._argument_matcher is not None and self._argument_matcher.is_allowed(tool_call):
-                return ApprovalTier.NORMAL  # Tool name matches but path is allowed
             return ApprovalTier.DANGEROUS
 
         if self._sensitive is not None and self._sensitive.matches(tool_name):
-            if self._argument_matcher is not None and self._argument_matcher.is_allowed(tool_call):
-                return ApprovalTier.NORMAL  # Tool name matches but path is allowed
             return ApprovalTier.SENSITIVE
 
         return ApprovalTier.NORMAL

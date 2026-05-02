@@ -175,7 +175,8 @@ class TestPathBasedApprovalClassification:
         )
         assert interceptor.classify_tier(tc) == ApprovalTier.DANGEROUS
 
-    def test_dangerous_tool_within_allowed_dir_returns_normal(self):
+    def test_dangerous_tool_within_allowed_dir_still_dangerous_by_name(self):
+        """Name-based dangerous tools are ALWAYS dangerous, even in safe paths."""
         interceptor = self._make_interceptor(
             dangerous_tools=["write_file", "shell"],
             allowed_dirs=["/safe"],
@@ -184,16 +185,30 @@ class TestPathBasedApprovalClassification:
             tool_name="write_file", call_id="c1",
             arguments={"path": "/safe/data.txt"},
         )
-        assert interceptor.classify_tier(tc) == ApprovalTier.NORMAL
+        # write_file matches name-based dangerous → always DANGEROUS
+        assert interceptor.classify_tier(tc) == ApprovalTier.DANGEROUS
 
-    def test_normal_tool_always_normal(self):
+    def test_non_dangerous_tool_outside_allowed_dir_is_dangerous(self):
+        """Any tool with path outside allowed dirs → DANGEROUS (not just dangerous-named)."""
         interceptor = self._make_interceptor(
             dangerous_tools=["write_file", "shell"],
             allowed_dirs=["/safe"],
         )
         tc = ToolCall(
-            tool_name="cat", call_id="c1",
-            arguments={"path": "/etc/passwd"},
+            tool_name="list_dir", call_id="c1",
+            arguments={"path": "/etc"},
+        )
+        assert interceptor.classify_tier(tc) == ApprovalTier.DANGEROUS
+
+    def test_non_dangerous_tool_within_allowed_dir_is_normal(self):
+        """Any tool with path inside allowed dirs AND not name-matched → NORMAL."""
+        interceptor = self._make_interceptor(
+            dangerous_tools=["write_file", "shell"],
+            allowed_dirs=["/safe"],
+        )
+        tc = ToolCall(
+            tool_name="list_dir", call_id="c1",
+            arguments={"path": "/safe/mydir"},
         )
         assert interceptor.classify_tier(tc) == ApprovalTier.NORMAL
 
@@ -214,7 +229,8 @@ class TestToolNodePathBasedClassification:
     """Verify ToolNode._classify_all works with path-based approval."""
 
     def test_mixed_path_classification(self):
-        """Main agent: safe write ALLOWED, dangerous write PENDING, normal tool ALLOWED."""
+        """write_file(safe) → name-matched dangerous; write_file(outside) → path-violation;
+        cat(outside) → path-violation; list_dir(safe) → NORMAL."""
         interceptor = TieredToolApprovalInterceptor(
             channel=MagicMock(),
             dangerous_matcher=ToolNameMatcher({"write_file", "rm"}),
@@ -226,11 +242,13 @@ class TestToolNodePathBasedClassification:
         ctx = _make_ctx_with_llm(
             tool_calls=[
                 ToolCall(tool_name="write_file", call_id="c1",
-                         arguments={"path": "/safe/data.txt"}),    # safe -> ALLOWED
+                         arguments={"path": "/safe/data.txt"}),    # name-dangerous → PENDING
                 ToolCall(tool_name="write_file", call_id="c2",
-                         arguments={"path": "/etc/hosts"}),        # dangerous -> PENDING
-                ToolCall(tool_name="cat", call_id="c3",
-                         arguments={"path": "/any/file.txt"}),     # normal -> ALLOWED
+                         arguments={"path": "/etc/hosts"}),        # path-violation → PENDING
+                ToolCall(tool_name="list_dir", call_id="c3",
+                         arguments={"path": "/etc"}),              # path-violation → PENDING
+                ToolCall(tool_name="list_dir", call_id="c4",
+                         arguments={"path": "/safe/mydir"}),       # safe path, not dangerous → ALLOWED
             ],
             interceptor_chain=chain,
         )
@@ -238,9 +256,10 @@ class TestToolNodePathBasedClassification:
             ctx.metadata[ReActMetaKey.LLM_RESPONSE].tool_calls, ctx,
         )
         assert decisions == [
-            ApprovalDecision.ALLOWED,
-            ApprovalDecision.PENDING,
-            ApprovalDecision.ALLOWED,
+            ApprovalDecision.PENDING,    # write_file: name-dangerous
+            ApprovalDecision.PENDING,    # write_file: path-violation
+            ApprovalDecision.PENDING,    # list_dir: path-violation (outside /safe)
+            ApprovalDecision.ALLOWED,    # list_dir: within /safe, not name-dangerous
         ]
 
 
