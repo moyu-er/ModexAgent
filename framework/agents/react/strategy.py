@@ -55,6 +55,15 @@ class SuspendResumeStrategy(SuspendStrategy):
     async def solicit_approval(
         self, requests: list[ApprovalRequest], ctx: AgentContext
     ) -> list[str]:
+        from framework.core.graph.interrupt import _current_resume
+
+        # On resume: consume decisions once, then clear to prevent cross-batch leaks
+        resume_val = _current_resume.get(None)
+        if resume_val is not None:
+            _current_resume.set(None)
+            return resume_val
+
+        # First pass: persist state before interrupt
         approval_state = ApprovalState(session_id=ctx.session_id, requests=list(requests))
         await self._approval_store.save(approval_state)
 

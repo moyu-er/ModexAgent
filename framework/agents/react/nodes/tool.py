@@ -62,11 +62,25 @@ class ToolNode(Node):
                 if d == ApprovalDecision.PENDING
             ]
             strategy = ctx_ext(ctx, ExtensionKey.SUSPEND_STRATEGY)
-            if strategy is not None:
-                resolved = await strategy.solicit_approval(requests, ctx)
-                decisions = self._merge(decisions, resolved)
+            if strategy is None:
+                # No strategy configured but approval needed — cannot proceed
+                logger.error(
+                    "ToolNode: PENDING decisions but no SuspendStrategy configured. "
+                    "decisions=%s", decisions,
+                )
+                return NodeTransition(ReActNode.END, ReActReason.TURN_CANCELLED)
 
-        # Phase 3: batch execute
+            resolved: list[str] = await strategy.solicit_approval(requests, ctx)
+            decisions = self._merge(decisions, resolved)
+
+        # Guard: ensure no PENDING remains before batch execution
+        if ApprovalDecision.PENDING in decisions:
+            logger.error(
+                "ToolNode: unresolved PENDING decisions after strategy: %s", decisions,
+            )
+            return NodeTransition(ReActNode.END, ReActReason.TURN_CANCELLED)
+
+        # Phase 3: batch execute (all decisions resolved)
         return await self._execute_batch(tool_calls, decisions, ctx)
 
     def _classify_all(
