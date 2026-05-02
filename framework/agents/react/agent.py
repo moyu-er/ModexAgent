@@ -19,9 +19,8 @@ from framework.interceptor.abc import (
     ToolCallContext,
 )
 
-from ...core.agent import Agent, AgentContext, ctx_ext, current_agent_context
+from ...core.agent import Agent, AgentContext, current_agent_context
 from ...core.constants import DefaultValues
-from ...core.context_extensions import ExtensionKey
 from ...core.emitter import AgentResult, ContentEmitter, ToolCall
 from ...core.events import AgentEvent
 from ...core.provider import LLMProvider, StreamingLLMProvider
@@ -268,15 +267,15 @@ class ReActAgent(Agent[ReActEvent]):
         await checkpoint_store.clear(checkpoint_id)
 
     def _resolve_hook_timeout(self, context: AgentContext) -> float:
-        """从 ctx.extensions 读取 hook_timeout，带 fallback。"""
-        safety = ctx_ext(context, ExtensionKey.SAFETY)
+        """从 runtime.safety 读取 hook_timeout，带 fallback。"""
+        safety = context.runtime.safety if context.runtime else None
         if safety is not None:
             return safety.turn.hook_timeout_seconds
         return self._hook_timeout
 
     def _resolve_tool_timeout(self, context: AgentContext) -> float:
-        """从 ctx.extensions 读取 tool_timeout，带 fallback。"""
-        safety = ctx_ext(context, ExtensionKey.SAFETY)
+        """从 runtime.safety 读取 tool_timeout，带 fallback。"""
+        safety = context.runtime.safety if context.runtime else None
         if safety is not None:
             return safety.turn.tool_timeout_seconds
         return self._tool_timeout
@@ -292,24 +291,23 @@ class ReActAgent(Agent[ReActEvent]):
 
         Used by LLMNode and ToolNode during graph execution.
         """
-        runtime: Any = getattr(context, "runtime", None)
-        hooks = runtime.hooks if runtime is not None else None
-        if hooks is None:
+        if context.runtime is None or context.runtime.hooks is None:
             return
 
         payload_data: dict[str, Any] = {}
         method_name = hook_point.value
         if args:
             if method_name == "after_turn":
-                payload_data = {"result": args[0]}
+                payload_data = {"result": args[0]} if args else {}
             elif method_name == "after_llm_response":
-                payload_data = {"response": args[0]}
-            elif method_name == "before_tool_execution":
-                payload_data = {"tool_calls": args[0]}
-            elif method_name == "after_tool_execution":
-                payload_data = {"results": args[0]}
+                payload_data = {"response": args[0]} if args else {}
+            elif method_name in ("before_tool_execution", "after_tool_execution"):
+                if method_name == "before_tool_execution":
+                    payload_data = {"tool_calls": args[0]}
+                else:
+                    payload_data = {"results": args[0]}
 
-        await hooks.dispatch(
+        await context.runtime.hooks.dispatch(
             hook_point,
             context,
             HookPayload(data=payload_data),
@@ -322,7 +320,7 @@ class ReActAgent(Agent[ReActEvent]):
         context: AgentContext,
     ) -> ToolResult:
         """执行工具，优先使用 InterceptorChain 包裹。"""
-        interceptor_chain = ctx_ext(context, ExtensionKey.INTERCEPTOR_CHAIN)
+        interceptor_chain = context.runtime.interceptors if context.runtime else None
         if interceptor_chain is not None:
             call_ctx = ToolCallContext(
                 tool_call=tool_call,
@@ -427,7 +425,7 @@ class ReActAgent(Agent[ReActEvent]):
                 finish_reason=response.finish_reason,
             )
 
-        interceptor_chain = ctx_ext(context, ExtensionKey.INTERCEPTOR_CHAIN)
+        interceptor_chain = context.runtime.interceptors if context.runtime else None
         async for chunk in interceptor_chain.around_llm_stream(
             context, stream_ctx, _actual_stream,
         ):
@@ -460,7 +458,7 @@ class ReActAgent(Agent[ReActEvent]):
         max_per_phase: int = _MAX_INJECTIONS_PER_PHASE,
     ) -> list[str]:
         """消费注入队列中的用户消息，追加到 history。"""
-        q = ctx_ext(context, ExtensionKey.INJECTION_QUEUE)
+        q = context.runtime.injection_queue if context.runtime else None
         if q is None:
             return []
 
