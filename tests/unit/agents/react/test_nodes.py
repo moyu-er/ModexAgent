@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 from unittest.mock import AsyncMock
 
+from framework.agents.react.agent import ReActAgent
 from framework.agents.react.constants import ReActMetaKey, ReActNode, ReActReason
 from framework.agents.react.nodes.end import EndNode
 from framework.agents.react.nodes.llm import LLMNode
@@ -332,7 +333,7 @@ class TestToolNode:
             async def _save_checkpoint(self, msgs, ctx):
                 pass
 
-            async def _save_denial_checkpoint(self, ctx):
+            async def _save_denial_checkpoint(self, all_messages, ctx):
                 pass
 
         agent = _MockAgent()
@@ -365,6 +366,29 @@ class TestToolNode:
         assert t.reason == ReActReason.TURN_CANCELLED
         # Only t1 should execute; t2 is DENIED
         assert len(executed) == 1
+
+    @pytest.mark.asyncio
+    async def test_denied_tool_cancel_path_uses_real_agent_checkpoint_signature(self):
+        agent = ReActAgent(provider=object(), mode="clean")
+        node = ToolNode(agent, enable_approval=False, enable_hooks=False)
+
+        tc = ToolCall(tool_name="write_file", arguments={"path": "/tmp/x"}, call_id="c1")
+        ctx = AgentContext(
+            system_prompt="test",
+            history=_MockHistory(),
+            tool_manager=InMemoryToolManager(),
+            metadata={
+                ReActMetaKey.ITERATION: 1,
+                ReActMetaKey.ITERATION_MSGS: [],
+                ReActMetaKey.DENY_AS_CANCEL: True,
+            },
+        )
+        ctx.emitter = _MockEmitter()
+
+        transition = await node._execute_batch([tc], [ApprovalDecision.DENIED], ctx)
+
+        assert transition.target == ReActNode.END
+        assert transition.reason == ReActReason.TURN_CANCELLED
 
     @pytest.mark.asyncio
     async def test_exceeds_max_tools_routes_to_end(self):

@@ -315,7 +315,7 @@ class TestFullApproveResumeExecute:
                 return []
             async def _save_checkpoint(self, msgs, ctx):
                 pass
-            async def _save_denial_checkpoint(self, ctx):
+            async def _save_denial_checkpoint(self, all_messages, ctx):
                 pass
 
         agent = _MockAgent()
@@ -430,7 +430,7 @@ class TestFullApproveResumeExecute:
                 return []
             async def _save_checkpoint(self, msgs, ctx):
                 pass
-            async def _save_denial_checkpoint(self, ctx):
+            async def _save_denial_checkpoint(self, all_messages, ctx):
                 pass
             async def _clear_checkpoint(self, ctx):
                 pass

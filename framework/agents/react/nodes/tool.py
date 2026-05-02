@@ -213,7 +213,10 @@ class ToolNode(Node):
             })
 
         if denied_encountered and ctx.metadata.get(ReActMetaKey.DENY_AS_CANCEL):
-            await self._agent._save_denial_checkpoint(ctx)
+            await self._agent._save_denial_checkpoint(
+                list(ctx.metadata.get(ReActMetaKey.ITERATION_MSGS, [])),
+                ctx,
+            )
             return NodeTransition(ReActNode.END, ReActReason.TURN_CANCELLED)
 
         return NodeTransition(ReActNode.LLM, ReActReason.TOOLS_DONE)
