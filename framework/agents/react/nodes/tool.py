@@ -42,6 +42,8 @@ class ToolNode(Node):
                 await ctx.emitter.emit(
                     ReActEvent.ERROR, f"Exceeded max_tools_per_turn ({max_tools})",
                 )
+            ctx.metadata[ReActMetaKey.END_REASON] = ReActReason.TURN_CANCELLED
+            ctx.metadata[ReActMetaKey.CANCEL_REASON] = "max_tools_per_turn"
             return NodeTransition(ReActNode.END, ReActReason.TURN_CANCELLED)
 
         # Extract data for resume state (LLM_RESPONSE is now popped, capture before strategy reads)
@@ -82,6 +84,8 @@ class ToolNode(Node):
                     "ToolNode: PENDING decisions but no SuspendStrategy configured. "
                     "decisions=%s", decisions,
                 )
+                ctx.metadata[ReActMetaKey.END_REASON] = ReActReason.TURN_CANCELLED
+                ctx.metadata[ReActMetaKey.CANCEL_REASON] = "missing_suspend_strategy"
                 return NodeTransition(ReActNode.END, ReActReason.TURN_CANCELLED)
 
             resolved: list[str] = await strategy.solicit_approval(
@@ -97,6 +101,8 @@ class ToolNode(Node):
             logger.error(
                 "ToolNode: unresolved PENDING decisions after strategy: %s", decisions,
             )
+            ctx.metadata[ReActMetaKey.END_REASON] = ReActReason.TURN_CANCELLED
+            ctx.metadata[ReActMetaKey.CANCEL_REASON] = "unresolved_approval"
             return NodeTransition(ReActNode.END, ReActReason.TURN_CANCELLED)
 
         # Phase 3: batch execute (all decisions resolved)
@@ -217,6 +223,8 @@ class ToolNode(Node):
                 list(ctx.metadata.get(ReActMetaKey.ITERATION_MSGS, [])),
                 ctx,
             )
+            ctx.metadata[ReActMetaKey.END_REASON] = ReActReason.TURN_CANCELLED
+            ctx.metadata[ReActMetaKey.CANCEL_REASON] = "approval_denied"
             return NodeTransition(ReActNode.END, ReActReason.TURN_CANCELLED)
 
         return NodeTransition(ReActNode.LLM, ReActReason.TOOLS_DONE)

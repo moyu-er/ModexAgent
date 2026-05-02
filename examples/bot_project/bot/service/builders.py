@@ -618,6 +618,9 @@ class AgentBuilderMixin:
                 print("   [OK] Cleared context_manager_factory, using peer-independent context manager")
 
             # 8. Inject PeerAutoSendHook as safety net
+            # RuntimeContextHook is already in the default hook_runner (injected
+            # by BotService._build_hook_runner), so peer agents inherit it when
+            # AgentFactory copies the default HookRunner. No extra injection needed.
             if self.agent_bus is not None and instance and instance.pipeline:
                 from framework.hook import HookErrorPolicy, HookSpec
                 from framework.hook.builtin import PeerAutoSendHook

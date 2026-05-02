@@ -197,10 +197,6 @@ class AgentPipeline:
         self.incremental_flush = incremental_flush
         self.skill_manager = skill_manager
         self.hooks = list(hooks) if hooks else []
-        if runtime_context_manager is not None:
-            from framework.hook.builtin import RuntimeContextHook
-            if not any(isinstance(h, RuntimeContextHook) for h in self.hooks):
-                self.hooks.insert(0, RuntimeContextHook())
         self.subagent_manager = subagent_manager
         self.command_interceptor = command_interceptor
         self.router = router

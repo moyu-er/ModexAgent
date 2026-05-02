@@ -127,3 +127,8 @@ class NoOpCheckpointStore:
 
     async def clear(self, checkpoint_id: str) -> None:
         pass
+
+
+RuntimeStateStore = CheckpointStore
+JsonFileRuntimeStateStore = JsonFileCheckpointStore
+NoOpRuntimeStateStore = NoOpCheckpointStore

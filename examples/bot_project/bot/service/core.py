@@ -24,7 +24,7 @@ from framework import (
     ToolManagerConfig,
 )
 from framework.control.channel import InMemoryControlChannel
-from framework.control.checkpoint import JsonFileCheckpointStore
+from framework.control.checkpoint import JsonFileRuntimeStateStore
 from framework.control.ui.im import IMUserInterface
 from framework.core.emitter import ContentEmitter
 from framework.core.llm_error import (
@@ -44,8 +44,6 @@ from framework.hook.builtin import InboxFlushHook
 from framework.interceptor.builtin import (
     ControlDrainInterceptor,
     ToolResultLimitInterceptor,
-    ToolTimeoutInterceptor,
-    TurnTimeoutInterceptor,
 )
 from framework.interceptor.builtin.tool_approval import (
     ArgumentMatcher,
@@ -346,7 +344,7 @@ class BotService(AgentBuilderMixin):
         self._approval_workspace = self._project_dir / approval_cfg.get(
             "workspace", "data/approval"
         )
-        self._checkpoint_store = JsonFileCheckpointStore(
+        self._checkpoint_store = JsonFileRuntimeStateStore(
             self._approval_workspace / "checkpoints"
         )
         self._im_ui = IMUserInterface(
@@ -716,10 +714,20 @@ class BotService(AgentBuilderMixin):
         return hooks
 
     def _build_hook_runner(self, hooks: list[Any]) -> Any:
-        """Build HookRunner from collected hooks with default HookSpec."""
+        """Build HookRunner from collected hooks with default HookSpec.
+
+        Explicitly injects RuntimeContextHook so PeerAutoSendHook can detect
+        communication tool calls. Previously this was auto-injected by
+        AgentPipeline into its hooks list, but ReActAgent prefers hook_runner
+        and never falls back to hooks — causing the hook to be silently ignored.
+        """
         from framework.hook import HookErrorPolicy, HookRunner, HookSpec
+        from framework.hook.builtin import RuntimeContextHook
 
         runner = HookRunner()
+        # RuntimeContextHook must be in hook_runner (not just hooks list)
+        # so that ReActAgent._call_hooks() actually dispatches it.
+        runner.add(HookSpec(hook=RuntimeContextHook(), on_error=HookErrorPolicy.LOG))
         for hook in hooks:
             runner.add(HookSpec(hook=hook, on_error=HookErrorPolicy.LOG))
         return runner
@@ -735,9 +743,7 @@ class BotService(AgentBuilderMixin):
 
         Installed interceptors (in order):
           1. ControlDrainInterceptor  – consumes cancel/timeout commands
-          2. TurnTimeoutInterceptor   – enforces agent_run_timeout from YAML
-          3. ToolTimeoutInterceptor   – enforces tool_timeout from YAML
-          4. ToolResultLimitInterceptor – truncates long tool results
+          2. ToolResultLimitInterceptor – truncates long tool results
         """
         if self.interceptor_chain is not None:
             return self.interceptor_chain
@@ -748,13 +754,7 @@ class BotService(AgentBuilderMixin):
         # 1. Control drain – highest priority, processes cancel commands
         chain.add(ControlDrainInterceptor(channel=channel, max_commands=3))
 
-        # 2. Turn timeout – reads agent_run_timeout_seconds from ctx.safety
-        chain.add(TurnTimeoutInterceptor())
-
-        # 3. Tool timeout – reads tool_timeout_seconds from ctx.safety
-        chain.add(ToolTimeoutInterceptor())
-
-        # 4. Tool result limit – prevents excessively long context
+        # 2. Tool result limit – prevents excessively long context
         tools_config = self.config.get("tools", {})
         max_result_chars = tools_config.get("max_tool_result_chars", 8000)
         chain.add(ToolResultLimitInterceptor(max_chars=max_result_chars))

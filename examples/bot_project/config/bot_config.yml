@@ -409,7 +409,3 @@ tools:
       - "playwright"
     tool_filter: {}
 
-# ==================== Approval ====================
-approval:
-  dangerous_tools: ["shell", "write_file", "edit_file"]
-  workspace: "data/approval"

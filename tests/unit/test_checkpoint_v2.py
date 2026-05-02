@@ -2,43 +2,43 @@
 
 import pytest
 from pathlib import Path
-from tempfile import TemporaryDirectory
 
 from framework.control.checkpoint import (
     AgentCheckpoint,
     ApprovalDenialContext,
+    CheckpointStore,
     JsonFileCheckpointStore,
+    JsonFileRuntimeStateStore,
     NoOpCheckpointStore,
+    NoOpRuntimeStateStore,
+    RuntimeStateStore,
 )
 from framework.control.exceptions import TerminationReason
 
 
 class TestJsonFileCheckpointStore:
-    async def test_save_and_load_dict(self):
-        with TemporaryDirectory() as tmp:
-            store = JsonFileCheckpointStore(Path(tmp))
-            data = {
-                "messages": [{"role": "assistant", "content": "hello"}],
-                "termination": None,
-                "denial_context": None,
-                "cancelled_tool_ids": [],
-                "iteration": 1,
-            }
-            await store.save("test_cp", data)
-            loaded = await store.load("test_cp")
-            assert loaded == data
+    async def test_save_and_load_dict(self, tmp_path: Path):
+        store = JsonFileCheckpointStore(tmp_path)
+        data = {
+            "messages": [{"role": "assistant", "content": "hello"}],
+            "termination": None,
+            "denial_context": None,
+            "cancelled_tool_ids": [],
+            "iteration": 1,
+        }
+        await store.save("test_cp", data)
+        loaded = await store.load("test_cp")
+        assert loaded == data
 
-    async def test_load_returns_none_for_missing(self):
-        with TemporaryDirectory() as tmp:
-            store = JsonFileCheckpointStore(Path(tmp))
-            assert await store.load("nonexistent") is None
+    async def test_load_returns_none_for_missing(self, tmp_path: Path):
+        store = JsonFileCheckpointStore(tmp_path)
+        assert await store.load("nonexistent") is None
 
-    async def test_clear_removes(self):
-        with TemporaryDirectory() as tmp:
-            store = JsonFileCheckpointStore(Path(tmp))
-            await store.save("test_cp", {"messages": [], "iteration": 0})
-            await store.clear("test_cp")
-            assert await store.load("test_cp") is None
+    async def test_clear_removes(self, tmp_path: Path):
+        store = JsonFileCheckpointStore(tmp_path)
+        await store.save("test_cp", {"messages": [], "iteration": 0})
+        await store.clear("test_cp")
+        assert await store.load("test_cp") is None
 
 
 class TestNoOpCheckpointStore:
@@ -47,6 +47,13 @@ class TestNoOpCheckpointStore:
         await store.save("x", {"messages": [], "iteration": 0})
         assert await store.load("x") is None
         await store.clear("x")
+
+
+class TestRuntimeStateStoreAliases:
+    def test_aliases_keep_checkpoint_compatibility(self):
+        assert RuntimeStateStore is CheckpointStore
+        assert JsonFileRuntimeStateStore is JsonFileCheckpointStore
+        assert NoOpRuntimeStateStore is NoOpCheckpointStore
 
 
 class TestAgentCheckpoint:

@@ -25,6 +25,8 @@ class EndNode(Node):
     async def execute(self, ctx: AgentContext) -> NodeTransition:
         response = ctx.metadata.pop(ReActMetaKey.LLM_RESPONSE, None)
         messages = ctx.metadata.pop(ReActMetaKey.ITERATION_MSGS, [])
+        end_reason = ctx.metadata.pop(ReActMetaKey.END_REASON, None)
+        cancel_reason = ctx.metadata.pop(ReActMetaKey.CANCEL_REASON, None)
 
         if response is not None and response.finish_reason == FinishReason.ERROR.value:
             error_text = response.error or response.content or "LLM request failed"
@@ -45,6 +47,14 @@ class EndNode(Node):
             )
             if ctx.emitter is not None:
                 await ctx.emitter.emit(ReActEvent.FINAL_OUTPUT, result)
+        elif end_reason == ReActReason.TURN_CANCELLED:
+            result = AgentResult(
+                content="turn cancelled",
+                stop_reason=ReActReason.TURN_CANCELLED.value,
+                metadata={"cancel_reason": cancel_reason} if cancel_reason else {},
+                messages=messages,
+                attachments=ctx.attachments,
+            )
         else:
             result = AgentResult(
                 content="max iterations reached",

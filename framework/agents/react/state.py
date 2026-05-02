@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from framework.control.checkpoint import CheckpointStore
+    from framework.control.checkpoint import RuntimeStateStore
 
 
 @dataclass
@@ -18,6 +18,8 @@ class TurnResumeState:
     all_new_messages: list[dict[str, Any]]
     llm_content: str = ""                      # LLM response content (if any)
     llm_reasoning: str | None = None           # LLM reasoning content (if any)
+    resume_node: str = "tool"
+    resume_reason: str = "resume_tools"
 
 
 class TurnResumeStateStore(ABC):
@@ -50,9 +52,9 @@ class InMemoryTurnResumeStateStore(TurnResumeStateStore):
 
 
 class StateStoreTurnResumeStateStore(TurnResumeStateStore):
-    """Wraps existing CheckpointStore for durable persistence."""
+    """Wraps existing runtime state store for durable persistence."""
 
-    def __init__(self, checkpoint_store: CheckpointStore) -> None:
+    def __init__(self, checkpoint_store: RuntimeStateStore) -> None:
         self._store = checkpoint_store
 
     def _key(self, session_id: str) -> str:
@@ -66,6 +68,8 @@ class StateStoreTurnResumeStateStore(TurnResumeStateStore):
             "all_new_messages": state.all_new_messages,
             "llm_content": state.llm_content,
             "llm_reasoning": state.llm_reasoning,
+            "resume_node": state.resume_node,
+            "resume_reason": state.resume_reason,
         })
 
     async def load(self, session_id: str) -> TurnResumeState | None:
@@ -79,6 +83,8 @@ class StateStoreTurnResumeStateStore(TurnResumeStateStore):
             all_new_messages=data["all_new_messages"],
             llm_content=data.get("llm_content", ""),
             llm_reasoning=data.get("llm_reasoning"),
+            resume_node=data.get("resume_node", "tool"),
+            resume_reason=data.get("resume_reason", "resume_tools"),
         )
 
     async def delete(self, session_id: str) -> None:

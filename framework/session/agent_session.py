@@ -119,10 +119,6 @@ class AgentSession(Generic[E]):
         self._dream_engine = dream_engine
         self._dream_threshold = dream_threshold
         self._hooks = list(hooks) if hooks else []
-        if runtime_context_manager is not None:
-            from framework.hook.builtin import RuntimeContextHook
-            if not any(isinstance(h, RuntimeContextHook) for h in self._hooks):
-                self._hooks.insert(0, RuntimeContextHook())
         self._router = router
         self._deduplicator = deduplicator
         self._context_builder = context_builder

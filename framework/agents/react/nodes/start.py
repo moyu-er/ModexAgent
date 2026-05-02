@@ -9,7 +9,7 @@ from framework.core.types import LLMResponse, ToolCall
 
 
 class StartNode(Node):
-    """Routes to LLM normally, or to ToolNode when resuming from approval."""
+    """Routes to LLM normally, or to a resume target captured by runtime state."""
 
     def __init__(self) -> None:
         super().__init__(ReActNode.START)
@@ -18,26 +18,28 @@ class StartNode(Node):
         resume_state = ctx.metadata.get(ReActMetaKey.RESUME_STATE)
 
         if resume_state is not None:
-            # Reconstruct LLM response for ToolNode
-            tool_calls = [
-                ToolCall(
-                    tool_name=tc["function"]["name"],
-                    call_id=tc.get("id", ""),
-                    arguments=tc["function"].get("arguments", {}),
+            resume_node = getattr(resume_state, "resume_node", ReActNode.TOOL)
+            resume_reason = getattr(resume_state, "resume_reason", ReActReason.RESUME_TOOLS)
+            if str(resume_node) == ReActNode.TOOL.value:
+                tool_calls = [
+                    ToolCall(
+                        tool_name=tc["function"]["name"],
+                        call_id=tc.get("id", ""),
+                        arguments=tc["function"].get("arguments", {}),
+                    )
+                    for tc in resume_state.tool_calls
+                ]
+                llm_resp = LLMResponse(
+                    content=resume_state.llm_content or None,
+                    reasoning_content=resume_state.llm_reasoning,
+                    tool_calls=tool_calls,
+                    finish_reason="tool_calls",
                 )
-                for tc in resume_state.tool_calls
-            ]
-            llm_resp = LLMResponse(
-                content=resume_state.llm_content or None,
-                reasoning_content=resume_state.llm_reasoning,
-                tool_calls=tool_calls,
-                finish_reason="tool_calls",
-            )
-            ctx.metadata[ReActMetaKey.LLM_RESPONSE] = llm_resp
+                ctx.metadata[ReActMetaKey.LLM_RESPONSE] = llm_resp
             ctx.metadata[ReActMetaKey.ITERATION] = resume_state.iteration
             ctx.metadata[ReActMetaKey.TOOL_DECISIONS] = resume_state.tool_decisions
             ctx.metadata[ReActMetaKey.ITERATION_MSGS] = list(resume_state.all_new_messages)
-            return NodeTransition(ReActNode.TOOL, ReActReason.RESUME_TOOLS)
+            return NodeTransition(str(resume_node), str(resume_reason))
 
         ctx.metadata[ReActMetaKey.ITERATION] = 0
         if ctx.emitter is not None:

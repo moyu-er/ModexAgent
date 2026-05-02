@@ -14,6 +14,8 @@ class TestTurnResumeState:
             all_new_messages=[],
         )
         assert trs.iteration == 3
+        assert trs.resume_node == "tool"
+        assert trs.resume_reason == "resume_tools"
 
 
 class TestInMemoryTurnResumeStateStore:

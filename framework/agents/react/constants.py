@@ -30,3 +30,5 @@ class ReActMetaKey:
     DENY_AS_CANCEL = "_deny_as_cancel"
     APPROVAL_DENIAL = "_approval_denial"
     INJECTION_CYCLE = "_injection_cycle_count"
+    END_REASON = "_react_end_reason"
+    CANCEL_REASON = "_react_cancel_reason"

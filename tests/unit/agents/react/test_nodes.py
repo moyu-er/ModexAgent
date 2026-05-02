@@ -89,6 +89,25 @@ class TestStartNode:
         assert t.reason == ReActReason.RESUME_TOOLS
         assert ctx.metadata[ReActMetaKey.ITERATION] == 3
 
+    @pytest.mark.asyncio
+    async def test_resume_target_is_not_approval_specific(self):
+        node = StartNode()
+        resume = TurnResumeState(
+            iteration=3, tool_calls=[], tool_decisions=[],
+            all_new_messages=[], resume_node="llm", resume_reason="resume_llm",
+        )
+        ctx = AgentContext(
+            system_prompt="test", history=ListMessageHistory(),
+            tool_manager=InMemoryToolManager(),
+            metadata={ReActMetaKey.RESUME_STATE: resume},
+        )
+        ctx.emitter = _MockEmitter()
+
+        t = await node.execute(ctx)
+        assert t.target == "llm"
+        assert t.reason == "resume_llm"
+        assert ReActMetaKey.LLM_RESPONSE not in ctx.metadata
+
 
 class TestEndNode:
     @pytest.mark.asyncio
@@ -140,6 +159,32 @@ class TestEndNode:
         result = ctx.metadata[GraphMetaKey.GRAPH_RESULT]
         assert result.content == "max iterations reached"
         assert result.stop_reason == "max_iterations"
+
+    @pytest.mark.asyncio
+    async def test_turn_cancelled_writes_cancelled_result(self):
+        async def _mock_clear_checkpoint(self, ctx):
+            pass
+
+        agent = type("_MockAgent", (), {
+            "_clear_checkpoint": _mock_clear_checkpoint,
+        })()
+        node = EndNode(agent)
+        ctx = AgentContext(
+            system_prompt="test", history=ListMessageHistory(),
+            tool_manager=InMemoryToolManager(),
+            metadata={
+                ReActMetaKey.END_REASON: ReActReason.TURN_CANCELLED,
+                ReActMetaKey.ITERATION_MSGS: [],
+            },
+        )
+        ctx.emitter = _MockEmitter()
+
+        t = await node.execute(ctx)
+        assert t.target == GraphNode.END
+        result = ctx.metadata[GraphMetaKey.GRAPH_RESULT]
+        assert result.content == "turn cancelled"
+        assert result.stop_reason == "turn_cancelled"
+        assert result.error is None
 
 
 class TestLLMNode:
