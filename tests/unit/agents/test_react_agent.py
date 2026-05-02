@@ -582,19 +582,23 @@ class TestReActAgentCheckpoint:
         streaming_provider.chat_stream = mock_chat_stream
         context.tool_manager.execute = AsyncMock(return_value=ToolResult(tool_name="weather", result="Sunny, 25C"))
 
-        checkpoints: list[list[dict[str, Any]]] = []
+        saved: list[list[dict[str, Any]]] = []
+        cleared: list[str] = []
 
-        async def on_checkpoint(msgs: list[dict[str, Any]]) -> None:
-            checkpoints.append(list(msgs))
+        class _MockStore:
+            async def save(self, cid, data):
+                saved.append(list(data.get("messages", [])))
+            async def clear(self, cid):
+                cleared.append(cid)
 
-        context.extensions[ExtensionKey.ON_CHECKPOINT] = on_checkpoint
+        context.extensions[ExtensionKey.CHECKPOINT_STORE] = _MockStore()
         agent = ReActAgent(provider=streaming_provider)
         streaming_emitter = StreamingEmitter()
 
         result = await agent.run(context, streaming_emitter)
 
         # checkpoint 应在 assistant 后、每个 tool 后都同步保存
-        assert len(checkpoints) >= 3
+        assert len(saved) >= 3
 
         # 最终内容正确
         assert "Sunny in Beijing" in result.content
@@ -606,18 +610,21 @@ class TestReActAgentCheckpoint:
 
         non_streaming_provider.chat = mock_chat
 
-        checkpoints: list[list[dict[str, Any]]] = []
+        cleared: list[str] = []
 
-        async def on_checkpoint(msgs: list[dict[str, Any]]) -> None:
-            checkpoints.append(list(msgs))
+        class _MockStore:
+            async def save(self, cid, data):
+                pass
+            async def clear(self, cid):
+                cleared.append(cid)
 
-        context.extensions[ExtensionKey.ON_CHECKPOINT] = on_checkpoint
+        context.extensions[ExtensionKey.CHECKPOINT_STORE] = _MockStore()
         agent = ReActAgent(provider=non_streaming_provider)
 
         await agent.run(context, emitter)
 
-        # 最后一个 checkpoint 应该是空列表（clear_checkpoint）
-        assert checkpoints[-1] == []
+        # checkpoint 应在结束时清除
+        assert len(cleared) >= 1
 
     @pytest.mark.asyncio
     async def test_checkpoint_saved_on_error(self, non_streaming_provider, context, emitter):
@@ -626,20 +633,22 @@ class TestReActAgentCheckpoint:
 
         non_streaming_provider.chat = mock_chat
 
-        checkpoints: list[list[dict[str, Any]]] = []
+        saved: list[list[dict[str, Any]]] = []
 
-        async def on_checkpoint(msgs: list[dict[str, Any]]) -> None:
-            checkpoints.append(list(msgs))
+        class _MockStore:
+            async def save(self, cid, data):
+                saved.append(list(data.get("messages", [])))
+            async def clear(self, cid):
+                pass
 
-        context.extensions[ExtensionKey.ON_CHECKPOINT] = on_checkpoint
+        context.extensions[ExtensionKey.CHECKPOINT_STORE] = _MockStore()
         agent = ReActAgent(provider=non_streaming_provider)
 
         result = await agent.run(context, emitter)
 
         assert result.stop_reason == "error"
         # 错误路径中也会保存 checkpoint（保留当前进度）
-        assert len(checkpoints) >= 1
-        assert checkpoints[-1] == []
+        assert len(saved) >= 1
 
     @pytest.mark.asyncio
     async def test_multiturn_tool_calls_synced_to_context_history(self, streaming_provider, context):

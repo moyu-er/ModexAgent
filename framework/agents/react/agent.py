@@ -230,29 +230,23 @@ class ReActAgent(Agent[ReActEvent]):
         all_new_messages: list[dict[str, Any]],
         context: AgentContext,
     ) -> None:
-        """保存检查点，优先使用 checkpoint_store，回退到 on_checkpoint 回调。"""
-        data = {"messages": list(all_new_messages)}
+        """保存检查点到 checkpoint_store。无 store 则跳过。"""
         checkpoint_store = ctx_ext(context, ExtensionKey.CHECKPOINT_STORE)
-        if checkpoint_store is not None:
-            session_id = getattr(context, "session_id", "unknown")
-            checkpoint_id = f"{session_id}:latest"
-            await checkpoint_store.save(checkpoint_id, data)
-        else:
-            on_checkpoint = ctx_ext(context, ExtensionKey.ON_CHECKPOINT)
-            if on_checkpoint:
-                await on_checkpoint(list(all_new_messages))
+        if checkpoint_store is None:
+            return
+        data = {"messages": list(all_new_messages)}
+        session_id = getattr(context, "session_id", "unknown")
+        checkpoint_id = f"{session_id}:latest"
+        await checkpoint_store.save(checkpoint_id, data)
 
     async def _clear_checkpoint(self, context: AgentContext) -> None:
-        """清空检查点，优先使用 checkpoint_store，回退到 on_checkpoint 回调。"""
+        """清空检查点。无 store 则跳过。"""
         checkpoint_store = ctx_ext(context, ExtensionKey.CHECKPOINT_STORE)
-        if checkpoint_store is not None:
-            session_id = getattr(context, "session_id", "unknown")
-            checkpoint_id = f"{session_id}:latest"
-            await checkpoint_store.clear(checkpoint_id)
-        else:
-            on_checkpoint = ctx_ext(context, ExtensionKey.ON_CHECKPOINT)
-            if on_checkpoint:
-                await on_checkpoint([])
+        if checkpoint_store is None:
+            return
+        session_id = getattr(context, "session_id", "unknown")
+        checkpoint_id = f"{session_id}:latest"
+        await checkpoint_store.clear(checkpoint_id)
 
     def _resolve_hook_timeout(self, context: AgentContext) -> float:
         """从 ctx.extensions 读取 hook_timeout，带 fallback。"""

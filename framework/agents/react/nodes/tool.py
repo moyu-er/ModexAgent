@@ -160,6 +160,7 @@ class ToolNode(Node):
             await ctx.history.append(tool_msg)
             msgs: list = ctx.metadata.setdefault(ReActMetaKey.ITERATION_MSGS, [])
             msgs.append(tool_msg)
+            await self._agent._save_checkpoint(msgs, ctx)
 
             if dec in (ApprovalDecision.DENIED, ApprovalDecision.PREEMPTED):
                 denied_encountered = True
