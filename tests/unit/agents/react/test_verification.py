@@ -335,8 +335,15 @@ class TestSuspendResumeLifecycle:
         ))
         req = ApprovalRequest("rm", "c2", {"path": "/x"}, "dangerous", 1)
 
+        all_tc = [
+            {"id": "c1", "type": "function", "function": {"name": "cat", "arguments": {}}},
+            {"id": "c2", "type": "function", "function": {"name": "rm", "arguments": {"path": "/x"}}},
+        ]
         with pytest.raises(GraphInterrupt):
-            await strategy.solicit_approval([req], ctx)
+            await strategy.solicit_approval(
+                [req], ctx, all_tc, "Let me check and clean up",
+                "Need to read first then delete",
+            )
 
         resume_state = await resume_store.load("s1")
         assert resume_state is not None

@@ -352,8 +352,14 @@ class TestFullApprovalResumeFlow:
             tool_name="write_file", tool_call_id="c1",
             arguments={"path": "/etc/hosts"}, tier="dangerous", iteration=1,
         )
+        all_tc = [{"id": "c1", "type": "function",
+                     "function": {"name": "write_file", "arguments": {"path": "/etc/hosts"}}}]
         with pytest.raises(GraphInterrupt) as exc:
-            await strategy.solicit_approval([req], ctx1)
+            await strategy.solicit_approval(
+                [req], ctx1,
+                all_tool_calls=all_tc,
+                llm_content="Let me write to that file",
+            )
         assert exc.value.value is not None
 
         # Phase 2: Approval state persisted
@@ -429,8 +435,14 @@ class TestFullApprovalResumeFlow:
             ApprovalRequest(tc1.tool_name, tc1.call_id or "c1", tc1.arguments, "dangerous", 1),
             ApprovalRequest(tc2.tool_name, tc2.call_id or "c2", tc2.arguments, "dangerous", 1),
         ]
+        all_tc = [
+            {"id": "c1", "type": "function", "function": {"name": "write_file", "arguments": {"path": "/etc/a"}}},
+            {"id": "c2", "type": "function", "function": {"name": "write_file", "arguments": {"path": "/etc/b"}}},
+        ]
         with pytest.raises(GraphInterrupt):
-            await strategy.solicit_approval(reqs, ctx1)
+            await strategy.solicit_approval(
+                reqs, ctx1, all_tool_calls=all_tc, llm_content="Writing files",
+            )
 
         # Phase 2: State persisted
         saved = await approval_store.load("s2")

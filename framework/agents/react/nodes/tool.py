@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +44,21 @@ class ToolNode(Node):
                 )
             return NodeTransition(ReActNode.END, ReActReason.TURN_CANCELLED)
 
+        # Extract data for resume state (LLM_RESPONSE is now popped, capture before strategy reads)
+        all_tc_dicts: list[dict[str, Any]] = [
+            {
+                "id": tc.call_id or "",
+                "type": "function",
+                "function": {
+                    "name": tc.tool_name,
+                    "arguments": tc.arguments or {},
+                },
+            }
+            for tc in tool_calls
+        ]
+        llm_content = getattr(response, "content", "") or ""
+        llm_reasoning = getattr(response, "reasoning_content", None)
+
         # Phase 1: classify all tools
         decisions = self._classify_all(tool_calls, ctx)
 
@@ -63,14 +78,18 @@ class ToolNode(Node):
             ]
             strategy = ctx_ext(ctx, ExtensionKey.SUSPEND_STRATEGY)
             if strategy is None:
-                # No strategy configured but approval needed — cannot proceed
                 logger.error(
                     "ToolNode: PENDING decisions but no SuspendStrategy configured. "
                     "decisions=%s", decisions,
                 )
                 return NodeTransition(ReActNode.END, ReActReason.TURN_CANCELLED)
 
-            resolved: list[str] = await strategy.solicit_approval(requests, ctx)
+            resolved: list[str] = await strategy.solicit_approval(
+                requests, ctx,
+                all_tool_calls=all_tc_dicts,
+                llm_content=llm_content,
+                llm_reasoning=llm_reasoning,
+            )
             decisions = self._merge(decisions, resolved)
 
         # Guard: ensure no PENDING remains before batch execution
