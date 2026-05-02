@@ -48,6 +48,7 @@ from framework.interceptor.builtin import (
     TurnTimeoutInterceptor,
 )
 from framework.interceptor.builtin.tool_approval import (
+    ArgumentMatcher,
     TieredToolApprovalInterceptor,
     ToolNameMatcher,
 )
@@ -438,14 +439,24 @@ class BotService(AgentBuilderMixin):
         # Add TieredToolApprovalInterceptor for main agent only
         approval_config = self.config.get("approval", {})
         dangerous_tools = approval_config.get("dangerous_tools", ["shell", "write_file", "edit_file"])
+        # Build ArgumentMatcher from config
+        tools_config = self.config.get("tools", {})
+        file_tools = tools_config.get("file_tools", {})
+        allowed_dirs = set(file_tools.get("allowed_directories", ["."]))
+        # Add shell workspace restriction if enabled
+        shell_tools = tools_config.get("shell_tools", {})
+        if shell_tools.get("restrict_to_workspace", False):
+            allowed_dirs.add(".")
+        argument_matcher = ArgumentMatcher(allowed_dirs)
         main_interceptor_chain.add(
             TieredToolApprovalInterceptor(
                 channel=self.control_channel,
                 dangerous_matcher=ToolNameMatcher(set(dangerous_tools)),
+                argument_matcher=argument_matcher,
             )
         )
         print(f"[OK] Main agent interceptor chain includes TieredToolApprovalInterceptor "
-              f"(dangerous_tools={dangerous_tools})")
+              f"(dangerous_tools={dangerous_tools}, allowed_dirs={allowed_dirs})")
 
         self.pipeline = AgentPipeline(
             agent=self.agent,

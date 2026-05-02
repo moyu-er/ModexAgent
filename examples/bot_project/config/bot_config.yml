@@ -408,3 +408,7 @@ tools:
       - "MiniMax"
       - "playwright"
     tool_filter: {}
+
+# ==================== Approval ====================
+approval:
+  dangerous_tools: ["shell", "write_file", "edit_file"]

@@ -13,6 +13,7 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from framework.agents.react.constants import ReActMetaKey
@@ -60,6 +61,44 @@ class TimeoutAction(str, Enum):
 
     TOOL_ERROR = "timeout_as_tool_error"
     CANCEL_TURN = "timeout_as_cancel"
+
+
+class ArgumentMatcher:
+    """Match tool arguments against allowed directories for path-based approval.
+
+    Checks tool_call.arguments for path-like keys (path, file_path, target, dest, directory, dir)
+    and determines if the path is within allowed directories.
+    """
+
+    def __init__(self, allowed_directories: set[str], workspace: str = ".") -> None:
+        self._allowed = allowed_directories
+        self._workspace = str(Path(workspace).resolve())
+
+    def is_allowed(self, tool_call) -> bool:
+        """Returns True if the tool's path argument is within allowed directories."""
+        args = tool_call.arguments or {}
+        # Find path argument (check common key names)
+        path_arg = None
+        for key in ("path", "file_path", "target", "dest", "directory", "dir"):
+            if key in args:
+                path_arg = str(args[key])
+                break
+        if path_arg is None:
+            # No path argument — check other arguments for path-like values
+            for val in args.values():
+                val_str = str(val)
+                if "/" in val_str or val_str.endswith((".txt", ".py", ".json", ".yml", ".yaml", ".md", ".csv")):
+                    path_arg = val_str
+                    break
+        if path_arg is None:
+            return True  # No path to check — allow
+
+        resolved = str(Path(path_arg).resolve())
+        for allowed in self._allowed:
+            allowed_resolved = str(Path(allowed).resolve())
+            if resolved.startswith(allowed_resolved):
+                return True
+        return False
 
 
 class ToolNameMatcher:
@@ -202,6 +241,7 @@ class TieredToolApprovalInterceptor:
         hardline_matcher: ToolNameMatcher | None = None,
         dangerous_matcher: ToolNameMatcher | None = None,
         sensitive_matcher: ToolNameMatcher | None = None,
+        argument_matcher: ArgumentMatcher | None = None,
         approval_timeout_seconds: float = 60.0,
         on_denied: DenyAction = DenyAction.TOOL_ERROR,
         on_timeout: TimeoutAction = TimeoutAction.TOOL_ERROR,
@@ -211,6 +251,7 @@ class TieredToolApprovalInterceptor:
         self._hardline = hardline_matcher
         self._dangerous = dangerous_matcher
         self._sensitive = sensitive_matcher
+        self._argument_matcher = argument_matcher
         self._approval_timeout = approval_timeout_seconds
         self._on_denied = on_denied
         self._on_timeout = on_timeout
@@ -226,9 +267,13 @@ class TieredToolApprovalInterceptor:
             return ApprovalTier.HARDLINE
 
         if self._dangerous is not None and self._dangerous.matches(tool_name):
+            if self._argument_matcher is not None and self._argument_matcher.is_allowed(tool_call):
+                return ApprovalTier.NORMAL  # Tool name matches but path is allowed
             return ApprovalTier.DANGEROUS
 
         if self._sensitive is not None and self._sensitive.matches(tool_name):
+            if self._argument_matcher is not None and self._argument_matcher.is_allowed(tool_call):
+                return ApprovalTier.NORMAL  # Tool name matches but path is allowed
             return ApprovalTier.SENSITIVE
 
         return ApprovalTier.NORMAL
