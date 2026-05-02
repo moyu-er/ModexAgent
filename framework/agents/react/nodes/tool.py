@@ -91,24 +91,31 @@ class ToolNode(Node):
 
     def _get_tier(self, tc: ToolCall, ctx: AgentContext) -> str:
         interceptor_chain = ctx_ext(ctx, ExtensionKey.INTERCEPTOR_CHAIN)
-        logger.debug(
-            "ToolNode._get_tier: tool=%s interceptor_chain=%s interceptors=%d",
-            tc.tool_name,
-            type(interceptor_chain).__name__ if interceptor_chain is not None else None,
-            len(getattr(interceptor_chain, "interceptors", [])),
+        if interceptor_chain is None:
+            logger.warning(
+                "ToolNode._get_tier: NO interceptor_chain in ctx.extensions! "
+                "ctx.extensions keys=%s for tool=%s",
+                list(ctx.extensions.keys()), tc.tool_name,
+            )
+            return ApprovalTier.NORMAL
+        interceptors = getattr(interceptor_chain, "interceptors", [])
+        logger.info(
+            "ToolNode._get_tier: interceptor_chain=%s with %d interceptors for tool=%s args=%s",
+            type(interceptor_chain).__name__, len(interceptors),
+            tc.tool_name, dict(tc.arguments or {}),
         )
-        if interceptor_chain is not None:
-            for interceptor in getattr(interceptor_chain, "interceptors", []):
-                classify_fn = getattr(interceptor, "classify_tier", None)
-                logger.debug("  interceptor=%s classify_fn=%s", type(interceptor).__name__, classify_fn is not None)
-                if classify_fn is not None:
-                    tier = classify_fn(tc)
-                    logger.info(
-                        "ToolNode._get_tier: tool=%s args=%s → tier=%s",
-                        tc.tool_name, dict(tc.arguments or {}), tier,
-                    )
-                    return tier
-        logger.warning("ToolNode._get_tier: NO classify_tier found, defaulting to NORMAL for tool=%s", tc.tool_name)
+        for interceptor in interceptors:
+            classify_fn = getattr(interceptor, "classify_tier", None)
+            logger.info("  interceptor=%s has classify_tier=%s",
+                        type(interceptor).__name__, classify_fn is not None)
+            if classify_fn is not None:
+                tier = classify_fn(tc)
+                logger.info("  → tier=%s", tier)
+                return tier
+        logger.warning(
+            "ToolNode._get_tier: NO classify_tier in %d interceptors, defaulting NORMAL for tool=%s",
+            len(interceptors), tc.tool_name,
+        )
         return ApprovalTier.NORMAL
 
     def _merge(self, original: list[str], resolved: list[str]) -> list[str]:
