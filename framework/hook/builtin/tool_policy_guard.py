@@ -31,7 +31,7 @@ class ToolPolicyGuardHook:
 
     async def before_tool_execution(
         self,
-        ctx: AgentContext,
+        ctx: AgentContext[Any],
         tool_calls: list[Any],
     ) -> None:
         """检查 tool_calls 列表，标记需要否决的。"""

@@ -21,7 +21,7 @@ class RuntimeContextHook:
 
     _PENDING_KEY = "_pending_tool_calls"
 
-    async def before_turn(self, ctx: AgentContext) -> None:
+    async def before_turn(self, ctx: AgentContext[Any]) -> None:
         rt_mgr = ctx_ext(ctx, ExtensionKey.RUNTIME_CTX_MGR)
         rc = ctx_ext(ctx, ExtensionKey.RUNTIME_CTX)
         if rc is None and rt_mgr is not None:
@@ -34,7 +34,7 @@ class RuntimeContextHook:
 
     async def before_tool_execution(
         self,
-        ctx: AgentContext,
+        ctx: AgentContext[Any],
         tool_calls: list[Any] | None = None,
     ) -> None:
         rc = ctx_ext(ctx, ExtensionKey.RUNTIME_CTX)
@@ -43,7 +43,7 @@ class RuntimeContextHook:
 
     async def after_tool_execution(
         self,
-        ctx: AgentContext,
+        ctx: AgentContext[Any],
         results: list[Any] | None = None,
     ) -> None:
         rc = ctx_ext(ctx, ExtensionKey.RUNTIME_CTX)

@@ -28,16 +28,16 @@ class ProgressReportHook:
     def __init__(self, event_bus: ControlEventBus) -> None:
         self._event_bus = event_bus
 
-    async def before_iteration(self, ctx: AgentContext) -> None:
+    async def before_iteration(self, ctx: AgentContext[Any]) -> None:
         iteration = ctx.metadata.get("iteration", 0)
         await self._emit(ctx, {"phase": "iteration_start", "iteration": iteration})
 
-    async def after_iteration(self, ctx: AgentContext) -> None:
+    async def after_iteration(self, ctx: AgentContext[Any]) -> None:
         iteration = ctx.metadata.get("iteration", 0)
         await self._emit(ctx, {"phase": "iteration_end", "iteration": iteration})
 
     async def before_tool_execution(
-        self, ctx: AgentContext, tool_calls: list[Any],
+        self, ctx: AgentContext[Any], tool_calls: list[Any],
     ) -> None:
         names = [getattr(tc, "tool_name", "?") for tc in tool_calls]
         await self._emit(ctx, {
@@ -47,7 +47,7 @@ class ProgressReportHook:
         })
 
     async def after_tool_execution(
-        self, ctx: AgentContext, results: list[Any],
+        self, ctx: AgentContext[Any], results: list[Any],
     ) -> None:
         tool_names = [getattr(r, "tool_name", "?") for r in results]
         errors = [getattr(r, "error", None) for r in results]
@@ -59,7 +59,7 @@ class ProgressReportHook:
         })
 
     async def after_llm_response(
-        self, ctx: AgentContext, response: Any,
+        self, ctx: AgentContext[Any], response: Any,
     ) -> None:
         content_len = len(getattr(response, "content", "") or "")
         tool_count = len(getattr(response, "tool_calls", []) or [])
@@ -70,7 +70,7 @@ class ProgressReportHook:
         })
 
     async def after_turn(
-        self, ctx: AgentContext, result: Any,
+        self, ctx: AgentContext[Any], result: Any,
     ) -> None:
         stop_reason = getattr(result, "stop_reason", "") if result else ""
         await self._emit(ctx, {
@@ -78,7 +78,7 @@ class ProgressReportHook:
             "stop_reason": stop_reason,
         })
 
-    async def _emit(self, ctx: AgentContext, payload: dict[str, Any]) -> None:
+    async def _emit(self, ctx: AgentContext[Any], payload: dict[str, Any]) -> None:
         try:
             await self._event_bus.emit(ControlEvent(
                 event_id=uuid.uuid4().hex,

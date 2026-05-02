@@ -41,7 +41,7 @@ class DynamicToolFilterHook:
         ) if token_thresholds else {}
         self._error_readonly_threshold = error_readonly_threshold
 
-    async def before_iteration(self, ctx: AgentContext) -> None:
+    async def before_iteration(self, ctx: AgentContext[Any]) -> None:
         # 总是先恢复 — 以防上个 iteration 的 after_iteration 因异常未执行
         ctx.tool_manager = self._base
 
@@ -66,6 +66,6 @@ class DynamicToolFilterHook:
             ctx.metadata["_dynamic_tool_active"] = True
             ctx.metadata.setdefault("_dynamic_tool_denied", set()).update(denied)
 
-    async def after_iteration(self, ctx: AgentContext) -> None:
+    async def after_iteration(self, ctx: AgentContext[Any]) -> None:
         ctx.tool_manager = self._base
         ctx.metadata.pop("_dynamic_tool_active", None)

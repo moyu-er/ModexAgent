@@ -40,7 +40,7 @@ class LLMOutputGuardHook:
 
     async def after_llm_response(
         self,
-        ctx: AgentContext,
+        ctx: AgentContext[Any],
         response: LLMResponse,
     ) -> None:
         content = response.content or ""

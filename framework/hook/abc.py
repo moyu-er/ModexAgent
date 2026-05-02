@@ -8,13 +8,15 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
 
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
     from framework.core.emitter import AgentResult
     from framework.core.types import LLMResponse, ToolCall
     from framework.core.tool_manager import ToolResult
+
+R = TypeVar("R", default=Any)
 
 
 class HookPoint(str, Enum):
@@ -75,46 +77,46 @@ class HookResult:
 
 
 @dataclass(frozen=True)
-class HookSpec:
+class HookSpec(Generic[R]):
     """Hook 注册规格。
 
     包含 hook 实例和错误处理策略，后续用于代码装配。
     """
 
-    hook: Hook
+    hook: "Hook[R]"
     on_error: HookErrorPolicy = HookErrorPolicy.LOG
 
 
-class Hook(Protocol):
+class Hook(Protocol, Generic[R]):
     """Hook 协议 —— 生命周期扩展点。
 
     所有方法均为可选，HookRunner 通过 getattr 按 HookPoint 值调度。
     子类可选择性覆盖所需方法。
     """
 
-    async def before_turn(self, ctx: AgentContext) -> None:
+    async def before_turn(self, ctx: "AgentContext[R]") -> None:
         """在 Agent.run() 开始时、while 循环之前调用，且只调用一次。"""
         ...
 
     async def after_turn(
         self,
-        ctx: AgentContext,
+        ctx: "AgentContext[R]",
         result: AgentResult,
     ) -> None:
         """在 Agent.run() 结束后调用（无论成功、失败或达到最大迭代次数），且只调用一次。"""
         ...
 
-    async def before_iteration(self, ctx: AgentContext) -> None:
+    async def before_iteration(self, ctx: "AgentContext[R]") -> None:
         """每次迭代开始前调用。"""
         ...
 
-    async def after_iteration(self, ctx: AgentContext) -> None:
+    async def after_iteration(self, ctx: "AgentContext[R]") -> None:
         """每次迭代结束后调用。"""
         ...
 
     async def before_tool_execution(
         self,
-        ctx: AgentContext,
+        ctx: "AgentContext[R]",
         tool_calls: Sequence[ToolCall],
     ) -> None:
         """工具执行前调用。"""
@@ -122,7 +124,7 @@ class Hook(Protocol):
 
     async def after_tool_execution(
         self,
-        ctx: AgentContext,
+        ctx: "AgentContext[R]",
         results: Sequence[ToolResult],
     ) -> None:
         """工具执行后调用。"""
@@ -130,7 +132,7 @@ class Hook(Protocol):
 
     async def after_llm_response(
         self,
-        ctx: AgentContext,
+        ctx: "AgentContext[R]",
         response: LLMResponse,
     ) -> None:
         """LLM 完整响应返回后调用。"""
@@ -138,7 +140,7 @@ class Hook(Protocol):
 
     async def on_control_command(
         self,
-        ctx: AgentContext,
+        ctx: "AgentContext[R]",
         command: Any,
     ) -> HookResult:
         """接收控制命令时调用，可返回 HookResult(veto=True) 拒绝命令。"""
@@ -146,7 +148,7 @@ class Hook(Protocol):
 
     def finalize_content(
         self,
-        ctx: AgentContext,
+        ctx: "AgentContext[R]",
         content: str | None,
     ) -> str | None:
         """最终内容调整（同步）。"""

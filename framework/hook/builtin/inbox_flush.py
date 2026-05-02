@@ -32,10 +32,10 @@ class InboxFlushHook:
         self._agent_name = agent_name
         self._max_messages = max_messages_per_flush
 
-    async def before_turn(self, ctx: AgentContext) -> None:
+    async def before_turn(self, ctx: AgentContext[Any]) -> None:
         await self._flush(ctx.history, ctx.metadata.get("session_id"))
 
-    async def before_iteration(self, ctx: AgentContext) -> None:
+    async def before_iteration(self, ctx: AgentContext[Any]) -> None:
         await self._flush(ctx.history, ctx.metadata.get("session_id"))
 
     @staticmethod

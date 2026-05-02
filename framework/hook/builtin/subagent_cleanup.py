@@ -29,7 +29,7 @@ class SubagentMemoryCleanupHook:
         self._cleanup_fn = cleanup_fn
         self._session_id = session_id
 
-    async def after_turn(self, ctx: AgentContext, result: Any = None) -> None:
+    async def after_turn(self, ctx: AgentContext[Any], result: Any = None) -> None:
         if self._cleanup_fn is None:
             return
         try:

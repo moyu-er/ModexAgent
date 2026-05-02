@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from framework.hook.abc import (
     HookErrorPolicy,
@@ -20,47 +20,49 @@ from framework.hook.abc import (
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
 
+R = TypeVar("R", default=Any)
+
 logger = logging.getLogger(__name__)
 
 # 默认超时：每个 hook 方法调用的最大时间（秒）
 _DEFAULT_HOOK_TIMEOUT = 10.0
 
 
-class HookRunner:
+class HookRunner(Generic[R]):
     """Hook 调度执行器。
 
     按配置顺序遍历 Hook 列表，对每个 Hook 调用匹配 hook_point 的方法。
     每个 hook 带独立超时保护，异常处理策略由 HookSpec.on_error 控制。
     """
 
-    def __init__(self, hook_specs: list[HookSpec] | None = None) -> None:
-        self._hook_specs: list[HookSpec] = list(hook_specs) if hook_specs else []
+    def __init__(self, hook_specs: list[HookSpec[R]] | None = None) -> None:
+        self._hook_specs: list[HookSpec[R]] = list(hook_specs) if hook_specs else []
 
     @property
-    def hook_specs(self) -> list[HookSpec]:
+    def hook_specs(self) -> list[HookSpec[R]]:
         """返回当前注册的 hook 规格列表。"""
         return list(self._hook_specs)
 
-    def add(self, spec: HookSpec) -> None:
+    def add(self, spec: HookSpec[R]) -> None:
         """追加一个 hook 规格。"""
         self._hook_specs.append(spec)
 
-    def insert(self, index: int, spec: HookSpec) -> None:
+    def insert(self, index: int, spec: HookSpec[R]) -> None:
         """在指定位置插入 hook 规格。"""
         self._hook_specs.insert(index, spec)
 
-    def remove(self, spec: HookSpec) -> None:
+    def remove(self, spec: HookSpec[R]) -> None:
         """移除一个 hook 规格。"""
         self._hook_specs.remove(spec)
 
-    def extend(self, specs: list[HookSpec]) -> None:
+    def extend(self, specs: list[HookSpec[R]]) -> None:
         """批量追加 hook 规格。"""
         self._hook_specs.extend(specs)
 
     async def dispatch(
         self,
         hook_point: HookPoint,
-        ctx: AgentContext,
+        ctx: "AgentContext[R]",
         payload: HookPayload | None = None,
         *,
         hook_timeout: float | None = None,
@@ -152,7 +154,7 @@ class HookRunner:
 
     def dispatch_finalize(
         self,
-        ctx: AgentContext,
+        ctx: "AgentContext[R]",
         content: str | None,
     ) -> str | None:
         """同步串行调用所有 hook 的 finalize_content 方法。

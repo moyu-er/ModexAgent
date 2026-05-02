@@ -29,7 +29,7 @@ class ToolResultTransformHook:
 
     async def after_tool_execution(
         self,
-        ctx: AgentContext,
+        ctx: AgentContext[Any],
         results: list[Any],
     ) -> None:
         if not results:

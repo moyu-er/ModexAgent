@@ -46,10 +46,10 @@ class PeerAutoSendHook:
         self._self_name = self_name
         self._parent_name = parent_name
 
-    async def before_turn(self, ctx: AgentContext) -> None:
+    async def before_turn(self, ctx: AgentContext[Any]) -> None:
         pass
 
-    async def after_turn(self, ctx: AgentContext, result: Any = None) -> None:
+    async def after_turn(self, ctx: AgentContext[Any], result: Any = None) -> None:
         if not result or not getattr(result, "content", None):
             return
 

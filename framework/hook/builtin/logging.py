@@ -32,7 +32,7 @@ class RunLoggingHook:
         self._max_result_chars = max_result_chars
         self._pending_tool_calls: dict[str, list[Any]] = {}
 
-    async def after_llm_response(self, ctx: AgentContext, response: LLMResponse) -> None:
+    async def after_llm_response(self, ctx: AgentContext[Any], response: LLMResponse) -> None:
         tool_names = [call.tool_name for call in response.tool_calls]
         self._logger.log(
             self._level,
@@ -48,7 +48,7 @@ class RunLoggingHook:
 
     async def before_tool_execution(
         self,
-        ctx: AgentContext,
+        ctx: AgentContext[Any],
         tool_calls: list[Any] | None = None,
     ) -> None:
         if tool_calls is None:
@@ -69,7 +69,7 @@ class RunLoggingHook:
 
     async def after_tool_execution(
         self,
-        ctx: AgentContext,
+        ctx: AgentContext[Any],
         results: list[Any] | None = None,
     ) -> None:
         if results is None:
