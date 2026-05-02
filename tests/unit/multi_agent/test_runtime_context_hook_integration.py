@@ -36,7 +36,7 @@ class FakeAgent:
 
     async def run(self, context: AgentContext, emitter: ContentEmitter) -> AgentResult:
         # Simulate ReActAgent._call_hooks(): prefer HOOK_RUNNER, fallback to HOOKS
-        hook_runner = context.extensions.get(ExtensionKey.HOOK_RUNNER)
+        hook_runner = context.extensions.get("hook_runner")
 
         async def _call_hook_point(method_name: str, *args):
             if hook_runner is not None:
@@ -53,7 +53,7 @@ class FakeAgent:
                     HookPayload(data=payload_data), hook_timeout=10.0,
                 )
                 return
-            for hook in context.extensions.get(ExtensionKey.HOOKS, []):
+            for hook in context.extensions.get("hooks", []):
                 method = getattr(hook, method_name, None)
                 if method is not None:
                     await method(context, *args)
@@ -188,7 +188,7 @@ class TestHookCollaboration:
             session_id="conv_001:main:doc-expert",
             metadata={"session_id": "conv_001:main:doc-expert"},
             extensions={
-                ExtensionKey.HOOK_RUNNER: hook_runner,
+                "hook_runner": hook_runner,
                 ExtensionKey.RUNTIME_CTX_MGR: runtime_mgr,
             },
         )
@@ -220,7 +220,7 @@ class TestHookCollaboration:
             session_id="conv_001:main:doc-expert",
             metadata={"session_id": "conv_001:main:doc-expert"},
             extensions={
-                ExtensionKey.HOOK_RUNNER: hook_runner,
+                "hook_runner": hook_runner,
                 ExtensionKey.RUNTIME_CTX_MGR: runtime_mgr,
             },
         )
@@ -244,7 +244,7 @@ class TestHookCollaboration:
             session_id="test_session",
             metadata={},
             extensions={
-                ExtensionKey.HOOKS: [rch],
+                "hooks": [rch],
                 ExtensionKey.RUNTIME_CTX_MGR: runtime_mgr,
             },
         )
@@ -295,7 +295,7 @@ class TestHookCollaboration:
             session_id="conv_001:main:doc-expert",
             metadata={"session_id": "conv_001:main:doc-expert"},
             extensions={
-                ExtensionKey.HOOK_RUNNER: hook_runner,
+                "hook_runner": hook_runner,
                 ExtensionKey.RUNTIME_CTX_MGR: runtime_mgr,
             },
         )
@@ -336,8 +336,8 @@ class TestHookCollaboration:
             session_id="conv_001:main:doc-expert",
             metadata={"session_id": "conv_001:main:doc-expert"},
             extensions={
-                ExtensionKey.HOOK_RUNNER: hook_runner,
-                ExtensionKey.HOOKS: [],
+                "hook_runner": hook_runner,
+                "hooks": [],
                 ExtensionKey.RUNTIME_CTX_MGR: runtime_mgr,
             },
         )
@@ -366,8 +366,8 @@ class TestHookCollaboration:
             session_id="conv_001:main:doc-expert",
             metadata={"session_id": "conv_001:main:doc-expert"},
             extensions={
-                ExtensionKey.HOOK_RUNNER: hook_runner,
-                ExtensionKey.HOOKS: [],
+                "hook_runner": hook_runner,
+                "hooks": [],
                 ExtensionKey.RUNTIME_CTX_MGR: runtime_mgr,
             },
         )
