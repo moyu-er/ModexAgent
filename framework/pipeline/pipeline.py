@@ -567,14 +567,13 @@ class AgentPipeline:
         if not _is_approval_cmd:
             # 通过 history.append 写入用户消息（与 Nodes 使用同一写入路径）
             await context_state.history.append(user_message)
-            # 设置 pending turn 用于崩溃恢复
-            if metadata_to_save := {"input_metadata": input_metadata}:
-                await ctx_mgr.save(
-                    session_id=session_id,
-                    user_message=None,
-                    assistant_result=AgentResult(),
-                    metadata=metadata_to_save,
-                )
+        # 设置 pending turn 用于崩溃恢复
+        await ctx_mgr.save(
+            session_id=session_id,
+            user_message=None,
+            assistant_result=AgentResult(),
+            metadata={"input_metadata": input_metadata},
+        )
 
         # 恢复当前用户消息的完整多模态内容
         #（memory 中保存的是 sanitize 后的占位符，LLM 需要看到完整媒体）
