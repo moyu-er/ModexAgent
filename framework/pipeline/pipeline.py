@@ -560,18 +560,21 @@ class AgentPipeline:
         else:
             user_message = {"role": MessageRole.USER, "content": multimodal_content}
 
-        # 预先保存用户消息（审批命令跳过，避免将 /approve 写入历史）
-        if not _is_approval_cmd:
-            await ctx_mgr.save(
-                session_id=session_id,
-                user_message=user_message,
-                assistant_result=AgentResult(),
-                metadata={"input_metadata": input_metadata},
-            )
-
-        # 重新加载以获取最新历史（必须在 build_system_prompt 之前，
-        # 否则 load() 会覆盖已注入 tools/skills 的 system_prompt）
+        # 加载上下文（加载后再写入用户消息，确保单一写入路径）
         context_state = await ctx_mgr.load(session_id)
+
+        # 审批命令跳过写入历史
+        if not _is_approval_cmd:
+            # 通过 history.append 写入用户消息（与 Nodes 使用同一写入路径）
+            await context_state.history.append(user_message)
+            # 设置 pending turn 用于崩溃恢复
+            if metadata_to_save := {"input_metadata": input_metadata}:
+                await ctx_mgr.save(
+                    session_id=session_id,
+                    user_message=None,
+                    assistant_result=AgentResult(),
+                    metadata=metadata_to_save,
+                )
 
         # 恢复当前用户消息的完整多模态内容
         #（memory 中保存的是 sanitize 后的占位符，LLM 需要看到完整媒体）
