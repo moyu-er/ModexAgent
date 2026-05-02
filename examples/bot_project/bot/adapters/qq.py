@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from bot.utils.media_utils import download_file
 from framework.agents.react import ReActEvent
 from framework.core.emitter import EmitterConfig, StreamingAwareEmitter
 from framework.pipeline.adapters import (
@@ -32,7 +33,6 @@ from framework.pipeline.adapters import (
     OutputMessage,
 )
 from framework.pipeline.filters import ChainedContentFilter, ThinkTagFilter, WhitespaceFilter
-from bot.utils.media_utils import download_file
 
 # QQ rich media file_type: 1=image, 4=file
 QQ_FILE_TYPE_IMAGE = 1

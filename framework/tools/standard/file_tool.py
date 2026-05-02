@@ -9,30 +9,9 @@ from typing import Any
 from ...core.tool_manager import Tool
 
 
-def _resolve_path(path: str, allowed_dirs: list[Path] | None = None) -> Path:
-    """Resolve path and optionally enforce directory containment."""
-    resolved = Path(path).expanduser().resolve()
-    if allowed_dirs:
-        for allowed_dir in allowed_dirs:
-            allowed_resolved = allowed_dir.resolve()
-            try:
-                resolved.relative_to(allowed_resolved)
-                return resolved
-            except ValueError:
-                continue
-        dir_label = "directory" if len(allowed_dirs) == 1 else "directories"
-        raise PermissionError(f"Path {path} is outside allowed {dir_label}: {allowed_dirs}")
-    return resolved
-
-
-def _build_allowed_dirs(allowed_dir: Path | None, extra_allowed_dirs: list[Path] | None) -> list[Path] | None:
-    """构建允许的目录列表."""
-    dirs: list[Path] = []
-    if allowed_dir:
-        dirs.append(allowed_dir)
-    if extra_allowed_dirs:
-        dirs.extend(extra_allowed_dirs)
-    return dirs if dirs else None
+def _resolve_path(path: str) -> Path:
+    """Resolve path. No permission check — that's the interceptor's job."""
+    return Path(path).expanduser().resolve()
 
 
 class ReadFileTool(Tool):
@@ -40,9 +19,8 @@ class ReadFileTool(Tool):
 
     DEFAULT_MAX_LINES = 500
 
-    def __init__(self, allowed_dir: Path | None = None, extra_allowed_dirs: list[Path] | None = None):
+    def __init__(self):
         super().__init__()
-        self._allowed_dirs = _build_allowed_dirs(allowed_dir, extra_allowed_dirs)
 
     @property
     def name(self) -> str:
@@ -50,10 +28,7 @@ class ReadFileTool(Tool):
 
     @property
     def description(self) -> str:
-        desc = f"Read the contents of a file at the given path. By default reads first {self.DEFAULT_MAX_LINES} lines."
-        if self._allowed_dirs:
-            desc += f" Files are restricted to: {self._allowed_dirs}"
-        return desc
+        return f"Read the contents of a file at the given path. By default reads first {self.DEFAULT_MAX_LINES} lines."
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -66,7 +41,7 @@ class ReadFileTool(Tool):
                 },
                 "start_line": {
                     "type": "integer",
-                    "description": f"Starting line number include (start from 1, default: 1)",
+                    "description": "Starting line number include (start from 1, default: 1)",
                     "default": 1
                 },
                 "end_line": {
@@ -80,7 +55,7 @@ class ReadFileTool(Tool):
 
     async def execute(self, path: str, start_line: int = 1, end_line: int = DEFAULT_MAX_LINES, **kwargs: Any) -> str:
         try:
-            file_path = _resolve_path(path, self._allowed_dirs)
+            file_path = _resolve_path(path)
             if not file_path.exists():
                 return f"Error: File not found: {path}"
             if not file_path.is_file():
@@ -122,8 +97,6 @@ class ReadFileTool(Tool):
                 result += "\n\n[No more lines below]"
 
             return result
-        except PermissionError as e:
-            return f"Error: {e}"
         except Exception as e:
             return f"Error reading file: {str(e)}"
 
@@ -131,9 +104,8 @@ class ReadFileTool(Tool):
 class WriteFileTool(Tool):
     """写入内容到文件的工具."""
 
-    def __init__(self, allowed_dir: Path | None = None, extra_allowed_dirs: list[Path] | None = None):
+    def __init__(self):
         super().__init__()
-        self._allowed_dirs = _build_allowed_dirs(allowed_dir, extra_allowed_dirs)
 
     @property
     def name(self) -> str:
@@ -141,10 +113,7 @@ class WriteFileTool(Tool):
 
     @property
     def description(self) -> str:
-        desc = "Write content to a file at the given path. Creates parent directories if needed."
-        if self._allowed_dirs:
-            desc += f" Files are restricted to: {self._allowed_dirs}"
-        return desc
+        return "Write content to a file at the given path. Creates parent directories if needed."
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -165,12 +134,10 @@ class WriteFileTool(Tool):
 
     async def execute(self, path: str, content: str, **kwargs: Any) -> str:
         try:
-            file_path = _resolve_path(path, self._allowed_dirs)
+            file_path = _resolve_path(path)
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(content, encoding="utf-8")
             return f"Successfully wrote {len(content)} bytes to {path}"
-        except PermissionError as e:
-            return f"Error: {e}"
         except Exception as e:
             return f"Error writing file: {str(e)}"
 
@@ -178,9 +145,8 @@ class WriteFileTool(Tool):
 class EditFileTool(Tool):
     """通过替换文本编辑文件的工具."""
 
-    def __init__(self, allowed_dir: Path | None = None, extra_allowed_dirs: list[Path] | None = None):
+    def __init__(self):
         super().__init__()
-        self._allowed_dirs = _build_allowed_dirs(allowed_dir, extra_allowed_dirs)
 
     @property
     def name(self) -> str:
@@ -188,10 +154,7 @@ class EditFileTool(Tool):
 
     @property
     def description(self) -> str:
-        desc = "Edit a file by replacing old_text with new_text. The old_text must exist exactly in the file."
-        if self._allowed_dirs:
-            desc += f" Files are restricted to: {self._allowed_dirs}"
-        return desc
+        return "Edit a file by replacing old_text with new_text. The old_text must exist exactly in the file."
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -216,14 +179,14 @@ class EditFileTool(Tool):
 
     async def execute(self, path: str, old_text: str, new_text: str, **kwargs: Any) -> str:
         try:
-            file_path = _resolve_path(path, self._allowed_dirs)
+            file_path = _resolve_path(path)
             if not file_path.exists():
                 return f"Error: File not found: {path}"
 
             content = file_path.read_text(encoding="utf-8")
 
             if old_text not in content:
-                return f"Error: old_text not found in file. Make sure it matches exactly."
+                return "Error: old_text not found in file. Make sure it matches exactly."
 
             # 统计出现次数
             count = content.count(old_text)
@@ -234,8 +197,6 @@ class EditFileTool(Tool):
             file_path.write_text(new_content, encoding="utf-8")
 
             return f"Successfully edited {path}"
-        except PermissionError as e:
-            return f"Error: {e}"
         except Exception as e:
             return f"Error editing file: {str(e)}"
 
@@ -243,9 +204,8 @@ class EditFileTool(Tool):
 class ListDirTool(Tool):
     """列出目录内容的工具."""
 
-    def __init__(self, allowed_dir: Path | None = None, extra_allowed_dirs: list[Path] | None = None):
+    def __init__(self):
         super().__init__()
-        self._allowed_dirs = _build_allowed_dirs(allowed_dir, extra_allowed_dirs)
 
     @property
     def name(self) -> str:
@@ -253,10 +213,7 @@ class ListDirTool(Tool):
 
     @property
     def description(self) -> str:
-        desc = "List the contents of a directory."
-        if self._allowed_dirs:
-            desc += f" Directories are restricted to: {self._allowed_dirs}"
-        return desc
+        return "List the contents of a directory."
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -273,7 +230,7 @@ class ListDirTool(Tool):
 
     async def execute(self, path: str, **kwargs: Any) -> str:
         try:
-            dir_path = _resolve_path(path, self._allowed_dirs)
+            dir_path = _resolve_path(path)
             if not dir_path.exists():
                 return f"Error: Directory not found: {path}"
             if not dir_path.is_dir():
@@ -288,8 +245,6 @@ class ListDirTool(Tool):
                 return f"Directory {path} is empty"
 
             return "\n".join(items)
-        except PermissionError as e:
-            return f"Error: {e}"
         except Exception as e:
             return f"Error listing directory: {str(e)}"
 

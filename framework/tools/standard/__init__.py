@@ -13,25 +13,23 @@ Example:
     registry = ToolRegistry()
 
     # 注册文件工具
-    registry.register(ReadFileTool(allowed_dir=Path("./workspace")))
-    registry.register(WriteFileTool(allowed_dir=Path("./workspace")))
-    registry.register(EditFileTool(allowed_dir=Path("./workspace")))
-    registry.register(ListDirTool(allowed_dir=Path("./workspace")))
+    registry.register(ReadFileTool())
+    registry.register(WriteFileTool())
+    registry.register(EditFileTool())
+    registry.register(ListDirTool())
 
     # 注册 Shell 工具
     registry.register(ShellTool(
         timeout=60,
-        working_dir="./workspace",
-        restrict_to_workspace=True
     ))
 """
 
 from .file_tool import (
+    EditFileTool,
+    FileTool,  # 兼容性别名
+    ListDirTool,
     ReadFileTool,
     WriteFileTool,
-    EditFileTool,
-    ListDirTool,
-    FileTool,  # 兼容性别名
 )
 from .shell_tool import ShellTool
 

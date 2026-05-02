@@ -7,7 +7,6 @@ import asyncio
 import os
 import platform
 import re
-from pathlib import Path
 from typing import Any
 
 from ...core.tool_manager import Tool
@@ -46,27 +45,21 @@ class ShellTool(Tool):
     def __init__(
         self,
         timeout: int = 60,
-        working_dir: str | None = None,
         enable_safety_guard: bool = True,
         deny_patterns: list[str] | None = None,
         allow_patterns: list[str] | None = None,
-        restrict_to_workspace: bool = False,
     ):
         """初始化 Shell 工具.
 
         Args:
             timeout: 命令超时时间（秒）
-            working_dir: 默认工作目录
             enable_safety_guard: 是否启用安全校验（默认 True）
             deny_patterns: 自定义禁止命令模式列表
             allow_patterns: 允许命令模式列表（如设置则只允许这些命令）
-            restrict_to_workspace: 是否限制在工作目录内
         """
         super().__init__()
         self.timeout = timeout
-        self.working_dir = working_dir
         self.enable_safety_guard = enable_safety_guard
-        self.restrict_to_workspace = restrict_to_workspace
         self._platform = platform.system().lower()
 
         # 根据平台设置默认危险模式，或接受自定义模式
@@ -100,15 +93,9 @@ class ShellTool(Tool):
                 "Commands run in sh/bash."
             )
 
-        # 工作目录提示
-        if self.working_dir:
-            parts.append(f"Default working directory: {self.working_dir}")
-
         # 安全限制提示
         if self.enable_safety_guard:
             parts.append("Safety guard is enabled.")
-            if self.restrict_to_workspace:
-                parts.append("Path traversal (../) is blocked for security.")
         else:
             parts.append("WARNING: Safety guard is disabled.")
 
@@ -132,11 +119,11 @@ class ShellTool(Tool):
         }
 
     async def execute(self, command: str, working_dir: str | None = None, **kwargs: Any) -> str:
-        cwd = working_dir or self.working_dir or os.getcwd()
+        cwd = working_dir or os.getcwd()
 
         # 安全校验（如果启用）
         if self.enable_safety_guard:
-            guard_error = self._guard_command(command, cwd)
+            guard_error = self._guard_command(command)
             if guard_error:
                 return guard_error
 
@@ -153,7 +140,7 @@ class ShellTool(Tool):
                     process.communicate(),
                     timeout=self.timeout
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 process.kill()
                 return f"Error: Command timed out after {self.timeout} seconds"
 
@@ -182,7 +169,7 @@ class ShellTool(Tool):
         except Exception as e:
             return f"Error executing command: {str(e)}"
 
-    def _guard_command(self, command: str, cwd: str) -> str | None:
+    def _guard_command(self, command: str) -> str | None:
         """安全检查，防止危险命令."""
         cmd = command.strip()
         lower = cmd.lower()
@@ -193,54 +180,7 @@ class ShellTool(Tool):
                 return f"Error: Command blocked by safety guard (dangerous pattern: {pattern})"
 
         # 检查允许模式
-        if self.allow_patterns:
-            if not any(re.search(p, lower) for p in self.allow_patterns):
-                return "Error: Command blocked by safety guard (not in allowlist)"
-
-        # 检查工作目录限制
-        if self.restrict_to_workspace:
-            cwd_path = Path(cwd).resolve()
-
-            # 根据操作系统选择路径匹配模式
-            if self._platform == "windows":
-                # Windows: 匹配 C:\path 或 C:/path，以及相对路径
-                path_patterns = [
-                    r"[A-Za-z]:[/\\][^\s\"'|<>]+",  # C:\path 或 C:/path
-                    r"\.\.?[/\\][^\s\"'|<>]+",      # .\path 或 ..\path
-                ]
-            else:
-                # POSIX: 匹配 /path 以及相对路径
-                path_patterns = [
-                    r"(?<![A-Za-z0-9_-])(?<![A-Za-z0-9_-]-)(?<!-)(?<!/)(/[^\s\"'|<>]+)",  # /path
-                    r"\.\.?/[^\s\"'|<>]+",  # ./path 或 ../path
-                ]
-
-            found_paths = []
-            for pattern in path_patterns:
-                found_paths.extend(re.findall(pattern, cmd))
-
-            for raw_path in found_paths:
-                try:
-                    # 清理路径（去除可能的尾随标点）
-                    clean_path = raw_path.rstrip('.,;:!?)')
-                    resolved_path = Path(clean_path)
-
-                    # 如果是相对路径，基于工作目录解析
-                    if not resolved_path.is_absolute():
-                        resolved_path = (cwd_path / resolved_path).resolve()
-                    else:
-                        resolved_path = resolved_path.resolve()
-
-                    # 检查路径是否在工作目录内
-                    try:
-                        resolved_path.relative_to(cwd_path)
-                    except ValueError:
-                        # 路径在工作目录外
-                        if resolved_path != cwd_path:
-                            return f"Error: Command blocked by safety guard (path outside working dir: {clean_path})"
-
-                except Exception:
-                    # 路径解析失败，跳过
-                    continue
+        if self.allow_patterns and not any(re.search(p, lower) for p in self.allow_patterns):
+            return "Error: Command blocked by safety guard (not in allowlist)"
 
         return None

@@ -59,40 +59,25 @@ class AgentBuilderMixin:
         )
 
         tools_config = self.config.get("tools", {})
-        project_dir = Path(__file__).parent.parent.parent
 
         file_tools_config = tools_config.get("file_tools", {})
         if file_tools_config.get("enabled", True):
-            allowed_dirs = file_tools_config.get("allowed_directories", ["."])
-            resolved_dirs = [project_dir / d for d in allowed_dirs]
-            allowed_dir = resolved_dirs[0] if len(resolved_dirs) == 1 else project_dir.resolve()
-
-            self.tool_manager.register(ReadFileTool(allowed_dir=allowed_dir))
-            self.tool_manager.register(WriteFileTool(allowed_dir=allowed_dir))
-            self.tool_manager.register(EditFileTool(allowed_dir=allowed_dir))
-            self.tool_manager.register(ListDirTool(allowed_dir=allowed_dir))
+            self.tool_manager.register(ReadFileTool())
+            self.tool_manager.register(WriteFileTool())
+            self.tool_manager.register(EditFileTool())
+            self.tool_manager.register(ListDirTool())
             print("   [OK] File tools registered (read_file, write_file, edit_file, list_dir)")
-            print(f"      Allowed dir: {allowed_dir}")
 
         shell_tools_config = tools_config.get("shell_tools", {})
         if shell_tools_config.get("enabled", True):
             from framework.tools.standard import ShellTool
 
-            working_dir = shell_tools_config.get("working_dir")
-            if working_dir:
-                working_dir = str((project_dir / working_dir).resolve())
-            else:
-                working_dir = str(project_dir.resolve())
-
             shell_tool = ShellTool(
                 timeout=shell_tools_config.get("timeout", 60),
-                working_dir=working_dir,
                 enable_safety_guard=shell_tools_config.get("enable_safety_guard", True),
-                restrict_to_workspace=shell_tools_config.get("restrict_to_workspace", True),
             )
             self.tool_manager.register(shell_tool)
             print("   [OK] Shell tool registered (shell)")
-            print(f"      Working dir: {working_dir}")
 
         from bot.tools.custom import SendFileToUserTool as _SendFileToUserTool
 
@@ -207,14 +192,6 @@ class AgentBuilderMixin:
     ) -> InMemoryToolManager:
         tm_config = ToolManagerConfig(max_workers=10, enable_parallel=True, parallel_max_workers=5)
         tm = InMemoryToolManager(config=tm_config)
-        project_dir = Path(__file__).parent.parent.parent
-
-        extra_allowed_dirs: list[Path] = []
-        if peer_name:
-            for skills_base in ["skills/subagents", "skills/peers"]:
-                skill_dir = project_dir / skills_base / peer_name
-                if skill_dir.exists():
-                    extra_allowed_dirs.append(skill_dir.resolve())
 
         from framework.tools.standard import (
             EditFileTool,
@@ -225,29 +202,18 @@ class AgentBuilderMixin:
 
         file_tools_config = tools_config.get("file_tools", {})
         if file_tools_config.get("enabled", True):
-            allowed_dirs = file_tools_config.get("allowed_directories", ["."])
-            resolved_dirs = [project_dir / d for d in allowed_dirs]
-            allowed_dir = resolved_dirs[0] if len(resolved_dirs) == 1 else project_dir.resolve()
-            extra = extra_allowed_dirs or None
-            tm.register(ReadFileTool(allowed_dir=allowed_dir, extra_allowed_dirs=extra))
-            tm.register(WriteFileTool(allowed_dir=allowed_dir, extra_allowed_dirs=extra))
-            tm.register(EditFileTool(allowed_dir=allowed_dir, extra_allowed_dirs=extra))
-            tm.register(ListDirTool(allowed_dir=allowed_dir, extra_allowed_dirs=extra))
+            tm.register(ReadFileTool())
+            tm.register(WriteFileTool())
+            tm.register(EditFileTool())
+            tm.register(ListDirTool())
 
         from framework.tools.standard import ShellTool
 
         shell_tools_config = tools_config.get("shell_tools", {})
         if shell_tools_config.get("enabled", True):
-            working_dir = shell_tools_config.get("working_dir")
-            if working_dir:
-                working_dir = str((project_dir / working_dir).resolve())
-            else:
-                working_dir = str(project_dir.resolve())
             tm.register(ShellTool(
                 timeout=shell_tools_config.get("timeout", 60),
-                working_dir=working_dir,
                 enable_safety_guard=shell_tools_config.get("enable_safety_guard", True),
-                restrict_to_workspace=shell_tools_config.get("restrict_to_workspace", True),
             ))
 
         mcp_tools_config = tools_config.get("mcp_tools", {})
@@ -653,7 +619,7 @@ class AgentBuilderMixin:
 
             # 8. Inject PeerAutoSendHook as safety net
             if self.agent_bus is not None and instance and instance.pipeline:
-                from framework.hook import HookSpec, HookErrorPolicy
+                from framework.hook import HookErrorPolicy, HookSpec
                 from framework.hook.builtin import PeerAutoSendHook
 
                 peer_hook = PeerAutoSendHook(
