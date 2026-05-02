@@ -1,8 +1,11 @@
 """Tests for ReActAgent thin shell."""
 import pytest
 from framework.agents.react.agent import ReActAgent, ReActEvent
+from framework.agents.react.runtime import ReActRuntime
 from framework.core.agent import AgentContext
+from framework.core.context_extensions import ExtensionKey
 from framework.core.tool_manager import InMemoryToolManager
+from framework.hook import HookRunner
 from framework.memory.history import ListMessageHistory
 from framework.core.graph.engine import GraphEngine
 from framework.agents.react.graph import ReActGraph
@@ -50,3 +53,81 @@ class TestReActAgent:
 
         # contextvar should be reset
         assert ctx.emitter is None
+
+
+class TestReActAgentRuntime:
+    @pytest.mark.asyncio
+    async def test_clean_mode_sets_clean_runtime(self):
+        agent = ReActAgent(_MockProvider(), mode="clean")
+
+        class _Emitter:
+            def wants_streaming(self):
+                return False
+
+            async def emit(self, *args, **kwargs):
+                pass
+
+            async def emit_delta(self, *args, **kwargs):
+                pass
+
+            async def emit_content(self, *args, **kwargs):
+                pass
+
+            async def emit_stream_end(self, *args, **kwargs):
+                pass
+
+            async def emit_complete(self, *args, **kwargs):
+                pass
+
+        ctx = AgentContext(
+            system_prompt="test",
+            history=ListMessageHistory(),
+            tool_manager=InMemoryToolManager(),
+            extensions={ExtensionKey.HOOK_RUNNER: HookRunner()},
+        )
+        emitter = _Emitter()
+        try:
+            await agent.run(ctx, emitter)
+        except Exception:
+            pass
+        assert ctx.runtime is not None
+        assert ctx.runtime.mode == "clean"
+        assert ctx.runtime.hooks is None  # sanitized
+
+    @pytest.mark.asyncio
+    async def test_full_mode_preserves_hooks(self):
+        agent = ReActAgent(_MockProvider(), mode="full")
+
+        class _Emitter:
+            def wants_streaming(self):
+                return False
+
+            async def emit(self, *a, **kw):
+                pass
+
+            async def emit_delta(self, *a, **kw):
+                pass
+
+            async def emit_content(self, *a, **kw):
+                pass
+
+            async def emit_stream_end(self, *a, **kw):
+                pass
+
+            async def emit_complete(self, *a, **kw):
+                pass
+
+        ctx = AgentContext(
+            system_prompt="test",
+            history=ListMessageHistory(),
+            tool_manager=InMemoryToolManager(),
+            extensions={ExtensionKey.HOOK_RUNNER: HookRunner()},
+        )
+        emitter = _Emitter()
+        try:
+            await agent.run(ctx, emitter)
+        except Exception:
+            pass
+        assert ctx.runtime is not None
+        assert ctx.runtime.mode == "full"
+        assert ctx.runtime.hooks is not None

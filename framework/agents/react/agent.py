@@ -121,6 +121,7 @@ class ReActAgent(Agent[ReActEvent]):
         self.provider = provider
         self._hook_timeout = hook_timeout
         self._tool_timeout = tool_timeout
+        self.mode = mode
         self.graph = ReActGraph(self, mode=mode)
         self.engine = GraphEngine(self.graph)
 
@@ -147,14 +148,24 @@ class ReActAgent(Agent[ReActEvent]):
         # 每轮开始时清空 attachments，避免跨轮污染
         context.attachments = []
         context.emitter = emitter
+        from framework.agents.react.runtime import ReActRuntime
+
+        runtime = ReActRuntime.from_context(context, mode=self.mode)
+        context.runtime = runtime
+        runtime.validate()
         ctx_token = current_agent_context.set(context)
 
         result = AgentResult(content="", stop_reason="error")
 
         try:
-            await self._call_hooks(HookPoint.BEFORE_TURN, context)
+            if runtime.hooks:
+                await runtime.hooks.dispatch(HookPoint.BEFORE_TURN, context)
             result = await self.engine.run(context)
-            await self._call_hooks(HookPoint.AFTER_TURN, context, result)
+            if runtime.hooks:
+                await runtime.hooks.dispatch(
+                    HookPoint.AFTER_TURN, context,
+                    HookPayload(data={"result": result}),
+                )
             return result
         except GraphInterrupt:
             raise
@@ -224,7 +235,8 @@ class ReActAgent(Agent[ReActEvent]):
                 "reason": denial.reason,
                 "iteration": denial.iteration,
             }
-        checkpoint_store = ctx_ext(context, ExtensionKey.CHECKPOINT_STORE)
+        runtime: Any = getattr(context, "runtime", None)
+        checkpoint_store = runtime.checkpoint_store if runtime is not None else None
         if checkpoint_store is not None:
             session_id = getattr(context, "session_id", "unknown")
             checkpoint_id = f"{session_id}:denial"
@@ -236,7 +248,8 @@ class ReActAgent(Agent[ReActEvent]):
         context: AgentContext,
     ) -> None:
         """保存检查点到 checkpoint_store。无 store 则跳过。"""
-        checkpoint_store = ctx_ext(context, ExtensionKey.CHECKPOINT_STORE)
+        runtime: Any = getattr(context, "runtime", None)
+        checkpoint_store = runtime.checkpoint_store if runtime is not None else None
         if checkpoint_store is None:
             return
         data = {"messages": list(all_new_messages)}
@@ -246,7 +259,8 @@ class ReActAgent(Agent[ReActEvent]):
 
     async def _clear_checkpoint(self, context: AgentContext) -> None:
         """清空检查点。无 store 则跳过。"""
-        checkpoint_store = ctx_ext(context, ExtensionKey.CHECKPOINT_STORE)
+        runtime: Any = getattr(context, "runtime", None)
+        checkpoint_store = runtime.checkpoint_store if runtime is not None else None
         if checkpoint_store is None:
             return
         session_id = getattr(context, "session_id", "unknown")
@@ -274,56 +288,33 @@ class ReActAgent(Agent[ReActEvent]):
         *args: Any,
         **kwargs: Any,
     ) -> None:
-        """调用 context 中注册的所有 hooks 的指定方法。
+        """Dispatch hook via context.runtime (set by ReActAgent.run()).
 
-        优先使用 HookRunner（extensions[HOOK_RUNNER]），否则回退到旧路径。
+        Used by LLMNode and ToolNode during graph execution.
         """
-        hook_runner = ctx_ext(context, ExtensionKey.HOOK_RUNNER)
-        if hook_runner is not None:
-            payload_data: dict[str, Any] = {}
-            method_name = hook_point.value
-            if args:
-                if method_name == "after_turn":
-                    payload_data = {"result": args[0]} if args else {}
-                elif method_name == "after_llm_response":
-                    payload_data = {"response": args[0]} if args else {}
-                elif method_name in ("before_tool_execution", "after_tool_execution"):
-                    if method_name == "before_tool_execution":
-                        payload_data = {"tool_calls": args[0]}
-                    else:
-                        payload_data = {"results": args[0]}
-            await hook_runner.dispatch(
-                hook_point,
-                context,
-                HookPayload(data=payload_data),
-                hook_timeout=self._resolve_hook_timeout(context),
-            )
+        runtime: Any = getattr(context, "runtime", None)
+        hooks = runtime.hooks if runtime is not None else None
+        if hooks is None:
             return
 
-        hook_timeout = self._resolve_hook_timeout(context)
-        hooks = ctx_ext(context, ExtensionKey.HOOKS, [])
-        for hook in hooks:
-            if hook is None:
-                continue
-            method = getattr(hook, hook_point.value, None)
-            if method is None:
-                continue
-            try:
-                await asyncio.wait_for(
-                    method(context, *args, **kwargs),
-                    timeout=hook_timeout,
-                )
-            except asyncio.CancelledError:
-                raise
-            except TimeoutError:
-                logger.warning(
-                    "Hook %s.%s timed out after %.1fs",
-                    type(hook).__name__,
-                    hook_point.value,
-                    hook_timeout,
-                )
-            except Exception:
-                logger.exception("Hook %s failed in %s", type(hook).__name__, hook_point.value)
+        payload_data: dict[str, Any] = {}
+        method_name = hook_point.value
+        if args:
+            if method_name == "after_turn":
+                payload_data = {"result": args[0]}
+            elif method_name == "after_llm_response":
+                payload_data = {"response": args[0]}
+            elif method_name == "before_tool_execution":
+                payload_data = {"tool_calls": args[0]}
+            elif method_name == "after_tool_execution":
+                payload_data = {"results": args[0]}
+
+        await hooks.dispatch(
+            hook_point,
+            context,
+            HookPayload(data=payload_data),
+            hook_timeout=self._resolve_hook_timeout(context),
+        )
 
     async def _execute_tool(
         self,
