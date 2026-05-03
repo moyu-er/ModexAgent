@@ -30,7 +30,7 @@ class TurnTimeoutInterceptor:
     """Turn 超时拦截器。
 
     包裹整个 turn，超时时按配置取消或通知。
-    读取 ctx.extensions[ExtensionKey.SAFETY].turn.turn_timeout_seconds 作为默认值。
+    读取 ctx.runtime.safety.turn.agent_run_timeout_seconds 作为默认值。
     """
 
     scopes = frozenset([InterceptorScope.TURN])

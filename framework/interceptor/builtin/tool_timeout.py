@@ -24,7 +24,7 @@ _DEFAULT_TOOL_TIMEOUT = 60.0
 class ToolTimeoutInterceptor:
     """工具调用超时拦截器。
 
-    读取 ctx.extensions[ExtensionKey.SAFETY].turn.tool_timeout_seconds 作为默认超时值。
+    读取 ctx.runtime.safety.turn.tool_timeout_seconds 作为默认超时值。
     只有当前边界没有更高层 timeout owner 时才生效。
     """
 

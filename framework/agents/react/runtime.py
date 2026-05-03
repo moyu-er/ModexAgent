@@ -4,9 +4,18 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from framework.core.context_extensions import ExtensionKey
+
+if TYPE_CHECKING:
+    from framework.agents.react.approval import ApprovalRuntime
+    from framework.control.checkpoint import RuntimeStateStore
+    from framework.control.runtime import ControlRuntime
+    from framework.core.llm_error import RuntimeSafetyPolicy
+    from framework.hook import HookRunner
+    from framework.interceptor.chain import InterceptorChain
+    from framework.memory.context_governance import ContextGovernance
 
 logger = logging.getLogger(__name__)
 
@@ -41,14 +50,14 @@ class ReActRuntime:
     mode: Literal["clean", "full"]
 
     # Runtime services -- populated in full mode from AgentContext.extensions.
-    hooks: Any = None
-    interceptors: Any = None
-    approval: Any = None
-    control: Any = None
-    checkpoint_store: Any = None
+    hooks: HookRunner | None = None
+    interceptors: InterceptorChain | None = None
+    approval: ApprovalRuntime | None = None
+    control: ControlRuntime | None = None
+    checkpoint_store: RuntimeStateStore | None = None
     injection_queue: asyncio.Queue[str] | None = None
-    governance: Any = None
-    safety: Any = None
+    governance: ContextGovernance | None = None
+    safety: RuntimeSafetyPolicy | None = None
 
     @classmethod
     def clean(cls) -> ReActRuntime:
@@ -98,9 +107,21 @@ class ReActRuntime:
         if self.interceptors is not None:
             from framework.control.exceptions import PolicyViolation
             from framework.interceptor.builtin import ControlDrainInterceptor
+            from framework.interceptor.builtin.tool_approval import (
+                TieredToolApprovalInterceptor,
+            )
 
             for interceptor in self.interceptors.interceptors:
                 if isinstance(interceptor, ControlDrainInterceptor) and self.control is None:
                     raise PolicyViolation(
                         "ControlDrainInterceptor configured but no ControlRuntime present"
+                    )
+                if (
+                    isinstance(interceptor, TieredToolApprovalInterceptor)
+                    and self.approval is None
+                ):
+                    logger.warning(
+                        "TieredToolApprovalInterceptor configured but no ApprovalRuntime "
+                        "present; around_tool_call() still works, but classification "
+                        "will be unavailable"
                     )

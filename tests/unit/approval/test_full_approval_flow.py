@@ -98,7 +98,8 @@ def _make_approval_interceptor(dangerous_tools=None, allowed_dirs=None):
 
 
 def _make_ctx(*, session_id="s1", history=None, interceptor_chain=None,
-              suspend_strategy=None, approval_classifier=None, metadata=None):
+              suspend_strategy=None, approval_classifier=None, metadata=None,
+              dangerous_tools=None, allowed_dirs=None):
     ctx = AgentContext(
         system_prompt="You are helpful.",
         history=history if history is not None else _TrackingHistory(),
@@ -115,18 +116,20 @@ def _make_ctx(*, session_id="s1", history=None, interceptor_chain=None,
         )
         # Build ApprovalRuntime for ToolNode._get_tier
         classifier = approval_classifier
-        if classifier is None and interceptor_chain:
-            from framework.agents.react.approval import TieredToolApprovalClassifier
-            from framework.interceptor.builtin.tool_approval import TieredToolApprovalInterceptor
-            for interceptor in interceptor_chain.interceptors:
-                if isinstance(interceptor, TieredToolApprovalInterceptor):
-                    classifier = TieredToolApprovalClassifier(
-                        hardline=interceptor._hardline,
-                        dangerous=interceptor._dangerous,
-                        sensitive=interceptor._sensitive,
-                        argument_matcher=interceptor._argument_matcher,
-                    )
-                    break
+        if classifier is None and dangerous_tools is not None:
+            from framework.agents.react.approval import (
+                TieredToolApprovalClassifier,
+            )
+            from framework.interceptor.builtin.tool_approval import (
+                ArgumentMatcher,
+                ToolNameMatcher,
+            )
+            classifier = TieredToolApprovalClassifier(
+                dangerous=ToolNameMatcher(dangerous_tools) if dangerous_tools else None,
+                argument_matcher=(
+                    ArgumentMatcher(allowed_dirs) if allowed_dirs else None
+                ),
+            )
         if classifier is not None:
             from framework.agents.react.approval import ApprovalRuntime
             runtime.approval = ApprovalRuntime(
@@ -259,7 +262,11 @@ class TestApprovalTrigger:
             allowed_dirs={"/safe"},
         )
         chain = InterceptorChain(interceptors=[interceptor])
-        ctx = _make_ctx(interceptor_chain=chain)
+        ctx = _make_ctx(
+            interceptor_chain=chain,
+            dangerous_tools={"rm", "write_file"},
+            allowed_dirs={"/safe"},
+        )
 
         agent = MagicMock()
         node = ToolNode(agent)
@@ -286,11 +293,17 @@ class TestApprovalTrigger:
         strategy = SuspendResumeStrategy(
             InMemoryApprovalStateStore(), InMemoryTurnResumeStateStore(),
         )
-        ctx = _make_ctx(interceptor_chain=chain, suspend_strategy=strategy, metadata={
-            ReActMetaKey.LLM_RESPONSE: LLMResponse(
-                content="", tool_calls=[ToolCall(tool_name="rm", call_id="c1", arguments={"path": "/etc/hosts"})],
-                finish_reason="tool_calls",
-            ),
+        ctx = _make_ctx(
+            interceptor_chain=chain,
+            suspend_strategy=strategy,
+            dangerous_tools={"rm"},
+            allowed_dirs={"/safe"},
+            metadata={
+                ReActMetaKey.LLM_RESPONSE: LLMResponse(
+                    content="",
+                    tool_calls=[ToolCall(tool_name="rm", call_id="c1", arguments={"path": "/etc/hosts"})],
+                    finish_reason="tool_calls",
+                ),
             ReActMetaKey.ITERATION: 1,
             ReActMetaKey.ITERATION_MSGS: [],
         })
@@ -347,6 +360,7 @@ class TestFullApproveResumeExecute:
         tc = ToolCall(tool_name="rm", call_id="c1", arguments={"path": "/etc/hosts"})
         ctx1 = _make_ctx(
             history=history, interceptor_chain=chain, suspend_strategy=strategy,
+            dangerous_tools={"rm"}, allowed_dirs={"/safe"},
             metadata={
                 ReActMetaKey.LLM_RESPONSE: LLMResponse(
                     content="", tool_calls=[tc], finish_reason="tool_calls",
@@ -371,6 +385,7 @@ class TestFullApproveResumeExecute:
         # ── Resume: StartNode → ToolNode ──
         ctx2 = _make_ctx(
             history=history, interceptor_chain=chain, suspend_strategy=strategy,
+            dangerous_tools={"rm"}, allowed_dirs={"/safe"},
             metadata={
                 ReActMetaKey.RESUME_STATE: resume_state,
                 ReActMetaKey.ITERATION: 1,
@@ -477,6 +492,7 @@ class TestFullApproveResumeExecute:
         ctx = _make_ctx(
             session_id="s1", history=history,
             interceptor_chain=chain, suspend_strategy=strategy,
+            dangerous_tools={"write_file"}, allowed_dirs={"/safe"},
             metadata={ReActMetaKey.ITERATION: 0},
         )
         # Set checkpoint_store to None (not needed for this test)
@@ -503,6 +519,7 @@ class TestFullApproveResumeExecute:
         ctx2 = _make_ctx(
             session_id="s1", history=history,
             interceptor_chain=chain, suspend_strategy=strategy,
+            dangerous_tools={"write_file"}, allowed_dirs={"/safe"},
             metadata={
                 ReActMetaKey.RESUME_STATE: resume_state,
                 ReActMetaKey.ITERATION: 1,
@@ -635,6 +652,7 @@ class TestMemoryCorrectness:
         tc = ToolCall(tool_name="write_file", call_id="c1", arguments={"path": "/etc/hosts"})
         ctx1 = _make_ctx(
             history=history, interceptor_chain=chain, suspend_strategy=strategy,
+            dangerous_tools={"write_file"}, allowed_dirs={"/safe"},
             metadata={
                 ReActMetaKey.LLM_RESPONSE: LLMResponse(
                     content="", tool_calls=[tc], finish_reason="tool_calls",
@@ -673,6 +691,7 @@ class TestMemoryCorrectness:
 
         ctx2 = _make_ctx(
             history=history, interceptor_chain=chain, suspend_strategy=strategy,
+            dangerous_tools={"write_file"}, allowed_dirs={"/safe"},
             metadata={
                 ReActMetaKey.RESUME_STATE: resume_state,
                 ReActMetaKey.ITERATION: 1,
@@ -909,6 +928,8 @@ class TestMultiToolResumeFlow:
             ctx = _make_ctx(
                 session_id="s1", history=history,
                 interceptor_chain=chain, suspend_strategy=strategy,
+                dangerous_tools={"shell", "write_file"},
+                allowed_dirs={"/safe"},
                 metadata={
                     ReActMetaKey.LLM_RESPONSE: LLMResponse(
                         content="", tool_calls=tcs, finish_reason="tool_calls",
@@ -984,6 +1005,8 @@ class TestMultiToolResumeFlow:
             ctx = _make_ctx(
                 session_id="s2", history=history,
                 interceptor_chain=chain, suspend_strategy=strategy,
+                dangerous_tools={"shell", "write_file"},
+                allowed_dirs={"/safe"},
                 metadata={
                     ReActMetaKey.LLM_RESPONSE: LLMResponse(
                         content="", tool_calls=tcs, finish_reason="tool_calls",
@@ -1056,6 +1079,8 @@ class TestMultiToolResumeFlow:
             ctx = _make_ctx(
                 session_id="s3", history=history,
                 interceptor_chain=chain, suspend_strategy=strategy,
+                dangerous_tools={"shell", "write_file"},
+                allowed_dirs={"/safe"},
                 metadata={
                     ReActMetaKey.LLM_RESPONSE: LLMResponse(
                         content="", tool_calls=tcs, finish_reason="tool_calls",
@@ -1130,6 +1155,8 @@ class TestMultiToolResumeFlow:
             ctx = _make_ctx(
                 session_id="s4", history=history,
                 interceptor_chain=chain, suspend_strategy=strategy,
+                dangerous_tools={"shell", "write_file", "edit_file"},
+                allowed_dirs={"/safe"},
                 metadata={
                     ReActMetaKey.LLM_RESPONSE: LLMResponse(
                         content="", tool_calls=tcs, finish_reason="tool_calls",
@@ -1221,6 +1248,8 @@ class TestUnrelatedContentDuringApproval:
             ctx = _make_ctx(
                 session_id="s5", history=history,
                 interceptor_chain=chain, suspend_strategy=strategy,
+                dangerous_tools={"shell", "write_file"},
+                allowed_dirs={"/safe"},
                 metadata={
                     ReActMetaKey.LLM_RESPONSE: LLMResponse(
                         content="ok let me check", tool_calls=tcs, finish_reason="tool_calls",
@@ -1307,6 +1336,8 @@ class TestUnrelatedContentDuringApproval:
             ctx = _make_ctx(
                 session_id="s6", history=history,
                 interceptor_chain=chain, suspend_strategy=strategy,
+                dangerous_tools={"shell"},
+                allowed_dirs={"/safe"},
                 metadata={
                     ReActMetaKey.LLM_RESPONSE: LLMResponse(
                         content="let me delete that", tool_calls=[tc],
