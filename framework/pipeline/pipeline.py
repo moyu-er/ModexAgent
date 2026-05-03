@@ -501,14 +501,15 @@ class AgentPipeline:
 
         _is_approval_cmd = False
         approval_state_early = None
-        # Check prebuilt strategy first, then lazy stores
-        strategy = getattr(self, "_prebuilt_strategy", None)
-        if strategy is None:
-            approval_store = self._approval_stores.get(session_id)
+        # Load approval state: prefer runtime strategy, fall back to lazy stores
+        strategy = None
+        if self._prebuilt_runtime and self._prebuilt_runtime.approval:
+            strategy = getattr(self._prebuilt_runtime.approval, "suspend_strategy", None)
+        if strategy is not None:
+            approval_state_early = await strategy.load_approval_state(session_id)
         else:
-            approval_store = getattr(strategy, "_approval_store", None)
-        if approval_store is not None:
-            approval_state_early = await approval_store.load(session_id)
+            approval_store = self._approval_stores.get(session_id)
+            approval_state_early = await approval_store.load(session_id) if approval_store else None
             if approval_state_early is not None:
                 action = parse_approval_action(input_msg.content or "")
                 if action is not None:
@@ -523,7 +524,10 @@ class AgentPipeline:
                            approval_state_early.decisions[req.tool_call_id] == ApprovalDecision.PENDING:
                             approval_state_early.apply(req.tool_call_id, ApprovalDecision.DENIED)
                             break
-                    await approval_store.save(approval_state_early)
+                    if strategy is not None:
+                        await strategy.save_approval_state(approval_state_early)
+                    elif approval_store is not None:
+                        await approval_store.save(approval_state_early)
 
         return _is_approval_cmd, approval_state_early
 
@@ -722,8 +726,6 @@ class AgentPipeline:
             metadata={"session_id": session_id},
             extensions={
                 ExtensionKey.RUNTIME_CTX_MGR: self.runtime_context_manager,
-                ExtensionKey.GOVERNANCE: self.governance,
-                ExtensionKey.SAFETY: self.safety,
                 ExtensionKey.ON_CHECKPOINT: on_checkpoint,
                 ExtensionKey.MAX_TOOLS_PER_TURN: None,
             },
@@ -780,12 +782,12 @@ class AgentPipeline:
                 break
 
         if approval_state.every_tool_decided:
-            # Get resume store from strategy or lazy stores
+            # Get resume state from strategy or lazy stores
             if strategy is not None:
-                _resume_store = getattr(strategy, "_resume_store", None)
+                resume_state = await strategy.load_resume_state(session_id)
             else:
                 _resume_store = self._resume_stores.get(session_id)
-            resume_state = await _resume_store.load(session_id) if _resume_store else None
+                resume_state = await _resume_store.load(session_id) if _resume_store else None
             if resume_state is not None:
                 # Rebuild context with resume state
                 agent_context.metadata[ReActMetaKey.RESUME_STATE] = resume_state
@@ -814,9 +816,14 @@ class AgentPipeline:
                     _current_resume.set(None)
 
                 # Cleanup old approval state (new state saved by strategy if another interrupt)
-                await approval_store.delete(session_id)
-                if _resume_store:
-                    await _resume_store.delete(session_id)
+                if strategy is not None:
+                    await strategy.delete_approval_state(session_id)
+                    await strategy.delete_resume_state(session_id)
+                else:
+                    if approval_store:
+                        await approval_store.delete(session_id)
+                    if _resume_store:
+                        await _resume_store.delete(session_id)
 
                 # Drain buffered messages
                 await self._drain_approval_buffer(session_id)
@@ -835,7 +842,10 @@ class AgentPipeline:
                 return result
         else:
             # Partial decision — save progress and send next prompt
-            await approval_store.save(approval_state)
+            if strategy is not None:
+                await strategy.save_approval_state(approval_state)
+            elif approval_store is not None:
+                await approval_store.save(approval_state)
             if self._user_interface is not None:
                 for req in approval_state.requests:
                     if req.tool_call_id not in approval_state.decisions:
@@ -996,7 +1006,9 @@ class AgentPipeline:
         if approval_state is not None:
             action = parse_approval_action(input_msg.content or "")
             if action is not None:
-                strategy = getattr(self, "_prebuilt_strategy", None)
+                strategy = None
+                if self._prebuilt_runtime and self._prebuilt_runtime.approval:
+                    strategy = getattr(self._prebuilt_runtime.approval, "suspend_strategy", None)
                 return await self._handle_approval_command(
                     action, approval_state, agent_context, emitter, session_id,
                     context_state, input_metadata, strategy, ctx_mgr,

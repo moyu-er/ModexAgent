@@ -30,6 +30,28 @@ class SuspendStrategy(ABC):
         """Request approval and return final decisions."""
         ...
 
+    # ── Public storage API for Pipeline ──
+
+    async def load_approval_state(self, session_id: str) -> Any | None:
+        """Load pending approval state for a session, or None."""
+        return None
+
+    async def save_approval_state(self, state: Any) -> None:
+        """Save approval state (e.g. partial decisions)."""
+        pass
+
+    async def delete_approval_state(self, session_id: str) -> None:
+        """Delete approval state after completion."""
+        pass
+
+    async def load_resume_state(self, session_id: str) -> Any | None:
+        """Load TurnResumeState for a session, or None."""
+        return None
+
+    async def delete_resume_state(self, session_id: str) -> None:
+        """Delete resume state after completion."""
+        pass
+
 
 class InlineWaitStrategy(SuspendStrategy):
     """Blocking approval — polls a channel per-tool, no persistence."""
@@ -61,6 +83,21 @@ class SuspendResumeStrategy(SuspendStrategy):
     def __init__(self, approval_store: Any, resume_store: Any) -> None:
         self._approval_store = approval_store
         self._resume_store = resume_store
+
+    async def load_approval_state(self, session_id: str) -> Any | None:
+        return await self._approval_store.load(session_id)
+
+    async def save_approval_state(self, state: Any) -> None:
+        await self._approval_store.save(state)
+
+    async def delete_approval_state(self, session_id: str) -> None:
+        await self._approval_store.delete(session_id)
+
+    async def load_resume_state(self, session_id: str) -> Any | None:
+        return await self._resume_store.load(session_id)
+
+    async def delete_resume_state(self, session_id: str) -> None:
+        await self._resume_store.delete(session_id)
 
     async def solicit_approval(
         self,
