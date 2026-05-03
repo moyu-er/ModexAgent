@@ -18,7 +18,6 @@ from framework.memory.core.message import ChatMessage
 
 from ..agents.react.constants import ReActMetaKey
 from ..agents.react.state import StateStoreTurnResumeStateStore
-from ..agents.react.strategy import SuspendResumeStrategy
 from ..approval.constants import ApprovalDecision
 from ..approval.response import parse_approval_action
 from ..approval.store import LocalFileApprovalStateStore
@@ -399,28 +398,19 @@ class AgentPipeline:
                 )
             return await self._process_message_locked(input_msg, session_id, route_result)
 
-    async def _process_message_locked(
-        self, input_msg: InputMessage, session_id: str, route_result: Any | None = None
-    ) -> AgentResult | None:
-        """在 session 锁保护内处理单个消息"""
-        if self.on_session_start is not None:
-            try:
-                await asyncio.wait_for(
-                    self.on_session_start(session_id),
-                    timeout=self.safety.turn.hook_timeout_seconds,
-                )
-            except TimeoutError:
-                logger.warning("on_session_start timeout for %s", session_id)
-            except Exception:
-                logger.exception("on_session_start failed for %s", session_id)
-        ctx_mgr = (
-            self.context_manager_factory(session_id)
-            if self.context_manager_factory
-            else self.context_manager
-        )
-        input_metadata = getattr(input_msg, "metadata", None) or {}
+    async def _preprocess_input(
+        self,
+        input_msg: InputMessage,
+        session_id: str,
+        input_metadata: dict[str, Any],
+        route_result: Any | None,
+    ) -> tuple[str | None, list[Any], Any | None]:
+        """Preprocess input: sanitize, handle attachments, apply route modifier, intercept commands.
 
-        # 输入内容清洗
+        Returns:
+            (sanitized_content, media_blocks, media_processor).
+            If command_interceptor consumed the message, sanitized_content is None.
+        """
         sanitized_content = input_msg.content
         if self.sanitizer is not None:
             sanitized_content = self.sanitizer(sanitized_content)
@@ -480,8 +470,22 @@ class AgentPipeline:
                     OutputMessage(content=intercept_result, message_type="command_response"),
                     session_id,
                 )
-                return
+                return None, [], None
 
+        return sanitized_content, media_blocks, _media_processor
+
+    async def _detect_approval_command(
+        self,
+        input_msg: InputMessage,
+        session_id: str,
+        input_metadata: dict[str, Any],
+    ) -> tuple[bool, Any | None]:
+        """Detect approval commands and handle auto-deny / source_agent buffering.
+
+        Returns:
+            (is_approval_cmd, approval_state).  If approval_state is not None,
+            the caller should handle approval consumption.
+        """
         # Ensure approval/resume stores exist for this session (only when needed)
         if self.checkpoint_store is not None:
             if session_id not in self._approval_stores:
@@ -493,7 +497,6 @@ class AgentPipeline:
                     self.checkpoint_store
                 )
 
-        # Preliminary approval check: is this message an approval command?
         _is_approval_cmd = False
         approval_state_early = None
         # Check prebuilt strategy first, then lazy stores
@@ -510,7 +513,6 @@ class AgentPipeline:
                     _is_approval_cmd = True
                 elif input_metadata.get("source_agent"):
                     self._approval_pending.setdefault(session_id, []).append(input_msg)
-                    return None
                 else:
                     # Unrelated user content during pending approval → deny all
                     # tools. apply(DENIED) cascades remaining to PREEMPTED.
@@ -520,6 +522,28 @@ class AgentPipeline:
                             approval_state_early.apply(req.tool_call_id, ApprovalDecision.DENIED)
                             break
                     await approval_store.save(approval_state_early)
+
+        return _is_approval_cmd, approval_state_early
+
+    async def _assemble_context(
+        self,
+        session_id: str,
+        input_msg: InputMessage,
+        input_metadata: dict[str, Any],
+        sanitized_content: str | None,
+        media_blocks: list[Any],
+        _media_processor: Any | None,
+        ctx_mgr: Any,
+        route_result: Any | None,
+        _is_approval_cmd: bool,
+    ) -> Any:
+        """Assemble context state: load context, recover checkpoints, write user message,
+        build system prompt, and run multi-agent context builder.
+
+        Returns:
+            context_state
+        """
+        source_agent = input_metadata.get("source_agent")
 
         context_state = await ctx_mgr.load_with_metadata(
             session_id,
@@ -663,11 +687,27 @@ class AgentPipeline:
             else:
                 context_state.history = ListMessageHistory(non_system)
 
+        return context_state
+
+    def _build_runtime_and_context(
+        self,
+        session_id: str,
+        context_state: Any,
+        ctx_mgr: Any,
+    ) -> tuple[AgentContext, Any]:
+        """Build AgentContext and emitter for the turn.
+
+        Only uses the active ExtensionKey set: RUNTIME_CTX_MGR, GOVERNANCE, SAFETY,
+        MAX_TOOLS_PER_TURN, ON_CHECKPOINT.
+
+        Returns:
+            (agent_context, emitter)
+        """
         async def on_checkpoint(messages: list[ChatMessage | dict[str, Any]]) -> None:
             await ctx_mgr.save_checkpoint(session_id, messages)
 
-        # 获取或创建 per-session injection queue
-        injection_queue = self._injection_queues.setdefault(
+        # Ensure per-session injection queue exists
+        self._injection_queues.setdefault(
             session_id, asyncio.Queue(maxsize=50)
         )
 
@@ -679,32 +719,15 @@ class AgentPipeline:
             max_iterations=self.max_iterations,
             metadata={"session_id": session_id},
             extensions={
-                ExtensionKey.HOOKS: self.hooks,
-                ExtensionKey.HOOK_RUNNER: self.hook_runner,
-                ExtensionKey.INTERCEPTOR_CHAIN: self.interceptor_chain,
-                ExtensionKey.CHECKPOINT_STORE: self.checkpoint_store,
                 ExtensionKey.RUNTIME_CTX_MGR: self.runtime_context_manager,
                 ExtensionKey.GOVERNANCE: self.governance,
                 ExtensionKey.SAFETY: self.safety,
-                ExtensionKey.INJECTION_QUEUE: injection_queue,
                 ExtensionKey.ON_CHECKPOINT: on_checkpoint,
+                ExtensionKey.MAX_TOOLS_PER_TURN: None,
             },
         )
 
-        # Inject SuspendResumeStrategy if not already set
-        if ExtensionKey.SUSPEND_STRATEGY not in agent_context.extensions:
-            # Pre-built strategy (injected by bot_project pool mode)
-            prebuilt = getattr(self, "_prebuilt_strategy", None)
-            if prebuilt is not None:
-                agent_context.extensions[ExtensionKey.SUSPEND_STRATEGY] = prebuilt
-            else:
-                _approval_store = self._approval_stores.get(session_id)
-                _resume_store = self._resume_stores.get(session_id)
-                if _approval_store is not None and _resume_store is not None:
-                    strategy = SuspendResumeStrategy(_approval_store, _resume_store)
-                    agent_context.extensions[ExtensionKey.SUSPEND_STRATEGY] = strategy
-
-        # Emitter selection (must be before approval consumption, which may call agent.run)
+        # Emitter selection
         if self.emitter_factory:
             emitter = self.emitter_factory(session_id)
         else:
@@ -714,88 +737,121 @@ class AgentPipeline:
                 send_timeout=self.safety.turn.output_send_timeout_seconds,
             )
 
-        # Approval consumption: handle pending approval commands
-        # Also triggered by unrelated user content during pending approval
-        # (all tools were already denied in the approval check above).
-        if approval_state_early is not None:
-            action = parse_approval_action(input_msg.content or "")
-            if action is not None:
-                # Apply decision to the first unresolved tool
-                for req in approval_state_early.requests:
-                    if req.tool_call_id not in approval_state_early.decisions or \
-                       approval_state_early.decisions[req.tool_call_id] == ApprovalDecision.PENDING:
-                        decision = ApprovalDecision.ALLOWED if action == ApprovalAction.ALLOW else ApprovalDecision.DENIED
-                        approval_state_early.apply(req.tool_call_id, decision)
-                        break
+        return agent_context, emitter
 
-                if approval_state_early.every_tool_decided:
-                    # Get resume store from strategy or lazy stores
-                    if strategy is not None:
-                        _resume_store = getattr(strategy, "_resume_store", None)
-                    else:
-                        _resume_store = self._resume_stores.get(session_id)
-                    resume_state = await _resume_store.load(session_id) if _resume_store else None
-                    if resume_state is not None:
-                        # Rebuild context with resume state
-                        agent_context.metadata[ReActMetaKey.RESUME_STATE] = resume_state
-                        agent_context.metadata[ReActMetaKey.TOOL_DECISIONS] = (
-                            approval_state_early.final_decisions()
-                        )
+    async def _handle_approval_command(
+        self,
+        action: Any,
+        approval_state: Any,
+        agent_context: AgentContext,
+        emitter: Any,
+        session_id: str,
+        context_state: Any,
+        input_metadata: dict[str, Any],
+        strategy: Any | None,
+        ctx_mgr: Any,
+    ) -> AgentResult | None:
+        """Handle an approval command: apply decision, resume if ready, handle GraphInterrupt.
 
-                        _current_resume.set(approval_state_early.final_decisions())
-                        try:
-                            result = await self.agent.run(agent_context, emitter)
-                        except GraphInterrupt as interrupt_exc:
-                            # New tools triggered during resume — send approval prompt
-                            if self._user_interface is not None:
-                                requests = interrupt_exc.value
-                                if isinstance(requests, list):
-                                    for req in requests:
-                                        await self._user_interface.render_message(
-                                            session_id, _format_approval_prompt(req),
-                                        )
-                                        break
-                            # Drain buffered peer messages even when a new approval
-                            # interrupt is triggered, otherwise they are lost forever.
-                            await self._drain_approval_buffer(session_id)
-                            return None
-                        finally:
-                            _current_resume.set(None)
+        Returns:
+            AgentResult if resume completed, None otherwise.
+        """
+        # Get approval store
+        if strategy is None:
+            approval_store = self._approval_stores.get(session_id)
+        else:
+            approval_store = getattr(strategy, "_approval_store", None)
 
-                        # Cleanup old approval state (new state saved by strategy if another interrupt)
-                        await approval_store.delete(session_id)
-                        if _resume_store:
-                            await _resume_store.delete(session_id)
+        # Apply decision to the first unresolved tool
+        for req in approval_state.requests:
+            if req.tool_call_id not in approval_state.decisions or \
+               approval_state.decisions[req.tool_call_id] == ApprovalDecision.PENDING:
+                decision = ApprovalDecision.ALLOWED if action == ApprovalAction.ALLOW else ApprovalDecision.DENIED
+                approval_state.apply(req.tool_call_id, decision)
+                break
 
-                        # Drain buffered messages
-                        await self._drain_approval_buffer(session_id)
+        if approval_state.every_tool_decided:
+            # Get resume store from strategy or lazy stores
+            if strategy is not None:
+                _resume_store = getattr(strategy, "_resume_store", None)
+            else:
+                _resume_store = self._resume_stores.get(session_id)
+            resume_state = await _resume_store.load(session_id) if _resume_store else None
+            if resume_state is not None:
+                # Rebuild context with resume state
+                agent_context.metadata[ReActMetaKey.RESUME_STATE] = resume_state
+                agent_context.metadata[ReActMetaKey.TOOL_DECISIONS] = (
+                    approval_state.final_decisions()
+                )
 
-                        # Save result
-                        if result and result.attachments:
-                            await inject_attachments_to_history(
-                                context_state.history, result.attachments
-                            )
-                        await ctx_mgr.save(
-                            session_id=session_id,
-                            user_message=None,
-                            assistant_result=result,
-                            metadata={"input_metadata": input_metadata},
-                        )
-                        turn_clean = True
-                        return result
-                else:
-                    # Partial decision — save progress and send next prompt
-                    await approval_store.save(approval_state_early)
+                _current_resume.set(approval_state.final_decisions())
+                try:
+                    result = await self.agent.run(agent_context, emitter)
+                except GraphInterrupt as interrupt_exc:
+                    # New tools triggered during resume — send approval prompt
                     if self._user_interface is not None:
-                        for req in approval_state_early.requests:
-                            if req.tool_call_id not in approval_state_early.decisions:
+                        requests = interrupt_exc.value
+                        if isinstance(requests, list):
+                            for req in requests:
                                 await self._user_interface.render_message(
-                                    session_id,
-                                    _format_approval_prompt(req),
+                                    session_id, _format_approval_prompt(req),
                                 )
                                 break
-                return None  # Approval command consumed — do NOT save to memory
+                    # Drain buffered peer messages even when a new approval
+                    # interrupt is triggered, otherwise they are lost forever.
+                    await self._drain_approval_buffer(session_id)
+                    return None
+                finally:
+                    _current_resume.set(None)
 
+                # Cleanup old approval state (new state saved by strategy if another interrupt)
+                await approval_store.delete(session_id)
+                if _resume_store:
+                    await _resume_store.delete(session_id)
+
+                # Drain buffered messages
+                await self._drain_approval_buffer(session_id)
+
+                # Save result
+                if result and result.attachments:
+                    await inject_attachments_to_history(
+                        context_state.history, result.attachments
+                    )
+                await ctx_mgr.save(
+                    session_id=session_id,
+                    user_message=None,
+                    assistant_result=result,
+                    metadata={"input_metadata": input_metadata},
+                )
+                return result
+        else:
+            # Partial decision — save progress and send next prompt
+            await approval_store.save(approval_state)
+            if self._user_interface is not None:
+                for req in approval_state.requests:
+                    if req.tool_call_id not in approval_state.decisions:
+                        await self._user_interface.render_message(
+                            session_id,
+                            _format_approval_prompt(req),
+                        )
+                        break
+
+        return None  # Approval command consumed — do NOT save to memory
+
+    async def _execute_turn(
+        self,
+        agent_context: AgentContext,
+        emitter: Any,
+        session_id: str,
+        context_state: Any,
+        input_metadata: dict[str, Any],
+        ctx_mgr: Any,
+    ) -> AgentResult | None:
+        """Execute a normal agent turn, including cleanup.
+
+        Returns:
+            AgentResult on successful turn, None if GraphInterrupt for approval.
+        """
         # 设置当前 conversation_id 上下文变量（供 peer 通信工具使用）
         from ..multi_agent.subagent_manager import current_conversation_id
 
@@ -882,6 +938,66 @@ class AgentPipeline:
                     logger.warning("on_session_end cancelled for %s", session_id)
                 except Exception:
                     logger.exception("on_session_end failed for %s", session_id)
+
+    async def _process_message_locked(
+        self, input_msg: InputMessage, session_id: str, route_result: Any | None = None
+    ) -> AgentResult | None:
+        """在 session 锁保护内处理单个消息"""
+        if self.on_session_start is not None:
+            try:
+                await asyncio.wait_for(
+                    self.on_session_start(session_id),
+                    timeout=self.safety.turn.hook_timeout_seconds,
+                )
+            except TimeoutError:
+                logger.warning("on_session_start timeout for %s", session_id)
+            except Exception:
+                logger.exception("on_session_start failed for %s", session_id)
+        ctx_mgr = (
+            self.context_manager_factory(session_id)
+            if self.context_manager_factory
+            else self.context_manager
+        )
+        input_metadata = getattr(input_msg, "metadata", None) or {}
+
+        # 1. Preprocess input
+        sanitized_content, media_blocks, _media_processor = await self._preprocess_input(
+            input_msg, session_id, input_metadata, route_result,
+        )
+        if sanitized_content is None:
+            return None  # Command interceptor consumed the message
+
+        # 2. Detect approval command
+        is_approval_cmd, approval_state = await self._detect_approval_command(
+            input_msg, session_id, input_metadata,
+        )
+
+        # 3. Assemble context
+        context_state = await self._assemble_context(
+            session_id, input_msg, input_metadata, sanitized_content,
+            media_blocks, _media_processor, ctx_mgr, route_result, is_approval_cmd,
+        )
+
+        # 4. Build runtime and context
+        agent_context, emitter = self._build_runtime_and_context(
+            session_id, context_state, ctx_mgr,
+        )
+
+        # 5. Handle approval command if pending
+        if approval_state is not None:
+            action = parse_approval_action(input_msg.content or "")
+            if action is not None:
+                strategy = getattr(self, "_prebuilt_strategy", None)
+                return await self._handle_approval_command(
+                    action, approval_state, agent_context, emitter, session_id,
+                    context_state, input_metadata, strategy, ctx_mgr,
+                )
+            return None  # source_agent buffered or unrelated content auto-denied
+
+        # 6. Execute normal turn
+        return await self._execute_turn(
+            agent_context, emitter, session_id, context_state, input_metadata, ctx_mgr,
+        )
 
     async def cleanup_session_resources(self, session_id: str) -> None:
         """清理 per-session 资源（长时间运行避免内存泄漏）。
