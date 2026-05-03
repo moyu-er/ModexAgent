@@ -32,7 +32,7 @@ from framework.core.graph.interrupt import (
     GraphInterrupt, interrupt, _current_resume,
 )
 from framework.core.agent import AgentContext, ctx_ext
-from framework.core.context_extensions import ExtensionKey
+
 from framework.core.tool_manager import InMemoryToolManager
 from framework.core.emitter import ToolCall, ToolResult
 from framework.core.types import LLMResponse
@@ -108,7 +108,8 @@ class TestToolNodeClassification:
             tool_manager=InMemoryToolManager(),
         )
         if interceptor_chain is not None:
-            ctx.extensions[ExtensionKey.INTERCEPTOR_CHAIN] = interceptor_chain
+            from framework.agents.react.runtime import ReActRuntime
+            ctx.runtime = ReActRuntime(mode="full", interceptors=interceptor_chain)
         return ctx
 
     def test_classifies_dangerous_as_pending(self):
@@ -121,7 +122,7 @@ class TestToolNodeClassification:
         chain = MagicMock()
         chain.interceptors = [interceptor]
 
-        node = ToolNode(agent, enable_approval=True, enable_hooks=False)
+        node = ToolNode(agent)
         ctx = self._make_ctx(interceptor_chain=chain)
         tc = ToolCall(tool_name="rm", call_id="c1", arguments={})
         decisions = node._classify_all([tc], ctx)
@@ -138,7 +139,7 @@ class TestToolNodeClassification:
         chain = MagicMock()
         chain.interceptors = [interceptor]
 
-        node = ToolNode(agent, enable_approval=True, enable_hooks=False)
+        node = ToolNode(agent)
         ctx = self._make_ctx(interceptor_chain=chain)
         tc = ToolCall(tool_name="cat", call_id="c1", arguments={})
         decisions = node._classify_all([tc], ctx)
@@ -155,7 +156,7 @@ class TestToolNodeClassification:
         chain = MagicMock()
         chain.interceptors = [interceptor]
 
-        node = ToolNode(agent, enable_approval=True, enable_hooks=False)
+        node = ToolNode(agent)
         ctx = self._make_ctx(interceptor_chain=chain)
         tc = ToolCall(tool_name="sudo", call_id="c1", arguments={})
         decisions = node._classify_all([tc], ctx)
@@ -165,7 +166,7 @@ class TestToolNodeClassification:
     def test_no_chain_all_allowed(self):
         from unittest.mock import MagicMock
         agent = MagicMock()
-        node = ToolNode(agent, enable_approval=True, enable_hooks=False)
+        node = ToolNode(agent)
         ctx = self._make_ctx()  # no interceptor_chain
         tc = ToolCall(tool_name="anything", call_id="c1", arguments={})
         decisions = node._classify_all([tc], ctx)
@@ -191,7 +192,7 @@ class TestToolNodeClassification:
         chain = MagicMock()
         chain.interceptors = [interceptor]
 
-        node = ToolNode(agent, enable_approval=True, enable_hooks=False)
+        node = ToolNode(agent)
         ctx = self._make_ctx(interceptor_chain=chain)
         tcs = [
             ToolCall(tool_name="cat", call_id="c1", arguments={}),
@@ -507,7 +508,7 @@ class TestIterationEvents:
                 self.events.append((event, data))
 
         agent = _MockAgent()
-        node = ToolNode(agent, enable_approval=False, enable_hooks=False)
+        node = ToolNode(agent)
         emitter = _Emitter()
 
         ctx = AgentContext(
@@ -641,7 +642,7 @@ class TestLLMNodeMessages:
     async def test_build_messages_includes_system_prompt(self):
         from unittest.mock import MagicMock
         agent = MagicMock()
-        node = LLMNode(agent, enable_hooks=False)
+        node = LLMNode(agent)
 
         ctx = AgentContext(
             system_prompt="You are helpful.",
@@ -661,7 +662,7 @@ class TestLLMNodeMessages:
     async def test_empty_system_prompt_omitted(self):
         from unittest.mock import MagicMock
         agent = MagicMock()
-        node = LLMNode(agent, enable_hooks=False)
+        node = LLMNode(agent)
 
         ctx = AgentContext(
             system_prompt="",
@@ -758,7 +759,7 @@ class TestToolNodeBatchExecute:
 
         agent = _MockAgent()
 
-        node = ToolNode(agent, enable_approval=False, enable_hooks=False)
+        node = ToolNode(agent)
 
         class _Emitter:
             def __init__(self):

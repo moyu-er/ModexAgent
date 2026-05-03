@@ -5,13 +5,13 @@ from typing import TYPE_CHECKING, Any
 
 from framework.agents.react.agent import ReActEvent
 from framework.agents.react.constants import ReActMetaKey, ReActNode, ReActReason
-from framework.core.agent import AgentContext, ctx_ext
+from framework.core.agent import AgentContext
 from framework.core.constants import FinishReason
-from framework.core.context_extensions import ExtensionKey
 from framework.core.graph.node import Node, NodeTransition
 from framework.core.provider import StreamingLLMProvider
 from framework.core.types import LLMResponse
-from framework.hook import HookPoint
+from framework.hook import HookPoint, HookPayload
+from framework.interceptor.abc import InterceptorScope, IterationContext
 
 if TYPE_CHECKING:
     from framework.agents.react.agent import ReActAgent
@@ -20,12 +20,11 @@ if TYPE_CHECKING:
 class LLMNode(Node):
     """Calls LLM, writes assistant message, routes to ToolNode or EndNode."""
 
-    def __init__(self, agent: ReActAgent, *, enable_hooks: bool = True) -> None:
+    def __init__(self, agent: ReActAgent) -> None:
         super().__init__(ReActNode.LLM)
         self._agent = agent
-        self._enable_hooks = enable_hooks
 
-    async def execute(self, ctx: AgentContext) -> NodeTransition:
+    async def execute(self, ctx: AgentContext[Any]) -> NodeTransition:
         iteration = ctx.metadata[ReActMetaKey.ITERATION] + 1
         ctx.metadata[ReActMetaKey.ITERATION] = iteration
 
@@ -34,33 +33,59 @@ class LLMNode(Node):
                 await ctx.emitter.emit(ReActEvent.MAX_ITERATIONS)
             return NodeTransition(ReActNode.END, ReActReason.MAX_ITERATIONS)
 
-        if ctx.emitter is not None:
-            await ctx.emitter.emit(ReActEvent.ITERATION_START, {"iteration": iteration})
+        runtime = ctx.runtime
 
-        if self._enable_hooks:
-            await self._agent._call_hooks(HookPoint.BEFORE_ITERATION, ctx)
-            await self._agent._drain_injections(ctx)
+        async def actual_iteration():
+            if ctx.emitter is not None:
+                await ctx.emitter.emit(
+                    ReActEvent.ITERATION_START, {"iteration": iteration},
+                )
 
-        messages = await self._build_messages(ctx)
-        response = await self._call_llm(messages, ctx)
+            if runtime and runtime.hooks:
+                await runtime.hooks.dispatch(HookPoint.BEFORE_ITERATION, ctx)
+            if runtime and runtime.injection_queue:
+                await self._agent._drain_injections(ctx)
 
-        if self._enable_hooks:
-            await self._agent._call_hooks(HookPoint.AFTER_LLM_RESPONSE, ctx, response)
+            messages = await self._build_messages(ctx)
+            response = await self._call_llm(messages, ctx)
 
-        if response.finish_reason == FinishReason.ERROR.value:
+            if runtime and runtime.hooks:
+                await runtime.hooks.dispatch(
+                    HookPoint.AFTER_LLM_RESPONSE, ctx,
+                    payload=HookPayload(data={"response": response}),
+                )
+
+            if response.finish_reason == FinishReason.ERROR.value:
+                ctx.metadata[ReActMetaKey.LLM_RESPONSE] = response
+                return
+
+            assistant_msg = self._agent._build_assistant_message(
+                response.content or "", response.tool_calls,
+            )
+            await ctx.history.append(assistant_msg)
             ctx.metadata[ReActMetaKey.LLM_RESPONSE] = response
+            msgs: list = ctx.metadata.setdefault(ReActMetaKey.ITERATION_MSGS, [])
+            msgs.append(assistant_msg)
+            if runtime and runtime.checkpoint_store:
+                await self._agent._save_checkpoint(msgs, ctx)
+
+        if (
+            runtime and runtime.interceptors
+            and runtime.interceptors.has_scope(InterceptorScope.ITERATION)
+        ):
+            await runtime.interceptors.around_iteration(
+                ctx,
+                IterationContext(iteration=iteration, turn_id=ctx.session_id),
+                actual_iteration,
+            )
+        else:
+            await actual_iteration()
+
+        response = ctx.metadata.get(ReActMetaKey.LLM_RESPONSE)
+        if response is not None and response.finish_reason == FinishReason.ERROR.value:
             return NodeTransition(ReActNode.END, ReActReason.LLM_ERROR)
 
-        assistant_msg = self._agent._build_assistant_message(
-            response.content or "", response.tool_calls,
-        )
-        await ctx.history.append(assistant_msg)
-        ctx.metadata[ReActMetaKey.LLM_RESPONSE] = response
-        msgs: list = ctx.metadata.setdefault(ReActMetaKey.ITERATION_MSGS, [])
-        msgs.append(assistant_msg)
-        await self._agent._save_checkpoint(msgs, ctx)
-
-        if response.tool_calls:
+        if response is not None and response.tool_calls:
             return NodeTransition(ReActNode.TOOL, ReActReason.HAS_TOOLS)
 
         if ctx.emitter is not None:
@@ -75,7 +100,7 @@ class LLMNode(Node):
             messages.append({"role": "system", "content": ctx.system_prompt})
         messages.extend(await ctx.to_messages())
 
-        governance = ctx_ext(ctx, ExtensionKey.GOVERNANCE)
+        governance = ctx.runtime.governance if ctx.runtime else None
         if governance is not None:
             messages = await governance.apply(messages)
         return messages
@@ -87,9 +112,8 @@ class LLMNode(Node):
         if emitter is not None and emitter.wants_streaming() and isinstance(
             self._agent.provider, StreamingLLMProvider,
         ):
-            interceptor_chain = ctx_ext(ctx, ExtensionKey.INTERCEPTOR_CHAIN)
+            interceptor_chain = ctx.runtime.interceptors if ctx.runtime else None
             if interceptor_chain is not None:
-                from framework.interceptor.abc import InterceptorScope
                 if interceptor_chain.has_scope(InterceptorScope.LLM_STREAM):
                     return await self._agent._stream_with_control(
                         messages, ctx,

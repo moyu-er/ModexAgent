@@ -19,11 +19,10 @@ class ReActGraph(Graph):
     def __init__(self, agent: ReActAgent, *,
                  mode: Literal["clean", "full"] = "full") -> None:
         super().__init__(name=f"react_{mode}")
-        enable = mode == "full"
 
         self.add_node(StartNode())
-        self.add_node(LLMNode(agent, enable_hooks=enable))
-        self.add_node(ToolNode(agent, enable_approval=enable, enable_hooks=enable))
+        self.add_node(LLMNode(agent))
+        self.add_node(ToolNode(agent))
         self.add_node(EndNode(agent))
 
         # start edges

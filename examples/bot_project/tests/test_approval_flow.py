@@ -238,7 +238,7 @@ class TestToolNodePathBasedClassification:
         )
         chain = InterceptorChain(interceptors=[interceptor])
 
-        node = ToolNode(_make_mock_agent(), enable_approval=True, enable_hooks=False)
+        node = ToolNode(_make_mock_agent())
         ctx = _make_ctx_with_llm(
             tool_calls=[
                 ToolCall(tool_name="write_file", call_id="c1",
@@ -285,7 +285,7 @@ class TestMainVsPeerInterceptorSeparation:
         assert len(main_chain.interceptors) == 2
         assert len(base_chain.interceptors) == 1
 
-        node = ToolNode(_make_mock_agent(), enable_approval=True, enable_hooks=False)
+        node = ToolNode(_make_mock_agent())
         ctx = _make_ctx_with_llm(
             tool_calls=[
                 ToolCall(tool_name="write_file", call_id="c1",
@@ -306,7 +306,7 @@ class TestMainVsPeerInterceptorSeparation:
             pass
         base_chain.add(_NoApprovalInterceptor())
 
-        node = ToolNode(_make_mock_agent(), enable_approval=True, enable_hooks=False)
+        node = ToolNode(_make_mock_agent())
         ctx = _make_ctx_with_llm(
             tool_calls=[
                 ToolCall(tool_name="write_file", call_id="c1",
@@ -397,7 +397,7 @@ class TestFullApprovalResumeFlow:
 
         # Phase 7: ToolNode executes with injected decisions
         agent = _make_mock_agent()
-        node = ToolNode(agent, enable_approval=True, enable_hooks=False)
+        node = ToolNode(agent)
         _current_resume.set([ApprovalDecision.ALLOWED])
         try:
             t = await node.execute(ctx2)
@@ -482,7 +482,7 @@ class TestFullApprovalResumeFlow:
 
         # Phase 7: ToolNode with deny -> cancels turn
         agent = _make_mock_agent()
-        node = ToolNode(agent, enable_approval=True, enable_hooks=False)
+        node = ToolNode(agent)
         _current_resume.set(saved.final_decisions())
         try:
             t = await node.execute(ctx2)

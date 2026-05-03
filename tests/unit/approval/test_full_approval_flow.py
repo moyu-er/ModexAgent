@@ -33,7 +33,7 @@ from framework.approval.store import (
     InMemoryApprovalStateStore, LocalFileApprovalStateStore,
 )
 from framework.core.agent import AgentContext, ctx_ext
-from framework.core.context_extensions import ExtensionKey
+
 from framework.core.emitter import AgentResult, ToolCall, ToolResult
 from framework.core.types import LLMResponse
 from framework.core.constants import FinishReason
@@ -107,10 +107,13 @@ def _make_ctx(*, session_id="s1", history=None, interceptor_chain=None,
         metadata=metadata or {},
     )
     ctx.emitter = _MockEmitter()
-    if interceptor_chain:
-        ctx.extensions[ExtensionKey.INTERCEPTOR_CHAIN] = interceptor_chain
-    if suspend_strategy:
-        ctx.extensions[ExtensionKey.SUSPEND_STRATEGY] = suspend_strategy
+    if interceptor_chain or suspend_strategy:
+        from framework.agents.react.runtime import ReActRuntime
+        ctx.runtime = ReActRuntime(
+            mode="full",
+            interceptors=interceptor_chain,
+            suspend_strategy=suspend_strategy,
+        )
     return ctx
 
 
@@ -239,7 +242,7 @@ class TestApprovalTrigger:
         ctx = _make_ctx(interceptor_chain=chain)
 
         agent = MagicMock()
-        node = ToolNode(agent, enable_approval=True, enable_hooks=False)
+        node = ToolNode(agent)
         tcs = [
             ToolCall(tool_name="list_dir", call_id="c1", arguments={"path": "/safe"}),
             ToolCall(tool_name="rm", call_id="c2", arguments={"path": "/etc/hosts"}),
@@ -272,7 +275,7 @@ class TestApprovalTrigger:
             ReActMetaKey.ITERATION_MSGS: [],
         })
         agent = MagicMock()
-        node = ToolNode(agent, enable_approval=True, enable_hooks=False)
+        node = ToolNode(agent)
 
         with pytest.raises(GraphInterrupt) as exc:
             await node.execute(ctx)
@@ -332,7 +335,7 @@ class TestFullApproveResumeExecute:
                 ReActMetaKey.ITERATION_MSGS: [{"role": "assistant", "content": ""}],
             },
         )
-        node1 = ToolNode(agent, enable_approval=True, enable_hooks=False)
+        node1 = ToolNode(agent)
         with pytest.raises(GraphInterrupt):
             await node1.execute(ctx1)
 
@@ -366,7 +369,7 @@ class TestFullApproveResumeExecute:
         # ToolNode executes with decisions
         _current_resume.set(decisions)
         try:
-            node2 = ToolNode(agent, enable_approval=True, enable_hooks=False)
+            node2 = ToolNode(agent)
             t = await node2.execute(ctx2)
             assert t.target == ReActNode.LLM
             assert t.reason == ReActReason.TOOLS_DONE
@@ -457,8 +460,7 @@ class TestFullApproveResumeExecute:
             metadata={ReActMetaKey.ITERATION: 0},
         )
         # Set checkpoint_store to None (not needed for this test)
-        ctx.extensions[ExtensionKey.CHECKPOINT_STORE] = None
-
+        # checkpoint_store defaults to None in runtime
         # ── First run: LLM → interrupt ──
         with pytest.raises(GraphInterrupt) as exc:
             await engine.run(ctx)
@@ -487,8 +489,7 @@ class TestFullApproveResumeExecute:
                 ReActMetaKey.ITERATION_MSGS: [],
             },
         )
-        ctx2.extensions[ExtensionKey.CHECKPOINT_STORE] = None
-
+        # checkpoint_store defaults to None in runtime
         _current_resume.set(decisions)
         try:
             result = await engine.run(ctx2)
@@ -531,7 +532,7 @@ class TestDenyFlow:
         agent._save_checkpoint = AsyncMock()
         agent._save_denial_checkpoint = AsyncMock()
 
-        node = ToolNode(agent, enable_approval=False, enable_hooks=False)
+        node = ToolNode(agent)
         history = _TrackingHistory()
         tc = ToolCall(tool_name="rm", call_id="c1", arguments={"path": "/etc/hosts"})
         ctx = _make_ctx(
@@ -564,7 +565,7 @@ class TestDenyFlow:
         agent._save_checkpoint = AsyncMock()
         agent._save_denial_checkpoint = AsyncMock()
 
-        node = ToolNode(agent, enable_approval=False, enable_hooks=False)
+        node = ToolNode(agent)
         history = _TrackingHistory()
         tcs = [
             ToolCall(tool_name="t1", call_id="c1", arguments={}),
@@ -637,7 +638,7 @@ class TestMemoryCorrectness:
         agent._drain_injections = AsyncMock(return_value=[])
         agent._save_checkpoint = AsyncMock()
 
-        node = ToolNode(agent, enable_approval=True, enable_hooks=False)
+        node = ToolNode(agent)
         with pytest.raises(GraphInterrupt):
             await node.execute(ctx1)
 
@@ -663,7 +664,7 @@ class TestMemoryCorrectness:
 
         _current_resume.set([ApprovalDecision.ALLOWED])
         try:
-            node2 = ToolNode(agent, enable_approval=True, enable_hooks=False)
+            node2 = ToolNode(agent)
             await node2.execute(ctx2)
         finally:
             _current_resume.set(None)
@@ -899,7 +900,7 @@ class TestMultiToolResumeFlow:
                     # the ToolNode itself writes it before Phase 3)
                 },
             )
-            node = ToolNode(agent, enable_approval=True, enable_hooks=False)
+            node = ToolNode(agent)
             transition = await node.execute(ctx)
         finally:
             _current_resume.set(None)
@@ -971,7 +972,7 @@ class TestMultiToolResumeFlow:
                     ReActMetaKey.ITERATION_MSGS: [],
                 },
             )
-            node = ToolNode(agent, enable_approval=True, enable_hooks=False)
+            node = ToolNode(agent)
             transition = await node.execute(ctx)
         finally:
             _current_resume.set(None)
@@ -1043,7 +1044,7 @@ class TestMultiToolResumeFlow:
                     ReActMetaKey.ITERATION_MSGS: [],
                 },
             )
-            node = ToolNode(agent, enable_approval=True, enable_hooks=False)
+            node = ToolNode(agent)
             transition = await node.execute(ctx)
         finally:
             _current_resume.set(None)
@@ -1117,7 +1118,7 @@ class TestMultiToolResumeFlow:
                     ReActMetaKey.ITERATION_MSGS: [],
                 },
             )
-            node = ToolNode(agent, enable_approval=True, enable_hooks=False)
+            node = ToolNode(agent)
             await node.execute(ctx)
         finally:
             _current_resume.set(None)
@@ -1208,7 +1209,7 @@ class TestUnrelatedContentDuringApproval:
                     ReActMetaKey.ITERATION_MSGS: [],
                 },
             )
-            node = ToolNode(agent, enable_approval=True, enable_hooks=False)
+            node = ToolNode(agent)
             transition = await node.execute(ctx)
         finally:
             _current_resume.set(None)
@@ -1295,7 +1296,7 @@ class TestUnrelatedContentDuringApproval:
                     ReActMetaKey.ITERATION_MSGS: [],
                 },
             )
-            node = ToolNode(agent, enable_approval=True, enable_hooks=False)
+            node = ToolNode(agent)
             transition = await node.execute(ctx)
         finally:
             _current_resume.set(None)

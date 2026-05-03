@@ -206,7 +206,7 @@ class TestLLMNode:
             "_drain_injections": lambda self, ctx, max_per_phase=3: [],
             "_save_checkpoint": AsyncMock(return_value=None),
         })()
-        node = LLMNode(agent, enable_hooks=False)
+        node = LLMNode(agent)
         node._call_llm = _mock_llm
 
         ctx = AgentContext(
@@ -237,7 +237,7 @@ class TestLLMNode:
             "_drain_injections": lambda self, ctx, max_per_phase=3: [],
             "_save_checkpoint": AsyncMock(return_value=None),
         })()
-        node = LLMNode(agent, enable_hooks=False)
+        node = LLMNode(agent)
         node._call_llm = _mock_llm
 
         ctx = AgentContext(
@@ -257,7 +257,7 @@ class TestLLMNode:
             "_call_hooks": lambda self, *a, **kw: None,
             "_drain_injections": lambda self, ctx, max_per_phase=3: [],
         })()
-        node = LLMNode(agent, enable_hooks=False)
+        node = LLMNode(agent)
 
         ctx = AgentContext(
             system_prompt="test", history=ListMessageHistory(),
@@ -286,7 +286,7 @@ class TestLLMNode:
             "_call_hooks": lambda self, *a, **kw: None,
             "_drain_injections": lambda self, ctx, max_per_phase=3: [],
         })()
-        node = LLMNode(agent, enable_hooks=False)
+        node = LLMNode(agent)
         node._call_llm = _mock_llm
 
         ctx = AgentContext(
@@ -329,7 +329,7 @@ class TestToolNode:
                 pass
 
         agent = _MockAgent()
-        node = ToolNode(agent, enable_approval=False, enable_hooks=False)
+        node = ToolNode(agent)
 
         history = _MockHistory()
         tc1 = ToolCall(tool_name="search", arguments={}, call_id="c1")
@@ -382,7 +382,7 @@ class TestToolNode:
                 pass
 
         agent = _MockAgent()
-        node = ToolNode(agent, enable_approval=False, enable_hooks=False)
+        node = ToolNode(agent)
 
         history = _MockHistory()
         tc1 = ToolCall(tool_name="t1", arguments={}, call_id="c1")
@@ -415,7 +415,7 @@ class TestToolNode:
     @pytest.mark.asyncio
     async def test_denied_tool_cancel_path_uses_real_agent_checkpoint_signature(self):
         agent = ReActAgent(provider=object(), mode="clean")
-        node = ToolNode(agent, enable_approval=False, enable_hooks=False)
+        node = ToolNode(agent)
 
         tc = ToolCall(tool_name="write_file", arguments={"path": "/tmp/x"}, call_id="c1")
         ctx = AgentContext(
@@ -445,7 +445,7 @@ class TestToolNode:
                 return []
 
         agent = _MockAgent()
-        node = ToolNode(agent, enable_approval=False, enable_hooks=False)
+        node = ToolNode(agent)
 
         tc_list = [
             ToolCall(tool_name=f"t{i}", arguments={}, call_id=f"c{i}")
@@ -474,7 +474,7 @@ class TestToolNode:
             pass
 
         agent = _MockAgent()
-        node = ToolNode(agent, enable_approval=False, enable_hooks=False)
+        node = ToolNode(agent)
 
         tool_calls = [
             ToolCall(tool_name="search", arguments={}),

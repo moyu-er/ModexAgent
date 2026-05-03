@@ -110,8 +110,12 @@ class TestStreamWithControlPreservesToolCalls:
         async def _fake_around_turn(ctx, next_call):
             return await next_call()
 
+        async def _fake_around_iteration(ctx, call, next_call):
+            return await next_call()
+
         fake_chain.has_scope = MagicMock(return_value=True)
         fake_chain.around_turn = _fake_around_turn
+        fake_chain.around_iteration = _fake_around_iteration
         fake_chain.around_llm_stream = _fake_llm_stream
 
         # Arrange: mock streaming provider that returns tool_calls
@@ -172,8 +176,12 @@ class TestStreamWithControlPreservesToolCalls:
         async def _fake_around_turn(ctx, next_call):
             return await next_call()
 
+        async def _fake_around_iteration(ctx, call, next_call):
+            return await next_call()
+
         fake_chain.has_scope = MagicMock(return_value=True)
         fake_chain.around_turn = _fake_around_turn
+        fake_chain.around_iteration = _fake_around_iteration
         fake_chain.around_llm_stream = _fake_llm_stream
 
         class StreamingProviderNoTools(StreamingLLMProvider):

@@ -15,7 +15,7 @@ from framework.core.context_extensions import ExtensionKey
 from framework.core.emitter import ToolCall
 from framework.core.graph.node import Node, NodeTransition
 from framework.core.tool_manager import ToolResult
-from framework.hook import HookPoint
+from framework.hook import HookPayload, HookPoint
 
 if TYPE_CHECKING:
     from framework.agents.react.agent import ReActAgent
@@ -24,13 +24,9 @@ if TYPE_CHECKING:
 class ToolNode(Node):
     """Two-phase tool node: classify all → strategy solicit → batch execute."""
 
-    def __init__(self, agent: ReActAgent, *,
-                 enable_approval: bool = True,
-                 enable_hooks: bool = True) -> None:
+    def __init__(self, agent: ReActAgent) -> None:
         super().__init__(ReActNode.TOOL)
         self._agent = agent
-        self._enable_approval = enable_approval
-        self._enable_hooks = enable_hooks
 
     async def execute(self, ctx: AgentContext) -> NodeTransition:
         response = ctx.metadata.pop(ReActMetaKey.LLM_RESPONSE)
@@ -65,7 +61,7 @@ class ToolNode(Node):
         decisions = self._classify_all(tool_calls, ctx)
 
         # Phase 2: if any need approval, delegate to strategy
-        if self._enable_approval and ApprovalDecision.PENDING in decisions:
+        if ApprovalDecision.PENDING in decisions:
             iteration = ctx.metadata[ReActMetaKey.ITERATION]
             requests = [
                 ApprovalRequest(
@@ -78,7 +74,7 @@ class ToolNode(Node):
                 for tc, d in zip(tool_calls, decisions, strict=False)
                 if d == ApprovalDecision.PENDING
             ]
-            strategy = ctx_ext(ctx, ExtensionKey.SUSPEND_STRATEGY)
+            strategy = ctx.runtime.suspend_strategy if ctx.runtime else None
             if strategy is None:
                 logger.error(
                     "ToolNode: PENDING decisions but no SuspendStrategy configured. "
@@ -129,7 +125,7 @@ class ToolNode(Node):
         return decisions
 
     def _get_tier(self, tc: ToolCall, ctx: AgentContext) -> str:
-        interceptor_chain = ctx_ext(ctx, ExtensionKey.INTERCEPTOR_CHAIN)
+        interceptor_chain = ctx.runtime.interceptors if ctx.runtime else None
         if interceptor_chain is None:
             logger.warning(
                 "ToolNode._get_tier: NO interceptor_chain in ctx.extensions! "
@@ -173,8 +169,11 @@ class ToolNode(Node):
             await ctx.emitter.emit(ReActEvent.PROGRESS, {
                 "hint": self._format_hint(tool_calls), "tool_hint": True,
             })
-        if self._enable_hooks:
-            await self._agent._call_hooks(HookPoint.BEFORE_TOOL_EXECUTION, ctx, tool_calls)
+        if ctx.runtime and ctx.runtime.hooks:
+            await ctx.runtime.hooks.dispatch(
+                HookPoint.BEFORE_TOOL_EXECUTION, ctx,
+                payload=HookPayload(data={"tool_calls": tool_calls}),
+            )
 
         # Mark pre-approved tools so TieredToolApprovalInterceptor.around_tool_call
         # skips redundant control-channel approval (already resolved in Phase 2).
@@ -213,12 +212,17 @@ class ToolNode(Node):
                 if dec in (ApprovalDecision.DENIED, ApprovalDecision.PREEMPTED):
                     denied_encountered = True
 
-            if self._enable_hooks:
-                await self._agent._call_hooks(
+            if ctx.runtime and ctx.runtime.hooks:
+                await ctx.runtime.hooks.dispatch(
                     HookPoint.AFTER_TOOL_EXECUTION, ctx,
-                    [m for m in ctx.metadata.get(ReActMetaKey.ITERATION_MSGS, [])
-                     if isinstance(m, dict) and m.get("role") == "tool"],
+                    payload=HookPayload(data={
+                        "results": [
+                            m for m in ctx.metadata.get(ReActMetaKey.ITERATION_MSGS, [])
+                            if isinstance(m, dict) and m.get("role") == "tool"
+                        ],
+                    }),
                 )
+            if ctx.runtime and ctx.runtime.injection_queue:
                 await self._agent._drain_injections(ctx)
 
             if ctx.emitter is not None:
