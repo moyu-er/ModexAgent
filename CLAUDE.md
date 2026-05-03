@@ -89,15 +89,19 @@ tests/
 
 ```
 framework/
-├── core/                  # Abstract base classes: Agent, ContextManager, Emitter, Tool, hooks, skills/, runtime_context
-├── agents/react/          # ReActAgent with ReActEvent enum
+├── core/                  # ABCs: Agent, ContextManager, Emitter, Tool, skills/, runtime_context, context_extensions
+├── agents/react/          # ReActAgent, ReActGraph, nodes/{start,llm,tool,end}, strategy, state
+├── hook/                  # Hook system: HookRunner, HookPoint enum, builtin hooks (logging, runtime_context, peer_auto_send, ...)
+├── interceptor/           # InterceptorChain AOP onion-chain: scoped wrappers, builtin interceptors (control_drain, tool_approval, turn_timeout, ...)
+├── control/               # Runtime control plane: ControlChannel, ControlCommand/Scope, CheckpointStore, exceptions
+├── approval/              # Tool approval: ApprovalState, ApprovalDecision, store, response parsing
 ├── pipeline/              # AgentPipeline, InputAdapter, OutputAdapter
 ├── session/               # AgentSession (request/response mode)
 ├── tools/                 # ToolRegistry, executor, MCP integration, standard tools
 ├── memory/                # Three-layer memory system + redesign docs in agent_docs/
 │   ├── core/              # ABCs: MemoryScope, MemoryStorage, ChatMessage, scope metadata
 │   ├── managers/          # ShortTerm, History, LongTerm layer managers
-│   ├── compaction/        # MessageCompactionPolicy, BoundaryPolicy (pipeline removed)
+│   ├── compaction/        # MessageCompactionPolicy, BoundaryPolicy
 │   ├── consolidation/     # Online Consolidator + offline DreamEngine
 │   ├── stores/            # FileStorage (JSONL+KV), InMemoryStorage
 │   └── injection/         # MemoryInjectionPolicy → ContextState assembly
@@ -107,6 +111,8 @@ framework/
 ├── messaging/             # MessageBroker, BrokerBridgeService
 ├── extensions/            # Optional: LiteLLM provider, ChromaDB/FAISS stores, SQLAlchemy sessions
 ├── sandbox/               # Sandboxed execution: LocalPython, E2B, Docker, Subprocess adapters
+├── adapters/              # Adapter base classes
+├── registry/              # Service registry
 ├── security/              # SecurityPolicy, validators, approval handlers
 └── utils/                 # MediaProcessor, tokenizer, helpers
 ```
@@ -207,6 +213,31 @@ Extension points: `MemoryProvider` (add/search/prefetch), Tools, Hooks, SkillSou
 ### 8. Skill System
 
 `FileSkillSource` discovers `SKILL.md` from directories → `ProgressiveBuilder` resolves dependencies → `AgentSkillManager` wraps with per-agent white/deny list.
+
+### 9. Layered Runtime Model (Hook / Interceptor / Control / Approval)
+
+Four subsystems with distinct responsibilities, wired through `AgentContext.extensions`:
+
+| Layer | Role | Key Types |
+|-------|------|-----------|
+| **Hook** | Lifecycle observer, lightweight content transform | `HookRunner`, `HookPoint` enum, `HookSpec` |
+| **Interceptor** | AOP onion-chain around execution boundaries | `InterceptorChain`, scopes: TURN/ITERATION/LLM_STREAM/TOOL_CALL |
+| **Control** | Runtime command plane (cancel, inject, steer) | `ControlChannel`, `ControlCommand`, `ControlDrainInterceptor` |
+| **Approval** | Tool classification + suspend/resume | `ApprovalRuntime`, `SuspendResumeStrategy`, `GraphInterrupt` |
+
+**Design rules:**
+- Hooks do NOT control flow (no approval, no cancellation, no timeout).
+- Interceptors wrap calls at explicit boundaries (turn, iteration, LLM, tool).
+- Control is a first-class side channel — commands are drained at safe boundaries: before turn, iteration, LLM, and tool batch.
+- Approval is explicit: `ToolNode._classify_all()` → `SuspendResumeStrategy.solicit_approval()` → `GraphInterrupt` → Pipeline renders prompt → resume.
+
+**Two runtime modes:**
+- `clean`: no hooks, no interceptors, no approval, no control, no checkpoint. Context is sanitized once at `ReActAgent.run()` entry.
+- `full`: all services enabled. Nodes query `runtime = react_runtime(ctx)` — absent services are no-ops.
+
+**Current focus:** making TURN and ITERATION interceptor scopes actually fire (they are defined but inert today), and extracting approval classification into a standalone `ApprovalClassifier`.
+
+Design doc: `design_doc/react-hook-interceptor-control-integration-design.md`
 
 ## Type Structuring Best Practices
 
