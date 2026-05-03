@@ -751,9 +751,9 @@ class TestTurnResumeStateRoundtrip:
 
     @pytest.mark.asyncio
     async def test_state_store_roundtrip(self, tmp_path):
-        """StateStoreTurnResumeStateStore roundtrip via JsonFileCheckpointStore."""
-        from framework.control.checkpoint import JsonFileCheckpointStore
-        cp_store = JsonFileCheckpointStore(tmp_path)
+        """StateStoreTurnResumeStateStore roundtrip via JsonFileRuntimeStateStore."""
+        from framework.control.checkpoint import JsonFileRuntimeStateStore
+        cp_store = JsonFileRuntimeStateStore(tmp_path)
         store = StateStoreTurnResumeStateStore(cp_store)
         original = TurnResumeState(
             iteration=2,

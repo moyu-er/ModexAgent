@@ -1,24 +1,18 @@
-"""Tests for Phase 2 CheckpointStore — dict format, AgentCheckpoint, ApprovalDenialContext."""
-
+"""Tests for RuntimeStateStore dict format and ApprovalDenialContext."""
 import pytest
 from pathlib import Path
 
 from framework.control.checkpoint import (
-    AgentCheckpoint,
     ApprovalDenialContext,
-    CheckpointStore,
-    JsonFileCheckpointStore,
     JsonFileRuntimeStateStore,
-    NoOpCheckpointStore,
     NoOpRuntimeStateStore,
     RuntimeStateStore,
 )
-from framework.control.exceptions import TerminationReason
 
 
-class TestJsonFileCheckpointStore:
+class TestJsonFileRuntimeStateStore:
     async def test_save_and_load_dict(self, tmp_path: Path):
-        store = JsonFileCheckpointStore(tmp_path)
+        store = JsonFileRuntimeStateStore(tmp_path)
         data = {
             "messages": [{"role": "assistant", "content": "hello"}],
             "termination": None,
@@ -31,43 +25,35 @@ class TestJsonFileCheckpointStore:
         assert loaded == data
 
     async def test_load_returns_none_for_missing(self, tmp_path: Path):
-        store = JsonFileCheckpointStore(tmp_path)
+        store = JsonFileRuntimeStateStore(tmp_path)
         assert await store.load("nonexistent") is None
 
     async def test_clear_removes(self, tmp_path: Path):
-        store = JsonFileCheckpointStore(tmp_path)
+        store = JsonFileRuntimeStateStore(tmp_path)
         await store.save("test_cp", {"messages": [], "iteration": 0})
         await store.clear("test_cp")
         assert await store.load("test_cp") is None
 
 
-class TestNoOpCheckpointStore:
+class TestNoOpRuntimeStateStore:
     async def test_save_load_clear(self):
-        store = NoOpCheckpointStore()
+        store = NoOpRuntimeStateStore()
         await store.save("x", {"messages": [], "iteration": 0})
         assert await store.load("x") is None
         await store.clear("x")
 
 
-class TestRuntimeStateStoreAliases:
-    def test_aliases_keep_checkpoint_compatibility(self):
-        assert RuntimeStateStore is CheckpointStore
-        assert JsonFileRuntimeStateStore is JsonFileCheckpointStore
-        assert NoOpRuntimeStateStore is NoOpCheckpointStore
-
-
-class TestAgentCheckpoint:
-    def test_defaults(self):
-        cp = AgentCheckpoint(
-            checkpoint_id="cp1",
-            session_id="s1",
-        )
-        assert cp.checkpoint_id == "cp1"
-        assert cp.session_id == "s1"
-        assert cp.version == 1
-        assert cp.messages == []
-        assert cp.termination is None
-        assert cp.denial_context is None
+class TestRuntimeStateStoreProtocol:
+    def test_protocol_is_runtime_state_store(self):
+        """Verify RuntimeStateStore is a proper Protocol."""
+        # JsonFileRuntimeStateStore implements the protocol
+        assert hasattr(JsonFileRuntimeStateStore, "save")
+        assert hasattr(JsonFileRuntimeStateStore, "load")
+        assert hasattr(JsonFileRuntimeStateStore, "clear")
+        # NoOpRuntimeStateStore implements the protocol
+        assert hasattr(NoOpRuntimeStateStore, "save")
+        assert hasattr(NoOpRuntimeStateStore, "load")
+        assert hasattr(NoOpRuntimeStateStore, "clear")
 
 
 class TestApprovalDenialContext:

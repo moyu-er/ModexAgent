@@ -93,7 +93,7 @@ framework/
 ├── agents/react/          # ReActAgent, ReActGraph, nodes/{start,llm,tool,end}, strategy, state
 ├── hook/                  # Hook system: HookRunner, HookPoint enum, builtin hooks (logging, runtime_context, peer_auto_send, ...)
 ├── interceptor/           # InterceptorChain AOP onion-chain: scoped wrappers, builtin interceptors (control_drain, tool_approval, turn_timeout, ...)
-├── control/               # Runtime control plane: ControlChannel, ControlCommand/Scope, CheckpointStore, exceptions
+├── control/               # Runtime control plane: ControlChannel, ControlCommand/Scope, RuntimeStateStore, exceptions
 ├── approval/              # Tool approval: ApprovalState, ApprovalDecision, store, response parsing
 ├── pipeline/              # AgentPipeline, InputAdapter, OutputAdapter
 ├── session/               # AgentSession (request/response mode)

@@ -4,7 +4,7 @@
 # control
 
 ## Purpose
-Runtime control plane — the command input and event output layer. Provides `ControlChannel` (command queue with session routing), `ControlEventBus` (pub/sub event output), `CheckpointStore` (state persistence), and the unified exception model (`AgentControlError` hierarchy).
+Runtime control plane — the command input and event output layer. Provides `ControlChannel` (command queue with session routing), `ControlEventBus` (pub/sub event output), `RuntimeStateStore` (state persistence), and the unified exception model (`AgentControlError` hierarchy).
 
 ## Key Files
 | File | Description |
@@ -12,7 +12,7 @@ Runtime control plane — the command input and event output layer. Provides `Co
 | `types.py` | `ControlCommand`, `ControlEvent`, `ControlScope`, `ControlCommandType`, `ControlEventType` enums |
 | `channel.py` | `ControlChannel` Protocol + `InMemoryControlChannel` — session×command_type routed deques with `asyncio.Lock` |
 | `event_bus.py` | `ControlEventBus` Protocol + `CallbackControlEventBus` — session-routed pub/sub with async handler support |
-| `checkpoint.py` | `CheckpointStore` Protocol, `JsonFileCheckpointStore`, `NoOpCheckpointStore`, `AgentCheckpoint`, `ApprovalDenialContext` |
+| `checkpoint.py` | `RuntimeStateStore` Protocol, `JsonFileRuntimeStateStore`, `NoOpRuntimeStateStore`, `ApprovalDenialContext` |
 | `exceptions.py` | `AgentControlError`, `AgentCancelled`, `AgentTimeout`, `ApprovalDenied`, `PolicyViolation`, `TerminationReason` |
 | `preset.py` | `PresetControlRule`, `TokenBudgetControlRule` — pre-configured control policies |
 | `__init__.py` | Public API barrel exports |

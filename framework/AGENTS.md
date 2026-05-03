@@ -16,7 +16,7 @@ Core multi-agent framework package. Contains all abstractions, implementations, 
 | `agents/` | Agent reasoning pattern implementations — ReAct, Summarizer (see `agents/AGENTS.md`) |
 | `pipeline/` | AgentPipeline end-to-end flow orchestration, I/O adapters |
 | `session/` | AgentSession (request/response mode) |
-| `control/` | Runtime control plane — ControlChannel, ControlEventBus, CheckpointStore, exceptions (see `control/AGENTS.md`) |
+| `control/` | Runtime control plane — ControlChannel, ControlEventBus, RuntimeStateStore, exceptions (see `control/AGENTS.md`) |
 | `hook/` | Lifecycle extension points — HookPoint, HookRunner, builtin hooks (see `hook/AGENTS.md`) |
 | `interceptor/` | AOP interceptor system — InterceptorChain, builtin interceptors (see `interceptor/AGENTS.md`) |
 | `memory/` | Three-layer memory system — core ABCs, managers, compaction, consolidation, stores, injection (see `memory/AGENTS.md`) |

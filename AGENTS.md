@@ -5,11 +5,11 @@
 `framework/` contains the package source. Core abstractions live in `framework/core/`, ReAct agents in `framework/agents/react/`, orchestration in `framework/pipeline/`, multi-agent coordination in `framework/multi_agent/`, memory in `framework/memory/`, plugins in `framework/plugins/`, tools in `framework/tools/`, and sandbox adapters in `framework/sandbox/`.
 
 **Three-layer control system**:
-- `framework/control/` — Runtime control plane: `ControlChannel` (command queue), `ControlEventBus` (pub/sub), `CheckpointStore`, unified exceptions (`AgentCancelled`, `ApprovalDenied`, etc.)
+- `framework/control/` — Runtime control plane: `ControlChannel` (command queue), `ControlEventBus` (pub/sub), `RuntimeStateStore`, unified exceptions (`AgentCancelled`, `ApprovalDenied`, etc.)
 - `framework/hook/` — Lifecycle extension points: `HookPoint` enum (9 points), `Hook` Protocol, `HookRunner`. Hooks observe and modify context; do NOT wrap execution.
 - `framework/interceptor/` — AOP onion-chain wrapping: `Interceptor` Protocol, `InterceptorChain` (around tool_calls, turns, iterations, LLM streams). Interceptors wrap; they can approve/deny/timeout/transform.
 
-**Current runtime note**: ReAct is now graph-based (`StartNode`, `LLMNode`, `ToolNode`, `EndNode`). Runtime-state naming should prefer `RuntimeStateStore`, `JsonFileRuntimeStateStore`, and `NoOpRuntimeStateStore`; the older `CheckpointStore` names remain compatible. The bot project default interceptor chain currently wires `ControlDrainInterceptor` and `ToolResultLimitInterceptor`; turn/tool timeout interceptors are not default runtime wiring. See `docs/current-runtime.md` for the current hook/interceptor/control integration boundaries.
+**Current runtime note**: ReAct is now graph-based (`StartNode`, `LLMNode`, `ToolNode`, `EndNode`). Runtime-state persistence uses `RuntimeStateStore`, `JsonFileRuntimeStateStore`, and `NoOpRuntimeStateStore`. The bot project default interceptor chain currently wires `ControlDrainInterceptor` and `ToolResultLimitInterceptor`; turn/tool timeout interceptors are not default runtime wiring. See `docs/current-runtime.md` for the current hook/interceptor/control integration boundaries.
 
 Other packages: `framework/adapters/` (PlatformAdapter, AdapterRegistry), `framework/messaging/` (MessageBroker star-topology), `framework/registry/` (component registry), `framework/extensions/` (optional: LiteLLM, ChromaDB, FAISS, SQLAlchemy), `framework/security/` (SecurityPolicy).
 

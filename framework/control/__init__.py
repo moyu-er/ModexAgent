@@ -4,18 +4,14 @@
 - 统一终止异常（AgentControlError 等）
 - ControlCommand / ControlScope 控制命令类型
 - ControlChannel / ControlEventBus 命令和事件通道
-- CheckpointStore 检查点持久化
+- RuntimeStateStore 运行时状态持久化
 - PresetControlRule 预配置策略
 """
 
 from framework.control.channel import ControlChannel, InMemoryControlChannel
 from framework.control.checkpoint import (
-    AgentCheckpoint,
     ApprovalDenialContext,
-    CheckpointStore,
-    JsonFileCheckpointStore,
     JsonFileRuntimeStateStore,
-    NoOpCheckpointStore,
     NoOpRuntimeStateStore,
     RuntimeStateStore,
 )
@@ -46,7 +42,6 @@ from framework.control.types import (
 
 __all__ = [
     # 异常
-    "AgentCheckpoint",
     "AgentCancelled",
     "AgentControlError",
     "AgentTimeout",
@@ -62,16 +57,13 @@ __all__ = [
     "ControlEvent",
     "ControlEventType",
     "ControlScope",
-    # 通道 / 总线 / 检查点
+    # 通道 / 总线 / 状态存储
     "CallbackControlEventBus",
-    "CheckpointStore",
     "ControlChannel",
     "ControlEventBus",
     "ControlEventHandler",
     "InMemoryControlChannel",
-    "JsonFileCheckpointStore",
     "JsonFileRuntimeStateStore",
-    "NoOpCheckpointStore",
     "NoOpRuntimeStateStore",
     "RuntimeStateStore",
     "Subscription",
