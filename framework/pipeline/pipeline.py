@@ -510,23 +510,30 @@ class AgentPipeline:
         else:
             approval_store = self._approval_stores.get(session_id)
             approval_state_early = await approval_store.load(session_id) if approval_store else None
-            if approval_state_early is not None:
-                action = parse_approval_action(input_msg.content or "")
-                if action is not None:
-                    _is_approval_cmd = True
-                elif input_metadata.get("source_agent"):
-                    self._approval_pending.setdefault(session_id, []).append(input_msg)
+
+        if approval_state_early is not None:
+            action = parse_approval_action(input_msg.content or "")
+            if action is not None:
+                _is_approval_cmd = True
+            elif input_metadata.get("source_agent"):
+                self._approval_pending.setdefault(session_id, []).append(input_msg)
+            else:
+                # Unrelated user content during pending approval → deny all
+                # tools. apply(DENIED) cascades remaining to PREEMPTED.
+                truncated = (input_msg.content or "")[:50]
+                approval_state_early.deny_reason = (
+                    f"unrelated input: \"{truncated}\""
+                )
+                for req in approval_state_early.requests:
+                    if req.tool_call_id not in approval_state_early.decisions or \
+                       approval_state_early.decisions[req.tool_call_id] == ApprovalDecision.PENDING:
+                        approval_state_early.apply(req.tool_call_id, ApprovalDecision.DENIED)
+                        break
+                if strategy is not None:
+                    await strategy.save_approval_state(approval_state_early)
                 else:
-                    # Unrelated user content during pending approval → deny all
-                    # tools. apply(DENIED) cascades remaining to PREEMPTED.
-                    for req in approval_state_early.requests:
-                        if req.tool_call_id not in approval_state_early.decisions or \
-                           approval_state_early.decisions[req.tool_call_id] == ApprovalDecision.PENDING:
-                            approval_state_early.apply(req.tool_call_id, ApprovalDecision.DENIED)
-                            break
-                    if strategy is not None:
-                        await strategy.save_approval_state(approval_state_early)
-                    elif approval_store is not None:
+                    approval_store = self._approval_stores.get(session_id)
+                    if approval_store is not None:
                         await approval_store.save(approval_state_early)
 
         return _is_approval_cmd, approval_state_early
@@ -794,6 +801,10 @@ class AgentPipeline:
                 agent_context.metadata[ReActMetaKey.TOOL_DECISIONS] = (
                     approval_state.final_decisions()
                 )
+                if getattr(approval_state, "deny_reason", None):
+                    agent_context.metadata["APPROVAL_DENY_REASON"] = (
+                        approval_state.deny_reason
+                    )
 
                 _current_resume.set(approval_state.final_decisions())
                 try:
@@ -1005,15 +1016,17 @@ class AgentPipeline:
         # 5. Handle approval command if pending
         if approval_state is not None:
             action = parse_approval_action(input_msg.content or "")
-            if action is not None:
+            if action is not None or approval_state.every_tool_decided:
+                # Explicit command OR auto-deny resolved all tools → handle it
+                effective_action = action or ApprovalAction.DENY
                 strategy = None
                 if self._prebuilt_runtime and self._prebuilt_runtime.approval:
                     strategy = getattr(self._prebuilt_runtime.approval, "suspend_strategy", None)
                 return await self._handle_approval_command(
-                    action, approval_state, agent_context, emitter, session_id,
+                    effective_action, approval_state, agent_context, emitter, session_id,
                     context_state, input_metadata, strategy, ctx_mgr,
                 )
-            return None  # source_agent buffered or unrelated content auto-denied
+            return None  # source_agent buffered
 
         # 6. Execute normal turn
         return await self._execute_turn(

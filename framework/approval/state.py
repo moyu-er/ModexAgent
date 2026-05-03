@@ -22,6 +22,7 @@ class ApprovalState:
     requests: list[ApprovalRequest]
     decisions: dict[str, str] = field(default_factory=dict)
     status: str = ApprovalStatus.PENDING
+    deny_reason: str | None = None
 
     @property
     def every_tool_decided(self) -> bool:
@@ -40,11 +41,14 @@ class ApprovalState:
         )
 
     def apply(self, tool_call_id: str, decision: str) -> None:
-        """Apply a decision. DENIED cascades to mark remaining PENDING as PREEMPTED."""
+        """Apply a decision. DENIED cascades: ALL PENDING and previously
+        ALLOWED tools become PREEMPTED (batch atomicity — deny cancels all)."""
         self.decisions[tool_call_id] = decision
         if decision == ApprovalDecision.DENIED:
             for r in self.requests:
-                if r.tool_call_id not in self.decisions or self.decisions[r.tool_call_id] == ApprovalDecision.PENDING:
+                if r.tool_call_id not in self.decisions or self.decisions[r.tool_call_id] in (
+                    ApprovalDecision.PENDING, ApprovalDecision.ALLOWED,
+                ):
                     self.decisions[r.tool_call_id] = ApprovalDecision.PREEMPTED
             self.status = ApprovalStatus.DENIED
         elif self.every_tool_decided:

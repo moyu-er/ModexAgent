@@ -261,7 +261,7 @@ class TestApprovalStateCascade:
         state.apply("c1", ApprovalDecision.ALLOWED)
         state.apply("c2", ApprovalDecision.DENIED)
         assert state.final_decisions() == [
-            ApprovalDecision.ALLOWED,
+            ApprovalDecision.PREEMPTED,  # Batch atomicity: ALLOWED → PREEMPTED on deny
             ApprovalDecision.DENIED,
             ApprovalDecision.PREEMPTED,
         ]

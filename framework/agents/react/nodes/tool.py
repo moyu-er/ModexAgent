@@ -165,7 +165,7 @@ class ToolNode(Node):
         try:
             denied_encountered = False
             for tc, dec in zip(tool_calls, decisions, strict=False):
-                if denied_encountered:
+                if denied_encountered and dec == ApprovalDecision.ALLOWED:
                     dec = ApprovalDecision.PREEMPTED
 
                 if ctx.emitter is not None:
@@ -174,9 +174,14 @@ class ToolNode(Node):
                 if dec == ApprovalDecision.ALLOWED:
                     result = await self._agent._execute_tool(tc, ctx)
                 else:
+                    error_msg = f"Error: {dec}"
+                    if dec == ApprovalDecision.DENIED:
+                        deny_reason = ctx.metadata.get("APPROVAL_DENY_REASON")
+                        if deny_reason:
+                            error_msg = f"Error: {dec} ({deny_reason})"
                     result = ToolResult(
                         tool_name=tc.tool_name, result=None,
-                        error=f"Error: {dec}",
+                        error=error_msg,
                     )
 
                 if ctx.emitter is not None:
