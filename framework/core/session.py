@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 @dataclass
@@ -11,9 +11,9 @@ class Session:
     """会话数据"""
     session_id: str
     agent_id: str
-    user_id: Optional[str] = None
-    messages: List[Dict[str, Any]] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    user_id: str | None = None
+    messages: list[dict[str, Any]] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
 
@@ -36,9 +36,9 @@ class SessionStore(ABC):
                 session.updated_at = datetime.now()
                 self._sessions[session.session_id] = session
     """
-    
+
     @abstractmethod
-    async def get(self, session_id: str) -> Optional[Session]:
+    async def get(self, session_id: str) -> Session | None:
         """
         获取会话。
         
@@ -49,7 +49,7 @@ class SessionStore(ABC):
             会话对象，不存在则返回None
         """
         pass
-    
+
     @abstractmethod
     async def save(self, session: Session) -> None:
         """
@@ -59,7 +59,7 @@ class SessionStore(ABC):
             session: 会话对象
         """
         pass
-    
+
     @abstractmethod
     async def delete(self, session_id: str) -> bool:
         """
@@ -72,14 +72,14 @@ class SessionStore(ABC):
             是否删除成功
         """
         pass
-    
+
     @abstractmethod
     async def list_by_user(
         self,
         user_id: str,
         limit: int = 10,
         offset: int = 0
-    ) -> List[Session]:
+    ) -> list[Session]:
         """
         列出用户的所有会话。
         

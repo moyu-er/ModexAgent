@@ -2,14 +2,14 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from framework.core.agent import AgentContext
     from framework.control.channel import ControlChannel
     from framework.control.store import ControlStore
+    from framework.core.agent import AgentContext
     from framework.interceptor.handler import CommandHandlerRegistry
 
 logger = logging.getLogger(__name__)

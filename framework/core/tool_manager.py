@@ -6,10 +6,11 @@
 import asyncio
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +54,10 @@ class Tool:
 
     def __init__(
         self,
-        name: Optional[str] = None,
-        description: Optional[str] = None,
-        parameters: Optional[Dict[str, Any]] = None,
-        config: Optional[ToolConfig] = None,
+        name: str | None = None,
+        description: str | None = None,
+        parameters: dict[str, Any] | None = None,
+        config: ToolConfig | None = None,
     ):
         # 如果子类已经定义了 name/description/parameters 作为属性，则使用它们
         # 否则使用传入的参数
@@ -90,7 +91,7 @@ class Tool:
         raise NotImplementedError("Tool must define 'description' either via __init__ or as a property")
 
     @property
-    def parameters(self) -> Dict[str, Any]:
+    def parameters(self) -> dict[str, Any]:
         """工具参数定义"""
         if self._parameters is not None:
             return self._parameters
@@ -112,7 +113,7 @@ class Tool:
         """
         pass
 
-    def get_schema(self) -> Dict[str, Any]:
+    def get_schema(self) -> dict[str, Any]:
         """获取工具 Schema（供 LLM 使用）
 
         Returns:
@@ -139,7 +140,7 @@ class Tool:
         import copy
         return copy.deepcopy(self)
 
-    def validate_params(self, params: Dict[str, Any]) -> List[str]:
+    def validate_params(self, params: dict[str, Any]) -> list[str]:
         """验证工具参数
 
         Args:
@@ -153,7 +154,7 @@ class Tool:
             return [f"Schema must be object type, got {schema.get('type')!r}"]
         return self._validate(params, {**schema, "type": "object"}, "")
 
-    def _validate(self, val: Any, schema: Dict[str, Any], path: str) -> List[str]:
+    def _validate(self, val: Any, schema: dict[str, Any], path: str) -> list[str]:
         """递归验证参数"""
         _TYPE_MAP = {
             "string": str,
@@ -215,9 +216,9 @@ class ToolResult:
         self,
         tool_name: str,
         result: Any = None,
-        error: Optional[str] = None,
+        error: str | None = None,
         execution_time: float = 0.0,
-        call_id: Optional[str] = None,
+        call_id: str | None = None,
     ):
         self.tool_name = tool_name
         self.result = result
@@ -239,7 +240,7 @@ class ToolResult:
         status = "error" if self.error else "success"
         return f"ToolResult({self.tool_name}, {status}, {self.execution_time:.2f}s)"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """转换为字典"""
         return {
             "tool_name": self.tool_name,
@@ -250,7 +251,7 @@ class ToolResult:
             "success": self.success,
         }
 
-    def to_message(self) -> Dict[str, Any]:
+    def to_message(self) -> dict[str, Any]:
         """转换为 LLM message 格式
 
         Returns:
@@ -280,9 +281,9 @@ class ToolManager(ABC):
     - LLM 调用
     """
 
-    def __init__(self, config: Optional[ToolManagerConfig] = None):
+    def __init__(self, config: ToolManagerConfig | None = None):
         self.config = config or ToolManagerConfig()
-        self._thread_pool: Optional[ThreadPoolExecutor] = None
+        self._thread_pool: ThreadPoolExecutor | None = None
 
     async def __aenter__(self):
         """异步上下文管理器入口"""
@@ -312,7 +313,7 @@ class ToolManager(ABC):
     # ---- 工具注册/注销 ----
 
     @abstractmethod
-    def register(self, tool: Tool, config: Optional[ToolConfig] = None) -> None:
+    def register(self, tool: Tool, config: ToolConfig | None = None) -> None:
         """注册工具
 
         Args:
@@ -334,12 +335,12 @@ class ToolManager(ABC):
         pass
 
     @abstractmethod
-    def get_tool(self, tool_name: str) -> Optional[Tool]:
+    def get_tool(self, tool_name: str) -> Tool | None:
         """获取工具实例"""
         pass
 
     @abstractmethod
-    def list_tools(self) -> List[str]:
+    def list_tools(self) -> list[str]:
         """列出所有已注册的工具名称"""
         pass
 
@@ -357,7 +358,7 @@ class ToolManager(ABC):
     async def execute(
         self,
         tool_name: str,
-        arguments: Dict[str, Any],
+        arguments: dict[str, Any],
     ) -> ToolResult:
         """执行单个工具
 
@@ -418,7 +419,7 @@ class ToolManager(ABC):
                     execution_time=execution_time,
                 )
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 execution_time = asyncio.get_event_loop().time() - start_time
                 last_error = f"Tool '{tool_name}' execution timed out after {config.timeout}s"
                 logger.warning(f"Tool {tool_name} timeout (attempt {attempt + 1}/{config.retry_count + 1})")
@@ -441,9 +442,9 @@ class ToolManager(ABC):
 
     async def execute_batch(
         self,
-        tool_calls: List[Dict[str, Any]],  # [{"tool_name": str, "arguments": dict}, ...]
-        parallel: Optional[bool] = None,
-    ) -> List[ToolResult]:
+        tool_calls: list[dict[str, Any]],  # [{"tool_name": str, "arguments": dict}, ...]
+        parallel: bool | None = None,
+    ) -> list[ToolResult]:
         """批量执行多个工具
 
         Args:
@@ -462,7 +463,7 @@ class ToolManager(ABC):
             # 并行执行
             semaphore = asyncio.Semaphore(self.config.parallel_max_workers)
 
-            async def execute_with_limit(tc: Dict[str, Any]) -> ToolResult:
+            async def execute_with_limit(tc: dict[str, Any]) -> ToolResult:
                 async with semaphore:
                     return await self.execute(
                         tc["tool_name"],
@@ -485,7 +486,7 @@ class ToolManager(ABC):
     async def _execute_async(
         self,
         tool: Tool,
-        arguments: Dict[str, Any],
+        arguments: dict[str, Any],
         config: ToolConfig,
     ) -> Any:
         """异步执行（协程）"""
@@ -497,7 +498,7 @@ class ToolManager(ABC):
     async def _execute_parallel(
         self,
         tool: Tool,
-        arguments: Dict[str, Any],
+        arguments: dict[str, Any],
         config: ToolConfig,
     ) -> Any:
         """在线程池中并行执行"""
@@ -516,7 +517,7 @@ class ToolManager(ABC):
     async def _execute_sequential(
         self,
         tool: Tool,
-        arguments: Dict[str, Any],
+        arguments: dict[str, Any],
         config: ToolConfig,
     ) -> Any:
         """顺序执行（同步阻塞）"""
@@ -524,7 +525,7 @@ class ToolManager(ABC):
 
     # ---- 工具描述生成 ----
 
-    def get_tool_descriptions(self, caller_context: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
+    def get_tool_descriptions(self, caller_context: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         """获取所有工具的描述（供 LLM 使用）
 
         Args:
@@ -544,14 +545,14 @@ class ToolManager(ABC):
         return descriptions
 
     @staticmethod
-    def _get_tool_schema(tool: Tool, caller_context: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    def _get_tool_schema(tool: Tool, caller_context: dict[str, Any] | None = None) -> dict[str, Any]:
         """获取单个工具的 Schema，支持动态 Schema 提供者。"""
         from framework.core.tool import DynamicSchemaProvider
         if isinstance(tool, DynamicSchemaProvider):
             return tool.get_dynamic_schema(caller_context)
         return tool.get_schema()
 
-    def get_tools_section(self, caller_context: Dict[str, Any] | None = None) -> str:
+    def get_tools_section(self, caller_context: dict[str, Any] | None = None) -> str:
         """生成工具描述文本（用于系统提示词）"""
         lines = ["# Available Tools", ""]
 
@@ -572,11 +573,11 @@ class ToolManager(ABC):
 class InMemoryToolManager(ToolManager):
     """内存中的工具管理器实现"""
 
-    def __init__(self, config: Optional[ToolManagerConfig] = None):
+    def __init__(self, config: ToolManagerConfig | None = None):
         super().__init__(config)
-        self._tools: Dict[str, Tool] = {}
+        self._tools: dict[str, Tool] = {}
 
-    def register(self, tool: Tool, config: Optional[ToolConfig] = None) -> None:
+    def register(self, tool: Tool, config: ToolConfig | None = None) -> None:
         """注册工具"""
         self._tools[tool.name] = tool
         if config:
@@ -591,11 +592,11 @@ class InMemoryToolManager(ToolManager):
             return True
         return False
 
-    def get_tool(self, tool_name: str) -> Optional[Tool]:
+    def get_tool(self, tool_name: str) -> Tool | None:
         """获取工具"""
         return self._tools.get(tool_name)
 
-    def list_tools(self) -> List[str]:
+    def list_tools(self) -> list[str]:
         """列出所有工具"""
         return list(self._tools.keys())
 
@@ -622,9 +623,9 @@ class FunctionalTool(Tool):
         self,
         name: str,
         description: str,
-        parameters: Dict[str, Any],
+        parameters: dict[str, Any],
         func: Callable[..., Any],
-        config: Optional[ToolConfig] = None,
+        config: ToolConfig | None = None,
     ):
         super().__init__(name, description, parameters, config)
         self._func = func

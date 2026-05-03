@@ -8,8 +8,6 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 from framework.control.exceptions import AgentTimeout
-from framework.core.agent import ctx_ext
-from framework.core.context_extensions import ExtensionKey
 from framework.interceptor.abc import InterceptorScope, TurnNext
 
 if TYPE_CHECKING:
@@ -70,7 +68,6 @@ class TurnTimeoutInterceptor:
     def _resolve_timeout(self, ctx: AgentContext[Any]) -> float:
         if self._timeout is not None:
             return self._timeout
-        safety = ctx_ext(ctx, ExtensionKey.SAFETY)
-        if safety is not None:
-            return safety.turn.agent_run_timeout_seconds
+        if ctx.runtime and ctx.runtime.safety:
+            return ctx.runtime.safety.turn.agent_run_timeout_seconds
         return _DEFAULT_TURN_TIMEOUT

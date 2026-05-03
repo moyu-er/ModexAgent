@@ -14,9 +14,7 @@ import pytest
 
 from framework.agents.react import ReActAgent, ReActEvent
 from framework.core.agent import AgentContext
-from framework.core.context_extensions import ExtensionKey
 from framework.core.emitter import BufferingEmitter, StreamingAwareEmitter
-from framework.hook import Hook
 from framework.core.provider import StreamingLLMProvider
 from framework.core.tool_manager import ToolResult
 from framework.core.types import LLMResponse, ToolCall
@@ -174,7 +172,7 @@ class TestReActAgentUnifiedLoop:
                 responses.append(response.content)
 
         streaming_provider._stream_content = ["Hello ", "World"]
-        context.extensions[ExtensionKey.HOOKS] = [TrackingHook()]
+        context.extensions["hooks"] = [TrackingHook()]
         agent = ReActAgent(provider=streaming_provider)
 
         await agent.run(context, streaming_emitter)
@@ -294,7 +292,7 @@ class TestReActAgentUnifiedLoop:
             return LLMResponse(content="Complete response")
 
         non_streaming_provider.chat = mock_chat
-        context.extensions[ExtensionKey.HOOKS] = [TrackingHook()]
+        context.extensions["hooks"] = [TrackingHook()]
         agent = ReActAgent(provider=non_streaming_provider)
 
         await agent.run(context, emitter)
@@ -591,7 +589,7 @@ class TestReActAgentCheckpoint:
             async def clear(self, cid):
                 cleared.append(cid)
 
-        context.extensions[ExtensionKey.CHECKPOINT_STORE] = _MockStore()
+        context.extensions["checkpoint_store"] = _MockStore()
         agent = ReActAgent(provider=streaming_provider)
         streaming_emitter = StreamingEmitter()
 
@@ -618,7 +616,7 @@ class TestReActAgentCheckpoint:
             async def clear(self, cid):
                 cleared.append(cid)
 
-        context.extensions[ExtensionKey.CHECKPOINT_STORE] = _MockStore()
+        context.extensions["checkpoint_store"] = _MockStore()
         agent = ReActAgent(provider=non_streaming_provider)
 
         await agent.run(context, emitter)
@@ -641,7 +639,7 @@ class TestReActAgentCheckpoint:
             async def clear(self, cid):
                 pass
 
-        context.extensions[ExtensionKey.CHECKPOINT_STORE] = _MockStore()
+        context.extensions["checkpoint_store"] = _MockStore()
         agent = ReActAgent(provider=non_streaming_provider)
 
         result = await agent.run(context, emitter)

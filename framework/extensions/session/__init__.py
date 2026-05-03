@@ -4,7 +4,7 @@
 """
 
 try:
-    from .sqlite_store import SQLiteSessionStore, InMemorySessionStore
+    from .sqlite_store import InMemorySessionStore, SQLiteSessionStore
     HAS_SQLITE = True
 except ImportError:
     HAS_SQLITE = False

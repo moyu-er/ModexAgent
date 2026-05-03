@@ -3,9 +3,8 @@
 Wraps MCP tools, resources, and prompts as framework Tool objects.
 """
 
-import asyncio
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
 from framework.core.tool_manager import Tool, ToolConfig
 from framework.tools.mcp.client import _DEFAULT_TOOL_TIMEOUT
@@ -31,7 +30,7 @@ def _extract_nullable_branch(options: Any) -> tuple[dict, bool] | None:
     return None
 
 
-def _normalize_schema_for_openai(schema: Any) -> Dict[str, Any]:
+def _normalize_schema_for_openai(schema: Any) -> dict[str, Any]:
     """Normalize JSON Schema patterns for OpenAI tool definitions."""
     if not isinstance(schema, dict):
         return {"type": "object", "properties": {}}
@@ -78,9 +77,9 @@ class MCPTool(Tool):
         server_name: str,
         tool_name: str,
         description: str,
-        parameters: Dict[str, Any],
+        parameters: dict[str, Any],
         mcp_manager: Any,
-        config: Optional[ToolConfig] = None,
+        config: ToolConfig | None = None,
         tool_timeout: int = _DEFAULT_TOOL_TIMEOUT,
         use_prefix: bool = True,
     ):
@@ -141,7 +140,7 @@ class MCPResourceTool(Tool):
         uri: str,
         description: str,
         mcp_manager: Any,
-        config: Optional[ToolConfig] = None,
+        config: ToolConfig | None = None,
         resource_timeout: int = _DEFAULT_TOOL_TIMEOUT,
     ):
         full_name = f"mcp_{server_name}_resource_{resource_name}"
@@ -193,15 +192,15 @@ class MCPPromptTool(Tool):
         description: str,
         arguments_def: list,
         mcp_manager: Any,
-        config: Optional[ToolConfig] = None,
+        config: ToolConfig | None = None,
         prompt_timeout: int = _DEFAULT_TOOL_TIMEOUT,
     ):
         full_name = f"mcp_{server_name}_prompt_{prompt_name}"
 
-        properties: Dict[str, Any] = {}
+        properties: dict[str, Any] = {}
         required: list[str] = []
         for arg in arguments_def or []:
-            prop: Dict[str, Any] = {"type": "string"}
+            prop: dict[str, Any] = {"type": "string"}
             if arg.get("description"):
                 prop["description"] = arg["description"]
             properties[arg["name"]] = prop

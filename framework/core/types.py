@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, StrEnum
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .constants import DefaultValues
 

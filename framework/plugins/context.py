@@ -7,9 +7,9 @@ Components are collected here and later injected by PluginLoader.
 from collections.abc import Callable
 from typing import Any
 
-from framework.hook import Hook
 from framework.core.skills.source import SkillSource
 from framework.core.tool_manager import Tool
+from framework.hook import Hook
 from framework.plugins.abc import MemoryProvider
 
 

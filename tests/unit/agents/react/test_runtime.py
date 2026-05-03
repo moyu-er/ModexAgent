@@ -1,12 +1,11 @@
 """Tests for ReActRuntime normalization and clean mode sanitization."""
-import pytest
 from framework.agents.react.runtime import ReActRuntime, sanitize_clean_runtime
 from framework.core.agent import AgentContext
 from framework.core.context_extensions import ExtensionKey
 from framework.core.tool_manager import InMemoryToolManager
-from framework.memory.history import ListMessageHistory
 from framework.hook import HookRunner
 from framework.interceptor.chain import InterceptorChain
+from framework.memory.history import ListMessageHistory
 
 
 def make_ctx(**extensions):
@@ -33,15 +32,15 @@ class TestReActRuntime:
         assert rt.safety is None
 
     def test_from_context_full_mode_preserves_hooks(self):
-        ctx = make_ctx(**{ExtensionKey.HOOK_RUNNER: HookRunner()})
+        ctx = make_ctx(**{"hook_runner": HookRunner()})
         rt = ReActRuntime.from_context(ctx, mode="full")
         assert rt.mode == "full"
         assert rt.hooks is not None
 
     def test_from_context_clean_mode_disables_all(self):
         ctx = make_ctx(**{
-            ExtensionKey.HOOK_RUNNER: HookRunner(),
-            ExtensionKey.INTERCEPTOR_CHAIN: InterceptorChain(),
+            "hook_runner": HookRunner(),
+            "interceptor_chain": InterceptorChain(),
         })
         rt = ReActRuntime.from_context(ctx, mode="clean")
         assert rt.mode == "clean"
@@ -50,14 +49,14 @@ class TestReActRuntime:
 
     def test_sanitize_clean_runtime_clears_extension_keys(self):
         ctx = make_ctx(**{
-            ExtensionKey.HOOK_RUNNER: HookRunner(),
-            ExtensionKey.INTERCEPTOR_CHAIN: InterceptorChain(),
-            ExtensionKey.CHECKPOINT_STORE: object(),
+            "hook_runner": HookRunner(),
+            "interceptor_chain": InterceptorChain(),
+            "checkpoint_store": object(),
         })
         disabled = sanitize_clean_runtime(ctx)
-        assert ExtensionKey.HOOK_RUNNER not in ctx.extensions
-        assert ExtensionKey.INTERCEPTOR_CHAIN not in ctx.extensions
-        assert ExtensionKey.HOOK_RUNNER in disabled
+        assert "hook_runner" not in ctx.extensions
+        assert "interceptor_chain" not in ctx.extensions
+        assert "hook_runner" in disabled
 
     def test_sanitize_clean_runtime_keeps_non_runtime_keys(self):
         ctx = make_ctx(**{

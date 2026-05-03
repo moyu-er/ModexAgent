@@ -24,13 +24,12 @@ Example:
     results = await store.search(agent_id, "用户偏好", limit=3)
 """
 
-import json
 import logging
 import pickle
-import uuid
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 from framework.core.memory import MemoryEntry, MemoryStore
 
@@ -66,7 +65,7 @@ class FAISSMemoryStore(MemoryStore):
         dimension: int = 384,
         index_type: str = "Flat",
         create_dirs: bool = True,
-        embedding_fn: Optional[Callable[[str], List[float]]] = None,
+        embedding_fn: Callable[[str], list[float]] | None = None,
     ):
         """
         初始化 FAISS 记忆存储。
@@ -93,9 +92,9 @@ class FAISSMemoryStore(MemoryStore):
         self.metadata_file = self.vector_dir / "metadata.pkl"
 
         # 延迟初始化
-        self._index: Optional[Any] = None
-        self._metadata: Dict[str, Dict[str, Any]] = {}
-        self._embedding_model: Optional[Any] = None
+        self._index: Any | None = None
+        self._metadata: dict[str, dict[str, Any]] = {}
+        self._embedding_model: Any | None = None
 
         if create_dirs:
             self.vector_dir.mkdir(parents=True, exist_ok=True)
@@ -117,7 +116,7 @@ class FAISSMemoryStore(MemoryStore):
                 )
         return self._embedding_model
 
-    def _text_to_vector(self, text: str) -> List[float]:
+    def _text_to_vector(self, text: str) -> list[float]:
         """将文本转换为向量"""
         # 如果提供了自定义embedding函数，使用它
         if self._embedding_fn is not None:
@@ -193,8 +192,8 @@ class FAISSMemoryStore(MemoryStore):
             entry: 记忆条目
         """
         try:
-            import numpy as np
             import faiss
+            import numpy as np
         except ImportError:
             raise ImportError("numpy and faiss are required.")
 
@@ -227,7 +226,7 @@ class FAISSMemoryStore(MemoryStore):
         # 持久化
         self._save()
 
-    async def search(self, agent_id: str, query: str, limit: int = 5) -> List[MemoryEntry]:
+    async def search(self, agent_id: str, query: str, limit: int = 5) -> list[MemoryEntry]:
         """
         向量搜索相关记忆。
 
@@ -243,8 +242,8 @@ class FAISSMemoryStore(MemoryStore):
             return []
 
         try:
-            import numpy as np
             import faiss
+            import numpy as np
         except ImportError:
             raise ImportError("numpy and faiss are required.")
 
@@ -278,7 +277,7 @@ class FAISSMemoryStore(MemoryStore):
 
         return results
 
-    async def get_recent(self, agent_id: str, limit: int = 10) -> List[MemoryEntry]:
+    async def get_recent(self, agent_id: str, limit: int = 10) -> list[MemoryEntry]:
         """
         获取最近的记忆。
 
@@ -330,7 +329,7 @@ class FAISSMemoryStore(MemoryStore):
 
         return False
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """
         获取存储统计信息。
 

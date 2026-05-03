@@ -1,7 +1,8 @@
 """ToolPolicyInterceptor — 策略静默否决不合规 tool_call。
 
-配合 ToolPolicyGuardHook 使用：GuardHook 在 before_tool_execution 中标记被否决的 tool，
-本拦截器在 around_tool_call 中检查标记并返回伪 ToolResult 阻止实际执行。
+插件或自定义 hook 可在 before_tool_execution 中将 ctx.metadata["_policy_denied_tools"]
+设置为 {tool_name: reason} 字典。本拦截器在 around_tool_call 中检查该标记，
+匹配时返回伪 ToolResult 阻止实际执行。
 """
 
 from __future__ import annotations

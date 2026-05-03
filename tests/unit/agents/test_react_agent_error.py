@@ -2,7 +2,7 @@
 
 import asyncio
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -10,8 +10,8 @@ from framework.agents.react.agent import ReActAgent
 from framework.core.constants import FinishReason
 from framework.core.context_extensions import ExtensionKey
 from framework.core.emitter import AgentResult
-from framework.core.types import LLMResponse, ToolCall
 from framework.core.tool_manager import ToolResult
+from framework.core.types import LLMResponse, ToolCall
 
 
 class _FakeEmitter:
@@ -80,16 +80,17 @@ class _FakeContext:
         self.checkpoint: list | None = None
         self.metadata: dict = {}
         self.session_id = "error-test"
+        self.runtime = None
         self.extensions: dict[str, Any] = {
-            ExtensionKey.HOOKS: [],
+            "hooks": [],
             ExtensionKey.MAX_TOOLS_PER_TURN: None,
             ExtensionKey.GOVERNANCE: None,
             ExtensionKey.ON_CHECKPOINT: None,
             ExtensionKey.SAFETY: None,
-            ExtensionKey.HOOK_RUNNER: None,
-            ExtensionKey.INTERCEPTOR_CHAIN: None,
-            ExtensionKey.CHECKPOINT_STORE: None,
-            ExtensionKey.INJECTION_QUEUE: None,
+            "hook_runner": None,
+            "interceptor_chain": None,
+            "checkpoint_store": None,
+            "injection_queue": None,
             ExtensionKey.RUNTIME_CTX_MGR: None,
             ExtensionKey.RUNTIME_CTX: None,
         }
@@ -224,7 +225,7 @@ class TestReActAgentHookTimeout:
         agent = ReActAgent(provider=provider, hook_timeout=0.01)
         emitter = _FakeEmitter()
         ctx = _FakeContext()
-        ctx.extensions[ExtensionKey.HOOKS] = [SlowHook()]
+        ctx.extensions["hooks"] = [SlowHook()]
 
         # Should not raise — hook timeout is caught and logged
         result = await agent.run(ctx, emitter)

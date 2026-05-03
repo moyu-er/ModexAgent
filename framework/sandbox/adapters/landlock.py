@@ -1,18 +1,16 @@
 import os
-import sys
 import shutil
-import tempfile
 import subprocess
+import sys
+import tempfile
 import time
 from pathlib import Path
-from typing import Optional, List
 
-from .base import SandboxAdapter
-from ..types import SandboxResult
 from ..config import SandboxConfig
-from ..exceptions import SandboxError, SandboxUnavailableError
+from ..exceptions import SandboxUnavailableError
+from ..types import SandboxResult
 from ..validation import validate_code
-
+from .base import SandboxAdapter
 
 LANDLOCK_AVAILABLE = False
 try:
@@ -44,10 +42,10 @@ class LandlockSandbox(SandboxAdapter):
     def is_available(self) -> bool:
         return _check_landlock_available()
 
-    def __init__(self, config: Optional[SandboxConfig] = None):
+    def __init__(self, config: SandboxConfig | None = None):
         self.config = config or SandboxConfig()
 
-    def _create_ruleset(self, allowed_dirs: List[str]):
+    def _create_ruleset(self, allowed_dirs: list[str]):
         if not LANDLOCK_AVAILABLE:
             raise SandboxUnavailableError("landlock Python package not installed")
 
@@ -66,7 +64,7 @@ class LandlockSandbox(SandboxAdapter):
         self,
         code: str,
         language: str = "python",
-        config: Optional[SandboxConfig] = None,
+        config: SandboxConfig | None = None,
     ) -> SandboxResult:
         if not self.is_available:
             return SandboxResult(
@@ -166,8 +164,8 @@ class LandlockSandbox(SandboxAdapter):
     async def execute_command(
         self,
         command: str,
-        cwd: Optional[str] = None,
-        config: Optional[SandboxConfig] = None,
+        cwd: str | None = None,
+        config: SandboxConfig | None = None,
     ) -> SandboxResult:
         if not self.is_available:
             return SandboxResult(
@@ -251,5 +249,5 @@ class LandlockSandbox(SandboxAdapter):
         filtered_env["SANDBOX_ARTIFACTS_DIR"] = self._get_artifacts_dir(config)
         return filtered_env
 
-    async def cleanup(self, sandbox_id: Optional[str] = None) -> None:
+    async def cleanup(self, sandbox_id: str | None = None) -> None:
         pass

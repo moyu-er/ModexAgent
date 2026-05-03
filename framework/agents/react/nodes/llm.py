@@ -11,7 +11,7 @@ from framework.core.constants import FinishReason
 from framework.core.graph.node import Node, NodeTransition
 from framework.core.provider import StreamingLLMProvider
 from framework.core.types import LLMResponse
-from framework.hook import HookPoint, HookPayload
+from framework.hook import HookPayload, HookPoint
 from framework.interceptor.abc import InterceptorScope, IterationContext
 
 if TYPE_CHECKING:
@@ -37,8 +37,6 @@ class LLMNode(Node):
         runtime = ctx.runtime
 
         async def actual_iteration():
-            if runtime and runtime.control:
-                await runtime.control.drain(ctx, phase=ControlPhase.BEFORE_ITERATION)
             if ctx.emitter is not None:
                 await ctx.emitter.emit(
                     ReActEvent.ITERATION_START, {"iteration": iteration},

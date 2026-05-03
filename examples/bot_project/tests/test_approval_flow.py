@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from framework.agents.react.approval import TieredToolApprovalClassifier
 from framework.agents.react.constants import ReActMetaKey, ReActNode, ReActReason
 from framework.agents.react.nodes.start import StartNode
 from framework.agents.react.nodes.tool import ToolNode
@@ -25,17 +26,14 @@ from framework.approval.constants import ApprovalDecision, ApprovalTier
 from framework.approval.state import ApprovalRequest
 from framework.approval.store import InMemoryApprovalStateStore
 from framework.core.agent import AgentContext
-from framework.core.context_extensions import ExtensionKey
 from framework.core.emitter import ToolCall
 from framework.core.graph.interrupt import GraphInterrupt, _current_resume
 from framework.core.tool_manager import InMemoryToolManager, ToolResult
 from framework.core.types import LLMResponse
 from framework.interceptor.builtin.tool_approval import (
     ArgumentMatcher,
-    TieredToolApprovalInterceptor,
     ToolNameMatcher,
 )
-from framework.interceptor.chain import InterceptorChain
 from framework.memory.history import ListMessageHistory
 
 
@@ -46,8 +44,7 @@ def _make_ctx_with_llm(
     session_id="s1",
     tool_calls,
     llm_content="test content",
-    interceptor_chain=None,
-    suspend_strategy=None,
+    runtime=None,
     extra_metadata=None,
 ):
     """Build an AgentContext with LLM_RESPONSE preset for ToolNode execution."""
@@ -66,10 +63,8 @@ def _make_ctx_with_llm(
             **(extra_metadata or {}),
         },
     )
-    if interceptor_chain is not None:
-        ctx.extensions[ExtensionKey.INTERCEPTOR_CHAIN] = interceptor_chain
-    if suspend_strategy is not None:
-        ctx.extensions[ExtensionKey.SUSPEND_STRATEGY] = suspend_strategy
+    if runtime is not None:
+        ctx.runtime = runtime
     return ctx
 
 
@@ -153,19 +148,18 @@ class TestArgumentMatcher:
 
 
 class TestPathBasedApprovalClassification:
-    """Verify TieredToolApprovalInterceptor.classify_tier with ArgumentMatcher."""
+    """Verify TieredToolApprovalClassifier.classify with ArgumentMatcher."""
 
-    def _make_interceptor(self, dangerous_tools, allowed_dirs=None):
+    def _make_classifier(self, dangerous_tools, allowed_dirs=None):
         dangerous = ToolNameMatcher(set(dangerous_tools)) if dangerous_tools else None
         arg_matcher = ArgumentMatcher(set(allowed_dirs)) if allowed_dirs else None
-        return TieredToolApprovalInterceptor(
-            channel=MagicMock(),
-            dangerous_matcher=dangerous,
+        return TieredToolApprovalClassifier(
+            dangerous=dangerous,
             argument_matcher=arg_matcher,
         )
 
     def test_dangerous_tool_outside_allowed_dir_returns_dangerous(self):
-        interceptor = self._make_interceptor(
+        classifier = self._make_classifier(
             dangerous_tools=["write_file", "shell"],
             allowed_dirs=["/safe"],
         )
@@ -173,11 +167,11 @@ class TestPathBasedApprovalClassification:
             tool_name="write_file", call_id="c1",
             arguments={"path": "/etc/passwd"},
         )
-        assert interceptor.classify_tier(tc) == ApprovalTier.DANGEROUS
+        assert classifier.classify(tc, MagicMock()) == ApprovalTier.DANGEROUS
 
     def test_dangerous_tool_within_allowed_dir_still_dangerous_by_name(self):
         """Name-based dangerous tools are ALWAYS dangerous, even in safe paths."""
-        interceptor = self._make_interceptor(
+        classifier = self._make_classifier(
             dangerous_tools=["write_file", "shell"],
             allowed_dirs=["/safe"],
         )
@@ -186,11 +180,11 @@ class TestPathBasedApprovalClassification:
             arguments={"path": "/safe/data.txt"},
         )
         # write_file matches name-based dangerous → always DANGEROUS
-        assert interceptor.classify_tier(tc) == ApprovalTier.DANGEROUS
+        assert classifier.classify(tc, MagicMock()) == ApprovalTier.DANGEROUS
 
     def test_non_dangerous_tool_outside_allowed_dir_is_dangerous(self):
         """Any tool with path outside allowed dirs → DANGEROUS (not just dangerous-named)."""
-        interceptor = self._make_interceptor(
+        classifier = self._make_classifier(
             dangerous_tools=["write_file", "shell"],
             allowed_dirs=["/safe"],
         )
@@ -198,11 +192,11 @@ class TestPathBasedApprovalClassification:
             tool_name="list_dir", call_id="c1",
             arguments={"path": "/etc"},
         )
-        assert interceptor.classify_tier(tc) == ApprovalTier.DANGEROUS
+        assert classifier.classify(tc, MagicMock()) == ApprovalTier.DANGEROUS
 
     def test_non_dangerous_tool_within_allowed_dir_is_normal(self):
         """Any tool with path inside allowed dirs AND not name-matched → NORMAL."""
-        interceptor = self._make_interceptor(
+        classifier = self._make_classifier(
             dangerous_tools=["write_file", "shell"],
             allowed_dirs=["/safe"],
         )
@@ -210,11 +204,11 @@ class TestPathBasedApprovalClassification:
             tool_name="list_dir", call_id="c1",
             arguments={"path": "/safe/mydir"},
         )
-        assert interceptor.classify_tier(tc) == ApprovalTier.NORMAL
+        assert classifier.classify(tc, MagicMock()) == ApprovalTier.NORMAL
 
     def test_dangerous_tool_no_argument_matcher_returns_dangerous(self):
         """Without argument matcher, all dangerous tools require approval."""
-        interceptor = self._make_interceptor(
+        classifier = self._make_classifier(
             dangerous_tools=["write_file"],
             allowed_dirs=None,
         )
@@ -222,7 +216,7 @@ class TestPathBasedApprovalClassification:
             tool_name="write_file", call_id="c1",
             arguments={"path": "/safe/data.txt"},
         )
-        assert interceptor.classify_tier(tc) == ApprovalTier.DANGEROUS
+        assert classifier.classify(tc, MagicMock()) == ApprovalTier.DANGEROUS
 
 
 class TestToolNodePathBasedClassification:
@@ -231,12 +225,12 @@ class TestToolNodePathBasedClassification:
     def test_mixed_path_classification(self):
         """write_file(safe) → name-matched dangerous; write_file(outside) → path-violation;
         cat(outside) → path-violation; list_dir(safe) → NORMAL."""
-        interceptor = TieredToolApprovalInterceptor(
-            channel=MagicMock(),
-            dangerous_matcher=ToolNameMatcher({"write_file", "rm"}),
+        classifier = TieredToolApprovalClassifier(
+            dangerous=ToolNameMatcher({"write_file", "rm"}),
             argument_matcher=ArgumentMatcher({"/safe"}),
         )
-        chain = InterceptorChain(interceptors=[interceptor])
+        runtime = MagicMock()
+        runtime.approval.classifier = classifier
 
         node = ToolNode(_make_mock_agent())
         ctx = _make_ctx_with_llm(
@@ -250,7 +244,7 @@ class TestToolNodePathBasedClassification:
                 ToolCall(tool_name="list_dir", call_id="c4",
                          arguments={"path": "/safe/mydir"}),       # safe path, not dangerous → ALLOWED
             ],
-            interceptor_chain=chain,
+            runtime=runtime,
         )
         decisions = node._classify_all(
             ctx.metadata[ReActMetaKey.LLM_RESPONSE].tool_calls, ctx,
@@ -264,26 +258,16 @@ class TestToolNodePathBasedClassification:
 
 
 class TestMainVsPeerInterceptorSeparation:
-    """Verify main agent gets approval chain, peers do not."""
+    """Verify main agent gets approval classifier via runtime, peers do not."""
 
-    def test_main_chain_has_approval_interceptor(self):
-        """Simulate bot_project's main_interceptor_chain construction."""
-        base_chain = InterceptorChain()
-        base_chain.add(MagicMock())  # base interceptor e.g., tool_timeout
-
-        main_chain = InterceptorChain()
-        for i in base_chain.interceptors:
-            main_chain.add(i)
-        main_chain.add(
-            TieredToolApprovalInterceptor(
-                channel=MagicMock(),
-                dangerous_matcher=ToolNameMatcher({"shell", "write_file"}),
-                argument_matcher=ArgumentMatcher({"."}),
-            )
+    def test_main_has_approval_classifier(self):
+        """Simulate bot_project's main agent runtime with approval classifier."""
+        classifier = TieredToolApprovalClassifier(
+            dangerous=ToolNameMatcher({"shell", "write_file"}),
+            argument_matcher=ArgumentMatcher({"."}),
         )
-
-        assert len(main_chain.interceptors) == 2
-        assert len(base_chain.interceptors) == 1
+        runtime = MagicMock()
+        runtime.approval.classifier = classifier
 
         node = ToolNode(_make_mock_agent())
         ctx = _make_ctx_with_llm(
@@ -291,28 +275,22 @@ class TestMainVsPeerInterceptorSeparation:
                 ToolCall(tool_name="write_file", call_id="c1",
                          arguments={"path": "/etc/hosts"}),
             ],
-            interceptor_chain=main_chain,
+            runtime=runtime,
         )
         decisions = node._classify_all(
             ctx.metadata[ReActMetaKey.LLM_RESPONSE].tool_calls, ctx,
         )
         assert decisions == [ApprovalDecision.PENDING]  # Outside allowed dir (.)
 
-    def test_peer_chain_no_approval(self):
-        """Peer agents use base chain without approval - no classify_tier -> ALLOWED."""
-        base_chain = InterceptorChain()
-        # Use a plain object (not MagicMock) so getattr won't auto-create classify_tier
-        class _NoApprovalInterceptor:
-            pass
-        base_chain.add(_NoApprovalInterceptor())
-
+    def test_peer_no_approval_runtime(self):
+        """Peer agents have no runtime -> all tools ALLOWED."""
         node = ToolNode(_make_mock_agent())
         ctx = _make_ctx_with_llm(
             tool_calls=[
                 ToolCall(tool_name="write_file", call_id="c1",
                          arguments={"path": "/etc/hosts"}),
             ],
-            interceptor_chain=base_chain,
+            runtime=None,
         )
         decisions = node._classify_all(
             ctx.metadata[ReActMetaKey.LLM_RESPONSE].tool_calls, ctx,
@@ -326,13 +304,6 @@ class TestFullApprovalResumeFlow:
     @pytest.mark.asyncio
     async def test_approve_resume_execute(self):
         """Full flow: strategy suspends, user approves, ToolNode resumes and executes."""
-        interceptor = TieredToolApprovalInterceptor(
-            channel=MagicMock(),
-            dangerous_matcher=ToolNameMatcher({"write_file"}),
-            argument_matcher=ArgumentMatcher({"/safe"}),
-        )
-        chain = InterceptorChain(interceptors=[interceptor])
-
         approval_store = InMemoryApprovalStateStore()
         resume_store = InMemoryTurnResumeStateStore()
         strategy = SuspendResumeStrategy(approval_store, resume_store)
@@ -376,6 +347,17 @@ class TestFullApprovalResumeFlow:
         assert resume_state is not None
 
         # Phase 5: Build resume context, simulate pipeline's RESUME_STATE injection
+        classifier = TieredToolApprovalClassifier(
+            dangerous=ToolNameMatcher({"write_file"}),
+            argument_matcher=ArgumentMatcher({"/safe"}),
+        )
+        runtime = MagicMock()
+        runtime.approval.classifier = classifier
+        runtime.suspend_strategy = strategy
+        runtime.control = None
+        runtime.hooks = None
+        runtime.injection_queue = None
+
         history = _CountingHistory()
         ctx2 = AgentContext(
             system_prompt="test", history=history,
@@ -386,8 +368,7 @@ class TestFullApprovalResumeFlow:
                 ReActMetaKey.ITERATION_MSGS: [],
             },
         )
-        ctx2.extensions[ExtensionKey.SUSPEND_STRATEGY] = strategy
-        ctx2.extensions[ExtensionKey.INTERCEPTOR_CHAIN] = chain
+        ctx2.runtime = runtime
 
         # Phase 6: StartNode reconstructs LLM_RESPONSE and routes to ToolNode
         t = await StartNode().execute(ctx2)
@@ -410,13 +391,6 @@ class TestFullApprovalResumeFlow:
     @pytest.mark.asyncio
     async def test_deny_cascade_flow(self):
         """Multiple tools: deny first -> rest preempted -> turn cancelled."""
-        interceptor = TieredToolApprovalInterceptor(
-            channel=MagicMock(),
-            dangerous_matcher=ToolNameMatcher({"write_file", "shell"}),
-            argument_matcher=ArgumentMatcher({"/safe"}),
-        )
-        chain = InterceptorChain(interceptors=[interceptor])
-
         approval_store = InMemoryApprovalStateStore()
         resume_store = InMemoryTurnResumeStateStore()
         strategy = SuspendResumeStrategy(approval_store, resume_store)
@@ -462,6 +436,17 @@ class TestFullApprovalResumeFlow:
         assert resume_state is not None
 
         # Phase 5: Rebuild context with DENY_AS_CANCEL flag
+        classifier = TieredToolApprovalClassifier(
+            dangerous=ToolNameMatcher({"write_file", "shell"}),
+            argument_matcher=ArgumentMatcher({"/safe"}),
+        )
+        runtime = MagicMock()
+        runtime.approval.classifier = classifier
+        runtime.suspend_strategy = strategy
+        runtime.control = None
+        runtime.hooks = None
+        runtime.injection_queue = None
+
         history = _CountingHistory()
         ctx2 = AgentContext(
             system_prompt="test", history=history,
@@ -473,8 +458,7 @@ class TestFullApprovalResumeFlow:
                 ReActMetaKey.DENY_AS_CANCEL: True,
             },
         )
-        ctx2.extensions[ExtensionKey.SUSPEND_STRATEGY] = strategy
-        ctx2.extensions[ExtensionKey.INTERCEPTOR_CHAIN] = chain
+        ctx2.runtime = runtime
 
         # Phase 6: StartNode -> ToolNode
         t = await StartNode().execute(ctx2)

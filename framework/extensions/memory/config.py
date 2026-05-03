@@ -24,8 +24,8 @@ Example:
 """
 
 from dataclasses import dataclass, field
-from enum import Enum, auto
-from typing import Any, Dict, Optional
+from enum import Enum
+from typing import Any
 
 
 class StorageBackend(Enum):
@@ -55,8 +55,8 @@ class LifecyclePolicy:
     importance_threshold: float = 0.3
     auto_cleanup: bool = True
     cleanup_interval: int = 100  # 每100条消息检查一次
-    
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         """转换为字典"""
         return {
             "max_entries": self.max_entries,
@@ -65,9 +65,9 @@ class LifecyclePolicy:
             "auto_cleanup": self.auto_cleanup,
             "cleanup_interval": self.cleanup_interval,
         }
-    
+
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "LifecyclePolicy":
+    def from_dict(cls, data: dict[str, Any]) -> "LifecyclePolicy":
         """从字典创建"""
         return cls(
             max_entries=data.get("max_entries", 1000),
@@ -107,8 +107,8 @@ class MemoryConfig:
     archive_enabled: bool = True
     lifecycle_policy: LifecyclePolicy = field(default_factory=LifecyclePolicy)
     storage_backend: StorageBackend = StorageBackend.FILE
-    storage_config: Dict[str, Any] = field(default_factory=dict)
-    
+    storage_config: dict[str, Any] = field(default_factory=dict)
+
     def __post_init__(self):
         """验证配置一致性"""
         # 如果启用了长期记忆，归档也必须启用
@@ -117,18 +117,18 @@ class MemoryConfig:
                 "Cannot enable long_term_enabled without archive_enabled. "
                 "Long-term memory requires archiving to function."
             )
-    
+
     @property
     def is_memory_active(self) -> bool:
         """是否激活长期记忆功能"""
         return self.long_term_enabled and self.archive_enabled
-    
+
     @property
     def is_archive_only(self) -> bool:
         """是否仅归档模式（不检索）"""
         return not self.long_term_enabled and self.archive_enabled
-    
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         """转换为字典"""
         return {
             "long_term_enabled": self.long_term_enabled,
@@ -137,9 +137,9 @@ class MemoryConfig:
             "storage_backend": self.storage_backend.value,
             "storage_config": self.storage_config,
         }
-    
+
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "MemoryConfig":
+    def from_dict(cls, data: dict[str, Any]) -> "MemoryConfig":
         """从字典创建"""
         return cls(
             long_term_enabled=data.get("long_term_enabled", True),
@@ -152,7 +152,7 @@ class MemoryConfig:
             ),
             storage_config=data.get("storage_config", {}),
         )
-    
+
     @classmethod
     def minimal(cls) -> "MemoryConfig":
         """
@@ -167,7 +167,7 @@ class MemoryConfig:
             long_term_enabled=False,
             archive_enabled=False,
         )
-    
+
     @classmethod
     def archive_only(cls) -> "MemoryConfig":
         """
@@ -182,7 +182,7 @@ class MemoryConfig:
             long_term_enabled=False,
             archive_enabled=True,
         )
-    
+
     @classmethod
     def full_featured(cls) -> "MemoryConfig":
         """

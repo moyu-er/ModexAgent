@@ -11,12 +11,12 @@ from framework.core.context_extensions import ExtensionKey
 logger = logging.getLogger(__name__)
 
 _CLEAN_EXTENSION_KEYS = (
-    ExtensionKey.HOOK_RUNNER,
-    ExtensionKey.HOOKS,
-    ExtensionKey.INTERCEPTOR_CHAIN,
-    ExtensionKey.CHECKPOINT_STORE,
-    ExtensionKey.SUSPEND_STRATEGY,
-    ExtensionKey.INJECTION_QUEUE,
+    "hook_runner",
+    "hooks",
+    "interceptor_chain",
+    "checkpoint_store",
+    "suspend_strategy",
+    "injection_queue",
 )
 
 
@@ -74,10 +74,10 @@ class ReActRuntime:
             return cls.clean()
 
         # Full mode: consume extensions into runtime fields
-        from framework.hook import HookRunner, HookSpec, HookErrorPolicy
+        from framework.hook import HookErrorPolicy, HookRunner, HookSpec
 
-        hook_runner = ctx.extensions.pop(ExtensionKey.HOOK_RUNNER, None)
-        hooks = ctx.extensions.pop(ExtensionKey.HOOKS, None)
+        hook_runner = ctx.extensions.pop("hook_runner", None)
+        hooks = ctx.extensions.pop("hooks", None)
         if hook_runner is None and hooks:
             hook_runner = HookRunner([
                 HookSpec(hook=h, on_error=HookErrorPolicy.LOG) for h in hooks
@@ -86,10 +86,10 @@ class ReActRuntime:
         return cls(
             mode="full",
             hooks=hook_runner,
-            interceptors=ctx.extensions.pop(ExtensionKey.INTERCEPTOR_CHAIN, None),
-            checkpoint_store=ctx.extensions.pop(ExtensionKey.CHECKPOINT_STORE, None),
-            suspend_strategy=ctx.extensions.pop(ExtensionKey.SUSPEND_STRATEGY, None),
-            injection_queue=ctx.extensions.pop(ExtensionKey.INJECTION_QUEUE, None),
+            interceptors=ctx.extensions.pop("interceptor_chain", None),
+            checkpoint_store=ctx.extensions.pop("checkpoint_store", None),
+            suspend_strategy=ctx.extensions.pop("suspend_strategy", None),
+            injection_queue=ctx.extensions.pop("injection_queue", None),
             governance=ctx.extensions.pop(ExtensionKey.GOVERNANCE, None),
             safety=ctx.extensions.pop(ExtensionKey.SAFETY, None),
         )
@@ -99,8 +99,8 @@ class ReActRuntime:
         if self.mode == "clean":
             return
         if self.interceptors is not None:
-            from framework.interceptor.builtin import ControlDrainInterceptor
             from framework.control.exceptions import PolicyViolation
+            from framework.interceptor.builtin import ControlDrainInterceptor
 
             for interceptor in self.interceptors.interceptors:
                 if isinstance(interceptor, ControlDrainInterceptor) and self.control is None:

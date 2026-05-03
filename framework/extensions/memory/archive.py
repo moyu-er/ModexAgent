@@ -21,7 +21,7 @@ import logging
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from framework.core.memory import MemoryEntry
 
@@ -49,7 +49,7 @@ class AbstractMemoryArchive(ABC):
         pass
 
     @abstractmethod
-    async def retrieve(self, entry_id: str) -> Optional[MemoryEntry]:
+    async def retrieve(self, entry_id: str) -> MemoryEntry | None:
         """
         检索归档的记忆。
 
@@ -62,7 +62,7 @@ class AbstractMemoryArchive(ABC):
         pass
 
     @abstractmethod
-    async def list_archives(self, limit: int = 100, offset: int = 0) -> List[MemoryEntry]:
+    async def list_archives(self, limit: int = 100, offset: int = 0) -> list[MemoryEntry]:
         """
         列出所有归档。
 
@@ -136,7 +136,7 @@ class FileMemoryArchive(AbstractMemoryArchive):
         safe_id = "".join(c for c in entry_id if c.isalnum() or c in "_-").rstrip()
         return self.archive_dir / f"{safe_id}.json"
 
-    def _entry_to_dict(self, entry: MemoryEntry) -> Dict[str, Any]:
+    def _entry_to_dict(self, entry: MemoryEntry) -> dict[str, Any]:
         """将记忆条目转换为字典"""
         return {
             "id": entry.id,
@@ -148,7 +148,7 @@ class FileMemoryArchive(AbstractMemoryArchive):
             "archived_at": datetime.now().isoformat(),
         }
 
-    def _dict_to_entry(self, data: Dict[str, Any]) -> MemoryEntry:
+    def _dict_to_entry(self, data: dict[str, Any]) -> MemoryEntry:
         """将字典转换为记忆条目"""
         return MemoryEntry(
             id=data["id"],
@@ -181,7 +181,7 @@ class FileMemoryArchive(AbstractMemoryArchive):
             logger.warning(f"Failed to archive memory {entry.id}: {e}")
             return False
 
-    async def retrieve(self, entry_id: str) -> Optional[MemoryEntry]:
+    async def retrieve(self, entry_id: str) -> MemoryEntry | None:
         """
         从文件检索归档的记忆。
 
@@ -197,7 +197,7 @@ class FileMemoryArchive(AbstractMemoryArchive):
             return None
 
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 data = json.load(f)
 
             return self._dict_to_entry(data)
@@ -205,7 +205,7 @@ class FileMemoryArchive(AbstractMemoryArchive):
             logger.warning(f"Failed to retrieve memory {entry_id}: {e}")
             return None
 
-    async def list_archives(self, limit: int = 100, offset: int = 0) -> List[MemoryEntry]:
+    async def list_archives(self, limit: int = 100, offset: int = 0) -> list[MemoryEntry]:
         """
         列出所有归档的记忆。
 
@@ -233,7 +233,7 @@ class FileMemoryArchive(AbstractMemoryArchive):
 
         for file_path in paginated_files:
             try:
-                with open(file_path, "r", encoding="utf-8") as f:
+                with open(file_path, encoding="utf-8") as f:
                     data = json.load(f)
                 entry = self._dict_to_entry(data)
                 entries.append(entry)
@@ -276,7 +276,7 @@ class FileMemoryArchive(AbstractMemoryArchive):
             except Exception as e:
                 logger.warning(f"Failed to delete {file_path}: {e}")
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """
         获取归档统计信息。
 
@@ -317,10 +317,10 @@ class SQLMemoryArchive(AbstractMemoryArchive):
     async def archive(self, entry: MemoryEntry) -> bool:
         raise NotImplementedError()
 
-    async def retrieve(self, entry_id: str) -> Optional[MemoryEntry]:
+    async def retrieve(self, entry_id: str) -> MemoryEntry | None:
         raise NotImplementedError()
 
-    async def list_archives(self, limit: int = 100, offset: int = 0) -> List[MemoryEntry]:
+    async def list_archives(self, limit: int = 100, offset: int = 0) -> list[MemoryEntry]:
         raise NotImplementedError()
 
     async def delete_archive(self, entry_id: str) -> bool:

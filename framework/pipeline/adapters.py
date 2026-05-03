@@ -7,11 +7,13 @@ import asyncio
 import json
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, AsyncIterator, Dict, Optional
+from collections.abc import AsyncIterator
+from typing import Any
+
+from framework.adapters.platform import StreamingMode
 
 from ..core.types import InputMessage, OutputMessage
 from .filters import ContentFilter
-from framework.adapters.platform import StreamingMode
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +53,7 @@ class OutputAdapter(ABC):
     支持真流式输出通过 send_delta() 方法。
     """
 
-    content_filter: Optional[ContentFilter] = None
+    content_filter: ContentFilter | None = None
 
     @property
     def streaming_mode(self) -> StreamingMode:
@@ -75,7 +77,7 @@ class OutputAdapter(ABC):
         """发送完整输出消息"""
         pass
 
-    async def send_delta(self, delta: str, session_id: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+    async def send_delta(self, delta: str, session_id: str, metadata: dict[str, Any] | None = None) -> None:
         """发送流式增量（真流式传输）
 
         子类应该覆盖此方法以实现真流式（如 WebSocket、SSE、消息编辑等）。
@@ -141,7 +143,7 @@ class NullOutputAdapter(OutputAdapter):
     async def send(self, message: OutputMessage, session_id: str) -> None:
         pass
 
-    async def send_delta(self, delta: str, session_id: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+    async def send_delta(self, delta: str, session_id: str, metadata: dict[str, Any] | None = None) -> None:
         pass
 
     async def flush_deltas(self, session_id: str) -> None:
@@ -165,7 +167,7 @@ class LoggingOutputAdapter(OutputAdapter):
     async def send(self, message: OutputMessage, session_id: str) -> None:
         logger.log(self.level, "[session=%s] %s", session_id, message.content)
 
-    async def send_delta(self, delta: str, session_id: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+    async def send_delta(self, delta: str, session_id: str, metadata: dict[str, Any] | None = None) -> None:
         logger.log(self.level, "[session=%s] delta: %s", session_id, delta)
 
     async def flush_deltas(self, session_id: str) -> None:
@@ -205,7 +207,7 @@ class SessionPrefixStripAdapter(OutputAdapter):
     async def send(self, message: OutputMessage, session_id: str) -> None:
         await self._inner.send(message, self._map_session_id(session_id))
 
-    async def send_delta(self, delta: str, session_id: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+    async def send_delta(self, delta: str, session_id: str, metadata: dict[str, Any] | None = None) -> None:
         await self._inner.send_delta(delta, self._map_session_id(session_id), metadata)
 
     async def flush_deltas(self, session_id: str) -> None:
@@ -232,7 +234,7 @@ class CompositeOutputAdapter(OutputAdapter):
             except Exception as e:
                 logger.error(f"Adapter {adapter.name} failed: {e}")
 
-    async def send_delta(self, delta: str, session_id: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+    async def send_delta(self, delta: str, session_id: str, metadata: dict[str, Any] | None = None) -> None:
         """转发 send_delta 到所有子适配器"""
         for adapter in self.adapters:
             try:
@@ -287,7 +289,7 @@ class CLIOutputAdapter(OutputAdapter):
         if content:
             print(f"{self.prefix}{content}", end=self.suffix, flush=True)
 
-    async def send_delta(self, delta: str, session_id: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+    async def send_delta(self, delta: str, session_id: str, metadata: dict[str, Any] | None = None) -> None:
         """真流式：立即打印每个 delta 到终端"""
         if delta:
             print(delta, end="", flush=True)
@@ -303,7 +305,7 @@ class HTTPOutputAdapter(OutputAdapter):
     每个 delta 会生成一个 SSE 事件，客户端可以通过 EventSource 实时接收。
     """
 
-    def __init__(self, sse_queue: Optional[asyncio.Queue] = None):
+    def __init__(self, sse_queue: asyncio.Queue | None = None):
         self.sse_queue = sse_queue or asyncio.Queue()
 
     @property
@@ -312,7 +314,7 @@ class HTTPOutputAdapter(OutputAdapter):
 
     async def send(self, message: OutputMessage, session_id: str) -> None:
         """发送完整消息作为 SSE 事件"""
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "type": "message",
             "session_id": session_id,
             "content": message.content,
@@ -324,9 +326,9 @@ class HTTPOutputAdapter(OutputAdapter):
             payload["metadata"] = dict(message.metadata)
         await self.sse_queue.put(f"data: {json.dumps(payload)}\n\n")
 
-    async def send_delta(self, delta: str, session_id: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+    async def send_delta(self, delta: str, session_id: str, metadata: dict[str, Any] | None = None) -> None:
         """真流式：每个 delta 作为一个 SSE 事件"""
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "type": "delta",
             "session_id": session_id,
             "content": delta,

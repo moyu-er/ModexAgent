@@ -1,10 +1,9 @@
 """通用工具函数"""
 
 import re
-from typing import Optional
 
 
-def strip_think(text: Optional[str]) -> Optional[str]:
+def strip_think(text: str | None) -> str | None:
     """去除 <think>...</think> 标签
     
     某些模型（如 DeepSeek）会在回复中嵌入思考过程，
@@ -18,9 +17,9 @@ def strip_think(text: Optional[str]) -> Optional[str]:
     """
     if not text:
         return None
-    
+
     # 使用 DOTALL 标志让 . 匹配换行符
     cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
     cleaned = cleaned.strip()
-    
+
     return cleaned if cleaned else None

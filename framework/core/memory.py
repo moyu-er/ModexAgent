@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 @dataclass
@@ -11,8 +11,8 @@ class MemoryEntry:
     """记忆条目"""
     id: str
     content: str
-    source_session_id: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    source_session_id: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.now)
     importance: float = 1.0  # 重要性评分，用于记忆筛选
 
@@ -38,7 +38,7 @@ class MemoryStore(ABC):
                 memories = self._memories.get(agent_id, [])
                 return memories[-limit:]
     """
-    
+
     @abstractmethod
     async def add(self, agent_id: str, entry: MemoryEntry) -> None:
         """
@@ -49,14 +49,14 @@ class MemoryStore(ABC):
             entry: 记忆条目
         """
         pass
-    
+
     @abstractmethod
     async def search(
         self,
         agent_id: str,
         query: str,
         limit: int = 5
-    ) -> List[MemoryEntry]:
+    ) -> list[MemoryEntry]:
         """
         搜索相关记忆。
         
@@ -69,13 +69,13 @@ class MemoryStore(ABC):
             相关记忆条目列表
         """
         pass
-    
+
     @abstractmethod
     async def get_recent(
         self,
         agent_id: str,
         limit: int = 10
-    ) -> List[MemoryEntry]:
+    ) -> list[MemoryEntry]:
         """
         获取最近的记忆。
         
@@ -87,7 +87,7 @@ class MemoryStore(ABC):
             最近添加的记忆条目列表
         """
         pass
-    
+
     async def delete(self, agent_id: str, memory_id: str) -> bool:
         """
         删除记忆（可选实现）。
@@ -100,7 +100,7 @@ class MemoryStore(ABC):
             是否删除成功
         """
         return False
-    
+
     async def clear(self, agent_id: str) -> None:
         """
         清空Agent的所有记忆（可选实现）。

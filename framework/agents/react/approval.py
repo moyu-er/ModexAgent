@@ -5,12 +5,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
 from framework.approval.constants import ApprovalTier
-from framework.interceptor.builtin.tool_approval import ToolNameMatcher, ArgumentMatcher
+from framework.interceptor.builtin.tool_approval import ArgumentMatcher, ToolNameMatcher
 
 if TYPE_CHECKING:
+    from framework.agents.react.strategy import SuspendStrategy
     from framework.core.agent import AgentContext
     from framework.core.types import ToolCall
-    from framework.agents.react.strategy import SuspendStrategy
 
 
 class ApprovalClassifier(Protocol):

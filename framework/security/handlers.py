@@ -4,13 +4,10 @@ This module provides various implementations of the ApprovalHandler
 abstract base class for different approval scenarios.
 """
 
-import re
 import logging
+import re
 from abc import ABC, abstractmethod
-from typing import List, Optional, Dict
 from datetime import datetime
-
-from .exceptions import SecurityError
 
 logger = logging.getLogger(__name__)
 
@@ -97,8 +94,8 @@ class ConfigBasedApprovalHandler(ApprovalHandler):
 
     def __init__(
         self,
-        auto_approve_patterns: Optional[List[str]] = None,
-        auto_deny_patterns: Optional[List[str]] = None,
+        auto_approve_patterns: list[str] | None = None,
+        auto_deny_patterns: list[str] | None = None,
         default_action: bool = False
     ):
         """Initialize with configuration patterns.
@@ -159,9 +156,9 @@ class APIBasedApprovalHandler(ApprovalHandler):
     def __init__(
         self,
         endpoint: str,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         timeout: float = 30.0,
-        headers: Optional[Dict[str, str]] = None
+        headers: dict[str, str] | None = None
     ):
         """Initialize API-based handler.
 
@@ -241,7 +238,7 @@ class CompositeApprovalHandler(ApprovalHandler):
         ])
     """
 
-    def __init__(self, handlers: List[ApprovalHandler]):
+    def __init__(self, handlers: list[ApprovalHandler]):
         """Initialize with list of handlers.
 
         Args:

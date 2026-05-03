@@ -149,32 +149,30 @@ class ReActAgent(Agent[ReActEvent]):
         context.attachments = []
         context.emitter = emitter
 
-        # Use prebuilt runtime if already set on context (e.g. by AgentPipeline
-        # with prebuilt_runtime). Otherwise, build from context extensions.
-        runtime = getattr(context, 'runtime', None)
-        if runtime is None:
+        # Use prebuilt runtime if already set on context; otherwise build from context.
+        if context.runtime is None:
             from framework.agents.react.runtime import ReActRuntime
 
             runtime = ReActRuntime.from_context(context, mode=self.mode)
             context.runtime = runtime
+        else:
+            runtime = context.runtime
         runtime.validate()
         ctx_token = current_agent_context.set(context)
 
         result = AgentResult(content="", stop_reason="error")
 
         async def actual_turn():
-                nonlocal result
-                if runtime.control:
-                    await runtime.control.drain(context, phase=ControlPhase.BEFORE_TURN)
-                if runtime.hooks:
-                    await runtime.hooks.dispatch(HookPoint.BEFORE_TURN, context)
-                result = await self.engine.run(context)
-                if runtime.hooks:
-                    await runtime.hooks.dispatch(
-                        HookPoint.AFTER_TURN, context,
-                        HookPayload(data={"result": result}),
-                    )
-                return result
+            nonlocal result
+            if runtime.hooks:
+                await runtime.hooks.dispatch(HookPoint.BEFORE_TURN, context)
+            result = await self.engine.run(context)
+            if runtime.hooks:
+                await runtime.hooks.dispatch(
+                    HookPoint.AFTER_TURN, context,
+                    HookPayload(data={"result": result}),
+                )
+            return result
 
         try:
             if runtime.interceptors is not None:
@@ -254,8 +252,7 @@ class ReActAgent(Agent[ReActEvent]):
                 "reason": denial.reason,
                 "iteration": denial.iteration,
             }
-        runtime: Any = getattr(context, "runtime", None)
-        checkpoint_store = runtime.checkpoint_store if runtime is not None else None
+        checkpoint_store = context.runtime.checkpoint_store if context.runtime else None
         if checkpoint_store is not None:
             session_id = getattr(context, "session_id", "unknown")
             checkpoint_id = f"{session_id}:denial"
@@ -267,8 +264,7 @@ class ReActAgent(Agent[ReActEvent]):
         context: AgentContext,
     ) -> None:
         """保存检查点到 checkpoint_store。无 store 则跳过。"""
-        runtime: Any = getattr(context, "runtime", None)
-        checkpoint_store = runtime.checkpoint_store if runtime is not None else None
+        checkpoint_store = context.runtime.checkpoint_store if context.runtime else None
         if checkpoint_store is None:
             return
         data = {"messages": list(all_new_messages)}
@@ -278,8 +274,7 @@ class ReActAgent(Agent[ReActEvent]):
 
     async def _clear_checkpoint(self, context: AgentContext) -> None:
         """清空检查点。无 store 则跳过。"""
-        runtime: Any = getattr(context, "runtime", None)
-        checkpoint_store = runtime.checkpoint_store if runtime is not None else None
+        checkpoint_store = context.runtime.checkpoint_store if context.runtime else None
         if checkpoint_store is None:
             return
         session_id = getattr(context, "session_id", "unknown")

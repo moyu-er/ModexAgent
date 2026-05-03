@@ -91,6 +91,7 @@ class JsonFileCheckpointStore:
 
     async def save(self, checkpoint_id: str, data: dict[str, Any]) -> None:
         try:
+            self._workspace.mkdir(parents=True, exist_ok=True)
             self._path(checkpoint_id).write_text(
                 json.dumps(data, ensure_ascii=False, default=str),
                 encoding="utf-8",

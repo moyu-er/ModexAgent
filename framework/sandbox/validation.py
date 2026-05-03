@@ -1,14 +1,13 @@
 """Code validation module for sandbox execution."""
 
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
 class ValidationResult:
     is_valid: bool
-    error_message: Optional[str] = None
-    line_number: Optional[int] = None
+    error_message: str | None = None
+    line_number: int | None = None
 
 
 def validate_code(code: str) -> ValidationResult:

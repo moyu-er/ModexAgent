@@ -17,7 +17,6 @@ from .events import AgentEvent
 from .message_utils import normalize_agent_messages_for_llm
 from .tool_manager import ToolManager
 
-
 R = TypeVar("R", default=Any)
 
 

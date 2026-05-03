@@ -1,7 +1,7 @@
 """EndNode — builds AgentResult and marks completion."""
 from __future__ import annotations
 
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from framework.agents.react.agent import ReActEvent
 from framework.agents.react.constants import ReActMetaKey, ReActNode, ReActReason

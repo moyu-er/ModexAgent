@@ -70,6 +70,7 @@ class _FakeContext:
         self.max_tokens = None
         self.metadata: dict = {}
         self.session_id = "test-session-001"
+        self.runtime = None
         self.extensions: dict[str, Any] = {
             "hooks": [],
             ExtensionKey.MAX_TOOLS_PER_TURN: None,

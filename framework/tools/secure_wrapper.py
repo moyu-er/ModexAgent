@@ -5,18 +5,18 @@ with ApprovalHandler for complete tool security.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    from .toolkit import ToolWrapper
-    from .types import ToolResult
     from ..security import (
         ApprovalHandler,
-        ToolValidator,
-        RiskLevel,
         DefaultAction,
+        RiskLevel,
         SecurityPolicy,
+        ToolValidator,
     )
+    from .toolkit import ToolWrapper
+    from .types import ToolResult
 
 
 @dataclass
@@ -48,30 +48,30 @@ class SecureToolConfig:
             security_policy=SecurityPolicy(...)
         )
     """
-    
+
     validator: Optional["ToolValidator"] = None
     """Validator for this tool. If None, uses security_policy or allows all."""
-    
+
     approval_handler: Optional["ApprovalHandler"] = None
     """Approval handler for this tool. If None, uses security_policy."""
-    
-    risk_policies: Dict["RiskLevel", "DefaultAction"] = field(default_factory=dict)
+
+    risk_policies: dict["RiskLevel", "DefaultAction"] = field(default_factory=dict)
     """Risk level to action mapping. Only used with separate validator/handler."""
-    
+
     default_action: "DefaultAction" = None  # Will be set to ASK in post_init
     """Default action when no policy applies."""
-    
+
     security_policy: Optional["SecurityPolicy"] = None
     """Unified security policy. If set, uses this instead of separate validator/handler."""
-    
+
     def __post_init__(self):
         if self.default_action is None:
             from ..security import DefaultAction
             self.default_action = DefaultAction.ASK
-        
+
         # Set default risk policies if not provided and not using security_policy
         if not self.risk_policies and not self.security_policy:
-            from ..security import RiskLevel, DefaultAction
+            from ..security import DefaultAction, RiskLevel
             self.risk_policies = {
                 RiskLevel.LOW: DefaultAction.ALLOW,
                 RiskLevel.MEDIUM: DefaultAction.ASK,
@@ -107,7 +107,7 @@ class SecureToolWrapper:
         # If command is suspicious: prompts for approval
         # If command is dangerous: returns error
     """
-    
+
     def __init__(self, tool_wrapper: "ToolWrapper", config: SecureToolConfig):
         """Initialize secure tool wrapper.
         
@@ -117,17 +117,17 @@ class SecureToolWrapper:
         """
         self._tool = tool_wrapper
         self._config = config
-    
+
     @property
     def name(self) -> str:
         """Get the tool name."""
         return self._tool.name
-    
+
     @property
     def metadata(self):
         """Get the tool metadata."""
         return self._tool.metadata
-    
+
     async def execute(self, **kwargs) -> "ToolResult":
         """Execute the tool with security checks.
         
@@ -142,11 +142,11 @@ class SecureToolWrapper:
             ToolResult with execution results or error
         """
         from .types import ToolResult
-        
+
         # Use unified security policy if available
         if self._config.security_policy:
             result = await self._config.security_policy.check(self._tool.name, kwargs)
-            
+
             if not result.allowed:
                 return ToolResult(
                     tool_name=self._tool.name,
@@ -154,17 +154,17 @@ class SecureToolWrapper:
                     error=result.reason,
                     result=None,
                 )
-            
+
             # Approved, execute the tool
             return await self._tool.execute(**kwargs)
-        
+
         # Legacy mode: use separate validator and handler
-        from ..security import ValidationStatus, DefaultAction
-        
+        from ..security import DefaultAction, ValidationStatus
+
         # Phase 1: Validation
         if self._config.validator:
             validation = await self._config.validator.validate(self._tool.name, kwargs)
-            
+
             # Handle INVALID: Block immediately
             if validation.status == ValidationStatus.INVALID:
                 return ToolResult(
@@ -173,15 +173,15 @@ class SecureToolWrapper:
                     error=f"Security validation failed: {validation.reason}",
                     result=None,
                 )
-            
+
             # Handle SUSPICIOUS: Enter approval phase
             if validation.status == ValidationStatus.SUSPICIOUS:
                 # Look up policy for this risk level
                 action = self._config.risk_policies.get(
-                    validation.risk_level, 
+                    validation.risk_level,
                     self._config.default_action
                 )
-                
+
                 # DENY: Block without approval
                 if action == DefaultAction.DENY:
                     return ToolResult(
@@ -190,7 +190,7 @@ class SecureToolWrapper:
                         error=f"Blocked: {validation.reason}",
                         result=None,
                     )
-                
+
                 # ASK: Require approval
                 if action == DefaultAction.ASK:
                     if not self._config.approval_handler:
@@ -200,13 +200,13 @@ class SecureToolWrapper:
                             error=f"Approval required but no handler configured: {validation.reason}",
                             result=None,
                         )
-                    
+
                     # Call approval handler
                     approved = await self._config.approval_handler.approve(
                         command=f"{self._tool.name}({kwargs})",
                         reason=validation.reason
                     )
-                    
+
                     if not approved:
                         return ToolResult(
                             tool_name=self._tool.name,
@@ -214,9 +214,9 @@ class SecureToolWrapper:
                             error="Approval denied",
                             result=None,
                         )
-                
+
                 # ALLOW: Continue to execution (fall through)
-        
+
         # Execute the tool
         return await self._tool.execute(**kwargs)
 
@@ -249,7 +249,7 @@ class SecureToolExecutor:
         # Execute with automatic security checks
         result = await executor.execute("bash", command="ls -la")
     """
-    
+
     def __init__(self, security_policy: "SecurityPolicy"):
         """Initialize secure tool executor.
         
@@ -257,8 +257,8 @@ class SecureToolExecutor:
             security_policy: Security policy to apply to all tools
         """
         self._policy = security_policy
-        self._tools: Dict[str, SecureToolWrapper] = {}
-    
+        self._tools: dict[str, SecureToolWrapper] = {}
+
     def register_tool(self, tool_wrapper: "ToolWrapper") -> "SecureToolExecutor":
         """Register a tool with security wrapping.
         
@@ -272,7 +272,7 @@ class SecureToolExecutor:
         secure_tool = SecureToolWrapper(tool_wrapper, config)
         self._tools[tool_wrapper.name] = secure_tool
         return self
-    
+
     def unregister_tool(self, tool_name: str) -> "SecureToolExecutor":
         """Unregister a tool.
         
@@ -285,7 +285,7 @@ class SecureToolExecutor:
         if tool_name in self._tools:
             del self._tools[tool_name]
         return self
-    
+
     async def execute(self, tool_name: str, **kwargs) -> "ToolResult":
         """Execute a tool with security checks.
         
@@ -307,10 +307,10 @@ class SecureToolExecutor:
                 error=f"Tool '{tool_name}' not found",
                 result=None,
             )
-        
+
         return await self._tools[tool_name].execute(**kwargs)
-    
-    def get_tool(self, tool_name: str) -> Optional[SecureToolWrapper]:
+
+    def get_tool(self, tool_name: str) -> SecureToolWrapper | None:
         """Get a registered secure tool.
         
         Args:
@@ -320,7 +320,7 @@ class SecureToolExecutor:
             SecureToolWrapper or None if not found
         """
         return self._tools.get(tool_name)
-    
+
     def list_tools(self) -> list:
         """List all registered tool names.
         

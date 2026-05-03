@@ -223,7 +223,7 @@ async def test_inbox_flush_hook_injects_before_react_iteration(mock_provider):
         tool_manager=MagicMock(),
         max_iterations=1,
         metadata={"session_id": "conv1:main"},
-        extensions={ExtensionKey.HOOKS: [hook]},
+        extensions={"hooks": [hook]},
     )
 
     emitter = BufferingEmitter[ReActEvent]()
@@ -358,7 +358,7 @@ async def test_task_intervention_hook_cancels_react_iteration():
         history=ListMessageHistory([{"role": "user", "content": "start"}]),
         tool_manager=MagicMock(),
         max_iterations=3,
-        extensions={ExtensionKey.HOOKS: [hook]},
+        extensions={"hooks": [hook]},
     )
 
     # 稍微等待让策略 deadline 过期
@@ -439,7 +439,7 @@ async def test_task_progress_hook_reports_to_platform_during_react(broker, memor
         history=ListMessageHistory([{"role": "user", "content": "1+1"}]),
         tool_manager=tm,
         max_iterations=3,
-        extensions={ExtensionKey.HOOKS: [progress_hook]},
+        extensions={"hooks": [progress_hook]},
     )
 
     emitter = BufferingEmitter[ReActEvent]()
@@ -542,8 +542,8 @@ async def test_composite_run_hook_with_inbox_and_intervention(broker, mock_provi
         max_iterations=1,
         metadata={"session_id": "c1:main"},
         extensions={
-            ExtensionKey.HOOKS: [inbox_hook, intervention_hook],
-            ExtensionKey.HOOK_RUNNER: runner,
+            "hooks": [inbox_hook, intervention_hook],
+            "hook_runner": runner,
         },
     )
 

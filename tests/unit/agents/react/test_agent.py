@@ -1,14 +1,13 @@
 """Tests for ReActAgent thin shell."""
 import pytest
-from framework.agents.react.agent import ReActAgent, ReActEvent
-from framework.agents.react.runtime import ReActRuntime
+
+from framework.agents.react.agent import ReActAgent
+from framework.agents.react.graph import ReActGraph
 from framework.core.agent import AgentContext
-from framework.core.context_extensions import ExtensionKey
+from framework.core.graph.engine import GraphEngine
 from framework.core.tool_manager import InMemoryToolManager
 from framework.hook import HookRunner
 from framework.memory.history import ListMessageHistory
-from framework.core.graph.engine import GraphEngine
-from framework.agents.react.graph import ReActGraph
 
 
 class _MockProvider:
@@ -83,7 +82,7 @@ class TestReActAgentRuntime:
             system_prompt="test",
             history=ListMessageHistory(),
             tool_manager=InMemoryToolManager(),
-            extensions={ExtensionKey.HOOK_RUNNER: HookRunner()},
+            extensions={"hook_runner": HookRunner()},
         )
         emitter = _Emitter()
         try:
@@ -121,7 +120,7 @@ class TestReActAgentRuntime:
             system_prompt="test",
             history=ListMessageHistory(),
             tool_manager=InMemoryToolManager(),
-            extensions={ExtensionKey.HOOK_RUNNER: HookRunner()},
+            extensions={"hook_runner": HookRunner()},
         )
         emitter = _Emitter()
         try:

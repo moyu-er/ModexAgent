@@ -9,8 +9,8 @@ logger = logging.getLogger(__name__)
 from framework.agents.react.agent import ReActEvent
 from framework.agents.react.constants import ReActMetaKey, ReActNode, ReActReason
 from framework.approval.constants import ApprovalDecision, ApprovalTier
-from framework.control.runtime import ControlPhase
 from framework.approval.state import ApprovalRequest
+from framework.control.runtime import ControlPhase
 from framework.core.agent import AgentContext, ctx_ext
 from framework.core.context_extensions import ExtensionKey
 from framework.core.emitter import ToolCall

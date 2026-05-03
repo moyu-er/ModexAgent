@@ -35,11 +35,11 @@ Example:
     result = await executor.execute("shell_tool", {"command": "ls -la"})
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
+from .exceptions import SecurityError
 from .policy import SecurityPolicy
 from .validators import ValidationStatus
-from .exceptions import SecurityError
 
 
 class LocalSecureExecutor:
@@ -62,7 +62,7 @@ class LocalSecureExecutor:
             arguments={"command": "ls -la"}
         )
     """
-    
+
     def __init__(self, security_policy: SecurityPolicy):
         """初始化本地安全执行器
         
@@ -70,12 +70,12 @@ class LocalSecureExecutor:
             security_policy: 安全策略配置
         """
         self._policy = security_policy
-    
+
     async def validate(
         self,
         tool_name: str,
-        arguments: Dict[str, Any]
-    ) -> tuple[bool, Optional[str]]:
+        arguments: dict[str, Any]
+    ) -> tuple[bool, str | None]:
         """验证工具调用是否安全
         
         Args:
@@ -87,7 +87,7 @@ class LocalSecureExecutor:
         """
         try:
             result = await self._policy.validate(tool_name, arguments)
-            
+
             if result.status == ValidationStatus.VALID:
                 return True, None
             elif result.status == ValidationStatus.INVALID:
@@ -99,17 +99,17 @@ class LocalSecureExecutor:
                     return True, None
                 else:
                     return False, f"Denied: {result.reason}"
-            
+
             return False, "Unknown validation status"
-            
+
         except Exception as e:
             return False, f"Validation error: {e}"
-    
+
     async def execute(
         self,
         tool_name: str,
-        arguments: Dict[str, Any],
-        actual_executor: Optional[Any] = None
+        arguments: dict[str, Any],
+        actual_executor: Any | None = None
     ) -> Any:
         """安全执行工具
         
@@ -126,14 +126,14 @@ class LocalSecureExecutor:
         """
         # 1. 验证
         allowed, reason = await self.validate(tool_name, arguments)
-        
+
         if not allowed:
             raise SecurityError(f"Tool '{tool_name}' execution blocked: {reason}")
-        
+
         # 2. 执行（调用实际执行器）
         if actual_executor is None:
             raise ValueError("actual_executor is required for execution")
-        
+
         # 支持多种执行器类型
         if hasattr(actual_executor, 'execute'):
             # Tool 对象
@@ -168,7 +168,7 @@ class LocalSecureToolWrapper:
         # 执行（自动安全校验）
         result = await secure_shell.execute(command="ls -la")
     """
-    
+
     def __init__(
         self,
         tool: Any,
@@ -186,22 +186,22 @@ class LocalSecureToolWrapper:
         self._policy = security_policy
         self._auto_approve_low_risk = auto_approve_low_risk
         self._executor = LocalSecureExecutor(security_policy)
-    
+
     @property
     def name(self) -> str:
         """工具名称"""
         return self._tool.name
-    
+
     @property
     def description(self) -> str:
         """工具描述"""
         return getattr(self._tool, 'description', '')
-    
+
     @property
-    def parameters(self) -> Dict[str, Any]:
+    def parameters(self) -> dict[str, Any]:
         """工具参数定义"""
         return getattr(self._tool, 'parameters', {})
-    
+
     async def execute(self, **kwargs) -> Any:
         """安全执行工具
         

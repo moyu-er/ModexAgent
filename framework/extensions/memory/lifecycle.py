@@ -19,11 +19,12 @@ Example:
 """
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
-from enum import Enum, auto
-from typing import Any, Dict, List, Optional, Protocol
+from datetime import datetime
+from enum import Enum
+from typing import Any, Protocol
 
 from framework.core.memory import MemoryEntry, MemoryStore
+
 from .config import LifecyclePolicy
 
 
@@ -45,7 +46,7 @@ class MemoryEvaluation:
     age_days: int
     reason: str  # 状态原因说明
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "entry_id": self.entry.id,
             "status": self.status.value,
@@ -61,11 +62,11 @@ class ArchiveStore(Protocol):
         """归档记忆"""
         ...
 
-    async def retrieve(self, entry_id: str) -> Optional[MemoryEntry]:
+    async def retrieve(self, entry_id: str) -> MemoryEntry | None:
         """检索归档"""
         ...
 
-    async def list_archives(self, limit: int = 100) -> List[MemoryEntry]:
+    async def list_archives(self, limit: int = 100) -> list[MemoryEntry]:
         """列出归档"""
         ...
 
@@ -96,7 +97,7 @@ class MemoryLifecycleManager:
     def __init__(
         self,
         policy: LifecyclePolicy,
-        archive_store: Optional[ArchiveStore] = None,
+        archive_store: ArchiveStore | None = None,
     ):
         """
         初始化生命周期管理器。
@@ -178,7 +179,7 @@ class MemoryLifecycleManager:
 
     async def cleanup(
         self, memory_store: MemoryStore, agent_id: str, force: bool = False
-    ) -> List[MemoryEntry]:
+    ) -> list[MemoryEntry]:
         """
         执行清理。
 
@@ -269,7 +270,7 @@ class MemoryLifecycleManager:
     async def restore_entry(
         self,
         entry_id: str,
-    ) -> Optional[MemoryEntry]:
+    ) -> MemoryEntry | None:
         """
         从归档恢复记忆。
 
@@ -284,7 +285,7 @@ class MemoryLifecycleManager:
 
         return await self.archive_store.retrieve(entry_id)
 
-    def get_stats(self, evaluations: List[MemoryEvaluation]) -> Dict[str, Any]:
+    def get_stats(self, evaluations: list[MemoryEvaluation]) -> dict[str, Any]:
         """
         获取评估统计信息。
 

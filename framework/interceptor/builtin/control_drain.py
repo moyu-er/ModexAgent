@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from framework.control.types import ControlCommandType, ControlScope
 from framework.interceptor.abc import (
@@ -92,6 +92,11 @@ class ControlDrainInterceptor:
         ctx: AgentContext[Any],
         scope: ControlScope,
     ) -> None:
+        logger.debug(
+            "ControlDrainInterceptor: using legacy drain (no ControlRuntime). "
+            "Consider upgrading to ControlRuntime for durable store support. "
+            "session=%s", ctx.session_id,
+        )
         commands = await self._channel.drain(
             scope, limit=self._max_commands,
             command_types={

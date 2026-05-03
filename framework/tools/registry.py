@@ -6,7 +6,7 @@
 推荐使用 InMemoryToolManager 直接替代。
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from ..core.tool_manager import InMemoryToolManager
 
@@ -34,7 +34,7 @@ class ToolRegistry(InMemoryToolManager):
         # 使用默认配置初始化 ToolManager
         super().__init__()
 
-    def get(self, tool_name: str) -> Optional[Any]:
+    def get(self, tool_name: str) -> Any | None:
         """
         获取工具。
 
@@ -58,7 +58,7 @@ class ToolRegistry(InMemoryToolManager):
         """
         return self.is_registered(tool_name)
 
-    def get_definitions(self) -> List[Dict[str, Any]]:
+    def get_definitions(self) -> list[dict[str, Any]]:
         """
         获取所有工具的schema定义（用于LLM）。
 
@@ -67,7 +67,7 @@ class ToolRegistry(InMemoryToolManager):
         """
         return self.get_tool_descriptions()
 
-    async def execute_tool(self, tool_name: str, params: Dict[str, Any]) -> str:
+    async def execute_tool(self, tool_name: str, params: dict[str, Any]) -> str:
         """
         执行工具（兼容层方法，返回字符串而非 ToolResult）。
 
@@ -100,7 +100,7 @@ class ToolRegistry(InMemoryToolManager):
                 new_registry.register(tool)
         return new_registry
 
-    def filter_tools(self, include: Optional[List[str]] = None) -> "ToolRegistry":
+    def filter_tools(self, include: list[str] | None = None) -> "ToolRegistry":
         """
         筛选工具，创建新的注册表。
 
@@ -118,7 +118,7 @@ class ToolRegistry(InMemoryToolManager):
                     new_registry.register(tool)
         return new_registry
 
-    def exclude_tools(self, exclude: List[str]) -> "ToolRegistry":
+    def exclude_tools(self, exclude: list[str]) -> "ToolRegistry":
         """
         排除指定工具，创建新的注册表。
 

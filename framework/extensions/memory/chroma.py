@@ -1,12 +1,10 @@
 """ChromaDB向量记忆存储实现"""
 
-import json
-import hashlib
 from datetime import datetime
-from typing import List, Optional, Dict, Any
-import numpy as np
+from typing import Any
 
-from framework.core.memory import MemoryStore, MemoryEntry
+from framework.core.memory import MemoryEntry, MemoryStore
+
 from .embedding_config import get_cached_ef
 
 
@@ -34,7 +32,7 @@ class ChromaMemoryStore(MemoryStore):
 
     def __init__(
         self,
-        persist_directory: Optional[str] = None,
+        persist_directory: str | None = None,
         embedding_function=None,
         collection_name: str = "agent_memories",
         distance_func: str = "cosine",
@@ -80,7 +78,7 @@ class ChromaMemoryStore(MemoryStore):
             self._client = chromadb.EphemeralClient()
 
         # 缓存collection引用
-        self._collections: Dict[str, Any] = {}
+        self._collections: dict[str, Any] = {}
 
     def _get_collection(self, agent_id: str):
         """获取或创建agent的collection"""
@@ -141,7 +139,7 @@ class ChromaMemoryStore(MemoryStore):
         agent_id: str,
         query: str,
         limit: int = 5,
-    ) -> List[MemoryEntry]:
+    ) -> list[MemoryEntry]:
         """
         语义搜索记忆。
 
@@ -196,7 +194,7 @@ class ChromaMemoryStore(MemoryStore):
         self,
         agent_id: str,
         limit: int = 10,
-    ) -> List[MemoryEntry]:
+    ) -> list[MemoryEntry]:
         """
         获取最近添加的记忆。
 
@@ -257,7 +255,7 @@ class ChromaMemoryStore(MemoryStore):
     async def delete(
         self,
         agent_id: str,
-        content_filter: Optional[str] = None,
+        content_filter: str | None = None,
     ) -> int:
         """
         删除记忆。
@@ -319,7 +317,7 @@ class ChromaMemoryStore(MemoryStore):
             if agent_id in self._collections:
                 del self._collections[agent_id]
 
-    def get_stats(self, agent_id: str) -> Dict[str, Any]:
+    def get_stats(self, agent_id: str) -> dict[str, Any]:
         """
         获取记忆统计信息。
 

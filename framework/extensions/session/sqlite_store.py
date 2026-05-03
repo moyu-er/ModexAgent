@@ -31,7 +31,6 @@ import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
 
 from framework.core.session import Session, SessionStore
 
@@ -141,7 +140,7 @@ class SQLiteSessionStore(SessionStore):
             updated_at=datetime.fromisoformat(row["updated_at"]),
         )
 
-    async def get(self, session_id: str) -> Optional[Session]:
+    async def get(self, session_id: str) -> Session | None:
         """
         获取会话。
 
@@ -220,7 +219,7 @@ class SQLiteSessionStore(SessionStore):
         finally:
             await conn.close()
 
-    async def list_by_user(self, user_id: str, limit: int = 10, offset: int = 0) -> List[Session]:
+    async def list_by_user(self, user_id: str, limit: int = 10, offset: int = 0) -> list[Session]:
         """
         列出用户的所有会话。
 
@@ -251,7 +250,7 @@ class SQLiteSessionStore(SessionStore):
         finally:
             await conn.close()
 
-    async def list_by_agent(self, agent_id: str, limit: int = 10, offset: int = 0) -> List[Session]:
+    async def list_by_agent(self, agent_id: str, limit: int = 10, offset: int = 0) -> list[Session]:
         """
         列出 Agent 的所有会话。
 
@@ -280,7 +279,7 @@ class SQLiteSessionStore(SessionStore):
         finally:
             await conn.close()
 
-    async def list_all(self, limit: int = 10, offset: int = 0) -> List[Session]:
+    async def list_all(self, limit: int = 10, offset: int = 0) -> list[Session]:
         """
         列出所有会话。
 
@@ -347,9 +346,9 @@ class InMemorySessionStore(SessionStore):
     """
 
     def __init__(self):
-        self._sessions: Dict[str, Session] = {}
+        self._sessions: dict[str, Session] = {}
 
-    async def get(self, session_id: str) -> Optional[Session]:
+    async def get(self, session_id: str) -> Session | None:
         return self._sessions.get(session_id)
 
     async def save(self, session: Session) -> None:
@@ -362,7 +361,7 @@ class InMemorySessionStore(SessionStore):
             return True
         return False
 
-    async def list_by_user(self, user_id: str, limit: int = 10, offset: int = 0) -> List[Session]:
+    async def list_by_user(self, user_id: str, limit: int = 10, offset: int = 0) -> list[Session]:
         sessions = [s for s in self._sessions.values() if s.user_id == user_id]
         sessions.sort(key=lambda s: s.updated_at, reverse=True)
         return sessions[offset : offset + limit]

@@ -7,6 +7,7 @@ with query-aware filtering and token budget enforcement.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+
 from framework.memory.core.models import LongTermMemory
 from framework.memory.utils import estimate_text_tokens
 from framework.utils.helpers import strip_think

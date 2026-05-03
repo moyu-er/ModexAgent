@@ -10,7 +10,7 @@
 
 import json
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from ..core.types import ToolCall
 
@@ -19,9 +19,9 @@ from ..core.types import ToolCall
 class ToolCallChunk:
     """工具调用块 - 来自单个chunk的部分数据"""
     index: int                      # 工具调用索引(支持多个工具调用)
-    id: Optional[str] = None       # 工具调用ID
-    name: Optional[str] = None     # 函数名
-    args: Optional[str] = None     # 参数JSON字符串(可能不完整)
+    id: str | None = None       # 工具调用ID
+    name: str | None = None     # 函数名
+    args: str | None = None     # 参数JSON字符串(可能不完整)
 
 
 @dataclass
@@ -67,7 +67,7 @@ class AccumulatingToolCall:
         """检查是否为空(既没有name也没有args)"""
         return not self.name and not self.args
 
-    def to_tool_call(self, index: int = 0) -> Optional[ToolCall]:
+    def to_tool_call(self, index: int = 0) -> ToolCall | None:
         """转换为ToolCall对象
 
         Args:
@@ -80,7 +80,7 @@ class AccumulatingToolCall:
             return None
 
         # 解析参数
-        args: Dict[str, Any] = {}
+        args: dict[str, Any] = {}
         if self.args:
             try:
                 args = json.loads(self.args)
@@ -107,7 +107,7 @@ class AccumulatingToolCall:
         Returns:
             ToolCall对象
         """
-        args: Dict[str, Any] = {}
+        args: dict[str, Any] = {}
         if self.args:
             try:
                 args = json.loads(self.args)
@@ -159,10 +159,10 @@ class ToolCallAccumulator:
 
     def __init__(self):
         """初始化累积器"""
-        self._accumulating: Dict[int, AccumulatingToolCall] = {}
-        self._completed: List[ToolCall] = []
+        self._accumulating: dict[int, AccumulatingToolCall] = {}
+        self._completed: list[ToolCall] = []
 
-    def add_chunk(self, chunk: ToolCallChunk) -> List[ToolCall]:
+    def add_chunk(self, chunk: ToolCallChunk) -> list[ToolCall]:
         """
         添加一个工具调用块。
 
@@ -193,7 +193,7 @@ class ToolCallAccumulator:
 
         return completed
 
-    def get_pending(self) -> List[AccumulatingToolCall]:
+    def get_pending(self) -> list[AccumulatingToolCall]:
         """
         获取仍在累积中的工具调用。
 
@@ -202,7 +202,7 @@ class ToolCallAccumulator:
         """
         return list(self._accumulating.values())
 
-    def get_completed(self) -> List[ToolCall]:
+    def get_completed(self) -> list[ToolCall]:
         """
         获取已完成的工具调用。
 
@@ -211,7 +211,7 @@ class ToolCallAccumulator:
         """
         return self._completed.copy()
 
-    def flush_pending(self) -> List[ToolCall]:
+    def flush_pending(self) -> list[ToolCall]:
         """
         将所有累积中的工具调用转换为ToolCall(即使不完整)。
 
@@ -243,7 +243,7 @@ class ToolCallAccumulator:
         return len(self._accumulating)
 
 
-def parse_tool_call_chunks_from_delta(tool_calls_data: Any) -> List[ToolCallChunk]:
+def parse_tool_call_chunks_from_delta(tool_calls_data: Any) -> list[ToolCallChunk]:
     """
     从工具调用数据中解析工具调用块列表。
 

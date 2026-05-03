@@ -21,10 +21,10 @@ except ImportError:
 # 配置和生命周期管理
 try:
     from .config import (
-        MemoryConfig,
-        LifecyclePolicy,
-        StorageBackend,
         MEMORY_CONFIG_TEMPLATES,
+        LifecyclePolicy,
+        MemoryConfig,
+        StorageBackend,
     )
     HAS_CONFIG = True
 except ImportError:
@@ -36,9 +36,9 @@ except ImportError:
 
 try:
     from .lifecycle import (
+        MemoryEvaluation,
         MemoryLifecycleManager,
         MemoryStatus,
-        MemoryEvaluation,
     )
     HAS_LIFECYCLE = True
 except ImportError:

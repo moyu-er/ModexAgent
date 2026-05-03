@@ -5,13 +5,13 @@ for potentially dangerous operations before execution.
 """
 
 import asyncio
-import os
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
-from enum import Enum, auto
+from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 
 class ValidationStatus(Enum):
@@ -48,7 +48,7 @@ class ValidationResult:
     status: ValidationStatus
     reason: str
     risk_level: RiskLevel
-    
+
     @classmethod
     def valid(cls, reason: str = "Validation passed") -> "ValidationResult":
         """Create a valid result."""
@@ -57,7 +57,7 @@ class ValidationResult:
             reason=reason,
             risk_level=RiskLevel.LOW
         )
-    
+
     @classmethod
     def invalid(cls, reason: str, risk_level: RiskLevel = RiskLevel.CRITICAL) -> "ValidationResult":
         """Create an invalid result."""
@@ -66,7 +66,7 @@ class ValidationResult:
             reason=reason,
             risk_level=risk_level
         )
-    
+
     @classmethod
     def suspicious(cls, reason: str, risk_level: RiskLevel = RiskLevel.MEDIUM) -> "ValidationResult":
         """Create a suspicious result."""
@@ -97,9 +97,9 @@ class ToolValidator(ABC):
             def name(self) -> str:
                 return "my_validator"
     """
-    
+
     @abstractmethod
-    async def validate(self, tool_name: str, arguments: Dict[str, Any]) -> ValidationResult:
+    async def validate(self, tool_name: str, arguments: dict[str, Any]) -> ValidationResult:
         """Validate a tool invocation.
         
         Args:
@@ -110,7 +110,7 @@ class ToolValidator(ABC):
             ValidationResult indicating the validation status
         """
         pass
-    
+
     @property
     @abstractmethod
     def name(self) -> str:
@@ -134,7 +134,7 @@ class CommandValidator(ToolValidator):
         result = await validator.validate("bash", {"command": "rm -rf /"})
         # result.status == ValidationStatus.INVALID
     """
-    
+
     # Default dangerous patterns for command validation (BLOCKED - cannot be overridden)
     DEFAULT_DANGEROUS_PATTERNS = [
         # Filesystem destruction - these are irreversible
@@ -179,12 +179,12 @@ class CommandValidator(ToolValidator):
         r"mount\s+",
         r"umount\s+",
     ]
-    
+
     def __init__(
         self,
-        dangerous_patterns: Optional[List[str]] = None,
-        suspicious_patterns: Optional[List[str]] = None,
-        blocked_commands: Optional[List[str]] = None,
+        dangerous_patterns: list[str] | None = None,
+        suspicious_patterns: list[str] | None = None,
+        blocked_commands: list[str] | None = None,
         command_key: str = "command"
     ):
         """Initialize command validator.
@@ -199,7 +199,7 @@ class CommandValidator(ToolValidator):
         self.suspicious_patterns = suspicious_patterns or self.DEFAULT_SUSPICIOUS_PATTERNS
         self.blocked_commands = blocked_commands or []
         self.command_key = command_key
-        
+
         # Compile patterns for efficiency
         self._dangerous_regexes = [
             re.compile(p, re.IGNORECASE) for p in self.dangerous_patterns
@@ -207,13 +207,13 @@ class CommandValidator(ToolValidator):
         self._suspicious_regexes = [
             re.compile(p, re.IGNORECASE) for p in self.suspicious_patterns
         ]
-    
-    async def validate(self, tool_name: str, arguments: Dict[str, Any]) -> ValidationResult:
+
+    async def validate(self, tool_name: str, arguments: dict[str, Any]) -> ValidationResult:
         """Validate a command invocation."""
         command = arguments.get(self.command_key, "")
         if not command:
             return ValidationResult.valid("No command to validate")
-        
+
         # Check blocked commands first (exact match)
         for blocked in self.blocked_commands:
             if blocked in command:
@@ -221,7 +221,7 @@ class CommandValidator(ToolValidator):
                     f"Command contains blocked pattern: {blocked}",
                     RiskLevel.CRITICAL
                 )
-        
+
         # Check dangerous patterns
         for pattern in self._dangerous_regexes:
             if pattern.search(command):
@@ -229,7 +229,7 @@ class CommandValidator(ToolValidator):
                     f"Matched dangerous pattern: {pattern.pattern}",
                     RiskLevel.CRITICAL
                 )
-        
+
         # Check suspicious patterns
         for pattern in self._suspicious_regexes:
             if pattern.search(command):
@@ -237,9 +237,9 @@ class CommandValidator(ToolValidator):
                     f"Matched suspicious pattern: {pattern.pattern}",
                     RiskLevel.HIGH
                 )
-        
+
         return ValidationResult.valid("Command looks safe")
-    
+
     @property
     def name(self) -> str:
         return "command_validator"
@@ -261,10 +261,10 @@ class FilePathValidator(ToolValidator):
         result = await validator.validate("read_file", {"path": "../../../etc/passwd"})
         # result.status == ValidationStatus.SUSPICIOUS
     """
-    
+
     def __init__(
         self,
-        allowed_paths: Optional[List[str]] = None,
+        allowed_paths: list[str] | None = None,
         allow_absolute: bool = True,
         path_key: str = "path",
         block_traversal: bool = True
@@ -281,8 +281,8 @@ class FilePathValidator(ToolValidator):
         self.allow_absolute = allow_absolute
         self.path_key = path_key
         self.block_traversal = block_traversal
-    
-    async def validate(self, tool_name: str, arguments: Dict[str, Any]) -> ValidationResult:
+
+    async def validate(self, tool_name: str, arguments: dict[str, Any]) -> ValidationResult:
         """Validate a file path argument."""
         path = arguments.get(self.path_key, "")
         if not path:
@@ -357,7 +357,7 @@ class FilePathValidator(ToolValidator):
             return True
         except ValueError:
             return False
-    
+
     @property
     def name(self) -> str:
         return "file_path_validator"
@@ -379,38 +379,38 @@ class CompositeValidator(ToolValidator):
         result = await validator.validate("bash", {"command": "ls /tmp"})
         # Both validators must pass
     """
-    
-    def __init__(self, validators: List[ToolValidator]):
+
+    def __init__(self, validators: list[ToolValidator]):
         """Initialize composite validator.
         
         Args:
             validators: List of validators to chain
         """
         self.validators = validators
-    
-    async def validate(self, tool_name: str, arguments: Dict[str, Any]) -> ValidationResult:
+
+    async def validate(self, tool_name: str, arguments: dict[str, Any]) -> ValidationResult:
         """Validate using all validators in sequence."""
         suspicious_results = []
-        
+
         for validator in self.validators:
             result = await validator.validate(tool_name, arguments)
-            
+
             # Short-circuit on INVALID
             if result.status == ValidationStatus.INVALID:
                 return result
-            
+
             # Collect SUSPICIOUS results
             if result.status == ValidationStatus.SUSPICIOUS:
                 suspicious_results.append(result)
-        
+
         # If any SUSPICIOUS, return the highest risk one
         if suspicious_results:
             # Sort by risk level (highest first)
             suspicious_results.sort(key=lambda r: r.risk_level.value, reverse=True)
             return suspicious_results[0]
-        
+
         return ValidationResult.valid("All validators passed")
-    
+
     @property
     def name(self) -> str:
         return f"composite({', '.join(v.name for v in self.validators)})"
@@ -444,9 +444,7 @@ class FunctionValidator(ToolValidator):
 
     def __init__(
         self,
-        validators: Optional[
-            List[Callable[[str, Dict[str, Any]], Any]]
-        ] = None,
+        validators: list[Callable[[str, dict[str, Any]], Any]] | None = None,
     ):
         """Initialize with validation functions.
 
@@ -462,7 +460,7 @@ class FunctionValidator(ToolValidator):
         else:
             self.validators = validators
 
-    async def validate(self, tool_name: str, arguments: Dict[str, Any]) -> ValidationResult:
+    async def validate(self, tool_name: str, arguments: dict[str, Any]) -> ValidationResult:
         """Validate using custom functions."""
         for validator in self.validators:
             try:
@@ -530,7 +528,7 @@ class ParameterValidator(ToolValidator):
 
     def __init__(
         self,
-        tool_constraints: Dict[str, Dict[str, Dict[str, Any]]],
+        tool_constraints: dict[str, dict[str, dict[str, Any]]],
     ):
         """Initialize with tool-specific parameter constraints.
 
@@ -544,7 +542,7 @@ class ParameterValidator(ToolValidator):
         """
         self.tool_constraints = tool_constraints
 
-    async def validate(self, tool_name: str, arguments: Dict[str, Any]) -> ValidationResult:
+    async def validate(self, tool_name: str, arguments: dict[str, Any]) -> ValidationResult:
         """Validate tool arguments against constraints."""
         # If no constraints for this tool, skip validation
         if tool_name not in self.tool_constraints:
@@ -586,8 +584,8 @@ class ParameterValidator(ToolValidator):
         return ValidationResult.valid("All parameter constraints satisfied")
 
     def _validate_range(
-        self, value: Any, constraints: Dict[str, Any], param_name: str
-    ) -> Optional[ValidationResult]:
+        self, value: Any, constraints: dict[str, Any], param_name: str
+    ) -> ValidationResult | None:
         """Validate numeric range constraints."""
         try:
             num_value = float(value)
@@ -611,8 +609,8 @@ class ParameterValidator(ToolValidator):
         return None
 
     def _validate_enum(
-        self, value: Any, constraints: Dict[str, Any], param_name: str
-    ) -> Optional[ValidationResult]:
+        self, value: Any, constraints: dict[str, Any], param_name: str
+    ) -> ValidationResult | None:
         """Validate enum constraints."""
         allowed = constraints["enum"]
         if value not in allowed:
@@ -623,8 +621,8 @@ class ParameterValidator(ToolValidator):
         return None
 
     def _validate_pattern(
-        self, value: Any, constraints: Dict[str, Any], param_name: str
-    ) -> Optional[ValidationResult]:
+        self, value: Any, constraints: dict[str, Any], param_name: str
+    ) -> ValidationResult | None:
         """Validate regex pattern constraints."""
         pattern = constraints["pattern"]
         flags = constraints.get("flags", 0)
@@ -642,8 +640,8 @@ class ParameterValidator(ToolValidator):
         return None
 
     async def _validate_custom(
-        self, value: Any, constraints: Dict[str, Any], param_name: str, all_args: Dict[str, Any]
-    ) -> Optional[ValidationResult]:
+        self, value: Any, constraints: dict[str, Any], param_name: str, all_args: dict[str, Any]
+    ) -> ValidationResult | None:
         """Validate using custom function."""
         custom_fn = constraints["custom"]
 

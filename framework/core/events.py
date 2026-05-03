@@ -3,8 +3,8 @@
 提供 AgentEvent ABC 和 EmitterConfig 数据类，支持事件过滤。
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Optional, Set
 
 
 class AgentEvent:
@@ -37,14 +37,14 @@ class EmitterConfig:
         )
     """
     # 启用的事件类型（None 表示全部启用）
-    enabled_events: Optional[Set[str]] = None
+    enabled_events: set[str] | None = None
 
     # 禁用的事件类型（优先级高于 enabled_events）
-    disabled_events: Set[str] = field(default_factory=set)
+    disabled_events: set[str] = field(default_factory=set)
 
     # 模型内容过滤器（可选）
     # 例如：过滤掉 <think> 标签内容
-    content_filter: Optional[Callable[[str], str]] = None
+    content_filter: Callable[[str], str] | None = None
 
     # 工具结果最大长度（超出截断）
     max_tool_result_length: int = 2000

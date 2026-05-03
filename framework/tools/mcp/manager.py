@@ -6,19 +6,19 @@ Unified management of MCP connections, supporting stdio, sse, and streamable_htt
 import asyncio
 import logging
 from contextlib import AsyncExitStack
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from mcp import ClientSession
 
 from framework.tools.mcp.client import (
+    _DEFAULT_TOOL_TIMEOUT,
+    _STDIO_POLLUTION_MARKERS,
+    _TRANSPORT_ALIASES,
     BaseMCPClient,
     SSEMCPClient,
     StdioMCPClient,
     StreamableHttpMCPClient,
     TransportType,
-    _TRANSPORT_ALIASES,
-    _DEFAULT_TOOL_TIMEOUT,
-    _STDIO_POLLUTION_MARKERS,
 )
 
 _logger = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ class MCPClientManager:
     3. streamable_http transport (Streamable HTTP)
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: dict[str, Any] | None = None):
         """Initialize MCP client manager.
 
         Args:
@@ -46,8 +46,8 @@ class MCPClientManager:
                 {server_name: {transport, command, args, url, headers, env, enabled, tool_timeout, enabled_tools, ...}}
                 If None, uses empty config (servers must be provided explicitly).
         """
-        self.clients: Dict[str, BaseMCPClient] = {}
-        self._server_stacks: Dict[str, AsyncExitStack] = {}
+        self.clients: dict[str, BaseMCPClient] = {}
+        self._server_stacks: dict[str, AsyncExitStack] = {}
         self._initialized = False
         self._custom_config = config or {}
         self._reconnect_lock = asyncio.Lock()
@@ -61,7 +61,7 @@ class MCPClientManager:
 
         servers = self._custom_config.items()
 
-        tasks: List[asyncio.Task] = []
+        tasks: list[asyncio.Task] = []
         server_names = list(self._custom_config.keys())
 
         for name, server_config in servers:
@@ -88,8 +88,8 @@ class MCPClientManager:
         _logger.info("[MCP Manager] Initialized %d MCP servers", len(self.clients))
 
     async def _connect_single(
-        self, name: str, server_config: Dict[str, Any]
-    ) -> Optional[tuple[str, BaseMCPClient]]:
+        self, name: str, server_config: dict[str, Any]
+    ) -> tuple[str, BaseMCPClient] | None:
         """Connect to a single MCP server."""
         server_stack = AsyncExitStack()
         await server_stack.__aenter__()
@@ -162,11 +162,10 @@ class MCPClientManager:
         self,
         name: str,
         transport: str,
-        server_config: Dict[str, Any],
+        server_config: dict[str, Any],
         server_stack: AsyncExitStack,
-    ) -> Optional[BaseMCPClient]:
+    ) -> BaseMCPClient | None:
         """Create MCP client based on transport type."""
-        from mcp import ClientSession
 
         if transport == TransportType.STDIO:
             return await self._create_stdio_client(name, server_config, server_stack)
@@ -180,12 +179,12 @@ class MCPClientManager:
     async def _create_stdio_client(
         self,
         name: str,
-        server_config: Dict[str, Any],
+        server_config: dict[str, Any],
         server_stack: AsyncExitStack,
     ) -> BaseMCPClient:
         """Create stdio MCP client."""
-        from mcp.client.stdio import stdio_client
         from mcp import StdioServerParameters
+        from mcp.client.stdio import stdio_client
 
         command = server_config.get("command")
         if not command:
@@ -213,12 +212,12 @@ class MCPClientManager:
     async def _create_sse_client(
         self,
         name: str,
-        server_config: Dict[str, Any],
+        server_config: dict[str, Any],
         server_stack: AsyncExitStack,
     ) -> BaseMCPClient:
         """Create SSE MCP client."""
-        from mcp.client.sse import sse_client
         import httpx
+        from mcp.client.sse import sse_client
 
         url = server_config.get("url")
         if not url:
@@ -227,9 +226,9 @@ class MCPClientManager:
         config_headers = server_config.get("headers", {})
 
         def httpx_client_factory(
-            headers: Optional[Dict[str, str]] = None,
-            timeout: Optional[httpx.Timeout] = None,
-            auth: Optional[httpx.Auth] = None,
+            headers: dict[str, str] | None = None,
+            timeout: httpx.Timeout | None = None,
+            auth: httpx.Auth | None = None,
         ) -> httpx.AsyncClient:
             merged_headers = {
                 "Accept": "application/json, text/event-stream",
@@ -260,12 +259,12 @@ class MCPClientManager:
     async def _create_streamable_http_client(
         self,
         name: str,
-        server_config: Dict[str, Any],
+        server_config: dict[str, Any],
         server_stack: AsyncExitStack,
     ) -> BaseMCPClient:
         """Create Streamable HTTP MCP client."""
-        from mcp.client.streamable_http import streamable_http_client
         import httpx
+        from mcp.client.streamable_http import streamable_http_client
 
         url = server_config.get("url")
         if not url:
@@ -347,7 +346,7 @@ class MCPClientManager:
                 await asyncio.sleep(delay)
         return False
 
-    async def reconnect(self, server_name: Optional[str] = None) -> bool:
+    async def reconnect(self, server_name: str | None = None) -> bool:
         """Reconnect to one or all MCP servers.
 
         Args:
@@ -383,9 +382,9 @@ class MCPClientManager:
         self,
         server_name: str,
         tool_name: str,
-        params: Dict[str, Any],
+        params: dict[str, Any],
         timeout: int = _DEFAULT_TOOL_TIMEOUT,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Execute a tool on the specified server."""
         client = self.clients.get(server_name)
         if not client:
@@ -398,7 +397,7 @@ class MCPClientManager:
         server_name: str,
         uri: str,
         timeout: int = _DEFAULT_TOOL_TIMEOUT,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Read a resource from the specified server."""
         client = self.clients.get(server_name)
         if not client:
@@ -410,9 +409,9 @@ class MCPClientManager:
         self,
         server_name: str,
         prompt_name: str,
-        arguments: Optional[Dict[str, Any]] = None,
+        arguments: dict[str, Any] | None = None,
         timeout: int = _DEFAULT_TOOL_TIMEOUT,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get a prompt from the specified server."""
         client = self.clients.get(server_name)
         if not client:
@@ -420,7 +419,7 @@ class MCPClientManager:
 
         return await client.get_prompt(prompt_name, arguments=arguments, timeout=timeout)
 
-    async def list_tools(self, server_name: str) -> List[Dict[str, Any]]:
+    async def list_tools(self, server_name: str) -> list[dict[str, Any]]:
         """List tools on the specified server."""
         client = self.clients.get(server_name)
         if not client:
@@ -428,7 +427,7 @@ class MCPClientManager:
 
         return await client.list_tools()
 
-    async def list_resources(self, server_name: str) -> List[Dict[str, Any]]:
+    async def list_resources(self, server_name: str) -> list[dict[str, Any]]:
         """List resources on the specified server."""
         client = self.clients.get(server_name)
         if not client:
@@ -436,7 +435,7 @@ class MCPClientManager:
 
         return await client.list_resources()
 
-    async def list_prompts(self, server_name: str) -> List[Dict[str, Any]]:
+    async def list_prompts(self, server_name: str) -> list[dict[str, Any]]:
         """List prompts on the specified server."""
         client = self.clients.get(server_name)
         if not client:
@@ -444,7 +443,7 @@ class MCPClientManager:
 
         return await client.list_prompts()
 
-    async def list_all_tools(self) -> Dict[str, List[Dict[str, Any]]]:
+    async def list_all_tools(self) -> dict[str, list[dict[str, Any]]]:
         """List tools on all servers."""
         result = {}
         for name, client in self.clients.items():
@@ -457,6 +456,6 @@ class MCPClientManager:
         return result
 
     @property
-    def connected_servers(self) -> List[str]:
+    def connected_servers(self) -> list[str]:
         """Get list of connected servers."""
         return list(self.clients.keys())

@@ -239,7 +239,7 @@ class MemorySystemContextManager(ContextManager):
             tail = history[-len(recovered):]
             overlap = all(
                 h.role == r.role and h.content == r.content
-                for h, r in zip(tail, recovered)
+                for h, r in zip(tail, recovered, strict=False)
             )
             if overlap:
                 logger.debug(

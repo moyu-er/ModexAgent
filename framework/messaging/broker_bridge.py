@@ -70,8 +70,8 @@ def _broker_msg_to_input_message(msg: BrokerMessage) -> InputMessage:
     if sender.kind == "agent":
         cid = payload.get("conversation_id") or msg.headers.get("conversation_id")
         if not cid:
-            import uuid
             import logging
+            import uuid
 
             logger = logging.getLogger(__name__)
             logger.warning("Orphan agent message from %s, isolating to synthetic session", sender)

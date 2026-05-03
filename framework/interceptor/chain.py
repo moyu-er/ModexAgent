@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic
 
 from framework.control.exceptions import AgentControlError
 from framework.interceptor.abc import (
@@ -19,10 +19,10 @@ from framework.interceptor.abc import (
     LLMStreamChunk,
     LLMStreamContext,
     LLMStreamNext,
+    R,
     ToolCallContext,
     ToolCallNext,
     TurnNext,
-    R,
 )
 
 if TYPE_CHECKING:

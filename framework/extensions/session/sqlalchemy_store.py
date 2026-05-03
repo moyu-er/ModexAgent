@@ -2,14 +2,13 @@
 
 import json
 from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional
 
-from sqlalchemy import create_engine, Column, String, DateTime, Text, Index, select, delete, and_
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy import Column, DateTime, Index, String, Text, and_, delete, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import declarative_base
 from sqlalchemy.sql import func
 
-from framework.core.session import SessionStore, Session
+from framework.core.session import Session, SessionStore
 
 Base = declarative_base()
 
@@ -65,7 +64,7 @@ class SQLAlchemySessionStore(SessionStore):
     def __init__(
         self,
         database_url: str,
-        session_ttl: Optional[int] = None,
+        session_ttl: int | None = None,
         cleanup_interval: int = 3600,
     ):
         """
@@ -141,7 +140,7 @@ class SQLAlchemySessionStore(SessionStore):
             updated_at=model.updated_at,
         )
 
-    async def get(self, session_id: str) -> Optional[Session]:
+    async def get(self, session_id: str) -> Session | None:
         """
         获取会话。
 
@@ -245,7 +244,7 @@ class SQLAlchemySessionStore(SessionStore):
         user_id: str,
         limit: int = 10,
         offset: int = 0,
-    ) -> List[Session]:
+    ) -> list[Session]:
         """
         列出用户的所有会话。
 

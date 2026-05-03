@@ -6,7 +6,7 @@ from typing import Protocol
 
 class Tokenizer(Protocol):
     """Tokenizer协议"""
-    
+
     def count(self, text: str) -> int:
         """计算文本的token数"""
         ...
@@ -26,7 +26,7 @@ class SimpleTokenizer:
     - 英文单词：0.75个token
     - 其他字符：0.1个token
     """
-    
+
     def count(self, text: str) -> int:
         """
         估算文本的token数。
@@ -39,16 +39,16 @@ class SimpleTokenizer:
         """
         if not text:
             return 0
-        
+
         # 中文字符
         chinese_chars = len(re.findall(r'[\u4e00-\u9fff]', text))
-        
+
         # 英文单词
         english_words = len(re.findall(r'[a-zA-Z]+', text))
-        
+
         # 其他字符（标点、数字等）
         other_chars = len(text) - chinese_chars - sum(len(w) for w in re.findall(r'[a-zA-Z]+', text))
-        
+
         # 估算
         return chinese_chars + int(english_words * 0.75) + int(other_chars * 0.1)
 
@@ -61,6 +61,6 @@ class CharTokenizer:
     - 简单场景
     - 测试环境
     """
-    
+
     def count(self, text: str) -> int:
         return len(text)

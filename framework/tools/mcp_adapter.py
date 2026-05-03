@@ -5,18 +5,18 @@ Re-exports from framework.tools.mcp for backward compatibility.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
-
-from .registry import ToolRegistry
-from ..core.tool_manager import Tool, ToolConfig
 
 from framework.tools.mcp import (
     MCPClientManager,
-    MCPTool as _MCPTool,
-    MCPResourceTool,
     MCPPromptTool,
+    MCPResourceTool,
+)
+from framework.tools.mcp import (
+    MCPTool as _MCPTool,
 )
 from framework.tools.mcp.client import _DEFAULT_TOOL_TIMEOUT
+
+from .registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ class MCPToolAdapter:
 
     def __init__(
         self,
-        mcp_manager: Optional[MCPClientManager] = None,
+        mcp_manager: MCPClientManager | None = None,
         default_prefix: bool = True,
         tool_timeout: int = _DEFAULT_TOOL_TIMEOUT,
     ):
@@ -67,10 +67,10 @@ class MCPToolAdapter:
     async def register_tools(
         self,
         registry: ToolRegistry,
-        server_filter: Optional[List[str]] = None,
-        tool_filter: Optional[Dict[str, List[str]]] = None,
-        prefix: Optional[bool] = None,
-    ) -> List[str]:
+        server_filter: list[str] | None = None,
+        tool_filter: dict[str, list[str]] | None = None,
+        prefix: bool | None = None,
+    ) -> list[str]:
         """Register MCP tools to ToolRegistry.
 
         Args:
@@ -83,7 +83,7 @@ class MCPToolAdapter:
             list of registered tool names
         """
         use_prefix = prefix if prefix is not None else self.default_prefix
-        registered: List[str] = []
+        registered: list[str] = []
 
         for server_name in self.mcp_manager.connected_servers:
             if server_filter and server_name not in server_filter:
@@ -180,19 +180,19 @@ class MCPToolRegistry(ToolRegistry):
 
     def __init__(
         self,
-        mcp_manager: Optional[MCPClientManager] = None,
+        mcp_manager: MCPClientManager | None = None,
         tool_timeout: int = _DEFAULT_TOOL_TIMEOUT,
     ):
         super().__init__()
-        self._mcp_adapter: Optional[MCPToolAdapter] = None
+        self._mcp_adapter: MCPToolAdapter | None = None
         self._mcp_manager = mcp_manager
         self._tool_timeout = tool_timeout
 
     async def initialize_from_config(
         self,
-        server_filter: Optional[List[str]] = None,
-        tool_filter: Optional[Dict[str, List[str]]] = None,
-    ) -> List[str]:
+        server_filter: list[str] | None = None,
+        tool_filter: dict[str, list[str]] | None = None,
+    ) -> list[str]:
         """Initialize MCP tools from config.
 
         Args:

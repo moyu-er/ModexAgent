@@ -2,7 +2,6 @@
 
 import sys
 from enum import Enum
-from typing import Optional
 
 
 class Platform(Enum):
@@ -36,7 +35,7 @@ def get_default_shell() -> str:
         Shell command string (e.g., 'bash', 'cmd.exe', 'powershell.exe').
     """
     platform = get_platform()
-    
+
     if platform == Platform.WINDOWS:
         # Prefer PowerShell on Windows, fallback to cmd
         return "powershell.exe"
@@ -46,19 +45,19 @@ def get_default_shell() -> str:
         return "bash"
 
 
-def get_shell_executable() -> Optional[str]:
+def get_shell_executable() -> str | None:
     """Get the full path to the default shell executable.
     
     Returns:
         Path to shell executable or None if not found.
     """
     import shutil
-    
+
     shell = get_default_shell()
     return shutil.which(shell)
 
 
-def convert_path_for_platform(path: str, target_platform: Optional[Platform] = None) -> str:
+def convert_path_for_platform(path: str, target_platform: Platform | None = None) -> str:
     """Convert a path to use the correct separators for the target platform.
     
     Args:
@@ -70,10 +69,10 @@ def convert_path_for_platform(path: str, target_platform: Optional[Platform] = N
     """
     if target_platform is None:
         target_platform = get_platform()
-    
+
     # Normalize to forward slashes first
     normalized = path.replace("\\", "/")
-    
+
     if target_platform == Platform.WINDOWS:
         # Convert to backslashes for Windows
         return normalized.replace("/", "\\")

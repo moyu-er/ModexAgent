@@ -5,23 +5,22 @@ into a single configurable system. It supports per-tool configuration with
 pattern matching (including * wildcards).
 """
 
-import re
 import fnmatch
+import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Callable, Pattern
+from typing import Any
 
+from .handlers import ApprovalHandler, ConfigBasedApprovalHandler
 from .validators import (
+    CommandValidator,
+    DefaultAction,
+    FilePathValidator,
+    RiskLevel,
+    ToolValidator,
     ValidationResult,
     ValidationStatus,
-    RiskLevel,
-    DefaultAction,
-    ToolValidator,
-    CommandValidator,
-    FilePathValidator,
 )
-from .handlers import ApprovalHandler, ConfigBasedApprovalHandler
-from .exceptions import SecurityError
 
 
 @dataclass
@@ -51,25 +50,25 @@ class ToolSecurityConfig:
             validator=CompositeValidator([...]),
         )
     """
-    
+
     tool_pattern: str = "*"
     """Tool name pattern (supports * wildcards, e.g., 'bash', 'file_*', '*')"""
-    
-    validator: Optional[ToolValidator] = None
+
+    validator: ToolValidator | None = None
     """Validator for this tool. If None, uses global default."""
-    
-    approval_handler: Optional[ApprovalHandler] = None
+
+    approval_handler: ApprovalHandler | None = None
     """Approval handler for this tool. If None, uses global default."""
-    
-    risk_policies: Dict[RiskLevel, DefaultAction] = field(default_factory=dict)
+
+    risk_policies: dict[RiskLevel, DefaultAction] = field(default_factory=dict)
     """Risk level to action mapping. Empty means use global default."""
-    
+
     enabled: bool = True
     """Whether this config is active."""
-    
+
     priority: int = 0
     """Priority for matching (higher = checked first). Exact matches should have higher priority."""
-    
+
     def matches(self, tool_name: str) -> bool:
         """Check if this config matches a tool name.
         
@@ -114,24 +113,24 @@ class SecurityPolicyConfig:
             ]
         )
     """
-    
+
     # Global defaults
-    default_validator: Optional[ToolValidator] = None
-    default_approval_handler: Optional[ApprovalHandler] = None
-    default_risk_policies: Dict[RiskLevel, DefaultAction] = field(default_factory=lambda: {
+    default_validator: ToolValidator | None = None
+    default_approval_handler: ApprovalHandler | None = None
+    default_risk_policies: dict[RiskLevel, DefaultAction] = field(default_factory=lambda: {
         RiskLevel.LOW: DefaultAction.ALLOW,
         RiskLevel.MEDIUM: DefaultAction.ASK,
         RiskLevel.HIGH: DefaultAction.ASK,
         RiskLevel.CRITICAL: DefaultAction.DENY,
     })
     default_action: DefaultAction = DefaultAction.ASK
-    
+
     # Per-tool configurations (checked in priority order)
-    tool_configs: List[ToolSecurityConfig] = field(default_factory=list)
-    
+    tool_configs: list[ToolSecurityConfig] = field(default_factory=list)
+
     # Whether to allow execution if no validator is configured
     allow_without_validator: bool = True
-    
+
     def __post_init__(self):
         # Sort tool configs by priority (descending)
         self.tool_configs.sort(key=lambda c: c.priority, reverse=True)
@@ -174,16 +173,16 @@ class SecurityPolicy:
         if result.allowed:
             await execute_tool()
     """
-    
-    def __init__(self, config: Optional[SecurityPolicyConfig] = None):
+
+    def __init__(self, config: SecurityPolicyConfig | None = None):
         """Initialize security policy.
         
         Args:
             config: Policy configuration. If None, uses permissive defaults.
         """
         self._config = config or SecurityPolicyConfig()
-    
-    async def check(self, tool_name: str, arguments: Dict[str, Any]) -> "SecurityCheckResult":
+
+    async def check(self, tool_name: str, arguments: dict[str, Any]) -> "SecurityCheckResult":
         """Check if a tool execution is allowed.
         
         This is the main entry point. It performs:
@@ -201,10 +200,10 @@ class SecurityPolicy:
         """
         # Find matching tool config
         tool_config = self._find_tool_config(tool_name)
-        
+
         # Get validator (tool-specific or global)
         validator = self._get_validator(tool_config)
-        
+
         # Phase 1: Validation
         if validator:
             validation = await validator.validate(tool_name, arguments)
@@ -283,8 +282,8 @@ class SecurityPolicy:
             validation_result=None,
             reason="Execution approved",
         )
-    
-    def _find_tool_config(self, tool_name: str) -> Optional[ToolSecurityConfig]:
+
+    def _find_tool_config(self, tool_name: str) -> ToolSecurityConfig | None:
         """Find the best matching tool config for a tool name.
         
         Checks configs in priority order and returns the first match.
@@ -299,8 +298,8 @@ class SecurityPolicy:
             if config.enabled and config.matches(tool_name):
                 return config
         return None
-    
-    def _get_validator(self, tool_config: Optional[ToolSecurityConfig]) -> Optional[ToolValidator]:
+
+    def _get_validator(self, tool_config: ToolSecurityConfig | None) -> ToolValidator | None:
         """Get the validator to use.
         
         Prefers tool-specific validator, falls back to global default.
@@ -314,8 +313,8 @@ class SecurityPolicy:
         if tool_config and tool_config.validator:
             return tool_config.validator
         return self._config.default_validator
-    
-    def _get_approval_handler(self, tool_config: Optional[ToolSecurityConfig]) -> Optional[ApprovalHandler]:
+
+    def _get_approval_handler(self, tool_config: ToolSecurityConfig | None) -> ApprovalHandler | None:
         """Get the approval handler to use.
         
         Prefers tool-specific handler, falls back to global default.
@@ -329,11 +328,11 @@ class SecurityPolicy:
         if tool_config and tool_config.approval_handler:
             return tool_config.approval_handler
         return self._config.default_approval_handler
-    
+
     def _get_action_for_risk(
         self,
         risk_level: RiskLevel,
-        tool_config: Optional[ToolSecurityConfig],
+        tool_config: ToolSecurityConfig | None,
     ) -> DefaultAction:
         """Get the action for a risk level.
         
@@ -349,14 +348,14 @@ class SecurityPolicy:
         # Check tool-specific policies first
         if tool_config and risk_level in tool_config.risk_policies:
             return tool_config.risk_policies[risk_level]
-        
+
         # Fall back to global policies
         if risk_level in self._config.default_risk_policies:
             return self._config.default_risk_policies[risk_level]
-        
+
         # Ultimate fallback
         return self._config.default_action
-    
+
     def add_tool_config(self, config: ToolSecurityConfig) -> "SecurityPolicy":
         """Add a tool configuration dynamically.
         
@@ -370,7 +369,7 @@ class SecurityPolicy:
         # Re-sort by priority
         self._config.tool_configs.sort(key=lambda c: c.priority, reverse=True)
         return self
-    
+
     def remove_tool_config(self, pattern: str) -> "SecurityPolicy":
         """Remove tool configurations matching a pattern.
         
@@ -400,10 +399,10 @@ class SecurityCheckResult:
     """
     allowed: bool
     tool_name: str
-    arguments: Dict[str, Any]
-    validation_result: Optional[ValidationResult]
+    arguments: dict[str, Any]
+    validation_result: ValidationResult | None
     reason: str
-    
+
     def __bool__(self) -> bool:
         """Allow using result in boolean context."""
         return self.allowed
@@ -411,10 +410,10 @@ class SecurityCheckResult:
 
 # Convenience function for quick policy creation
 def create_security_policy(
-    dangerous_patterns: Optional[List[str]] = None,
-    auto_approve_patterns: Optional[List[str]] = None,
-    auto_deny_patterns: Optional[List[str]] = None,
-    allowed_paths: Optional[List[str]] = None,
+    dangerous_patterns: list[str] | None = None,
+    auto_approve_patterns: list[str] | None = None,
+    auto_deny_patterns: list[str] | None = None,
+    allowed_paths: list[str] | None = None,
     require_approval: bool = True,
 ) -> SecurityPolicy:
     """Create a security policy with common defaults.
@@ -434,25 +433,25 @@ def create_security_policy(
     """
     # Build validator
     validators = []
-    
+
     # Command validator
     cmd_validator = CommandValidator(
         dangerous_patterns=dangerous_patterns or []
     )
     validators.append(cmd_validator)
-    
+
     # File path validator (if paths specified)
     if allowed_paths:
         path_validator = FilePathValidator(allowed_paths=allowed_paths)
         validators.append(path_validator)
-    
+
     # Create composite validator if multiple
     if len(validators) == 1:
         validator = validators[0]
     else:
         from .validators import CompositeValidator
         validator = CompositeValidator(validators)
-    
+
     # Build approval handler
     if require_approval:
         approval_handler = ConfigBasedApprovalHandler(
@@ -461,12 +460,12 @@ def create_security_policy(
         )
     else:
         approval_handler = None
-    
+
     config = SecurityPolicyConfig(
         default_validator=validator,
         default_approval_handler=approval_handler,
     )
-    
+
     return SecurityPolicy(config)
 
 
@@ -489,23 +488,23 @@ class SecurityConfig:
         Use SecurityPolicyConfig and SecurityPolicy instead.
     """
     default_policy: CommandPolicy = CommandPolicy.ASK
-    approval_handler: Optional[ApprovalHandler] = None
+    approval_handler: ApprovalHandler | None = None
     approval_timeout_seconds: float = 30.0
     enable_logging: bool = True
-    
+
     # Pattern lists for legacy compatibility
-    allow_patterns: List[str] = field(default_factory=lambda: list(DEFAULT_ALLOW_PATTERNS))
-    deny_patterns: List[str] = field(default_factory=lambda: list(DEFAULT_DENY_PATTERNS))
-    ask_patterns: List[str] = field(default_factory=lambda: list(DEFAULT_ASK_PATTERNS))
-    
+    allow_patterns: list[str] = field(default_factory=lambda: list(DEFAULT_ALLOW_PATTERNS))
+    deny_patterns: list[str] = field(default_factory=lambda: list(DEFAULT_DENY_PATTERNS))
+    ask_patterns: list[str] = field(default_factory=lambda: list(DEFAULT_ASK_PATTERNS))
+
     def add_allow_pattern(self, pattern: str) -> None:
         """Add an allow pattern."""
         self.allow_patterns.append(pattern)
-    
+
     def add_deny_pattern(self, pattern: str) -> None:
         """Add a deny pattern."""
         self.deny_patterns.append(pattern)
-    
+
     def add_ask_pattern(self, pattern: str) -> None:
         """Add an ask pattern."""
         self.ask_patterns.append(pattern)
@@ -537,18 +536,17 @@ class SecurityChecker:
             policy = SecurityPolicy(config)
             result = await policy.check(tool_name, arguments)
     """
-    
-    def __init__(self, config: Optional[SecurityConfig] = None):
+
+    def __init__(self, config: SecurityConfig | None = None):
         self._config = config or SecurityConfig()
         self._approval_handler = self._config.approval_handler
-    
+
     def check_command(self, command: str) -> "LegacySecurityCheckResult":
         """Check command against security policy (synchronous version).
         
         This is the main method used by tests and legacy code.
         """
-        import re
-        
+
         # Check allow patterns first (highest priority)
         for pattern in self._config.allow_patterns:
             if re.search(pattern, command, re.IGNORECASE):
@@ -557,7 +555,7 @@ class SecurityChecker:
                     policy=CommandPolicy.ALLOW,
                     reason=f"Matched allow pattern: {pattern}",
                 )
-        
+
         # Check deny patterns
         for pattern in self._config.deny_patterns:
             if re.search(pattern, command, re.IGNORECASE):
@@ -566,7 +564,7 @@ class SecurityChecker:
                     policy=CommandPolicy.DENY,
                     reason=f"Matched deny pattern: {pattern}",
                 )
-        
+
         # Check ask patterns
         for pattern in self._config.ask_patterns:
             if re.search(pattern, command, re.IGNORECASE):
@@ -575,7 +573,7 @@ class SecurityChecker:
                     policy=CommandPolicy.ASK,
                     reason=f"Matched ask pattern: {pattern}",
                 )
-        
+
         # No patterns matched, use default policy
         if self._config.default_policy == CommandPolicy.ALLOW:
             return LegacySecurityCheckResult(
@@ -595,20 +593,21 @@ class SecurityChecker:
                 policy=CommandPolicy.ASK,
                 reason="Default policy: ask",
             )
-    
+
     async def check(self, command: str) -> "LegacySecurityCheckResult":
         """Check command against security policy (async version)."""
         import asyncio
-        from .exceptions import CommandRejectedError, ApprovalTimeoutError
-        
+
+        from .exceptions import ApprovalTimeoutError, CommandRejectedError
+
         result = self.check_command(command)
-        
+
         # Handle DENY policy - raise exception
         if result.policy == CommandPolicy.DENY:
             raise CommandRejectedError(
                 f"Command rejected: {command}. Reason: {result.reason}"
             )
-        
+
         # Handle ASK policy
         if result.policy == CommandPolicy.ASK:
             if self._approval_handler:
@@ -628,18 +627,18 @@ class SecurityChecker:
                             command=command,
                             reason=result.reason,
                         )
-                    
+
                     if not approved:
                         raise CommandRejectedError(
                             f"Command rejected by approval handler: {command}"
                         )
-                    
+
                     return LegacySecurityCheckResult(
                         allowed=True,
                         policy=CommandPolicy.ASK,
                         reason="Approved by handler",
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Handle timeout based on default policy
                     if self._config.default_policy == CommandPolicy.ALLOW:
                         return LegacySecurityCheckResult(
@@ -663,16 +662,16 @@ class SecurityChecker:
                     raise CommandRejectedError(
                         f"Command requires approval but no handler configured: {command}"
                     )
-        
+
         return result
-    
+
     async def check_and_approve(self, command: str) -> "LegacySecurityCheckResult":
         """Legacy method alias for check()."""
         return await self.check(command)
 
 
 # Legacy pattern constants
-DEFAULT_ALLOW_PATTERNS: List[str] = [
+DEFAULT_ALLOW_PATTERNS: list[str] = [
     r"^git\s+status",
     r"^git\s+log",
     r"^ls\s+",
@@ -685,7 +684,7 @@ DEFAULT_ALLOW_PATTERNS: List[str] = [
     r"^find\s+",
 ]
 
-DEFAULT_DENY_PATTERNS: List[str] = [
+DEFAULT_DENY_PATTERNS: list[str] = [
     r"rm\s+-rf\s+/$",  # Match rm -rf / exactly or with trailing space
     r"rm\s+-rf\s+/\s*$",  # Match rm -rf / with optional trailing space
     r":\(\)\s*\{\s*:\|:\s*&\s*\};\s*:",  # Fork bomb
@@ -695,7 +694,7 @@ DEFAULT_DENY_PATTERNS: List[str] = [
     r"format\s+C:",  # Windows format command
 ]
 
-DEFAULT_ASK_PATTERNS: List[str] = [
+DEFAULT_ASK_PATTERNS: list[str] = [
     r"sudo\s+",
     r"su\s+-",
     r"rm\s+-rf\s+",

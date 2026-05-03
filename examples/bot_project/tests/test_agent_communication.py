@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from framework.core.agent import AgentContext
+from framework.core.context_extensions import ExtensionKey
 from framework.core.emitter import AgentResult, BufferingEmitter, ContentEmitter
 from framework.core.provider import StreamingLLMProvider
 from framework.core.runtime_context import RuntimeContextManager
@@ -330,11 +331,12 @@ class TestPeerAutoSendHookBot:
         )
 
         ctx = MagicMock()
+        ctx.session_id = "conv-1:office-expert"
         ctx.metadata = {"session_id": "conv-1:office-expert"}
-        ctx.runtime_context = await runtime_mgr.get_context(
-            "conv-1:office-expert", {}
-        )
-        ctx.runtime_context_manager = runtime_mgr
+        ctx.extensions = {
+            ExtensionKey.RUNTIME_CTX: None,
+            ExtensionKey.RUNTIME_CTX_MGR: runtime_mgr,
+        }
 
         result = AgentResult(content="Document created successfully", stop_reason="completed")
 
@@ -362,15 +364,19 @@ class TestPeerAutoSendHookBot:
             parent_name="main",
         )
 
+        session_id = "conv-2:office-expert"
+        metadata = {"session_id": session_id}
         ctx = MagicMock()
-        ctx.metadata = {"session_id": "conv-2:office-expert"}
-        ctx.runtime_context = await runtime_mgr.get_context(
-            "conv-2:office-expert", {}
-        )
-        ctx.runtime_context_manager = runtime_mgr
+        ctx.session_id = session_id
+        ctx.metadata = metadata
+        ctx.extensions = {
+            ExtensionKey.RUNTIME_CTX: None,
+            ExtensionKey.RUNTIME_CTX_MGR: runtime_mgr,
+        }
 
         # Record that send_message_async was already called
-        await ctx.runtime_context.record_tool_call(
+        rc = await runtime_mgr.get_context(session_id, metadata)
+        await rc.record_tool_call(
             tool_name="send_message_async", arguments={"target_agent": "main"}, result="ok"
         )
 
@@ -380,8 +386,8 @@ class TestPeerAutoSendHookBot:
 
         # No additional message should be in inbox
         strategy = DefaultSessionIdStrategy(main_agent_name="main")
-        session_id = strategy.main_session("conv-2")
-        messages = await bus.poll(session_id, limit=10)
+        main_session_id = strategy.main_session("conv-2")
+        messages = await bus.poll(main_session_id, limit=10)
         assert len(messages) == 0
 
         await broker.stop()

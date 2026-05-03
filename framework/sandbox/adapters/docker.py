@@ -1,16 +1,13 @@
-import os
 import shutil
 import tempfile
 import time
 from pathlib import Path
-from typing import Optional
 
-from .base import SandboxAdapter
-from ..types import SandboxResult
 from ..config import SandboxConfig
 from ..exceptions import SandboxUnavailableError
+from ..types import SandboxResult
 from ..validation import validate_code
-
+from .base import SandboxAdapter
 
 DOCKER_AVAILABLE = False
 try:
@@ -46,7 +43,7 @@ class DockerSandbox(SandboxAdapter):
     def is_available(self) -> bool:
         return _check_docker_available()
 
-    def __init__(self, config: Optional[SandboxConfig] = None):
+    def __init__(self, config: SandboxConfig | None = None):
         self.config = config or SandboxConfig()
         self._client = None
 
@@ -64,7 +61,7 @@ class DockerSandbox(SandboxAdapter):
         self,
         code: str,
         language: str = "python",
-        config: Optional[SandboxConfig] = None,
+        config: SandboxConfig | None = None,
     ) -> SandboxResult:
         if not self.is_available:
             return SandboxResult(
@@ -113,7 +110,7 @@ class DockerSandbox(SandboxAdapter):
 
             run_kwargs = dict(
                 image=image,
-                command=f"python /app/main.py",
+                command="python /app/main.py",
                 volumes=volumes,
                 working_dir="/app",
                 network_mode="none" if not cfg.enable_network else "bridge",
@@ -176,8 +173,8 @@ class DockerSandbox(SandboxAdapter):
     async def execute_command(
         self,
         command: str,
-        cwd: Optional[str] = None,
-        config: Optional[SandboxConfig] = None,
+        cwd: str | None = None,
+        config: SandboxConfig | None = None,
     ) -> SandboxResult:
         if not self.is_available:
             return SandboxResult(
@@ -265,7 +262,7 @@ class DockerSandbox(SandboxAdapter):
                 except Exception:
                     pass
 
-    async def cleanup(self, sandbox_id: Optional[str] = None) -> None:
+    async def cleanup(self, sandbox_id: str | None = None) -> None:
         if sandbox_id:
             try:
                 container = self._get_client().containers.get(sandbox_id)

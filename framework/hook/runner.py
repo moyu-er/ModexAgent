@@ -62,7 +62,7 @@ class HookRunner(Generic[R]):
     async def dispatch(
         self,
         hook_point: HookPoint,
-        ctx: "AgentContext[R]",
+        ctx: AgentContext[R],
         payload: HookPayload | None = None,
         *,
         hook_timeout: float | None = None,
@@ -154,7 +154,7 @@ class HookRunner(Generic[R]):
 
     def dispatch_finalize(
         self,
-        ctx: "AgentContext[R]",
+        ctx: AgentContext[R],
         content: str | None,
     ) -> str | None:
         """同步串行调用所有 hook 的 finalize_content 方法。

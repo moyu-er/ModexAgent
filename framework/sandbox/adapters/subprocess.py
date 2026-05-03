@@ -1,21 +1,26 @@
-import os
-import sys
-import shutil
-import tempfile
-import subprocess
-import time
 import logging
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
 from pathlib import Path
-from typing import Optional
 
-from .base import SandboxAdapter
-from ..types import SandboxResult
-from ..config import SandboxConfig
-from ..exceptions import SandboxError, SandboxTimeoutError
-from ..validation import validate_code
 from framework.security import SecurityChecker, SecurityConfig
+
+from ..config import SandboxConfig
+from ..exceptions import SandboxError
+from ..isolation import (
+    FilesystemIsolationConfig,
+    IsolationConfig,
+    IsolationManager,
+    NetworkIsolationConfig,
+)
 from ..platform import get_shell_command_args
-from ..isolation import IsolationManager, IsolationConfig, FilesystemIsolationConfig, NetworkIsolationConfig
+from ..types import SandboxResult
+from ..validation import validate_code
+from .base import SandboxAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +28,7 @@ logger = logging.getLogger(__name__)
 _IS_UNIX = hasattr(os, "fork")
 
 
-def _apply_resource_limits(memory_limit_mb: Optional[int]):
+def _apply_resource_limits(memory_limit_mb: int | None):
     if memory_limit_mb is None or not _IS_UNIX:
         return
     import resource
@@ -41,11 +46,11 @@ class SubprocessSandbox(SandboxAdapter):
     def is_available(self) -> bool:
         return True
 
-    def __init__(self, config: Optional[SandboxConfig] = None):
+    def __init__(self, config: SandboxConfig | None = None):
         self.config = config or SandboxConfig()
-        self._security_checker: Optional[SecurityChecker] = None
-        self._isolation_manager: Optional[IsolationManager] = None
-    
+        self._security_checker: SecurityChecker | None = None
+        self._isolation_manager: IsolationManager | None = None
+
     def _get_isolation_manager(self) -> IsolationManager:
         """Get or create the OS-level isolation manager."""
         if self._isolation_manager is None:
@@ -61,7 +66,7 @@ class SubprocessSandbox(SandboxAdapter):
             )
             self._isolation_manager = IsolationManager(isolation_config)
         return self._isolation_manager
-    
+
     def _get_security_checker(self) -> SecurityChecker:
         """Get or create the security checker."""
         if self._security_checker is None:
@@ -73,7 +78,7 @@ class SubprocessSandbox(SandboxAdapter):
         self,
         code: str,
         language: str = "python",
-        config: Optional[SandboxConfig] = None,
+        config: SandboxConfig | None = None,
     ) -> SandboxResult:
         if language != "python":
             return SandboxResult(
@@ -167,8 +172,8 @@ class SubprocessSandbox(SandboxAdapter):
     async def execute_command(
         self,
         command: str,
-        cwd: Optional[str] = None,
-        config: Optional[SandboxConfig] = None,
+        cwd: str | None = None,
+        config: SandboxConfig | None = None,
     ) -> SandboxResult:
         cfg = config or self.config
         start_time = time.time()
@@ -192,7 +197,7 @@ class SubprocessSandbox(SandboxAdapter):
         try:
             # Get OS-level isolation manager
             isolation = self._get_isolation_manager()
-            
+
             # Build the command with isolation if available
             if isolation.is_available():
                 shell_cmd = get_shell_command_args(command)
@@ -281,5 +286,5 @@ class SubprocessSandbox(SandboxAdapter):
         filtered_env["SANDBOX_ARTIFACTS_DIR"] = self._get_artifacts_dir(config)
         return filtered_env
 
-    async def cleanup(self, sandbox_id: Optional[str] = None) -> None:
+    async def cleanup(self, sandbox_id: str | None = None) -> None:
         pass

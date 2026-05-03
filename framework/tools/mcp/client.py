@@ -8,7 +8,7 @@ import logging
 from abc import ABC, abstractmethod
 from contextlib import AsyncExitStack
 from enum import StrEnum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import httpx
 from mcp.shared.exceptions import McpError
@@ -44,7 +44,7 @@ class BaseMCPClient(ABC):
     def __init__(self, name: str):
         self.name = name
         self.session = None
-        self._tools: List[Dict[str, Any]] = []
+        self._tools: list[dict[str, Any]] = []
         self._initialized = False
         self._managed_externally = False
         self._exit_stack = AsyncExitStack()
@@ -69,7 +69,7 @@ class BaseMCPClient(ABC):
             self._tools = []
             self._initialized = False
 
-    async def list_tools(self) -> List[Dict[str, Any]]:
+    async def list_tools(self) -> list[dict[str, Any]]:
         """List available tools."""
         if not self.session:
             return []
@@ -89,7 +89,7 @@ class BaseMCPClient(ABC):
             _logger.debug("[MCP:%s] Failed to list tools: %s", self.name, e)
             return []
 
-    async def list_resources(self) -> List[Dict[str, Any]]:
+    async def list_resources(self) -> list[dict[str, Any]]:
         """List available resources."""
         if not self.session:
             return []
@@ -109,7 +109,7 @@ class BaseMCPClient(ABC):
             _logger.debug("[MCP:%s] Failed to list resources: %s", self.name, e)
             return []
 
-    async def list_prompts(self) -> List[Dict[str, Any]]:
+    async def list_prompts(self) -> list[dict[str, Any]]:
         """List available prompts."""
         if not self.session:
             return []
@@ -138,9 +138,9 @@ class BaseMCPClient(ABC):
     async def call_tool(
         self,
         tool_name: str,
-        params: Dict[str, Any],
+        params: dict[str, Any],
         timeout: int = _DEFAULT_TOOL_TIMEOUT,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Call an MCP tool."""
         if not self.session:
             return {"success": False, "error": "Not connected"}
@@ -150,7 +150,7 @@ class BaseMCPClient(ABC):
                 self.session.call_tool(tool_name, arguments=params),
                 timeout=timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             _logger.debug("[MCP:%s] Tool '%s' timed out after %ds", self.name, tool_name, timeout)
             return {"success": False, "error": "Tool call timed out after %ds" % timeout}
         except asyncio.CancelledError:
@@ -195,7 +195,7 @@ class BaseMCPClient(ABC):
         self,
         uri: str,
         timeout: int = _DEFAULT_TOOL_TIMEOUT,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Read an MCP resource."""
         if not self.session:
             return {"success": False, "error": "Not connected"}
@@ -205,7 +205,7 @@ class BaseMCPClient(ABC):
                 self.session.read_resource(uri),
                 timeout=timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             _logger.debug("[MCP:%s] Resource '%s' timed out after %ds", self.name, uri, timeout)
             return {"success": False, "error": "Resource read timed out after %ds" % timeout}
         except asyncio.CancelledError:
@@ -241,9 +241,9 @@ class BaseMCPClient(ABC):
     async def get_prompt(
         self,
         prompt_name: str,
-        arguments: Optional[Dict[str, Any]] = None,
+        arguments: dict[str, Any] | None = None,
         timeout: int = _DEFAULT_TOOL_TIMEOUT,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get an MCP prompt."""
         if not self.session:
             return {"success": False, "error": "Not connected"}
@@ -253,7 +253,7 @@ class BaseMCPClient(ABC):
                 self.session.get_prompt(prompt_name, arguments=arguments),
                 timeout=timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             _logger.debug("[MCP:%s] Prompt '%s' timed out after %ds", self.name, prompt_name, timeout)
             return {"success": False, "error": "Prompt call timed out after %ds" % timeout}
         except asyncio.CancelledError:
@@ -304,8 +304,8 @@ class StdioMCPClient(BaseMCPClient):
         self,
         name: str,
         command: str,
-        args: Optional[List[str]] = None,
-        env: Optional[Dict[str, str]] = None,
+        args: list[str] | None = None,
+        env: dict[str, str] | None = None,
     ):
         super().__init__(name)
         self.command = command
@@ -315,9 +315,8 @@ class StdioMCPClient(BaseMCPClient):
     async def initialize(self) -> bool:
         """Initialize subprocess connection."""
         try:
-            from mcp import ClientSession
+            from mcp import ClientSession, StdioServerParameters
             from mcp.client.stdio import stdio_client
-            from mcp import StdioServerParameters
 
             server_params = StdioServerParameters(
                 command=self.command,
@@ -351,7 +350,7 @@ class SSEMCPClient(BaseMCPClient):
         self,
         name: str,
         url: str,
-        headers: Optional[Dict[str, str]] = None,
+        headers: dict[str, str] | None = None,
     ):
         super().__init__(name)
         self.url = url
@@ -364,9 +363,9 @@ class SSEMCPClient(BaseMCPClient):
             from mcp.client.sse import sse_client
 
             def httpx_client_factory(
-                headers: Optional[Dict[str, str]] = None,
-                timeout: Optional[httpx.Timeout] = None,
-                auth: Optional[httpx.Auth] = None,
+                headers: dict[str, str] | None = None,
+                timeout: httpx.Timeout | None = None,
+                auth: httpx.Auth | None = None,
             ) -> httpx.AsyncClient:
                 merged_headers = {
                     "Accept": "application/json, text/event-stream",
@@ -406,7 +405,7 @@ class StreamableHttpMCPClient(BaseMCPClient):
         self,
         name: str,
         url: str,
-        headers: Optional[Dict[str, str]] = None,
+        headers: dict[str, str] | None = None,
     ):
         super().__init__(name)
         self.url = url

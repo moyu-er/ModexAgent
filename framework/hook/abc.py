@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
     from framework.core.emitter import AgentResult
-    from framework.core.types import LLMResponse, ToolCall
     from framework.core.tool_manager import ToolResult
+    from framework.core.types import LLMResponse, ToolCall
 
 R = TypeVar("R", default=Any)
 
@@ -83,7 +83,7 @@ class HookSpec(Generic[R]):
     包含 hook 实例和错误处理策略，后续用于代码装配。
     """
 
-    hook: "Hook[R]"
+    hook: Hook[R]
     on_error: HookErrorPolicy = HookErrorPolicy.LOG
 
 
@@ -94,29 +94,29 @@ class Hook(Protocol, Generic[R]):
     子类可选择性覆盖所需方法。
     """
 
-    async def before_turn(self, ctx: "AgentContext[R]") -> None:
+    async def before_turn(self, ctx: AgentContext[R]) -> None:
         """在 Agent.run() 开始时、while 循环之前调用，且只调用一次。"""
         ...
 
     async def after_turn(
         self,
-        ctx: "AgentContext[R]",
+        ctx: AgentContext[R],
         result: AgentResult,
     ) -> None:
         """在 Agent.run() 结束后调用（无论成功、失败或达到最大迭代次数），且只调用一次。"""
         ...
 
-    async def before_iteration(self, ctx: "AgentContext[R]") -> None:
+    async def before_iteration(self, ctx: AgentContext[R]) -> None:
         """每次迭代开始前调用。"""
         ...
 
-    async def after_iteration(self, ctx: "AgentContext[R]") -> None:
+    async def after_iteration(self, ctx: AgentContext[R]) -> None:
         """每次迭代结束后调用。"""
         ...
 
     async def before_tool_execution(
         self,
-        ctx: "AgentContext[R]",
+        ctx: AgentContext[R],
         tool_calls: Sequence[ToolCall],
     ) -> None:
         """工具执行前调用。"""
@@ -124,7 +124,7 @@ class Hook(Protocol, Generic[R]):
 
     async def after_tool_execution(
         self,
-        ctx: "AgentContext[R]",
+        ctx: AgentContext[R],
         results: Sequence[ToolResult],
     ) -> None:
         """工具执行后调用。"""
@@ -132,7 +132,7 @@ class Hook(Protocol, Generic[R]):
 
     async def after_llm_response(
         self,
-        ctx: "AgentContext[R]",
+        ctx: AgentContext[R],
         response: LLMResponse,
     ) -> None:
         """LLM 完整响应返回后调用。"""
@@ -140,7 +140,7 @@ class Hook(Protocol, Generic[R]):
 
     async def on_control_command(
         self,
-        ctx: "AgentContext[R]",
+        ctx: AgentContext[R],
         command: Any,
     ) -> HookResult:
         """接收控制命令时调用，可返回 HookResult(veto=True) 拒绝命令。"""
@@ -148,7 +148,7 @@ class Hook(Protocol, Generic[R]):
 
     def finalize_content(
         self,
-        ctx: "AgentContext[R]",
+        ctx: AgentContext[R],
         content: str | None,
     ) -> str | None:
         """最终内容调整（同步）。"""

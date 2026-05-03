@@ -1,8 +1,7 @@
+import os
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
-import tempfile
-import os
 
 from framework.security import SecurityConfig
 
@@ -19,21 +18,21 @@ def _get_default_workspace_dir() -> str:
 
 @dataclass
 class SandboxConfig:
-    allowed_dirs: List[str] = field(default_factory=lambda: [_get_default_temp_dir()])
-    deny_dirs: List[str] = field(default_factory=lambda: ["/home", "/root", "/etc", "/var"] if os.name != 'nt' else [])
+    allowed_dirs: list[str] = field(default_factory=lambda: [_get_default_temp_dir()])
+    deny_dirs: list[str] = field(default_factory=lambda: ["/home", "/root", "/etc", "/var"] if os.name != 'nt' else [])
     max_file_size_mb: int = 100
     max_execution_time_seconds: int = 60
     workspace_dir: str = field(default_factory=_get_default_workspace_dir)
     enable_network: bool = False
-    memory_limit_mb: Optional[int] = None
-    cpu_limit: Optional[float] = None
+    memory_limit_mb: int | None = None
+    cpu_limit: float | None = None
     enable_validation: bool = True
     artifact_max_size: int = 10485760
     # E2B-specific configuration
     auto_download_artifacts: bool = False
-    auto_download_patterns: Optional[List[str]] = None
+    auto_download_patterns: list[str] | None = None
     # Security configuration for command execution
-    security: Optional[SecurityConfig] = None
+    security: SecurityConfig | None = None
 
     def __post_init__(self):
         default_temp = _get_default_temp_dir()

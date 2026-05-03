@@ -4,8 +4,6 @@ import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from framework.agents.react.agent import ReActAgent
 from framework.core.context_extensions import ExtensionKey
 from framework.core.types import LLMResponse
@@ -44,18 +42,15 @@ class _FakeContext:
         self.session_id = "test-session"
         self.metadata: dict = {}
         self.extensions: dict[str, Any] = {
-            ExtensionKey.HOOKS: [],
             ExtensionKey.MAX_TOOLS_PER_TURN: None,
             ExtensionKey.GOVERNANCE: None,
             ExtensionKey.ON_CHECKPOINT: None,
             ExtensionKey.SAFETY: None,
-            ExtensionKey.HOOK_RUNNER: None,
-            ExtensionKey.INTERCEPTOR_CHAIN: None,
-            ExtensionKey.CHECKPOINT_STORE: None,
-            ExtensionKey.INJECTION_QUEUE: injection_queue,
             ExtensionKey.RUNTIME_CTX_MGR: None,
             ExtensionKey.RUNTIME_CTX: None,
         }
+        from framework.agents.react.runtime import ReActRuntime
+        self.runtime: Any = ReActRuntime(mode="full", injection_queue=injection_queue)
 
     async def to_messages(self):
         return list(self.messages)

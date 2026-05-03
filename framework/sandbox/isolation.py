@@ -32,7 +32,6 @@ import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +46,10 @@ class FilesystemIsolationConfig:
         deny_read: List of paths explicitly denied for reading
         deny_write: List of paths explicitly denied for writing
     """
-    allow_read: List[str] = field(default_factory=list)
-    allow_write: List[str] = field(default_factory=list)
-    deny_read: List[str] = field(default_factory=list)
-    deny_write: List[str] = field(default_factory=list)
+    allow_read: list[str] = field(default_factory=list)
+    allow_write: list[str] = field(default_factory=list)
+    deny_read: list[str] = field(default_factory=list)
+    deny_write: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -62,8 +61,8 @@ class NetworkIsolationConfig:
         deny_domains: List of domains explicitly denied
         allow_all: Whether to allow all network access (default: False)
     """
-    allow_domains: List[str] = field(default_factory=list)
-    deny_domains: List[str] = field(default_factory=list)
+    allow_domains: list[str] = field(default_factory=list)
+    deny_domains: list[str] = field(default_factory=list)
     allow_all: bool = False
 
 
@@ -77,10 +76,10 @@ class ResourceLimits:
         max_processes: Maximum number of processes
         timeout_seconds: Maximum execution time
     """
-    max_memory_mb: Optional[int] = None
-    max_cpu_percent: Optional[int] = None
-    max_processes: Optional[int] = None
-    timeout_seconds: Optional[int] = None
+    max_memory_mb: int | None = None
+    max_cpu_percent: int | None = None
+    max_processes: int | None = None
+    timeout_seconds: int | None = None
 
 
 @dataclass
@@ -99,17 +98,17 @@ class IsolationConfig:
 
 class IsolationProvider(abc.ABC):
     """Abstract base class for OS-level isolation providers."""
-    
+
     def __init__(self, config: IsolationConfig):
         self.config = config
-    
+
     @abc.abstractmethod
     def is_available(self) -> bool:
         """Check if this isolation provider is available on the system."""
         pass
-    
+
     @abc.abstractmethod
-    def wrap_command(self, command: List[str]) -> List[str]:
+    def wrap_command(self, command: list[str]) -> list[str]:
         """Wrap a command with isolation.
         
         Args:
@@ -119,7 +118,7 @@ class IsolationProvider(abc.ABC):
             Modified command with isolation applied
         """
         pass
-    
+
     @abc.abstractmethod
     def get_name(self) -> str:
         """Get the name of this provider."""
@@ -135,15 +134,15 @@ class BubblewrapProvider(IsolationProvider):
     - New PID namespace
     - Resource limits via cgroups (if available)
     """
-    
+
     def is_available(self) -> bool:
         """Check if bubblewrap is installed."""
         return shutil.which("bwrap") is not None
-    
+
     def get_name(self) -> str:
         return "bubblewrap"
-    
-    def wrap_command(self, command: List[str]) -> List[str]:
+
+    def wrap_command(self, command: list[str]) -> list[str]:
         """Wrap command with bubblewrap.
         
         Creates a sandbox with:
@@ -153,7 +152,7 @@ class BubblewrapProvider(IsolationProvider):
         - Network namespace isolation (if configured)
         """
         bwrap_args = ["bwrap"]
-        
+
         # Basic sandbox setup
         bwrap_args.extend([
             "--unshare-all",  # Unshare all namespaces
@@ -162,38 +161,38 @@ class BubblewrapProvider(IsolationProvider):
             "--dev", "/dev",  # Mount minimal dev filesystem
             "--tmpfs", "/tmp",  # Writable tmpfs for /tmp
         ])
-        
+
         # Filesystem isolation
         fs = self.config.filesystem
-        
+
         # Make root read-only by default
         bwrap_args.extend(["--ro-bind", "/", "/"])
-        
+
         # Add writable directories
         for path in fs.allow_write:
             resolved = Path(path).resolve()
             if resolved.exists():
                 bwrap_args.extend(["--bind", str(resolved), str(resolved)])
-        
+
         # Add read-only directories (explicit)
         for path in fs.allow_read:
             resolved = Path(path).resolve()
             if resolved.exists() and str(resolved) not in fs.allow_write:
                 bwrap_args.extend(["--ro-bind", str(resolved), str(resolved)])
-        
+
         # Network isolation
         if not self.config.network.allow_all:
             bwrap_args.append("--unshare-net")
-        
+
         # Resource limits (if cgroups available)
         resources = self.config.resources
         if resources.max_memory_mb:
             # Note: Requires cgroup v2 support
             bwrap_args.extend(["--memory-limit", str(resources.max_memory_mb * 1024 * 1024)])
-        
+
         # Add the actual command
         bwrap_args.extend(["--", *command])
-        
+
         return bwrap_args
 
 
@@ -205,14 +204,14 @@ class SandboxExecProvider(IsolationProvider):
     - Network access restrictions
     - Mach service restrictions
     """
-    
+
     def is_available(self) -> bool:
         """Check if sandbox-exec is available."""
         return shutil.which("sandbox-exec") is not None and platform.system() == "Darwin"
-    
+
     def get_name(self) -> str:
         return "sandbox-exec"
-    
+
     def _generate_profile(self) -> str:
         """Generate a Seatbelt profile for the sandbox.
         
@@ -231,17 +230,17 @@ class SandboxExecProvider(IsolationProvider):
             "(allow signal (target self))",
             "",
         ]
-        
+
         # Network access
         if not self.config.network.allow_all:
             lines.append("(deny network*)")
-        
+
         return "\n".join(lines)
-    
-    def wrap_command(self, command: List[str]) -> List[str]:
+
+    def wrap_command(self, command: list[str]) -> list[str]:
         """Wrap command with sandbox-exec."""
         profile = self._generate_profile()
-        
+
         return [
             "sandbox-exec",
             "-p", profile,
@@ -259,15 +258,15 @@ class WindowsIsolationProvider(IsolationProvider):
     
     Reference: Trae/AgentBox implementation
     """
-    
+
     def is_available(self) -> bool:
         """Check if running on Windows."""
         return platform.system() == "Windows"
-    
+
     def get_name(self) -> str:
         return "windows-native"
-    
-    def wrap_command(self, command: List[str]) -> List[str]:
+
+    def wrap_command(self, command: list[str]) -> list[str]:
         """Wrap command with Windows isolation.
         
         Note: Full implementation requires ctypes/CFFI for Win32 API calls.
@@ -275,31 +274,31 @@ class WindowsIsolationProvider(IsolationProvider):
         """
         # For now, use PowerShell Constrained Language Mode as fallback
         # Full implementation would use CreateRestrictedToken + Job Objects
-        
+
         logger.warning(
             "Windows isolation using basic PowerShell constraints. "
             "Full Restricted Token + Job Objects implementation requires Win32 API."
         )
-        
+
         # Build a constrained execution environment
         ps_script = [
             "powershell.exe",
             "-ExecutionPolicy", "Restricted",
             "-Command",
         ]
-        
+
         # Add filesystem restrictions via ACL checks
         fs = self.config.filesystem
-        
+
         # Build the constrained command
         constrained_cmd = "; ".join([
             "$ErrorActionPreference = 'Stop'",
             f"Set-Location -Path '{Path.cwd()}'",
             " ".join(command),
         ])
-        
+
         ps_script.append(constrained_cmd)
-        
+
         return ps_script
 
 
@@ -315,17 +314,17 @@ class IsolationManager:
         with manager.isolated_shell() as shell:
             result = shell.run(["pip", "install", "requests"])
     """
-    
-    def __init__(self, config: Optional[IsolationConfig] = None):
+
+    def __init__(self, config: IsolationConfig | None = None):
         """Initialize isolation manager.
         
         Args:
             config: Isolation configuration. If None, uses defaults.
         """
         self.config = config or IsolationConfig()
-        self._provider: Optional[IsolationProvider] = None
+        self._provider: IsolationProvider | None = None
         self._select_provider()
-    
+
     def _select_provider(self) -> None:
         """Select the best available isolation provider."""
         providers = [
@@ -333,24 +332,24 @@ class IsolationManager:
             SandboxExecProvider(self.config),
             WindowsIsolationProvider(self.config),
         ]
-        
+
         for provider in providers:
             if provider.is_available():
                 self._provider = provider
                 logger.info(f"Selected isolation provider: {provider.get_name()}")
                 return
-        
+
         logger.warning("No OS-level isolation provider available")
-    
+
     def is_available(self) -> bool:
         """Check if isolation is available."""
         return self._provider is not None
-    
-    def get_provider_name(self) -> Optional[str]:
+
+    def get_provider_name(self) -> str | None:
         """Get the name of the selected provider."""
         return self._provider.get_name() if self._provider else None
-    
-    def wrap_command(self, command: List[str]) -> List[str]:
+
+    def wrap_command(self, command: list[str]) -> list[str]:
         """Wrap a command with isolation.
         
         Args:
@@ -362,8 +361,8 @@ class IsolationManager:
         if self._provider:
             return self._provider.wrap_command(command)
         return command
-    
-    def execute(self, command: List[str], **kwargs) -> subprocess.CompletedProcess:
+
+    def execute(self, command: list[str], **kwargs) -> subprocess.CompletedProcess:
         """Execute a command in isolated environment.
         
         Args:
@@ -374,9 +373,9 @@ class IsolationManager:
             CompletedProcess result
         """
         isolated_cmd = self.wrap_command(command)
-        
+
         logger.debug(f"Executing isolated command: {' '.join(isolated_cmd)}")
-        
+
         return subprocess.run(
             isolated_cmd,
             capture_output=True,
@@ -400,12 +399,12 @@ def get_default_isolation() -> IsolationManager:
             allow_all=True,  # Allow network by default for compatibility
         ),
     )
-    
+
     return IsolationManager(config)
 
 
 # Convenience function for quick isolation
-def isolate_command(command: List[str], **isolation_kwargs) -> subprocess.CompletedProcess:
+def isolate_command(command: list[str], **isolation_kwargs) -> subprocess.CompletedProcess:
     """Execute a command with OS-level isolation.
     
     Args:

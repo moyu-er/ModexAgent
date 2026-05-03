@@ -2,11 +2,9 @@ import fnmatch
 import mimetypes
 import os
 from abc import ABC, abstractmethod
-from pathlib import Path
-from typing import Dict, List, Optional
 
-from ..types import SandboxArtifact, SandboxResult
 from ..config import SandboxConfig
+from ..types import SandboxArtifact, SandboxResult
 
 
 class SandboxAdapter(ABC):
@@ -25,7 +23,7 @@ class SandboxAdapter(ABC):
         self,
         code: str,
         language: str = "python",
-        config: Optional[SandboxConfig] = None,
+        config: SandboxConfig | None = None,
     ) -> SandboxResult:
         pass
 
@@ -33,21 +31,21 @@ class SandboxAdapter(ABC):
     async def execute_command(
         self,
         command: str,
-        cwd: Optional[str] = None,
-        config: Optional[SandboxConfig] = None,
+        cwd: str | None = None,
+        config: SandboxConfig | None = None,
     ) -> SandboxResult:
         pass
 
     @abstractmethod
-    async def cleanup(self, sandbox_id: Optional[str] = None) -> None:
+    async def cleanup(self, sandbox_id: str | None = None) -> None:
         pass
 
-    def _get_artifacts_dir(self, config: Optional[SandboxConfig]) -> str:
+    def _get_artifacts_dir(self, config: SandboxConfig | None) -> str:
         if config is None:
             config = SandboxConfig()
         return os.path.join(config.workspace_dir, "artifacts")
 
-    def _ensure_artifacts_dir(self, config: Optional[SandboxConfig]) -> str:
+    def _ensure_artifacts_dir(self, config: SandboxConfig | None) -> str:
         artifacts_dir = self._get_artifacts_dir(config)
         os.makedirs(artifacts_dir, exist_ok=True)
         return artifacts_dir
@@ -60,9 +58,9 @@ class SandboxAdapter(ABC):
 
     def _collect_artifacts(
         self,
-        config: Optional[SandboxConfig],
-        patterns: Optional[List[str]] = None,
-    ) -> List[SandboxArtifact]:
+        config: SandboxConfig | None,
+        patterns: list[str] | None = None,
+    ) -> list[SandboxArtifact]:
         if patterns is None:
             patterns = ["*"]
 
@@ -94,9 +92,9 @@ class SandboxAdapter(ABC):
 
     def get_artifacts(
         self,
-        patterns: List[str],
-        config: Optional[SandboxConfig] = None,
-    ) -> Dict[str, bytes]:
+        patterns: list[str],
+        config: SandboxConfig | None = None,
+    ) -> dict[str, bytes]:
         artifacts_dir = self._get_artifacts_dir(config)
         if not os.path.exists(artifacts_dir):
             return {}

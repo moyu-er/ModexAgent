@@ -1,9 +1,8 @@
 """嵌入函数配置 - 支持本地模型缓存"""
 
 import os
+from collections.abc import Callable
 from pathlib import Path
-from typing import Optional, List, Callable, Any
-
 
 # 项目根目录
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.parent
@@ -32,7 +31,7 @@ def ensure_model_cache_dir() -> Path:
 
 def get_sentence_transformer_ef(
     model_name: str = DEFAULT_MODEL_NAME,
-    cache_dir: Optional[Path] = None,
+    cache_dir: Path | None = None,
     device: str = "cpu",
 ):
     """
@@ -54,20 +53,20 @@ def get_sentence_transformer_ef(
         raise ImportError(
             "chromadb is required. Install with: pip install chromadb"
         )
-    
+
     if cache_dir is None:
         cache_dir = ensure_model_cache_dir()
-    
+
     # 设置环境变量让sentence-transformers使用我们的缓存目录
     os.environ["SENTENCE_TRANSFORMERS_HOME"] = str(cache_dir)
-    
+
     return SentenceTransformerEmbeddingFunction(
         model_name=model_name,
         device=device,
     )
 
 
-def get_onnx_mini_lm_ef(cache_dir: Optional[Path] = None):
+def get_onnx_mini_lm_ef(cache_dir: Path | None = None):
     """
     获取ONNX MiniLM嵌入函数(更快的CPU推理)。
     
@@ -83,14 +82,14 @@ def get_onnx_mini_lm_ef(cache_dir: Optional[Path] = None):
         raise ImportError(
             "onnxruntime is required. Install with: pip install onnxruntime"
         )
-    
+
     if cache_dir is None:
         cache_dir = ensure_model_cache_dir()
-    
+
     # ONNX模型会缓存到指定目录
     old_cache = os.environ.get("CHROMA_CACHE_DIR")
     os.environ["CHROMA_CACHE_DIR"] = str(cache_dir)
-    
+
     try:
         ef = ONNXMiniLM_L6_V2()
     finally:
@@ -98,24 +97,24 @@ def get_onnx_mini_lm_ef(cache_dir: Optional[Path] = None):
             os.environ["CHROMA_CACHE_DIR"] = old_cache
         else:
             del os.environ["CHROMA_CACHE_DIR"]
-    
+
     return ef
 
 
 def get_default_ef():
     """获取默认嵌入函数(优先使用本地缓存)"""
     cache_dir = ensure_model_cache_dir()
-    
+
     # 检查是否已有下载的模型
     model_path = cache_dir / "sentence-transformers" / DEFAULT_MODEL_NAME
-    
+
     if model_path.exists():
         # 使用本地模型
         return get_sentence_transformer_ef(
             model_name=str(model_path),
             cache_dir=cache_dir,
         )
-    
+
     # 首次使用,会下载到缓存目录
     return get_sentence_transformer_ef(cache_dir=cache_dir)
 
@@ -126,24 +125,24 @@ class CachedEmbeddingFunction:
     
     自动管理模型下载和缓存,避免重复下载。
     """
-    
+
     _instance = None
     _ef = None
-    
+
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
-    
+
     def __init__(self):
         if self._ef is None:
             self._ef = get_default_ef()
-    
-    def __call__(self, input: List[str]) -> List[List[float]]:
+
+    def __call__(self, input: list[str]) -> list[list[float]]:
         return self._ef(input)
 
 
-def get_cached_ef() -> Callable[[List[str]], List[List[float]]]:
+def get_cached_ef() -> Callable[[list[str]], list[list[float]]]:
     """
     获取全局缓存的嵌入函数实例。
     

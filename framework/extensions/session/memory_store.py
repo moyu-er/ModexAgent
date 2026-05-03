@@ -1,11 +1,8 @@
 """内存会话存储实现"""
 
-import json
 from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional
-from collections import defaultdict
 
-from framework.core.session import SessionStore, Session
+from framework.core.session import Session, SessionStore
 
 
 class InMemorySessionStore(SessionStore):
@@ -28,7 +25,7 @@ class InMemorySessionStore(SessionStore):
         loaded = await store.get("session_1")
     """
 
-    def __init__(self, session_ttl: Optional[int] = None):
+    def __init__(self, session_ttl: int | None = None):
         """
         初始化内存会话存储。
 
@@ -37,7 +34,7 @@ class InMemorySessionStore(SessionStore):
         """
         self._session_ttl = session_ttl
         # 存储结构: {session_id: {session, expires_at}}
-        self._sessions: Dict[str, Dict] = {}
+        self._sessions: dict[str, dict] = {}
 
     def _cleanup_expired(self):
         """清理过期会话"""
@@ -54,7 +51,7 @@ class InMemorySessionStore(SessionStore):
         for session_id in expired_sessions:
             del self._sessions[session_id]
 
-    async def get(self, session_id: str) -> Optional[Session]:
+    async def get(self, session_id: str) -> Session | None:
         """
         获取会话。
 
@@ -122,7 +119,7 @@ class InMemorySessionStore(SessionStore):
         user_id: str,
         limit: int = 10,
         offset: int = 0,
-    ) -> List[Session]:
+    ) -> list[Session]:
         """
         列出用户的所有会话。
 

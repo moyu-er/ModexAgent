@@ -1,15 +1,13 @@
 import sys
-from typing import List, Optional
 
 from .adapters.base import SandboxAdapter
-from .adapters.subprocess import SubprocessSandbox
-from .adapters.landlock import LandlockSandbox
 from .adapters.docker import DockerSandbox
 from .adapters.e2b import E2BSandbox
+from .adapters.landlock import LandlockSandbox
+from .adapters.subprocess import SubprocessSandbox
 from .config import SandboxConfig
-from .exceptions import SandboxUnavailableError
 from .enums import SandboxType
-
+from .exceptions import SandboxUnavailableError
 
 _ADAPTERS = {
     SandboxType.LANDLOCK: LandlockSandbox,
@@ -19,7 +17,7 @@ _ADAPTERS = {
 }
 
 
-def list_available_adapters() -> List[str]:
+def list_available_adapters() -> list[str]:
     available = []
     for sandbox_type, cls in _ADAPTERS.items():
         adapter = cls()
@@ -28,11 +26,11 @@ def list_available_adapters() -> List[str]:
     return available
 
 
-def get_default_sandbox(config: Optional[SandboxConfig] = None) -> SandboxAdapter:
+def get_default_sandbox(config: SandboxConfig | None = None) -> SandboxAdapter:
     return get_local_sandbox(config)
 
 
-def get_local_sandbox(config: Optional[SandboxConfig] = None) -> SandboxAdapter:
+def get_local_sandbox(config: SandboxConfig | None = None) -> SandboxAdapter:
     if sys.platform == "linux":
         landlock = LandlockSandbox(config)
         if landlock.is_available:
@@ -45,7 +43,7 @@ def get_local_sandbox(config: Optional[SandboxConfig] = None) -> SandboxAdapter:
     return SubprocessSandbox(config)
 
 
-def get_cloud_sandbox(config: Optional[SandboxConfig] = None) -> SandboxAdapter:
+def get_cloud_sandbox(config: SandboxConfig | None = None) -> SandboxAdapter:
     e2b = E2BSandbox(config)
     if e2b.is_available:
         return e2b
@@ -54,7 +52,7 @@ def get_cloud_sandbox(config: Optional[SandboxConfig] = None) -> SandboxAdapter:
 
 def get_sandbox(
     name: str | SandboxType,
-    config: Optional[SandboxConfig] = None,
+    config: SandboxConfig | None = None,
 ) -> SandboxAdapter:
     if isinstance(name, SandboxType):
         name = name.value

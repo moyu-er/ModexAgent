@@ -5,14 +5,12 @@ import mimetypes
 import os
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
 
-from .base import SandboxAdapter
-from ..types import SandboxArtifact, SandboxResult
 from ..config import SandboxConfig
 from ..exceptions import SandboxUnavailableError
+from ..types import SandboxArtifact, SandboxResult
 from ..validation import validate_code
-
+from .base import SandboxAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +23,7 @@ except ImportError:
     pass
 
 
-def _check_e2b_available(api_key: Optional[str] = None) -> bool:
+def _check_e2b_available(api_key: str | None = None) -> bool:
     if not E2B_AVAILABLE:
         return False
     key = api_key or os.environ.get("E2B_API_KEY")
@@ -88,8 +86,8 @@ class E2BSandbox(SandboxAdapter):
     - Local adapters: Artifacts are always available on local filesystem
     - E2B adapter: Artifacts are transient and tied to sandbox lifecycle
     """
-    
-    
+
+
     ARTIFACTS_DIR = "/home/user/artifacts"
     DEFAULT_SANDBOX_TIMEOUT_SECONDS = 300  # 5 minutes
 
@@ -101,14 +99,14 @@ class E2BSandbox(SandboxAdapter):
     def is_available(self) -> bool:
         return _check_e2b_available(self.api_key)
 
-    def __init__(self, config: Optional[SandboxConfig] = None, api_key: Optional[str] = None):
+    def __init__(self, config: SandboxConfig | None = None, api_key: str | None = None):
         self.config = config or SandboxConfig()
         self.api_key = api_key or os.environ.get("E2B_API_KEY")
-        
+
         # Sandbox lifecycle management
-        self._active_sandbox: Optional[Sandbox] = None
-        self._sandbox_created_at: Optional[float] = None
-        self._artifacts_metadata: List[SandboxArtifact] = []
+        self._active_sandbox: Sandbox | None = None
+        self._sandbox_created_at: float | None = None
+        self._artifacts_metadata: list[SandboxArtifact] = []
 
     def _set_api_key_env(self):
         old_key = os.environ.get("E2B_API_KEY")
@@ -127,15 +125,15 @@ class E2BSandbox(SandboxAdapter):
             return False
         if self._sandbox_created_at is None:
             return False
-        
+
         elapsed = time.time() - self._sandbox_created_at
         return elapsed < self.DEFAULT_SANDBOX_TIMEOUT_SECONDS
 
     def _collect_artifacts_from_e2b(
         self,
         sandbox,
-        patterns: Optional[List[str]] = None,
-    ) -> List[SandboxArtifact]:
+        patterns: list[str] | None = None,
+    ) -> list[SandboxArtifact]:
         """Collect artifact metadata from E2B remote sandbox."""
         if patterns is None:
             patterns = ["*"]
@@ -192,7 +190,7 @@ class E2BSandbox(SandboxAdapter):
         sandbox,
         artifact_path: str,
         max_size: int = 10485760,
-    ) -> Optional[bytes]:
+    ) -> bytes | None:
         """Read a single artifact's content from E2B remote sandbox.
         
         Args:
@@ -205,7 +203,7 @@ class E2BSandbox(SandboxAdapter):
         """
         try:
             full_path = os.path.join(self.ARTIFACTS_DIR, artifact_path)
-            
+
             # Check size first
             file_info = sandbox.files.list(os.path.dirname(full_path))
             for info in file_info:
@@ -215,14 +213,14 @@ class E2BSandbox(SandboxAdapter):
                         logger.warning(f"Artifact {artifact_path} exceeds max size ({size} > {max_size})")
                         return None
                     break
-            
+
             # Read file content
             content = sandbox.files.read(full_path)
-            
+
             # E2B returns string, convert to bytes
             if isinstance(content, str):
                 content = content.encode('utf-8')
-            
+
             return content
         except Exception as e:
             logger.warning(f"Failed to read artifact {artifact_path}: {e}")
@@ -236,18 +234,18 @@ class E2BSandbox(SandboxAdapter):
         """Automatically download artifacts if auto_download_artifacts is enabled."""
         if not config.auto_download_artifacts:
             return
-        
+
         patterns = config.auto_download_patterns or ["*"]
         artifacts_dir = self._get_artifacts_dir(config)
-        
+
         try:
             os.makedirs(artifacts_dir, exist_ok=True)
-            
+
             for artifact in self._artifacts_metadata:
                 if any(fnmatch.fnmatch(artifact.path, pattern) for pattern in patterns):
                     content = self._get_artifact_content_from_e2b(
-                        sandbox, 
-                        artifact.path, 
+                        sandbox,
+                        artifact.path,
                         config.artifact_max_size
                     )
                     if content is not None:
@@ -257,7 +255,7 @@ class E2BSandbox(SandboxAdapter):
                             os.makedirs(parent_dir, exist_ok=True)
                         with open(filepath, 'wb') as f:
                             f.write(content)
-                        
+
         except Exception as e:
             logger.warning(f"Auto-download artifacts failed: {e}")
 
@@ -265,7 +263,7 @@ class E2BSandbox(SandboxAdapter):
         self,
         code: str,
         language: str = "python",
-        config: Optional[SandboxConfig] = None,
+        config: SandboxConfig | None = None,
     ) -> SandboxResult:
         """Execute code in E2B cloud sandbox.
         
@@ -378,8 +376,8 @@ class E2BSandbox(SandboxAdapter):
     async def execute_command(
         self,
         command: str,
-        cwd: Optional[str] = None,
-        config: Optional[SandboxConfig] = None,
+        cwd: str | None = None,
+        config: SandboxConfig | None = None,
     ) -> SandboxResult:
         """Execute a command in E2B cloud sandbox."""
         if not self.is_available:
@@ -440,7 +438,7 @@ class E2BSandbox(SandboxAdapter):
         finally:
             self._restore_api_key_env(old_key)
 
-    async def cleanup(self, sandbox_id: Optional[str] = None) -> None:
+    async def cleanup(self, sandbox_id: str | None = None) -> None:
         """Clean up the E2B sandbox and release resources."""
         if self._active_sandbox is not None:
             try:
@@ -454,9 +452,9 @@ class E2BSandbox(SandboxAdapter):
 
     def get_artifacts(
         self,
-        patterns: List[str],
-        config: Optional[SandboxConfig] = None,
-    ) -> Dict[str, bytes]:
+        patterns: list[str],
+        config: SandboxConfig | None = None,
+    ) -> dict[str, bytes]:
         """Get artifacts from E2B sandbox with lazy loading.
         
         IMPORTANT: This method behaves differently from local sandbox adapters.
@@ -506,10 +504,10 @@ class E2BSandbox(SandboxAdapter):
 
     def download_artifacts(
         self,
-        patterns: List[str],
+        patterns: list[str],
         local_dir: str,
-        config: Optional[SandboxConfig] = None,
-    ) -> Dict[str, str]:
+        config: SandboxConfig | None = None,
+    ) -> dict[str, str]:
         """Download artifacts from E2B sandbox to a local directory.
         
         IMPORTANT: This method behaves differently from local sandbox adapters.
@@ -561,10 +559,10 @@ class E2BSandbox(SandboxAdapter):
                         # Handle subdirectories in artifact path
                         local_path = Path(local_dir) / artifact.path
                         local_path.parent.mkdir(parents=True, exist_ok=True)
-                        
+
                         with open(local_path, 'wb') as f:
                             f.write(content)
-                        
+
                         result[artifact.path] = str(local_path)
 
         return result

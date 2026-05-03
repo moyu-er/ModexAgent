@@ -1,5 +1,4 @@
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
 
 
 @dataclass
@@ -15,6 +14,6 @@ class SandboxResult:
     stdout: str = ""
     stderr: str = ""
     exit_code: int = 0
-    artifacts: List[SandboxArtifact] = field(default_factory=list)
+    artifacts: list[SandboxArtifact] = field(default_factory=list)
     execution_time_ms: float = 0.0
-    error: Optional[str] = None
+    error: str | None = None

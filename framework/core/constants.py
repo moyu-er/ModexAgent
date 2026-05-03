@@ -62,7 +62,7 @@ class DefaultValues:
     TOOL_VERSION = "1.0"
     TOOL_CATEGORY = "general"
     CALL_ID_PREFIX = "call_"
-    
+
     # 消息相关默认值
     CHANNEL = "default"
     SENDER_ID = "anonymous"
