@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 from framework.agents.react.agent import ReActEvent
 from framework.agents.react.constants import ReActMetaKey, ReActNode, ReActReason
 from framework.approval.constants import ApprovalDecision, ApprovalTier
+from framework.control.runtime import ControlPhase
 from framework.approval.state import ApprovalRequest
 from framework.core.agent import AgentContext, ctx_ext
 from framework.core.context_extensions import ExtensionKey
@@ -165,6 +166,8 @@ class ToolNode(Node):
     async def _execute_batch(
         self, tool_calls: list[ToolCall], decisions: list[str], ctx: AgentContext,
     ) -> NodeTransition:
+        if ctx.runtime and ctx.runtime.control:
+            await ctx.runtime.control.drain(ctx, phase=ControlPhase.BEFORE_TOOL_BATCH)
         if ctx.emitter is not None:
             await ctx.emitter.emit(ReActEvent.PROGRESS, {
                 "hint": self._format_hint(tool_calls), "tool_hint": True,

@@ -12,6 +12,7 @@ from typing import Any, Literal
 
 from framework.agents.react.constants import ReActMetaKey
 from framework.control.exceptions import AgentControlError
+from framework.control.runtime import ControlPhase
 from framework.hook import HookPayload, HookPoint
 from framework.interceptor.abc import (
     LLMStreamChunk,
@@ -158,6 +159,8 @@ class ReActAgent(Agent[ReActEvent]):
 
         async def actual_turn():
                 nonlocal result
+                if runtime.control:
+                    await runtime.control.drain(context, phase=ControlPhase.BEFORE_TURN)
                 if runtime.hooks:
                     await runtime.hooks.dispatch(HookPoint.BEFORE_TURN, context)
                 result = await self.engine.run(context)
@@ -332,6 +335,8 @@ class ReActAgent(Agent[ReActEvent]):
         context: AgentContext,
     ) -> ToolResult:
         """执行工具，优先使用 InterceptorChain 包裹。"""
+        if context.runtime and context.runtime.control:
+            await context.runtime.control.drain(context, phase=ControlPhase.BEFORE_TOOL_CALL)
         interceptor_chain = context.runtime.interceptors if context.runtime else None
         if interceptor_chain is not None:
             call_ctx = ToolCallContext(

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 from framework.agents.react.agent import ReActEvent
 from framework.agents.react.constants import ReActMetaKey, ReActNode, ReActReason
+from framework.control.runtime import ControlPhase
 from framework.core.agent import AgentContext
 from framework.core.constants import FinishReason
 from framework.core.graph.node import Node, NodeTransition
@@ -36,6 +37,8 @@ class LLMNode(Node):
         runtime = ctx.runtime
 
         async def actual_iteration():
+            if runtime and runtime.control:
+                await runtime.control.drain(ctx, phase=ControlPhase.BEFORE_ITERATION)
             if ctx.emitter is not None:
                 await ctx.emitter.emit(
                     ReActEvent.ITERATION_START, {"iteration": iteration},
@@ -108,6 +111,8 @@ class LLMNode(Node):
     async def _call_llm(
         self, messages: list[dict[str, Any]], ctx: AgentContext,
     ) -> LLMResponse:
+        if ctx.runtime and ctx.runtime.control:
+            await ctx.runtime.control.drain(ctx, phase=ControlPhase.BEFORE_LLM)
         emitter = ctx.emitter
         if emitter is not None and emitter.wants_streaming() and isinstance(
             self._agent.provider, StreamingLLMProvider,
