@@ -30,11 +30,11 @@ class TieredToolApprovalClassifier:
         if self.hardline is not None and self.hardline.matches(tool_name):
             return ApprovalTier.HARDLINE
 
-        if self.argument_matcher is not None:
-            if not self.argument_matcher.is_allowed(tool_call):
+        is_dangerous = self.dangerous is not None and self.dangerous.matches(tool_name)
+        if is_dangerous:
+            # Path-based check only applies to tools in the dangerous name set
+            if self.argument_matcher is not None and not self.argument_matcher.is_allowed(tool_call):
                 return ApprovalTier.DANGEROUS
-
-        if self.dangerous is not None and self.dangerous.matches(tool_name):
             return ApprovalTier.DANGEROUS
 
         if self.sensitive is not None and self.sensitive.matches(tool_name):
