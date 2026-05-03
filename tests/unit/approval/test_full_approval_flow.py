@@ -98,7 +98,7 @@ def _make_approval_interceptor(dangerous_tools=None, allowed_dirs=None):
 
 
 def _make_ctx(*, session_id="s1", history=None, interceptor_chain=None,
-              suspend_strategy=None, metadata=None):
+              suspend_strategy=None, approval_classifier=None, metadata=None):
     ctx = AgentContext(
         system_prompt="You are helpful.",
         history=history if history is not None else _TrackingHistory(),
@@ -107,13 +107,34 @@ def _make_ctx(*, session_id="s1", history=None, interceptor_chain=None,
         metadata=metadata or {},
     )
     ctx.emitter = _MockEmitter()
-    if interceptor_chain or suspend_strategy:
+    if interceptor_chain or suspend_strategy or approval_classifier:
         from framework.agents.react.runtime import ReActRuntime
-        ctx.runtime = ReActRuntime(
+        runtime = ReActRuntime(
             mode="full",
             interceptors=interceptor_chain,
             suspend_strategy=suspend_strategy,
         )
+        # Build ApprovalRuntime for ToolNode._get_tier
+        classifier = approval_classifier
+        if classifier is None and interceptor_chain:
+            from framework.agents.react.approval import TieredToolApprovalClassifier
+            from framework.interceptor.builtin.tool_approval import TieredToolApprovalInterceptor
+            for interceptor in interceptor_chain.interceptors:
+                if isinstance(interceptor, TieredToolApprovalInterceptor):
+                    classifier = TieredToolApprovalClassifier(
+                        hardline=interceptor._hardline,
+                        dangerous=interceptor._dangerous,
+                        sensitive=interceptor._sensitive,
+                        argument_matcher=interceptor._argument_matcher,
+                    )
+                    break
+        if classifier is not None:
+            from framework.agents.react.approval import ApprovalRuntime
+            runtime.approval = ApprovalRuntime(
+                classifier=classifier,
+                suspend_strategy=suspend_strategy,
+            )
+        ctx.runtime = runtime
     return ctx
 
 

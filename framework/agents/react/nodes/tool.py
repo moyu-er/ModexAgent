@@ -125,33 +125,10 @@ class ToolNode(Node):
         )
         return decisions
 
-    def _get_tier(self, tc: ToolCall, ctx: AgentContext) -> str:
-        interceptor_chain = ctx.runtime.interceptors if ctx.runtime else None
-        if interceptor_chain is None:
-            logger.warning(
-                "ToolNode._get_tier: NO interceptor_chain in ctx.extensions! "
-                "ctx.extensions keys=%s for tool=%s",
-                list(ctx.extensions.keys()), tc.tool_name,
-            )
-            return ApprovalTier.NORMAL
-        interceptors = getattr(interceptor_chain, "interceptors", [])
-        logger.info(
-            "ToolNode._get_tier: interceptor_chain=%s with %d interceptors for tool=%s args=%s",
-            type(interceptor_chain).__name__, len(interceptors),
-            tc.tool_name, dict(tc.arguments or {}),
-        )
-        for interceptor in interceptors:
-            classify_fn = getattr(interceptor, "classify_tier", None)
-            logger.info("  interceptor=%s has classify_tier=%s",
-                        type(interceptor).__name__, classify_fn is not None)
-            if classify_fn is not None:
-                tier = classify_fn(tc)
-                logger.info("  → tier=%s", tier)
-                return tier
-        logger.warning(
-            "ToolNode._get_tier: NO classify_tier in %d interceptors, defaulting NORMAL for tool=%s",
-            len(interceptors), tc.tool_name,
-        )
+    def _get_tier(self, tc: ToolCall, ctx: AgentContext[Any]) -> str:
+        runtime = ctx.runtime
+        if runtime and runtime.approval:
+            return runtime.approval.classifier.classify(tc, ctx)
         return ApprovalTier.NORMAL
 
     def _merge(self, original: list[str], resolved: list[str]) -> list[str]:

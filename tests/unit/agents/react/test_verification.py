@@ -6,7 +6,7 @@ event contract, engine routing, and bot_project wiring.
 
 import pytest
 from framework.interceptor.builtin.tool_approval import (
-    TieredToolApprovalInterceptor, ToolNameMatcher,
+    ToolNameMatcher,
 )
 from framework.approval.constants import ApprovalDecision, ApprovalTier, ApprovalStatus
 from framework.approval.state import ApprovalRequest, ApprovalState
@@ -42,57 +42,68 @@ from framework.hook import HookPoint
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 1. Approval System: classify_tier
+# 1. Approval System: TieredToolApprovalClassifier.classify
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestClassifyTier:
-    """Verify TieredToolApprovalInterceptor.classify_tier correctly classifies tools."""
+    """Verify TieredToolApprovalClassifier.classify correctly classifies tools."""
 
-    def _make_interceptor(self, *, dangerous_patterns=None, sensitive_patterns=None,
+    def _make_classifier(self, *, dangerous_patterns=None, sensitive_patterns=None,
                           hardline_patterns=None):
+        from framework.agents.react.approval import TieredToolApprovalClassifier
         dangerous = ToolNameMatcher(dangerous_patterns) if dangerous_patterns else None
         sensitive = ToolNameMatcher(sensitive_patterns) if sensitive_patterns else None
         hardline = ToolNameMatcher(hardline_patterns) if hardline_patterns else None
-        from unittest.mock import MagicMock
-        return TieredToolApprovalInterceptor(
-            channel=MagicMock(),
-            dangerous_matcher=dangerous,
-            sensitive_matcher=sensitive,
-            hardline_matcher=hardline,
+        return TieredToolApprovalClassifier(
+            dangerous=dangerous,
+            sensitive=sensitive,
+            hardline=hardline,
         )
 
     def test_normal_tool_returns_normal(self):
-        interceptor = self._make_interceptor(dangerous_patterns=["rm", "delete"])
+        classifier = self._make_classifier(dangerous_patterns=["rm", "delete"])
         tc = ToolCall(tool_name="cat", call_id="c1", arguments={})
-        assert interceptor.classify_tier(tc) == ApprovalTier.NORMAL
+        ctx = AgentContext(system_prompt="test", history=ListMessageHistory(),
+                            tool_manager=InMemoryToolManager())
+        assert classifier.classify(tc, ctx) == ApprovalTier.NORMAL
 
     def test_dangerous_tool_returns_dangerous(self):
-        interceptor = self._make_interceptor(dangerous_patterns=["rm", "delete", "rmdir"])
+        classifier = self._make_classifier(dangerous_patterns=["rm", "delete", "rmdir"])
         tc = ToolCall(tool_name="rm", call_id="c1", arguments={"path": "/tmp/x"})
-        assert interceptor.classify_tier(tc) == ApprovalTier.DANGEROUS
+        ctx = AgentContext(system_prompt="test", history=ListMessageHistory(),
+                            tool_manager=InMemoryToolManager())
+        assert classifier.classify(tc, ctx) == ApprovalTier.DANGEROUS
 
     def test_sensitive_tool_returns_sensitive(self):
-        interceptor = self._make_interceptor(sensitive_patterns=["read_file", "cat"])
+        classifier = self._make_classifier(sensitive_patterns=["read_file", "cat"])
         tc = ToolCall(tool_name="read_file", call_id="c1", arguments={"path": "/etc/passwd"})
-        assert interceptor.classify_tier(tc) == ApprovalTier.SENSITIVE
+        ctx = AgentContext(system_prompt="test", history=ListMessageHistory(),
+                            tool_manager=InMemoryToolManager())
+        assert classifier.classify(tc, ctx) == ApprovalTier.SENSITIVE
 
     def test_hardline_tool_returns_hardline(self):
-        interceptor = self._make_interceptor(hardline_patterns=["sudo", "eval"])
+        classifier = self._make_classifier(hardline_patterns=["sudo", "eval"])
         tc = ToolCall(tool_name="sudo", call_id="c1", arguments={"cmd": "rm -rf /"})
-        assert interceptor.classify_tier(tc) == ApprovalTier.HARDLINE
+        ctx = AgentContext(system_prompt="test", history=ListMessageHistory(),
+                            tool_manager=InMemoryToolManager())
+        assert classifier.classify(tc, ctx) == ApprovalTier.HARDLINE
 
     def test_hardline_takes_priority_over_dangerous(self):
-        interceptor = self._make_interceptor(
+        classifier = self._make_classifier(
             dangerous_patterns=["sudo", "eval"],
             hardline_patterns=["sudo"],
         )
         tc = ToolCall(tool_name="sudo", call_id="c1", arguments={})
-        assert interceptor.classify_tier(tc) == ApprovalTier.HARDLINE
+        ctx = AgentContext(system_prompt="test", history=ListMessageHistory(),
+                            tool_manager=InMemoryToolManager())
+        assert classifier.classify(tc, ctx) == ApprovalTier.HARDLINE
 
     def test_no_matchers_all_normal(self):
-        interceptor = self._make_interceptor()
+        classifier = self._make_classifier()
         tc = ToolCall(tool_name="anything", call_id="c1", arguments={})
-        assert interceptor.classify_tier(tc) == ApprovalTier.NORMAL
+        ctx = AgentContext(system_prompt="test", history=ListMessageHistory(),
+                            tool_manager=InMemoryToolManager())
+        assert classifier.classify(tc, ctx) == ApprovalTier.NORMAL
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -100,30 +111,30 @@ class TestClassifyTier:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestToolNodeClassification:
-    """Verify ToolNode._classify_all correctly finds and uses classify_tier from interceptors."""
+    """Verify ToolNode._classify_all correctly uses runtime.approval.classifier."""
 
-    def _make_ctx(self, interceptor_chain=None):
+    def _make_ctx(self, classifier=None):
+        from unittest.mock import MagicMock
+        from framework.agents.react.runtime import ReActRuntime
         ctx = AgentContext(
             system_prompt="test", history=ListMessageHistory(),
             tool_manager=InMemoryToolManager(),
         )
-        if interceptor_chain is not None:
-            from framework.agents.react.runtime import ReActRuntime
-            ctx.runtime = ReActRuntime(mode="full", interceptors=interceptor_chain)
+        runtime = ReActRuntime(mode="full")
+        if classifier is not None:
+            runtime.approval = MagicMock(classifier=classifier)
+        ctx.runtime = runtime
         return ctx
 
     def test_classifies_dangerous_as_pending(self):
         from unittest.mock import MagicMock
         agent = MagicMock()
 
-        interceptor = MagicMock()
-        interceptor.classify_tier.return_value = ApprovalTier.DANGEROUS
-
-        chain = MagicMock()
-        chain.interceptors = [interceptor]
+        classifier = MagicMock()
+        classifier.classify.return_value = ApprovalTier.DANGEROUS
 
         node = ToolNode(agent)
-        ctx = self._make_ctx(interceptor_chain=chain)
+        ctx = self._make_ctx(classifier=classifier)
         tc = ToolCall(tool_name="rm", call_id="c1", arguments={})
         decisions = node._classify_all([tc], ctx)
 
@@ -133,14 +144,11 @@ class TestToolNodeClassification:
         from unittest.mock import MagicMock
         agent = MagicMock()
 
-        interceptor = MagicMock()
-        interceptor.classify_tier.return_value = ApprovalTier.NORMAL
-
-        chain = MagicMock()
-        chain.interceptors = [interceptor]
+        classifier = MagicMock()
+        classifier.classify.return_value = ApprovalTier.NORMAL
 
         node = ToolNode(agent)
-        ctx = self._make_ctx(interceptor_chain=chain)
+        ctx = self._make_ctx(classifier=classifier)
         tc = ToolCall(tool_name="cat", call_id="c1", arguments={})
         decisions = node._classify_all([tc], ctx)
 
@@ -150,24 +158,33 @@ class TestToolNodeClassification:
         from unittest.mock import MagicMock
         agent = MagicMock()
 
-        interceptor = MagicMock()
-        interceptor.classify_tier.return_value = ApprovalTier.HARDLINE
-
-        chain = MagicMock()
-        chain.interceptors = [interceptor]
+        classifier = MagicMock()
+        classifier.classify.return_value = ApprovalTier.HARDLINE
 
         node = ToolNode(agent)
-        ctx = self._make_ctx(interceptor_chain=chain)
+        ctx = self._make_ctx(classifier=classifier)
         tc = ToolCall(tool_name="sudo", call_id="c1", arguments={})
         decisions = node._classify_all([tc], ctx)
 
         assert decisions == [ApprovalDecision.DENIED]
 
-    def test_no_chain_all_allowed(self):
+    def test_no_runtime_all_allowed(self):
         from unittest.mock import MagicMock
         agent = MagicMock()
         node = ToolNode(agent)
-        ctx = self._make_ctx()  # no interceptor_chain
+        ctx = self._make_ctx()  # no approval runtime
+        tc = ToolCall(tool_name="anything", call_id="c1", arguments={})
+        decisions = node._classify_all([tc], ctx)
+
+        assert decisions == [ApprovalDecision.ALLOWED]
+
+    def test_no_classifier_all_allowed(self):
+        from unittest.mock import MagicMock
+        agent = MagicMock()
+        node = ToolNode(agent)
+        ctx = self._make_ctx()
+        # runtime exists but approval is None
+        ctx.runtime.approval = None
         tc = ToolCall(tool_name="anything", call_id="c1", arguments={})
         decisions = node._classify_all([tc], ctx)
 
@@ -177,7 +194,7 @@ class TestToolNodeClassification:
         from unittest.mock import MagicMock
         agent = MagicMock()
 
-        def classify(tc):
+        def classify(tc, ctx):
             if tc.tool_name == "rm":
                 return ApprovalTier.DANGEROUS
             if tc.tool_name == "cat":
@@ -186,14 +203,11 @@ class TestToolNodeClassification:
                 return ApprovalTier.HARDLINE
             return ApprovalTier.NORMAL
 
-        interceptor = MagicMock()
-        interceptor.classify_tier.side_effect = classify
-
-        chain = MagicMock()
-        chain.interceptors = [interceptor]
+        classifier = MagicMock()
+        classifier.classify.side_effect = classify
 
         node = ToolNode(agent)
-        ctx = self._make_ctx(interceptor_chain=chain)
+        ctx = self._make_ctx(classifier=classifier)
         tcs = [
             ToolCall(tool_name="cat", call_id="c1", arguments={}),
             ToolCall(tool_name="rm", call_id="c2", arguments={}),
