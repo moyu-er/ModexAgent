@@ -458,6 +458,7 @@ async def test_control_drain_interceptor_raises_on_cancel():
 
     ctx = MagicMock()
     ctx.session_id = "s1"
+    ctx.runtime = None
 
     async def next_call() -> None:
         pass

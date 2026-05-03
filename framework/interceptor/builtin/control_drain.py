@@ -63,8 +63,13 @@ class ControlDrainInterceptor:
         ctx: AgentContext[Any],
         next_call: TurnNext,
     ) -> AgentResult:
-        scope = ControlScope(session_id=ctx.session_id)
-        await self._drain_and_handle(ctx, scope)
+        runtime = ctx.runtime if hasattr(ctx, 'runtime') and ctx.runtime else None
+        if runtime and runtime.control:
+            from framework.control.runtime import ControlPhase
+            await runtime.control.drain(ctx, phase=ControlPhase.BEFORE_TURN)
+        else:
+            scope = ControlScope(session_id=ctx.session_id)
+            await self._drain_and_handle(ctx, scope)
         return await next_call()
 
     async def around_iteration(
@@ -73,8 +78,13 @@ class ControlDrainInterceptor:
         call: IterationContext,
         next_call: IterationNext,
     ) -> None:
-        scope = ControlScope(session_id=ctx.session_id)
-        await self._drain_and_handle(ctx, scope)
+        runtime = ctx.runtime if hasattr(ctx, 'runtime') and ctx.runtime else None
+        if runtime and runtime.control:
+            from framework.control.runtime import ControlPhase
+            await runtime.control.drain(ctx, phase=ControlPhase.BEFORE_ITERATION)
+        else:
+            scope = ControlScope(session_id=ctx.session_id)
+            await self._drain_and_handle(ctx, scope)
         await next_call()
 
     async def _drain_and_handle(
