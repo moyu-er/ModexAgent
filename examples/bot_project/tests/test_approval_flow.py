@@ -353,7 +353,7 @@ class TestFullApprovalResumeFlow:
         )
         runtime = MagicMock()
         runtime.approval.classifier = classifier
-        runtime.suspend_strategy = strategy
+        runtime.approval.suspend_strategy = strategy
         runtime.control = None
         runtime.hooks = None
         runtime.injection_queue = None
@@ -442,7 +442,7 @@ class TestFullApprovalResumeFlow:
         )
         runtime = MagicMock()
         runtime.approval.classifier = classifier
-        runtime.suspend_strategy = strategy
+        runtime.approval.suspend_strategy = strategy
         runtime.control = None
         runtime.hooks = None
         runtime.injection_queue = None

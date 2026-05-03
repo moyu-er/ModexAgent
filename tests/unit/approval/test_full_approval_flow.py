@@ -112,7 +112,6 @@ def _make_ctx(*, session_id="s1", history=None, interceptor_chain=None,
         runtime = ReActRuntime(
             mode="full",
             interceptors=interceptor_chain,
-            suspend_strategy=suspend_strategy,
         )
         # Build ApprovalRuntime for ToolNode._get_tier
         classifier = approval_classifier

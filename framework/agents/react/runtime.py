@@ -15,7 +15,6 @@ _CLEAN_EXTENSION_KEYS = (
     "hooks",
     "interceptor_chain",
     "checkpoint_store",
-    "suspend_strategy",
     "injection_queue",
 )
 
@@ -47,7 +46,6 @@ class ReActRuntime:
     approval: Any = None
     control: Any = None
     checkpoint_store: Any = None
-    suspend_strategy: Any = None
     injection_queue: asyncio.Queue[str] | None = None
     governance: Any = None
     safety: Any = None
@@ -88,7 +86,6 @@ class ReActRuntime:
             hooks=hook_runner,
             interceptors=ctx.extensions.pop("interceptor_chain", None),
             checkpoint_store=ctx.extensions.pop("checkpoint_store", None),
-            suspend_strategy=ctx.extensions.pop("suspend_strategy", None),
             injection_queue=ctx.extensions.pop("injection_queue", None),
             governance=ctx.extensions.pop(ExtensionKey.GOVERNANCE, None),
             safety=ctx.extensions.pop(ExtensionKey.SAFETY, None),

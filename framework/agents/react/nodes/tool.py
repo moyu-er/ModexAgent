@@ -63,7 +63,7 @@ class ToolNode(Node):
 
         # Phase 2: if any need approval, delegate to strategy
         if ApprovalDecision.PENDING in decisions:
-            strategy = ctx.runtime.suspend_strategy if ctx.runtime else None
+            strategy = ctx.runtime.approval.suspend_strategy if ctx.runtime and ctx.runtime.approval else None
             if strategy is None:
                 # No strategy configured — approval is effectively disabled.
                 # Treat all PENDING tools as ALLOWED so execution proceeds normally.

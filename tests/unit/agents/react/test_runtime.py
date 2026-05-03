@@ -26,7 +26,6 @@ class TestReActRuntime:
         assert rt.approval is None
         assert rt.control is None
         assert rt.checkpoint_store is None
-        assert rt.suspend_strategy is None
         assert rt.injection_queue is None
         assert rt.governance is None
         assert rt.safety is None
