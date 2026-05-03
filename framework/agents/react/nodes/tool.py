@@ -63,35 +63,34 @@ class ToolNode(Node):
 
         # Phase 2: if any need approval, delegate to strategy
         if ApprovalDecision.PENDING in decisions:
-            iteration = ctx.metadata[ReActMetaKey.ITERATION]
-            requests = [
-                ApprovalRequest(
-                    tool_name=tc.tool_name,
-                    tool_call_id=tc.call_id or "",
-                    arguments=tc.arguments or {},
-                    tier=self._get_tier(tc, ctx),
-                    iteration=iteration,
-                )
-                for tc, d in zip(tool_calls, decisions, strict=False)
-                if d == ApprovalDecision.PENDING
-            ]
             strategy = ctx.runtime.suspend_strategy if ctx.runtime else None
             if strategy is None:
-                logger.error(
-                    "ToolNode: PENDING decisions but no SuspendStrategy configured. "
-                    "decisions=%s", decisions,
+                # No strategy configured — approval is effectively disabled.
+                # Treat all PENDING tools as ALLOWED so execution proceeds normally.
+                decisions = [
+                    ApprovalDecision.ALLOWED if d == ApprovalDecision.PENDING else d
+                    for d in decisions
+                ]
+            else:
+                iteration = ctx.metadata[ReActMetaKey.ITERATION]
+                requests = [
+                    ApprovalRequest(
+                        tool_name=tc.tool_name,
+                        tool_call_id=tc.call_id or "",
+                        arguments=tc.arguments or {},
+                        tier=self._get_tier(tc, ctx),
+                        iteration=iteration,
+                    )
+                    for tc, d in zip(tool_calls, decisions, strict=False)
+                    if d == ApprovalDecision.PENDING
+                ]
+                resolved: list[str] = await strategy.solicit_approval(
+                    requests, ctx,
+                    all_tool_calls=all_tc_dicts,
+                    llm_content=llm_content,
+                    llm_reasoning=llm_reasoning,
                 )
-                ctx.metadata[ReActMetaKey.END_REASON] = ReActReason.TURN_CANCELLED
-                ctx.metadata[ReActMetaKey.CANCEL_REASON] = "missing_suspend_strategy"
-                return NodeTransition(ReActNode.END, ReActReason.TURN_CANCELLED)
-
-            resolved: list[str] = await strategy.solicit_approval(
-                requests, ctx,
-                all_tool_calls=all_tc_dicts,
-                llm_content=llm_content,
-                llm_reasoning=llm_reasoning,
-            )
-            decisions = self._merge(decisions, resolved)
+                decisions = self._merge(decisions, resolved)
 
         # Guard: ensure no PENDING remains before batch execution
         if ApprovalDecision.PENDING in decisions:
