@@ -71,15 +71,15 @@ class _FakeContext:
         self.metadata: dict = {}
         self.session_id = "test-session-001"
         self.extensions: dict[str, Any] = {
-            ExtensionKey.HOOKS: [],
+            "hooks": [],
             ExtensionKey.MAX_TOOLS_PER_TURN: None,
             ExtensionKey.GOVERNANCE: None,
             ExtensionKey.ON_CHECKPOINT: None,
             ExtensionKey.SAFETY: None,
-            ExtensionKey.HOOK_RUNNER: None,
-            ExtensionKey.INTERCEPTOR_CHAIN: interceptor_chain,
-            ExtensionKey.CHECKPOINT_STORE: None,
-            ExtensionKey.INJECTION_QUEUE: None,
+            "hook_runner": None,
+            "interceptor_chain": interceptor_chain,
+            "checkpoint_store": None,
+            "injection_queue": None,
             ExtensionKey.RUNTIME_CTX_MGR: None,
             ExtensionKey.RUNTIME_CTX: None,
         }
@@ -106,7 +106,12 @@ class TestStreamWithControlPreservesToolCalls:
                 yield chunk
 
         fake_chain = MagicMock()
+
+        async def _fake_around_turn(ctx, next_call):
+            return await next_call()
+
         fake_chain.has_scope = MagicMock(return_value=True)
+        fake_chain.around_turn = _fake_around_turn
         fake_chain.around_llm_stream = _fake_llm_stream
 
         # Arrange: mock streaming provider that returns tool_calls
@@ -163,7 +168,12 @@ class TestStreamWithControlPreservesToolCalls:
                 yield chunk
 
         fake_chain = MagicMock()
+
+        async def _fake_around_turn(ctx, next_call):
+            return await next_call()
+
         fake_chain.has_scope = MagicMock(return_value=True)
+        fake_chain.around_turn = _fake_around_turn
         fake_chain.around_llm_stream = _fake_llm_stream
 
         class StreamingProviderNoTools(StreamingLLMProvider):

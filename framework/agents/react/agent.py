@@ -156,15 +156,27 @@ class ReActAgent(Agent[ReActEvent]):
 
         result = AgentResult(content="", stop_reason="error")
 
+        async def actual_turn():
+                nonlocal result
+                if runtime.hooks:
+                    await runtime.hooks.dispatch(HookPoint.BEFORE_TURN, context)
+                result = await self.engine.run(context)
+                if runtime.hooks:
+                    await runtime.hooks.dispatch(
+                        HookPoint.AFTER_TURN, context,
+                        HookPayload(data={"result": result}),
+                    )
+                return result
+
         try:
-            if runtime.hooks:
-                await runtime.hooks.dispatch(HookPoint.BEFORE_TURN, context)
-            result = await self.engine.run(context)
-            if runtime.hooks:
-                await runtime.hooks.dispatch(
-                    HookPoint.AFTER_TURN, context,
-                    HookPayload(data={"result": result}),
-                )
+            if runtime.interceptors is not None:
+                from framework.interceptor.abc import InterceptorScope
+                if runtime.interceptors.has_scope(InterceptorScope.TURN):
+                    result = await runtime.interceptors.around_turn(context, actual_turn)
+                else:
+                    result = await actual_turn()
+            else:
+                result = await actual_turn()
             return result
         except GraphInterrupt:
             raise
