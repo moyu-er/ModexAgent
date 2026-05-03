@@ -47,7 +47,6 @@ from framework.interceptor.builtin import (
 )
 from framework.interceptor.builtin.tool_approval import (
     ArgumentMatcher,
-    TieredToolApprovalInterceptor,
     ToolNameMatcher,
 )
 from framework.interceptor.chain import InterceptorChain
@@ -430,12 +429,12 @@ class BotService(AgentBuilderMixin):
         pipeline_hooks = [inbox_flush_hook]
         pipeline_hooks.extend(self._collect_run_hooks())
 
-        # Build main agent interceptor chain WITH approval
-        # (factory default chain without approval is used for peers/subagents)
+        # Build main agent interceptor chain (approval is now in ReActRuntime)
         main_interceptor_chain = InterceptorChain()
         for interceptor in self.interceptor_chain.interceptors:
             main_interceptor_chain.add(interceptor)
-        # Add TieredToolApprovalInterceptor for main agent only
+
+        # Build ApprovalRuntime with classifier + strategy
         approval_config = self.config.get("approval", {})
         dangerous_tools = approval_config.get("dangerous_tools", ["shell", "write_file", "edit_file"])
         # Build ArgumentMatcher from config
@@ -447,14 +446,52 @@ class BotService(AgentBuilderMixin):
         if shell_tools.get("restrict_to_workspace", False):
             allowed_dirs.add(".")
         argument_matcher = ArgumentMatcher(allowed_dirs)
-        main_interceptor_chain.add(
-            TieredToolApprovalInterceptor(
-                channel=self.control_channel,
-                dangerous_matcher=ToolNameMatcher(set(dangerous_tools)),
-                argument_matcher=argument_matcher,
-            )
+
+        from framework.agents.react.approval import ApprovalRuntime, TieredToolApprovalClassifier
+        from framework.agents.react.runtime import ReActRuntime
+        from framework.agents.react.state import StateStoreTurnResumeStateStore
+        from framework.agents.react.strategy import SuspendResumeStrategy
+        from framework.approval.store import LocalFileApprovalStateStore
+        from framework.control.runtime import ControlRuntime
+        from framework.control.store import InMemoryControlStore
+        from framework.interceptor.handler import CommandHandlerRegistry, DefaultCancelHandler
+
+        classifier = TieredToolApprovalClassifier(
+            dangerous=ToolNameMatcher(set(dangerous_tools)),
+            argument_matcher=argument_matcher,
         )
-        print(f"[OK] Main agent interceptor chain includes TieredToolApprovalInterceptor "
+
+        strategy = SuspendResumeStrategy(
+            LocalFileApprovalStateStore(self._approval_workspace),
+            StateStoreTurnResumeStateStore(self._checkpoint_store),
+        )
+
+        approval_runtime = ApprovalRuntime(
+            classifier=classifier,
+            suspend_strategy=strategy,
+        )
+
+        control_registry = CommandHandlerRegistry()
+        control_registry.register(DefaultCancelHandler())
+        control_runtime = ControlRuntime(
+            channel=self.control_channel,
+            store=InMemoryControlStore(),
+            registry=control_registry,
+        )
+
+        governance = self._build_governance()
+
+        runtime = ReActRuntime(
+            mode="full",
+            hooks=hook_runner,
+            interceptors=main_interceptor_chain,
+            approval=approval_runtime,
+            control=control_runtime,
+            checkpoint_store=self._checkpoint_store,
+            governance=governance,
+            safety=self.safety_policy,
+        )
+        print(f"[OK] ReActRuntime built "
               f"(dangerous_tools={dangerous_tools}, allowed_dirs={allowed_dirs})")
 
         self.pipeline = AgentPipeline(
@@ -473,11 +510,12 @@ class BotService(AgentBuilderMixin):
             interceptor_chain=main_interceptor_chain,
             subagent_manager=self.subagent_manager,
             context_manager_factory=self._get_context_manager,
-            governance=self._build_governance(),
+            governance=governance,
             safety=self.safety_policy,
             checkpoint_store=self._checkpoint_store,
             approval_workspace=str(self._approval_workspace),
             user_interface=self._im_ui,
+            prebuilt_runtime=runtime,
         )
         print("[OK] AgentPipeline initialized")
         print(f"   Input: {self.input_adapter.name}")
@@ -554,10 +592,10 @@ class BotService(AgentBuilderMixin):
         await self.agent_pool.register_resident(main_descriptor)
         print(f"[OK] AgentPool initialized, main agent '{parent_agent_name}' registered as resident")
 
-        # Inject approval pipeline into main agent's pool instance
+        # Inject ReActRuntime into main agent's pool pipeline
         main_instance = self.agent_pool._agents.get(parent_agent_name)
         if main_instance is not None and main_instance.pipeline is not None:
-            # Build main interceptor chain with TieredToolApprovalInterceptor
+            # Build main interceptor chain (approval is now in ReActRuntime)
             main_chain = InterceptorChain()
             for interceptor in self.interceptor_chain.interceptors:
                 main_chain.add(interceptor)
@@ -573,32 +611,56 @@ class BotService(AgentBuilderMixin):
                 allowed_dirs.add(".")
             argument_matcher = ArgumentMatcher(allowed_dirs)
 
-            main_chain.add(TieredToolApprovalInterceptor(
-                channel=self.control_channel,
-                dangerous_matcher=ToolNameMatcher(set(dangerous_tools)),
-                argument_matcher=argument_matcher,
-            ))
-
-            # Replace the pipeline's interceptor chain
-            main_instance.pipeline.interceptor_chain = main_chain
-
-            # Build SuspendResumeStrategy with persistent stores
-            from framework.agents.react.strategy import SuspendResumeStrategy
+            from framework.agents.react.approval import ApprovalRuntime, TieredToolApprovalClassifier
+            from framework.agents.react.runtime import ReActRuntime
             from framework.agents.react.state import StateStoreTurnResumeStateStore
+            from framework.agents.react.strategy import SuspendResumeStrategy
             from framework.approval.store import LocalFileApprovalStateStore
+            from framework.control.runtime import ControlRuntime
+            from framework.control.store import InMemoryControlStore
+            from framework.interceptor.handler import CommandHandlerRegistry, DefaultCancelHandler
+
+            classifier = TieredToolApprovalClassifier(
+                dangerous=ToolNameMatcher(set(dangerous_tools)),
+                argument_matcher=argument_matcher,
+            )
 
             approval_store = LocalFileApprovalStateStore(self._approval_workspace)
             resume_store = StateStoreTurnResumeStateStore(self._checkpoint_store)
             strategy = SuspendResumeStrategy(approval_store, resume_store)
 
-            # Inject into pipeline for AgentContext construction
+            approval_runtime = ApprovalRuntime(
+                classifier=classifier,
+                suspend_strategy=strategy,
+            )
+
+            control_registry = CommandHandlerRegistry()
+            control_registry.register(DefaultCancelHandler())
+            control_runtime = ControlRuntime(
+                channel=self.control_channel,
+                store=InMemoryControlStore(),
+                registry=control_registry,
+            )
+
+            runtime = ReActRuntime(
+                mode="full",
+                hooks=main_instance.pipeline.hook_runner,
+                interceptors=main_chain,
+                approval=approval_runtime,
+                control=control_runtime,
+                checkpoint_store=self._checkpoint_store,
+                governance=self._build_governance(),
+                safety=self.safety_policy,
+            )
+
+            # Inject runtime into pipeline; AgentPipeline._build_runtime_and_context
+            # will assign it directly to agent_context.runtime when set.
+            main_instance.pipeline._prebuilt_runtime = runtime
             main_instance.pipeline.interceptor_chain = main_chain
             main_instance.pipeline.checkpoint_store = self._checkpoint_store
             main_instance.pipeline._approval_workspace = self._approval_workspace
             main_instance.pipeline._user_interface = self._im_ui
-            main_instance.pipeline._prebuilt_strategy = strategy
-            print(f"[OK] Main agent pool pipeline injected with TieredToolApprovalInterceptor "
-                  f"and SuspendResumeStrategy "
+            print(f"[OK] Main agent pool pipeline injected with ReActRuntime "
                   f"(dangerous_tools={dangerous_tools}, allowed_dirs={allowed_dirs})")
 
         # Register subagents as residents (pool mode requires all targets to be resident)

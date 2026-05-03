@@ -148,10 +148,15 @@ class ReActAgent(Agent[ReActEvent]):
         # 每轮开始时清空 attachments，避免跨轮污染
         context.attachments = []
         context.emitter = emitter
-        from framework.agents.react.runtime import ReActRuntime
 
-        runtime = ReActRuntime.from_context(context, mode=self.mode)
-        context.runtime = runtime
+        # Use prebuilt runtime if already set on context (e.g. by AgentPipeline
+        # with prebuilt_runtime). Otherwise, build from context extensions.
+        runtime = getattr(context, 'runtime', None)
+        if runtime is None:
+            from framework.agents.react.runtime import ReActRuntime
+
+            runtime = ReActRuntime.from_context(context, mode=self.mode)
+            context.runtime = runtime
         runtime.validate()
         ctx_token = current_agent_context.set(context)
 

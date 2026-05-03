@@ -171,6 +171,7 @@ class AgentPipeline:
         busy_input_mode: BusyInputMode = BusyInputMode.QUEUE,
         approval_workspace: str = ".modex_approval",
         user_interface: ControlUserInterface | None = None,
+        prebuilt_runtime: Any | None = None,
     ):
         """
         Args:
@@ -216,6 +217,7 @@ class AgentPipeline:
         self.busy_input_mode = busy_input_mode
         self._approval_workspace = Path(approval_workspace)
         self._user_interface = user_interface
+        self._prebuilt_runtime = prebuilt_runtime
         self._approval_pending: dict[str, list] = {}
         self._approval_stores: dict[str, LocalFileApprovalStateStore] = {}
         self._resume_stores: dict[str, StateStoreTurnResumeStateStore] = {}
@@ -726,6 +728,13 @@ class AgentPipeline:
                 ExtensionKey.MAX_TOOLS_PER_TURN: None,
             },
         )
+
+        # If a prebuilt runtime is provided, assign it directly to the agent context.
+        # This allows callers (e.g. bot_project BotService) to assemble the full
+        # ReActRuntime including approval, control, hooks, and interceptors before
+        # the pipeline starts.
+        if self._prebuilt_runtime is not None:
+            agent_context.runtime = self._prebuilt_runtime
 
         # Emitter selection
         if self.emitter_factory:
