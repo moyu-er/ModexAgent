@@ -429,70 +429,8 @@ class BotService(AgentBuilderMixin):
         pipeline_hooks = [inbox_flush_hook]
         pipeline_hooks.extend(self._collect_run_hooks())
 
-        # Build main agent interceptor chain (approval is now in ReActRuntime)
-        main_interceptor_chain = InterceptorChain()
-        for interceptor in self.interceptor_chain.interceptors:
-            main_interceptor_chain.add(interceptor)
-
-        # Build ApprovalRuntime with classifier + strategy
-        approval_config = self.config.get("approval", {})
-        dangerous_tools = approval_config.get("dangerous_tools", ["shell", "write_file", "edit_file"])
-        # Build ArgumentMatcher from config
-        tools_config = self.config.get("tools", {})
-        file_tools = tools_config.get("file_tools", {})
-        allowed_dirs = set(file_tools.get("allowed_directories", ["."]))
-        # Add shell workspace restriction if enabled
-        shell_tools = tools_config.get("shell_tools", {})
-        if shell_tools.get("restrict_to_workspace", False):
-            allowed_dirs.add(".")
-        argument_matcher = ArgumentMatcher(allowed_dirs)
-
-        from framework.agents.react.approval import ApprovalRuntime, TieredToolApprovalClassifier
-        from framework.agents.react.runtime import ReActRuntime
-        from framework.agents.react.state import StateStoreTurnResumeStateStore
-        from framework.agents.react.strategy import SuspendResumeStrategy
-        from framework.approval.store import LocalFileApprovalStateStore
-        from framework.control.runtime import ControlRuntime
-        from framework.control.store import InMemoryControlStore
-        from framework.interceptor.handler import CommandHandlerRegistry, DefaultCancelHandler
-
-        classifier = TieredToolApprovalClassifier(
-            dangerous=ToolNameMatcher(set(dangerous_tools)),
-            argument_matcher=argument_matcher,
-        )
-
-        strategy = SuspendResumeStrategy(
-            LocalFileApprovalStateStore(self._approval_workspace),
-            StateStoreTurnResumeStateStore(self._checkpoint_store),
-        )
-
-        approval_runtime = ApprovalRuntime(
-            classifier=classifier,
-            suspend_strategy=strategy,
-        )
-
-        control_registry = CommandHandlerRegistry()
-        control_registry.register(DefaultCancelHandler())
-        control_runtime = ControlRuntime(
-            channel=self.control_channel,
-            store=InMemoryControlStore(),
-            registry=control_registry,
-        )
-
-        governance = self._build_governance()
-
-        runtime = ReActRuntime(
-            mode="full",
-            hooks=hook_runner,
-            interceptors=main_interceptor_chain,
-            approval=approval_runtime,
-            control=control_runtime,
-            checkpoint_store=self._checkpoint_store,
-            governance=governance,
-            safety=self.safety_policy,
-        )
-        print(f"[OK] ReActRuntime built "
-              f"(dangerous_tools={dangerous_tools}, allowed_dirs={allowed_dirs})")
+        # Build ReActRuntime via framework RuntimeAssembler
+        runtime = await self._assemble_runtime(hooks=hook_runner)
 
         self.pipeline = AgentPipeline(
             agent=self.agent,
@@ -595,73 +533,17 @@ class BotService(AgentBuilderMixin):
         # Inject ReActRuntime into main agent's pool pipeline
         main_instance = self.agent_pool._agents.get(parent_agent_name)
         if main_instance is not None and main_instance.pipeline is not None:
-            # Build main interceptor chain (approval is now in ReActRuntime)
-            main_chain = InterceptorChain()
-            for interceptor in self.interceptor_chain.interceptors:
-                main_chain.add(interceptor)
-
-            approval_config = self.config.get("approval", {})
-            dangerous_tools = approval_config.get("dangerous_tools", ["shell", "write_file", "edit_file"])
-            # Build ArgumentMatcher from config
-            tools_config = self.config.get("tools", {})
-            file_tools_cfg = tools_config.get("file_tools", {})
-            allowed_dirs = set(file_tools_cfg.get("allowed_directories", ["."]))
-            shell_cfg = tools_config.get("shell_tools", {})
-            if shell_cfg.get("restrict_to_workspace", False):
-                allowed_dirs.add(".")
-            argument_matcher = ArgumentMatcher(allowed_dirs)
-
-            from framework.agents.react.approval import ApprovalRuntime, TieredToolApprovalClassifier
-            from framework.agents.react.runtime import ReActRuntime
-            from framework.agents.react.state import StateStoreTurnResumeStateStore
-            from framework.agents.react.strategy import SuspendResumeStrategy
-            from framework.approval.store import LocalFileApprovalStateStore
-            from framework.control.runtime import ControlRuntime
-            from framework.control.store import InMemoryControlStore
-            from framework.interceptor.handler import CommandHandlerRegistry, DefaultCancelHandler
-
-            classifier = TieredToolApprovalClassifier(
-                dangerous=ToolNameMatcher(set(dangerous_tools)),
-                argument_matcher=argument_matcher,
-            )
-
-            approval_store = LocalFileApprovalStateStore(self._approval_workspace)
-            resume_store = StateStoreTurnResumeStateStore(self._checkpoint_store)
-            strategy = SuspendResumeStrategy(approval_store, resume_store)
-
-            approval_runtime = ApprovalRuntime(
-                classifier=classifier,
-                suspend_strategy=strategy,
-            )
-
-            control_registry = CommandHandlerRegistry()
-            control_registry.register(DefaultCancelHandler())
-            control_runtime = ControlRuntime(
-                channel=self.control_channel,
-                store=InMemoryControlStore(),
-                registry=control_registry,
-            )
-
-            runtime = ReActRuntime(
-                mode="full",
-                hooks=main_instance.pipeline.hook_runner,
-                interceptors=main_chain,
-                approval=approval_runtime,
-                control=control_runtime,
-                checkpoint_store=self._checkpoint_store,
-                governance=self._build_governance(),
-                safety=self.safety_policy,
-            )
+            # Build ReActRuntime via framework RuntimeAssembler
+            runtime = await self._assemble_runtime(hooks=main_instance.pipeline.hook_runner)
 
             # Inject runtime into pipeline; AgentPipeline._build_runtime_and_context
             # will assign it directly to agent_context.runtime when set.
             main_instance.pipeline._prebuilt_runtime = runtime
-            main_instance.pipeline.interceptor_chain = main_chain
+            main_instance.pipeline.interceptor_chain = runtime.interceptors
             main_instance.pipeline.checkpoint_store = self._checkpoint_store
             main_instance.pipeline._approval_workspace = self._approval_workspace
             main_instance.pipeline._user_interface = self._im_ui
-            print(f"[OK] Main agent pool pipeline injected with ReActRuntime "
-                  f"(dangerous_tools={dangerous_tools}, allowed_dirs={allowed_dirs})")
+            print("[OK] Main agent pool pipeline injected with ReActRuntime")
 
         # Register subagents as residents (pool mode requires all targets to be resident)
         for sub_key in ("subagent_sync", "subagent"):
@@ -880,6 +762,56 @@ class BotService(AgentBuilderMixin):
             print("\n[STOP] Shutting down...")
         finally:
             await self.stop()
+
+    # ------------------------------------------------------------------ #
+    # Runtime assembly
+    # ------------------------------------------------------------------ #
+
+    async def _assemble_runtime(self, hooks: Any = None) -> Any:
+        """Build ReActRuntime via framework RuntimeAssembler.
+
+        The only difference between pipeline and pool mode is the hooks source.
+        Everything else — classifier, strategy, control, governance — is identical.
+        """
+        from framework.agents.react.assembler import RuntimeAssembler, RuntimeServicesConfig
+        from framework.agents.react.approval import TieredToolApprovalClassifier
+        from framework.agents.react.state import StateStoreTurnResumeStateStore
+        from framework.agents.react.strategy import SuspendResumeStrategy
+        from framework.approval.store import LocalFileApprovalStateStore
+        from framework.control.store import InMemoryControlStore
+        from framework.control.types import ControlCommandType
+        from framework.interceptor.handler import CommandHandlerRegistry, DefaultCancelHandler
+
+        approval_config = self.config.get("approval", {})
+        dangerous_tools = approval_config.get("dangerous_tools", ["shell", "write_file", "edit_file"])
+        tools_config = self.config.get("tools", {})
+        file_tools = tools_config.get("file_tools", {})
+        allowed_dirs = set(file_tools.get("allowed_directories", ["."]))
+        shell_tools = tools_config.get("shell_tools", {})
+        if shell_tools.get("restrict_to_workspace", False):
+            allowed_dirs.add(".")
+
+        runtime = await RuntimeAssembler.assemble(RuntimeServicesConfig(
+            mode="full",
+            hooks=hooks,
+            interceptors=list(self.interceptor_chain.interceptors) if self.interceptor_chain else None,
+            approval_classifier=TieredToolApprovalClassifier(
+                dangerous=ToolNameMatcher(set(dangerous_tools)),
+                argument_matcher=ArgumentMatcher(allowed_dirs),
+            ),
+            approval_strategy=SuspendResumeStrategy(
+                LocalFileApprovalStateStore(self._approval_workspace),
+                StateStoreTurnResumeStateStore(self._checkpoint_store),
+            ),
+            control_channel=self.control_channel,
+            control_store=InMemoryControlStore(),
+            command_handlers=[(ControlCommandType.CANCEL_TURN, DefaultCancelHandler())],
+            checkpoint_store=self._checkpoint_store,
+            governance=self._build_governance(),
+            safety=self.safety_policy,
+        ))
+        print(f"[OK] ReActRuntime built (dangerous_tools={dangerous_tools}, allowed_dirs={allowed_dirs})")
+        return runtime
 
     # ------------------------------------------------------------------ #
     # Memory helpers

@@ -10,6 +10,7 @@
 
 import pytest
 
+from framework.adapters.platform import StreamingMode
 from framework.agents.react import ReActEvent
 from framework.core.emitter import AgentResult, StreamingAwareEmitter, ToolCall, ToolResult
 
@@ -18,7 +19,7 @@ class MockOutputAdapter:
     """Mock OutputAdapter for testing."""
 
     def __init__(self, supports_streaming=False):
-        self.supports_streaming = supports_streaming
+        self.streaming_mode = StreamingMode.NATIVE if supports_streaming else StreamingMode.PSEUDO
         self.send_delta_calls = []
         self.send_calls = []
         self.flush_deltas_calls = []

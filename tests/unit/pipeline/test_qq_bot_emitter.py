@@ -11,6 +11,7 @@ import logging
 
 import pytest
 
+from framework.adapters.platform import StreamingMode
 from framework.agents.react import ReActEvent
 from framework.core.emitter import AgentResult, ToolCall, ToolResult
 
@@ -19,7 +20,7 @@ class MockOutputAdapter:
     """Mock OutputAdapter for testing."""
 
     def __init__(self):
-        self.supports_streaming = False
+        self.streaming_mode = StreamingMode.PSEUDO
         self.send_delta_calls = []
         self.send_calls = []
 

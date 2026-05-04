@@ -24,6 +24,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from bot.utils.media_utils import download_file
+from framework.adapters.platform import StreamingMode
 from framework.agents.react import ReActEvent
 from framework.core.emitter import EmitterConfig, StreamingAwareEmitter
 from framework.pipeline.adapters import (
@@ -311,9 +312,9 @@ class QQOutputAdapter(OutputAdapter):
         return "qq"
 
     @property
-    def supports_streaming(self) -> bool:
+    def streaming_mode(self) -> StreamingMode:
         """QQ 不支持真流式，只支持缓冲后一次性发送"""
-        return False
+        return StreamingMode.PSEUDO
 
     async def send(self, message: OutputMessage, session_id: str) -> None:
         """发送完整消息到 QQ（支持 C2C 私聊和群聊自动路由，支持附件）"""
