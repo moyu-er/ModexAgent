@@ -372,14 +372,21 @@ class AgentSession(Generic[E]):
                 max_tokens=getattr(message, "metadata", {}).get("max_tokens"),
                 metadata={"session_id": session_id, "agent_name": agent_name},
                 extensions={
-                    "hooks": self._hooks,
-                    "hook_runner": self._hook_runner,
-                    "interceptor_chain": self._interceptor_chain,
-                    "checkpoint_store": self._checkpoint_store,
                     ExtensionKey.RUNTIME_CTX_MGR: self._runtime_context_manager,
                     ExtensionKey.ON_CHECKPOINT: on_checkpoint,
                 },
             )
+
+            # Build ReActRuntime via framework RuntimeAssembler
+            if self._hook_runner or self._interceptor_chain or self._checkpoint_store:
+                from framework.agents.react.assembler import RuntimeAssembler, RuntimeServicesConfig
+
+                agent_context.runtime = await RuntimeAssembler.assemble(RuntimeServicesConfig(
+                    mode="full",
+                    hooks=self._hook_runner,
+                    interceptors=list(self._interceptor_chain.interceptors) if self._interceptor_chain else None,
+                    checkpoint_store=self._checkpoint_store,
+                ))
 
             # 5.5 设置当前 conversation_id 上下文变量（供 peer 通信工具使用）
             from ..multi_agent.subagent_manager import current_conversation_id
