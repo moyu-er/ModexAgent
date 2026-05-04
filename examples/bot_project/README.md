@@ -183,6 +183,20 @@ BotService 支持两种运行时模式，可通过 `mode="pipeline"` 或 `mode="
 | **AgentMessageBus** | 消息总线，管理 Agent 间的 inbox 消息队列 |
 | **SkillManager** | 技能管理，从 Markdown 文件动态构建系统提示词 |
 
+## 效果预览
+
+### 工具审批
+
+敏感工具调用时，ReAct 循环暂停，框架渲染审批提示并等待用户确认或拒绝。拒绝时支持级联取消或返回错误：
+
+<img src="../../assets/approval.jpg" alt="工具审批流程" width="800">
+
+### 多 Agent 协作
+
+主 Agent 通过 `send_message` 将文档生成任务分发给 office-expert peer，peer 完成后通过 `send_message_async` 将结果回复到主 Agent 的 inbox：
+
+<img src="../../assets/office_peer.jpg" alt="多 Agent Peer 协作" width="800">
+
 ## 快速开始
 
 ### 1. 环境配置

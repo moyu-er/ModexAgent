@@ -27,6 +27,22 @@ ModexAgent 是一个用于搭建 AI Agent 应用的 Python 框架。它把模型
 | `Control` | 运行时控制通道，用于取消、审批、注入指令等流程控制。 |
 | `Plugin` | 以插件形式扩展工具、记忆、hook 或其他能力。 |
 
+## 效果预览
+
+以下是 `examples/bot_project/` QQ Bot 示例的真实运行截图，更多细节见 [examples/bot_project/README.md](examples/bot_project/README.md)。
+
+### 工具审批
+
+Agent 调用敏感工具时，框架暂停执行并渲染审批提示，用户确认后继续：
+
+<img src="assets/approval.jpg" alt="工具审批流程" width="800">
+
+### 多 Agent 协作
+
+主 Agent 将文档任务分发给 office-expert peer，peer 完成后异步回复：
+
+<img src="assets/office_peer.jpg" alt="多 Agent 协作" width="800">
+
 ## 快速开始
 
 ### 环境要求
