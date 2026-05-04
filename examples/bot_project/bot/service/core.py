@@ -430,7 +430,7 @@ class BotService(AgentBuilderMixin):
         pipeline_hooks.extend(self._collect_run_hooks())
 
         # Build ReActRuntime via framework RuntimeAssembler
-        runtime = await self._assemble_runtime(hooks=hook_runner)
+        runtime = await self._assemble_runtime(hooks=self._build_hook_runner(pipeline_hooks))
 
         self.pipeline = AgentPipeline(
             agent=self.agent,
@@ -445,10 +445,10 @@ class BotService(AgentBuilderMixin):
             skill_manager=main_skill_manager,  # type: ignore[arg-type]
             hooks=pipeline_hooks,
             hook_runner=self._build_hook_runner(pipeline_hooks),
-            interceptor_chain=main_interceptor_chain,
+            interceptor_chain=self.interceptor_chain,
             subagent_manager=self.subagent_manager,
             context_manager_factory=self._get_context_manager,
-            governance=governance,
+            governance=self._build_governance(),
             safety=self.safety_policy,
             checkpoint_store=self._checkpoint_store,
             approval_workspace=str(self._approval_workspace),
@@ -780,7 +780,7 @@ class BotService(AgentBuilderMixin):
         from framework.approval.store import LocalFileApprovalStateStore
         from framework.control.store import InMemoryControlStore
         from framework.control.types import ControlCommandType
-        from framework.interceptor.handler import CommandHandlerRegistry, DefaultCancelHandler
+        from framework.interceptor.handler import DefaultCancelHandler
 
         approval_config = self.config.get("approval", {})
         dangerous_tools = approval_config.get("dangerous_tools", ["shell", "write_file", "edit_file"])

@@ -712,9 +712,7 @@ class AgentPipeline:
         self._session_locks.pop(session_id, None)
         self._injection_queues.pop(session_id, None)
         self._session_tasks.pop(session_id, None)
-        self._approval._approval_pending.pop(session_id, None)
-        self._approval._approval_stores.pop(session_id, None)
-        self._approval._resume_stores.pop(session_id, None)
+        self._approval.cleanup_session(session_id)
         if self.control_channel is not None:
             try:
                 await asyncio.wait_for(

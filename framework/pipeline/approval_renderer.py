@@ -229,9 +229,20 @@ class ApprovalRenderer:
 
         return None
 
+    def cleanup_session(self, session_id: str) -> None:
+        """Clean up per-session approval resources."""
+        self._approval_pending.pop(session_id, None)
+        self._approval_stores.pop(session_id, None)
+        self._resume_stores.pop(session_id, None)
+
     async def _drain(self, session_id: str) -> None:
         """Replay buffered agent messages after approval completes."""
         pending = self._approval_pending.pop(session_id, [])
+        if pending and self._on_drain is None:
+            logger.warning(
+                "ApprovalRenderer: _on_drain is None, dropping %d buffered messages for %s",
+                len(pending), session_id,
+            )
+            return
         for msg in pending:
-            if self._on_drain is not None:
-                asyncio.create_task(self._on_drain(msg))
+            asyncio.create_task(self._on_drain(msg))  # type: ignore[misc]
