@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from framework.adapters.platform import StreamingMode
 from framework.agents.react import ReActAgent, ReActEvent
 from framework.core.agent import AgentContext
 from framework.core.emitter import BufferingEmitter, StreamingAwareEmitter
@@ -430,7 +431,7 @@ class TestReActAgentRegression:
         context.tool_manager.execute = AsyncMock(return_value=ToolResult(tool_name="weather", result="Sunny"))
 
         class MockAdapter:
-            supports_streaming = False
+            streaming_mode = StreamingMode.PSEUDO
             def __init__(self):
                 self.send_calls = []
             async def send(self, message, session_id):

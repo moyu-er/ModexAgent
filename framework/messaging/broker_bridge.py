@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator, Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any
 
+from ..adapters.platform import StreamingMode
 from ..core.constants import DefaultValues
 from ..core.types import InputMessage, OutputMessage
 from ..pipeline.adapters import InputAdapter, OutputAdapter
@@ -110,8 +111,8 @@ class BrokerOutputAdapter(OutputAdapter):
         return f"broker:out:{self.sender}"
 
     @property
-    def supports_streaming(self) -> bool:
-        return False
+    def streaming_mode(self) -> StreamingMode:
+        return StreamingMode.NONE
 
     async def send(self, message: OutputMessage, session_id: str) -> None:
         metadata = dict(message.metadata) if message.metadata else {}

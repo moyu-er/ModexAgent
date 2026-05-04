@@ -16,27 +16,20 @@ from framework.core.llm_error import RuntimeSafetyPolicy
 from framework.core.skills import SkillManager
 from framework.memory.core.message import ChatMessage
 
-from ..agents.react.constants import ReActMetaKey
-from ..agents.react.state import StateStoreTurnResumeStateStore
-from ..approval.constants import ApprovalDecision
 from ..approval.response import parse_approval_action
-from ..approval.store import LocalFileApprovalStateStore
 from ..approval.types import ApprovalAction
 from ..control.ui.abc import ControlUserInterface
 from ..core.agent import Agent, AgentContext
 from ..core.context import ContextManager
 from ..core.context_extensions import ExtensionKey
 from ..core.emitter import AgentResult, StreamingAwareEmitter
-from ..core.graph.interrupt import GraphInterrupt, _current_resume
+from ..core.graph.interrupt import GraphInterrupt
 from ..core.runtime_context import RuntimeContextManager
 from ..core.tool_manager import ToolManager
-from ..core.types import InputMessage, MessageRole
+from ..core.types import InputMessage
 from ..memory import ContextGovernance
 from ..memory.consolidation import DreamEngine
 from ..memory.history import (
-    ListMessageHistory,
-    MessageHistory,
-    history_to_list,
     inject_attachments_to_history,
 )
 from ..multi_agent import (
@@ -48,6 +41,8 @@ from ..multi_agent import (
 )
 from ..session.agent_session import _dream_locks
 from .adapters import InputAdapter, OutputAdapter, OutputMessage
+from .approval_renderer import ApprovalRenderer, format_approval_prompt
+from .context_assembler import assemble_context
 
 logger = logging.getLogger(__name__)
 
@@ -105,20 +100,6 @@ async def safe_send_output(
         )
 
 
-def _format_approval_prompt(req) -> str:
-    """Format an approval request for display to the user."""
-    tool_name = getattr(req, "tool_name", "unknown")
-    call_id = getattr(req, "tool_call_id", "")
-    args = getattr(req, "arguments", {})
-    tier = getattr(req, "tier", "unknown")
-    args_str = ", ".join(f"{k}={v}" for k, v in (args or {}).items())
-    return (
-        f"Approval Required [{tier.upper()}]\n"
-        f"Tool: {tool_name}\n"
-        f"ID: {call_id}\n"
-        f"Args: {args_str}\n"
-        f"Reply /approve or /deny"
-    )
 
 
 class AgentPipeline:
@@ -216,16 +197,27 @@ class AgentPipeline:
         self.control_channel = control_channel
         self.busy_input_mode = busy_input_mode
         self._approval_workspace = Path(approval_workspace)
-        self._user_interface = user_interface
         self._prebuilt_runtime = prebuilt_runtime
-        self._approval_pending: dict[str, list] = {}
-        self._approval_stores: dict[str, LocalFileApprovalStateStore] = {}
-        self._resume_stores: dict[str, StateStoreTurnResumeStateStore] = {}
+        self._approval = ApprovalRenderer(
+            approval_workspace=self._approval_workspace,
+            checkpoint_store=checkpoint_store,
+            agent=agent,
+            user_interface=user_interface,
+            on_drain=self._process_message,
+        )
         self._running = False
         self._dream_task: asyncio.Task | None = None
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._session_tasks: dict[str, asyncio.Task] = {}
         self._injection_queues: dict[str, asyncio.Queue[str]] = {}
+
+    @property
+    def _user_interface(self):  # delegates to renderer so pool injection reaches handle()
+        return self._approval._user_interface
+
+    @_user_interface.setter
+    def _user_interface(self, value):
+        self._approval._user_interface = value
 
     async def run(self) -> None:
         """运行流水线"""
@@ -476,68 +468,6 @@ class AgentPipeline:
 
         return sanitized_content, media_blocks, _media_processor
 
-    async def _detect_approval_command(
-        self,
-        input_msg: InputMessage,
-        session_id: str,
-        input_metadata: dict[str, Any],
-    ) -> tuple[bool, Any | None]:
-        """Detect approval commands and handle auto-deny / source_agent buffering.
-
-        Returns:
-            (is_approval_cmd, approval_state).  If approval_state is not None,
-            the caller should handle approval consumption.
-        """
-        # Ensure approval/resume stores exist for this session (only when needed)
-        if self.checkpoint_store is not None:
-            if session_id not in self._approval_stores:
-                self._approval_stores[session_id] = LocalFileApprovalStateStore(
-                    self._approval_workspace
-                )
-            if session_id not in self._resume_stores:
-                self._resume_stores[session_id] = StateStoreTurnResumeStateStore(
-                    self.checkpoint_store
-                )
-
-        _is_approval_cmd = False
-        approval_state_early = None
-        # Load approval state: prefer runtime strategy, fall back to lazy stores
-        strategy = None
-        if self._prebuilt_runtime and self._prebuilt_runtime.approval:
-            strategy = getattr(self._prebuilt_runtime.approval, "suspend_strategy", None)
-        if strategy is not None:
-            approval_state_early = await strategy.load_approval_state(session_id)
-        else:
-            approval_store = self._approval_stores.get(session_id)
-            approval_state_early = await approval_store.load(session_id) if approval_store else None
-
-        if approval_state_early is not None:
-            action = parse_approval_action(input_msg.content or "")
-            if action is not None:
-                _is_approval_cmd = True
-            elif input_metadata.get("source_agent"):
-                self._approval_pending.setdefault(session_id, []).append(input_msg)
-            else:
-                # Unrelated user content during pending approval → deny all
-                # tools. apply(DENIED) cascades remaining to PREEMPTED.
-                truncated = (input_msg.content or "")[:50]
-                approval_state_early.deny_reason = (
-                    f"unrelated input: \"{truncated}\""
-                )
-                for req in approval_state_early.requests:
-                    if req.tool_call_id not in approval_state_early.decisions or \
-                       approval_state_early.decisions[req.tool_call_id] == ApprovalDecision.PENDING:
-                        approval_state_early.apply(req.tool_call_id, ApprovalDecision.DENIED)
-                        break
-                if strategy is not None:
-                    await strategy.save_approval_state(approval_state_early)
-                else:
-                    approval_store = self._approval_stores.get(session_id)
-                    if approval_store is not None:
-                        await approval_store.save(approval_state_early)
-
-        return _is_approval_cmd, approval_state_early
-
     async def _assemble_context(
         self,
         session_id: str,
@@ -550,157 +480,15 @@ class AgentPipeline:
         route_result: Any | None,
         _is_approval_cmd: bool,
     ) -> Any:
-        """Assemble context state: load context, recover checkpoints, write user message,
-        build system prompt, and run multi-agent context builder.
-
-        Returns:
-            context_state
-        """
-        source_agent = input_metadata.get("source_agent")
-
-        context_state = await ctx_mgr.load_with_metadata(
-            session_id,
-            metadata={"input_metadata": input_metadata},
-        )
-
-        # 崩溃恢复（带 dedup，14.2）
-        recover_fn = getattr(ctx_mgr, "recover_checkpoint", None)
-        if recover_fn is not None:
-            recovered, was_recovered = await recover_fn(session_id)
-            if was_recovered:
-                context_state = await ctx_mgr.load_with_metadata(
-                    session_id,
-                    metadata={"input_metadata": input_metadata},
-                )
-        else:
-            # Fallback for older ctx_mgr without recover_checkpoint
-            recovered = await ctx_mgr.load_checkpoint(session_id)
-            if recovered:
-                memory_system = getattr(ctx_mgr, "memory_system", None)
-                if memory_system is not None:
-                    ctx = getattr(ctx_mgr, "_context_cache", {}).get(session_id)
-                    if ctx is None:
-                        from framework.memory.core.scope import MemoryContext
-
-                        ctx = MemoryContext(
-                            session_id=session_id,
-                            user_id=getattr(ctx_mgr, "default_user_id", "default"),
-                        )
-                    await memory_system.add_messages(ctx, recovered)
-                await ctx_mgr.clear_checkpoint(session_id)
-                context_state = await ctx_mgr.load_with_metadata(
-                    session_id,
-                    metadata={"input_metadata": input_metadata},
-                )
-
-        # 根据 source_agent 区分 agent 间通信消息和用户消息
-        # 如果有媒体附件，构建多模态 content（OpenAI 兼容格式）
-        if media_blocks and _media_processor is not None:
-            try:
-                multimodal_content = _media_processor.build_content(sanitized_content, media_blocks)
-            except Exception:
-                multimodal_content = sanitized_content
-        else:
-            multimodal_content = sanitized_content
-
-        if source_agent:
-            user_message = {
-                "role": MessageRole.AGENT,
-                "source_agent": source_agent,
-                "content": multimodal_content,
-            }
-        else:
-            user_message = {"role": MessageRole.USER, "content": multimodal_content}
-
-        # 加载上下文（加载后再写入用户消息，确保单一写入路径）
-        context_state = await ctx_mgr.load(session_id)
-
-        # 审批命令跳过写入历史
-        if not _is_approval_cmd:
-            # 通过 history.append 写入用户消息（与 Nodes 使用同一写入路径）
-            await context_state.history.append(user_message)
-        # 设置 pending turn 用于崩溃恢复
-        await ctx_mgr.save(
-            session_id=session_id,
-            user_message=None,
-            assistant_result=AgentResult(),
-            metadata={"input_metadata": input_metadata},
-        )
-
-        # 恢复当前用户消息的完整多模态内容
-        #（memory 中保存的是 sanitize 后的占位符，LLM 需要看到完整媒体）
-        if media_blocks and _media_processor is not None:
-            from ..memory.history import restore_multimodal_in_history
-
-            pending = await restore_multimodal_in_history(
-                context_state.history, multimodal_content, logger
-            )
-            if pending is not None:
-                context_state.history = ListMessageHistory(pending)
-
-        # 构建系统提示词（注入 tools / skills / runtime info）
-        # 将 input_metadata 中的 scope 关键字段传递到 runtime_info，
-        # 确保 build_system_prompt() 能正确解析 user_id / tenant_id
-        agent_name = self.agent_descriptor.address.name if self.agent_descriptor else "main"
-        runtime_info: dict[str, Any] = {"caller_context": {"agent_name": agent_name}}
-        if input_metadata:
-            for key in ("user_id", "tenant_id", "channel", "chat_id"):
-                if key in input_metadata:
-                    runtime_info[key] = input_metadata[key]
-        context_state.system_prompt = await ctx_mgr.build_system_prompt(
+        """Assemble context state via context_assembler module."""
+        return await assemble_context(
+            session_id, input_msg, input_metadata, sanitized_content,
+            media_blocks, _media_processor, ctx_mgr, route_result, _is_approval_cmd,
+            agent_descriptor=self.agent_descriptor,
             tool_manager=self.tool_manager,
             skill_manager=self.skill_manager,
-            runtime_info=runtime_info,
+            context_builder=self.context_builder,
         )
-
-        # 使用 MultiAgentContextBuilder 构建上下文（如果配置）
-        if self.context_builder is not None and self.agent_descriptor is not None:
-            from ..multi_agent.address import AgentAddress
-            from ..multi_agent.envelope import AgentMessageEnvelope
-
-            envelope = AgentMessageEnvelope(
-                payload={"content": multimodal_content},
-                source=AgentAddress(kind="user", name=input_msg.sender_id or "unknown"),
-                target=AgentAddress(
-                    kind="agent", name=route_result.agent_name if route_result else "main"
-                ),
-                message_type=route_result.envelope_metadata.get("message_type", "agent_message")
-                if route_result
-                else "agent_message",
-                conversation_id=route_result.conversation_id if route_result else session_id,
-                agent_session_id=session_id,
-                metadata=input_metadata,
-            )
-            base_history = await history_to_list(context_state.history)
-            if base_history and base_history[-1].get("role") == MessageRole.USER:
-                base_history = base_history[:-1]
-            built_messages = self.context_builder.build_messages(
-                history=base_history,
-                current_envelope=envelope,
-                agent_descriptor=self.agent_descriptor,
-            )
-            system_msgs = [m for m in built_messages if m.get("role") == "system"]
-            if system_msgs:
-                context_state.system_prompt = "\n\n".join(m.get("content", "") for m in system_msgs)
-            non_system = [m for m in built_messages if m.get("role") != "system"]
-            # Defensive: ensure the current user message is preserved in history.
-            # If context_builder.build_messages() omits the user message,
-            # replace_all() would permanently lose it.
-            if user_message.get("role") == MessageRole.USER and not any(
-                m.get("role") == MessageRole.USER for m in non_system
-            ):
-                non_system = list(non_system) + [user_message]
-            # Write built non-system messages back into the underlying MessageHistory
-            # ShortTermMessageHistory 支持 replace_all() 原子写入存储，
-            # 避免替换为 ListMessageHistory 导致实时写入中断。
-            if isinstance(context_state.history, MessageHistory) and not isinstance(
-                context_state.history, ListMessageHistory
-            ):
-                await context_state.history.replace_all(non_system)
-            else:
-                context_state.history = ListMessageHistory(non_system)
-
-        return context_state
 
     def _build_runtime_and_context(
         self,
@@ -757,117 +545,6 @@ class AgentPipeline:
 
         return agent_context, emitter
 
-    async def _handle_approval_command(
-        self,
-        action: Any,
-        approval_state: Any,
-        agent_context: AgentContext,
-        emitter: Any,
-        session_id: str,
-        context_state: Any,
-        input_metadata: dict[str, Any],
-        strategy: Any | None,
-        ctx_mgr: Any,
-    ) -> AgentResult | None:
-        """Handle an approval command: apply decision, resume if ready, handle GraphInterrupt.
-
-        Returns:
-            AgentResult if resume completed, None otherwise.
-        """
-        # Get approval store
-        if strategy is None:
-            approval_store = self._approval_stores.get(session_id)
-        else:
-            approval_store = getattr(strategy, "_approval_store", None)
-
-        # Apply decision to the first unresolved tool
-        for req in approval_state.requests:
-            if req.tool_call_id not in approval_state.decisions or \
-               approval_state.decisions[req.tool_call_id] == ApprovalDecision.PENDING:
-                decision = ApprovalDecision.ALLOWED if action == ApprovalAction.ALLOW else ApprovalDecision.DENIED
-                approval_state.apply(req.tool_call_id, decision)
-                break
-
-        if approval_state.every_tool_decided:
-            # Get resume state from strategy or lazy stores
-            if strategy is not None:
-                resume_state = await strategy.load_resume_state(session_id)
-            else:
-                _resume_store = self._resume_stores.get(session_id)
-                resume_state = await _resume_store.load(session_id) if _resume_store else None
-            if resume_state is not None:
-                # Rebuild context with resume state
-                agent_context.metadata[ReActMetaKey.RESUME_STATE] = resume_state
-                agent_context.metadata[ReActMetaKey.TOOL_DECISIONS] = (
-                    approval_state.final_decisions()
-                )
-                if getattr(approval_state, "deny_reason", None):
-                    agent_context.metadata["APPROVAL_DENY_REASON"] = (
-                        approval_state.deny_reason
-                    )
-
-                _current_resume.set(approval_state.final_decisions())
-                try:
-                    result = await self.agent.run(agent_context, emitter)
-                except GraphInterrupt as interrupt_exc:
-                    # New tools triggered during resume — send approval prompt
-                    if self._user_interface is not None:
-                        requests = interrupt_exc.value
-                        if isinstance(requests, list):
-                            for req in requests:
-                                await self._user_interface.render_message(
-                                    session_id, _format_approval_prompt(req),
-                                )
-                                break
-                    # Drain buffered peer messages even when a new approval
-                    # interrupt is triggered, otherwise they are lost forever.
-                    await self._drain_approval_buffer(session_id)
-                    return None
-                finally:
-                    _current_resume.set(None)
-
-                # Cleanup old approval state (new state saved by strategy if another interrupt)
-                if strategy is not None:
-                    await strategy.delete_approval_state(session_id)
-                    await strategy.delete_resume_state(session_id)
-                else:
-                    if approval_store:
-                        await approval_store.delete(session_id)
-                    if _resume_store:
-                        await _resume_store.delete(session_id)
-
-                # Drain buffered messages
-                await self._drain_approval_buffer(session_id)
-
-                # Save result
-                if result and result.attachments:
-                    await inject_attachments_to_history(
-                        context_state.history, result.attachments
-                    )
-                await ctx_mgr.save(
-                    session_id=session_id,
-                    user_message=None,
-                    assistant_result=result,
-                    metadata={"input_metadata": input_metadata},
-                )
-                return result
-        else:
-            # Partial decision — save progress and send next prompt
-            if strategy is not None:
-                await strategy.save_approval_state(approval_state)
-            elif approval_store is not None:
-                await approval_store.save(approval_state)
-            if self._user_interface is not None:
-                for req in approval_state.requests:
-                    if req.tool_call_id not in approval_state.decisions:
-                        await self._user_interface.render_message(
-                            session_id,
-                            _format_approval_prompt(req),
-                        )
-                        break
-
-        return None  # Approval command consumed — do NOT save to memory
-
     async def _execute_turn(
         self,
         agent_context: AgentContext,
@@ -910,7 +587,7 @@ class AgentPipeline:
                         for req in requests:
                             await self._user_interface.render_message(
                                 session_id,
-                                _format_approval_prompt(req),
+                                format_approval_prompt(req),
                             )
                             break  # Only prompt the first one; user approves one at a time
 
@@ -998,8 +675,9 @@ class AgentPipeline:
             return None  # Command interceptor consumed the message
 
         # 2. Detect approval command
-        is_approval_cmd, approval_state = await self._detect_approval_command(
+        is_approval_cmd, approval_state = await self._approval.detect(
             input_msg, session_id, input_metadata,
+            prebuilt_runtime=self._prebuilt_runtime,
         )
 
         # 3. Assemble context
@@ -1022,7 +700,7 @@ class AgentPipeline:
                 strategy = None
                 if self._prebuilt_runtime and self._prebuilt_runtime.approval:
                     strategy = getattr(self._prebuilt_runtime.approval, "suspend_strategy", None)
-                return await self._handle_approval_command(
+                return await self._approval.handle(
                     effective_action, approval_state, agent_context, emitter, session_id,
                     context_state, input_metadata, strategy, ctx_mgr,
                 )
@@ -1041,9 +719,7 @@ class AgentPipeline:
         self._session_locks.pop(session_id, None)
         self._injection_queues.pop(session_id, None)
         self._session_tasks.pop(session_id, None)
-        self._approval_pending.pop(session_id, None)
-        self._approval_stores.pop(session_id, None)
-        self._resume_stores.pop(session_id, None)
+        self._approval.cleanup_session(session_id)
         if self.control_channel is not None:
             try:
                 await asyncio.wait_for(
@@ -1054,18 +730,6 @@ class AgentPipeline:
                 logger.warning("cleanup_session timeout for %s", session_id)
             except Exception:
                 logger.debug("cleanup_session failed for %s", session_id, exc_info=True)
-
-    async def _drain_approval_buffer(self, session_id: str) -> None:
-        """Replay buffered agent messages after approval completes.
-
-        Must not call _process_message directly because the session lock is
-        still held by the caller (_process_message_locked).  Scheduling each
-        replay as a background task avoids reentrancy deadlock on the
-        non-reentrant asyncio.Lock.
-        """
-        pending = self._approval_pending.pop(session_id, [])
-        for msg in pending:
-            asyncio.create_task(self._process_message(msg))
 
     async def stop(self) -> None:
         """停止流水线"""

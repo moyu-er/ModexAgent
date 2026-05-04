@@ -110,9 +110,11 @@ class OutputAdapter(ABC):
     def supports_streaming(self) -> bool:
         """是否支持真流式
 
-        如果子类覆盖了 send_delta() 且有实际实现（非默认缓冲），返回 True。
+        优先根据 streaming_mode 判断；若子类未覆盖 streaming_mode，
+        回退到检查 send_delta 是否被覆盖。
         """
-        # 检查是否覆盖了 send_delta 方法
+        if type(self).streaming_mode is not OutputAdapter.streaming_mode:
+            return self.streaming_mode == StreamingMode.NATIVE
         return type(self).send_delta is not OutputAdapter.send_delta
 
     async def send_stream(
@@ -150,8 +152,8 @@ class NullOutputAdapter(OutputAdapter):
         pass
 
     @property
-    def supports_streaming(self) -> bool:
-        return False
+    def streaming_mode(self) -> StreamingMode:
+        return StreamingMode.NONE
 
 
 class LoggingOutputAdapter(OutputAdapter):
@@ -174,8 +176,8 @@ class LoggingOutputAdapter(OutputAdapter):
         logger.log(self.level, "[session=%s] flush_deltas", session_id)
 
     @property
-    def supports_streaming(self) -> bool:
-        return True
+    def streaming_mode(self) -> StreamingMode:
+        return StreamingMode.NATIVE
 
 
 class SessionPrefixStripAdapter(OutputAdapter):
@@ -195,8 +197,12 @@ class SessionPrefixStripAdapter(OutputAdapter):
         return f"session_prefix_strip:{self._inner.name}"
 
     @property
+    def streaming_mode(self) -> StreamingMode:
+        return self._inner.streaming_mode
+
+    @property
     def supports_streaming(self) -> bool:
-        return self._inner.supports_streaming
+        return self._inner.streaming_mode == StreamingMode.NATIVE
 
     def _map_session_id(self, session_id: str) -> str:
         if self._separator not in session_id:
@@ -253,7 +259,15 @@ class CompositeOutputAdapter(OutputAdapter):
     @property
     def supports_streaming(self) -> bool:
         """如果任一子适配器支持真流式，返回 True"""
-        return any(adapter.supports_streaming for adapter in self.adapters)
+        return any(adapter.streaming_mode == StreamingMode.NATIVE for adapter in self.adapters)
+
+    @property
+    def streaming_mode(self) -> StreamingMode:
+        if any(adapter.streaming_mode == StreamingMode.NATIVE for adapter in self.adapters):
+            return StreamingMode.NATIVE
+        if any(adapter.streaming_mode == StreamingMode.PSEUDO for adapter in self.adapters):
+            return StreamingMode.PSEUDO
+        return StreamingMode.NONE
 
     async def send_stream(
         self,

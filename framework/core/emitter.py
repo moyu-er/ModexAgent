@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
+from ..adapters.platform import StreamingMode
 from ..memory.core.message import ChatMessage
 from .events import AgentEvent, EmitterConfig
 from .tool_manager import ToolResult
@@ -216,12 +217,12 @@ class StreamingAwareEmitter(ContentEmitter[E]):
         self._reasoning_buffer = ""
 
     def wants_streaming(self) -> bool:
-        return self.output_adapter.supports_streaming
+        return self.output_adapter.streaming_mode == StreamingMode.NATIVE
 
     @property
     def is_true_streaming(self) -> bool:
-        """是否是真流式（Adapter 支持）"""
-        return self.output_adapter.supports_streaming
+        """是否是真流式（Adapter 支持 NATIVE 模式）"""
+        return self.output_adapter.streaming_mode == StreamingMode.NATIVE
 
     async def _safe_adapter_send(self, message: Any, log_label: str = "send") -> None:
         """通过 output_adapter 发送消息，带 timeout 保护。"""

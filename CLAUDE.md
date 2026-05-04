@@ -98,9 +98,9 @@ framework/
 ├── pipeline/              # AgentPipeline, InputAdapter, OutputAdapter
 ├── session/               # AgentSession (request/response mode)
 ├── tools/                 # ToolRegistry, executor, MCP integration, standard tools
-├── memory/                # Three-layer memory system + redesign docs in agent_docs/
+├── memory/                # Three-layer memory system + redesign docs in design_doc/
 │   ├── core/              # ABCs: MemoryScope, MemoryStorage, ChatMessage, scope metadata
-│   ├── managers/          # ShortTerm, History, LongTerm layer managers
+│   ├── layers/            # Session, Archive, Knowledge layer managers
 │   ├── compaction/        # MessageCompactionPolicy, BoundaryPolicy
 │   ├── consolidation/     # Online Consolidator + offline DreamEngine
 │   ├── stores/            # FileStorage (JSONL+KV), InMemoryStorage
@@ -157,7 +157,7 @@ class ReActAgent(Agent[ReActEvent]):
 
 ### 3. Memory System
 
-Three-layer with scope isolation: `Short-term → History → Long-term (SOUL/USER/MEMORY.md)`. Scopes: Session/User/Tenant/Agent/Channel/Chat/PeerPair/Composite/Global.
+Three-layer with scope isolation: `Session (short-term) → Archive (history) → Knowledge (long-term, SOUL/USER/MEMORY.md)`. Scopes: Session/User/Tenant/Agent/Channel/Chat/PeerPair/Composite/Global.
 
 **Key abstractions (new redesign):**
 - `MemoryCompactionPipeline` — unified entry for token-pressure and idle AutoCompact
@@ -168,7 +168,7 @@ Three-layer with scope isolation: `Short-term → History → Long-term (SOUL/US
 
 Compression is two-phase (trigger → plan → summary → commit), all tool-chain-aware. `DreamEngine` runs offline consolidation; `Consolidator` runs online LLM-based compression via `SummaryStrategy`.
 
-**Design documents:** `agent_docs/memory-system-redesign.md` and `agent_docs/memory-system-redesign-plan.md` describe the ongoing P0-P5 redesign.
+**Design documents:** `design_doc/` contains the latest memory system design docs; `docs/memory-system.md` describes the current architecture.
 
 ### 4. Runtime Context System
 

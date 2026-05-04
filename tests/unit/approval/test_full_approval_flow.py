@@ -829,7 +829,7 @@ class TestApprovalBufferDeadlock:
             content="peer update", session_id="s1",
             metadata={"source_agent": "peer-a"},
         )
-        pipeline._approval_pending["s1"] = [msg]
+        pipeline._approval._approval_pending["s1"] = [msg]
 
         # Mock _process_message so that trying to acquire a held lock
         # would deadlock.  In the old code _drain_approval_buffer did
@@ -843,18 +843,18 @@ class TestApprovalBufferDeadlock:
             async with lock:
                 processed.append(msg)
 
-        pipeline._process_message = _mock_process
+        pipeline._approval._on_drain = _mock_process
 
         # Hold the lock while calling _drain_approval_buffer.
         # Old code: deadlock (times out).
         # New code: returns immediately because create_task doesn't wait.
         async with lock:
             await asyncio.wait_for(
-                pipeline._drain_approval_buffer("s1"), timeout=1.0
+                pipeline._approval._drain("s1"), timeout=1.0
             )
 
         # Buffer cleared immediately
-        assert "s1" not in pipeline._approval_pending
+        assert "s1" not in pipeline._approval._approval_pending
 
         # The created task is still waiting for the lock.
         # After we release it (end of async with), yield so it runs.

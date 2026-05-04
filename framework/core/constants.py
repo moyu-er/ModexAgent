@@ -6,15 +6,6 @@
 from enum import Enum
 
 
-class MessageRole(str, Enum):
-    """消息角色"""
-    SYSTEM = "system"
-    USER = "user"
-    ASSISTANT = "assistant"
-    TOOL = "tool"
-    FUNCTION = "function"
-
-
 class ToolCallType(str, Enum):
     """工具调用类型"""
     FUNCTION = "function"

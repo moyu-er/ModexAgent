@@ -64,7 +64,7 @@ class TestDetectApprovalCommandWithStrategy:
         pipeline = _make_pipeline(strategy=strategy)
         msg = InputMessage(content="/approve", session_id="s1")
 
-        is_cmd, returned_state = await pipeline._detect_approval_command(msg, "s1", {})
+        is_cmd, returned_state = await pipeline._approval.detect(msg, "s1", {}, prebuilt_runtime=pipeline._prebuilt_runtime)
 
         assert is_cmd is True, (
             "BUG: /approve with strategy should set _is_approval_cmd=True "
@@ -82,7 +82,7 @@ class TestDetectApprovalCommandWithStrategy:
         pipeline = _make_pipeline(strategy=strategy)
         msg = InputMessage(content="/deny", session_id="s1")
 
-        is_cmd, returned_state = await pipeline._detect_approval_command(msg, "s1", {})
+        is_cmd, returned_state = await pipeline._approval.detect(msg, "s1", {}, prebuilt_runtime=pipeline._prebuilt_runtime)
 
         assert is_cmd is True, (
             "BUG: /deny with strategy should set _is_approval_cmd=True "
@@ -98,7 +98,7 @@ class TestDetectApprovalCommandWithStrategy:
         pipeline = _make_pipeline(strategy=strategy)
         msg = InputMessage(content="/approve", session_id="s1")
 
-        is_cmd, returned_state = await pipeline._detect_approval_command(msg, "s1", {})
+        is_cmd, returned_state = await pipeline._approval.detect(msg, "s1", {}, prebuilt_runtime=pipeline._prebuilt_runtime)
 
         assert is_cmd is False
         assert returned_state is None
@@ -118,7 +118,7 @@ class TestDetectApprovalCommandNonApprovalInput:
         pipeline = _make_pipeline(strategy=strategy)
         msg = InputMessage(content="hello, tell me a story", session_id="s1")
 
-        is_cmd, returned_state = await pipeline._detect_approval_command(msg, "s1", {})
+        is_cmd, returned_state = await pipeline._approval.detect(msg, "s1", {}, prebuilt_runtime=pipeline._prebuilt_runtime)
 
         # Should NOT be treated as an approval command
         assert is_cmd is False
@@ -140,7 +140,7 @@ class TestDetectApprovalCommandNonApprovalInput:
         pipeline = _make_pipeline(strategy=strategy)
         msg = InputMessage(content="good morning", session_id="s1")
 
-        await pipeline._detect_approval_command(msg, "s1", {})
+        await pipeline._approval.detect(msg, "s1", {}, prebuilt_runtime=pipeline._prebuilt_runtime)
 
         strategy.save_approval_state.assert_called_once()
         saved_state = strategy.save_approval_state.call_args[0][0]
@@ -155,7 +155,7 @@ class TestDetectApprovalCommandNonApprovalInput:
         pipeline = _make_pipeline(strategy=strategy)
         msg = InputMessage(content="hello", session_id="s1")
 
-        is_cmd, returned_state = await pipeline._detect_approval_command(msg, "s1", {})
+        is_cmd, returned_state = await pipeline._approval.detect(msg, "s1", {}, prebuilt_runtime=pipeline._prebuilt_runtime)
 
         assert is_cmd is False
         assert returned_state is None
@@ -174,7 +174,7 @@ class TestDetectApprovalCommandNonApprovalInput:
             session_id="s1",
         )
 
-        await pipeline._detect_approval_command(msg, "s1", {})
+        await pipeline._approval.detect(msg, "s1", {}, prebuilt_runtime=pipeline._prebuilt_runtime)
 
         saved_state = strategy.save_approval_state.call_args[0][0]
         assert saved_state.deny_reason is not None, (
@@ -193,7 +193,7 @@ class TestDetectApprovalCommandNonApprovalInput:
         pipeline = _make_pipeline(strategy=strategy)
         msg = InputMessage(content="/deny", session_id="s1")
 
-        await pipeline._detect_approval_command(msg, "s1", {})
+        await pipeline._approval.detect(msg, "s1", {}, prebuilt_runtime=pipeline._prebuilt_runtime)
 
         # Explicit /deny: state is returned, caller handles via _handle_approval_command
         assert state.deny_reason is None, (
@@ -216,7 +216,7 @@ class TestDetectApprovalCommandNonApprovalInput:
         pipeline = _make_pipeline(strategy=strategy)
         msg = InputMessage(content="random chatter", session_id="s1")
 
-        await pipeline._detect_approval_command(msg, "s1", {})
+        await pipeline._approval.detect(msg, "s1", {}, prebuilt_runtime=pipeline._prebuilt_runtime)
 
         decisions = state.final_decisions()
         assert decisions == [
@@ -239,7 +239,7 @@ class TestDetectApprovalCommandNonApprovalInput:
             metadata={"source_agent": "peer1"},
         )
 
-        is_cmd, returned_state = await pipeline._detect_approval_command(
+        is_cmd, returned_state = await pipeline._approval.detect(
             msg, "s1", {"source_agent": "peer1"},
         )
 
@@ -436,7 +436,7 @@ class TestToolNodeDenyReasonError:
             metadata={"source_agent": "peer1"},
         )
 
-        is_cmd, returned_state = await pipeline._detect_approval_command(
+        is_cmd, returned_state = await pipeline._approval.detect(
             msg, "s1", {"source_agent": "peer1"},
         )
 

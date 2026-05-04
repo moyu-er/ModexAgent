@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+pytestmark = pytest.mark.integration
+
 from framework.core.emitter import AgentResult
 from framework.core.types import InputMessage
 from framework.messaging.broker_memory import InMemoryMessageBroker

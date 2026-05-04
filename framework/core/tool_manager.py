@@ -257,7 +257,7 @@ class ToolResult:
         Returns:
             OpenAI 格式的 tool message
         """
-        from .constants import MessageRole
+        from .types import MessageRole
         content = self.result if self.success else f"Error: {self.error}"
         return {
             "role": MessageRole.TOOL.value,
