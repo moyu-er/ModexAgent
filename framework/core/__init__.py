@@ -8,10 +8,12 @@ from .constants import (
     DefaultValues,
     ErrorMessages,
     FinishReason,
-    MessageRole,
     ToolCallType,
     ToolChoice,
     ToolSchemaConstants,
+)
+from .types import (
+    MessageRole,
 )
 from .context import (
     ContextManager,
