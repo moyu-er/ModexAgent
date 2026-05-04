@@ -48,6 +48,7 @@ from ..multi_agent import (
 )
 from ..session.agent_session import _dream_locks
 from .adapters import InputAdapter, OutputAdapter, OutputMessage
+from .approval_renderer import format_approval_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -105,20 +106,6 @@ async def safe_send_output(
         )
 
 
-def _format_approval_prompt(req) -> str:
-    """Format an approval request for display to the user."""
-    tool_name = getattr(req, "tool_name", "unknown")
-    call_id = getattr(req, "tool_call_id", "")
-    args = getattr(req, "arguments", {})
-    tier = getattr(req, "tier", "unknown")
-    args_str = ", ".join(f"{k}={v}" for k, v in (args or {}).items())
-    return (
-        f"Approval Required [{tier.upper()}]\n"
-        f"Tool: {tool_name}\n"
-        f"ID: {call_id}\n"
-        f"Args: {args_str}\n"
-        f"Reply /approve or /deny"
-    )
 
 
 class AgentPipeline:
@@ -816,7 +803,7 @@ class AgentPipeline:
                         if isinstance(requests, list):
                             for req in requests:
                                 await self._user_interface.render_message(
-                                    session_id, _format_approval_prompt(req),
+                                    session_id, format_approval_prompt(req),
                                 )
                                 break
                     # Drain buffered peer messages even when a new approval
