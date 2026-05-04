@@ -197,7 +197,6 @@ class AgentPipeline:
         self.control_channel = control_channel
         self.busy_input_mode = busy_input_mode
         self._approval_workspace = Path(approval_workspace)
-        self._user_interface = user_interface
         self._prebuilt_runtime = prebuilt_runtime
         self._approval = ApprovalRenderer(
             approval_workspace=self._approval_workspace,
@@ -211,6 +210,14 @@ class AgentPipeline:
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._session_tasks: dict[str, asyncio.Task] = {}
         self._injection_queues: dict[str, asyncio.Queue[str]] = {}
+
+    @property
+    def _user_interface(self):  # delegates to renderer so pool injection reaches handle()
+        return self._approval._user_interface
+
+    @_user_interface.setter
+    def _user_interface(self, value):
+        self._approval._user_interface = value
 
     async def run(self) -> None:
         """运行流水线"""
