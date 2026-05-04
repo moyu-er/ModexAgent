@@ -13,7 +13,7 @@
 
 Other packages: `framework/adapters/` (PlatformAdapter, AdapterRegistry), `framework/messaging/` (MessageBroker star-topology), `framework/registry/` (component registry), `framework/extensions/` (optional: LiteLLM, ChromaDB, FAISS, SQLAlchemy), `framework/security/` (SecurityPolicy).
 
-Tests are under `tests/unit/`, `tests/integration/`, and `tests/e2e/`. Documentation in `docs/`, examples in `examples/`, design docs in `agent_docs/`.
+Tests are under `tests/unit/`, `tests/integration/`, and `tests/e2e/`. Documentation in `docs/`, examples in `examples/`, design docs in `design_doc/`.
 
 ## Build, Test, and Development Commands
 
@@ -87,4 +87,4 @@ Recent commits use concise imperative subjects, often with prefixes such as `doc
 2. 用结构体代替 dict（ChatMessage、ToolCall、LLMResponse、InputMessage、OutputMessage 等）
 3. 函数签名必须写参数和返回值类型，禁止 bare Any / list / dict / list[Any]
 4. 类设计必须做好抽象化, 禁止直接使用具体实现类, 而是应该使用抽象类或接口, 便于扩展/拔插/自定义
-4. framework目录中的都是框架代码, examples中的都是业务代码使用示例, 必须按照业务需求和框架设计/通用性区分修改内容, 例如不能将业务代码中的配置写死到框架中
+5. framework目录中的都是框架代码, examples中的都是业务代码使用示例, 必须按照业务需求和框架设计/通用性区分修改内容, 例如不能将业务代码中的配置写死到框架中
