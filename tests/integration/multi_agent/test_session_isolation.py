@@ -7,6 +7,8 @@
 
 import pytest
 
+pytestmark = pytest.mark.integration
+
 from framework.core.emitter import AgentResult
 from framework.multi_agent import (
     AgentAddress,

@@ -8,6 +8,8 @@
 """
 
 import pytest
+
+pytestmark = pytest.mark.integration
 import sys
 import asyncio
 from pathlib import Path
