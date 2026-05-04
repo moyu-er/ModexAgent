@@ -48,7 +48,7 @@ from ..multi_agent import (
 )
 from ..session.agent_session import _dream_locks
 from .adapters import InputAdapter, OutputAdapter, OutputMessage
-from .approval_renderer import format_approval_prompt
+from .approval_renderer import ApprovalRenderer, format_approval_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -205,9 +205,17 @@ class AgentPipeline:
         self._approval_workspace = Path(approval_workspace)
         self._user_interface = user_interface
         self._prebuilt_runtime = prebuilt_runtime
-        self._approval_pending: dict[str, list] = {}
-        self._approval_stores: dict[str, LocalFileApprovalStateStore] = {}
-        self._resume_stores: dict[str, StateStoreTurnResumeStateStore] = {}
+        self._approval = ApprovalRenderer(
+            approval_workspace=self._approval_workspace,
+            checkpoint_store=checkpoint_store,
+            agent=agent,
+            user_interface=user_interface,
+            on_drain=self._process_message,
+        )
+        # backward-compat accessors removed after full migration
+        self._approval_stores = self._approval._approval_stores
+        self._resume_stores = self._approval._resume_stores
+        self._approval_pending = self._approval._approval_pending
         self._running = False
         self._dream_task: asyncio.Task | None = None
         self._session_locks: dict[str, asyncio.Lock] = {}
