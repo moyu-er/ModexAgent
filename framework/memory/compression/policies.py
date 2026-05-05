@@ -315,6 +315,7 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
         max_messages: int | None = 100,
         max_tokens: int | None = 8000,
         compaction: MessageCompactionPolicy | None = None,
+        keep_ratio: float = 0.5,
     ) -> None:
         self._max_messages = max_messages
         self._trigger = trigger or DefaultCompressionTriggerPolicy(
@@ -325,6 +326,7 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
         self._commit = commit or DefaultCommitPolicy()
         self._error = error_policy or DefaultCompressionErrorPolicy()
         self._compaction = compaction or ConservativeCompactionPolicy()
+        self._keep_ratio = max(0.2, min(keep_ratio, 0.9))  # clamp [0.2, 0.9]
 
     async def maybe_compress(
         self,
@@ -347,7 +349,8 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
 
         # Phase 3: Compute boundary and summary (LLM may be called — NO lock)
         trigger_max_messages = getattr(self._trigger, "_max_messages", self._max_messages)
-        prune_count = max(0, len(all_msgs) - (trigger_max_messages or 100))
+        keep_target = max(1, int((trigger_max_messages or 100) * self._keep_ratio))
+        prune_count = max(0, len(all_msgs) - keep_target)
         if prune_count <= 0:
             return CompressionResult(committed=True, reason="within_budget")
 

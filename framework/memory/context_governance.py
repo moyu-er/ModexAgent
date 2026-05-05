@@ -141,12 +141,6 @@ class ToolChainRepairGovernance(ContextGovernance):
 
 class MicrocompactGovernance(ContextGovernance):
     """将旧的可压缩 tool result 替换为一行摘要，保留最近 N 个。"""
-
-    _COMPACTABLE_TOOLS: frozenset[str] = frozenset({
-        "read_file", "exec", "grep", "glob",
-        "web_search", "web_fetch", "list_dir",
-    })
-
     def __init__(
         self,
         keep_recent: int = 10,
@@ -155,7 +149,7 @@ class MicrocompactGovernance(ContextGovernance):
     ) -> None:
         self._keep_recent = keep_recent
         self._min_chars = min_chars
-        self._compactable = compactable_tools or self._COMPACTABLE_TOOLS
+        self._compactable = compactable_tools or set()
 
     async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         compactable_indices: list[int] = []

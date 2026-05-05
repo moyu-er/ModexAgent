@@ -201,12 +201,16 @@ async def test_coordinator_commit_replaces_session_and_persists_summary(registry
     messages = [{"role": "user", "content": f"message {index}"} for index in range(6)]
     await session.add_messages(ctx, messages)
 
-    coordinator = DefaultMemoryCompressionCoordinator(max_messages=3)
+    # keep_ratio=0.9 (clamp max): keep_target=2, prune=4 from 6 msgs
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=5, keep_ratio=0.9)
     result = await coordinator.maybe_compress(session=session, archive=archive, context=ctx)
 
     assert result.committed
     remaining = await session.get_all_messages(ctx)
-    assert [message.content for message in remaining] == ["message 3", "message 4", "message 5"]
+    # keep_target = int(5*0.9) = 4, prune=2 from 6 → keep last 4
+    assert [message.content for message in remaining] == [
+        "message 2", "message 3", "message 4", "message 5",
+    ]
 
     storage = await registry.resolve(
         layer=MemoryLayerName.SESSION,
@@ -704,7 +708,45 @@ async def test_coordinator_compresses_when_total_exceeds_visible_cap(registry):
     assert result.committed, f"stored=96 > max=50 should trigger, got {result}"
 
     remaining = len(await session.get_all_messages(ctx))
-    assert remaining <= 50, f"should compress to ≤50, got {remaining}"
+    # keep_ratio=0.5 → keep_target=25, compress 96→~25
+    assert remaining <= 30, f"should compress with headroom to ~25, got {remaining}"
 
     entries = await archive.get_recent(ctx, limit=10)
     assert len(entries) > 0, "archive should have compressed entries"
+
+
+async def test_coordinator_creates_headroom_no_recompress_on_small_growth(registry):
+    """After compression creates headroom, small growth doesn't re-trigger."""
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    config = SessionMemoryConfig(max_messages=None)
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(storage_factory=factory, config=config)
+    archive = MemoryLayerFactory.single_user(registry=registry).archive
+    ctx = MemoryContext(session_id="headroom")
+
+    # 96 messages, trigger at 50, keep_ratio=0.5 → compress to ~25
+    await session.add_messages(ctx, [
+        {"role": "user", "content": f"msg{i}"} for i in range(96)
+    ])
+
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=50, keep_ratio=0.5)
+    result = await coordinator.maybe_compress(session=session, archive=archive, context=ctx)
+    assert result.committed
+
+    after_compress = len(await session.get_all_messages(ctx))
+    assert after_compress <= 30, f"headroom created: {after_compress}"
+
+    # Add 10 more messages — still well below trigger threshold of 50
+    await session.add_messages(ctx, [
+        {"role": "user", "content": f"new{i}"} for i in range(10)
+    ])
+    total = len(await session.get_all_messages(ctx))
+    assert total <= 45, f"still below trigger after small growth: {total}"
+
+    # Trigger should NOT fire
+    result2 = await coordinator.maybe_compress(session=session, archive=archive, context=ctx)
+    assert result2.reason in ("not_needed", "within_budget"), \
+        f"should NOT compress, total={total} < max=50, got {result2.reason}"

@@ -249,10 +249,13 @@ multi_agent:
 memory:
   main:
     # -- 短期记忆 (Session) --
-    # max_messages: 当存储总量超过此值时触发压缩(旧前缀→Archive, 近后缀保留)
+    # max_messages: 触发压缩阈值 (超过才压缩，不等于保留数)
+    # keep_ratio: 压缩后保留 max_messages × 此比例 (默认 0.6)，
+    #   例如 50×0.6=30 — 留 20 条余量防止频繁触发
     # auto_llm_compression: 启用 LLM (SummarizerAgent) 生成 Archive 摘要
     short_term:
-      max_messages: 50
+      max_messages: 20
+      keep_ratio: 0.5             # 压缩后保留 max_messages × 此比例
       auto_llm_compression: true
 
     # -- 消息分类策略 (压缩时使用) --
@@ -274,7 +277,7 @@ memory:
       tool_chain_repair: true        # 修复孤儿 tool result / 补全缺失 tool call
       microcompact:
         enabled: true
-        keep_recent: 10              # 保留最近 N 个 tool result 不压缩
+        keep_recent: 3              # 保留最近 N 个 tool result 不压缩
       token_budget:                  # 注入上下文的总 token 上限
         enabled: true
         budget_ratio: 0.5            # llm.max_tokens × 此比例 = 注入上限

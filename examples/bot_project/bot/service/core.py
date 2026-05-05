@@ -955,6 +955,7 @@ class BotService(AgentBuilderMixin):
         return DefaultMemoryCompressionCoordinator(
             max_messages=auto_compact.get("max_messages", short_term.get("max_messages", 100)),
             max_tokens=auto_compact.get("max_tokens", short_term.get("max_tokens", 8000)),
+            keep_ratio=short_term.get("keep_ratio", 0.5),
             summary=summary_strategy,
             compaction=compaction,
             boundary=boundary,

@@ -158,17 +158,17 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
             knowledge = await memory_system.retrieve_knowledge(context, query=query)
             if knowledge.soul:
                 sections.append(PromptSection(
-                    key="knowledge:soul", content=f"## 你的沟通风格\n{knowledge.soul}",
+                    key="knowledge:soul", content=f"{knowledge.soul}",
                     priority=100, source="system",
                 ))
             if knowledge.user:
                 sections.append(PromptSection(
-                    key="knowledge:user", content=f"## 用户画像\n{knowledge.user}",
+                    key="knowledge:user", content=f"{knowledge.user}",
                     priority=100, source="system",
                 ))
             if knowledge.memory:
                 sections.append(PromptSection(
-                    key="knowledge:memory", content=f"## 相关知识\n{knowledge.memory}",
+                    key="knowledge:memory", content=f"{knowledge.memory}",
                     priority=90, source="system",
                 ))
         except Exception:
