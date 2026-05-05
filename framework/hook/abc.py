@@ -8,7 +8,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Protocol
+from typing_extensions import TypeVar
 
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext

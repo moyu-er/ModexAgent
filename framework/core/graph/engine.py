@@ -1,7 +1,8 @@
 """GraphEngine — drives node execution and edge routing."""
 from __future__ import annotations
 
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic
+from typing_extensions import TypeVar
 
 from framework.core.agent import AgentContext
 

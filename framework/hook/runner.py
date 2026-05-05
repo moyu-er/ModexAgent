@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic
+from typing_extensions import TypeVar
 
 from framework.hook.abc import (
     HookErrorPolicy,
