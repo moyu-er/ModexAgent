@@ -184,9 +184,7 @@ multi_agent:
           timeout: 60
           restrict_to_workspace: true
         mcp_tools:
-          enabled: true
-          server_filter:
-            - "fetch"
+          enabled: false
 
     - name: "query-12306"
       role: "travel"
@@ -239,22 +237,13 @@ multi_agent:
       execution_strategy: "react"
 
       subagent:
-        enabled: true
+        enabled: false
 
       tools:
-        file_tools:
-          enabled: true
-          allowed_directories:
-            - "."
-        shell_tools:
-          enabled: true
-          timeout: 60
-          restrict_to_workspace: true
         mcp_tools:
           enabled: true
           server_filter:
             - "12306-mcp"
-            - "fetch"
 
 # ==================== Memory ====================
 memory:
@@ -265,6 +254,15 @@ memory:
       budget_ratio: 0.5
       compression_mode: "cursor"   # "delete" | "cursor"
       auto_llm_compression: true
+    compaction:
+      policy: "conservative"     # "conservative" | "keep_all" | "semantic"
+      boundary: "tool_chain"     # "tool_chain" | "user_turn_tool_chain"
+      raw_tool_archive: false
+      high_value_tools:
+        - "fetch"
+        - "web_search"
+        - "query_12306"
+        - "mcp-deepwiki"
     long_term:
       enabled: true
       init_defaults: true      # auto-create SOUL.md/USER.md/MEMORY.md with templates
@@ -287,7 +285,7 @@ memory:
       keep_recent_messages: 8
     dream_engine:
       enabled: true
-      interval: 300
+      interval: 1800
       threshold: 5
 
   peers:
@@ -311,7 +309,7 @@ plugins:
 
   configurations:
     tool_call_cleanup:
-      enabled: false
+      enabled: true
 
     # Mem0 semantic memory plugin — vector-retrieval-enhanced conversation memory.
     # Requires: pip install mem0ai chromadb sentence-transformers
