@@ -67,17 +67,19 @@ class DefaultCompressionTriggerPolicy(CompressionTriggerPolicy):
         session: SessionMemoryManager,
         context: MemoryContext,
     ) -> CompressionTrigger | None:
-        visible = await session.get_visible_messages(context)
+        all_msgs_count = len(await session.get_all_messages(context))
 
-        # Cooldown: don't re-trigger for small deltas (persisted to session storage)
+        # Cooldown: don't re-trigger for small deltas since last compression
         last_raw = await session.get_state(context, self.COOLDOWN_KEY)
         last = int(last_raw) if isinstance(last_raw, int | float | str) else 0
-        if len(visible) - last < self._cooldown:
+        if last > 0 and all_msgs_count - last < self._cooldown:
             return None
 
-        if self._max_messages and len(visible) > self._max_messages:
+        if self._max_messages and all_msgs_count > self._max_messages:
             return CompressionTrigger(reason=CompressionReason.MESSAGE_COUNT)
-        if self._max_tokens and self._estimate_tokens(visible) > self._max_tokens:
+        if self._max_tokens and self._estimate_tokens(
+            await session.get_visible_messages(context)
+        ) > self._max_tokens:
             return CompressionTrigger(reason=CompressionReason.TOKEN_PRESSURE)
         return None
 
@@ -234,32 +236,41 @@ class DefaultCommitPolicy(CommitPolicy):
 
         # Archive first — skip empty or placeholder summaries
         normalized_summary = normalize_memory_summary(plan.summary)
-        if normalized_summary is None:
-            return CompressionResult(committed=False, retryable=False, reason="nothing_to_archive")
-        try:
-            entry = ArchiveEntry(
-                summary=normalized_summary,
-                metadata={"reason": str(plan.trigger.reason), "source": "compression"},
-            )
-            await archive.append(context, entry)
-        except Exception as exc:
-            proceed = await error_policy.on_archive_failure(exc, plan, context)
-            if not proceed:
-                return CompressionResult(committed=False, retryable=True, reason="archive_failed")
-            # Fall through to still mutate session (error policy said proceed)
+        wrote_archive = False
+        if normalized_summary is not None:
+            try:
+                entry = ArchiveEntry(
+                    summary=normalized_summary,
+                    metadata={"reason": str(plan.trigger.reason), "source": "compression"},
+                )
+                await archive.append(context, entry)
+                wrote_archive = True
+            except Exception as exc:
+                proceed = await error_policy.on_archive_failure(exc, plan, context)
+                if not proceed:
+                    return CompressionResult(committed=False, retryable=True, reason="archive_failed")
+                # Fall through to still mutate session (error policy said proceed)
+
+        # Always truncate session, even when archive is empty — freeing
+        # short-term memory and advancing the cooldown counter.
+        extra_state: dict[str, Any] = {
+            ".last_compression": len(plan.keep_messages),
+        }
+        if wrote_archive and normalized_summary is not None:
+            extra_state[".compression_summary"] = normalized_summary
 
         revision = await session.replace_messages_if_revision(
             context,
             plan.keep_messages,
             plan.expected_revision,
-            {
-                ".compression_summary": normalized_summary,
-                ".last_compression": len(plan.keep_messages),
-            },
+            extra_state,
         )
         if revision is None:
             await error_policy.on_commit_conflict(plan, context)
             return CompressionResult(committed=False, retryable=False, reason="revision_changed")
+
+        if not wrote_archive:
+            return CompressionResult(committed=True, reason="nothing_to_archive")
 
         return CompressionResult(committed=True)
 
@@ -327,26 +338,26 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
         if trigger is None:
             return CompressionResult(committed=True, reason="not_needed")
 
-        # Phase 2: Read visible snapshot and classify every message.
-        visible = [m.to_dict() for m in await session.get_visible_messages(context)]
-        if not visible:
+        # Phase 2: Read ALL stored messages and classify every one.
+        all_msgs = [m.to_dict() for m in await session.get_all_messages(context)]
+        if not all_msgs:
             return CompressionResult(committed=True, reason="empty")
 
-        decisions = self._compaction.decide_all(visible, context, str(trigger.reason))
+        decisions = self._compaction.decide_all(all_msgs, context, str(trigger.reason))
 
         # Phase 3: Compute boundary and summary (LLM may be called — NO lock)
         trigger_max_messages = getattr(self._trigger, "_max_messages", self._max_messages)
-        prune_count = max(0, len(visible) - (trigger_max_messages or 100))
+        prune_count = max(0, len(all_msgs) - (trigger_max_messages or 100))
         if prune_count <= 0:
             return CompressionResult(committed=True, reason="within_budget")
 
-        boundary_idx = self._find_boundary(visible, decisions, prune_count)
+        boundary_idx = self._find_boundary(all_msgs, decisions, prune_count)
         if boundary_idx <= 0:
             return CompressionResult(committed=True, reason="no_safe_boundary")
 
         # Pruned prefix: classify by decision
-        pruned = visible[:boundary_idx]
-        keep = visible[boundary_idx:]
+        pruned = all_msgs[:boundary_idx]
+        keep = all_msgs[boundary_idx:]
         pruned_decisions = decisions[:boundary_idx]
 
         # Messages marked SUMMARIZE go to the LLM/heuristic summary

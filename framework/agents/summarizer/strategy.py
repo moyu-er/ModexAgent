@@ -16,7 +16,7 @@ from framework.memory.compression.semantic_filter import SemanticMessageFilter
 from framework.memory.compression.strategy import MessageFilterStrategy
 from framework.memory.core.models import CompressionReason
 from framework.memory.core.scope import MemoryContext
-from framework.memory.utils import strip_runtime_prefixes
+from framework.memory.utils import EMPTY_MEMORY_SUMMARY_MARKERS, strip_runtime_prefixes
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ class SummarizerStrategy(SummaryStrategy):
         self,
         agent: SummarizerAgent,
         filter_strategy: MessageFilterStrategy | None = None,
-        max_summary_length: int = 300,
+        max_summary_length: int = 800,
     ) -> None:
         self.agent = agent
         self.filter_strategy = filter_strategy or SemanticMessageFilter()
@@ -72,17 +72,46 @@ class SummarizerStrategy(SummaryStrategy):
             max_tokens=self.max_summary_length,
         )
 
-        if not summary or summary.strip() in ("(no summary)", "(nothing)"):
+        if not summary:
             return self._fallback_summary(sanitized)
 
-        return f"[Consolidator] {summary}"
+        if len(summary) < 100 and summary.strip() in EMPTY_MEMORY_SUMMARY_MARKERS:
+            return ""
+
+        return summary
 
     @staticmethod
-    def _format_messages(messages: list[dict[str, Any]]) -> str:
+    def _format_messages(
+        messages: list[dict[str, Any]],
+        *,
+        max_tool_result_chars: int = 200,
+    ) -> str:
         lines = []
         for msg in messages:
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
+            if not content and not msg.get("tool_calls"):
+                continue
+
+            if role == "assistant" and msg.get("tool_calls"):
+                tool_names = []
+                for tc in msg.get("tool_calls", []):
+                    fn = tc.get("function", {}) if isinstance(tc, dict) else {}
+                    tool_names.append(fn.get("name", "?"))
+                if content:
+                    lines.append(f"[assistant → tools: {', '.join(tool_names)}] {content}")
+                else:
+                    lines.append(f"[assistant → tools: {', '.join(tool_names)}]")
+                continue
+
+            if role == "tool":
+                name = msg.get("name", "unknown")
+                if isinstance(content, str) and len(content) > max_tool_result_chars:
+                    content = content[:max_tool_result_chars] + "..."
+                    content += f" ({len(msg.get('content', ''))} chars total)"
+                lines.append(f"[tool:{name}] {content}")
+                continue
+
             if not content:
                 continue
             lines.append(f"[{role}] {content}")

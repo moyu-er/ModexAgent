@@ -25,7 +25,13 @@ logger = logging.getLogger(__name__)
 
 
 class ScopedMessageHistory(MessageHistory):
-    """MessageHistory backed by a registry-scoped SessionMemoryManager."""
+    """MessageHistory backed by a registry-scoped SessionMemoryManager.
+
+    Accepts an optional *on_messages_added* callback that is invoked after
+    every ``append`` / ``extend`` so lifecycle hooks (compression, etc.)
+    are triggered on the ReAct-turn hot path — not just on the explicit
+    ``DefaultMemorySystem.add_messages()`` path.
+    """
 
     def __init__(
         self,
@@ -33,10 +39,12 @@ class ScopedMessageHistory(MessageHistory):
         context: MemoryContext,
         initial_messages: Sequence[ChatMessage | dict[str, Any]] | None = None,
         recorder: MemoryAppendRecorder | None = None,
+        on_messages_added: Any = None,  # callable(context, layer_set)
     ) -> None:
         self._manager = manager
         self._context = context
         self._recorder = recorder
+        self._on_messages_added = on_messages_added
         self._cache: list[ChatMessage] | None = (
             [ChatMessage.coerce(m) for m in initial_messages]
             if initial_messages is not None
@@ -45,18 +53,22 @@ class ScopedMessageHistory(MessageHistory):
         self._cache_lock = asyncio.Lock()
 
     async def append(self, message: ChatMessage | dict[str, Any]) -> None:
-        await self._manager.add_messages(self._context, [message])
+        revision = await self._manager.add_messages(self._context, [message])
         if self._recorder is not None:
             await self._recorder.record([message], self._context)
+        if self._on_messages_added is not None:
+            await self._on_messages_added(self._context, revision)
         async with self._cache_lock:
             self._cache = None
 
     async def extend(self, messages: Sequence[ChatMessage | dict[str, Any]]) -> None:
         if not messages:
             return
-        await self._manager.add_messages(self._context, list(messages))
+        revision = await self._manager.add_messages(self._context, list(messages))
         if self._recorder is not None:
             await self._recorder.record(list(messages), self._context)
+        if self._on_messages_added is not None:
+            await self._on_messages_added(self._context, revision)
         async with self._cache_lock:
             self._cache = None
 
@@ -140,11 +152,22 @@ class DefaultMemorySystem(MemorySystem):
         context: MemoryContext,
         initial_messages: Sequence[ChatMessage | dict[str, Any]] | None = None,
     ) -> MessageHistory:
+        on_added: Any = None
+        if self._lifecycle is not None:
+            layers = self._layers
+
+            async def _on_added(ctx: MemoryContext, revision: Any) -> None:
+                if self._lifecycle is not None:
+                    await self._lifecycle.on_messages_added(ctx, layers, revision)
+
+            on_added = _on_added
+
         return ScopedMessageHistory(
             manager=self._layers.session,
             context=context,
             initial_messages=initial_messages,
             recorder=self._recorder,
+            on_messages_added=on_added,
         )
 
     async def add_messages(
