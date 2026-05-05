@@ -98,3 +98,61 @@ class ToolChainBoundaryPolicy(BoundaryPolicy):
         boundary = min(boundary, n - self._min_tail_keep)
 
         return max(0, boundary)
+
+
+class UserTurnToolChainBoundaryPolicy(ToolChainBoundaryPolicy):
+    """Boundary policy that prefers user-turn boundaries.
+
+    Extends ``ToolChainBoundaryPolicy`` with a preference for cutting
+    *before* a user message or *after* a completed assistant final
+    response (one without tool_calls), rather than at an arbitrary index.
+
+    When no user-turn boundary is found within a reasonable lookahead,
+    falls back to the parent tool-chain-protected boundary.
+    """
+
+    def __init__(self, min_tail_keep: int = 1, lookahead: int = 5) -> None:
+        super().__init__(min_tail_keep=min_tail_keep)
+        self._lookahead = lookahead
+
+    def find_prune_boundary(
+        self,
+        messages: Sequence[ChatMessage | dict[str, Any]],
+        decisions: Sequence[MessageCompactionDecision],
+        target_prune_count: int,
+    ) -> int:
+        base = super().find_prune_boundary(messages, decisions, target_prune_count)
+        if base <= 0:
+            return base
+
+        n = len(messages)
+        may_move_forward = base >= target_prune_count
+
+        # Try to find a user message boundary at or near the base index.
+        # Move forward only when the parent did not shrink the boundary for safety.
+        if may_move_forward:
+            for offset in range(min(self._lookahead, n - base)):
+                idx = base + offset
+                role = (
+                    messages[idx].get("role")
+                    if isinstance(messages[idx], dict)
+                    else getattr(messages[idx], "role", None)
+                )
+                if role in ("user", "User"):
+                    return idx
+
+        # Try to find a completed assistant final just before base
+        # (assistant without tool_calls = end of a ReAct turn).
+        for offset in range(min(self._lookahead, base)):
+            idx = base - 1 - offset
+            msg = messages[idx]
+            role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", None)
+            has_tc = (
+                bool(msg.get("tool_calls"))
+                if isinstance(msg, dict)
+                else bool(getattr(msg, "tool_calls", None))
+            )
+            if role in ("assistant", "Assistant") and not has_tc:
+                return min(idx + 1, base)  # cut after this message
+
+        return base

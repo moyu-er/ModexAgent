@@ -174,7 +174,7 @@ class MicrocompactGovernance(ContextGovernance):
             if not isinstance(content, str) or len(content) < self._min_chars:
                 continue
             name = msg.get("name", "tool")
-            summary = f"[{name} result omitted from context]"
+            summary = f"[{name} result omitted from context: {len(content):,} chars]"
             if updated is None:
                 updated = [dict(m) for m in messages]
             updated[idx]["content"] = summary

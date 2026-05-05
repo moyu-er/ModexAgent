@@ -5,7 +5,11 @@ unified under MemoryCompressionCoordinator.  Policy and boundary abstractions
 remain available for custom coordinator configurations.
 """
 
-from framework.memory.compaction.boundary import BoundaryPolicy, ToolChainBoundaryPolicy
+from framework.memory.compaction.boundary import (
+    BoundaryPolicy,
+    ToolChainBoundaryPolicy,
+    UserTurnToolChainBoundaryPolicy,
+)
 from framework.memory.compaction.policy import (
     ConservativeCompactionPolicy,
     KeepAllCompactionPolicy,
@@ -22,4 +26,5 @@ __all__ = [
     "MessageCompactionPolicy",
     "SemanticToolCompactionPolicy",
     "ToolChainBoundaryPolicy",
+    "UserTurnToolChainBoundaryPolicy",
 ]

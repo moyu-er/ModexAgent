@@ -138,13 +138,11 @@ class KeepAllCompactionPolicy(MessageCompactionPolicy):
 
 
 class SemanticToolCompactionPolicy(MessageCompactionPolicy):
-    """Placeholder for semantic-value-based tool result classification.
+    """Compatibility alias for ``ConservativeCompactionPolicy``.
 
-    High-value tool results (search, analysis, code execution) are summarized;
-    low-value results (heartbeat, status checks) are dropped from summary.
-
-    NOTE: This requires a ``SemanticMessageFilter`` or similar classifier.
-    Until that integration is wired, behaviour falls back to conservative.
+    This class exists so that configs referencing ``"semantic"`` policy
+    do not break.  It delegates entirely to ``ConservativeCompactionPolicy``
+    and will be removed once all callers migrate to the canonical name.
     """
 
     def __init__(self, high_value_tools: set[str] | None = None) -> None:
@@ -156,5 +154,4 @@ class SemanticToolCompactionPolicy(MessageCompactionPolicy):
         context: MemoryContext,
         reason: str,
     ) -> MessageCompactionDecision:
-        # TODO: integrate semantic classification once filter API is stable
         return self._fallback.decide(message, context, reason)

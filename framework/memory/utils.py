@@ -9,6 +9,13 @@ from typing import Any
 
 from framework.memory.core.message import ChatMessage
 
+EMPTY_MEMORY_SUMMARY_MARKERS = frozenset({
+    "(no conversation content)",
+    "(no summary)",
+    "(nothing)",
+    "(no semantic content)",
+})
+
 
 def safe_atomic_replace(tmp_path: Path, target_path: Path) -> None:
     """Replace target with tmp file, with fallback for Windows file-locking.
@@ -61,6 +68,18 @@ def strip_runtime_prefixes(
             m["content"] = content
         cleaned.append(m)
     return cleaned
+
+
+def normalize_memory_summary(summary: str | None) -> str | None:
+    """Return a trimmed meaningful summary, or None for empty placeholders."""
+    if summary is None:
+        return None
+    normalized = summary.strip()
+    if not normalized:
+        return None
+    if normalized.lower() in EMPTY_MEMORY_SUMMARY_MARKERS:
+        return None
+    return normalized
 
 
 def estimate_text_tokens(text: str) -> int:

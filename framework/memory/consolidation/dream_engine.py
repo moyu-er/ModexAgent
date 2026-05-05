@@ -228,13 +228,31 @@ class DreamEngine(ConsolidationEngine):
 
         return result
 
-    @staticmethod
-    def _is_meaningful_entry(entry: dict[str, Any]) -> bool:
-        """Check whether an archive entry contains useful content for consolidation."""
+    _EMPTY_MARKERS = frozenset({
+        "(no conversation content)", "(no summary)", "(nothing)",
+        "(no semantic content)",
+    })
+
+    @classmethod
+    def _is_meaningful_entry(cls, entry: dict[str, Any]) -> bool:
+        """Check whether an archive entry contains useful content for consolidation.
+
+        Rejects empty summaries, known placeholder markers, and entries
+        that were explicitly marked as empty by the archive strategy
+        (source=="empty" or semantic_count==0).
+        """
         summary = entry.get("summary", "")
         if not summary or not summary.strip():
             return False
-        return summary.strip() not in ("(no conversation content)", "(no summary)", "(nothing)")
+        if summary.strip() in cls._EMPTY_MARKERS:
+            return False
+        metadata = entry.get("metadata", {})
+        if isinstance(metadata, dict):
+            if metadata.get("source") == "empty":
+                return False
+            if metadata.get("semantic_count") == 0:
+                return False
+        return True
 
     @staticmethod
     def _archive_entry_to_dict(entry: ArchiveEntry) -> dict[str, Any]:
