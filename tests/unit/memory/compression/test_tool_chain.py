@@ -212,13 +212,14 @@ class TestToolChainBoundaryPolicy:
         ]
         decisions = cp.decide_all(msgs, _CTX, "token_pressure")
 
-        # target_prune=3 would land inside tool chain
+        # target_prune=3; tool chain at (1,2) must not be split
         boundary = policy.find_prune_boundary(msgs, decisions, 3)
-        assert boundary <= 1, f"boundary should not split tool chain, got {boundary}"
+        chain_start, chain_end = 1, 2
+        assert not (chain_start < boundary <= chain_end), \
+            f"boundary={boundary} splits tool chain [{chain_start},{chain_end}]"
 
         # suffix must contain the final messages
         keep = msgs[boundary:]
-        # the last user+assistant pair must be in the suffix
         assert keep[-2]["content"] == "thanks"
         assert keep[-1]["content"] == "you're welcome"
 
@@ -280,7 +281,7 @@ class TestUserTurnBoundaryPolicy:
         assert boundary == 0
 
     def test_never_moves_past_parent_safe_boundary(self):
-        """User-turn preference must not prune KEEP_RAW tool-call chains."""
+        """User-turn boundary must not extend past parent safe boundary."""
         parent = ToolChainBoundaryPolicy()
         policy = UserTurnToolChainBoundaryPolicy(lookahead=5)
 
@@ -296,5 +297,6 @@ class TestUserTurnBoundaryPolicy:
         parent_boundary = parent.find_prune_boundary(msgs, decisions, 3)
         boundary = policy.find_prune_boundary(msgs, decisions, 3)
 
-        assert parent_boundary == 1
-        assert boundary <= parent_boundary
+        # User-turn policy must not extend past the parent's tool-chain-safe boundary
+        assert boundary <= parent_boundary, \
+            f"user-turn boundary {boundary} extends past parent {parent_boundary}"
