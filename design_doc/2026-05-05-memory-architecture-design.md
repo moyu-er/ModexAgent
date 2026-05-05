@@ -89,8 +89,7 @@ Useful ideas:
 
 ## 2.3 Issue Report Triage
 
-The existing report `design_doc/memory-system-issues-and-recommendations.md` was reviewed and
-folded into this design selectively.
+Previous memory system issues were reviewed and folded into this design selectively.
 
 Already covered by this design:
 

@@ -237,7 +237,7 @@ Four subsystems with distinct responsibilities, wired through `AgentContext.exte
 
 **Current focus:** making TURN and ITERATION interceptor scopes actually fire (they are defined but inert today), and extracting approval classification into a standalone `ApprovalClassifier`.
 
-Design doc: `design_doc/react-hook-interceptor-control-integration-design.md`
+Design doc: `docs/architecture-graph-approval.md`
 
 ## Type Structuring Best Practices
 

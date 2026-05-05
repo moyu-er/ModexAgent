@@ -163,40 +163,43 @@ class ReActEvent(AgentEvent, Enum):
     PROGRESS = "progress"                   # 进度提示
 ```
 
-### ReAct 循环核心逻辑
+### ReAct 图执行逻辑
+
+ReActAgent 现在基于图结构执行。`ReActAgent.run()` 准备 `AgentContext`，然后委托给 `GraphEngine` 执行图节点：
 
 ```
 run(context, emitter):
     emit(START)
     hooks.before_turn(ctx)
-    while iteration < max_iterations:
-        hooks.before_iteration(ctx)
-        messages = context.to_messages()
-        response = _request_llm(messages, context, emitter)
-        assistant_msg = _build_assistant_message(content, tool_calls)
-        context.history.append(assistant_msg)
-
-        if tool_calls:
-            hooks.before_tool_execution(ctx, tool_calls)
-            for tool_call in tool_calls:
-                emit(TOOL_CALL_START)
-                result = _execute_tool(tool_call, context)
-                emit(TOOL_CALL_END)
-                context.history.append(tool_message)
-            hooks.after_tool_execution(ctx, results)
-            hooks.after_iteration(ctx)
-        else:
-            result = AgentResult(content, reasoning, attachments)
-            emit(FINAL_OUTPUT)
-            emit_complete(result)
-            hooks.after_turn(ctx, result)
-            return result
-
-    result = AgentResult(stop_reason="max_iterations")
-    emit_complete(result)
+    result = await self.engine.run(context)
     hooks.after_turn(ctx, result)
     return result
 ```
+
+图拓扑：
+
+```
+        NORMAL_START          RESUME_TOOLS
+start ──────────────→ llm    start ────────────→ tool
+        (正常启动)              (审批恢复)
+
+llm ──── HAS_TOOLS ───→ tool
+llm ──── NO_TOOLS ────→ end
+llm ──── MAX_ITERATIONS → end
+llm ──── LLM_ERROR ────→ end
+
+tool ─── TOOLS_DONE ──→ llm    (循环)
+tool ─── TURN_CANCELLED → end
+```
+
+节点职责：
+
+| 节点 | 文件 | 职责 |
+|------|------|------|
+| `StartNode` | `nodes/start.py` | 迭代计数初始化；检测 `RESUME_STATE` 元数据来路由到 TOOL（恢复）或 LLM（正常） |
+| `LLMNode` | `nodes/llm.py` | 调用 LLM，流式输出，运行 before/after iteration hooks，通过 InterceptorChain 包装流式调用 |
+| `ToolNode` | `nodes/tool.py` | **三阶段**：分类（`_classify_all`）→ 审批（strategy）→ 批量执行（`_execute_batch`） |
+| `EndNode` | `nodes/end.py` | 构建 `AgentResult`，发送完成事件，写入 `_graph_result` |
 
 ### LLM 请求路径选择
 
@@ -530,33 +533,51 @@ class EmitterConfig:
 
 ---
 
-## 10. AgentRunHook (`core/hooks.py`)
+## 10. Hook 系统 (`framework/hook/`)
 
-### 生命周期钩子
+### HookPoint 枚举
 
 ```python
-class AgentRunHook:
-    async def before_turn(self, ctx: AgentContext) -> None:
-        """Agent.run() 开始时调用，只调用一次。"""
-
-    async def before_iteration(self, ctx: AgentContext) -> None:
-        """每次迭代开始前调用。"""
-
-    async def before_tool_execution(self, ctx: AgentContext, tool_calls: list) -> None:
-        """工具执行前调用。"""
-
-    async def after_tool_execution(self, ctx: AgentContext, results: list) -> None:
-        """工具执行后调用。"""
-
-    async def after_iteration(self, ctx: AgentContext) -> None:
-        """每次迭代结束后调用。"""
-
-    async def after_turn(self, ctx: AgentContext, result: AgentResult) -> None:
-        """Agent.run() 结束后调用，只调用一次。"""
-
-    def finalize_content(self, ctx: AgentContext, content: str | None) -> str | None:
-        """最终内容调整。"""
+class HookPoint(StrEnum):
+    BEFORE_TURN = "before_turn"
+    AFTER_TURN = "after_turn"
+    BEFORE_ITERATION = "before_iteration"
+    AFTER_ITERATION = "after_iteration"
+    BEFORE_TOOL_EXECUTION = "before_tool_execution"
+    AFTER_TOOL_EXECUTION = "after_tool_execution"
+    AFTER_LLM_RESPONSE = "after_llm_response"
+    ON_CONTROL_COMMAND = "on_control_command"
+    FINALIZE_CONTENT = "finalize_content"
 ```
+
+### Hook Protocol
+
+```python
+class Hook(Protocol):
+    async def before_turn(self, ctx: AgentContext) -> HookResult: ...
+    async def after_tool_execution(self, ctx: AgentContext, tool_results: list) -> HookResult: ...
+    # 所有方法都是可选的
+```
+
+**关键规则**：Hooks **不包裹执行**，只观察和修改 payload。Per-turn 状态必须存 `ctx.metadata`，禁止实例属性（pool 模式下多个 Agent 共享 Hook 实例）。
+
+### HookRunner
+
+串行分发 hooks，按注册顺序执行。聚合结果：
+- `veto=True` → 阻止当前操作
+- `content_override` → 最后一个非 None 值生效
+
+### 内置 Hooks
+
+| Hook | 触发点 | 用途 |
+|------|--------|------|
+| `RunLoggingHook` | LLM/Tool 响应 | 记录日志 |
+| `RuntimeContextHook` | before_turn / tool_exec | 管理 per-turn RuntimeContext |
+| `InboxFlushHook` | before_turn / iteration | 消费 inbox 中的待处理消息 |
+| `PeerAutoSendHook` | after_turn | 自动转发 peer agent 结果 |
+| `DynamicToolFilterHook` | before_iteration | Token 预算梯度降级 |
+| `LLMOutputGuardHook` | after_llm_response | 脱敏输出 |
+| `ProgressReportHook` | 多个钩子点 | 发出进度事件 |
 
 ### RuntimeContextHook
 
@@ -575,7 +596,7 @@ class ExecutionStrategy(ABC):
     async def execute(self, agent, context, emitter) -> AgentResult: ...
 
 class ReActStrategy(ExecutionStrategy):
-    """ReAct 执行策略（默认）。"""
+    """ReAct 执行策略（默认）。委托给 GraphEngine 执行图节点。"""
 
 class SingleTurnStrategy(ExecutionStrategy):
     """单轮执行策略（直接 LLM 调用，无迭代循环）。"""
@@ -583,24 +604,44 @@ class SingleTurnStrategy(ExecutionStrategy):
 
 ---
 
-## 12. InterruptibleRunner (`core/runner.py`)
+## 12. GraphEngine (`core/graph/engine.py`)
 
-包装 `Agent.run()` 以支持 graceful cancellation：
+纯粹的图执行引擎，对 ReAct / Hook / Interceptor 完全无感知：
 
 ```python
-class InterruptibleRunner:
-    async def run(self, agent, context, emitter) -> AgentResult:
-        try:
-            return await agent.run(context, emitter)
-        except asyncio.CancelledError:
-            partial = emitter.get_content() or ""
-            return AgentResult(
-                content=partial or "Task was cancelled before completion.",
-                stop_reason="cancelled",
-                messages=await context.history.to_list(),
-                partial_content=partial,
-            )
+class GraphEngine:
+    async def run(ctx) -> Any:
+        current = graph.entry_node
+        while current != GraphNode.END:
+            node = graph._nodes[current]
+            transition = await node.execute(ctx)
+            if transition.target == GraphNode.END:
+                break
+            current = graph.next_node(current, transition.reason)
+        return build_result(ctx)
 ```
+
+边路由规则：精确 `reason` 匹配 > `reason=None` 的无条件回退边。图拓扑可声明、可检查、可序列化。
+
+### 中断原语
+
+```python
+class GraphInterrupt(Exception):
+    value: Any          # 载荷（如审批请求列表）
+    node_name: str      # 触发中断的节点
+    iteration: int      # 中断时的迭代计数
+
+_current_resume: ContextVar[Any] = ContextVar("_gr_resume")
+
+def interrupt(value: Any) -> Any:
+    resume = _current_resume.get(None)
+    if resume is not None:
+        return resume      # 恢复：返回注入的值
+    raise GraphInterrupt(value=value)  # 首次：抛出异常
+```
+
+- **首次调用**（`_current_resume` 为 None）→ 抛出 `GraphInterrupt`，栈展开到 Pipeline
+- **二次调用**（已通过 `_current_resume.set(value)` 注入）→ 返回注入值，继续执行
 
 ---
 

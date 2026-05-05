@@ -157,6 +157,7 @@ tests/               单元、集成和端到端测试
 | [docs/extension-guide.md](docs/extension-guide.md) | 扩展和插件开发说明。 |
 | [docs/bot-guide.md](docs/bot-guide.md) | Bot 示例使用说明。 |
 | [docs/current-runtime.md](docs/current-runtime.md) | 当前 ReAct、hook、interceptor、control 的运行时设计说明。 |
+| [docs/architecture-graph-approval.md](docs/architecture-graph-approval.md) | 图架构、Hook、Interceptor、Control、Approval 详细设计。 |
 
 ## 开发命令
 
