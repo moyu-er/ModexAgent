@@ -3,6 +3,11 @@ from __future__ import annotations
 
 import pytest
 
+from framework.memory.compaction.boundary import BoundaryPolicy
+from framework.memory.compaction.policy import (
+    MessageCompactionDecision,
+    MessageCompactionPolicy,
+)
 from framework.memory.compression.policies import (
     CommitPolicy,
     CompressionErrorPolicy,
@@ -230,3 +235,245 @@ async def test_archive_injection_prefers_query_search(registry):
     content = "\n".join(section.content for section in bundle.system_sections)
     assert "Python 数据分析项目" in content
     assert "天气很好" not in content
+
+
+# ── Regression: empty summary commit ──────────────────────────────────────
+
+
+async def test_commit_skips_empty_summary_and_reports_no_op(registry):
+    """Empty summary → committed=False, reason=nothing_to_archive, no writes."""
+    layer_set = MemoryLayerFactory.single_user(registry=registry)
+    session = layer_set.session
+    archive = layer_set.archive
+    ctx = MemoryContext(session_id="empty-commit")
+    await session.add_messages(ctx, [{"role": "user", "content": "hi"}])
+
+    plan = CompressionPlan(
+        trigger=CompressionTrigger(reason=CompressionReason.MANUAL),
+        expected_revision=await session.get_revision(ctx),
+        expected_cursor=None,
+        keep_messages=[{"role": "user", "content": "hi"}],
+        summarize_messages=[],
+        archive_raw_messages=[],
+        drop_messages=[],
+        summary="",  # empty
+    )
+
+    commit = DefaultCommitPolicy()
+    error_policy = DefaultCompressionErrorPolicy()
+    result = await commit.commit(
+        plan=plan,
+        session=session,
+        archive=archive,
+        context=ctx,
+        error_policy=error_policy,
+    )
+
+    assert result.committed is False
+    assert result.retryable is False
+    assert result.reason == "nothing_to_archive"
+
+
+async def test_commit_skips_placeholder_summaries(registry):
+    """Known placeholder strings like '(nothing)' also skip with no-op."""
+    layer_set = MemoryLayerFactory.single_user(registry=registry)
+    session = layer_set.session
+    archive = layer_set.archive
+    ctx = MemoryContext(session_id="placeholder-commit")
+    await session.add_messages(ctx, [{"role": "user", "content": "hi"}])
+
+    for placeholder in ("(nothing)", "(no summary)", "(no semantic content)"):
+        plan = CompressionPlan(
+            trigger=CompressionTrigger(reason=CompressionReason.MANUAL),
+            expected_revision=await session.get_revision(ctx),
+            expected_cursor=None,
+            keep_messages=[{"role": "user", "content": "hi"}],
+            summarize_messages=[],
+            archive_raw_messages=[],
+            drop_messages=[],
+            summary=placeholder,
+        )
+
+        result = await DefaultCommitPolicy().commit(
+            plan=plan,
+            session=session,
+            archive=archive,
+            context=ctx,
+            error_policy=DefaultCompressionErrorPolicy(),
+        )
+        assert result.committed is False, f"placeholder '{placeholder}' should skip"
+        assert result.reason == "nothing_to_archive", f"placeholder '{placeholder}'"
+
+
+# ── Regression: trigger no-op on hidden history ───────────────────────────
+
+
+async def test_commit_skips_long_whitespace_summary(registry):
+    """Whitespace-only summaries should never create archive entries."""
+    layer_set = MemoryLayerFactory.single_user(registry=registry)
+    session = layer_set.session
+    archive = layer_set.archive
+    ctx = MemoryContext(session_id="whitespace-commit")
+    await session.add_messages(ctx, [{"role": "user", "content": "hi"}])
+
+    plan = CompressionPlan(
+        trigger=CompressionTrigger(reason=CompressionReason.MANUAL),
+        expected_revision=await session.get_revision(ctx),
+        expected_cursor=None,
+        keep_messages=[{"role": "user", "content": "hi"}],
+        summarize_messages=[],
+        archive_raw_messages=[],
+        drop_messages=[],
+        summary=" " * 80,
+    )
+
+    result = await DefaultCommitPolicy().commit(
+        plan=plan,
+        session=session,
+        archive=archive,
+        context=ctx,
+        error_policy=DefaultCompressionErrorPolicy(),
+    )
+
+    assert result.committed is False
+    assert result.reason == "nothing_to_archive"
+    assert await archive.get_recent(ctx, limit=10) == []
+
+
+async def test_coordinator_excludes_dropped_messages_from_summary_input(registry):
+    """Coordinator should only summarize messages classified as SUMMARIZE."""
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    class FixedBoundary(BoundaryPolicy):
+        def find_prune_boundary(self, messages, decisions, target_prune_count):
+            _ = messages, decisions, target_prune_count
+            return 4
+
+    class ToolDroppingPolicy(MessageCompactionPolicy):
+        def decide(self, message, context, reason):
+            _ = context, reason
+            role = message.get("role") if isinstance(message, dict) else message.role
+            has_tool_calls = bool(
+                message.get("tool_calls") if isinstance(message, dict) else message.tool_calls
+            )
+            if role == "tool" or (role == "assistant" and has_tool_calls):
+                return MessageCompactionDecision.DROP_FROM_SUMMARY
+            return MessageCompactionDecision.SUMMARIZE
+
+    class CapturingSummary(SummaryStrategy):
+        def __init__(self):
+            self.messages = []
+
+        async def summarize(self, messages, context, reason):
+            _ = context, reason
+            self.messages = list(messages)
+            return "summarized user content"
+
+    config = SessionMemoryConfig(max_messages=None)
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(storage_factory=factory, config=config)
+    archive = MemoryLayerFactory.single_user(registry=registry).archive
+    ctx = MemoryContext(session_id="coord-tool-filter")
+    await session.add_messages(ctx, [
+        {"role": "user", "content": "old question"},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "t1"}]},
+        {"role": "tool", "tool_call_id": "t1", "content": "large raw result"},
+        {"role": "assistant", "content": "answer based on tool"},
+        {"role": "user", "content": "new question"},
+    ])
+
+    summary = CapturingSummary()
+    coordinator = DefaultMemoryCompressionCoordinator(
+        max_messages=1,
+        boundary=FixedBoundary(),
+        summary=summary,
+        compaction=ToolDroppingPolicy(),
+    )
+
+    result = await coordinator.maybe_compress(session=session, archive=archive, context=ctx)
+
+    assert result.committed
+    assert [message["role"] for message in summary.messages] == ["user", "assistant"]
+    assert all(not message.get("tool_calls") for message in summary.messages)
+
+
+async def test_trigger_does_not_fire_on_hidden_history_alone(registry):
+    """Visible within budget → no trigger, even if all_msgs > visible."""
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    config = SessionMemoryConfig(max_messages=3)  # caps visible to 3
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(storage_factory=factory, config=config)
+    ctx = MemoryContext(session_id="hidden-hist")
+
+    # 6 messages stored, but visible capped at 3
+    await session.add_messages(ctx, [
+        {"role": "user", "content": f"msg{i}"} for i in range(6)
+    ])
+
+    trigger = DefaultCompressionTriggerPolicy(max_messages=10, max_tokens=8000, cooldown_messages=0)
+    result = await trigger.should_compress(session=session, context=ctx)
+    # Visible is 3 messages, well within 10/8000 budget → no trigger
+    assert result is None, f"hidden history alone should not trigger, got {result}"
+
+
+# ── Regression: injection filters legacy empty markers ────────────────────
+
+
+async def test_injection_filters_no_semantic_content_entries(registry):
+    """Archive entries with '(no semantic content)' or source=empty are filtered."""
+    from framework.memory.default_system import DefaultMemorySystem
+    from framework.memory.injection import FullInjectionPolicy
+
+    layer_set = MemoryLayerFactory.single_user(registry=registry)
+    system = DefaultMemorySystem(layer_set=layer_set, store_registry=registry)
+    ctx = MemoryContext(session_id="filter-empty")
+    await system.initialize()
+
+    await layer_set.archive.append(ctx, ArchiveEntry(
+        summary="(no semantic content)",
+        metadata={"source": "empty", "semantic_count": 0},
+    ))
+    await layer_set.archive.append(ctx, ArchiveEntry(
+        summary="real conversation about project setup",
+    ))
+
+    bundle = await FullInjectionPolicy(max_history_entries=5).assemble(
+        context=ctx, memory_system=system, query="",
+    )
+
+    content = "\n".join(section.content for section in bundle.system_sections)
+    assert "project setup" in content
+    assert "no semantic content" not in content
+
+
+async def test_injection_filters_empty_session_summaries(registry):
+    """Legacy empty compression and auto-compact summaries should not be injected."""
+    from framework.memory.core.scope import MemoryLayerName, SessionScope
+    from framework.memory.default_system import DefaultMemorySystem
+    from framework.memory.injection import FullInjectionPolicy
+
+    layer_set = MemoryLayerFactory.single_user(registry=registry)
+    system = DefaultMemorySystem(layer_set=layer_set, store_registry=registry)
+    ctx = MemoryContext(session_id="filter-empty-session-summary")
+    await system.initialize()
+
+    storage = await registry.resolve(
+        layer=MemoryLayerName.SESSION,
+        scope=SessionScope(),
+        context=ctx,
+    )
+    await storage.set(".compression_summary", "(no semantic content)")
+    await storage.set(".auto_compact_summary", " " * 80)
+
+    bundle = await FullInjectionPolicy(max_history_entries=5).assemble(
+        context=ctx, memory_system=system, query="",
+    )
+
+    content = "\n".join(section.content for section in bundle.system_sections)
+    assert "Earlier conversation compressed" not in content
+    assert "Auto-compact summary" not in content

@@ -1,10 +1,18 @@
-"""Tests for tool-chain aware compression."""
+"""Tests for tool-chain aware compression and boundary policies."""
 
-
+from framework.memory.compaction.boundary import (
+    ToolChainBoundaryPolicy,
+    UserTurnToolChainBoundaryPolicy,
+)
+from framework.memory.compaction.policy import (
+    ConservativeCompactionPolicy,
+    MessageCompactionDecision,
+)
 from framework.memory.compression.tool_chain import (
     _find_safe_truncation_count,
     _fit_token_window,
 )
+from framework.memory.core.scope import MemoryContext
 
 
 class TestFindSafeTruncationCount:
@@ -120,3 +128,173 @@ class TestFitTokenWindow:
         ]
         remaining, pruned = _fit_token_window(msgs, 30, protected_count=0, min_tail_keep=2)
         assert len(remaining) >= 2
+
+
+# ── Boundary policy regression tests ────────────────────────────────────────
+
+_CTX = MemoryContext(session_id="test", user_id="u1")
+
+
+class TestToolChainBoundaryPolicy:
+    """Regression tests for ToolChainBoundaryPolicy with real decisions."""
+
+    def test_boundary_avoids_splitting_tool_chain(self):
+        """Boundary should not split an assistant tool_calls + tool result pair."""
+        policy = ToolChainBoundaryPolicy()
+
+        msgs = [
+            {"role": "user", "content": "0"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "tc1"}]},
+            {"role": "tool", "content": "result", "tool_call_id": "tc1"},
+            {"role": "user", "content": "3"},
+            {"role": "assistant", "content": "4"},
+        ]
+        # Conservative defaults: user+assistant=SUMMARIZE, tool=DROP_FROM_SUMMARY,
+        # assistant with tool_calls=KEEP_RAW
+        cp = ConservativeCompactionPolicy()
+        decisions = cp.decide_all(msgs, _CTX, "token_pressure")
+
+        # target_prune=2: boundary 1 means prune idx 0 only, chain at 1-2 intact
+        boundary = policy.find_prune_boundary(msgs, decisions, 2)
+        # chain (assistant tool_calls + tool result) must not be split
+        chain_start = 1
+        chain_end = 2
+        assert not (chain_start < boundary <= chain_end), \
+            f"boundary={boundary} should not split tool chain [{chain_start},{chain_end}]"
+
+    def test_keep_raw_shrinks_boundary(self):
+        """When KEEP_RAW appears in prune range, boundary shrinks before it."""
+        policy = ToolChainBoundaryPolicy()
+
+        msgs = [
+            {"role": "system", "content": "system prompt"},
+            {"role": "user", "content": "1"},
+            {"role": "user", "content": "2"},
+            {"role": "user", "content": "3"},
+        ]
+        # Mark system message manually as KEEP_RAW
+        decisions = [
+            MessageCompactionDecision.KEEP_RAW,
+            MessageCompactionDecision.SUMMARIZE,
+            MessageCompactionDecision.SUMMARIZE,
+            MessageCompactionDecision.SUMMARIZE,
+        ]
+
+        boundary = policy.find_prune_boundary(msgs, decisions, 2)
+        # boundary must be <= 0 because index 0 is KEEP_RAW
+        assert boundary == 0
+
+    def test_empty_decisions_no_effect(self):
+        """Empty decisions list is handled (no KEEP_RAW protection)."""
+        policy = ToolChainBoundaryPolicy()
+        msgs = [
+            {"role": "user", "content": "1"},
+            {"role": "user", "content": "2"},
+            {"role": "user", "content": "3"},
+        ]
+        boundary = policy.find_prune_boundary(msgs, [], 1)
+        assert boundary == 1  # simple prune without decisions
+
+    def test_with_conservative_defaults(self):
+        """Integration: ConservativeCompactionPolicy + ToolChainBoundaryPolicy."""
+        policy = ToolChainBoundaryPolicy()
+        cp = ConservativeCompactionPolicy()
+
+        msgs = [
+            {"role": "user", "content": "read file"},
+            {"role": "assistant", "content": "", "tool_calls": [
+                {"id": "t1", "type": "function", "function": {"name": "read_file"}}
+            ]},
+            {"role": "tool", "tool_call_id": "t1", "name": "read_file", "content": "file content"},
+            {"role": "assistant", "content": "file says hello"},
+            {"role": "user", "content": "thanks"},
+            {"role": "assistant", "content": "you're welcome"},
+        ]
+        decisions = cp.decide_all(msgs, _CTX, "token_pressure")
+
+        # target_prune=3 would land inside tool chain
+        boundary = policy.find_prune_boundary(msgs, decisions, 3)
+        assert boundary <= 1, f"boundary should not split tool chain, got {boundary}"
+
+        # suffix must contain the final messages
+        keep = msgs[boundary:]
+        # the last user+assistant pair must be in the suffix
+        assert keep[-2]["content"] == "thanks"
+        assert keep[-1]["content"] == "you're welcome"
+
+
+class TestUserTurnBoundaryPolicy:
+    """Regression tests for UserTurnToolChainBoundaryPolicy."""
+
+    def test_prefers_user_message_boundary(self):
+        """Should prefer cutting before a user message."""
+        policy = UserTurnToolChainBoundaryPolicy()
+
+        msgs = [
+            {"role": "assistant", "content": "old reply"},
+            {"role": "user", "content": "question 1"},
+            {"role": "assistant", "content": "answer 1"},
+            {"role": "user", "content": "question 2"},
+            {"role": "assistant", "content": "answer 2"},
+        ]
+        cp = ConservativeCompactionPolicy()
+        decisions = cp.decide_all(msgs, _CTX, "token_pressure")
+
+        boundary = policy.find_prune_boundary(msgs, decisions, 2)
+        # Should prefer index 1 (user "question 1") or index 3 (user "question 2")
+        # The base boundary from parent would be 2, but user-turn prefers 1 or 3
+        assert msgs[boundary]["role"] == "user", f"expected user at boundary, got {msgs[boundary]['role']}"
+
+    def test_prefers_completed_assistant_boundary(self):
+        """Should prefer cutting after a completed assistant (no tool_calls)."""
+        policy = UserTurnToolChainBoundaryPolicy()
+
+        msgs = [
+            {"role": "user", "content": "q1"},
+            {"role": "assistant", "content": "a1"},
+            {"role": "user", "content": "q2"},
+            {"role": "assistant", "content": "a2"},
+        ]
+        cp = ConservativeCompactionPolicy()
+        decisions = cp.decide_all(msgs, _CTX, "token_pressure")
+
+        boundary = policy.find_prune_boundary(msgs, decisions, 1)
+        # base boundary=1 (index 1), lookahead: index 1 is "a1" (assistant without tool_calls)
+        # so return idx+1=2 (after the completed assistant)
+        assert msgs[boundary]["role"] == "user", f"expected user at boundary, got role={msgs[boundary]['role']}"
+
+    def test_falls_back_to_parent_when_no_good_boundary(self):
+        """When no user-turn boundary is found, falls back to parent."""
+        policy = UserTurnToolChainBoundaryPolicy(lookahead=1)
+
+        msgs = [
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "t1"}]},
+            {"role": "tool", "content": "result", "tool_call_id": "t1"},
+            {"role": "assistant", "content": "reply"},
+        ]
+        cp = ConservativeCompactionPolicy()
+        decisions = cp.decide_all(msgs, _CTX, "token_pressure")
+
+        boundary = policy.find_prune_boundary(msgs, decisions, 1)
+        # parent would have moved boundary to 0 to protect tool chain
+        assert boundary == 0
+
+    def test_never_moves_past_parent_safe_boundary(self):
+        """User-turn preference must not prune KEEP_RAW tool-call chains."""
+        parent = ToolChainBoundaryPolicy()
+        policy = UserTurnToolChainBoundaryPolicy(lookahead=5)
+
+        msgs = [
+            {"role": "user", "content": "old question"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "t1"}]},
+            {"role": "tool", "content": "result", "tool_call_id": "t1"},
+            {"role": "user", "content": "new question"},
+            {"role": "assistant", "content": "new answer"},
+        ]
+        decisions = ConservativeCompactionPolicy().decide_all(msgs, _CTX, "token_pressure")
+
+        parent_boundary = parent.find_prune_boundary(msgs, decisions, 3)
+        boundary = policy.find_prune_boundary(msgs, decisions, 3)
+
+        assert parent_boundary == 1
+        assert boundary <= parent_boundary

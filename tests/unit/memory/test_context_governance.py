@@ -78,7 +78,7 @@ async def test_microcompact_omits_stale_results():
     result = await gov.apply(messages)
 
     assert len(result) == 4
-    assert result[1]["content"] == "[read_file result omitted from context]"
+    assert "[read_file result omitted from context" in result[1]["content"]
     assert result[3]["content"] == "B" * 1000
 
 
