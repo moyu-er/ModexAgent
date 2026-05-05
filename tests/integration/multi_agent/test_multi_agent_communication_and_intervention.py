@@ -1,7 +1,7 @@
 """Integration tests for multi-agent communication, context injection,
 independent configuration, intervention, and feedback/reporting.
 
-验证场景（对照 docs/multi_agent_system_design.md）：
+验证场景（对照 docs/multi-agent-guide.md）：
 1. Agent 之间通过 Broker + Envelope 通信
 2. Agent 消息通过 InboxFlushHook 注入上下文
 3. 多 Agent 独立 Tool / Skill 配置

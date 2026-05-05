@@ -560,10 +560,13 @@ class AgentPipeline:
             AgentResult on successful turn, None if GraphInterrupt for approval.
         """
         # 设置当前 conversation_id 上下文变量（供 peer 通信工具使用）
+        from ..multi_agent.session_id import DefaultSessionIdStrategy
         from ..multi_agent.subagent_manager import current_conversation_id
 
-        agent_name = self.agent_descriptor.address.name if self.agent_descriptor else "main"
-        conversation_id = input_metadata.get("conversation_id", session_id) or session_id
+        raw_id = input_metadata.get("conversation_id") or session_id
+        conversation_id, agent_name = DefaultSessionIdStrategy().parse(raw_id)
+        if not agent_name:
+            agent_name = self.agent_descriptor.address.name if self.agent_descriptor else "main"
         conv_token = current_conversation_id.set(conversation_id)
         result: AgentResult | None = None
         turn_clean = False

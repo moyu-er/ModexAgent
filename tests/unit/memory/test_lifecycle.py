@@ -13,6 +13,7 @@ import pytest
 
 from datetime import datetime
 
+from framework.core.types import MessageRole
 from framework.memory.core.layers import MemoryLayerSet
 from framework.memory.core.models import ArchiveEntry
 from framework.memory.core.scope import (
@@ -448,3 +449,168 @@ class TestConsolidationEngineABC:
 
         engine = Complete()
         assert engine is not None
+
+
+# ── End-to-end: bot_project cascading memory flow ──────────────────────────
+
+
+async def test_full_add_messages_compression_archive_cascade():
+    """Simulate bot_project flow: add_messages → lifecycle → compression → archive.
+
+    Config: max_messages=50 (same as bot_profile short_term.max_messages).
+    Adding 96 messages should trigger compression, truncate session, and
+    write archive entries — all through the normal add_messages path.
+    """
+    from framework.memory.compression.policies import DefaultMemoryCompressionCoordinator
+    from framework.memory.default_system import DefaultMemorySystem
+    from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
+    from framework.memory.registry.in_memory import InMemoryStoreRegistry
+
+    registry = InMemoryStoreRegistry()
+    layer_set = MemoryLayerFactory.single_user(registry=registry)
+    ctx = MemoryContext(session_id="e2e-cascade")
+
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=50)
+    lifecycle = DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator)
+    system = DefaultMemorySystem(layer_set=layer_set, store_registry=registry, lifecycle_policy=lifecycle)
+    await system.initialize()
+
+    # Add 96 messages in batches (simulates real turn-by-turn flow)
+    messages = [{"role": "user", "content": f"msg{i}"} for i in range(96)]
+    await system.add_messages(ctx, messages)
+
+    # Session should be truncated to ≤50 by compression
+    remaining = await system.get_history(ctx, max_messages=None)
+    assert len(remaining) <= 55, \
+        f"session should be compressed, got {len(remaining)} messages"
+
+    # Archive should have entries from the compressed prefix
+    entries = await layer_set.archive.get_recent(ctx, limit=20)
+    assert len(entries) > 0, \
+        f"archive should have compression entries, got {len(entries)}"
+
+    # Compression summary should be stored in session state
+    storage = await registry.resolve(
+        layer=MemoryLayerName.SESSION, scope=SessionScope(), context=ctx,
+    )
+    summary = await storage.get(".compression_summary")
+    assert summary is not None, "compression summary should be persisted"
+
+
+async def test_cascaded_compression_retains_tool_chain_integrity():
+    """After compression via add_messages, tool chains in the suffix are intact."""
+    from framework.memory.compression.policies import DefaultMemoryCompressionCoordinator
+    from framework.memory.default_system import DefaultMemorySystem
+    from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
+    from framework.memory.registry.in_memory import InMemoryStoreRegistry
+
+    registry = InMemoryStoreRegistry()
+    layer_set = MemoryLayerFactory.single_user(registry=registry)
+    ctx = MemoryContext(session_id="e2e-toolchain")
+
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=8)
+    lifecycle = DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator)
+    system = DefaultMemorySystem(layer_set=layer_set, store_registry=registry, lifecycle_policy=lifecycle)
+    await system.initialize()
+
+    # 6 turns with tool chains = 30 messages total
+    messages: list[dict[str, object]] = []
+    for i in range(6):
+        messages.append({"role": "user", "content": f"q{i}"})
+        messages.append({"role": "assistant", "content": "", "tool_calls": [
+            {"id": f"tc{i}a", "type": "function", "function": {"name": "read_file"}},
+            {"id": f"tc{i}b", "type": "function", "function": {"name": "shell"}},
+        ]})
+        messages.append({"role": "tool", "tool_call_id": f"tc{i}a", "name": "read_file", "content": f"out{i}a"})
+        messages.append({"role": "tool", "tool_call_id": f"tc{i}b", "name": "shell", "content": f"out{i}b"})
+        messages.append({"role": "assistant", "content": f"answer {i}"})
+    await system.add_messages(ctx, messages)
+
+    remaining = await system.get_history(ctx, max_messages=None)
+    assert len(remaining) <= 12  # compressed, with chain safety margin
+
+    # No orphan tool results in the kept suffix
+    kept_call_ids: set[str] = set()
+    for m in remaining:
+        d = m.to_dict()
+        for tc in d.get("tool_calls", []) or []:
+            if isinstance(tc, dict) and tc.get("id"):
+                kept_call_ids.add(tc["id"])
+    for m in remaining:
+        d = m.to_dict()
+        if d.get("role") == str(MessageRole.TOOL):
+            assert d.get("tool_call_id") in kept_call_ids, \
+                f"orphan tool result {d.get('tool_call_id')} in suffix"
+
+    # Archive entries exist
+    entries = await layer_set.archive.get_recent(ctx, limit=20)
+    assert len(entries) > 0
+
+
+async def test_archive_retrieval_after_compression():
+    """Compressed archive entries are retrievable via get_history_entries."""
+    from framework.memory.compression.policies import DefaultMemoryCompressionCoordinator
+    from framework.memory.default_system import DefaultMemorySystem
+    from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
+    from framework.memory.registry.in_memory import InMemoryStoreRegistry
+
+    registry = InMemoryStoreRegistry()
+    layer_set = MemoryLayerFactory.single_user(registry=registry)
+    ctx = MemoryContext(session_id="e2e-retrieval")
+
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=5)
+    lifecycle = DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator)
+    system = DefaultMemorySystem(layer_set=layer_set, store_registry=registry, lifecycle_policy=lifecycle)
+    await system.initialize()
+
+    # Add distinctive messages then compress
+    messages = [{"role": "user", "content": f"distinctive topic {i}"} for i in range(20)]
+    await system.add_messages(ctx, messages)
+
+    # Archive should be searchable
+    entries = await system.get_history_entries(ctx, limit=10, query="topic")
+    assert len(entries) > 0, "archive should be searchable after compression"
+
+
+# ── Regression: ScopedMessageHistory path (bot_project hot path) ─────────
+
+
+async def test_scoped_message_history_triggers_compression():
+    """Messages added through ScopedMessageHistory (ReAct turn path) must compress.
+
+    This is the actually-used path in bot_project: during a ReAct turn,
+    assistant/tool messages are appended via ScopedMessageHistory.append().
+    Since it calls session.add_messages() directly, not
+    DefaultMemorySystem.add_messages(), the lifecycle hook is skipped.
+    """
+    from framework.memory.compression.policies import DefaultMemoryCompressionCoordinator
+    from framework.memory.default_system import DefaultMemorySystem
+    from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
+    from framework.memory.registry.in_memory import InMemoryStoreRegistry
+
+    registry = InMemoryStoreRegistry()
+    layer_set = MemoryLayerFactory.single_user(registry=registry)
+    ctx = MemoryContext(session_id="e2e-history")
+
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=10)
+    lifecycle = DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator)
+    system = DefaultMemorySystem(
+        layer_set=layer_set, store_registry=registry, lifecycle_policy=lifecycle,
+    )
+    await system.initialize()
+
+    # Simulate ReAct turn: messages go through ScopedMessageHistory (bot_project hot path)
+    history = system.create_message_history(ctx)
+    for i in range(30):
+        await history.append({"role": "user", "content": f"q{i}"})
+        await history.append({"role": "assistant", "content": f"a{i}"})
+
+    # Verify: compression WAS triggered by the on_messages_added callback
+    stored = len(await system.get_history(ctx, max_messages=None))
+    assert stored <= 20, \
+        f"should compress from 60 to ≤20, got {stored}"
+
+    # Archive must have entries from compression
+    archive_entries = await layer_set.archive.get_recent(ctx, limit=20)
+    assert len(archive_entries) > 0, \
+        f"archive should have compression entries, got {len(archive_entries)}"

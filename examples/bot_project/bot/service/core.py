@@ -918,16 +918,47 @@ class BotService(AgentBuilderMixin):
             return None
 
         from framework.agents.summarizer import SummarizerAgent, SummarizerStrategy
+        from framework.memory.compaction.boundary import (
+            ToolChainBoundaryPolicy,
+            UserTurnToolChainBoundaryPolicy,
+        )
+        from framework.memory.compaction.policy import ConservativeCompactionPolicy
         from framework.memory.compression.policies import DefaultMemoryCompressionCoordinator
 
         # Shared SummarizerAgent for compression + consolidation + DreamEngine
         self._summarizer_agent = SummarizerAgent(self.provider)
         summary_strategy = SummarizerStrategy(self._summarizer_agent)
 
+        # Build compaction policy from config
+        compaction_config = main_memory_config.get("compaction", {})
+        compaction_policy_name = compaction_config.get("policy", "conservative")
+        high_value_tools = set(compaction_config.get("high_value_tools", []))
+
+        if compaction_policy_name == "conservative":
+            compaction = ConservativeCompactionPolicy(high_value_tools=high_value_tools)
+        elif compaction_policy_name == "keep_all":
+            from framework.memory.compaction.policy import KeepAllCompactionPolicy
+            compaction = KeepAllCompactionPolicy()
+        elif compaction_policy_name == "semantic":
+            from framework.memory.compaction.policy import SemanticToolCompactionPolicy
+            compaction = SemanticToolCompactionPolicy(high_value_tools=high_value_tools)
+        else:
+            compaction = ConservativeCompactionPolicy(high_value_tools=high_value_tools)
+
+        # Build boundary policy from config
+        boundary_name = compaction_config.get("boundary", "tool_chain")
+        if boundary_name == "user_turn_tool_chain":
+            boundary = UserTurnToolChainBoundaryPolicy()
+        else:
+            boundary = ToolChainBoundaryPolicy()
+
         return DefaultMemoryCompressionCoordinator(
             max_messages=auto_compact.get("max_messages", short_term.get("max_messages", 100)),
             max_tokens=auto_compact.get("max_tokens", short_term.get("max_tokens", 8000)),
+            keep_ratio=short_term.get("keep_ratio", 0.5),
             summary=summary_strategy,
+            compaction=compaction,
+            boundary=boundary,
         )
 
     async def _init_auto_compact(

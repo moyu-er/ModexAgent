@@ -87,8 +87,10 @@ class ConservativeCompactionPolicy(MessageCompactionPolicy):
     """Default conservative policy.
 
     - ``user`` and plain ``assistant`` messages: ``SUMMARIZE``
-    - ``assistant`` with ``tool_calls``: ``KEEP_RAW`` (protect tool-call chain)
-    - ``tool`` messages: ``DROP_FROM_SUMMARY`` (archive raw but don't summarize)
+    - ``assistant`` with ``tool_calls``: ``SUMMARIZE`` (tool-chain
+      atomicity is enforced by ``BoundaryPolicy``; compacted before
+      the summarizer sees them so tool context is preserved in archive)
+    - ``tool`` messages: ``SUMMARIZE`` (compacted before LLM summarization)
     - ``system`` / ``developer``: ``KEEP_RAW`` (never prune into user history)
     """
 
@@ -112,13 +114,10 @@ class ConservativeCompactionPolicy(MessageCompactionPolicy):
             return MessageCompactionDecision.KEEP_RAW
 
         if role == MessageRole.ASSISTANT and _has_tool_calls(message):
-            return MessageCompactionDecision.KEEP_RAW
+            return MessageCompactionDecision.SUMMARIZE
 
         if role == MessageRole.TOOL:
-            name = message.get("name") if isinstance(message, dict) else message.name
-            if name and name in self.high_value_tools:
-                return MessageCompactionDecision.SUMMARIZE
-            return MessageCompactionDecision.DROP_FROM_SUMMARY
+            return MessageCompactionDecision.SUMMARIZE
 
         # user and plain assistant
         return MessageCompactionDecision.SUMMARIZE
@@ -138,13 +137,11 @@ class KeepAllCompactionPolicy(MessageCompactionPolicy):
 
 
 class SemanticToolCompactionPolicy(MessageCompactionPolicy):
-    """Placeholder for semantic-value-based tool result classification.
+    """Compatibility alias for ``ConservativeCompactionPolicy``.
 
-    High-value tool results (search, analysis, code execution) are summarized;
-    low-value results (heartbeat, status checks) are dropped from summary.
-
-    NOTE: This requires a ``SemanticMessageFilter`` or similar classifier.
-    Until that integration is wired, behaviour falls back to conservative.
+    This class exists so that configs referencing ``"semantic"`` policy
+    do not break.  It delegates entirely to ``ConservativeCompactionPolicy``
+    and will be removed once all callers migrate to the canonical name.
     """
 
     def __init__(self, high_value_tools: set[str] | None = None) -> None:
@@ -156,5 +153,4 @@ class SemanticToolCompactionPolicy(MessageCompactionPolicy):
         context: MemoryContext,
         reason: str,
     ) -> MessageCompactionDecision:
-        # TODO: integrate semantic classification once filter API is stable
         return self._fallback.decide(message, context, reason)

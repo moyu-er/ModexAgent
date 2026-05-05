@@ -15,7 +15,7 @@ from framework.memory.compression.strategy import MessageFilterStrategy
 from framework.memory.core.message import ChatMessage
 from framework.memory.core.models import ArchiveEntry
 from framework.memory.core.scope import MemoryContext
-from framework.memory.utils import strip_runtime_prefixes
+from framework.memory.utils import normalize_memory_summary, strip_runtime_prefixes
 
 
 def _raw_archive_summary(messages: Sequence[ChatMessage | dict[str, Any]]) -> str:
@@ -122,7 +122,7 @@ class SemanticArchiveStrategy(ArchiveStrategy):
 
     - 优先使用 LLM 生成的 compression_summary；
     - 无 LLM 摘要时，对 pruned_messages 进行语义过滤，生成摘要；
-    - 过滤后无保留内容时，存储占位条目；
+    - 过滤后无保留内容时，跳过写入（不产生空占位归档条目）；
     - 绝不将原始 tool dump 直接写入 summary。
     """
 
@@ -137,6 +137,8 @@ class SemanticArchiveStrategy(ArchiveStrategy):
         history_manager: Any,
     ) -> None:
         entry = self._build_entry(pruned_messages, summary)
+        if entry is None:
+            return  # no semantic content — skip write
         await history_manager.append(
             context,
             ArchiveEntry(
@@ -152,10 +154,11 @@ class SemanticArchiveStrategy(ArchiveStrategy):
         self,
         pruned_messages: Sequence[ChatMessage | dict[str, Any]],
         summary: str,
-    ) -> ArchiveEntry:
-        if summary:
+    ) -> ArchiveEntry | None:
+        normalized_summary = normalize_memory_summary(summary)
+        if normalized_summary is not None:
             return ArchiveEntry(
-                summary=summary,
+                summary=normalized_summary,
                 metadata={
                     "source": "compression_summary",
                     "semantic_count": len(pruned_messages),
@@ -176,13 +179,8 @@ class SemanticArchiveStrategy(ArchiveStrategy):
                 },
             )
 
-        return ArchiveEntry(
-            summary="(no semantic content)",
-            metadata={
-                "source": "empty",
-                "semantic_count": 0,
-            },
-        )
+        # No semantic content — skip archive write entirely
+        return None
 
     @staticmethod
     def _heuristic_summary(messages: list[dict[str, Any]]) -> str:

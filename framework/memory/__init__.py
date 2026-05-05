@@ -19,7 +19,7 @@ from framework.memory.archive import (
     PreserveSummaryArchiveStrategy,
     RawDumpArchiveStrategy,
 )
-from framework.memory.compaction.boundary import BoundaryPolicy, ToolChainBoundaryPolicy
+from framework.memory.compaction.boundary import BoundaryPolicy, ToolChainBoundaryPolicy, UserTurnToolChainBoundaryPolicy
 from framework.memory.compaction.policy import (
     ConservativeCompactionPolicy,
     KeepAllCompactionPolicy,
@@ -198,4 +198,5 @@ __all__ = [
     "SemanticToolCompactionPolicy",
     "BoundaryPolicy",
     "ToolChainBoundaryPolicy",
+    "UserTurnToolChainBoundaryPolicy",
 ]

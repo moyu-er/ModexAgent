@@ -38,18 +38,27 @@ class SummarizerAgent(Agent[SummarizerEvent]):
 
     event_enum = SummarizerEvent
 
-    PROMPT_COMPRESSION = """You are a conversation summarizer.
+    PROMPT_COMPRESSION = """You are a conversation archiver creating a medium-term memory record.
 
-Task: Summarize the provided conversation messages into a concise paragraph.
+Task: Summarize the provided conversation messages into a structured archive entry that a DreamEngine will later use to extract long-term knowledge.
+
+Output format (plain text, no markdown):
+
+[Task] The user's main request or goal in one sentence.
+[Actions] Numbered list of concrete actions and tools used with their results.
+[Decisions] Any important decisions made and WHY.
+[State] Current working context (files, environment, errors, etc.).
+[Pending] Anything still in progress or unanswered — write "None" if nothing.
 
 Rules:
-1. Keep key information: user's main questions, assistant's core answers, important context
-2. Be concise: remove redundant pleasantries and repetition
-3. Max 200 characters
-4. Output plain text only, no markdown, no JSON
+1. Be CONCRETE — include file paths, values, error messages, tool names
+2. Skip trivial pleasantries, greetings, and redundant repetition
+3. Output 300-800 characters — enough detail for future retrieval
+4. Plain text only, no markdown formatting, no JSON
 5. Do NOT include any thinking/reasoning tags in output
+6. Write in the same language the conversation was in
 
-If the conversation is empty or trivial, output: (no summary)"""
+If the conversation contains no meaningful content, output exactly: (nothing)"""
 
     PROMPT_FACT_EXTRACTION = """You are a memory analysis assistant.
 

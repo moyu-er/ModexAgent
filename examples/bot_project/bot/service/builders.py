@@ -201,7 +201,7 @@ class AgentBuilderMixin:
         )
 
         file_tools_config = tools_config.get("file_tools", {})
-        if file_tools_config.get("enabled", True):
+        if file_tools_config.get("enabled", "file_tools" in tools_config):
             tm.register(ReadFileTool())
             tm.register(WriteFileTool())
             tm.register(EditFileTool())
@@ -210,7 +210,7 @@ class AgentBuilderMixin:
         from framework.tools.standard import ShellTool
 
         shell_tools_config = tools_config.get("shell_tools", {})
-        if shell_tools_config.get("enabled", True):
+        if shell_tools_config.get("enabled", "shell_tools" in tools_config):
             tm.register(ShellTool(
                 timeout=shell_tools_config.get("timeout", 60),
                 enable_safety_guard=shell_tools_config.get("enable_safety_guard", True),
@@ -374,7 +374,21 @@ class AgentBuilderMixin:
         llm = self.config.get("llm", {})
         agent = self.config.get("agent", {})
         tools_config = sub_config.get("tools")
-        tool_manager = await self._build_peer_tool_manager(tools_config) if tools_config else None
+        mcp_tools_config = tools_config.get("mcp_tools", {}) if tools_config else {}
+        mcp_server_filter = (
+            mcp_tools_config.get("server_filter")
+            if mcp_tools_config.get("enabled", False)
+            else None
+        )
+        tool_manager = (
+            await self._build_peer_tool_manager(
+                tools_config,
+                mcp_server_filter=mcp_server_filter,
+                peer_name=sub_config.get("name", "helper"),
+            )
+            if tools_config
+            else None
+        )
 
         has_skill_dirs = bool(sub_config.get("skill_dirs"))
         has_allowed_skills = sub_config.get("allowed_skills") is not None

@@ -19,7 +19,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "examples" / "bot_project"))
 
 from bot.service.core import BotService
-
 from framework.agents.react.approval import (
     ApprovalRuntime,
     TieredToolApprovalClassifier,
@@ -39,6 +38,7 @@ from framework.memory.context_governance import (
     CompositeGovernance,
     ToolChainRepairGovernance,
 )
+from framework.memory.system import create_memory_system
 from framework.pipeline.adapters import InputAdapter, OutputAdapter
 
 
@@ -133,6 +133,38 @@ def _make_minimal_config(**overrides: Any) -> dict[str, Any]:
     }
     cfg.update(overrides)
     return cfg
+
+
+async def _load_tool_cleanup_plugin(enabled: bool = True) -> Any:
+    from bot.plugins.integration import PluginIntegration
+
+    local_plugins_dir = (
+        Path(__file__).parent.parent.parent.parent
+        / "examples"
+        / "bot_project"
+        / "plugins"
+    )
+    integration = PluginIntegration(
+        {
+            "plugins": {
+                "enabled": ["tool_call_cleanup"],
+                "configurations": {
+                    "tool_call_cleanup": {"enabled": enabled},
+                },
+            },
+        },
+        extra_plugin_dirs=[local_plugins_dir],
+    )
+    await integration.discover_and_load()
+    return integration
+
+
+def _is_tool_call_cleanup_session(memory_system: Any) -> bool:
+    session_type = type(memory_system.layers.session)
+    return (
+        session_type.__name__ == "ToolCallAwareSessionManager"
+        and "tool_call_cleanup" in session_type.__module__
+    )
 
 
 # ===================================================================
@@ -349,7 +381,170 @@ class TestInterceptorChainWiring:
 
 
 # ===================================================================
-# Test 5: ReActRuntime is correctly assembled (full mode)
+# Test 5: bot_project plugin and agent capability wiring
+# ===================================================================
+
+class TestBotProjectPluginAndCapabilityWiring:
+    async def test_tool_call_cleanup_wraps_main_memory_when_enabled(self, tmp_path: Path):
+        integration = await _load_tool_cleanup_plugin(enabled=True)
+        memory_system = create_memory_system(workspace=tmp_path / "main", session_only=True)
+        await memory_system.initialize()
+
+        try:
+            injected = integration.inject_memory_system_modifiers(memory_system)
+
+            assert injected == ["tool_call_cleanup"]
+            assert _is_tool_call_cleanup_session(memory_system)
+        finally:
+            await memory_system.close()
+            await integration.shutdown()
+
+    async def test_tool_call_cleanup_does_not_wrap_when_disabled(self, tmp_path: Path):
+        integration = await _load_tool_cleanup_plugin(enabled=False)
+        memory_system = create_memory_system(workspace=tmp_path / "main", session_only=True)
+        await memory_system.initialize()
+
+        try:
+            injected = integration.inject_memory_system_modifiers(memory_system)
+
+            assert injected == []
+            assert not _is_tool_call_cleanup_session(memory_system)
+        finally:
+            await memory_system.close()
+            await integration.shutdown()
+
+    async def test_tool_call_cleanup_wraps_peer_and_subagent_memory(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        cfg = _make_minimal_config(
+            memory={
+                "peers": {"short_term": {"max_messages": 20}},
+                "subagents": {"short_term": {"max_messages": 10}},
+            },
+        )
+        svc = _make_service(config=cfg)
+        svc.plugin_integration = await _load_tool_cleanup_plugin(enabled=True)
+        monkeypatch.setattr(
+            svc,
+            "_resolve_path",
+            lambda _config_key, _default_relative: tmp_path,
+        )
+
+        peer_context = await svc._create_peer_memory(
+            "query-12306",
+            {"system_prompt": "railway", "memory": {"enabled": True}},
+        )
+        subagent_context = await svc._create_subagent_memory("helper-sync")
+
+        try:
+            assert _is_tool_call_cleanup_session(peer_context.memory_system)
+            assert _is_tool_call_cleanup_session(subagent_context.memory_system)
+        finally:
+            await peer_context.memory_system.close()
+            await subagent_context.memory_system.close()
+            await svc.plugin_integration.shutdown()
+
+    def test_query_12306_peer_uses_dedicated_skill_and_mcp_config(self):
+        from bot.utils.config_loader import ConfigLoader
+
+        config_dir = (
+            Path(__file__).parent.parent.parent.parent
+            / "examples"
+            / "bot_project"
+            / "config"
+        )
+        loader = ConfigLoader(config_dir)
+        config = loader.load_yaml("bot_config.yml")
+        config["mcp"] = loader.load_mcp_config(config.get("mcp", {}))
+
+        peers = {
+            peer["name"]: peer
+            for peer in config.get("multi_agent", {}).get("peers", [])
+        }
+        query_peer = peers["query-12306"]
+        office_peer = peers["office-expert"]
+
+        assert query_peer["skill_dirs"] == ["skills/peers/12306"]
+        assert "skills/peers/docx" not in query_peer["skill_dirs"]
+        assert query_peer["tools"]["mcp_tools"]["server_filter"] == ["12306-mcp", "fetch"]
+        assert query_peer["tools"]["file_tools"]["enabled"] is False
+        assert query_peer["tools"]["shell_tools"]["enabled"] is False
+        assert (
+            config_dir.parent / query_peer["skill_dirs"][0] / "SKILL.md"
+        ).exists()
+
+        assert "skills/peers/docx" in office_peer["skill_dirs"]
+        assert office_peer["tools"]["mcp_tools"]["server_filter"] == ["fetch"]
+        assert "12306-mcp" in config["mcp"]["servers"]
+
+    async def test_query_12306_peer_loads_only_dedicated_skill_manager(self):
+        from bot.utils.config_loader import ConfigLoader
+
+        config_dir = (
+            Path(__file__).parent.parent.parent.parent
+            / "examples"
+            / "bot_project"
+            / "config"
+        )
+        loader = ConfigLoader(config_dir)
+        config = loader.load_yaml("bot_config.yml")
+        peers = {
+            peer["name"]: peer
+            for peer in config.get("multi_agent", {}).get("peers", [])
+        }
+        svc = _make_service(config=config)
+
+        descriptor, _tool_manager, skill_manager = await svc._build_peer_descriptor(
+            peers["query-12306"]
+        )
+
+        assert descriptor.address.name == "query-12306"
+        assert skill_manager is not None
+        skills = await skill_manager.list_skills()
+        assert [skill.name for skill in skills] == ["12306-railway-query"]
+
+    async def test_subagent_descriptor_passes_mcp_server_filter(self, monkeypatch: pytest.MonkeyPatch):
+        svc = _make_service(config=_make_minimal_config())
+        captured: dict[str, Any] = {}
+
+        async def _fake_build_tool_manager(
+            tools_config: dict[str, Any],
+            mcp_server_filter: list[str] | None = None,
+            peer_name: str | None = None,
+        ) -> Mock:
+            captured["tools_config"] = tools_config
+            captured["mcp_server_filter"] = mcp_server_filter
+            captured["peer_name"] = peer_name
+            return Mock()
+
+        async def _fake_create_subagent_memory(
+            sub_name: str,
+            base_system_prompt: str = "",
+        ) -> Mock:
+            _ = sub_name, base_system_prompt
+            return Mock()
+
+        monkeypatch.setattr(svc, "_build_peer_tool_manager", _fake_build_tool_manager)
+        monkeypatch.setattr(svc, "_create_subagent_memory", _fake_create_subagent_memory)
+
+        await svc._build_subagent_descriptor({
+            "name": "rail-helper",
+            "tools": {
+                "mcp_tools": {
+                    "enabled": True,
+                    "server_filter": ["12306-mcp"],
+                },
+            },
+        })
+
+        assert captured["mcp_server_filter"] == ["12306-mcp"]
+        assert captured["peer_name"] == "rail-helper"
+
+
+# ===================================================================
+# Test 6: ReActRuntime is correctly assembled (full mode)
 # ===================================================================
 
 class TestReActRuntimeAssembly:

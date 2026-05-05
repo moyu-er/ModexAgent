@@ -1,6 +1,6 @@
 # ModexAgent — 核心架构
 
-> 版本: 0.3.0 | 更新: 2026-04-22
+> 版本: 0.3.1 | 更新: 2026-05-05
 
 ## 1. 设计理念
 
@@ -23,6 +23,11 @@
 ```
 framework/
 ├── core/                     # 核心抽象层
+│   ├── graph/                # 图执行框架
+│   │   ├── node.py           # Node + NodeTransition 抽象
+│   │   ├── graph.py          # Graph + Edge 定义
+│   │   ├── engine.py         # GraphEngine 执行循环
+│   │   └── interrupt.py      # GraphInterrupt + _current_resume
 │   ├── agent.py              # Agent[E] 泛型基类 + AgentContext
 │   ├── emitter.py            # ContentEmitter[E] + StreamingAwareEmitter + AgentResult
 │   ├── events.py             # AgentEvent 标记类 + EmitterConfig
@@ -32,7 +37,6 @@ framework/
 │   ├── types.py              # InputMessage, OutputMessage, ToolCall, LLMResponse
 │   ├── hooks.py              # AgentRunHook + RuntimeContextHook
 │   ├── strategy.py           # ExecutionStrategy (ReAct / SingleTurn)
-│   ├── runner.py             # InterruptibleRunner (可中断执行)
 │   ├── runtime_context.py    # RuntimeContext + RuntimeContextManager (会话级运行时状态)
 │   ├── tool_call_accumulator.py # 流式 ToolCall 片段累积解析
 │   ├── message_utils.py      # Agent 消息归一化（role: agent → user 转换）
@@ -40,7 +44,9 @@ framework/
 │   ├── memory.py             # MemoryStore 抽象
 │   ├── session.py            # SessionStore 抽象
 │   ├── tool.py               # Tool 基类（独立模块）
-│   └── skills/               # 技能系统
+│   ├── agent_runtime_config.py # AgentRuntimeConfig, RuntimeControl
+│   ├── llm_error.py          # RuntimeSafetyPolicy, LLMTimeoutPolicy
+│   ├── skills/               # 技能系统
 │       ├── manager.py        # SkillManager
 │       ├── source.py         # FileSkillSource
 │       ├── builder.py        # ProgressiveBuilder (渐进式 Skill 构建)
@@ -50,12 +56,40 @@ framework/
 ├── agents/                   # Agent 推理模式实现
 │   └── react/
 │       ├── agent.py          # ReActAgent + ReActEvent 枚举
+│       ├── graph.py          # ReActGraph（图拓扑定义）
+│       ├── engine.py         # GraphEngine（图执行引擎）
+│       ├── nodes/            # 图节点实现
+│       │   ├── start.py      # StartNode（初始化/恢复路由）
+│       │   ├── llm.py        # LLMNode（模型调用 + 流式）
+│       │   ├── tool.py       # ToolNode（分类 + 审批 + 执行）
+│       │   └── end.py        # EndNode（构建 AgentResult）
+│       ├── strategy.py       # SuspendResumeStrategy（审批策略）
+│       ├── state.py          # TurnResumeState + RuntimeStateStore 别名
+│       ├── constants.py      # ReActMetaKey + ExtensionKey
+│       ├── assembler.py      # RuntimeAssembler（运行时服务组装）
+│       ├── approval.py       # ApprovalClassifier（工具分类）
 │       └── builder.py        # Agent 构建器
+│
+├── control/                  # 运行时控制平面
+│   ├── channel.py            # ControlChannel（命令输入队列）
+│   ├── event_bus.py          # ControlEventBus（事件输出总线）
+│   ├── checkpoint.py         # RuntimeStateStore / JsonFileRuntimeStateStore
+│   ├── types.py              # ControlCommand + ControlEvent 类型
+│   ├── exceptions.py         # AgentControlError / AgentCancelled / ApprovalDenied
+│   └── ui/                   # 用户界面实现（CLI / IM / Noop）
+│
+├── approval/                 # 审批系统
+│   ├── state.py              # ApprovalState + ApprovalRequest + ApprovalTier
+│   ├── store.py              # ApprovalStateStore（InMemory / LocalFile）
+│   ├── response.py           # 审批命令解析（/approve, /deny）
+│   └── constants.py          # ApprovalDecision + ApprovalAction
 │
 ├── pipeline/                 # 端到端流程编排
 │   ├── pipeline.py           # AgentPipeline（长期运行服务模式）
 │   ├── adapters.py           # InputAdapter / OutputAdapter + 内置实现
-│   └── filters.py            # 内容过滤器（ThinkTag / Whitespace / Reasoning）
+│   ├── filters.py            # 内容过滤器（ThinkTag / Whitespace / Reasoning）
+│   ├── context_assembler.py  # AgentContext 构建
+│   └── approval_renderer.py  # 审批提示渲染
 │
 ├── session/                  # 单次请求模式
 │   └── agent_session.py      # AgentSession（HTTP API 风格）
@@ -70,28 +104,43 @@ framework/
 │   │   ├── compression.py    # 压缩策略接口
 │   │   ├── consolidation.py  # 记忆整合接口
 │   │   └── lock.py           # 读写锁
-│   ├── managers/             # 各层记忆管理器实现
-│   │   ├── short_term.py     # Short-term Memory（近期对话）
-│   │   ├── history.py        # History Archive（压缩摘要）
-│   │   └── long_term.py      # Long-term Memory（用户画像与知识）
-│   ├── compression/          # 压缩策略实现
-│   │   ├── strategy.py       # 基础策略
-│   │   ├── token_window.py   # Token 窗口截断
-│   │   ├── truncation.py     # 消息截断
-│   │   ├── tool_chain.py     # 工具链压缩
+│   ├── layers/               # 各层记忆管理器实现
+│   │   ├── session.py        # Session Memory（短期记忆）
+│   │   ├── archive.py        # Archive Memory（历史归档）
+│   │   ├── knowledge.py      # Knowledge Memory（长期记忆）
+│   │   ├── config.py         # 各层配置（MemoryLayerConfigSet）
+│   │   └── factory.py        # 层工厂
+│   ├── compaction/           # 压缩策略（触发 → 计划 → 摘要 → 提交）
+│   │   ├── policy.py         # MessageCompactionPolicy + BoundaryPolicy
+│   │   ├── boundary.py       # ToolChainBoundaryPolicy + UserTurnToolChainBoundaryPolicy
+│   │   └── ...               # 其他策略实现
+│   ├── compression/          # 压缩执行策略
+│   │   ├── policies.py       # DefaultMemoryCompressionCoordinator
 │   │   ├── semantic_filter.py # 语义过滤
-│   │   ├── importance.py     # 重要性评估
-│   │   └── hybrid.py         # 混合策略
+│   │   ├── tool_chain.py     # 工具链压缩
+│   │   └── ...
 │   ├── consolidation/        # 记忆整合
 │   │   ├── consolidator.py   # LLM 摘要压缩
 │   │   └── dream_engine.py   # DreamEngine 两阶段离线整合
 │   ├── stores/               # 存储后端
-│   │   ├── file.py           # FileStorage (JSON Lines)
+│   │   ├── file.py           # FileStorage (JSON Lines + KV)
+│   │   ├── scoped_file.py    # ScopedFileStorage（按 scope 隔离）
 │   │   └── in_memory.py      # InMemoryStorage
-│   ├── archive/              # 归档策略
+│   ├── registry/             # 存储注册表
+│   │   ├── base.py           # StoreRegistry 抽象
+│   │   ├── file.py           # FileStoreRegistry
+│   │   └── in_memory.py      # InMemoryStoreRegistry
 │   ├── injection/            # 记忆注入策略
+│   │   ├── filter.py         # InjectionFilterStrategy（工具消息过滤）
+│   │   └── ...
+│   ├── archive/              # 归档策略
 │   ├── content_transform.py  # 内容变换器（如 Base64 清洗）
+│   ├── context_governance.py # 上下文治理（ToolChainRepair + Microcompact + TokenBudget）
 │   ├── history.py            # MessageHistory 协议 + 多种实现
+│   ├── history_search.py     # 历史搜索
+│   ├── knowledge_search.py   # 知识搜索
+│   ├── recorder.py           # 记忆记录器
+│   ├── lifecycle.py          # 内存生命周期管理（AutoCompact）
 │   └── utils.py              # 工具函数
 │
 ├── multi_agent/              # 多 Agent 协作层
@@ -124,15 +173,16 @@ framework/
 │   ├── policy_registry.py    # PolicyRegistry（策略注册表）
 │   ├── rpc_broker.py         # RPCBroker（同步 RPC 调用）
 │   └── utils.py              # 工具函数
-│   └── inbox/                # Agent 收件箱
-│       ├── server.py         # InboxServer 抽象
-│       ├── server_local.py   # LocalFileInboxServer（本地文件持久化）
-│       ├── server_memory.py  # InMemoryInboxServer（内存实现）
-│       ├── producer.py       # InboxProducer（消息生产者）
-│       ├── consumer.py       # InboxConsumer（消息消费者）
-│       ├── hook.py           # InboxFlushHook（turn 边界注入）
-│       ├── tracker.py        # InboxTracker（投递追踪）
-│       └── types.py          # InboxMessage 类型
+│   ├── inbox/                # Agent 收件箱
+│   │   ├── server.py         # InboxServer 抽象
+│   │   ├── server_local.py   # LocalFileInboxServer（本地文件持久化）
+│   │   ├── server_memory.py  # InMemoryInboxServer（内存实现）
+│   │   ├── producer.py       # InboxProducer（消息生产者）
+│   │   ├── consumer.py       # InboxConsumer（消息消费者）
+│   │   ├── hook.py           # InboxFlushHook（turn 边界注入）
+│   │   ├── tracker.py        # InboxTracker（投递追踪）
+│   │   └── types.py          # InboxMessage 类型
+│   ├── session_id.py         # SessionIdStrategy（会话 ID 生成策略）
 │
 ├── messaging/                # 消息基础设施
 │   ├── broker.py             # MessageBroker 抽象（P2P / PubSub / Broadcast）
@@ -276,17 +326,23 @@ AgentPipeline._process_message()
      ▼
 ReActAgent.run(context, emitter)
      │
-     │  ReAct 循环 (最多 max_iterations 次):
+     │  图引擎执行 (GraphEngine.run):
      │    0. before_turn hook
-     │    1. before_iteration hook
-     │    2. _request_llm() ──> LLM 响应 (流式/非流式)
-     │    3. 有 tool_calls?
-     │        ├── before_tool_execution hook
-     │        ├── 执行工具 (批量并行)
-     │        ├── after_tool_execution hook
-     │        ├── 追加 tool message ──> 继续循环
-     │        └── after_iteration hook
-     │    4. 无 tool_calls? ──> 触发 FINAL_OUTPUT ──> 返回 AgentResult
+     │    1. StartNode ──> 路由到 LLMNode 或 ToolNode（恢复路径）
+     │    2. LLMNode:
+     │       ├── before_iteration hook
+     │       ├── _stream_with_control() ──> LLM 响应 (流式/非流式)
+     │       ├── after_llm_response hook
+     │       └── 路由: HAS_TOOLS → ToolNode, NO_TOOLS → EndNode
+     │    3. ToolNode:
+     │       ├── _classify_all() ──> 工具分类（NORMAL/SENSITIVE/DANGEROUS/HARDLINE）
+     │       ├── 审批策略 (SuspendResumeStrategy) ──> 可能触发 GraphInterrupt
+     │       ├── before_tool_execution hook
+     │       ├── 执行工具 (批量并行，经 InterceptorChain 包裹)
+     │       ├── after_tool_execution hook
+     │       ├── after_iteration hook
+     │       └── 路由: TOOLS_DONE → LLMNode（循环）, TURN_CANCELLED → EndNode
+     │    4. EndNode ──> 构建 AgentResult
      │    5. after_turn hook
      │
      ├──> emitter.emit_delta()        ──>  流式内容片段

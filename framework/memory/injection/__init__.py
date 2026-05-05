@@ -23,7 +23,7 @@ from framework.memory.injection.filter import (
     NoopFilterStrategy,
     ToolMessageFilterStrategy,
 )
-from framework.memory.utils import estimate_text_tokens
+from framework.memory.utils import estimate_text_tokens, normalize_memory_summary
 
 logger = logging.getLogger(__name__)
 
@@ -158,17 +158,17 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
             knowledge = await memory_system.retrieve_knowledge(context, query=query)
             if knowledge.soul:
                 sections.append(PromptSection(
-                    key="knowledge:soul", content=f"## 你的沟通风格\n{knowledge.soul}",
+                    key="knowledge:soul", content=f"{knowledge.soul}",
                     priority=100, source="system",
                 ))
             if knowledge.user:
                 sections.append(PromptSection(
-                    key="knowledge:user", content=f"## 用户画像\n{knowledge.user}",
+                    key="knowledge:user", content=f"{knowledge.user}",
                     priority=100, source="system",
                 ))
             if knowledge.memory:
                 sections.append(PromptSection(
-                    key="knowledge:memory", content=f"## 相关知识\n{knowledge.memory}",
+                    key="knowledge:memory", content=f"{knowledge.memory}",
                     priority=90, source="system",
                 ))
         except Exception:
@@ -186,11 +186,15 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                 context, limit=self._max_history, query=query
             )
             if entries:
-                _EMPTY_MARKERS = frozenset({"(no conversation content)", "(no summary)", "(nothing)"})
                 lines = [
-                    f"- {e.get('summary', '')}"
+                    f"- {summary}"
                     for e in entries
-                    if e.get('summary') and e.get('summary').strip() not in _EMPTY_MARKERS
+                    if (
+                        (summary := normalize_memory_summary(e.get("summary")))
+                        is not None
+                        and e.get("metadata", {}).get("source") != "empty"
+                        and e.get("metadata", {}).get("semantic_count") != 0
+                    )
                 ]
                 if lines:
                     sections.append(PromptSection(
@@ -246,20 +250,22 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
     ) -> None:
         try:
             summary = await memory_system.get_compression_summary(context)
-            if summary:
+            normalized_summary = normalize_memory_summary(summary)
+            if normalized_summary is not None:
                 sections.append(PromptSection(
                     key="session:compression",
-                    content=f"[Earlier conversation compressed] {summary}",
+                    content=f"[Earlier conversation compressed] {normalized_summary}",
                     priority=40, source="system",
                 ))
         except Exception:
             pass
         try:
             auto = await memory_system.get_auto_compact_summary(context)
-            if auto:
+            normalized_auto = normalize_memory_summary(auto)
+            if normalized_auto is not None:
                 sections.append(PromptSection(
                     key="session:auto_compact",
-                    content=f"[Auto-compact summary] {auto}",
+                    content=f"[Auto-compact summary] {normalized_auto}",
                     priority=30, source="system",
                 ))
         except Exception:

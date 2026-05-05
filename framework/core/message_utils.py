@@ -2,7 +2,7 @@
 
 处理内部 `role: "agent"` 消息到 LLM 兼容格式的转换。
 
-设计原则（参考 agent_docs/agent-communication.md）：
+设计原则：
 - 内部存储使用 `role: "agent"` + `source_agent` 字段，语义清晰
 - 调用 LLM 前映射为 `role: "user"` + `name` 字段 + 内容前缀
 - 系统提示词中声明 agent 消息来源，帮助 LLM 区分人类用户与其他 Agent

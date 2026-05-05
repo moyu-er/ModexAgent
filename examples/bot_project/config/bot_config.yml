@@ -184,9 +184,7 @@ multi_agent:
           timeout: 60
           restrict_to_workspace: true
         mcp_tools:
-          enabled: true
-          server_filter:
-            - "fetch"
+          enabled: false
 
     - name: "query-12306"
       role: "travel"
@@ -239,70 +237,76 @@ multi_agent:
       execution_strategy: "react"
 
       subagent:
-        enabled: true
+        enabled: false
 
       tools:
-        file_tools:
-          enabled: true
-          allowed_directories:
-            - "."
-        shell_tools:
-          enabled: true
-          timeout: 60
-          restrict_to_workspace: true
         mcp_tools:
           enabled: true
           server_filter:
             - "12306-mcp"
-            - "fetch"
 
 # ==================== Memory ====================
 memory:
   main:
+    # -- 短期记忆 (Session) --
+    # max_messages: 触发压缩阈值 (超过才压缩，不等于保留数)
+    # keep_ratio: 压缩后保留 max_messages × 此比例 (默认 0.6)，
+    #   例如 50×0.6=30 — 留 20 条余量防止频繁触发
+    # auto_llm_compression: 启用 LLM (SummarizerAgent) 生成 Archive 摘要
     short_term:
-      max_messages: 50
-      # max_tokens: if omitted, calculated from llm.max_tokens * budget_ratio, capped at 128K
-      budget_ratio: 0.5
-      compression_mode: "cursor"   # "delete" | "cursor"
+      max_messages: 20
+      keep_ratio: 0.5             # 压缩后保留 max_messages × 此比例
       auto_llm_compression: true
+
+    # -- 消息分类策略 (压缩时使用) --
+    compaction:
+      policy: "conservative"         # "conservative" | "keep_all" | "semantic"
+      boundary: "tool_chain"         # "tool_chain" | "user_turn_tool_chain"
+      high_value_tools:              # 高价值工具结果可纳入摘要 (其余结果压缩前截断)
+        - "mcp-deepwiki"
+
+    # -- 长期记忆 (Knowledge: SOUL.md / USER.md / MEMORY.md) --
+    # DreamEngine 定时从 Archive 提取事实写入 Knowledge 文件
     long_term:
       enabled: true
-      init_defaults: true      # auto-create SOUL.md/USER.md/MEMORY.md with templates
-    history:
-      enabled: true
-      max_entries: 1000
+      init_defaults: true            # 首次启动自动创建模板文件
+
+    # -- 上下文治理 (每次 LLM 调用前, 对消息列表副本做预处理) --
     governance:
       enabled: true
-      tool_chain_repair: true
+      tool_chain_repair: true        # 修复孤儿 tool result / 补全缺失 tool call
       microcompact:
         enabled: true
-        keep_recent: 10
-      token_budget:
+        keep_recent: 3              # 保留最近 N 个 tool result 不压缩
+      token_budget:                  # 注入上下文的总 token 上限
         enabled: true
-        budget_ratio: 0.5      # of llm.max_tokens
+        budget_ratio: 0.5            # llm.max_tokens × 此比例 = 注入上限
         safety_buffer: 1024
+
+    # -- 空闲自动压缩 (session 空闲超过阈值时触发) --
     auto_compact:
       enabled: true
-      idle_threshold_seconds: 1800   # 30 min
-      keep_recent_messages: 8
+      idle_threshold_seconds: 1800   # 空闲 30 分钟后触发
+      keep_recent_messages: 8        # 压缩后至少保留最近 N 条
+      scan_interval: 300             # 后台扫描间隔 (秒)
+
+    # -- DreamEngine (Archive → Knowledge 离线整合) --
+    # 从 Archive 未处理条目中提取事实, 写入 SOUL/USER/MEMORY
     dream_engine:
       enabled: true
-      interval: 300
-      threshold: 5
+      interval: 600                  # 扫描间隔 (秒)
 
+  # Peer Agent 记忆: 仅 Session 层, 不压缩, 不归档
   peers:
     short_term:
       max_messages: 50
-      budget_ratio: 0.5
-      compression_mode: "delete"
       auto_llm_compression: false
 
+  # Subagent 记忆: 仅 Session 层, 更小窗口, 任务结束清除
   subagents:
     short_term:
       max_messages: 20
       max_tokens: 4000
-      budget_ratio: 0.5
-      compression_mode: "delete"
       auto_llm_compression: false
 
 # ==================== Plugins ====================

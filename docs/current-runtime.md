@@ -101,5 +101,5 @@ The target layering is:
 4. Interceptors wrap execution scopes.
 5. Control stores, receives, drains, and eventually targets live operations.
 
-See `design_doc/react-hook-interceptor-control-integration-design.md` for the
-detailed design and staged implementation plan.
+See `docs/architecture-graph-approval.md` for the detailed graph, hook,
+interceptor, control, and approval design.

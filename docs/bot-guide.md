@@ -48,30 +48,38 @@ BotService.__init__()
 
 BotService.initialize()
   │
-  ├── 1. 加载配置
+  ├── 1. 加载配置（bot_config.yml + mcp.json）
   ├── 2. 创建 InMemoryMessageBroker（跨 Agent 消息传递）
   ├── 3. 创建 InMemoryToolManager（支持并行执行）
-  │   ├── 注册文件工具：read_file, write_file, edit_file, list_dir
-  │   ├── 注册 Shell 工具：shell
+  │   ├── 注册标准工具：read_file, write_file, edit_file, list_dir, shell
   │   └── 注册 MCP 工具（通过 MCPClientManager）
-  ├── 4. 创建 LiteLLMProvider（支持 100+ 模型）
-  ├── 5. 创建 MemorySystem + MemorySystemContextManager
-  │   └── 三层记忆：ShortTerm → History → LongTerm
-  │       └── main: 3 层全功能 / peers: 1 层短记忆 / subagents: 1 层短记忆
-  ├── 6. 创建 DreamEngine（后台离线长期记忆整理）
-  ├── 7. 创建 SkillManager（加载 skills/main/ 下的 SKILL.md）
-  ├── 8. 创建 AgentFactory + SubagentManager（多 Agent 协作）
-  ├── 9. 创建 AgentPool（常驻 Peer Agent）
-  ├── 10. 注册多 Agent 工具：spawn_subagent, send_message
-  ├── 11. 加载插件（如 mem0_memory）
-  ├── 12. 创建 ReActAgent
-  └── 13. 创建 AgentPipeline（组装所有组件）
+  ├── 4. 加载插件（tool_call_cleanup, mem0_memory 等）
+  ├── 5. 创建 LiteLLMProvider（支持 100+ 模型）
+  ├── 6. 初始化 MemorySystem（registry-backed 架构）
+  │   └── 主 Agent：session + archive + knowledge 全功能
+  │   └── peers/subagents：session-only 短记忆
+  ├── 7. 初始化 long-term 默认值（SOUL.md / USER.md / MEMORY.md）
+  ├── 8. 创建 AutoCompact 后台服务 + DreamEngine
+  ├── 9. 创建 SkillManager（加载 skills/main/ 下的 SKILL.md）
+  ├── 10. 创建 InboxServer / Producer / Consumer
+  ├── 11. 创建 AgentFactory（含 hooks, interceptors, control）
+  ├── 12. 初始化审批基础设施（ApprovalStateStore, IMUserInterface）
+  ├── 13. 创建 ReActAgent（mode="full"）
+  ├── 14. 按模式初始化：
+  │   ├── pipeline 模式：创建 AgentPipeline（组装所有组件）
+  │   └── pool 模式：创建 AgentPool + BrokerBridgeService
+  ├── 15. 注册多 Agent 工具：spawn_subagent, send_message
+  └── 16. 显示架构信息
 
 BotService.start()
-  └── pipeline.run()
-       ├── input_adapter.start() → 连接 QQ Bot (botpy SDK)
-       └── async for input_msg in input_adapter.receive():
-              await _process_message(input_msg)
+  ├── pipeline 模式：
+  │   └── pipeline.run()
+  │       ├── input_adapter.start() → 连接 QQ Bot (botpy SDK)
+  │       └── async for input_msg in input_adapter.receive():
+  │              await _process_message(input_msg)
+  └── pool 模式：
+      ├── 启动 BrokerBridgeService
+      └── 启动 DreamEngine 后台循环
 ```
 
 ### 2.2 消息处理流程
@@ -95,10 +103,12 @@ AgentPipeline._process_message()
     │
     ▼
 ReActAgent.run()
-    ├── ReAct 循环（最多 20 次迭代）
-    ├── LLM 调用（流式/非流式）
-    ├── 工具执行（文件操作、Shell、MCP、子 Agent）
-    └── 返回 AgentResult
+    ├── 图引擎执行（最多 max_iterations 次迭代）
+    │   ├── StartNode → LLMNode（调用 LLM，流式输出）
+    │   ├── LLMNode → ToolNode（如有 tool_calls）
+    │   ├── ToolNode：分类 → 审批 → 批量执行工具
+    │   └── ToolNode → LLMNode（循环）或 EndNode（完成）
+    └── EndNode 构建 AgentResult
     │
     ▼
 QQBotEmitter
