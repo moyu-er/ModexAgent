@@ -44,10 +44,7 @@ from framework.interceptor.builtin import (
     ControlDrainInterceptor,
     ToolResultLimitInterceptor,
 )
-from framework.interceptor.builtin.tool_approval import (
-    ArgumentMatcher,
-    ToolNameMatcher,
-)
+from framework.interceptor.builtin.tool_approval import ArgumentMatcher
 from framework.interceptor.chain import InterceptorChain
 from framework.memory.context_governance import (
     CompositeGovernance,
@@ -766,31 +763,38 @@ class BotService(AgentBuilderMixin):
         The only difference between pipeline and pool mode is the hooks source.
         Everything else — classifier, strategy, control, governance — is identical.
         """
-        from framework.agents.react.assembler import RuntimeAssembler, RuntimeServicesConfig
         from framework.agents.react.approval import TieredToolApprovalClassifier
+        from framework.agents.react.assembler import RuntimeAssembler, RuntimeServicesConfig
         from framework.agents.react.state import StateStoreTurnResumeStateStore
         from framework.agents.react.strategy import SuspendResumeStrategy
+        from framework.approval.config import AgentApprovalConfig, ToolApprovalConfig
         from framework.approval.store import LocalFileApprovalStateStore
         from framework.control.store import InMemoryControlStore
         from framework.control.types import ControlCommandType
         from framework.interceptor.handler import DefaultCancelHandler
 
-        approval_config = self.config.get("approval", {})
-        dangerous_tools = approval_config.get("dangerous_tools", ["shell", "write_file", "edit_file"])
-        tools_config = self.config.get("tools", {})
-        file_tools = tools_config.get("file_tools", {})
-        allowed_dirs = set(file_tools.get("allowed_directories", ["."]))
-        shell_tools = tools_config.get("shell_tools", {})
-        if shell_tools.get("restrict_to_workspace", False):
-            allowed_dirs.add(".")
+        # Read agent-level approval config from bot_config.yml
+        agent_config = self.config.get("agent", {})
+        approval_raw = agent_config.get("approval", {})
+        enabled = approval_raw.get("enabled", True)
+        tools_raw = approval_raw.get("tools", {})
+
+        tools_approval: dict[str, ToolApprovalConfig] = {}
+        for tool_name, tool_cfg in tools_raw.items():
+            if isinstance(tool_cfg, dict):
+                tools_approval[tool_name] = ToolApprovalConfig(
+                    allowed_paths=tool_cfg.get("allowed_paths", [])
+                )
+
+        approval_config = AgentApprovalConfig(enabled=enabled, tools=tools_approval)
 
         runtime = await RuntimeAssembler.assemble(RuntimeServicesConfig(
             mode="full",
             hooks=hooks,
             interceptors=list(self.interceptor_chain.interceptors) if self.interceptor_chain else None,
             approval_classifier=TieredToolApprovalClassifier(
-                dangerous=ToolNameMatcher(set(dangerous_tools)),
-                argument_matcher=ArgumentMatcher(allowed_dirs),
+                config=approval_config,
+                argument_matcher=ArgumentMatcher(project_root=self._project_dir),
             ),
             approval_strategy=SuspendResumeStrategy(
                 LocalFileApprovalStateStore(self._approval_workspace),
@@ -800,10 +804,11 @@ class BotService(AgentBuilderMixin):
             control_store=InMemoryControlStore(),
             command_handlers=[(ControlCommandType.CANCEL_TURN, DefaultCancelHandler())],
             checkpoint_store=self._checkpoint_store,
+            project_root=self._project_dir,
             governance=self._build_governance(),
             safety=self.safety_policy,
         ))
-        print(f"[OK] ReActRuntime built (dangerous_tools={dangerous_tools}, allowed_dirs={allowed_dirs})")
+        print(f"[OK] ReActRuntime built (approval enabled={enabled}, tools={list(tools_approval.keys())})")
         return runtime
 
     # ------------------------------------------------------------------ #

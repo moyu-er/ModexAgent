@@ -62,6 +62,21 @@ agent:
 
   max_iterations: 50
 
+  # Tool approval: only tools listed here are subject to approval.
+  # Tools NOT listed are always NORMAL (no approval needed).
+  # enabled: true → approval checking is active
+  # allowed_paths: empty list [] → ALL paths require approval (DANGEROUS)
+  # allowed_paths: ["*"] → NO paths require approval (NORMAL)
+  approval:
+    enabled: true
+    tools:
+      edit_file:
+        allowed_paths: ["./*"]
+      write_file:
+        allowed_paths: ["./*"]
+      shell:
+        allowed_paths: []
+
 # ==================== Multi-Agent ====================
 multi_agent:
   enabled: true
