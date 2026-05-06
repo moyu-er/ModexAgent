@@ -375,6 +375,10 @@ mcp:
 
 # ==================== Tools ====================
 tools:
+  # Search tools: file content search and file discovery
+  search_tools:
+    enabled: true
+
   # MCP tools for main agent (peers have their own tool configs)
   mcp_tools:
     enabled: true

@@ -79,6 +79,13 @@ class AgentBuilderMixin:
             self.tool_manager.register(shell_tool)
             print("   [OK] Shell tool registered (shell)")
 
+        search_tools_config = tools_config.get("search_tools", {})
+        if search_tools_config.get("enabled", True):
+            from framework.tools.standard import SearchFilesTool, FindFilesTool
+            self.tool_manager.register(SearchFilesTool())
+            self.tool_manager.register(FindFilesTool())
+            print("   [OK] Search tools registered (search_files, find_files)")
+
         from bot.tools.custom import SendFileToUserTool as _SendFileToUserTool
 
         self.tool_manager.register(_SendFileToUserTool(output_adapter=self.output_adapter))
@@ -215,6 +222,12 @@ class AgentBuilderMixin:
                 timeout=shell_tools_config.get("timeout", 60),
                 enable_safety_guard=shell_tools_config.get("enable_safety_guard", True),
             ))
+
+        search_tools_config = tools_config.get("search_tools", {})
+        if search_tools_config.get("enabled", True):
+            from framework.tools.standard import SearchFilesTool, FindFilesTool
+            tm.register(SearchFilesTool())
+            tm.register(FindFilesTool())
 
         mcp_tools_config = tools_config.get("mcp_tools", {})
         if mcp_tools_config.get("enabled", False) and mcp_server_filter and self.mcp_manager:
