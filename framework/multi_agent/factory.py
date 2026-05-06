@@ -24,6 +24,7 @@ except ImportError:
 from framework.hook import HookRunner
 from framework.hook.builtin import InboxFlushHook
 
+from framework.core.skills.manager import SkillManager
 from framework.core.skills.filter import SkillWhitelistFilter
 from .descriptor import AgentDescriptor, AgentInstance
 from framework.tools.filter import FilteredToolManager
@@ -50,7 +51,7 @@ class AgentFactory(ABC):
         context_manager: ContextManager | None = None,
         broker: Any | None = None,
         tool_manager: InMemoryToolManager | None = None,
-        skill_manager: Any | None = None,
+        skill_manager: SkillManager | None = None,
         sanitizer: Any | None = None,
         command_interceptor: Any | None = None,
         subagent_manager: Any | None = None,
@@ -69,7 +70,7 @@ class DefaultAgentFactory(AgentFactory):
         self,
         default_llm_provider: Any | None = None,
         default_tool_manager: InMemoryToolManager | None = None,
-        skill_manager: Any | None = None,
+        skill_manager: SkillManager | None = None,
         sanitizer: Any | None = None,
         command_interceptor: Any | None = None,
         subagent_manager: Any | None = None,
@@ -154,7 +155,7 @@ class DefaultAgentFactory(AgentFactory):
         context_manager: ContextManager | None = None,
         broker: Any | None = None,
         tool_manager: InMemoryToolManager | None = None,
-        skill_manager: Any | None = None,
+        skill_manager: SkillManager | None = None,
         sanitizer: Any | None = None,
         command_interceptor: Any | None = None,
         subagent_manager: Any | None = None,
