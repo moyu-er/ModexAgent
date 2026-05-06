@@ -23,6 +23,7 @@ from framework.agents.react.approval import (
     ApprovalRuntime,
     TieredToolApprovalClassifier,
 )
+from framework.approval.config import AgentApprovalConfig, ToolApprovalConfig
 from framework.agents.react.runtime import ReActRuntime
 from framework.approval.constants import ApprovalTier
 from framework.core.types import InputMessage, OutputMessage, ToolCall
@@ -32,7 +33,7 @@ from framework.interceptor.builtin import (
     ControlDrainInterceptor,
     ToolResultLimitInterceptor,
 )
-from framework.interceptor.builtin.tool_approval import ArgumentMatcher, ToolNameMatcher
+from framework.interceptor.builtin.tool_approval import ArgumentMatcher
 from framework.interceptor.chain import InterceptorChain
 from framework.memory.context_governance import (
     CompositeGovernance,
@@ -117,6 +118,14 @@ def _make_minimal_config(**overrides: Any) -> dict[str, Any]:
         "agent": {
             "system_prompt": "You are a helpful assistant.",
             "max_iterations": 10,
+            "approval": {
+                "enabled": True,
+                "tools": {
+                    "edit_file": {"allowed_paths": []},
+                    "write_file": {"allowed_paths": []},
+                    "shell": {"allowed_paths": []},
+                },
+            },
         },
         "tools": {},
         "memory": {
@@ -126,9 +135,6 @@ def _make_minimal_config(**overrides: Any) -> dict[str, Any]:
                     "tool_chain_repair": True,
                 },
             },
-        },
-        "approval": {
-            "dangerous_tools": ["shell", "write_file", "edit_file"],
         },
     }
     cfg.update(overrides)
@@ -182,13 +188,18 @@ class TestApprovalRuntimeWiring:
             call_id=f"call_{name}",
         )
 
-    def _make_classifier(
-        self, dangerous: set[str] | None = None,
-    ) -> TieredToolApprovalClassifier:
-        dangerous = dangerous or {"shell", "write_file", "edit_file"}
+    def _make_classifier(self) -> TieredToolApprovalClassifier:
+        config = AgentApprovalConfig(
+            enabled=True,
+            tools={
+                "edit_file": ToolApprovalConfig(allowed_paths=[]),
+                "write_file": ToolApprovalConfig(allowed_paths=[]),
+                "shell": ToolApprovalConfig(allowed_paths=[]),
+            },
+        )
         return TieredToolApprovalClassifier(
-            dangerous=ToolNameMatcher(dangerous),
-            argument_matcher=ArgumentMatcher({"."}),
+            config=config,
+            argument_matcher=ArgumentMatcher(project_root=Path("/project")),
         )
 
     def test_list_dir_is_normal(self):
@@ -556,9 +567,17 @@ class TestReActRuntimeAssembly:
         chain.add(ControlDrainInterceptor(Mock()))
         chain.add(ToolResultLimitInterceptor(max_chars=8000))
 
+        config = AgentApprovalConfig(
+            enabled=True,
+            tools={
+                "edit_file": ToolApprovalConfig(allowed_paths=[]),
+                "write_file": ToolApprovalConfig(allowed_paths=[]),
+                "shell": ToolApprovalConfig(allowed_paths=[]),
+            },
+        )
         classifier = TieredToolApprovalClassifier(
-            dangerous=ToolNameMatcher({"shell", "write_file", "edit_file"}),
-            argument_matcher=ArgumentMatcher({"."}),
+            config=config,
+            argument_matcher=ArgumentMatcher(project_root=Path("/project")),
         )
         approval = ApprovalRuntime(
             classifier=classifier,
