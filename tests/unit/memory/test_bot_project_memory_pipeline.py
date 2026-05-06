@@ -99,13 +99,13 @@ async def test_multi_turn_triggers_compression_at_threshold():
 
 
 @pytest.mark.asyncio
-async def test_multi_turn_cooldown_prevents_repeated_compression():
-    """After compression, adding a few more messages does not re-trigger."""
+async def test_compression_respects_threshold():
+    """After compression, adding a few more messages does not re-trigger until threshold is exceeded."""
     registry = InMemoryStoreRegistry()
     coordinator = _bot_project_coordinator(max_messages=10)
     system = _bot_project_system(registry, coordinator)
     await system.initialize()
-    ctx = _make_ctx("cooldown")
+    ctx = _make_ctx("threshold")
 
     history = system.create_message_history(ctx)
     # Push past threshold
@@ -116,7 +116,7 @@ async def test_multi_turn_cooldown_prevents_repeated_compression():
     compressed_count = len(await system.get_history(ctx, max_messages=None))
     archive_count_1 = len(await system.get_history_entries(ctx, limit=20))
 
-    # Add only 2 more turns (4 messages) — well within cooldown
+    # Add only 2 more turns (4 messages) — still below max_messages=10 threshold for re-trigger
     for i in range(2):
         await history.append({"role": "user", "content": f"post{i}"})
         await history.append({"role": "assistant", "content": f"post-a{i}"})
@@ -124,15 +124,14 @@ async def test_multi_turn_cooldown_prevents_repeated_compression():
     new_count = len(await system.get_history(ctx, max_messages=None))
     archive_count_2 = len(await system.get_history_entries(ctx, limit=20))
 
-    # Session grew modestly (cooldown prevented aggressive re-compression)
+    # Session grew modestly (threshold prevents re-compression with small delta)
     assert new_count <= compressed_count + 10
-    # Archive may have 0-1 additional entries from cooldown-bounded compression
     assert archive_count_2 <= archive_count_1 + 2
 
 
 @pytest.mark.asyncio
-async def test_second_compression_fires_after_cooldown():
-    """After sufficiently many new messages past cooldown, compression re-fires."""
+async def test_second_compression_fires_when_over_threshold():
+    """After sufficiently many new messages past threshold, compression re-fires."""
     registry = InMemoryStoreRegistry()
     coordinator = _bot_project_coordinator(max_messages=10)
     system = _bot_project_system(registry, coordinator)
@@ -147,7 +146,7 @@ async def test_second_compression_fires_after_cooldown():
     archive_first = len(await system.get_history_entries(ctx, limit=20))
     assert archive_first > 0, "first compression should produce archive"
 
-    # Add enough new messages to exceed threshold again (past cooldown)
+    # Add enough new messages to exceed threshold again
     for i in range(30):
         await history.append({"role": "user", "content": f"round2-{i}"})
 
@@ -415,7 +414,7 @@ async def test_archive_merges_multiple_compression_rounds():
         await history.append({"role": "user", "content": f"r1-{i}"})
         await history.append({"role": "assistant", "content": f"r1-a{i}"})
 
-    # Round 2: add many more messages (past cooldown) to trigger again
+    # Round 2: add many more messages to trigger again
     for i in range(40):
         await history.append({"role": "user", "content": f"r2-{i}"})
 
@@ -453,7 +452,7 @@ async def test_empty_session_no_compression():
 
 @pytest.mark.asyncio
 async def test_session_only_messages_no_duplicate_compression_trigger():
-    """Compression does not fire on every single message — cooldown works."""
+    """Compression does not fire on every single message — threshold-based trigger works."""
     registry = InMemoryStoreRegistry()
     coordinator = _bot_project_coordinator(max_messages=10)
     system = _bot_project_system(registry, coordinator)
