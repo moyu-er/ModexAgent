@@ -17,7 +17,7 @@ from framework.core.runtime_context import RuntimeContextManager
 from framework.core.tool_manager import InMemoryToolManager
 
 try:
-    from framework.extensions.llm import LiteLLMProvider
+    from framework.providers import LiteLLMProvider
 except ImportError:
     LiteLLMProvider = None  # type: ignore[misc,assignment]
 

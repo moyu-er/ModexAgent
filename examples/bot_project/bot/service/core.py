@@ -38,7 +38,7 @@ from framework.core.skills import (
     ResolutionContext,
     SkillManager,
 )
-from framework.extensions.llm.litellm_provider import LiteLLMProvider
+from framework.providers.litellm_provider import LiteLLMProvider
 from framework.hook.builtin import InboxFlushHook
 from framework.interceptor.builtin import (
     ControlDrainInterceptor,
