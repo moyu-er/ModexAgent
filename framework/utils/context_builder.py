@@ -5,13 +5,12 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from framework.multi_agent.descriptor import AgentDescriptor
     from framework.multi_agent.envelope import AgentMessageEnvelope
-    from framework.multi_agent.governance import ContextGovernancePolicy
 
 
 class MultiAgentContextBuilder:
     """按 agent_session_id 构建运行时消息上下文。"""
 
-    def __init__(self, governance: ContextGovernancePolicy):
+    def __init__(self, governance: Any | None = None):
         self._governance = governance
 
     def build_messages(
@@ -26,7 +25,8 @@ class MultiAgentContextBuilder:
         for msg in history:
             messages.append(self._normalize_message(msg))
         messages.append(self._envelope_to_message(current_envelope))
-        messages = self._governance.apply(messages, agent_descriptor)
+        if self._governance is not None:
+            messages = self._governance.apply(messages, agent_descriptor)
         return messages
 
     @staticmethod

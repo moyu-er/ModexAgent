@@ -24,7 +24,7 @@ except ImportError:
 from framework.hook import HookRunner
 from framework.hook.builtin import InboxFlushHook
 
-from framework.core.skills.filter import SkillWhitelistFilter as AgentSkillManager
+from framework.core.skills.filter import SkillWhitelistFilter
 from .descriptor import AgentDescriptor, AgentInstance
 from framework.tools.filter import FilteredToolManager
 from .inbox.consumer import InboxConsumer
@@ -50,7 +50,7 @@ class AgentFactory(ABC):
         context_manager: ContextManager | None = None,
         broker: Any | None = None,
         tool_manager: InMemoryToolManager | None = None,
-        skill_manager: AgentSkillManager | None = None,
+        skill_manager: Any | None = None,
         sanitizer: Any | None = None,
         command_interceptor: Any | None = None,
         subagent_manager: Any | None = None,
@@ -69,7 +69,7 @@ class DefaultAgentFactory(AgentFactory):
         self,
         default_llm_provider: Any | None = None,
         default_tool_manager: InMemoryToolManager | None = None,
-        skill_manager: AgentSkillManager | None = None,
+        skill_manager: Any | None = None,
         sanitizer: Any | None = None,
         command_interceptor: Any | None = None,
         subagent_manager: Any | None = None,
@@ -179,7 +179,7 @@ class DefaultAgentFactory(AgentFactory):
         # Skill manager filtering (wrap if skills configured)
         skill_mgr = skill_manager or self._skill_manager
         if descriptor.allowed_skills is not None and skill_mgr is not None:
-            skill_mgr = AgentSkillManager(
+            skill_mgr = SkillWhitelistFilter(
                 base=skill_mgr,
                 allowed_skills=descriptor.allowed_skills,
             )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from typing import Any
 
 from .models import ResolutionContext, Skill
 from .manager import SkillManager
@@ -12,7 +13,7 @@ logger = logging.getLogger(__name__)
 class SkillWhitelistFilter:
     """基于白名单过滤的 SkillManager 包装器。"""
 
-    def __init__(self, base: SkillManager, allowed_skills: list[str] | None = None):
+    def __init__(self, base: Any, allowed_skills: list[str] | None = None):
         self._base = base
         self._allowed = set(allowed_skills) if allowed_skills is not None else None
 
