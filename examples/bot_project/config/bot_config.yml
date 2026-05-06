@@ -364,10 +364,6 @@ runtime_safety:
     stream_idle_timeout_seconds: 90.0
     framework_max_retries: 1
     retry_backoff_seconds: [2.0, 8.0]
-  circuit_breaker:
-    enabled: true
-    failure_threshold: 3
-    cooldown_seconds: 120.0
   turn:
     agent_run_timeout_seconds: 180.0
     dispatch_timeout_seconds: 300.0

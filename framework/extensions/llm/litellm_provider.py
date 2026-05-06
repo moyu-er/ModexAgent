@@ -32,7 +32,6 @@ for _name in _SUPPRESSED_LOGGERS:
 
 from framework.core.constants import DefaultValues, FinishReason, ToolChoice
 from framework.core.llm_error import (
-    CircuitBreaker,
     LLMErrorInfo,
     LLMErrorKind,
     RuntimeSafetyPolicy,
@@ -74,7 +73,6 @@ class LiteLLMProvider(StreamingLLMProvider):
         stream_idle_timeout: float = 90.0,
         parse_think_tags: bool = False,
         reasoning_effort: str | None = None,
-        circuit_breaker: CircuitBreaker | None = None,
         safety: RuntimeSafetyPolicy | None = None,
         **kwargs,
     ):
@@ -104,22 +102,9 @@ class LiteLLMProvider(StreamingLLMProvider):
         if safety is not None:
             self._timeout = safety.llm.request_timeout_seconds
             self._stream_idle_timeout = safety.llm.stream_idle_timeout_seconds
-            cb_policy = safety.circuit_breaker
-            if cb_policy.enabled:
-                self._circuit_breaker = CircuitBreaker(
-                    name="litellm",
-                    failure_threshold=cb_policy.failure_threshold,
-                    cooldown_seconds=cb_policy.cooldown_seconds,
-                    enabled=True,
-                )
-            else:
-                self._circuit_breaker = CircuitBreaker(name="litellm", enabled=False)
         else:
             self._timeout = timeout
             self._stream_idle_timeout = stream_idle_timeout
-            self._circuit_breaker = circuit_breaker or CircuitBreaker(
-                name="litellm", enabled=False
-            )
 
         retry_backoff = (
             safety.llm.retry_backoff_seconds
@@ -262,24 +247,6 @@ class LiteLLMProvider(StreamingLLMProvider):
         tools: list[dict] | None = None,
         **kwargs,
     ) -> LLMResponse:
-        if not await self._circuit_breaker.allow_request():
-            cb_name = getattr(self._circuit_breaker, "name", "litellm")
-            logger.warning(
-                "LLM circuit breaker open for %s, fast failing",
-                cb_name,
-            )
-            return LLMResponse(
-                content="LLM circuit breaker open",
-                finish_reason=FinishReason.ERROR.value,
-                error="LLM circuit breaker open",
-                error_info=LLMErrorInfo(
-                    kind=LLMErrorKind.CIRCUIT_BREAKER,
-                    message="LLM circuit breaker open",
-                    provider="litellm",
-                    should_retry=False,
-                ),
-            )
-
         params = self._build_request_params(
             messages=messages,
             model=model,
@@ -298,7 +265,6 @@ class LiteLLMProvider(StreamingLLMProvider):
         except Exception as exc:
             elapsed_ms = (time.monotonic() - t0) * 1000
             error_info = classify_litellm_error(exc)
-            await self._circuit_breaker.record(error_info)
             logger.warning(
                 "LLM attempt failed: kind=%s provider=%s elapsed=%.0fms message=%s",
                 error_info.kind.value,
@@ -317,7 +283,6 @@ class LiteLLMProvider(StreamingLLMProvider):
             error_info = LLMErrorInfo(
                 LLMErrorKind.UNKNOWN, "Empty response from LLM", "litellm", should_retry=True
             )
-            await self._circuit_breaker.record(error_info)
             return LLMResponse(
                 content=None,
                 finish_reason=FinishReason.ERROR.value,
@@ -331,7 +296,6 @@ class LiteLLMProvider(StreamingLLMProvider):
             error_info = LLMErrorInfo(
                 LLMErrorKind.UNKNOWN, "Empty message in response", "litellm", should_retry=True
             )
-            await self._circuit_breaker.record(error_info)
             return LLMResponse(
                 content=None,
                 finish_reason=FinishReason.ERROR.value,
@@ -373,8 +337,6 @@ class LiteLLMProvider(StreamingLLMProvider):
             "LLM attempt done: model=%s finish=%s elapsed=%.0fms",
             params.get("model"), finish_reason, elapsed_ms,
         )
-
-        await self._circuit_breaker.record_success()
 
         return LLMResponse(
             content=clean_content,
@@ -435,24 +397,6 @@ class LiteLLMProvider(StreamingLLMProvider):
         on_reasoning_delta: Callable[[str], Any] | None = None,
         **kwargs,
     ) -> LLMResponse:
-        if not await self._circuit_breaker.allow_request():
-            cb_name = getattr(self._circuit_breaker, "name", "litellm")
-            logger.warning(
-                "LLM circuit breaker open for %s, fast failing (stream)",
-                cb_name,
-            )
-            return LLMResponse(
-                content="LLM circuit breaker open",
-                finish_reason=FinishReason.ERROR.value,
-                error="LLM circuit breaker open",
-                error_info=LLMErrorInfo(
-                    kind=LLMErrorKind.CIRCUIT_BREAKER,
-                    message="LLM circuit breaker open",
-                    provider="litellm",
-                    should_retry=False,
-                ),
-            )
-
         params = self._build_request_params(
             messages=messages,
             model=model,
@@ -472,7 +416,6 @@ class LiteLLMProvider(StreamingLLMProvider):
         except Exception as exc:
             elapsed_ms = (time.monotonic() - t0) * 1000
             error_info = classify_litellm_error(exc)
-            await self._circuit_breaker.record(error_info)
             logger.warning(
                 "LLM stream attempt failed: kind=%s provider=%s elapsed=%.0fms message=%s",
                 error_info.kind.value,
@@ -520,14 +463,6 @@ class LiteLLMProvider(StreamingLLMProvider):
                     "LiteLLM stream idle timeout after %.1fs, partial_content_len=%d",
                     self._stream_idle_timeout,
                     len(partial_content),
-                )
-                await self._circuit_breaker.record(
-                    LLMErrorInfo(
-                        kind=LLMErrorKind.TIMEOUT,
-                        message="stream idle timeout",
-                        provider="litellm",
-                        should_retry=True,
-                    )
                 )
                 return build_timeout_response(
                     provider="litellm",
@@ -579,8 +514,6 @@ class LiteLLMProvider(StreamingLLMProvider):
             "LLM stream attempt done: model=%s finish=%s content_len=%d elapsed=%.0fms",
             params.get("model"), finish_reason, len("".join(content_parts)), elapsed_ms,
         )
-
-        await self._circuit_breaker.record_success()
 
         return LLMResponse(
             content="".join(content_parts),

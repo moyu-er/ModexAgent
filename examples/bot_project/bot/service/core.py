@@ -28,7 +28,6 @@ from framework.control.checkpoint import JsonFileRuntimeStateStore
 from framework.control.ui.im import IMUserInterface
 from framework.core.emitter import ContentEmitter
 from framework.core.llm_error import (
-    CircuitBreakerPolicy,
     LLMTimeoutPolicy,
     RuntimeSafetyPolicy,
     TurnTimeoutPolicy,
@@ -598,7 +597,6 @@ class BotService(AgentBuilderMixin):
         """Build RuntimeSafetyPolicy from bot_config.yml runtime_safety section."""
         rs_config = self.config.get("runtime_safety", {})
         llm_config = rs_config.get("llm", {})
-        cb_config = rs_config.get("circuit_breaker", {})
         turn_config = rs_config.get("turn", {})
         backoff = llm_config.get("retry_backoff_seconds", [2.0, 8.0])
         if isinstance(backoff, list):
@@ -609,11 +607,6 @@ class BotService(AgentBuilderMixin):
                 stream_idle_timeout_seconds=llm_config.get("stream_idle_timeout_seconds", 90.0),
                 framework_max_retries=llm_config.get("framework_max_retries", 1),
                 retry_backoff_seconds=backoff,
-            ),
-            circuit_breaker=CircuitBreakerPolicy(
-                enabled=cb_config.get("enabled", True),
-                failure_threshold=cb_config.get("failure_threshold", 3),
-                cooldown_seconds=cb_config.get("cooldown_seconds", 120.0),
             ),
             turn=TurnTimeoutPolicy(
                 agent_run_timeout_seconds=turn_config.get("agent_run_timeout_seconds", 180.0),

@@ -10,7 +10,7 @@ Pure unit tests — no external deps, must run offline. Mirror the framework pac
 | Directory | Purpose |
 |-----------|---------|
 | `agents/` | ReActAgent tests — error handling, tool execution, streaming |
-| `core/` | Core abstractions — AgentContext, AgentResult, circuit breaker, emitter, tool manager |
+| `core/` | Core abstractions — AgentContext, AgentResult, error handling, emitter, tool manager |
 | `core/skills/` | Skill system tests |
 | `pipeline/` | Pipeline tests — emitter, adapters, timeout, skills |
 | `session/` | AgentSession tests |

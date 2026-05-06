@@ -157,7 +157,7 @@ class AgentPipeline:
         """
         Args:
             ...
-            safety: P0-a 运行时安全策略（timeout、熔断等），None 则使用默认
+            safety: P0-a 运行时安全策略（timeout、retry 等），None 则使用默认
             approval_workspace: approval 状态持久化目录（默认 .modex_approval）
             user_interface: 审批通知 UI 接口（CLI/IM/Noop），None 则不通知
         """
