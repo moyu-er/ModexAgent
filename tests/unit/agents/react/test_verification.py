@@ -5,9 +5,8 @@ event contract, engine routing, and bot_project wiring.
 """
 
 import pytest
-from framework.interceptor.builtin.tool_approval import (
-    ToolNameMatcher,
-)
+from framework.agents.react.approval import TieredToolApprovalClassifier
+from framework.approval.config import AgentApprovalConfig, ToolApprovalConfig
 from framework.approval.constants import ApprovalDecision, ApprovalTier, ApprovalStatus
 from framework.approval.state import ApprovalRequest, ApprovalState
 from framework.approval.store import InMemoryApprovalStateStore
@@ -48,58 +47,56 @@ from framework.hook import HookPoint
 class TestClassifyTier:
     """Verify TieredToolApprovalClassifier.classify correctly classifies tools."""
 
-    def _make_classifier(self, *, dangerous_patterns=None, sensitive_patterns=None,
-                          hardline_patterns=None):
-        from framework.agents.react.approval import TieredToolApprovalClassifier
-        dangerous = ToolNameMatcher(dangerous_patterns) if dangerous_patterns else None
-        sensitive = ToolNameMatcher(sensitive_patterns) if sensitive_patterns else None
-        hardline = ToolNameMatcher(hardline_patterns) if hardline_patterns else None
-        return TieredToolApprovalClassifier(
-            dangerous=dangerous,
-            sensitive=sensitive,
-            hardline=hardline,
-        )
-
-    def test_normal_tool_returns_normal(self):
-        classifier = self._make_classifier(dangerous_patterns=["rm", "delete"])
+    def test_disabled_returns_normal(self):
+        from framework.approval.config import AgentApprovalConfig
+        classifier = TieredToolApprovalClassifier(config=AgentApprovalConfig(enabled=False))
         tc = ToolCall(tool_name="cat", call_id="c1", arguments={})
         ctx = AgentContext(system_prompt="test", history=ListMessageHistory(),
                             tool_manager=InMemoryToolManager())
         assert classifier.classify(tc, ctx) == ApprovalTier.NORMAL
 
-    def test_dangerous_tool_returns_dangerous(self):
-        classifier = self._make_classifier(dangerous_patterns=["rm", "delete", "rmdir"])
+    def test_unconfigured_tool_returns_normal(self):
+        from framework.approval.config import AgentApprovalConfig, ToolApprovalConfig
+        config = AgentApprovalConfig(
+            enabled=True,
+            tools={"rm": ToolApprovalConfig(allowed_paths=[])},
+        )
+        classifier = TieredToolApprovalClassifier(config=config)
+        tc = ToolCall(tool_name="cat", call_id="c1", arguments={})
+        ctx = AgentContext(system_prompt="test", history=ListMessageHistory(),
+                            tool_manager=InMemoryToolManager())
+        assert classifier.classify(tc, ctx) == ApprovalTier.NORMAL
+
+    def test_configured_tool_with_empty_paths_returns_dangerous(self):
+        from framework.approval.config import AgentApprovalConfig, ToolApprovalConfig
+        config = AgentApprovalConfig(
+            enabled=True,
+            tools={"rm": ToolApprovalConfig(allowed_paths=[])},
+        )
+        classifier = TieredToolApprovalClassifier(config=config)
         tc = ToolCall(tool_name="rm", call_id="c1", arguments={"path": "/tmp/x"})
         ctx = AgentContext(system_prompt="test", history=ListMessageHistory(),
                             tool_manager=InMemoryToolManager())
         assert classifier.classify(tc, ctx) == ApprovalTier.DANGEROUS
 
-    def test_sensitive_tool_returns_sensitive(self):
-        classifier = self._make_classifier(sensitive_patterns=["read_file", "cat"])
+    def test_configured_tool_with_star_paths_returns_normal(self):
+        from pathlib import Path
+        from framework.approval.config import AgentApprovalConfig, ToolApprovalConfig
+        from framework.interceptor.builtin.tool_approval import ArgumentMatcher
+        config = AgentApprovalConfig(
+            enabled=True,
+            tools={"read_file": ToolApprovalConfig(allowed_paths=["*"])},
+        )
+        matcher = ArgumentMatcher(project_root=Path("/project"))
+        classifier = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
         tc = ToolCall(tool_name="read_file", call_id="c1", arguments={"path": "/etc/passwd"})
         ctx = AgentContext(system_prompt="test", history=ListMessageHistory(),
                             tool_manager=InMemoryToolManager())
-        assert classifier.classify(tc, ctx) == ApprovalTier.SENSITIVE
+        assert classifier.classify(tc, ctx) == ApprovalTier.NORMAL
 
-    def test_hardline_tool_returns_hardline(self):
-        classifier = self._make_classifier(hardline_patterns=["sudo", "eval"])
-        tc = ToolCall(tool_name="sudo", call_id="c1", arguments={"cmd": "rm -rf /"})
-        ctx = AgentContext(system_prompt="test", history=ListMessageHistory(),
-                            tool_manager=InMemoryToolManager())
-        assert classifier.classify(tc, ctx) == ApprovalTier.HARDLINE
-
-    def test_hardline_takes_priority_over_dangerous(self):
-        classifier = self._make_classifier(
-            dangerous_patterns=["sudo", "eval"],
-            hardline_patterns=["sudo"],
-        )
-        tc = ToolCall(tool_name="sudo", call_id="c1", arguments={})
-        ctx = AgentContext(system_prompt="test", history=ListMessageHistory(),
-                            tool_manager=InMemoryToolManager())
-        assert classifier.classify(tc, ctx) == ApprovalTier.HARDLINE
-
-    def test_no_matchers_all_normal(self):
-        classifier = self._make_classifier()
+    def test_no_config_all_normal(self):
+        from framework.approval.config import AgentApprovalConfig
+        classifier = TieredToolApprovalClassifier(config=AgentApprovalConfig())
         tc = ToolCall(tool_name="anything", call_id="c1", arguments={})
         ctx = AgentContext(system_prompt="test", history=ListMessageHistory(),
                             tool_manager=InMemoryToolManager())

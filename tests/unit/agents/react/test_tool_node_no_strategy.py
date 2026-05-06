@@ -1,6 +1,7 @@
 """TDD: without SuspendStrategy, tools must execute normally — never cancelled."""
-import pytest
 from unittest.mock import MagicMock, AsyncMock
+
+import pytest
 from framework.agents.react.nodes.tool import ToolNode
 from framework.agents.react.agent import ReActAgent, ReActEvent
 from framework.agents.react.constants import ReActMetaKey, ReActNode, ReActReason
@@ -14,6 +15,7 @@ from framework.memory.history import ListMessageHistory
 from framework.core.emitter import ContentEmitter
 from framework.approval.constants import ApprovalDecision, ApprovalTier
 from framework.agents.react.approval import TieredToolApprovalClassifier
+from framework.approval.config import AgentApprovalConfig, ToolApprovalConfig
 
 
 class _MockProvider:
@@ -80,8 +82,13 @@ class TestToolNodeNoStrategyExecutesNormally:
         ctx = make_ctx()
         ctx.runtime = MagicMock()
         ctx.runtime.approval = MagicMock()
-        ctx.runtime.approval.classifier = TieredToolApprovalClassifier(
-            dangerous=MagicMock(matches=lambda name: name == "edit_file"))
+
+        # Use new API: classifier with config that marks edit_file as DANGEROUS
+        config = AgentApprovalConfig(
+            enabled=True,
+            tools={"edit_file": ToolApprovalConfig(allowed_paths=[])},
+        )
+        ctx.runtime.approval.classifier = TieredToolApprovalClassifier(config=config)
         ctx.runtime.approval.deny_as_cancel = True
         ctx.runtime.approval.suspend_strategy = None  # <-- strategy now under approval
         ctx.runtime.hooks = None
@@ -109,16 +116,18 @@ class TestToolNodeWithStrategyTriggersApproval:
     @pytest.mark.asyncio
     async def test_strategy_on_approval_triggers_graph_interrupt(self, tmp_path):
         """approval.suspend_strategy configured → PENDING → GraphInterrupt."""
-        from framework.agents.react.agent import ReActAgent
-        from framework.core.graph.interrupt import GraphInterrupt
-
         agent = ReActAgent(_MockProvider(), mode="full")
         node = ToolNode(agent)
         ctx = make_ctx()
         ctx.runtime = MagicMock()
         ctx.runtime.approval = MagicMock()
-        ctx.runtime.approval.classifier = TieredToolApprovalClassifier(
-            dangerous=MagicMock(matches=lambda name: name == "edit_file"))
+
+        # Use new API: classifier with config that marks edit_file as DANGEROUS
+        config = AgentApprovalConfig(
+            enabled=True,
+            tools={"edit_file": ToolApprovalConfig(allowed_paths=[])},
+        )
+        ctx.runtime.approval.classifier = TieredToolApprovalClassifier(config=config)
         ctx.runtime.approval.deny_as_cancel = True
         # Real strategy that will raise GraphInterrupt
         strategy = SuspendResumeStrategy(
@@ -141,5 +150,6 @@ class TestToolNodeWithStrategyTriggersApproval:
             content="ok", tool_calls=[tool_call])
         ctx.emitter = _FakeEmitter()
 
+        from framework.core.graph.interrupt import GraphInterrupt
         with pytest.raises(GraphInterrupt):
             await node.execute(ctx)
