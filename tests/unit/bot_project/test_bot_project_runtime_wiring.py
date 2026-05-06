@@ -484,8 +484,8 @@ class TestBotProjectPluginAndCapabilityWiring:
         assert query_peer["tools"]["mcp_tools"]["enabled"] is True
 
         assert "skills/peers/docx" in office_peer["skill_dirs"]
-        # office-expert has mcp_tools enabled: false, no server_filter
-        assert office_peer["tools"]["mcp_tools"]["enabled"] is False
+        # office-expert has no mcp_tools config (disabled by default)
+        assert "mcp_tools" not in office_peer.get("tools", {})
         assert "12306-mcp" in config["mcp"]["servers"]
 
     async def test_query_12306_peer_has_no_skill_manager(self):

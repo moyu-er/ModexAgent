@@ -114,16 +114,8 @@ multi_agent:
     execution_strategy: "react"
     # Independent tool config (inherits main ToolManager with filtering if not set)
     tools:
-      file_tools:
-        enabled: true
-        allowed_directories:
-          - "."
-      shell_tools:
-        enabled: true
-        timeout: 60
-        restrict_to_workspace: true
-      mcp_tools:
-        enabled: false
+      file_tools: {}
+      shell_tools: {}
 
   # ==================== Peer Agents ====================
   # Key difference from subagent: context_strategy="persistent", MemorySystem-backed
@@ -190,16 +182,8 @@ multi_agent:
 
       # Independent tool config
       tools:
-        file_tools:
-          enabled: true
-          allowed_directories:
-            - "."
-        shell_tools:
-          enabled: true
-          timeout: 60
-          restrict_to_workspace: true
-        mcp_tools:
-          enabled: false
+        file_tools: {}
+        shell_tools: {}
 
     - name: "query-12306"
       role: "travel"
@@ -294,11 +278,10 @@ memory:
       tool_chain_repair: true        # 修复孤儿 tool result / 补全缺失 tool call
       microcompact:
         enabled: true
-        keep_recent: 3              # 保留最近 N 个 tool result 不压缩
+        keep_recent: 5              # 保留最近 N 个 tool result 不压缩
       token_budget:                  # 注入上下文的总 token 上限
         enabled: true
         budget_ratio: 0.5            # llm.max_tokens × 此比例 = 注入上限
-        safety_buffer: 1024
 
     # -- 空闲自动压缩 (session 空闲超过阈值时触发) --
     # auto_compact:
@@ -405,15 +388,9 @@ mcp:
 tools:
   file_tools:
     enabled: true
-    allowed_directories:
-      - "."
 
   shell_tools:
     enabled: true
-    timeout: 60
-    working_dir: null
-    enable_safety_guard: false
-    restrict_to_workspace: true
 
   # MCP tools for main agent (peers have their own tool configs)
   mcp_tools:
