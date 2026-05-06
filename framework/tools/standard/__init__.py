@@ -31,6 +31,7 @@ from .file_tool import (
     ReadFileTool,
     WriteFileTool,
 )
+from .search_tool import FindFilesTool, SearchFilesTool
 from .shell_tool import ShellTool
 
 __all__ = [
@@ -40,4 +41,6 @@ __all__ = [
     "ListDirTool",
     "FileTool",
     "ShellTool",
+    "SearchFilesTool",
+    "FindFilesTool",
 ]
