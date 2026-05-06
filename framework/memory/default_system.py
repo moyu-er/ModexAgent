@@ -340,7 +340,12 @@ class DefaultMemorySystem(MemorySystem):
         else:
             entries = await archive.get_recent(context, limit=limit)
         return [
-            {"summary": e.summary, "metadata": dict(e.metadata), "cursor": e.entry_id}
+            {
+                "summary": e.summary,
+                "metadata": dict(e.metadata),
+                "cursor": e.entry_id,
+                "created_at": e.created_at.isoformat() if e.created_at is not None else None,
+            }
             for e in entries
         ]
 
@@ -437,9 +442,16 @@ class DefaultMemorySystem(MemorySystem):
                 else:
                     entries = await archive.get_recent(context, limit=max_history_entries)
                 if entries:
-                    lines = [f"- {e.summary}" for e in entries if e.summary]
-                    if lines:
-                        sections.append("## 历史对话摘要\n" + "\n".join(lines))
+                    blocks: list[str] = []
+                    for idx, e in enumerate(entries, start=1):
+                        if not e.summary:
+                            continue
+                        time_str = ""
+                        if e.created_at is not None:
+                            time_str = f" {e.created_at.strftime('%Y-%m-%d %H:%M')}"
+                        blocks.append(f"--- [Historical Record {idx}]{time_str} ---\n{e.summary}")
+                    if blocks:
+                        sections.append("## Historical Conversation Summaries\n\n" + "\n\n".join(blocks))
 
         return "\n\n---\n\n".join(sections) if sections else ""
 

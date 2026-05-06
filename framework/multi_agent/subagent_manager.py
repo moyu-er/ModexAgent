@@ -16,7 +16,7 @@ from .address import AgentAddress
 from .coordinator import InMemoryTaskCoordinator, NullTaskCoordinator, TaskCoordinator, TaskRecord
 from .descriptor import AgentDescriptor
 from .factory import AgentFactory
-from .intervention import TaskSupervisor, TimeoutCancellationPolicy
+from framework.control.task_supervision import TaskSupervisor, TimeoutSupervisionPolicy
 
 if TYPE_CHECKING:
     from framework.messaging.broker import MessageBroker
@@ -225,7 +225,7 @@ class SubagentManager:
         )
         await self._coordinator.bind_policy(
             task_id,
-            TimeoutCancellationPolicy.from_duration(
+            TimeoutSupervisionPolicy.from_duration(
                 timeout or self._config.default_timeout_seconds
             ),
         )

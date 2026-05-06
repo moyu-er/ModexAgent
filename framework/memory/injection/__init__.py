@@ -186,20 +186,26 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                 context, limit=self._max_history, query=query
             )
             if entries:
-                lines = [
-                    f"- {summary}"
-                    for e in entries
-                    if (
-                        (summary := normalize_memory_summary(e.get("summary")))
-                        is not None
-                        and e.get("metadata", {}).get("source") != "empty"
-                        and e.get("metadata", {}).get("semantic_count") != 0
-                    )
-                ]
-                if lines:
+                blocks: list[str] = []
+                for idx, e in enumerate(entries, start=1):
+                    summary = normalize_memory_summary(e.get("summary"))
+                    if summary is None:
+                        continue
+                    if e.get("metadata", {}).get("source") == "empty":
+                        continue
+                    if e.get("metadata", {}).get("semantic_count") == 0:
+                        continue
+                    created_at = e.get("created_at")
+                    time_str = ""
+                    if isinstance(created_at, str):
+                        time_str = f" {created_at.replace('T', ' ')[:16]}"
+                    elif hasattr(created_at, "strftime"):
+                        time_str = f" {created_at.strftime('%Y-%m-%d %H:%M')}"
+                    blocks.append(f"--- [Historical Record {idx}]{time_str} ---\n{summary}")
+                if blocks:
                     sections.append(PromptSection(
                         key="archive:recent",
-                        content="## 历史对话摘要\n" + "\n".join(lines),
+                        content="## Historical Conversation Summaries\n\n" + "\n\n".join(blocks),
                         priority=70, source="system",
                     ))
         except Exception:

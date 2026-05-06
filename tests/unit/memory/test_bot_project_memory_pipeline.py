@@ -470,6 +470,96 @@ async def test_session_only_messages_no_duplicate_compression_trigger():
     assert remaining > 0, "but not empty"
 
 
+# ── Archive injection: distinguishable markers ────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_archive_injection_has_distinguishable_markers():
+    """Multiple archive entries are injected with clear per-entry markers."""
+    from framework.memory.injection import FullInjectionPolicy
+
+    registry = InMemoryStoreRegistry()
+    system = _bot_project_system(registry)
+    await system.initialize()
+    ctx = _make_ctx("archive-markers")
+
+    await system._layers.archive.append(ctx, ArchiveEntry(
+        summary="first session: discussed login bug",
+    ))
+    await system._layers.archive.append(ctx, ArchiveEntry(
+        summary="second session: fixed auth flow",
+    ))
+    await system._layers.archive.append(ctx, ArchiveEntry(
+        summary="third session: added JWT tests",
+    ))
+
+    bundle = await FullInjectionPolicy(max_history_entries=5).assemble(
+        context=ctx, memory_system=system, query="",
+    )
+    content = "\n".join(s.content for s in bundle.system_sections)
+
+    assert "[Historical Record 1]" in content
+    assert "[Historical Record 2]" in content
+    assert "[Historical Record 3]" in content
+    assert "login bug" in content
+    assert "auth flow" in content
+    assert "JWT tests" in content
+
+
+@pytest.mark.asyncio
+async def test_archive_injection_includes_timestamp_when_available():
+    """Archive entries with created_at show timestamps in markers."""
+    from framework.memory.injection import FullInjectionPolicy
+    from datetime import datetime
+
+    registry = InMemoryStoreRegistry()
+    system = _bot_project_system(registry)
+    await system.initialize()
+    ctx = _make_ctx("archive-timestamps")
+
+    await system._layers.archive.append(ctx, ArchiveEntry(
+        summary="older discussion",
+        created_at=datetime(2026, 5, 1, 10, 30),
+    ))
+    await system._layers.archive.append(ctx, ArchiveEntry(
+        summary="recent discussion",
+        created_at=datetime(2026, 5, 6, 14, 45),
+    ))
+
+    bundle = await FullInjectionPolicy(max_history_entries=5).assemble(
+        context=ctx, memory_system=system, query="",
+    )
+    content = "\n".join(s.content for s in bundle.system_sections)
+
+    assert "2026-05-01 10:30" in content
+    assert "2026-05-06 14:45" in content
+    assert "[Historical Record 1]" in content
+    assert "[Historical Record 2]" in content
+
+
+@pytest.mark.asyncio
+async def test_build_system_prompt_has_distinguishable_archive_markers():
+    """DefaultMemorySystem.build_system_prompt also uses per-entry markers."""
+    registry = InMemoryStoreRegistry()
+    system = _bot_project_system(registry)
+    await system.initialize()
+    ctx = _make_ctx("system-prompt-markers")
+
+    await system._layers.archive.append(ctx, ArchiveEntry(
+        summary="project started with FastAPI",
+    ))
+    await system._layers.archive.append(ctx, ArchiveEntry(
+        summary="switched to SQLAlchemy",
+    ))
+
+    prompt = await system.build_system_prompt(ctx, max_history_entries=5)
+
+    assert "[Historical Record 1]" in prompt
+    assert "[Historical Record 2]" in prompt
+    assert "FastAPI" in prompt
+    assert "SQLAlchemy" in prompt
+
+
 # ── Retrieval: archive search by query ────────────────────────────────────
 
 
