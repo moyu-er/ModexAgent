@@ -162,7 +162,7 @@ class AgentPipeline:
             user_interface: 审批通知 UI 接口（CLI/IM/Noop），None 则不通知
         """
         if sanitizer is _UNSET:
-            from framework.multi_agent.sanitizer import ContentSanitizer
+            from framework.utils.sanitizer import ContentSanitizer
 
             sanitizer = ContentSanitizer.sanitize
         self.agent = agent

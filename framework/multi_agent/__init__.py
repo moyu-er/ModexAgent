@@ -4,20 +4,20 @@ from framework.core.runner import InterruptibleRunner
 from framework.core.strategy import ExecutionStrategy, ReActStrategy, SingleTurnStrategy
 from framework.hook import Hook, HookRunner
 from framework.multi_agent.address import AgentAddress
-from framework.multi_agent.agent_skill_manager import AgentSkillManager
+from framework.core.skills.filter import SkillWhitelistFilter as AgentSkillManager
 from framework.multi_agent.bus import AgentMessageBus, LocalAgentMessageBus
 from framework.multi_agent.commands import (
     CommandInterceptor,
     SystemCommandInterceptor,
 )
-from framework.multi_agent.context_builder import MultiAgentContextBuilder
+from framework.utils.context_builder import MultiAgentContextBuilder
 from framework.multi_agent.coordinator import (
     InMemoryTaskCoordinator,
     NullTaskCoordinator,
     TaskCoordinator,
     TaskRecord,
 )
-from framework.multi_agent.deduplicator import MessageDeduplicator
+from framework.utils.deduplicator import MessageDeduplicator
 from framework.multi_agent.descriptor import (
     AgentDescriptor,
     AgentInstance,
@@ -34,7 +34,7 @@ from framework.multi_agent.event_bus import (
     TaskEventType,
 )
 from framework.multi_agent.factory import AgentFactory, DefaultAgentFactory
-from framework.multi_agent.filtered_tool_manager import FilteredToolManager
+from framework.tools.filter import FilteredToolManager
 from framework.multi_agent.governance import (
     ContextGovernancePolicy,
     FullGovernance,
@@ -58,7 +58,7 @@ from framework.multi_agent.pool import AgentPool
 from framework.multi_agent.registry import AgentDirectory, AgentRegistry
 from framework.multi_agent.router import AgentMessageRouter, DefaultMeshRouter, RouteResult
 from framework.multi_agent.rpc_broker import RPCBroker, RPCTimeoutError
-from framework.multi_agent.sanitizer import ContentSanitizer
+from framework.utils.sanitizer import ContentSanitizer
 from framework.multi_agent.state import AgentState
 from framework.multi_agent.subagent_manager import (
     SubagentManager,

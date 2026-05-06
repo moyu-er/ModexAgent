@@ -11,15 +11,15 @@ from framework.core.tool_manager import (
 from framework.messaging.broker import Address, BrokerMessage
 from framework.messaging.broker_memory import InMemoryMessageBroker
 from framework.multi_agent.address import AgentAddress
-from framework.multi_agent.agent_skill_manager import AgentSkillManager
+from framework.core.skills.filter import SkillWhitelistFilter as AgentSkillManager
 from framework.multi_agent.commands import SystemCommandInterceptor
-from framework.multi_agent.context_builder import MultiAgentContextBuilder
-from framework.multi_agent.deduplicator import MessageDeduplicator
+from framework.utils.context_builder import MultiAgentContextBuilder
+from framework.utils.deduplicator import MessageDeduplicator
 from framework.multi_agent.descriptor import AgentDescriptor
 from framework.multi_agent.envelope import AgentMessageEnvelope
-from framework.multi_agent.filtered_tool_manager import FilteredToolManager
+from framework.tools.filter import FilteredToolManager
 from framework.multi_agent.governance import FullGovernance, NoOpGovernance
-from framework.multi_agent.sanitizer import ContentSanitizer
+from framework.utils.sanitizer import ContentSanitizer
 from framework.multi_agent.tools import SendMessageTool
 
 

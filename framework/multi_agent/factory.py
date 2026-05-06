@@ -24,9 +24,9 @@ except ImportError:
 from framework.hook import HookRunner
 from framework.hook.builtin import InboxFlushHook
 
-from .agent_skill_manager import AgentSkillManager
+from framework.core.skills.filter import SkillWhitelistFilter as AgentSkillManager
 from .descriptor import AgentDescriptor, AgentInstance
-from .filtered_tool_manager import FilteredToolManager
+from framework.tools.filter import FilteredToolManager
 from .inbox.consumer import InboxConsumer
 from .inbox.producer import InboxProducer
 from .inbox.server import InboxServer

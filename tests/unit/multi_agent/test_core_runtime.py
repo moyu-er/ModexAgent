@@ -550,7 +550,7 @@ async def test_default_agent_factory_uses_allowed_skills():
     instance = await factory.create_agent(descriptor, mode="session")
     assert instance.session is not None
     # skill_manager on session should be an AgentSkillManager wrapper
-    from framework.multi_agent.agent_skill_manager import AgentSkillManager
+    from framework.core.skills.filter import SkillWhitelistFilter as AgentSkillManager
     assert isinstance(instance.session._skill_manager, AgentSkillManager)
 
 

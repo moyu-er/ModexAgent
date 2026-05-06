@@ -59,7 +59,7 @@ class DynamicToolFilterHook:
             denied.update({"write_file", "shell", "delete_file"})
 
         if denied:
-            from framework.multi_agent.filtered_tool_manager import FilteredToolManager
+            from framework.tools.filter import FilteredToolManager
 
             wrapper = FilteredToolManager(self._base, denied_tools=list(denied))
             ctx.tool_manager = wrapper

@@ -57,7 +57,7 @@ from framework.multi_agent.event_bus import (
     CompositeTaskEventReporter,
     TaskEventReporter,
 )
-from framework.multi_agent.filtered_tool_manager import FilteredToolManager
+from framework.tools.filter import FilteredToolManager
 from framework.core.runner import InterruptibleRunner
 from framework.multi_agent.pool import AgentPool
 from framework.multi_agent.tools import SendMessageTool
@@ -270,7 +270,7 @@ async def test_filtered_tool_manager_restricts_tools_per_agent():
 async def test_factory_assembles_distinct_tool_and_skill_managers(broker):
     """AgentFactory 应为不同 descriptor 组装出独立的 ToolManager 和 SkillManager 视图。"""
     from framework.core.skills import FileSkillSource, ProgressiveBuilder, SkillManager
-    from framework.multi_agent.agent_skill_manager import AgentSkillManager
+    from framework.core.skills.filter import SkillWhitelistFilter as AgentSkillManager
     from framework.multi_agent.factory import DefaultAgentFactory
 
     # 使用独立的 factory 实例，避免修改共享 fixture 状态
