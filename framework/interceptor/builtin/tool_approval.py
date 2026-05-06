@@ -11,10 +11,11 @@ import logging
 import time
 import uuid
 from collections.abc import Mapping
+import fnmatch
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from framework.agents.react.constants import ReActMetaKey
 from framework.control.checkpoint import ApprovalDenialContext
@@ -73,42 +74,77 @@ def _looks_like_path(val: str) -> bool:
 
 
 class ArgumentMatcher:
-    """Match tool arguments against allowed directories for path-based approval.
+    """Match tool arguments against allowed path patterns for approval.
 
-    Checks tool_call.arguments for path-like keys (path, file_path, target, dest, directory, dir)
-    and determines if the path is within allowed directories.
+    Uses fnmatch for cross-platform wildcard support (*, ?, []).
+    Resolves . to project_root, ~ to user home.
     """
 
-    def __init__(self, allowed_directories: set[str], workspace: str = ".") -> None:
-        self._allowed = allowed_directories
-        self._workspace = str(Path(workspace).expanduser().resolve())
+    def __init__(self, project_root: Path | None = None) -> None:
+        self.project_root = project_root
 
-    def is_allowed(self, tool_call) -> bool:
-        """Returns True if the tool's path argument is within allowed directories."""
-        args = tool_call.arguments or {}
-        # Find path argument (check common key names)
-        path_arg = None
-        for key in ("path", "file_path", "target", "dest", "directory", "dir"):
-            if key in args:
-                path_arg = str(args[key])
-                break
-        if path_arg is None:
-            # No path argument — check other arguments for path-like values
-            for val in args.values():
-                val_str = str(val)
-                if _looks_like_path(val_str):
-                    path_arg = val_str
-                    break
-        if path_arg is None:
-            return True  # No path to check — allow
+    def matches(self, arguments: dict[str, Any], allowed_paths: list[str]) -> bool:
+        """Returns True if all path arguments match at least one allowed pattern."""
+        paths = self._extract_paths(arguments)
+        if not paths:
+            return True  # No path arguments — nothing to check
+        for path in paths:
+            resolved = self._resolve_path(path)
+            if not self._match_any(resolved, allowed_paths):
+                return False
+        return True
 
-        # expanduser() handles ~ on both Unix and Windows; resolve() normalizes
-        resolved = str(Path(path_arg).expanduser().resolve())
-        for allowed in self._allowed:
-            allowed_resolved = str(Path(allowed).expanduser().resolve())
-            if resolved.startswith(allowed_resolved):
+    def _resolve_path(self, raw: str) -> Path:
+        """Resolve special path prefixes.
+
+        - . / ./xxx  → project_root (or cwd if project_root not set)
+        - ~ / ~/xxx  → Path.home()
+        - absolute   → as-is
+        """
+        if raw.startswith("~/"):
+            return Path.home() / raw[2:]
+        if raw == ".":
+            return self.project_root if self.project_root is not None else Path(".").resolve()
+        if raw.startswith("./"):
+            root = self.project_root if self.project_root is not None else Path(".").resolve()
+            return root / raw[2:]
+        return Path(raw).expanduser()
+
+    def _match_any(self, path: Path, patterns: list[str]) -> bool:
+        """Check if path matches any pattern using fnmatch.
+
+        Normalizes Windows backslashes to forward slashes for fnmatch.
+        """
+        path_str = str(path).replace("\\", "/")
+        for pattern in patterns:
+            resolved_pattern = self._resolve_path(pattern)
+            pattern_str = str(resolved_pattern).replace("\\", "/")
+            if fnmatch.fnmatch(path_str, pattern_str):
                 return True
         return False
+
+    def _extract_paths(self, arguments: dict[str, Any]) -> list[str]:
+        """Extract path-like values from tool arguments."""
+        path_keys = {
+            "path", "file_path", "target", "dest",
+            "directory", "dir", "working_dir",
+        }
+        paths: list[str] = []
+        for key, value in arguments.items():
+            if key in path_keys and isinstance(value, str):
+                paths.append(value)
+        return paths
+
+    # ---- Legacy API (retained for backward compat during migration) ----
+
+    def is_allowed(self, tool_call) -> bool:
+        """Legacy API — delegates to matches() with empty allowed_paths.
+
+        This returns False (not allowed) when no paths match, which in the
+        old API meant "needs approval" (dangerous). Kept for interceptor use.
+        """
+        args = tool_call.arguments or {}
+        return self.matches(args, [])  # type: ignore[return-value]
 
 
 class ToolNameMatcher:
