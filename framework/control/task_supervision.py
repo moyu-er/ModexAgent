@@ -1,3 +1,10 @@
+"""Task supervision — runtime monitoring and policy enforcement for async tasks.
+
+Absorbed from the former multi_agent/intervention.py module.
+Provides timeout monitoring, heartbeat emission, and policy-based
+task cancellation. This is part of the control/ runtime plane.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -12,14 +19,14 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, TypeVar
 
 if TYPE_CHECKING:
-    from .coordinator import TaskCoordinator, TaskRecord
+    from framework.multi_agent.coordinator import TaskCoordinator, TaskRecord
 
 T = TypeVar("T")
 logger = logging.getLogger(__name__)
 
 
-class InterventionAction(Enum):
-    """干预动作枚举。"""
+class SupervisionAction(Enum):
+    """监督动作枚举。"""
 
     PASS = "pass"
     CANCEL = "cancel"
@@ -30,40 +37,40 @@ class InterventionAction(Enum):
 
 
 @dataclass
-class InterventionResult:
-    """干预结果。"""
+class SupervisionResult:
+    """监督结果。"""
 
-    action: InterventionAction = InterventionAction.PASS
+    action: SupervisionAction = SupervisionAction.PASS
     reason: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-class TaskInterventionPolicy(ABC):
-    """任务干预策略抽象基类。"""
+class TaskSupervisionPolicy(ABC):
+    """任务监督策略抽象基类。"""
 
     policy_type: str = ""
 
     @abstractmethod
-    async def check(self, task_record: TaskRecord) -> InterventionResult:
+    async def check(self, task_record: TaskRecord) -> SupervisionResult:
         """检查策略条件。"""
         ...
 
     @classmethod
-    def from_config(cls, config: dict[str, Any]) -> TaskInterventionPolicy:
+    def from_config(cls, config: dict[str, Any]) -> TaskSupervisionPolicy:
         """从配置创建策略实例（子类应覆盖）。"""
         return cls(**config)
 
 
-class NoOpInterventionPolicy(TaskInterventionPolicy):
-    """显式关闭所有干预的占位策略。"""
+class NoOpSupervisionPolicy(TaskSupervisionPolicy):
+    """显式关闭所有监督的占位策略。"""
 
     policy_type = "no_op"
 
-    async def check(self, task_record: TaskRecord) -> InterventionResult:
-        return InterventionResult(action=InterventionAction.PASS, reason="No-op policy")
+    async def check(self, task_record: TaskRecord) -> SupervisionResult:
+        return SupervisionResult(action=SupervisionAction.PASS, reason="No-op policy")
 
 
-class TimeoutCancellationPolicy(TaskInterventionPolicy):
+class TimeoutSupervisionPolicy(TaskSupervisionPolicy):
     """超时取消策略。"""
 
     policy_type = "timeout_cancellation"
@@ -71,16 +78,16 @@ class TimeoutCancellationPolicy(TaskInterventionPolicy):
     def __init__(self, deadline: float):
         self.deadline = deadline
 
-    async def check(self, task_record: TaskRecord) -> InterventionResult:
+    async def check(self, task_record: TaskRecord) -> SupervisionResult:
         if time.time() > self.deadline:
-            return InterventionResult(
-                action=InterventionAction.CANCEL,
+            return SupervisionResult(
+                action=SupervisionAction.CANCEL,
                 reason=f"Task {task_record.task_id} exceeded deadline {datetime.fromtimestamp(self.deadline).isoformat()}",
             )
-        return InterventionResult(action=InterventionAction.PASS, reason="Within deadline")
+        return SupervisionResult(action=SupervisionAction.PASS, reason="Within deadline")
 
     @classmethod
-    def from_duration(cls, seconds: float = 180.0) -> TimeoutCancellationPolicy:
+    def from_duration(cls, seconds: float = 180.0) -> TimeoutSupervisionPolicy:
         return cls(deadline=time.time() + seconds)
 
 
@@ -99,9 +106,8 @@ class TaskSupervisor:
 
     async def supervise(self, task_id: str, coro: Coroutine[Any, Any, T]) -> T:
         """包裹任意协程，在开始前和运行中持续执行策略检查。"""
-        from .event_bus import TaskEvent, TaskEventType
+        from framework.multi_agent.event_bus import TaskEvent, TaskEventType
 
-        # 开始消费前检查（容错降级）
         try:
             record = await self._coordinator.get_task_record(task_id)
         except Exception:
@@ -110,7 +116,7 @@ class TaskSupervisor:
 
         if record:
             for result in await record.check_all():
-                if result.action == InterventionAction.CANCEL:
+                if result.action == SupervisionAction.CANCEL:
                     raise asyncio.CancelledError(result.reason)
 
         try:
@@ -172,7 +178,7 @@ class TaskSupervisor:
                 await monitor_task
 
     async def _monitor(self, task_id: str, main_task: asyncio.Task) -> None:
-        from .event_bus import TaskEvent, TaskEventType
+        from framework.multi_agent.event_bus import TaskEvent, TaskEventType
 
         change_event = self._coordinator.on_policy_change(task_id)
         bus = self._coordinator.event_bus
@@ -194,15 +200,15 @@ class TaskSupervisor:
             if not record:
                 continue
 
-            triggered_results: list[InterventionResult] = []
+            triggered_results: list[SupervisionResult] = []
             for result in await record.check_all():
-                if result.action == InterventionAction.CANCEL and not main_task.done():
+                if result.action == SupervisionAction.CANCEL and not main_task.done():
                     main_task.cancel()
                     return
-                if result.action == InterventionAction.NOTIFY:
+                if result.action == SupervisionAction.NOTIFY:
                     triggered_results.append(result)
-                elif result.action not in (InterventionAction.PASS, InterventionAction.CANCEL):
-                    logger.debug("Unhandled intervention action: %s", result.action)
+                elif result.action not in (SupervisionAction.PASS, SupervisionAction.CANCEL):
+                    logger.debug("Unhandled supervision action: %s", result.action)
 
             if bus:
                 if triggered_results:
