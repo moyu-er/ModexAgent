@@ -80,7 +80,7 @@ class AgentBuilderMixin:
             print("   [OK] Shell tool registered (shell)")
 
         search_tools_config = tools_config.get("search_tools", {})
-        if search_tools_config.get("enabled", True):
+        if search_tools_config.get("enabled", "search_tools" in tools_config):
             from framework.tools.standard import SearchFilesTool, FindFilesTool
             self.tool_manager.register(SearchFilesTool())
             self.tool_manager.register(FindFilesTool())
@@ -224,7 +224,7 @@ class AgentBuilderMixin:
             ))
 
         search_tools_config = tools_config.get("search_tools", {})
-        if search_tools_config.get("enabled", True):
+        if search_tools_config.get("enabled", "search_tools" in tools_config):
             from framework.tools.standard import SearchFilesTool, FindFilesTool
             tm.register(SearchFilesTool())
             tm.register(FindFilesTool())

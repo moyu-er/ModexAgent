@@ -74,7 +74,11 @@ agent:
       write_file:
         allowed_paths: ["./*"]
       shell:
-        allowed_paths: []
+        allowed_paths: ["*"]
+      search_files:
+        allowed_paths: ["*"]
+      find_files:
+        allowed_paths: ["*"]
 
 # ==================== Multi-Agent ====================
 multi_agent:
@@ -375,9 +379,8 @@ mcp:
 
 # ==================== Tools ====================
 tools:
-  # Search tools: file content search and file discovery
-  search_tools:
-    enabled: true
+  # Standard tools for main agent
+  search_tools: {}
 
   # MCP tools for main agent (peers have their own tool configs)
   mcp_tools:
