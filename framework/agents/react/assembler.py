@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 from framework.agents.react.approval import ApprovalRuntime
@@ -34,6 +35,7 @@ class RuntimeServicesConfig:
     interceptors: list[Interceptor] | None = None
     approval_classifier: Any = None            # ApprovalClassifier (Protocol)
     approval_strategy: Any = None              # SuspendStrategy (ABC)
+    project_root: Path | None = None           # NEW: for ArgumentMatcher path resolution
     control_channel: ControlChannel | None = None
     control_store: ControlStore | None = None
     command_handlers: list[tuple[ControlCommandType, Any]] | None = None
