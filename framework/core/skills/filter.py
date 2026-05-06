@@ -26,10 +26,7 @@ class SkillWhitelistFilter(SkillManager):
         if self._allowed is None:
             return await self._base.build_prompt(context)
         skills = await self.list_skills(context)
-        builder = getattr(self._base, "_builder", None)
-        if builder is None:
-            from .builder import ProgressiveBuilder
-            builder = ProgressiveBuilder()
+        builder = self._base._builder
         return await builder.build(skills, context)
 
     async def list_skills(self, context: ResolutionContext | None = None) -> list[Skill]:

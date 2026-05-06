@@ -47,7 +47,7 @@ Agent 调用敏感工具时，框架暂停执行并渲染审批提示，用户�
 
 ### 环境要求
 
-- Python 3.11+
+- Python 3.12+
 - [uv](https://docs.astral.sh/uv/)
 
 ### 安装
