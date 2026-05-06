@@ -264,8 +264,8 @@ class TestBuildRequestParams:
             from framework.extensions.llm.litellm_provider import LiteLLMProvider
             return LiteLLMProvider(model="gpt-4", api_key="test-key")
 
-    def test_num_retries_defaults_to_zero(self, provider):
+    def test_num_retries_not_in_params(self, provider):
         params = provider._build_request_params(
             messages=[{"role": "user", "content": "hi"}],
         )
-        assert params.get("num_retries") == 0
+        assert "num_retries" not in params

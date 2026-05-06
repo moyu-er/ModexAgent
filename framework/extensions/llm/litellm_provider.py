@@ -190,18 +190,16 @@ class LiteLLMProvider(StreamingLLMProvider):
             **kwargs,
         }
 
-        # 关闭 LiteLLM 内部重试，由框架统一管理
-        params.setdefault("num_retries", 0)
-
         if stream:
             params["stream"] = True
 
-        if self._reasoning_effort is not None:
+        if self._reasoning_effort is not None and "reasoning_effort" not in params:
             params["reasoning_effort"] = self._reasoning_effort
 
         if tools:
             params["tools"] = tools
-            params["tool_choice"] = ToolChoice.AUTO.value
+            if "tool_choice" not in params:
+                params["tool_choice"] = ToolChoice.AUTO.value
 
         return params
 
