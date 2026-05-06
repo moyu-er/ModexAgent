@@ -49,17 +49,13 @@ class CompressionTriggerPolicy(ABC):
 class DefaultCompressionTriggerPolicy(CompressionTriggerPolicy):
     """Default trigger: check token count and message count against config."""
 
-    COOLDOWN_KEY = ".last_compression"
-
     def __init__(
         self,
         max_messages: int | None = 100,
         max_tokens: int | None = 8000,
-        cooldown_messages: int = 5,
     ) -> None:
         self._max_messages = max_messages
         self._max_tokens = max_tokens
-        self._cooldown = cooldown_messages
 
     async def should_compress(
         self,
@@ -67,24 +63,31 @@ class DefaultCompressionTriggerPolicy(CompressionTriggerPolicy):
         session: SessionMemoryManager,
         context: MemoryContext,
     ) -> CompressionTrigger | None:
-        all_msgs_count = len(await session.get_all_messages(context))
-
-        # Cooldown: don't re-trigger for small deltas since last compression
-        last_raw = await session.get_state(context, self.COOLDOWN_KEY)
-        last = int(last_raw) if isinstance(last_raw, int | float | str) else 0
-        if last > 0 and all_msgs_count - last < self._cooldown:
-            return None
+        all_msgs = await session.get_all_messages(context)
+        all_msgs_count = len(all_msgs)
 
         if self._max_messages and all_msgs_count > self._max_messages:
+            logger.info(
+                "Compression triggered by MESSAGE_COUNT: msgs=%d > max_messages=%d",
+                all_msgs_count, self._max_messages,
+            )
             return CompressionTrigger(reason=CompressionReason.MESSAGE_COUNT)
-        if self._max_tokens and self._estimate_tokens(
-            await session.get_visible_messages(context)
-        ) > self._max_tokens:
-            return CompressionTrigger(reason=CompressionReason.TOKEN_PRESSURE)
+
+        if self._max_tokens:
+            estimated_tokens = self.estimate_tokens(all_msgs)
+            if estimated_tokens > self._max_tokens:
+                logger.info(
+                    "Compression triggered by TOKEN_PRESSURE: tokens=%d > max_tokens=%d",
+                    estimated_tokens, self._max_tokens,
+                )
+                return CompressionTrigger(
+                    reason=CompressionReason.TOKEN_PRESSURE,
+                    metadata={"estimated_tokens": estimated_tokens},
+                )
         return None
 
     @staticmethod
-    def _estimate_tokens(messages: Sequence[Any]) -> int:
+    def estimate_tokens(messages: Sequence[Any]) -> int:
         try:
             from framework.memory.utils import estimate_token_count
             return estimate_token_count([m.to_dict() if hasattr(m, 'to_dict') else m for m in messages])
@@ -251,11 +254,7 @@ class DefaultCommitPolicy(CommitPolicy):
                     return CompressionResult(committed=False, retryable=True, reason="archive_failed")
                 # Fall through to still mutate session (error policy said proceed)
 
-        # Always truncate session, even when archive is empty — freeing
-        # short-term memory and advancing the cooldown counter.
-        extra_state: dict[str, Any] = {
-            ".last_compression": len(plan.keep_messages),
-        }
+        extra_state: dict[str, Any] = {}
         if wrote_archive and normalized_summary is not None:
             extra_state[".compression_summary"] = normalized_summary
 
@@ -315,7 +314,8 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
         max_messages: int | None = 100,
         max_tokens: int | None = 8000,
         compaction: MessageCompactionPolicy | None = None,
-        keep_ratio: float = 0.5,
+        keep_ratio_for_messages: float = 0.5,
+        keep_ratio_for_token: float = 0.5,
     ) -> None:
         self._max_messages = max_messages
         self._trigger = trigger or DefaultCompressionTriggerPolicy(
@@ -326,7 +326,8 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
         self._commit = commit or DefaultCommitPolicy()
         self._error = error_policy or DefaultCompressionErrorPolicy()
         self._compaction = compaction or ConservativeCompactionPolicy()
-        self._keep_ratio = max(0.2, min(keep_ratio, 0.9))  # clamp [0.2, 0.9]
+        self._keep_ratio_for_messages = max(0.2, min(keep_ratio_for_messages, 0.9))
+        self._keep_ratio_for_token = max(0.2, min(keep_ratio_for_token, 0.9))
 
     async def maybe_compress(
         self,
@@ -348,15 +349,38 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
         decisions = self._compaction.decide_all(all_msgs, context, str(trigger.reason))
 
         # Phase 3: Compute boundary and summary (LLM may be called — NO lock)
-        trigger_max_messages = getattr(self._trigger, "_max_messages", self._max_messages)
-        keep_target = max(1, int((trigger_max_messages or 100) * self._keep_ratio))
+        if trigger.reason == CompressionReason.TOKEN_PRESSURE:
+            all_tokens = self._trigger.estimate_tokens(all_msgs)
+            target_tokens = int(all_tokens * self._keep_ratio_for_token)
+            keep_target = self._compute_keep_by_token_budget(all_msgs, target_tokens)
+            logger.info(
+                "Compression by TOKEN_PRESSURE: all_tokens=%d, target_tokens=%d, keep_target=%d",
+                all_tokens, target_tokens, keep_target,
+            )
+        elif trigger.reason == CompressionReason.MESSAGE_COUNT:
+            trigger_max_messages = getattr(self._trigger, "_max_messages", self._max_messages)
+            keep_target = max(1, int((trigger_max_messages or 100) * self._keep_ratio_for_messages))
+            logger.info(
+                "Compression by MESSAGE_COUNT: keep_target=%d (max_messages=%s * keep_ratio_for_messages=%.2f)",
+                keep_target, trigger_max_messages or 100, self._keep_ratio_for_messages,
+            )
+        else:
+            trigger_max_messages = getattr(self._trigger, "_max_messages", self._max_messages)
+            keep_target = max(1, int((trigger_max_messages or 100) * self._keep_ratio_for_messages))
+
         prune_count = max(0, len(all_msgs) - keep_target)
         if prune_count <= 0:
             return CompressionResult(committed=True, reason="within_budget")
 
         boundary_idx = self._find_boundary(all_msgs, decisions, prune_count)
         if boundary_idx <= 0:
+            logger.info("No safe boundary found for compression (prune_count=%d)", prune_count)
             return CompressionResult(committed=True, reason="no_safe_boundary")
+
+        logger.info(
+            "Compression plan: total_msgs=%d, prune_count=%d, keep_count=%d, boundary_idx=%d",
+            len(all_msgs), prune_count, len(all_msgs) - boundary_idx, boundary_idx,
+        )
 
         # Pruned prefix: classify by decision
         pruned = all_msgs[:boundary_idx]
@@ -404,6 +428,20 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
             context=context,
             error_policy=self._error,
         )
+
+    def _compute_keep_by_token_budget(
+        self,
+        messages: list[dict[str, Any]],
+        target_tokens: int,
+    ) -> int:
+        total = len(messages)
+        accumulated = 0
+        for i in range(total - 1, -1, -1):
+            msg_tokens = len(str(messages[i])) // 4
+            accumulated += msg_tokens
+            if accumulated >= target_tokens:
+                return total - i
+        return total
 
     def _find_boundary(
         self,
