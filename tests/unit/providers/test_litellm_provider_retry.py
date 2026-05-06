@@ -226,7 +226,7 @@ class TestLiteLLMProviderRetryRouting:
     @pytest.fixture
     def provider(self):
         with patch.dict('os.environ', {'LITELLM_LOG': 'ERROR'}):
-            from framework.extensions.llm.litellm_provider import LiteLLMProvider
+            from framework.providers.litellm_provider import LiteLLMProvider
             p = LiteLLMProvider(model="gpt-4", api_key="test-key")
             p._acompletion = AsyncMock()
             return p

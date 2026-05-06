@@ -10,7 +10,7 @@
 
 import pytest
 
-from framework.extensions.llm.litellm_provider import ThinkTagExtractor
+from framework.providers.litellm_provider import ThinkTagExtractor
 
 
 class TestThinkTagExtractor:

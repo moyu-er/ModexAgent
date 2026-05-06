@@ -45,7 +45,7 @@ from framework.multi_agent import (
     TaskProgressHook,
     TaskRecord,
     TaskSupervisor,
-    TimeoutCancellationPolicy,
+    TimeoutSupervisionPolicy,
 )
 from framework.hook.builtin import InboxFlushHook
 from framework.multi_agent.inbox.producer import InboxProducer
@@ -325,7 +325,7 @@ async def test_task_supervisor_cancels_slow_subagent_via_timeout_policy():
     coord = InMemoryTaskCoordinator()
     record = TaskRecord(task_id="sub1", task_type="subagent", created_at=time.time())
     await coord.register_task("sub1", record)
-    await coord.bind_policy("sub1", TimeoutCancellationPolicy.from_duration(0.1))
+    await coord.bind_policy("sub1", TimeoutSupervisionPolicy.from_duration(0.1))
 
     supervisor = TaskSupervisor(coord, check_interval=0.05)
 
@@ -347,7 +347,7 @@ async def test_task_intervention_hook_cancels_react_iteration():
     coord = InMemoryTaskCoordinator()
     record = TaskRecord(task_id="turn1", task_type="turn", created_at=time.time())
     await coord.register_task("turn1", record)
-    await coord.bind_policy("turn1", TimeoutCancellationPolicy.from_duration(0.05))
+    await coord.bind_policy("turn1", TimeoutSupervisionPolicy.from_duration(0.05))
 
     hook = TaskInterventionHook("turn1", coord)
     mock_provider = MockStreamingProvider()
@@ -385,7 +385,7 @@ async def test_subagent_lifecycle_emits_events_to_platform(memory_event_reporter
 
     record = TaskRecord(task_id="sub_life", task_type="subagent", created_at=time.time())
     await coord.register_task("sub_life", record)
-    await coord.bind_policy("sub_life", TimeoutCancellationPolicy.from_duration(0.2))
+    await coord.bind_policy("sub_life", TimeoutSupervisionPolicy.from_duration(0.2))
 
     async def _slow():
         await asyncio.sleep(10)
@@ -461,9 +461,9 @@ async def test_platform_receives_policy_triggered_and_heartbeat_events(memory_ev
         policy_type = "notify"
 
         async def check(self, task_record: TaskRecord):
-            from framework.multi_agent.intervention import InterventionAction, InterventionResult
+            from framework.control.task_supervision import SupervisionAction, SupervisionResult
 
-            return InterventionResult(action=InterventionAction.NOTIFY, reason="threshold reached")
+            return SupervisionResult(action=SupervisionAction.NOTIFY, reason="threshold reached")
 
     reporter = CompositeTaskEventReporter([memory_event_reporter])
     bus = TaskEventBus(reporter)
@@ -473,15 +473,15 @@ async def test_platform_receives_policy_triggered_and_heartbeat_events(memory_ev
     record = TaskRecord(task_id="t_notify", task_type="test", created_at=time.time())
     await coord.register_task("t_notify", record)
     # 绑定一个 NOTIFY 策略，不应取消任务
-    from framework.multi_agent.intervention import TaskInterventionPolicy
+    from framework.control.task_supervision import TaskSupervisionPolicy
 
-    class _Notify(TaskInterventionPolicy):
+    class _Notify(TaskSupervisionPolicy):
         policy_type = "notify"
 
         async def check(self, task_record):
-            from framework.multi_agent.intervention import InterventionAction, InterventionResult
+            from framework.control.task_supervision import SupervisionAction, SupervisionResult
 
-            return InterventionResult(action=InterventionAction.NOTIFY, reason="threshold")
+            return SupervisionResult(action=SupervisionAction.NOTIFY, reason="threshold")
 
     await coord.bind_policy("t_notify", _Notify())
 
@@ -524,7 +524,7 @@ async def test_composite_run_hook_with_inbox_and_intervention(broker, mock_provi
     coord = InMemoryTaskCoordinator()
     record = TaskRecord(task_id="turn_ok", task_type="turn", created_at=time.time())
     await coord.register_task("turn_ok", record)
-    await coord.bind_policy("turn_ok", TimeoutCancellationPolicy(deadline=time.time() + 100))
+    await coord.bind_policy("turn_ok", TimeoutSupervisionPolicy(deadline=time.time() + 100))
     intervention_hook = TaskInterventionHook("turn_ok", coord)
 
     from framework.hook import HookRunner, HookSpec, HookErrorPolicy

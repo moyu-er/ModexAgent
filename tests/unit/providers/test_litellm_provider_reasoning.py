@@ -40,7 +40,7 @@ class TestLiteLLMProviderReasoning:
     def provider(self):
         """Create LiteLLMProvider instance with mocked acompletion."""
         with patch.dict('os.environ', {'LITELLM_LOG': 'ERROR'}):
-            from framework.extensions.llm.litellm_provider import LiteLLMProvider
+            from framework.providers.litellm_provider import LiteLLMProvider
             provider = LiteLLMProvider(
                 model="deepseek-ai/DeepSeek-R1",
                 api_key="test-key",
@@ -255,7 +255,7 @@ class TestLiteLLMProviderReasoningEffort:
     @pytest.fixture
     def provider(self):
         with patch.dict('os.environ', {'LITELLM_LOG': 'ERROR'}):
-            from framework.extensions.llm.litellm_provider import LiteLLMProvider
+            from framework.providers.litellm_provider import LiteLLMProvider
             return LiteLLMProvider(model="openai/o3-mini", api_key="test-key")
 
     def test_reasoning_effort_passed_when_set(self, provider):
@@ -270,7 +270,7 @@ class TestLiteLLMProviderReasoningEffort:
 
     def test_reasoning_effort_injected_via_constructor(self):
         with patch.dict('os.environ', {'LITELLM_LOG': 'ERROR'}):
-            from framework.extensions.llm.litellm_provider import LiteLLMProvider
+            from framework.providers.litellm_provider import LiteLLMProvider
             p = LiteLLMProvider(
                 model="openai/o3-mini",
                 api_key="test-key",

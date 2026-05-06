@@ -12,13 +12,11 @@ from framework.messaging.broker import Address, BrokerMessage
 from framework.messaging.broker_memory import InMemoryMessageBroker
 from framework.multi_agent.address import AgentAddress
 from framework.core.skills.filter import SkillWhitelistFilter as AgentSkillManager
-from framework.multi_agent.commands import SystemCommandInterceptor
 from framework.utils.context_builder import MultiAgentContextBuilder
 from framework.utils.deduplicator import MessageDeduplicator
 from framework.multi_agent.descriptor import AgentDescriptor
 from framework.multi_agent.envelope import AgentMessageEnvelope
 from framework.tools.filter import FilteredToolManager
-from framework.multi_agent.governance import FullGovernance, NoOpGovernance
 from framework.utils.sanitizer import ContentSanitizer
 from framework.multi_agent.tools import SendMessageTool
 
@@ -142,32 +140,9 @@ class TestContentSanitizer:
         assert "[FORGED_TOOL_CALL_BLOCKED]" in result
 
 
-class TestSystemCommandInterceptor:
-    def test_stop_command(self) -> None:
-        from framework.core.types import InputMessage
-        interceptor = SystemCommandInterceptor()
-        msg = InputMessage(content="/stop", session_id="s1")
-        result = interceptor.handle(msg)
-        assert "Stopping" in result
-
-    def test_non_command_returns_none(self) -> None:
-        from framework.core.types import InputMessage
-        interceptor = SystemCommandInterceptor()
-        msg = InputMessage(content="hello", session_id="s1")
-        assert interceptor.handle(msg) is None
-
-
-class TestContextGovernance:
-    def test_no_op_governance(self) -> None:
-        gov = NoOpGovernance()
-        desc = AgentDescriptor(address=AgentAddress(kind="agent", name="a"))
-        messages = [{"role": "user", "content": "hi"}]
-        assert gov.apply(messages, desc) == messages
-
-
 class TestMultiAgentContextBuilder:
     def test_build_messages(self) -> None:
-        builder = MultiAgentContextBuilder(FullGovernance())
+        builder = MultiAgentContextBuilder()
         desc = AgentDescriptor(
             address=AgentAddress(kind="agent", name="a"),
             system_prompt_template="You are helpful.",
