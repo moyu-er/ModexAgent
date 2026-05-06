@@ -43,6 +43,7 @@ from framework.core.graph.interrupt import GraphInterrupt, _current_resume, inte
 from framework.core.graph.constants import GraphMetaKey
 from framework.hook import HookPoint
 from framework.interceptor.chain import InterceptorChain
+from framework.approval.config import AgentApprovalConfig, ToolApprovalConfig
 from framework.interceptor.builtin.tool_approval import (
     TieredToolApprovalInterceptor, ToolNameMatcher, ArgumentMatcher,
 )
@@ -122,12 +123,17 @@ def _make_ctx(*, session_id="s1", history=None, interceptor_chain=None,
             )
             from framework.interceptor.builtin.tool_approval import (
                 ArgumentMatcher,
-                ToolNameMatcher,
             )
+            tools_config = {
+                name: ToolApprovalConfig(
+                    allowed_paths=list(allowed_dirs) if allowed_dirs else [],
+                )
+                for name in dangerous_tools
+            }
             classifier = TieredToolApprovalClassifier(
-                dangerous=ToolNameMatcher(dangerous_tools) if dangerous_tools else None,
+                config=AgentApprovalConfig(enabled=True, tools=tools_config),
                 argument_matcher=(
-                    ArgumentMatcher(allowed_dirs) if allowed_dirs else None
+                    ArgumentMatcher() if allowed_dirs else None
                 ),
             )
         if classifier is not None:

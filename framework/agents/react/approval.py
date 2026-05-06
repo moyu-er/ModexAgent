@@ -46,10 +46,19 @@ class TieredToolApprovalClassifier:
         if not tool_config.allowed_paths:
             return ApprovalTier.DANGEROUS
 
-        # 4. Check path arguments against allowed_paths
+        # 4. Explicit wildcard means NO paths require approval
+        if "*" in tool_config.allowed_paths:
+            return ApprovalTier.NORMAL
+
+        # 5. Check path arguments against allowed_paths
         if self.argument_matcher is not None:
+            args = tool_call.arguments or {}
+            # If the tool has no path arguments, be conservative:
+            # we cannot verify safety, so require approval.
+            if not self.argument_matcher._extract_paths(args):
+                return ApprovalTier.DANGEROUS
             path_allowed = self.argument_matcher.matches(
-                tool_call.arguments or {},
+                args,
                 tool_config.allowed_paths,
             )
             if path_allowed:
