@@ -10,9 +10,6 @@ if TYPE_CHECKING:
 class MultiAgentContextBuilder:
     """按 agent_session_id 构建运行时消息上下文。"""
 
-    def __init__(self, governance: Any | None = None):
-        self._governance = governance
-
     def build_messages(
         self,
         history: list[dict[str, Any]],
@@ -20,13 +17,11 @@ class MultiAgentContextBuilder:
         agent_descriptor: AgentDescriptor,
         session_summary: str | None = None,
     ) -> list[dict[str, Any]]:
-        """构建注入当前消息和治理策略后的完整 messages 列表。"""
+        """构建注入当前消息后的完整 messages 列表。"""
         messages = self._build_system_block(agent_descriptor, session_summary)
         for msg in history:
             messages.append(self._normalize_message(msg))
         messages.append(self._envelope_to_message(current_envelope))
-        if self._governance is not None:
-            messages = self._governance.apply(messages, agent_descriptor)
         return messages
 
     @staticmethod

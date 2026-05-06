@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-04-30 -->
+<!-- Generated: 2026-05-06 -->
 
 # multi_agent
 
@@ -16,18 +16,29 @@ Multi-agent orchestration — factory, pool, inbox, subagent management, and sta
 | `descriptor.py` | `AgentDescriptor`, `AgentInstance` — agent configuration and instance |
 | `router.py` | `AgentMessageRouter` — routes messages to target agents |
 | `envelope.py` | `AgentMessageEnvelope` — typed message format for agent communication |
-| `filtered_tool_manager.py` | `FilteredToolManager` — allowed/denied tool list per agent |
 | `peer_validator.py` | `PeerAgentValidator` — enforces star-topology (peers through main only) |
-| `agent_skill_manager.py` | `AgentSkillManager` — per-agent skill set management |
-| `context_builder.py` | `MultiAgentContextBuilder` — builds agent context from message history |
 | `address.py` | `AgentAddress` — agent addressing (kind + name) |
-| `commands.py` | Agent control command types |
-| `coordinator.py`, `deduplicator.py`, `discovery.py`, `policy_registry.py` | Mesh coordination |
-| `governance.py`, `intervention.py`, `sanitizer.py` | Message governance |
-| `event_bus.py`, `bus.py` | Task event bus and agent message bus |
-| `assembly_kit.py`, `registry.py` | Assembly helpers |
-| `rpc_broker.py`, `state.py` | RPC and state management |
-| `session_id.py`, `tools.py`, `toolset.py`, `utils.py` | Support utilities |
+| `coordinator.py` | `InMemoryTaskCoordinator`, `NullTaskCoordinator` — task coordination |
+| `event_bus.py` | `TaskEventBus`, `CompositeTaskEventReporter` — event reporting |
+| `bus.py` | Agent message bus |
+| `registry.py` | Agent registry |
+| `state.py` | Agent state management |
+| `session_id.py` | Session ID strategy |
+| `tools.py` | `SendMessageTool` — agent-to-agent messaging tool |
+| `utils.py` | Support utilities |
+
+## Moved Components
+The following components were previously in this package but have been relocated:
+
+| Component | New Location |
+|-----------|-------------|
+| `FilteredToolManager` | `framework/tools/filter.py` |
+| `SkillWhitelistFilter` (was `AgentSkillManager`) | `framework/core/skills/filter.py` |
+| `MultiAgentContextBuilder` | `framework/utils/context_builder.py` |
+| `MessageDeduplicator` | `framework/utils/deduplicator.py` |
+| `ContentSanitizer` | `framework/utils/sanitizer.py` |
+| `TaskSupervisor`, `TimeoutSupervisionPolicy` | `framework/control/task_supervision.py` |
+| `SupervisionPolicyRegistry` | `framework/control/policy_registry.py` |
 
 ## Subdirectories
 | Directory | Purpose |
@@ -54,6 +65,7 @@ Multi-agent orchestration — factory, pool, inbox, subagent management, and sta
 ### Internal
 - All `framework.*` sub-packages
 - `framework.agents.react` — `ReActAgentBuilder`
+
 ## Current Runtime Status
 
 Pool and multi-agent code may share hook/interceptor instances. Keep per-turn
