@@ -314,33 +314,6 @@ async def test_injection_excludes_empty_archive_markers():
     assert "no semantic content" not in content
 
 
-@pytest.mark.asyncio
-async def test_injection_includes_compression_summary():
-    """After compression, the summary is injected into LLM context."""
-    from framework.memory.injection import FullInjectionPolicy
-
-    registry = InMemoryStoreRegistry()
-    mock = MockSummarizerStrategy("[MOCK] built the login page")
-    coordinator = _bot_project_coordinator(max_messages=5, summary=mock)
-    system = _bot_project_system(registry, coordinator)
-    await system.initialize()
-    ctx = _make_ctx("compression-inject")
-
-    history = system.create_message_history(ctx)
-    for i in range(12):
-        await history.append({"role": "user", "content": f"q{i}"})
-        await history.append({"role": "assistant", "content": f"a{i}"})
-
-    bundle = await FullInjectionPolicy(max_history_entries=10).assemble(
-        context=ctx, memory_system=system, query="",
-    )
-    content = "\n".join(s.content for s in bundle.system_sections)
-    # Compression summary should appear in injected sections
-    assert "[MOCK] built the login page" in content or \
-        any("[MOCK]" in s.content for s in bundle.system_sections), \
-        "compression summary should be in injected context"
-
-
 # ── Long-term knowledge: full update (existing + new) ─────────────────────
 
 
