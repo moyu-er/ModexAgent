@@ -10,7 +10,8 @@ from framework.agents.react.state import InMemoryTurnResumeStateStore
 from framework.approval.store import LocalFileApprovalStateStore
 from framework.approval.constants import ApprovalDecision, ApprovalTier
 from framework.approval.state import ApprovalRequest, ApprovalState
-from framework.interceptor.builtin.tool_approval import ToolNameMatcher, ArgumentMatcher
+from framework.approval.config import AgentApprovalConfig, ToolApprovalConfig
+from framework.interceptor.builtin.tool_approval import ArgumentMatcher
 from framework.core.types import ToolCall
 from framework.core.agent import AgentContext
 from framework.core.tool_manager import InMemoryToolManager
@@ -29,32 +30,37 @@ def make_ctx(session_id="s1"):
 class TestApprovalFlowE2E:
     """Verify the full approval flow works for dangerous tools."""
 
+    def _make_classifier(self) -> TieredToolApprovalClassifier:
+        config = AgentApprovalConfig(
+            enabled=True,
+            tools={
+                "edit_file": ToolApprovalConfig(allowed_paths=[]),
+                "write_file": ToolApprovalConfig(allowed_paths=[]),
+                "shell": ToolApprovalConfig(allowed_paths=[]),
+            },
+        )
+        return TieredToolApprovalClassifier(
+            config=config,
+            argument_matcher=ArgumentMatcher(),
+        )
+
     def test_classifier_dangerous_tool_outside_allowed_fails(self):
         """Classifier returns NORMAL for list_dir /home — read-only, no approval needed."""
-        c = TieredToolApprovalClassifier(
-            dangerous=ToolNameMatcher({"shell", "write_file", "edit_file"}),
-            argument_matcher=ArgumentMatcher({"."}),
-        )
+        c = self._make_classifier()
         tc = ToolCall(tool_name="list_dir", call_id="1", arguments={"path": "/home"})
-        # list_dir is NOT in dangerous set → always NORMAL
+        # list_dir is NOT in config → always NORMAL
         assert c.classify(tc, make_ctx()) == ApprovalTier.NORMAL
 
     def test_classifier_dangerous_tool_outside_allowed_triggers(self):
-        """Classifier returns DANGEROUS for edit_file /etc — dangerous tool + outside allowed dir."""
-        c = TieredToolApprovalClassifier(
-            dangerous=ToolNameMatcher({"shell", "write_file", "edit_file"}),
-            argument_matcher=ArgumentMatcher({"."}),
-        )
+        """Classifier returns DANGEROUS for edit_file /etc — configured tool with empty allowed_paths."""
+        c = self._make_classifier()
         tc = ToolCall(tool_name="edit_file", call_id="2",
                       arguments={"path": "/etc/shadow"})
         assert c.classify(tc, make_ctx()) == ApprovalTier.DANGEROUS
 
     def test_classifier_dangerous_tool_inside_allowed_still_dangerous(self):
-        """Classifier returns DANGEROUS for shell even with path inside allowed dir."""
-        c = TieredToolApprovalClassifier(
-            dangerous=ToolNameMatcher({"shell", "write_file", "edit_file"}),
-            argument_matcher=ArgumentMatcher({"."}),
-        )
+        """Classifier returns DANGEROUS for shell — configured tool with empty allowed_paths."""
+        c = self._make_classifier()
         tc = ToolCall(tool_name="shell", call_id="3",
                       arguments={"command": "ls", "working_dir": "."})
         assert c.classify(tc, make_ctx()) == ApprovalTier.DANGEROUS
@@ -113,10 +119,7 @@ class TestApprovalFlowE2E:
 
     def test_approval_runtime_bundles_classifier_and_strategy(self):
         """ApprovalRuntime correctly bundles classifier + strategy."""
-        c = TieredToolApprovalClassifier(
-            dangerous=ToolNameMatcher({"shell", "write_file", "edit_file"}),
-            argument_matcher=ArgumentMatcher({"."}),
-        )
+        c = self._make_classifier()
         strategy = SuspendResumeStrategy(
             MagicMock(), MagicMock(),
         )
