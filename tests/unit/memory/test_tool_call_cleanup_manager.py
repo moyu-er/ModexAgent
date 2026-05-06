@@ -33,7 +33,7 @@ class DummySessionManager(SessionMemoryManager):
         )
         return self.revision
 
-    async def get_visible_messages(
+    async def get_recent_messages(
         self,
         context: MemoryContext,
         limit: int | None = None,

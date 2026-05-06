@@ -53,12 +53,12 @@ class ToolCallAwareSessionManager(SessionMemoryManager):
         await self._cleanup(context)
         return revision
 
-    async def get_visible_messages(
+    async def get_recent_messages(
         self,
         context: MemoryContext,
         limit: int | None = None,
     ) -> list[ChatMessage]:
-        return await self._inner.get_visible_messages(context, limit=limit)
+        return await self._inner.get_recent_messages(context, limit=limit)
 
     async def get_all_messages(self, context: MemoryContext) -> list[ChatMessage]:
         return await self._inner.get_all_messages(context)

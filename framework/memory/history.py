@@ -111,7 +111,7 @@ class ShortTermMessageHistory(MessageHistory):
         async with self._cache_lock:
             if self._cache is not None:
                 return list(self._cache)
-        stm_messages = await self._manager.get_visible_messages(self._context)
+        stm_messages = await self._manager.get_recent_messages(self._context)
         async with self._cache_lock:
             self._cache = list(stm_messages)
         return list(stm_messages)

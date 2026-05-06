@@ -76,10 +76,10 @@ class ScopedMessageHistory(MessageHistory):
         async with self._cache_lock:
             if self._cache is not None:
                 return list(self._cache)
-        visible = await self._manager.get_visible_messages(self._context)
+        recent = await self._manager.get_recent_messages(self._context)
         async with self._cache_lock:
-            self._cache = list(visible)
-        return list(visible)
+            self._cache = list(recent)
+        return list(recent)
 
     async def clear(self) -> None:
         await self._manager.clear(self._context)
@@ -187,7 +187,7 @@ class DefaultMemorySystem(MemorySystem):
         context: MemoryContext,
         max_messages: int | None = None,
     ) -> list[ChatMessage]:
-        return await self._layers.session.get_visible_messages(context, limit=max_messages)
+        return await self._layers.session.get_recent_messages(context, limit=max_messages)
 
     async def search(
         self,
