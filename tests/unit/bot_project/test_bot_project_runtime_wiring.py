@@ -457,7 +457,8 @@ class TestBotProjectPluginAndCapabilityWiring:
             await subagent_context.memory_system.close()
             await svc.plugin_integration.shutdown()
 
-    def test_query_12306_peer_uses_dedicated_skill_and_mcp_config(self):
+    def test_query_12306_peer_has_no_skills_and_uses_mcp_only(self):
+        """query-12306 peer has no skill_dirs (MCP-only) and uses 12306-mcp."""
         from bot.utils.config_loader import ConfigLoader
 
         config_dir = (
@@ -477,20 +478,18 @@ class TestBotProjectPluginAndCapabilityWiring:
         query_peer = peers["query-12306"]
         office_peer = peers["office-expert"]
 
-        assert query_peer["skill_dirs"] == ["skills/peers/12306"]
-        assert "skills/peers/docx" not in query_peer["skill_dirs"]
-        assert query_peer["tools"]["mcp_tools"]["server_filter"] == ["12306-mcp", "fetch"]
-        assert query_peer["tools"]["file_tools"]["enabled"] is False
-        assert query_peer["tools"]["shell_tools"]["enabled"] is False
-        assert (
-            config_dir.parent / query_peer["skill_dirs"][0] / "SKILL.md"
-        ).exists()
+        # query-12306 has no skill_dirs (MCP-only peer)
+        assert not query_peer.get("skill_dirs")
+        assert query_peer["tools"]["mcp_tools"]["server_filter"] == ["12306-mcp"]
+        assert query_peer["tools"]["mcp_tools"]["enabled"] is True
 
         assert "skills/peers/docx" in office_peer["skill_dirs"]
-        assert office_peer["tools"]["mcp_tools"]["server_filter"] == ["fetch"]
+        # office-expert has mcp_tools enabled: false, no server_filter
+        assert office_peer["tools"]["mcp_tools"]["enabled"] is False
         assert "12306-mcp" in config["mcp"]["servers"]
 
-    async def test_query_12306_peer_loads_only_dedicated_skill_manager(self):
+    async def test_query_12306_peer_has_no_skill_manager(self):
+        """query-12306 peer has empty skill_dirs → no SkillManager created."""
         from bot.utils.config_loader import ConfigLoader
 
         config_dir = (
@@ -512,9 +511,8 @@ class TestBotProjectPluginAndCapabilityWiring:
         )
 
         assert descriptor.address.name == "query-12306"
-        assert skill_manager is not None
-        skills = await skill_manager.list_skills()
-        assert [skill.name for skill in skills] == ["12306-railway-query"]
+        # query-12306 has no skill_dirs → skill_manager is None
+        assert skill_manager is None
 
     async def test_subagent_descriptor_passes_mcp_server_filter(self, monkeypatch: pytest.MonkeyPatch):
         svc = _make_service(config=_make_minimal_config())
