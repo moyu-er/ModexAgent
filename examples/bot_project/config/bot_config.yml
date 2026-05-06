@@ -254,8 +254,10 @@ memory:
     #   例如 50×0.6=30 — 留 20 条余量防止频繁触发
     # auto_llm_compression: 启用 LLM (SummarizerAgent) 生成 Archive 摘要
     short_term:
-      max_messages: 20
-      keep_ratio: 0.5             # 压缩后保留 max_messages × 此比例
+      max_messages: 60            # 消息数触发阈值 (超过才压缩)
+      max_tokens: 100000          # Token 触发阈值 (超过才压缩)
+      keep_ratio_for_messages: 0.5  # MESSAGE_COUNT 触发时保留 max_messages × 此比例
+      keep_ratio_for_token: 0.5     # TOKEN_PRESSURE 触发时保留当前 token 数 × 此比例
       auto_llm_compression: true
 
     # -- 消息分类策略 (压缩时使用) --
@@ -284,11 +286,11 @@ memory:
         safety_buffer: 1024
 
     # -- 空闲自动压缩 (session 空闲超过阈值时触发) --
-    auto_compact:
-      enabled: true
-      idle_threshold_seconds: 1800   # 空闲 30 分钟后触发
-      keep_recent_messages: 8        # 压缩后至少保留最近 N 条
-      scan_interval: 300             # 后台扫描间隔 (秒)
+    # auto_compact:
+    #   enabled: true
+    #   idle_threshold_seconds: 1800   # 空闲 30 分钟后触发
+    #   keep_recent_messages: 8        # 压缩后至少保留最近 N 条
+    #   scan_interval: 300             # 后台扫描间隔 (秒)
 
     # -- DreamEngine (Archive → Knowledge 离线整合) --
     # 从 Archive 未处理条目中提取事实, 写入 SOUL/USER/MEMORY

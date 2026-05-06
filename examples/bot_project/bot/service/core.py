@@ -955,7 +955,8 @@ class BotService(AgentBuilderMixin):
         return DefaultMemoryCompressionCoordinator(
             max_messages=auto_compact.get("max_messages", short_term.get("max_messages", 100)),
             max_tokens=auto_compact.get("max_tokens", short_term.get("max_tokens", 8000)),
-            keep_ratio=short_term.get("keep_ratio", 0.5),
+            keep_ratio_for_messages=short_term.get("keep_ratio_for_messages", 0.5),
+            keep_ratio_for_token=short_term.get("keep_ratio_for_token", 0.5),
             summary=summary_strategy,
             compaction=compaction,
             boundary=boundary,
@@ -968,7 +969,7 @@ class BotService(AgentBuilderMixin):
     ) -> None:
         """Initialize and start background auto-compact via DefaultMemoryMaintenancePolicy."""
         ac_config = main_memory_config.get("auto_compact", {})
-        if not ac_config.get("enabled", True):
+        if not ac_config.get("enabled", False):
             return
         if self.memory_system is None or compression_coordinator is None:
             return
