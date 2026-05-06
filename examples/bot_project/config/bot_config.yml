@@ -10,7 +10,6 @@ paths:
   memory_dir: "data/memory"
   inbox_dir: "data/inbox"
   skills_dir: "skills/main"
-  plugins_dir: "plugins"
 
 # ==================== QQ Bot ====================
 qq:
@@ -81,13 +80,11 @@ agent:
 multi_agent:
   enabled: true
   parent_agent_name: "main"
-  allowed_callers: null
 
   # Subagent sync (quick tasks, returns result immediately)
   subagent_sync:
     enabled: true
     name: "helper-sync"
-    capabilities: []
     system_prompt: |
       你是一个快速执行 Agent，专门处理调用方 Agent 分配的即时子任务。
 
@@ -102,13 +99,10 @@ multi_agent:
       - 你的输出内容会直接返回给调用方，确保结果完整、准确
       - 遇到障碍时尝试替代方案，如实记录尝试过程
     context_strategy: "ephemeral"
-    allowed_tools: null
     denied_tools:
       - "spawn_subagent_sync"
       - "send_message"
       - "send_message_async"
-    allowed_skills: null
-    skill_dirs:
     max_iterations: 10
     max_tools_per_turn: 10
     execution_strategy: "react"
@@ -165,9 +159,6 @@ multi_agent:
           max_messages: 50
 
       context_strategy: "persistent"
-      allowed_tools: null
-      denied_tools:
-      allowed_skills: null
       skill_dirs:
         - "skills/peers/docx"
         - "skills/peers/pdf"
@@ -229,8 +220,6 @@ multi_agent:
           max_messages: 30
 
       context_strategy: "persistent"
-      allowed_tools: null
-      denied_tools:
       max_iterations: 20
       max_tools_per_turn: 5
       execution_strategy: "react"
@@ -386,12 +375,6 @@ mcp:
 
 # ==================== Tools ====================
 tools:
-  file_tools:
-    enabled: true
-
-  shell_tools:
-    enabled: true
-
   # MCP tools for main agent (peers have their own tool configs)
   mcp_tools:
     enabled: true
