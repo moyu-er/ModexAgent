@@ -34,6 +34,8 @@ def _is_binary(file_path: Path, sample_size: int = 8192) -> bool:
 
 
 async def _async_subprocess_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    kwargs.setdefault("encoding", "utf-8")
+    kwargs.setdefault("errors", "replace")
     return await asyncio.to_thread(subprocess.run, *args, **kwargs)
 
 
