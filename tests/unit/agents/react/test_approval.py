@@ -1,12 +1,15 @@
 """Tests for ApprovalRuntime, ApprovalClassifier, TieredToolApprovalClassifier."""
+from pathlib import Path
+
 import pytest
 from framework.agents.react.approval import (
     ApprovalClassifier,
     TieredToolApprovalClassifier,
     ApprovalRuntime,
 )
+from framework.approval.config import AgentApprovalConfig, ToolApprovalConfig
 from framework.approval.constants import ApprovalTier
-from framework.interceptor.builtin.tool_approval import ToolNameMatcher
+from framework.interceptor.builtin.tool_approval import ArgumentMatcher
 from framework.core.types import ToolCall
 from framework.core.agent import AgentContext
 from framework.core.tool_manager import InMemoryToolManager
@@ -22,46 +25,68 @@ def make_ctx():
 
 
 class TestTieredToolApprovalClassifier:
-    def test_normal_by_default(self):
-        c = TieredToolApprovalClassifier()
-        tc = ToolCall(tool_name="read_file", call_id="1", arguments={"path": "x.txt"})
+    def test_disabled_returns_normal(self):
+        config = AgentApprovalConfig(enabled=False)
+        c = TieredToolApprovalClassifier(config=config)
+        tc = ToolCall(tool_name="shell", call_id="1", arguments={})
         assert c.classify(tc, make_ctx()) == ApprovalTier.NORMAL
 
-    def test_hardline_overrides(self):
-        c = TieredToolApprovalClassifier(
-            hardline=ToolNameMatcher({"rm"}),
+    def test_tool_not_in_config_returns_normal(self):
+        config = AgentApprovalConfig(
+            enabled=True,
+            tools={"write_file": ToolApprovalConfig(allowed_paths=["./*"])},
         )
-        tc = ToolCall(tool_name="rm", call_id="1", arguments={})
-        assert c.classify(tc, make_ctx()) == ApprovalTier.HARDLINE
-
-    def test_dangerous_matched(self):
-        c = TieredToolApprovalClassifier(
-            dangerous=ToolNameMatcher({"shell"}),
-        )
+        c = TieredToolApprovalClassifier(config=config)
         tc = ToolCall(tool_name="shell", call_id="1", arguments={})
+        assert c.classify(tc, make_ctx()) == ApprovalTier.NORMAL
+
+    def test_path_in_allowed_returns_normal(self):
+        config = AgentApprovalConfig(
+            enabled=True,
+            tools={"write_file": ToolApprovalConfig(allowed_paths=["./*"])},
+        )
+        matcher = ArgumentMatcher(project_root=Path("/project"))
+        c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
+        tc = ToolCall(tool_name="write_file", call_id="1", arguments={"path": "./file.txt"})
+        assert c.classify(tc, make_ctx()) == ApprovalTier.NORMAL
+
+    def test_path_not_in_allowed_returns_dangerous(self):
+        config = AgentApprovalConfig(
+            enabled=True,
+            tools={"write_file": ToolApprovalConfig(allowed_paths=["./*"])},
+        )
+        matcher = ArgumentMatcher(project_root=Path("/project"))
+        c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
+        tc = ToolCall(tool_name="write_file", call_id="1", arguments={"path": "/etc/passwd"})
         assert c.classify(tc, make_ctx()) == ApprovalTier.DANGEROUS
 
-    def test_sensitive_matched(self):
-        c = TieredToolApprovalClassifier(
-            sensitive=ToolNameMatcher({"api_call"}),
+    def test_empty_allowed_paths_all_dangerous(self):
+        config = AgentApprovalConfig(
+            enabled=True,
+            tools={"shell": ToolApprovalConfig(allowed_paths=[])},
         )
-        tc = ToolCall(tool_name="api_call", call_id="1", arguments={})
-        assert c.classify(tc, make_ctx()) == ApprovalTier.SENSITIVE
+        matcher = ArgumentMatcher(project_root=Path("/project"))
+        c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
+        tc = ToolCall(tool_name="shell", call_id="1", arguments={"command": "ls"})
+        assert c.classify(tc, make_ctx()) == ApprovalTier.DANGEROUS
 
-    def test_hardline_has_priority_over_dangerous(self):
-        c = TieredToolApprovalClassifier(
-            hardline=ToolNameMatcher({"rm"}),
-            dangerous=ToolNameMatcher({"rm", "shell"}),
+    def test_star_allowed_paths_all_normal(self):
+        config = AgentApprovalConfig(
+            enabled=True,
+            tools={"shell": ToolApprovalConfig(allowed_paths=["*"])},
         )
-        tc = ToolCall(tool_name="rm", call_id="1", arguments={})
-        assert c.classify(tc, make_ctx()) == ApprovalTier.HARDLINE
+        matcher = ArgumentMatcher(project_root=Path("/project"))
+        c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
+        tc = ToolCall(tool_name="shell", call_id="1", arguments={"command": "ls"})
+        assert c.classify(tc, make_ctx()) == ApprovalTier.NORMAL
 
 
 class TestApprovalRuntime:
     def test_construction(self):
         from framework.agents.react.strategy import InlineWaitStrategy
         from framework.control.channel import InMemoryControlChannel
-        classifier = TieredToolApprovalClassifier()
+        config = AgentApprovalConfig()
+        classifier = TieredToolApprovalClassifier(config=config)
         strategy = InlineWaitStrategy(InMemoryControlChannel())
         ar = ApprovalRuntime(classifier=classifier, suspend_strategy=strategy)
         assert ar.classifier is classifier
