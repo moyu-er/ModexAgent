@@ -62,7 +62,7 @@ class ScopedSessionMemoryManager(SessionMemoryManager):
                 await storage.set(".last_write_id", next(iter(write_ids)))
             return await storage.save_messages(existing)
 
-    async def get_visible_messages(
+    async def get_recent_messages(
         self,
         context: MemoryContext,
         limit: int | None = None,

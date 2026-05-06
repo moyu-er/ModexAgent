@@ -35,7 +35,7 @@ class _SessionManager(SessionMemoryManager):
     async def add_messages(self, context: Any, messages: Any) -> Any:
         pass
 
-    async def get_visible_messages(self, context: Any, limit: int | None = None) -> list[Any]:
+    async def get_recent_messages(self, context: Any, limit: int | None = None) -> list[Any]:
         return []
 
     async def get_all_messages(self, context: Any) -> list[Any]:
