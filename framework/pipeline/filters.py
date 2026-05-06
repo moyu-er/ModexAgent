@@ -11,7 +11,7 @@ from ..core.types import OutputMessage
 
 
 def _get_think_tag_extractor():
-    from ..extensions.llm.litellm_provider import ThinkTagExtractor
+    from ..providers.litellm_provider import ThinkTagExtractor
     return ThinkTagExtractor
 
 
