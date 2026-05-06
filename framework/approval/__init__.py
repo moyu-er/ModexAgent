@@ -1,4 +1,5 @@
 """Approval system."""
+from .config import AgentApprovalConfig, ToolApprovalConfig
 from .constants import ApprovalDecision, ApprovalStatus, ApprovalTier
 from .state import ApprovalRequest, ApprovalState
 from .store import (
@@ -8,6 +9,8 @@ from .store import (
 )
 
 __all__ = [
+    "AgentApprovalConfig",
+    "ToolApprovalConfig",
     "ApprovalDecision",
     "ApprovalStatus",
     "ApprovalTier",

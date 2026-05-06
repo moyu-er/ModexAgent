@@ -23,6 +23,7 @@ from framework.agents.react.approval import (
     ApprovalRuntime,
     TieredToolApprovalClassifier,
 )
+from framework.approval.config import AgentApprovalConfig, ToolApprovalConfig
 from framework.agents.react.runtime import ReActRuntime
 from framework.approval.constants import ApprovalTier
 from framework.core.types import InputMessage, OutputMessage, ToolCall
@@ -32,7 +33,7 @@ from framework.interceptor.builtin import (
     ControlDrainInterceptor,
     ToolResultLimitInterceptor,
 )
-from framework.interceptor.builtin.tool_approval import ArgumentMatcher, ToolNameMatcher
+from framework.interceptor.builtin.tool_approval import ArgumentMatcher
 from framework.interceptor.chain import InterceptorChain
 from framework.memory.context_governance import (
     CompositeGovernance,
@@ -117,6 +118,14 @@ def _make_minimal_config(**overrides: Any) -> dict[str, Any]:
         "agent": {
             "system_prompt": "You are a helpful assistant.",
             "max_iterations": 10,
+            "approval": {
+                "enabled": True,
+                "tools": {
+                    "edit_file": {"allowed_paths": []},
+                    "write_file": {"allowed_paths": []},
+                    "shell": {"allowed_paths": []},
+                },
+            },
         },
         "tools": {},
         "memory": {
@@ -126,9 +135,6 @@ def _make_minimal_config(**overrides: Any) -> dict[str, Any]:
                     "tool_chain_repair": True,
                 },
             },
-        },
-        "approval": {
-            "dangerous_tools": ["shell", "write_file", "edit_file"],
         },
     }
     cfg.update(overrides)
@@ -182,13 +188,18 @@ class TestApprovalRuntimeWiring:
             call_id=f"call_{name}",
         )
 
-    def _make_classifier(
-        self, dangerous: set[str] | None = None,
-    ) -> TieredToolApprovalClassifier:
-        dangerous = dangerous or {"shell", "write_file", "edit_file"}
+    def _make_classifier(self) -> TieredToolApprovalClassifier:
+        config = AgentApprovalConfig(
+            enabled=True,
+            tools={
+                "edit_file": ToolApprovalConfig(allowed_paths=[]),
+                "write_file": ToolApprovalConfig(allowed_paths=[]),
+                "shell": ToolApprovalConfig(allowed_paths=[]),
+            },
+        )
         return TieredToolApprovalClassifier(
-            dangerous=ToolNameMatcher(dangerous),
-            argument_matcher=ArgumentMatcher({"."}),
+            config=config,
+            argument_matcher=ArgumentMatcher(project_root=Path("/project")),
         )
 
     def test_list_dir_is_normal(self):
@@ -446,7 +457,8 @@ class TestBotProjectPluginAndCapabilityWiring:
             await subagent_context.memory_system.close()
             await svc.plugin_integration.shutdown()
 
-    def test_query_12306_peer_uses_dedicated_skill_and_mcp_config(self):
+    def test_query_12306_peer_has_no_skills_and_uses_mcp_only(self):
+        """query-12306 peer has no skill_dirs (MCP-only) and uses 12306-mcp."""
         from bot.utils.config_loader import ConfigLoader
 
         config_dir = (
@@ -466,20 +478,18 @@ class TestBotProjectPluginAndCapabilityWiring:
         query_peer = peers["query-12306"]
         office_peer = peers["office-expert"]
 
-        assert query_peer["skill_dirs"] == ["skills/peers/12306"]
-        assert "skills/peers/docx" not in query_peer["skill_dirs"]
-        assert query_peer["tools"]["mcp_tools"]["server_filter"] == ["12306-mcp", "fetch"]
-        assert query_peer["tools"]["file_tools"]["enabled"] is False
-        assert query_peer["tools"]["shell_tools"]["enabled"] is False
-        assert (
-            config_dir.parent / query_peer["skill_dirs"][0] / "SKILL.md"
-        ).exists()
+        # query-12306 has no skill_dirs (MCP-only peer)
+        assert not query_peer.get("skill_dirs")
+        assert query_peer["tools"]["mcp_tools"]["server_filter"] == ["12306-mcp"]
+        assert query_peer["tools"]["mcp_tools"]["enabled"] is True
 
         assert "skills/peers/docx" in office_peer["skill_dirs"]
-        assert office_peer["tools"]["mcp_tools"]["server_filter"] == ["fetch"]
+        # office-expert has no mcp_tools config (disabled by default)
+        assert "mcp_tools" not in office_peer.get("tools", {})
         assert "12306-mcp" in config["mcp"]["servers"]
 
-    async def test_query_12306_peer_loads_only_dedicated_skill_manager(self):
+    async def test_query_12306_peer_has_no_skill_manager(self):
+        """query-12306 peer has empty skill_dirs → no SkillManager created."""
         from bot.utils.config_loader import ConfigLoader
 
         config_dir = (
@@ -501,9 +511,8 @@ class TestBotProjectPluginAndCapabilityWiring:
         )
 
         assert descriptor.address.name == "query-12306"
-        assert skill_manager is not None
-        skills = await skill_manager.list_skills()
-        assert [skill.name for skill in skills] == ["12306-railway-query"]
+        # query-12306 has no skill_dirs → skill_manager is None
+        assert skill_manager is None
 
     async def test_subagent_descriptor_passes_mcp_server_filter(self, monkeypatch: pytest.MonkeyPatch):
         svc = _make_service(config=_make_minimal_config())
@@ -556,9 +565,17 @@ class TestReActRuntimeAssembly:
         chain.add(ControlDrainInterceptor(Mock()))
         chain.add(ToolResultLimitInterceptor(max_chars=8000))
 
+        config = AgentApprovalConfig(
+            enabled=True,
+            tools={
+                "edit_file": ToolApprovalConfig(allowed_paths=[]),
+                "write_file": ToolApprovalConfig(allowed_paths=[]),
+                "shell": ToolApprovalConfig(allowed_paths=[]),
+            },
+        )
         classifier = TieredToolApprovalClassifier(
-            dangerous=ToolNameMatcher({"shell", "write_file", "edit_file"}),
-            argument_matcher=ArgumentMatcher({"."}),
+            config=config,
+            argument_matcher=ArgumentMatcher(project_root=Path("/project")),
         )
         approval = ApprovalRuntime(
             classifier=classifier,

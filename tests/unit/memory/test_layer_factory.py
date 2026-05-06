@@ -28,7 +28,7 @@ async def test_single_user_factory_builds_fieldized_layers_with_scoped_storage()
     assert layers.knowledge is not None
 
     await layers.session.add_messages(context, [{"role": "user", "content": "hello"}])
-    messages = await layers.session.get_visible_messages(context)
+    messages = await layers.session.get_recent_messages(context)
     stored_archive = await layers.archive.append(
         context,
         ArchiveEntry(summary="summary", metadata={"source": "test"}),
@@ -67,7 +67,7 @@ async def test_session_only_factory_excludes_archive_and_knowledge() -> None:
 
     assert layers.archive is None
     assert layers.knowledge is None
-    assert [message.content for message in await layers.session.get_visible_messages(context)] == [
+    assert [message.content for message in await layers.session.get_recent_messages(context)] == [
         "two",
         "three",
     ]

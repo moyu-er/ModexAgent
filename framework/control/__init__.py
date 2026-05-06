@@ -30,6 +30,15 @@ from framework.control.exceptions import (
     TerminationReason,
 )
 from framework.control.preset import PresetControlRule, TokenBudgetControlRule
+from framework.control.task_supervision import (
+    NoOpSupervisionPolicy,
+    SupervisionAction,
+    SupervisionResult,
+    TaskSupervisionPolicy,
+    TaskSupervisor,
+    TimeoutSupervisionPolicy,
+)
+from framework.control.policy_registry import SupervisionPolicyRegistry, SupervisionPolicySpec
 from framework.control.types import (
     ControlAction,
     ControlCommand,
@@ -70,4 +79,13 @@ __all__ = [
     # 预设规则
     "PresetControlRule",
     "TokenBudgetControlRule",
+    # Task supervision
+    "NoOpSupervisionPolicy",
+    "SupervisionAction",
+    "SupervisionResult",
+    "SupervisionPolicyRegistry",
+    "SupervisionPolicySpec",
+    "TaskSupervisionPolicy",
+    "TaskSupervisor",
+    "TimeoutSupervisionPolicy",
 ]

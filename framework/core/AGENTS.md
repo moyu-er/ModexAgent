@@ -20,7 +20,7 @@ Abstract base classes and shared types forming the framework's type-safe foundat
 | `constants.py` | `DefaultValues`, `FinishReason` enums/constants |
 | `agent_runtime_config.py` | `AgentRuntimeConfig`, `RuntimeControl`, `BusyInputMode` — runtime wiring |
 | `runtime_context.py` | `RuntimeContext`, `RuntimeContextManager` — per-session state container |
-| `llm_error.py` | `RuntimeSafetyPolicy` — timeout/circuit-breaker safety |
+| `llm_error.py` | `RuntimeSafetyPolicy` — timeout/retry safety |
 | `strategy.py` | Strategy-related base types |
 | `session.py` | Session-related base types |
 | `message_utils.py` | Agent message normalization for LLM format |

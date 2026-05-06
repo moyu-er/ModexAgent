@@ -5,7 +5,7 @@ independent configuration, intervention, and feedback/reporting.
 1. Agent 之间通过 Broker + Envelope 通信
 2. Agent 消息通过 InboxFlushHook 注入上下文
 3. 多 Agent 独立 Tool / Skill 配置
-4. 实时/初始干预能力（TaskSupervisor, TaskInterventionHook, 手动 cancel）
+4. 实时/初始干预能力（TaskSupervisor, ControlDrainInterceptor, 手动 cancel）
 5. 反馈与上报能力（超时中断、手动终止、事件上报平台中心）
 """
 
@@ -41,11 +41,12 @@ from framework.multi_agent import (
     TaskEvent,
     TaskEventBus,
     TaskEventType,
-    TaskInterventionHook,
     TaskProgressHook,
     TaskRecord,
+)
+from framework.control.task_supervision import (
     TaskSupervisor,
-    TimeoutCancellationPolicy,
+    TimeoutSupervisionPolicy,
 )
 from framework.hook.builtin import InboxFlushHook
 from framework.multi_agent.inbox.producer import InboxProducer
@@ -57,7 +58,7 @@ from framework.multi_agent.event_bus import (
     CompositeTaskEventReporter,
     TaskEventReporter,
 )
-from framework.multi_agent.filtered_tool_manager import FilteredToolManager
+from framework.tools.filter import FilteredToolManager
 from framework.core.runner import InterruptibleRunner
 from framework.multi_agent.pool import AgentPool
 from framework.multi_agent.tools import SendMessageTool
@@ -270,7 +271,7 @@ async def test_filtered_tool_manager_restricts_tools_per_agent():
 async def test_factory_assembles_distinct_tool_and_skill_managers(broker):
     """AgentFactory 应为不同 descriptor 组装出独立的 ToolManager 和 SkillManager 视图。"""
     from framework.core.skills import FileSkillSource, ProgressiveBuilder, SkillManager
-    from framework.multi_agent.agent_skill_manager import AgentSkillManager
+    from framework.core.skills.filter import SkillWhitelistFilter as AgentSkillManager
     from framework.multi_agent.factory import DefaultAgentFactory
 
     # 使用独立的 factory 实例，避免修改共享 fixture 状态
@@ -321,11 +322,11 @@ async def test_factory_assembles_distinct_tool_and_skill_managers(broker):
 
 @pytest.mark.asyncio
 async def test_task_supervisor_cancels_slow_subagent_via_timeout_policy():
-    """TaskSupervisor 应在 TimeoutCancellationPolicy 触发时硬中断子任务。"""
+    """TaskSupervisor 应在 TimeoutSupervisionPolicy 触发时硬中断子任务。"""
     coord = InMemoryTaskCoordinator()
     record = TaskRecord(task_id="sub1", task_type="subagent", created_at=time.time())
     await coord.register_task("sub1", record)
-    await coord.bind_policy("sub1", TimeoutCancellationPolicy.from_duration(0.1))
+    await coord.bind_policy("sub1", TimeoutSupervisionPolicy.from_duration(0.1))
 
     supervisor = TaskSupervisor(coord, check_interval=0.05)
 
@@ -341,36 +342,6 @@ async def test_task_supervisor_cancels_slow_subagent_via_timeout_policy():
     assert rec.status == "cancelled"
 
 
-@pytest.mark.asyncio
-async def test_task_intervention_hook_cancels_react_iteration():
-    """TaskInterventionHook 应在 ReAct 迭代前检查策略并抛出 CancelledError。"""
-    coord = InMemoryTaskCoordinator()
-    record = TaskRecord(task_id="turn1", task_type="turn", created_at=time.time())
-    await coord.register_task("turn1", record)
-    await coord.bind_policy("turn1", TimeoutCancellationPolicy.from_duration(0.05))
-
-    hook = TaskInterventionHook("turn1", coord)
-    mock_provider = MockStreamingProvider()
-    mock_provider.set_responses([LLMResponse(content="should not reach")])
-    agent = ReActAgent(provider=mock_provider)
-
-    from framework.memory.history import ListMessageHistory
-    ctx = AgentContext(
-        system_prompt="test",
-        history=ListMessageHistory([{"role": "user", "content": "start"}]),
-        tool_manager=MagicMock(),
-        max_iterations=3,
-        extensions={"hooks": [hook]},
-    )
-
-    # 稍微等待让策略 deadline 过期
-    await asyncio.sleep(0.1)
-
-    runner = InterruptibleRunner()
-    emitter = BufferingEmitter[ReActEvent]()
-    result = await runner.run(agent, ctx, emitter)
-
-    assert result.stop_reason == "cancelled"
 
 
 # ── 5. 反馈与上报能力（TaskEventBus -> 平台中心） ──
@@ -385,7 +356,7 @@ async def test_subagent_lifecycle_emits_events_to_platform(memory_event_reporter
 
     record = TaskRecord(task_id="sub_life", task_type="subagent", created_at=time.time())
     await coord.register_task("sub_life", record)
-    await coord.bind_policy("sub_life", TimeoutCancellationPolicy.from_duration(0.2))
+    await coord.bind_policy("sub_life", TimeoutSupervisionPolicy.from_duration(0.2))
 
     async def _slow():
         await asyncio.sleep(10)
@@ -461,9 +432,9 @@ async def test_platform_receives_policy_triggered_and_heartbeat_events(memory_ev
         policy_type = "notify"
 
         async def check(self, task_record: TaskRecord):
-            from framework.multi_agent.intervention import InterventionAction, InterventionResult
+            from framework.control.task_supervision import SupervisionAction, SupervisionResult
 
-            return InterventionResult(action=InterventionAction.NOTIFY, reason="threshold reached")
+            return SupervisionResult(action=SupervisionAction.NOTIFY, reason="threshold reached")
 
     reporter = CompositeTaskEventReporter([memory_event_reporter])
     bus = TaskEventBus(reporter)
@@ -473,15 +444,15 @@ async def test_platform_receives_policy_triggered_and_heartbeat_events(memory_ev
     record = TaskRecord(task_id="t_notify", task_type="test", created_at=time.time())
     await coord.register_task("t_notify", record)
     # 绑定一个 NOTIFY 策略，不应取消任务
-    from framework.multi_agent.intervention import TaskInterventionPolicy
+    from framework.control.task_supervision import TaskSupervisionPolicy
 
-    class _Notify(TaskInterventionPolicy):
+    class _Notify(TaskSupervisionPolicy):
         policy_type = "notify"
 
         async def check(self, task_record):
-            from framework.multi_agent.intervention import InterventionAction, InterventionResult
+            from framework.control.task_supervision import SupervisionAction, SupervisionResult
 
-            return InterventionResult(action=InterventionAction.NOTIFY, reason="threshold")
+            return SupervisionResult(action=SupervisionAction.NOTIFY, reason="threshold")
 
     await coord.bind_policy("t_notify", _Notify())
 
@@ -498,62 +469,3 @@ async def test_platform_receives_policy_triggered_and_heartbeat_events(memory_ev
     assert TaskEventType.POLICY_TRIGGERED in types
 
 
-# ── 6. 端到端：Hook 组合 + 干预 + 取消 ──
-
-@pytest.mark.asyncio
-async def test_composite_run_hook_with_inbox_and_intervention(broker, mock_provider):
-    """CompositeRunHook 应能同时运行 InboxFlushHook 和 TaskInterventionHook。"""
-    server = InMemoryInboxServer()
-    producer = InboxProducer(server=server)
-    consumer = InboxConsumer(server=server)
-
-    # 预置 inbox 消息
-    env = AgentMessageEnvelope(
-        payload={"content": "injected"},
-        source=AgentAddress(name="peer"),
-        target=AgentAddress(name="main"),
-        message_type="agent_message",
-        conversation_id="c1",
-        agent_session_id="c1:main",
-    )
-    await producer.send("c1:main", env)
-
-    inbox_hook = InboxFlushHook(consumer=consumer, agent_name="main")
-
-    # intervention hook 不 cancel（使用很远的 deadline）
-    coord = InMemoryTaskCoordinator()
-    record = TaskRecord(task_id="turn_ok", task_type="turn", created_at=time.time())
-    await coord.register_task("turn_ok", record)
-    await coord.bind_policy("turn_ok", TimeoutCancellationPolicy(deadline=time.time() + 100))
-    intervention_hook = TaskInterventionHook("turn_ok", coord)
-
-    from framework.hook import HookRunner, HookSpec, HookErrorPolicy
-    runner = HookRunner([
-        HookSpec(hook=inbox_hook, on_error=HookErrorPolicy.LOG),
-        HookSpec(hook=intervention_hook, on_error=HookErrorPolicy.LOG),
-    ])
-
-    mock_provider.set_responses([LLMResponse(content="ack")])
-    agent = ReActAgent(provider=mock_provider)
-
-    from framework.memory.history import ListMessageHistory
-    ctx = AgentContext(
-        system_prompt="test",
-        history=ListMessageHistory([{"role": "user", "content": "start"}]),
-        tool_manager=MagicMock(),
-        max_iterations=1,
-        metadata={"session_id": "c1:main"},
-        extensions={
-            "hooks": [inbox_hook, intervention_hook],
-            "hook_runner": runner,
-        },
-    )
-
-    emitter = BufferingEmitter[ReActEvent]()
-    result = await agent.run(ctx, emitter)
-    assert result.content == "ack"
-
-    history_list = await ctx.history.to_list()
-    injected = [m for m in history_list if m.get("meta_inbox") is True]
-    assert len(injected) == 1
-    assert "injected" in injected[0]["content"]

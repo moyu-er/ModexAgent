@@ -1,8 +1,11 @@
-"""TDD: argument_matcher should only apply to dangerous-named tools, not all tools."""
+"""Tests: unconfigured tools are always NORMAL; configured tools check paths."""
+from pathlib import Path
+
 import pytest
 from framework.agents.react.approval import TieredToolApprovalClassifier
+from framework.approval.config import AgentApprovalConfig, ToolApprovalConfig
 from framework.approval.constants import ApprovalTier
-from framework.interceptor.builtin.tool_approval import ToolNameMatcher, ArgumentMatcher
+from framework.interceptor.builtin.tool_approval import ArgumentMatcher
 from framework.core.types import ToolCall
 from framework.core.agent import AgentContext
 from framework.core.tool_manager import InMemoryToolManager
@@ -17,70 +20,69 @@ def make_ctx():
     )
 
 
-class TestReadOnlyToolsNeverNeedApproval:
-    """Read-only tools like list_dir/read_file/cat must always be NORMAL,
-    regardless of path arguments. Only tools in the dangerous name set
-    should have their path arguments checked."""
+class TestUnconfiguredToolsNeverNeedApproval:
+    """Tools not in AgentApprovalConfig.tools are always NORMAL."""
 
     def test_list_dir_with_any_path_is_normal(self):
-        """list_dir is a read-only tool — never needs approval."""
-        c = TieredToolApprovalClassifier(
-            dangerous=ToolNameMatcher({"shell", "write_file", "edit_file"}),
-            argument_matcher=ArgumentMatcher({"."}),
+        config = AgentApprovalConfig(
+            enabled=True,
+            tools={"shell": ToolApprovalConfig(allowed_paths=[])},
         )
-        tc = ToolCall(tool_name="list_dir", call_id="1",
-                      arguments={"path": "/home"})
+        matcher = ArgumentMatcher(project_root=Path("/project"))
+        c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
+        tc = ToolCall(tool_name="list_dir", call_id="1", arguments={"path": "/home"})
         assert c.classify(tc, make_ctx()) == ApprovalTier.NORMAL
 
     def test_read_file_with_any_path_is_normal(self):
-        """read_file is a read-only tool — never needs approval."""
-        c = TieredToolApprovalClassifier(
-            dangerous=ToolNameMatcher({"write_file", "edit_file"}),
-            argument_matcher=ArgumentMatcher({"."}),
+        config = AgentApprovalConfig(
+            enabled=True,
+            tools={"write_file": ToolApprovalConfig(allowed_paths=["./*"])},
         )
-        tc = ToolCall(tool_name="read_file", call_id="1",
-                      arguments={"path": "/etc/passwd"})
+        matcher = ArgumentMatcher(project_root=Path("/project"))
+        c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
+        tc = ToolCall(tool_name="read_file", call_id="1", arguments={"path": "/etc/passwd"})
         assert c.classify(tc, make_ctx()) == ApprovalTier.NORMAL
 
     def test_cat_with_any_path_is_normal(self):
-        """cat is a read-only tool — never needs approval."""
-        c = TieredToolApprovalClassifier(
-            dangerous=ToolNameMatcher({"write_file", "edit_file"}),
-            argument_matcher=ArgumentMatcher({"."}),
+        config = AgentApprovalConfig(
+            enabled=True,
+            tools={"edit_file": ToolApprovalConfig(allowed_paths=["./*"])},
         )
-        tc = ToolCall(tool_name="cat", call_id="1",
-                      arguments={"path": "/etc/hosts"})
+        matcher = ArgumentMatcher(project_root=Path("/project"))
+        c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
+        tc = ToolCall(tool_name="cat", call_id="1", arguments={"path": "/etc/hosts"})
         assert c.classify(tc, make_ctx()) == ApprovalTier.NORMAL
 
     def test_search_content_with_any_path_is_normal(self):
-        """search_content is read-only — never needs approval."""
-        c = TieredToolApprovalClassifier(
-            dangerous=ToolNameMatcher({"write_file", "edit_file"}),
-            argument_matcher=ArgumentMatcher({"."}),
+        config = AgentApprovalConfig(
+            enabled=True,
+            tools={"write_file": ToolApprovalConfig(allowed_paths=["./*"])},
         )
-        tc = ToolCall(tool_name="search_content", call_id="1",
-                      arguments={"directory": "/home"})
+        matcher = ArgumentMatcher(project_root=Path("/project"))
+        c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
+        tc = ToolCall(tool_name="search_content", call_id="1", arguments={"directory": "/home"})
         assert c.classify(tc, make_ctx()) == ApprovalTier.NORMAL
 
 
-class TestDangerousToolsStillCheckArguments:
-    """Dangerous-named tools should still have their path arguments checked."""
+class TestConfiguredToolsCheckPaths:
+    """Tools in AgentApprovalConfig.tools have their path arguments checked."""
 
-    def test_dangerous_tool_outside_allowed_dirs_is_dangerous(self):
-        c = TieredToolApprovalClassifier(
-            dangerous=ToolNameMatcher({"edit_file"}),
-            argument_matcher=ArgumentMatcher({"."}),
+    def test_configured_tool_outside_allowed_paths_is_dangerous(self):
+        config = AgentApprovalConfig(
+            enabled=True,
+            tools={"edit_file": ToolApprovalConfig(allowed_paths=["./*"])},
         )
-        tc = ToolCall(tool_name="edit_file", call_id="1",
-                      arguments={"path": "/etc/shadow"})
+        matcher = ArgumentMatcher(project_root=Path("/project"))
+        c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
+        tc = ToolCall(tool_name="edit_file", call_id="1", arguments={"path": "/etc/shadow"})
         assert c.classify(tc, make_ctx()) == ApprovalTier.DANGEROUS
 
-    def test_dangerous_tool_inside_allowed_dir_still_dangerous(self):
-        """A tool in the dangerous set is always DANGEROUS, even with safe path."""
-        c = TieredToolApprovalClassifier(
-            dangerous=ToolNameMatcher({"edit_file"}),
-            argument_matcher=ArgumentMatcher({"."}),
+    def test_configured_tool_inside_allowed_paths_is_normal(self):
+        config = AgentApprovalConfig(
+            enabled=True,
+            tools={"edit_file": ToolApprovalConfig(allowed_paths=["./*"])},
         )
-        tc = ToolCall(tool_name="edit_file", call_id="1",
-                      arguments={"path": "./project/file.txt"})
-        assert c.classify(tc, make_ctx()) == ApprovalTier.DANGEROUS
+        matcher = ArgumentMatcher(project_root=Path("/project"))
+        c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
+        tc = ToolCall(tool_name="edit_file", call_id="1", arguments={"path": "./project/file.txt"})
+        assert c.classify(tc, make_ctx()) == ApprovalTier.NORMAL

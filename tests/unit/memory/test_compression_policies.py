@@ -67,7 +67,7 @@ async def test_trigger_compress_when_over_limit(registry):
     ctx = MemoryContext(session_id="t2")
     msgs = [{"role": "user", "content": f"msg{i}"} for i in range(110)]
     await session.add_messages(ctx, msgs)
-    trigger = DefaultCompressionTriggerPolicy(max_messages=100, cooldown_messages=0)
+    trigger = DefaultCompressionTriggerPolicy(max_messages=100)
     result = await trigger.should_compress(session=session, context=ctx)
     assert result is not None
     assert result.reason == CompressionReason.MESSAGE_COUNT
@@ -172,7 +172,7 @@ async def test_coordinator_does_not_lose_data_on_archive_failure(registry):
     msgs = [{"role": "user", "content": f"msg{i}"} for i in range(150)]
     await session.add_messages(ctx, msgs)
 
-    initial_count = len(await session.get_visible_messages(ctx))
+    initial_count = len(await session.get_all_messages(ctx))
     assert initial_count == 150
 
     class FailingCommit(DefaultCommitPolicy):
@@ -185,7 +185,7 @@ async def test_coordinator_does_not_lose_data_on_archive_failure(registry):
         session=session, archive=layer_set.archive, context=ctx,
     )
     assert not result.committed
-    assert len(await session.get_visible_messages(ctx)) == 150  # untouched
+    assert len(await session.get_all_messages(ctx)) == 150  # untouched
 
 
 async def test_coordinator_commit_replaces_session_and_persists_summary(registry):
@@ -202,7 +202,7 @@ async def test_coordinator_commit_replaces_session_and_persists_summary(registry
     await session.add_messages(ctx, messages)
 
     # keep_ratio=0.9 (clamp max): keep_target=2, prune=4 from 6 msgs
-    coordinator = DefaultMemoryCompressionCoordinator(max_messages=5, keep_ratio=0.9)
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=5, keep_ratio_for_messages=0.9)
     result = await coordinator.maybe_compress(session=session, archive=archive, context=ctx)
 
     assert result.committed
@@ -535,7 +535,7 @@ async def test_trigger_does_not_fire_when_total_within_budget(registry):
     stored = len(await session.get_all_messages(ctx))
     assert stored == 6
 
-    trigger = DefaultCompressionTriggerPolicy(max_messages=10, max_tokens=8000, cooldown_messages=0)
+    trigger = DefaultCompressionTriggerPolicy(max_messages=10, max_tokens=8000)
     result = await trigger.should_compress(session=session, context=ctx)
     # Total stored (6) < trigger threshold (10) → no trigger
     assert result is None, f"total 6 < max 10 should not trigger, got {result}"
@@ -558,10 +558,10 @@ async def test_trigger_fires_when_total_exceeds_threshold(registry):
 
     stored = len(await session.get_all_messages(ctx))
     assert stored == 12
-    visible = len(await session.get_visible_messages(ctx))
+    visible = len(await session.get_recent_messages(ctx))
     assert visible == 5  # capped
 
-    trigger = DefaultCompressionTriggerPolicy(max_messages=10, cooldown_messages=0)
+    trigger = DefaultCompressionTriggerPolicy(max_messages=10)
     result = await trigger.should_compress(session=session, context=ctx)
     # Total stored (12) > trigger threshold (10)
     assert result is not None, "total 12 > max 10 should trigger"
@@ -699,7 +699,7 @@ async def test_coordinator_compresses_when_total_exceeds_visible_cap(registry):
     ])
 
     stored = len(await session.get_all_messages(ctx))
-    visible = len(await session.get_visible_messages(ctx))
+    visible = len(await session.get_recent_messages(ctx))
     assert stored == 96
     assert visible == 50
 
@@ -732,7 +732,7 @@ async def test_coordinator_creates_headroom_no_recompress_on_small_growth(regist
         {"role": "user", "content": f"msg{i}"} for i in range(96)
     ])
 
-    coordinator = DefaultMemoryCompressionCoordinator(max_messages=50, keep_ratio=0.5)
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=50, keep_ratio_for_messages=0.5)
     result = await coordinator.maybe_compress(session=session, archive=archive, context=ctx)
     assert result.committed
 
@@ -750,3 +750,109 @@ async def test_coordinator_creates_headroom_no_recompress_on_small_growth(regist
     result2 = await coordinator.maybe_compress(session=session, archive=archive, context=ctx)
     assert result2.reason in ("not_needed", "within_budget"), \
         f"should NOT compress, total={total} < max=50, got {result2.reason}"
+
+
+# ── Regression: token estimation must use all messages ─────────────────────
+
+
+@pytest.mark.asyncio
+async def test_trigger_token_pressure_uses_all_messages_not_windowed_view(registry):
+    """TOKEN_PRESSURE must estimate tokens from ALL messages, not a windowed subset.
+
+    Regression: Previously get_visible_messages() was used, which applies the
+    session's max_messages window.  If the session window is smaller than the
+    trigger threshold, token estimation is incomplete and may miss pressure.
+
+    Scenario:
+      - Session window (max_messages) = 10  ← small window
+      - Trigger threshold (max_messages) = 50
+      - Trigger threshold (max_tokens) = 1500
+      - 20 messages, each 500 chars → ~2500 tokens total
+
+    Old behavior (get_visible_messages, window=10):
+      - Only 10 messages considered → ~1250 tokens
+      - 1250 < 1500 → NO trigger ❌ (missed pressure)
+
+    New behavior (get_all_messages):
+      - All 20 messages considered → ~2500 tokens
+      - 2500 > 1500 → TOKEN_PRESSURE trigger ✅
+    """
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    config = SessionMemoryConfig(max_messages=10)
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(storage_factory=factory, config=config)
+    ctx = MemoryContext(session_id="token-pressure-regression")
+
+    # 20 messages × 500 chars = 10000 chars → ~2500 tokens (estimate = chars/4)
+    msgs = [{"role": "user", "content": "A" * 500} for _ in range(20)]
+    await session.add_messages(ctx, msgs)
+
+    stored = len(await session.get_all_messages(ctx))
+    recent = len(await session.get_recent_messages(ctx))
+    assert stored == 20, "all 20 messages stored"
+    assert recent == 10, "windowed view only shows 10"
+
+    trigger = DefaultCompressionTriggerPolicy(max_messages=50, max_tokens=1500)
+    result = await trigger.should_compress(session=session, context=ctx)
+
+    assert result is not None, (
+        "TOKEN_PRESSURE should trigger: total tokens ~2500 > max_tokens=1500. "
+        "If this fails, token estimation may be using a windowed view."
+    )
+    assert result.reason == CompressionReason.TOKEN_PRESSURE
+
+
+@pytest.mark.asyncio
+async def test_trigger_message_count_respects_threshold(registry):
+    """MESSAGE_COUNT trigger must fire only when total messages exceed threshold.
+
+    Regression guard: ensures the fix to use get_all_messages for token
+    estimation does not break the primary MESSAGE_COUNT trigger path.
+    """
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    config = SessionMemoryConfig(max_messages=None)
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(storage_factory=factory, config=config)
+    ctx = MemoryContext(session_id="msg-count")
+
+    # 55 messages > threshold 50 → should trigger
+    msgs = [{"role": "user", "content": f"msg{i}"} for i in range(55)]
+    await session.add_messages(ctx, msgs)
+
+    trigger = DefaultCompressionTriggerPolicy(max_messages=50)
+    result = await trigger.should_compress(session=session, context=ctx)
+
+    assert result is not None
+    assert result.reason == CompressionReason.MESSAGE_COUNT
+    # Log should show: "Compression triggered by MESSAGE_COUNT: msgs=55 > max_messages=50"
+
+
+@pytest.mark.asyncio
+async def test_trigger_no_false_positive_below_threshold(registry):
+    """Compression must NOT trigger when both message count and tokens are within budget.
+
+    Regression guard: ensures we don't over-trigger after removing cooldown.
+    """
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    config = SessionMemoryConfig(max_messages=None)
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(storage_factory=factory, config=config)
+    ctx = MemoryContext(session_id="no-fp")
+
+    # 30 messages < threshold 50, short content → tokens well below budget
+    msgs = [{"role": "user", "content": f"short{i}"} for i in range(30)]
+    await session.add_messages(ctx, msgs)
+
+    trigger = DefaultCompressionTriggerPolicy(max_messages=50, max_tokens=100000)
+    result = await trigger.should_compress(session=session, context=ctx)
+
+    assert result is None, "should not trigger: 30 msgs < 50, tokens well below 100k"

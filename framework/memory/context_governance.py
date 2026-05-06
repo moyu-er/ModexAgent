@@ -138,23 +138,22 @@ class ToolChainRepairGovernance(ContextGovernance):
             )
         return updated
 
-
 class MicrocompactGovernance(ContextGovernance):
     """将旧的可压缩 tool result 替换为一行摘要，保留最近 N 个。"""
     def __init__(
         self,
         keep_recent: int = 10,
-        min_chars: int = 500,
-        compactable_tools: frozenset[str] | None = None,
+        min_chars: int = 200,
+        whitelist_tools: set[str] | None = None,
     ) -> None:
         self._keep_recent = keep_recent
         self._min_chars = min_chars
-        self._compactable = compactable_tools or set()
+        self._whitelist_tools = frozenset(whitelist_tools) if whitelist_tools is not None else frozenset()
 
     async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         compactable_indices: list[int] = []
         for idx, msg in enumerate(messages):
-            if msg.get("role") == str(MessageRole.TOOL) and msg.get("name") in self._compactable:
+            if msg.get("role") == str(MessageRole.TOOL) and msg.get("name") not in self._whitelist_tools:
                 compactable_indices.append(idx)
 
         if len(compactable_indices) <= self._keep_recent:
@@ -191,7 +190,7 @@ class TokenBudgetGovernance(ContextGovernance):
         if not messages:
             return []
 
-        system_messages = [dict(msg) for msg in messages if msg.get("role") == str(MessageRole.SYSTEM)]
+        system_messages = [dict(msg) for msg in messages if msg.get("role") == str(MessageRole.SYSTEM)][:1]
         non_system = [dict(msg) for msg in messages if msg.get("role") != str(MessageRole.SYSTEM)]
 
         if not non_system:

@@ -28,7 +28,6 @@ from framework.control.checkpoint import JsonFileRuntimeStateStore
 from framework.control.ui.im import IMUserInterface
 from framework.core.emitter import ContentEmitter
 from framework.core.llm_error import (
-    CircuitBreakerPolicy,
     LLMTimeoutPolicy,
     RuntimeSafetyPolicy,
     TurnTimeoutPolicy,
@@ -39,16 +38,13 @@ from framework.core.skills import (
     ResolutionContext,
     SkillManager,
 )
-from framework.extensions.llm.litellm_provider import LiteLLMProvider
+from framework.providers.litellm_provider import LiteLLMProvider
 from framework.hook.builtin import InboxFlushHook
 from framework.interceptor.builtin import (
     ControlDrainInterceptor,
     ToolResultLimitInterceptor,
 )
-from framework.interceptor.builtin.tool_approval import (
-    ArgumentMatcher,
-    ToolNameMatcher,
-)
+from framework.interceptor.builtin.tool_approval import ArgumentMatcher
 from framework.interceptor.chain import InterceptorChain
 from framework.memory.context_governance import (
     CompositeGovernance,
@@ -598,7 +594,6 @@ class BotService(AgentBuilderMixin):
         """Build RuntimeSafetyPolicy from bot_config.yml runtime_safety section."""
         rs_config = self.config.get("runtime_safety", {})
         llm_config = rs_config.get("llm", {})
-        cb_config = rs_config.get("circuit_breaker", {})
         turn_config = rs_config.get("turn", {})
         backoff = llm_config.get("retry_backoff_seconds", [2.0, 8.0])
         if isinstance(backoff, list):
@@ -609,11 +604,6 @@ class BotService(AgentBuilderMixin):
                 stream_idle_timeout_seconds=llm_config.get("stream_idle_timeout_seconds", 90.0),
                 framework_max_retries=llm_config.get("framework_max_retries", 1),
                 retry_backoff_seconds=backoff,
-            ),
-            circuit_breaker=CircuitBreakerPolicy(
-                enabled=cb_config.get("enabled", True),
-                failure_threshold=cb_config.get("failure_threshold", 3),
-                cooldown_seconds=cb_config.get("cooldown_seconds", 120.0),
             ),
             turn=TurnTimeoutPolicy(
                 agent_run_timeout_seconds=turn_config.get("agent_run_timeout_seconds", 180.0),
@@ -773,31 +763,38 @@ class BotService(AgentBuilderMixin):
         The only difference between pipeline and pool mode is the hooks source.
         Everything else — classifier, strategy, control, governance — is identical.
         """
-        from framework.agents.react.assembler import RuntimeAssembler, RuntimeServicesConfig
         from framework.agents.react.approval import TieredToolApprovalClassifier
+        from framework.agents.react.assembler import RuntimeAssembler, RuntimeServicesConfig
         from framework.agents.react.state import StateStoreTurnResumeStateStore
         from framework.agents.react.strategy import SuspendResumeStrategy
+        from framework.approval.config import AgentApprovalConfig, ToolApprovalConfig
         from framework.approval.store import LocalFileApprovalStateStore
         from framework.control.store import InMemoryControlStore
         from framework.control.types import ControlCommandType
         from framework.interceptor.handler import DefaultCancelHandler
 
-        approval_config = self.config.get("approval", {})
-        dangerous_tools = approval_config.get("dangerous_tools", ["shell", "write_file", "edit_file"])
-        tools_config = self.config.get("tools", {})
-        file_tools = tools_config.get("file_tools", {})
-        allowed_dirs = set(file_tools.get("allowed_directories", ["."]))
-        shell_tools = tools_config.get("shell_tools", {})
-        if shell_tools.get("restrict_to_workspace", False):
-            allowed_dirs.add(".")
+        # Read agent-level approval config from bot_config.yml
+        agent_config = self.config.get("agent", {})
+        approval_raw = agent_config.get("approval", {})
+        enabled = approval_raw.get("enabled", True)
+        tools_raw = approval_raw.get("tools", {})
+
+        tools_approval: dict[str, ToolApprovalConfig] = {}
+        for tool_name, tool_cfg in tools_raw.items():
+            if isinstance(tool_cfg, dict):
+                tools_approval[tool_name] = ToolApprovalConfig(
+                    allowed_paths=tool_cfg.get("allowed_paths", [])
+                )
+
+        approval_config = AgentApprovalConfig(enabled=enabled, tools=tools_approval)
 
         runtime = await RuntimeAssembler.assemble(RuntimeServicesConfig(
             mode="full",
             hooks=hooks,
             interceptors=list(self.interceptor_chain.interceptors) if self.interceptor_chain else None,
             approval_classifier=TieredToolApprovalClassifier(
-                dangerous=ToolNameMatcher(set(dangerous_tools)),
-                argument_matcher=ArgumentMatcher(allowed_dirs),
+                config=approval_config,
+                argument_matcher=ArgumentMatcher(project_root=self._project_dir),
             ),
             approval_strategy=SuspendResumeStrategy(
                 LocalFileApprovalStateStore(self._approval_workspace),
@@ -807,10 +804,11 @@ class BotService(AgentBuilderMixin):
             control_store=InMemoryControlStore(),
             command_handlers=[(ControlCommandType.CANCEL_TURN, DefaultCancelHandler())],
             checkpoint_store=self._checkpoint_store,
+            project_root=self._project_dir,
             governance=self._build_governance(),
             safety=self.safety_policy,
         ))
-        print(f"[OK] ReActRuntime built (dangerous_tools={dangerous_tools}, allowed_dirs={allowed_dirs})")
+        print(f"[OK] ReActRuntime built (approval enabled={enabled}, tools={list(tools_approval.keys())})")
         return runtime
 
     # ------------------------------------------------------------------ #
@@ -955,7 +953,8 @@ class BotService(AgentBuilderMixin):
         return DefaultMemoryCompressionCoordinator(
             max_messages=auto_compact.get("max_messages", short_term.get("max_messages", 100)),
             max_tokens=auto_compact.get("max_tokens", short_term.get("max_tokens", 8000)),
-            keep_ratio=short_term.get("keep_ratio", 0.5),
+            keep_ratio_for_messages=short_term.get("keep_ratio_for_messages", 0.5),
+            keep_ratio_for_token=short_term.get("keep_ratio_for_token", 0.5),
             summary=summary_strategy,
             compaction=compaction,
             boundary=boundary,
@@ -968,7 +967,7 @@ class BotService(AgentBuilderMixin):
     ) -> None:
         """Initialize and start background auto-compact via DefaultMemoryMaintenancePolicy."""
         ac_config = main_memory_config.get("auto_compact", {})
-        if not ac_config.get("enabled", True):
+        if not ac_config.get("enabled", False):
             return
         if self.memory_system is None or compression_coordinator is None:
             return

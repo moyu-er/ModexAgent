@@ -2,9 +2,7 @@
 
 import pytest
 
-from framework.core.constants import FinishReason
 from framework.core.llm_error import (
-    CircuitBreakerPolicy,
     LLMErrorInfo,
     LLMErrorKind,
     LLMTimeoutPolicy,
@@ -68,7 +66,6 @@ class TestSafetyPolicyDefaults:
     def test_runtime_safety_policy_defaults(self):
         policy = RuntimeSafetyPolicy()
         assert isinstance(policy.llm, LLMTimeoutPolicy)
-        assert isinstance(policy.circuit_breaker, CircuitBreakerPolicy)
         assert isinstance(policy.turn, TurnTimeoutPolicy)
 
     def test_llm_timeout_policy_defaults(self):
@@ -76,17 +73,12 @@ class TestSafetyPolicyDefaults:
         assert policy.request_timeout_seconds > 0
         assert policy.stream_idle_timeout_seconds > 0
 
-    def test_circuit_breaker_defaults(self):
-        policy = CircuitBreakerPolicy()
-        assert policy.enabled is True
-        assert policy.failure_threshold == 3
-
 
 class TestBuildTimeoutResponse:
     def test_build_timeout_response(self):
         resp = build_timeout_response(provider="litellm", message="timed out")
         assert isinstance(resp, LLMResponse)
-        assert resp.finish_reason == FinishReason.ERROR.value
+        assert resp.finish_reason == "error"
         assert resp.error == "timed out"
         assert resp.error_info is not None
         assert resp.error_info.kind == LLMErrorKind.TIMEOUT
@@ -98,7 +90,7 @@ class TestBuildTimeoutResponse:
             partial_content="partial reply...",
         )
         assert resp.content == "partial reply..."
-        assert resp.finish_reason == FinishReason.ERROR.value
+        assert resp.finish_reason == "error"
 
 
 class TestClassifyLitellmError:

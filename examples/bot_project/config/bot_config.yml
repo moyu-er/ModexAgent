@@ -10,7 +10,6 @@ paths:
   memory_dir: "data/memory"
   inbox_dir: "data/inbox"
   skills_dir: "skills/main"
-  plugins_dir: "plugins"
 
 # ==================== QQ Bot ====================
 qq:
@@ -62,17 +61,34 @@ agent:
 
   max_iterations: 50
 
+  # Tool approval: only tools listed here are subject to approval.
+  # Tools NOT listed are always NORMAL (no approval needed).
+  # enabled: true → approval checking is active
+  # allowed_paths: empty list [] → ALL paths require approval (DANGEROUS)
+  # allowed_paths: ["*"] → NO paths require approval (NORMAL)
+  approval:
+    enabled: true
+    tools:
+      edit_file:
+        allowed_paths: ["./*"]
+      write_file:
+        allowed_paths: ["./*"]
+      shell:
+        allowed_paths: ["*"]
+      search_files:
+        allowed_paths: ["*"]
+      find_files:
+        allowed_paths: ["*"]
+
 # ==================== Multi-Agent ====================
 multi_agent:
   enabled: true
   parent_agent_name: "main"
-  allowed_callers: null
 
   # Subagent sync (quick tasks, returns result immediately)
   subagent_sync:
     enabled: true
     name: "helper-sync"
-    capabilities: []
     system_prompt: |
       你是一个快速执行 Agent，专门处理调用方 Agent 分配的即时子任务。
 
@@ -87,28 +103,17 @@ multi_agent:
       - 你的输出内容会直接返回给调用方，确保结果完整、准确
       - 遇到障碍时尝试替代方案，如实记录尝试过程
     context_strategy: "ephemeral"
-    allowed_tools: null
     denied_tools:
       - "spawn_subagent_sync"
       - "send_message"
       - "send_message_async"
-    allowed_skills: null
-    skill_dirs:
     max_iterations: 10
     max_tools_per_turn: 10
     execution_strategy: "react"
     # Independent tool config (inherits main ToolManager with filtering if not set)
     tools:
-      file_tools:
-        enabled: true
-        allowed_directories:
-          - "."
-      shell_tools:
-        enabled: true
-        timeout: 60
-        restrict_to_workspace: true
-      mcp_tools:
-        enabled: false
+      file_tools: {}
+      shell_tools: {}
 
   # ==================== Peer Agents ====================
   # Key difference from subagent: context_strategy="persistent", MemorySystem-backed
@@ -158,9 +163,6 @@ multi_agent:
           max_messages: 50
 
       context_strategy: "persistent"
-      allowed_tools: null
-      denied_tools:
-      allowed_skills: null
       skill_dirs:
         - "skills/peers/docx"
         - "skills/peers/pdf"
@@ -175,16 +177,8 @@ multi_agent:
 
       # Independent tool config
       tools:
-        file_tools:
-          enabled: true
-          allowed_directories:
-            - "."
-        shell_tools:
-          enabled: true
-          timeout: 60
-          restrict_to_workspace: true
-        mcp_tools:
-          enabled: false
+        file_tools: {}
+        shell_tools: {}
 
     - name: "query-12306"
       role: "travel"
@@ -230,8 +224,6 @@ multi_agent:
           max_messages: 30
 
       context_strategy: "persistent"
-      allowed_tools: null
-      denied_tools:
       max_iterations: 20
       max_tools_per_turn: 5
       execution_strategy: "react"
@@ -254,8 +246,10 @@ memory:
     #   例如 50×0.6=30 — 留 20 条余量防止频繁触发
     # auto_llm_compression: 启用 LLM (SummarizerAgent) 生成 Archive 摘要
     short_term:
-      max_messages: 20
-      keep_ratio: 0.5             # 压缩后保留 max_messages × 此比例
+      max_messages: 60            # 消息数触发阈值 (超过才压缩)
+      max_tokens: 100000          # Token 触发阈值 (超过才压缩)
+      keep_ratio_for_messages: 0.5  # MESSAGE_COUNT 触发时保留 max_messages × 此比例
+      keep_ratio_for_token: 0.5     # TOKEN_PRESSURE 触发时保留当前 token 数 × 此比例
       auto_llm_compression: true
 
     # -- 消息分类策略 (压缩时使用) --
@@ -277,18 +271,17 @@ memory:
       tool_chain_repair: true        # 修复孤儿 tool result / 补全缺失 tool call
       microcompact:
         enabled: true
-        keep_recent: 3              # 保留最近 N 个 tool result 不压缩
+        keep_recent: 5              # 保留最近 N 个 tool result 不压缩
       token_budget:                  # 注入上下文的总 token 上限
         enabled: true
         budget_ratio: 0.5            # llm.max_tokens × 此比例 = 注入上限
-        safety_buffer: 1024
 
     # -- 空闲自动压缩 (session 空闲超过阈值时触发) --
-    auto_compact:
-      enabled: true
-      idle_threshold_seconds: 1800   # 空闲 30 分钟后触发
-      keep_recent_messages: 8        # 压缩后至少保留最近 N 条
-      scan_interval: 300             # 后台扫描间隔 (秒)
+    # auto_compact:
+    #   enabled: true
+    #   idle_threshold_seconds: 1800   # 空闲 30 分钟后触发
+    #   keep_recent_messages: 8        # 压缩后至少保留最近 N 条
+    #   scan_interval: 300             # 后台扫描间隔 (秒)
 
     # -- DreamEngine (Archive → Knowledge 离线整合) --
     # 从 Archive 未处理条目中提取事实, 写入 SOUL/USER/MEMORY
@@ -362,10 +355,6 @@ runtime_safety:
     stream_idle_timeout_seconds: 90.0
     framework_max_retries: 1
     retry_backoff_seconds: [2.0, 8.0]
-  circuit_breaker:
-    enabled: true
-    failure_threshold: 3
-    cooldown_seconds: 120.0
   turn:
     agent_run_timeout_seconds: 180.0
     dispatch_timeout_seconds: 300.0
@@ -390,17 +379,8 @@ mcp:
 
 # ==================== Tools ====================
 tools:
-  file_tools:
-    enabled: true
-    allowed_directories:
-      - "."
-
-  shell_tools:
-    enabled: true
-    timeout: 60
-    working_dir: null
-    enable_safety_guard: false
-    restrict_to_workspace: true
+  # Standard tools for main agent
+  search_tools: {}
 
   # MCP tools for main agent (peers have their own tool configs)
   mcp_tools:

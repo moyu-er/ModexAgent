@@ -97,13 +97,13 @@ async def test_microcompact_skips_short_content():
 
 
 @pytest.mark.asyncio
-async def test_microcompact_skips_non_compactable_tools():
-    """非可压缩工具的 result 不被替换."""
+async def test_microcompact_skips_whitelisted_tools():
+    """白名单中的 tool result 不被替换."""
     messages = [
         {"role": str(MessageRole.ASSISTANT), "content": "call"},
         {"role": str(MessageRole.TOOL), "name": "custom_tool", "content": "A" * 1000, "tool_call_id": "c1"},
     ]
-    gov = MicrocompactGovernance(keep_recent=0, min_chars=500)
+    gov = MicrocompactGovernance(keep_recent=0, min_chars=500, whitelist_tools={"custom_tool"})
     result = await gov.apply(messages)
 
     assert len(result) == 2

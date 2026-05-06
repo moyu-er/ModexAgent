@@ -72,7 +72,7 @@ mypy framework/
 ```
 tests/
 ├── unit/               # Pure unit tests; no external deps; must run offline
-│   ├── core/           ├── agents/          ├── extensions/
+│   ├── core/           ├── agents/          ├── tools/
 │   ├── pipeline/       ├── session/         ├── tools/
 │   ├── memory/         ├── multi_agent/     ├── plugins/
 │   └── utils/
@@ -93,11 +93,11 @@ framework/
 ├── agents/react/          # ReActAgent, ReActGraph, nodes/{start,llm,tool,end}, strategy, state
 ├── hook/                  # Hook system: HookRunner, HookPoint enum, builtin hooks (logging, runtime_context, peer_auto_send, ...)
 ├── interceptor/           # InterceptorChain AOP onion-chain: scoped wrappers, builtin interceptors (control_drain, tool_approval, turn_timeout, ...)
-├── control/               # Runtime control plane: ControlChannel, ControlCommand/Scope, RuntimeStateStore, exceptions
+├── control/               # Runtime control plane: ControlChannel, ControlCommand/Scope, RuntimeStateStore, task_supervision, exceptions
 ├── approval/              # Tool approval: ApprovalState, ApprovalDecision, store, response parsing
 ├── pipeline/              # AgentPipeline, InputAdapter, OutputAdapter
 ├── session/               # AgentSession (request/response mode)
-├── tools/                 # ToolRegistry, executor, MCP integration, standard tools
+├── tools/                 # ToolRegistry, executor, MCP integration, standard tools, FilteredToolManager
 ├── memory/                # Three-layer memory system + redesign docs in design_doc/
 │   ├── core/              # ABCs: MemoryScope, MemoryStorage, ChatMessage, scope metadata
 │   ├── layers/            # Session, Archive, Knowledge layer managers
@@ -109,12 +109,12 @@ framework/
 │   └── inbox/             # MQ system: LocalFileInboxServer, Producer, Consumer, InboxFlushHook
 ├── plugins/               # Plugin system: MemoryProvider ABC, PluginContext, PluginManager
 ├── messaging/             # MessageBroker, BrokerBridgeService
-├── extensions/            # Optional: LiteLLM provider, ChromaDB/FAISS stores, SQLAlchemy sessions
+├── providers/             # LLM provider implementations (LiteLLM)
 ├── sandbox/               # Sandboxed execution: LocalPython, E2B, Docker, Subprocess adapters
 ├── adapters/              # Adapter base classes
 ├── registry/              # Service registry
 ├── security/              # SecurityPolicy, validators, approval handlers
-└── utils/                 # MediaProcessor, tokenizer, helpers
+└── utils/                 # MediaProcessor, tokenizer, context_builder, deduplicator, sanitizer, helpers
 ```
 
 ## Example Project
@@ -212,7 +212,7 @@ Extension points: `MemoryProvider` (add/search/prefetch), Tools, Hooks, SkillSou
 
 ### 8. Skill System
 
-`FileSkillSource` discovers `SKILL.md` from directories → `ProgressiveBuilder` resolves dependencies → `AgentSkillManager` wraps with per-agent white/deny list.
+`FileSkillSource` discovers `SKILL.md` from directories → `ProgressiveBuilder` resolves dependencies → `SkillWhitelistFilter` wraps with per-agent white/deny list.
 
 ### 9. Layered Runtime Model (Hook / Interceptor / Control / Approval)
 

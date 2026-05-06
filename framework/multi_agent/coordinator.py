@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 from .event_bus import TaskEvent, TaskEventBus, TaskEventType
 
 if TYPE_CHECKING:
-    from .intervention import TaskInterventionPolicy
+    from framework.control.task_supervision import TaskSupervisionPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -29,12 +29,12 @@ class TaskRecord:
     source_agent: str | None = None
     target_agent: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-    policies: list[TaskInterventionPolicy] = field(default_factory=list)
+    policies: list[TaskSupervisionPolicy] = field(default_factory=list)
     events: list[TaskEvent] = field(default_factory=list)
     max_events: int = 1000
     expires_at: float | None = None
 
-    def bind_policy(self, policy: TaskInterventionPolicy) -> None:
+    def bind_policy(self, policy: TaskSupervisionPolicy) -> None:
         """绑定策略，同类型替换。"""
         existing = next(
             (i for i, p in enumerate(self.policies) if p.policy_type and p.policy_type == policy.policy_type),
@@ -46,7 +46,7 @@ class TaskRecord:
             self.policies.append(policy)
         self.updated_at = time.time()
 
-    def replace_policies(self, policies: list[TaskInterventionPolicy]) -> None:
+    def replace_policies(self, policies: list[TaskSupervisionPolicy]) -> None:
         """原子替换策略列表。"""
         self.policies = policies
         self.updated_at = time.time()
@@ -71,11 +71,11 @@ class TaskCoordinator(ABC):
         ...
 
     @abstractmethod
-    async def bind_policy(self, task_id: str, policy: TaskInterventionPolicy) -> None:
+    async def bind_policy(self, task_id: str, policy: TaskSupervisionPolicy) -> None:
         ...
 
     @abstractmethod
-    async def replace_policies(self, task_id: str, policies: list[TaskInterventionPolicy]) -> None:
+    async def replace_policies(self, task_id: str, policies: list[TaskSupervisionPolicy]) -> None:
         ...
 
     @abstractmethod
@@ -119,10 +119,10 @@ class NullTaskCoordinator(TaskCoordinator):
     async def register_task(self, task_id: str, record: TaskRecord) -> None:
         pass
 
-    async def bind_policy(self, task_id: str, policy: TaskInterventionPolicy) -> None:
+    async def bind_policy(self, task_id: str, policy: TaskSupervisionPolicy) -> None:
         pass
 
-    async def replace_policies(self, task_id: str, policies: list[TaskInterventionPolicy]) -> None:
+    async def replace_policies(self, task_id: str, policies: list[TaskSupervisionPolicy]) -> None:
         pass
 
     async def get_task_record(self, task_id: str) -> TaskRecord | None:
@@ -191,7 +191,7 @@ class InMemoryTaskCoordinator(TaskCoordinator):
             except Exception:
                 logger.exception("EventBus emit failed during register_task for %s", task_id)
 
-    async def bind_policy(self, task_id: str, policy: TaskInterventionPolicy) -> None:
+    async def bind_policy(self, task_id: str, policy: TaskSupervisionPolicy) -> None:
         rec = self._tasks.get(task_id)
         if rec is None:
             return
@@ -211,7 +211,7 @@ class InMemoryTaskCoordinator(TaskCoordinator):
             except Exception:
                 logger.exception("EventBus emit failed during bind_policy for %s", task_id)
 
-    async def replace_policies(self, task_id: str, policies: list[TaskInterventionPolicy]) -> None:
+    async def replace_policies(self, task_id: str, policies: list[TaskSupervisionPolicy]) -> None:
         rec = self._tasks.get(task_id)
         if rec is None:
             return

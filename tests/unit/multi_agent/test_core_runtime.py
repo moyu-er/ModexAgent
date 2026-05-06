@@ -11,6 +11,15 @@ from framework.core.emitter import AgentResult
 from framework.core.tool_manager import InMemoryToolManager
 from framework.messaging.broker import Address
 from framework.messaging.broker_memory import InMemoryMessageBroker
+from framework.control.task_supervision import (
+    SupervisionAction,
+    SupervisionResult,
+    NoOpSupervisionPolicy,
+    TaskSupervisionPolicy,
+    TaskSupervisor,
+    TimeoutSupervisionPolicy,
+)
+from framework.control.policy_registry import SupervisionPolicyRegistry, SupervisionPolicySpec
 from framework.multi_agent import (
     AgentDescriptor,
     AgentDirectory,
@@ -22,15 +31,9 @@ from framework.multi_agent import (
     DefaultAgentFactory,
     InMemoryTaskCoordinator,
     InterruptibleRunner,
-    InterventionAction,
-    InterventionResult,
     LoggingTaskEventReporter,
-    NoOpInterventionPolicy,
     NullTaskCoordinator,
-    PolicyRegistry,
     ReActStrategy,
-    RPCBroker,
-    RPCTimeoutError,
     SingleTurnStrategy,
     SubagentManager,
     TaskCoordinationConfig,
@@ -39,12 +42,8 @@ from framework.multi_agent import (
     TaskEventBus,
     TaskEventReporter,
     TaskEventType,
-    TaskInterventionPolicy,
-    TaskInterventionPolicySpec,
     TaskProgressHook,
     TaskRecord,
-    TaskSupervisor,
-    TimeoutCancellationPolicy,
 )
 from framework.multi_agent.address import AgentAddress
 
@@ -150,53 +149,6 @@ async def test_agent_pool_get_lock(any_broker):
     assert lock1 is lock2
 
 
-# ── 7. RPC Broker ──
-
-@pytest.mark.asyncio
-async def test_rpc_broker_request_timeout(any_broker):
-    rpc = RPCBroker(any_broker)
-    from framework.multi_agent.envelope import AgentMessageEnvelope
-
-    envelope = AgentMessageEnvelope(
-        payload={"content": "hello"},
-        source=AgentAddress(name="a"),
-        target=AgentAddress(name="b"),
-    )
-    with pytest.raises(RPCTimeoutError):
-        await rpc.request(Address(kind="agent", name="b"), envelope, timeout=0.01)
-
-
-@pytest.mark.asyncio
-async def test_rpc_broker_on_reply_validates_source():
-    broker = InMemoryMessageBroker()
-    rpc = RPCBroker(broker)
-    from framework.multi_agent.envelope import AgentMessageEnvelope
-
-    env = AgentMessageEnvelope(
-        payload={"x": 1},
-        source=AgentAddress(name="expected"),
-        target=AgentAddress(name="caller"),
-        correlation_id="c1",
-    )
-    future = asyncio.get_running_loop().create_future()
-    rpc._pending["c1"] = future
-    rpc._pending_sources["c1"] = AgentAddress(name="expected")
-
-    # forged source
-    forged = AgentMessageEnvelope(
-        payload={"x": 1},
-        source=AgentAddress(name="forged"),
-        target=AgentAddress(name="caller"),
-        correlation_id="c1",
-    )
-    await rpc.on_reply(forged)
-    assert not future.done()
-
-    await rpc.on_reply(env)
-    assert future.done()
-    assert future.result() == env
-
-
 # ── 8. Task Coordinator ──
 
 @pytest.mark.asyncio
@@ -231,8 +183,8 @@ async def test_in_memory_task_coordinator_replace_policy():
     coord = InMemoryTaskCoordinator()
     record = TaskRecord(task_id="t3", task_type="test", created_at=time.time())
     await coord.register_task("t3", record)
-    p1 = TimeoutCancellationPolicy(deadline=time.time() + 10)
-    p2 = TimeoutCancellationPolicy(deadline=time.time() + 20)
+    p1 = TimeoutSupervisionPolicy(deadline=time.time() + 10)
+    p2 = TimeoutSupervisionPolicy(deadline=time.time() + 20)
     await coord.bind_policy("t3", p1)
     await coord.bind_policy("t3", p2)
     rec = await coord.get_task_record("t3")
@@ -253,14 +205,14 @@ async def test_null_task_coordinator_noop():
 
 @pytest.mark.asyncio
 async def test_timeout_cancellation_policy():
-    p = TimeoutCancellationPolicy(deadline=time.time() - 1)
+    p = TimeoutSupervisionPolicy(deadline=time.time() - 1)
     rec = TaskRecord(task_id="t", task_type="t", created_at=0)
     result = await p.check(rec)
-    assert result.action == InterventionAction.CANCEL
+    assert result.action == SupervisionAction.CANCEL
 
-    p2 = TimeoutCancellationPolicy(deadline=time.time() + 100)
+    p2 = TimeoutSupervisionPolicy(deadline=time.time() + 100)
     result2 = await p2.check(rec)
-    assert result2.action == InterventionAction.PASS
+    assert result2.action == SupervisionAction.PASS
 
 
 @pytest.mark.asyncio
@@ -268,7 +220,7 @@ async def test_task_supervisor_cancels_main_task():
     coord = InMemoryTaskCoordinator()
     record = TaskRecord(task_id="task1", task_type="test", created_at=time.time())
     await coord.register_task("task1", record)
-    await coord.bind_policy("task1", TimeoutCancellationPolicy(deadline=time.time() - 0.1))
+    await coord.bind_policy("task1", TimeoutSupervisionPolicy(deadline=time.time() - 0.1))
 
     supervisor = TaskSupervisor(coord, check_interval=0.05)
 
@@ -326,10 +278,10 @@ async def test_task_supervisor_fault_tolerant_to_coordinator_failure():
 
 @pytest.mark.asyncio
 async def test_no_op_intervention_policy():
-    p = NoOpInterventionPolicy()
+    p = NoOpSupervisionPolicy()
     rec = TaskRecord(task_id="t", task_type="t", created_at=0)
     result = await p.check(rec)
-    assert result.action == InterventionAction.PASS
+    assert result.action == SupervisionAction.PASS
 
 
 # ── 10. Event Bus / Reporters ──
@@ -370,11 +322,11 @@ async def test_in_memory_coordinator_event_bus_isolation():
 
 # ── 11. Policy Registry ──
 
-class DummyPolicy(TaskInterventionPolicy):
+class DummyPolicy(TaskSupervisionPolicy):
     policy_type = "dummy"
 
     async def check(self, task_record):
-        return InterventionResult()
+        return SupervisionResult()
 
     @classmethod
     def from_config(cls, config):
@@ -382,13 +334,13 @@ class DummyPolicy(TaskInterventionPolicy):
 
 
 def test_policy_registry_register_and_get():
-    PolicyRegistry.register("dummy", DummyPolicy)
-    assert PolicyRegistry.get("dummy") is DummyPolicy
+    SupervisionPolicyRegistry.register("dummy", DummyPolicy)
+    assert SupervisionPolicyRegistry.get("dummy") is DummyPolicy
 
 
 def test_policy_spec_round_trip():
-    PolicyRegistry.register("dummy2", DummyPolicy)
-    spec = TaskInterventionPolicySpec(policy_type="dummy2", config={})
+    SupervisionPolicyRegistry.register("dummy2", DummyPolicy)
+    spec = SupervisionPolicySpec(policy_type="dummy2", config={})
     policy = spec.to_policy()
     assert isinstance(policy, DummyPolicy)
 
@@ -550,7 +502,7 @@ async def test_default_agent_factory_uses_allowed_skills():
     instance = await factory.create_agent(descriptor, mode="session")
     assert instance.session is not None
     # skill_manager on session should be an AgentSkillManager wrapper
-    from framework.multi_agent.agent_skill_manager import AgentSkillManager
+    from framework.core.skills.filter import SkillWhitelistFilter as AgentSkillManager
     assert isinstance(instance.session._skill_manager, AgentSkillManager)
 
 

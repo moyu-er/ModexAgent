@@ -35,10 +35,10 @@ from ..memory.history import (
 from ..multi_agent import (
     AgentDescriptor,
     AgentMessageRouter,
-    MessageDeduplicator,
-    MultiAgentContextBuilder,
     SubagentManager,
 )
+from ..utils.context_builder import MultiAgentContextBuilder
+from ..utils.deduplicator import MessageDeduplicator
 from ..session.agent_session import _dream_locks
 from .adapters import InputAdapter, OutputAdapter, OutputMessage
 from .approval_renderer import ApprovalRenderer, format_approval_prompt
@@ -157,12 +157,12 @@ class AgentPipeline:
         """
         Args:
             ...
-            safety: P0-a 运行时安全策略（timeout、熔断等），None 则使用默认
+            safety: P0-a 运行时安全策略（timeout、retry 等），None 则使用默认
             approval_workspace: approval 状态持久化目录（默认 .modex_approval）
             user_interface: 审批通知 UI 接口（CLI/IM/Noop），None 则不通知
         """
         if sanitizer is _UNSET:
-            from framework.multi_agent.sanitizer import ContentSanitizer
+            from framework.utils.sanitizer import ContentSanitizer
 
             sanitizer = ContentSanitizer.sanitize
         self.agent = agent

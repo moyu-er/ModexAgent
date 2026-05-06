@@ -4,8 +4,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
+from framework.approval.config import AgentApprovalConfig
 from framework.approval.constants import ApprovalTier
-from framework.interceptor.builtin.tool_approval import ArgumentMatcher, ToolNameMatcher
+from framework.interceptor.builtin.tool_approval import ArgumentMatcher
 
 if TYPE_CHECKING:
     from framework.agents.react.strategy import SuspendStrategy
@@ -19,28 +20,51 @@ class ApprovalClassifier(Protocol):
 
 @dataclass
 class TieredToolApprovalClassifier:
-    hardline: ToolNameMatcher | None = None
-    dangerous: ToolNameMatcher | None = None
-    sensitive: ToolNameMatcher | None = None
+    """Agent-level tool approval classifier driven by path rules.
+
+    Replaces the old name-based matching (hardline/dangerous/sensitive ToolNameMatcher)
+    with a configuration-driven approach:
+    - approval.enabled=False  → all tools NORMAL
+    - tool not in config      → NORMAL
+    - path matches allowed    → NORMAL
+    - path does not match     → DANGEROUS
+    """
+    config: AgentApprovalConfig
     argument_matcher: ArgumentMatcher | None = None
 
     def classify(self, tool_call: ToolCall, ctx: AgentContext[Any]) -> str:
-        tool_name = tool_call.tool_name
+        # 1. Approval disabled for this agent
+        if not self.config.enabled:
+            return ApprovalTier.NORMAL
 
-        if self.hardline is not None and self.hardline.matches(tool_name):
-            return ApprovalTier.HARDLINE
+        # 2. Tool not configured for approval
+        tool_config = self.config.tools.get(tool_call.tool_name)
+        if tool_config is None:
+            return ApprovalTier.NORMAL
 
-        is_dangerous = self.dangerous is not None and self.dangerous.matches(tool_name)
-        if is_dangerous:
-            # Path-based check only applies to tools in the dangerous name set
-            if self.argument_matcher is not None and not self.argument_matcher.is_allowed(tool_call):
-                return ApprovalTier.DANGEROUS
+        # 3. Empty allowed_paths means ALL paths require approval
+        if not tool_config.allowed_paths:
             return ApprovalTier.DANGEROUS
 
-        if self.sensitive is not None and self.sensitive.matches(tool_name):
-            return ApprovalTier.SENSITIVE
+        # 4. Explicit wildcard means NO paths require approval
+        if "*" in tool_config.allowed_paths:
+            return ApprovalTier.NORMAL
 
-        return ApprovalTier.NORMAL
+        # 5. Check path arguments against allowed_paths
+        if self.argument_matcher is not None:
+            args = tool_call.arguments or {}
+            # If the tool has no path arguments, be conservative:
+            # we cannot verify safety, so require approval.
+            if not self.argument_matcher._extract_paths(args):
+                return ApprovalTier.DANGEROUS
+            path_allowed = self.argument_matcher.matches(
+                args,
+                tool_config.allowed_paths,
+            )
+            if path_allowed:
+                return ApprovalTier.NORMAL
+
+        return ApprovalTier.DANGEROUS
 
 
 @dataclass

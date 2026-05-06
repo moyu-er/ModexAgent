@@ -9,6 +9,7 @@ Tests:
 6. ArgumentMatcher edge cases
 """
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -17,11 +18,9 @@ from framework.agents.react.approval import TieredToolApprovalClassifier
 from framework.agents.react.constants import ReActMetaKey, ReActNode, ReActReason
 from framework.agents.react.nodes.start import StartNode
 from framework.agents.react.nodes.tool import ToolNode
-from framework.agents.react.state import (
-    InMemoryTurnResumeStateStore,
-    TurnResumeState,
-)
+from framework.agents.react.state import InMemoryTurnResumeStateStore
 from framework.agents.react.strategy import SuspendResumeStrategy
+from framework.approval.config import AgentApprovalConfig, ToolApprovalConfig
 from framework.approval.constants import ApprovalDecision, ApprovalTier
 from framework.approval.state import ApprovalRequest
 from framework.approval.store import InMemoryApprovalStateStore
@@ -30,12 +29,8 @@ from framework.core.emitter import ToolCall
 from framework.core.graph.interrupt import GraphInterrupt, _current_resume
 from framework.core.tool_manager import InMemoryToolManager, ToolResult
 from framework.core.types import LLMResponse
-from framework.interceptor.builtin.tool_approval import (
-    ArgumentMatcher,
-    ToolNameMatcher,
-)
+from framework.interceptor.builtin.tool_approval import ArgumentMatcher
 from framework.memory.history import ListMessageHistory
-
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -74,9 +69,9 @@ class _CountingHistory(ListMessageHistory):
         super().__init__()
         self.msgs = []
 
-    async def append(self, msg):
-        self.msgs.append(msg)
-        await super().append(msg)
+    async def append(self, message):
+        self.msgs.append(message)
+        await super().append(message)
 
 
 def _make_mock_agent():
@@ -107,127 +102,110 @@ class TestArgumentMatcher:
     """Verify ArgumentMatcher correctly checks paths against allowed directories."""
 
     def test_path_within_allowed(self):
-        matcher = ArgumentMatcher({"/tmp/allowed"}, workspace="/tmp/allowed")
-        tc = ToolCall(
-            tool_name="write_file", call_id="c1",
-            arguments={"path": "/tmp/allowed/subdir/file.txt"},
-        )
-        assert matcher.is_allowed(tc) is True
+        matcher = ArgumentMatcher(project_root=Path("/tmp/allowed"))
+        assert matcher.matches(
+            {"path": "/tmp/allowed/subdir/file.txt"},
+            ["/tmp/allowed/*"],
+        ) is True
 
     def test_path_outside_allowed(self):
-        matcher = ArgumentMatcher({"/tmp/allowed"}, workspace="/tmp/allowed")
-        tc = ToolCall(
-            tool_name="write_file", call_id="c1",
-            arguments={"path": "/etc/hosts"},
-        )
-        assert matcher.is_allowed(tc) is False
+        matcher = ArgumentMatcher(project_root=Path("/tmp/allowed"))
+        assert matcher.matches(
+            {"path": "/etc/hosts"},
+            ["/tmp/allowed/*"],
+        ) is False
 
     def test_no_path_argument(self):
-        matcher = ArgumentMatcher({"/tmp/allowed"}, workspace="/tmp/allowed")
-        tc = ToolCall(
-            tool_name="write_file", call_id="c1",
-            arguments={"content": "hello"},
-        )
-        assert matcher.is_allowed(tc) is True
+        matcher = ArgumentMatcher(project_root=Path("/tmp/allowed"))
+        assert matcher.matches(
+            {"content": "hello"},
+            ["/tmp/allowed/*"],
+        ) is True
 
     def test_relative_path_resolved(self):
-        matcher = ArgumentMatcher({"."}, workspace="/Users/user/project")
-        tc = ToolCall(
-            tool_name="write_file", call_id="c1",
-            arguments={"file_path": "./data/output.txt"},
-        )
-        assert matcher.is_allowed(tc) is True
+        matcher = ArgumentMatcher(project_root=Path("/Users/user/project"))
+        assert matcher.matches(
+            {"file_path": "./data/output.txt"},
+            ["./*"],
+        ) is True
 
-    def test_multiple_allowed_dirs(self):
-        matcher = ArgumentMatcher({"/tmp/a", "/tmp/b"}, workspace="/tmp/a")
-        tc = ToolCall(
-            tool_name="write_file", call_id="c1",
-            arguments={"path": "/tmp/b/file.txt"},
-        )
-        assert matcher.is_allowed(tc) is True
+    def test_multiple_allowed_patterns(self):
+        matcher = ArgumentMatcher(project_root=Path("/tmp/a"))
+        assert matcher.matches(
+            {"path": "/tmp/b/file.txt"},
+            ["/tmp/a/*", "/tmp/b/*"],
+        ) is True
 
 
 class TestPathBasedApprovalClassification:
     """Verify TieredToolApprovalClassifier.classify with ArgumentMatcher."""
 
-    def _make_classifier(self, dangerous_tools, allowed_dirs=None):
-        dangerous = ToolNameMatcher(set(dangerous_tools)) if dangerous_tools else None
-        arg_matcher = ArgumentMatcher(set(allowed_dirs)) if allowed_dirs else None
-        return TieredToolApprovalClassifier(
-            dangerous=dangerous,
-            argument_matcher=arg_matcher,
-        )
+    def _make_classifier(self, tools_config, project_root="/safe"):
+        config = AgentApprovalConfig(enabled=True, tools=tools_config)
+        matcher = ArgumentMatcher(project_root=Path(project_root))
+        return TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
 
-    def test_dangerous_tool_outside_allowed_dir_returns_dangerous(self):
-        classifier = self._make_classifier(
-            dangerous_tools=["write_file", "shell"],
-            allowed_dirs=["/safe"],
-        )
-        tc = ToolCall(
-            tool_name="write_file", call_id="c1",
-            arguments={"path": "/etc/passwd"},
-        )
-        assert classifier.classify(tc, MagicMock()) == ApprovalTier.DANGEROUS
-
-    def test_dangerous_tool_within_allowed_dir_still_dangerous_by_name(self):
-        """Name-based dangerous tools are ALWAYS dangerous, even in safe paths."""
-        classifier = self._make_classifier(
-            dangerous_tools=["write_file", "shell"],
-            allowed_dirs=["/safe"],
-        )
-        tc = ToolCall(
-            tool_name="write_file", call_id="c1",
-            arguments={"path": "/safe/data.txt"},
-        )
-        # write_file matches name-based dangerous → always DANGEROUS
-        assert classifier.classify(tc, MagicMock()) == ApprovalTier.DANGEROUS
-
-    def test_non_dangerous_tool_outside_allowed_dir_is_dangerous(self):
-        """Any tool with path outside allowed dirs → DANGEROUS (not just dangerous-named)."""
-        classifier = self._make_classifier(
-            dangerous_tools=["write_file", "shell"],
-            allowed_dirs=["/safe"],
-        )
-        tc = ToolCall(
-            tool_name="list_dir", call_id="c1",
-            arguments={"path": "/etc"},
-        )
-        assert classifier.classify(tc, MagicMock()) == ApprovalTier.DANGEROUS
-
-    def test_non_dangerous_tool_within_allowed_dir_is_normal(self):
-        """Any tool with path inside allowed dirs AND not name-matched → NORMAL."""
-        classifier = self._make_classifier(
-            dangerous_tools=["write_file", "shell"],
-            allowed_dirs=["/safe"],
-        )
-        tc = ToolCall(
-            tool_name="list_dir", call_id="c1",
-            arguments={"path": "/safe/mydir"},
-        )
+    def test_tool_not_in_config_returns_normal(self):
+        """Tools not listed in approval config are always NORMAL."""
+        classifier = self._make_classifier({})
+        tc = ToolCall(tool_name="list_dir", call_id="c1", arguments={"path": "/etc"})
         assert classifier.classify(tc, MagicMock()) == ApprovalTier.NORMAL
 
-    def test_dangerous_tool_no_argument_matcher_returns_dangerous(self):
-        """Without argument matcher, all dangerous tools require approval."""
-        classifier = self._make_classifier(
-            dangerous_tools=["write_file"],
-            allowed_dirs=None,
-        )
-        tc = ToolCall(
-            tool_name="write_file", call_id="c1",
-            arguments={"path": "/safe/data.txt"},
-        )
+    def test_path_outside_allowed_returns_dangerous(self):
+        """Configured tool with path outside allowed_paths → DANGEROUS."""
+        classifier = self._make_classifier({
+            "write_file": ToolApprovalConfig(allowed_paths=["/safe/*"]),
+        })
+        tc = ToolCall(tool_name="write_file", call_id="c1", arguments={"path": "/etc/passwd"})
         assert classifier.classify(tc, MagicMock()) == ApprovalTier.DANGEROUS
+
+    def test_path_within_allowed_returns_normal(self):
+        """Configured tool with path inside allowed_paths → NORMAL."""
+        classifier = self._make_classifier({
+            "write_file": ToolApprovalConfig(allowed_paths=["/safe/*"]),
+        })
+        tc = ToolCall(tool_name="write_file", call_id="c1", arguments={"path": "/safe/data.txt"})
+        assert classifier.classify(tc, MagicMock()) == ApprovalTier.NORMAL
+
+    def test_empty_allowed_paths_all_dangerous(self):
+        """Configured tool with empty allowed_paths → ALL paths DANGEROUS."""
+        classifier = self._make_classifier({
+            "shell": ToolApprovalConfig(allowed_paths=[]),
+        })
+        tc = ToolCall(tool_name="shell", call_id="c1", arguments={"command": "ls"})
+        assert classifier.classify(tc, MagicMock()) == ApprovalTier.DANGEROUS
+
+    def test_no_path_args_with_empty_allowed_paths_returns_dangerous(self):
+        """Configured tool with no path args and empty allowed_paths → DANGEROUS."""
+        classifier = self._make_classifier({
+            "shell": ToolApprovalConfig(allowed_paths=[]),
+        })
+        tc = ToolCall(tool_name="shell", call_id="c1", arguments={"command": "ls"})
+        assert classifier.classify(tc, MagicMock()) == ApprovalTier.DANGEROUS
+
+    def test_star_allowed_paths_all_normal(self):
+        """Configured tool with ['*'] allowed_paths → ALL paths NORMAL."""
+        classifier = self._make_classifier({
+            "shell": ToolApprovalConfig(allowed_paths=["*"]),
+        })
+        tc = ToolCall(tool_name="shell", call_id="c1", arguments={"command": "rm -rf /"})
+        assert classifier.classify(tc, MagicMock()) == ApprovalTier.NORMAL
 
 
 class TestToolNodePathBasedClassification:
     """Verify ToolNode._classify_all works with path-based approval."""
 
     def test_mixed_path_classification(self):
-        """write_file(safe) → name-matched dangerous; write_file(outside) → path-violation;
-        cat(outside) → path-violation; list_dir(safe) → NORMAL."""
+        """write_file(outside) → DANGEROUS; list_dir(safe) → NORMAL."""
+        config = AgentApprovalConfig(
+            enabled=True,
+            tools={
+                "write_file": ToolApprovalConfig(allowed_paths=["/safe/*"]),
+            },
+        )
         classifier = TieredToolApprovalClassifier(
-            dangerous=ToolNameMatcher({"write_file", "rm"}),
-            argument_matcher=ArgumentMatcher({"/safe"}),
+            config=config,
+            argument_matcher=ArgumentMatcher(project_root=Path("/safe")),
         )
         runtime = MagicMock()
         runtime.approval.classifier = classifier
@@ -236,13 +214,11 @@ class TestToolNodePathBasedClassification:
         ctx = _make_ctx_with_llm(
             tool_calls=[
                 ToolCall(tool_name="write_file", call_id="c1",
-                         arguments={"path": "/safe/data.txt"}),    # name-dangerous → PENDING
+                         arguments={"path": "/safe/data.txt"}),    # in allowed → NORMAL
                 ToolCall(tool_name="write_file", call_id="c2",
-                         arguments={"path": "/etc/hosts"}),        # path-violation → PENDING
+                         arguments={"path": "/etc/hosts"}),        # outside → DANGEROUS
                 ToolCall(tool_name="list_dir", call_id="c3",
-                         arguments={"path": "/etc"}),              # path-violation → PENDING
-                ToolCall(tool_name="list_dir", call_id="c4",
-                         arguments={"path": "/safe/mydir"}),       # safe path, not dangerous → ALLOWED
+                         arguments={"path": "/etc"}),              # not in config → NORMAL
             ],
             runtime=runtime,
         )
@@ -250,10 +226,9 @@ class TestToolNodePathBasedClassification:
             ctx.metadata[ReActMetaKey.LLM_RESPONSE].tool_calls, ctx,
         )
         assert decisions == [
-            ApprovalDecision.PENDING,    # write_file: name-dangerous
-            ApprovalDecision.PENDING,    # write_file: path-violation
-            ApprovalDecision.PENDING,    # list_dir: path-violation (outside /safe)
-            ApprovalDecision.ALLOWED,    # list_dir: within /safe, not name-dangerous
+            ApprovalDecision.ALLOWED,    # write_file: within /safe
+            ApprovalDecision.PENDING,    # write_file: outside /safe
+            ApprovalDecision.ALLOWED,    # list_dir: not in config
         ]
 
 
@@ -262,9 +237,13 @@ class TestMainVsPeerInterceptorSeparation:
 
     def test_main_has_approval_classifier(self):
         """Simulate bot_project's main agent runtime with approval classifier."""
+        config = AgentApprovalConfig(
+            enabled=True,
+            tools={"write_file": ToolApprovalConfig(allowed_paths=["./*"])},
+        )
         classifier = TieredToolApprovalClassifier(
-            dangerous=ToolNameMatcher({"shell", "write_file"}),
-            argument_matcher=ArgumentMatcher({"."}),
+            config=config,
+            argument_matcher=ArgumentMatcher(project_root=Path("/project")),
         )
         runtime = MagicMock()
         runtime.approval.classifier = classifier
@@ -347,9 +326,13 @@ class TestFullApprovalResumeFlow:
         assert resume_state is not None
 
         # Phase 5: Build resume context, simulate pipeline's RESUME_STATE injection
+        config = AgentApprovalConfig(
+            enabled=True,
+            tools={"write_file": ToolApprovalConfig(allowed_paths=["/safe/*"])},
+        )
         classifier = TieredToolApprovalClassifier(
-            dangerous=ToolNameMatcher({"write_file"}),
-            argument_matcher=ArgumentMatcher({"/safe"}),
+            config=config,
+            argument_matcher=ArgumentMatcher(project_root=Path("/safe")),
         )
         runtime = MagicMock()
         runtime.approval.classifier = classifier
@@ -436,9 +419,13 @@ class TestFullApprovalResumeFlow:
         assert resume_state is not None
 
         # Phase 5: Rebuild context with DENY_AS_CANCEL flag
+        config = AgentApprovalConfig(
+            enabled=True,
+            tools={"write_file": ToolApprovalConfig(allowed_paths=["/safe/*"])},
+        )
         classifier = TieredToolApprovalClassifier(
-            dangerous=ToolNameMatcher({"write_file", "shell"}),
-            argument_matcher=ArgumentMatcher({"/safe"}),
+            config=config,
+            argument_matcher=ArgumentMatcher(project_root=Path("/safe")),
         )
         runtime = MagicMock()
         runtime.approval.classifier = classifier

@@ -99,13 +99,13 @@ async def test_multi_turn_triggers_compression_at_threshold():
 
 
 @pytest.mark.asyncio
-async def test_multi_turn_cooldown_prevents_repeated_compression():
-    """After compression, adding a few more messages does not re-trigger."""
+async def test_compression_respects_threshold():
+    """After compression, adding a few more messages does not re-trigger until threshold is exceeded."""
     registry = InMemoryStoreRegistry()
     coordinator = _bot_project_coordinator(max_messages=10)
     system = _bot_project_system(registry, coordinator)
     await system.initialize()
-    ctx = _make_ctx("cooldown")
+    ctx = _make_ctx("threshold")
 
     history = system.create_message_history(ctx)
     # Push past threshold
@@ -116,7 +116,7 @@ async def test_multi_turn_cooldown_prevents_repeated_compression():
     compressed_count = len(await system.get_history(ctx, max_messages=None))
     archive_count_1 = len(await system.get_history_entries(ctx, limit=20))
 
-    # Add only 2 more turns (4 messages) — well within cooldown
+    # Add only 2 more turns (4 messages) — still below max_messages=10 threshold for re-trigger
     for i in range(2):
         await history.append({"role": "user", "content": f"post{i}"})
         await history.append({"role": "assistant", "content": f"post-a{i}"})
@@ -124,15 +124,14 @@ async def test_multi_turn_cooldown_prevents_repeated_compression():
     new_count = len(await system.get_history(ctx, max_messages=None))
     archive_count_2 = len(await system.get_history_entries(ctx, limit=20))
 
-    # Session grew modestly (cooldown prevented aggressive re-compression)
+    # Session grew modestly (threshold prevents re-compression with small delta)
     assert new_count <= compressed_count + 10
-    # Archive may have 0-1 additional entries from cooldown-bounded compression
     assert archive_count_2 <= archive_count_1 + 2
 
 
 @pytest.mark.asyncio
-async def test_second_compression_fires_after_cooldown():
-    """After sufficiently many new messages past cooldown, compression re-fires."""
+async def test_second_compression_fires_when_over_threshold():
+    """After sufficiently many new messages past threshold, compression re-fires."""
     registry = InMemoryStoreRegistry()
     coordinator = _bot_project_coordinator(max_messages=10)
     system = _bot_project_system(registry, coordinator)
@@ -147,7 +146,7 @@ async def test_second_compression_fires_after_cooldown():
     archive_first = len(await system.get_history_entries(ctx, limit=20))
     assert archive_first > 0, "first compression should produce archive"
 
-    # Add enough new messages to exceed threshold again (past cooldown)
+    # Add enough new messages to exceed threshold again
     for i in range(30):
         await history.append({"role": "user", "content": f"round2-{i}"})
 
@@ -315,33 +314,6 @@ async def test_injection_excludes_empty_archive_markers():
     assert "no semantic content" not in content
 
 
-@pytest.mark.asyncio
-async def test_injection_includes_compression_summary():
-    """After compression, the summary is injected into LLM context."""
-    from framework.memory.injection import FullInjectionPolicy
-
-    registry = InMemoryStoreRegistry()
-    mock = MockSummarizerStrategy("[MOCK] built the login page")
-    coordinator = _bot_project_coordinator(max_messages=5, summary=mock)
-    system = _bot_project_system(registry, coordinator)
-    await system.initialize()
-    ctx = _make_ctx("compression-inject")
-
-    history = system.create_message_history(ctx)
-    for i in range(12):
-        await history.append({"role": "user", "content": f"q{i}"})
-        await history.append({"role": "assistant", "content": f"a{i}"})
-
-    bundle = await FullInjectionPolicy(max_history_entries=10).assemble(
-        context=ctx, memory_system=system, query="",
-    )
-    content = "\n".join(s.content for s in bundle.system_sections)
-    # Compression summary should appear in injected sections
-    assert "[MOCK] built the login page" in content or \
-        any("[MOCK]" in s.content for s in bundle.system_sections), \
-        "compression summary should be in injected context"
-
-
 # ── Long-term knowledge: full update (existing + new) ─────────────────────
 
 
@@ -415,7 +387,7 @@ async def test_archive_merges_multiple_compression_rounds():
         await history.append({"role": "user", "content": f"r1-{i}"})
         await history.append({"role": "assistant", "content": f"r1-a{i}"})
 
-    # Round 2: add many more messages (past cooldown) to trigger again
+    # Round 2: add many more messages to trigger again
     for i in range(40):
         await history.append({"role": "user", "content": f"r2-{i}"})
 
@@ -453,7 +425,7 @@ async def test_empty_session_no_compression():
 
 @pytest.mark.asyncio
 async def test_session_only_messages_no_duplicate_compression_trigger():
-    """Compression does not fire on every single message — cooldown works."""
+    """Compression does not fire on every single message — threshold-based trigger works."""
     registry = InMemoryStoreRegistry()
     coordinator = _bot_project_coordinator(max_messages=10)
     system = _bot_project_system(registry, coordinator)
@@ -469,6 +441,96 @@ async def test_session_only_messages_no_duplicate_compression_trigger():
     # After 50 messages with max=10, should compress to ≤15
     assert remaining <= 20, f"should compress, got {remaining}"
     assert remaining > 0, "but not empty"
+
+
+# ── Archive injection: distinguishable markers ────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_archive_injection_has_distinguishable_markers():
+    """Multiple archive entries are injected with clear per-entry markers."""
+    from framework.memory.injection import FullInjectionPolicy
+
+    registry = InMemoryStoreRegistry()
+    system = _bot_project_system(registry)
+    await system.initialize()
+    ctx = _make_ctx("archive-markers")
+
+    await system._layers.archive.append(ctx, ArchiveEntry(
+        summary="first session: discussed login bug",
+    ))
+    await system._layers.archive.append(ctx, ArchiveEntry(
+        summary="second session: fixed auth flow",
+    ))
+    await system._layers.archive.append(ctx, ArchiveEntry(
+        summary="third session: added JWT tests",
+    ))
+
+    bundle = await FullInjectionPolicy(max_history_entries=5).assemble(
+        context=ctx, memory_system=system, query="",
+    )
+    content = "\n".join(s.content for s in bundle.system_sections)
+
+    assert "[Historical Record 1]" in content
+    assert "[Historical Record 2]" in content
+    assert "[Historical Record 3]" in content
+    assert "login bug" in content
+    assert "auth flow" in content
+    assert "JWT tests" in content
+
+
+@pytest.mark.asyncio
+async def test_archive_injection_includes_timestamp_when_available():
+    """Archive entries with created_at show timestamps in markers."""
+    from framework.memory.injection import FullInjectionPolicy
+    from datetime import datetime
+
+    registry = InMemoryStoreRegistry()
+    system = _bot_project_system(registry)
+    await system.initialize()
+    ctx = _make_ctx("archive-timestamps")
+
+    await system._layers.archive.append(ctx, ArchiveEntry(
+        summary="older discussion",
+        created_at=datetime(2026, 5, 1, 10, 30),
+    ))
+    await system._layers.archive.append(ctx, ArchiveEntry(
+        summary="recent discussion",
+        created_at=datetime(2026, 5, 6, 14, 45),
+    ))
+
+    bundle = await FullInjectionPolicy(max_history_entries=5).assemble(
+        context=ctx, memory_system=system, query="",
+    )
+    content = "\n".join(s.content for s in bundle.system_sections)
+
+    assert "2026-05-01 10:30" in content
+    assert "2026-05-06 14:45" in content
+    assert "[Historical Record 1]" in content
+    assert "[Historical Record 2]" in content
+
+
+@pytest.mark.asyncio
+async def test_build_system_prompt_has_distinguishable_archive_markers():
+    """DefaultMemorySystem.build_system_prompt also uses per-entry markers."""
+    registry = InMemoryStoreRegistry()
+    system = _bot_project_system(registry)
+    await system.initialize()
+    ctx = _make_ctx("system-prompt-markers")
+
+    await system._layers.archive.append(ctx, ArchiveEntry(
+        summary="project started with FastAPI",
+    ))
+    await system._layers.archive.append(ctx, ArchiveEntry(
+        summary="switched to SQLAlchemy",
+    ))
+
+    prompt = await system.build_system_prompt(ctx, max_history_entries=5)
+
+    assert "[Historical Record 1]" in prompt
+    assert "[Historical Record 2]" in prompt
+    assert "FastAPI" in prompt
+    assert "SQLAlchemy" in prompt
 
 
 # ── Retrieval: archive search by query ────────────────────────────────────

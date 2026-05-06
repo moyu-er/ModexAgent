@@ -30,11 +30,21 @@ class SessionMemoryManager(ABC):
         pass
 
     @abstractmethod
-    async def get_visible_messages(
+    async def get_recent_messages(
         self,
         context: MemoryContext,
         limit: int | None = None,
     ) -> list[ChatMessage]:
+        """Return the most recent messages, up to *limit*.
+
+        This is a **windowed view** intended for LLM context injection and
+        external read APIs that need bounded output.  When *limit* is None,
+        the implementation's configured ``max_messages`` is used.
+
+        For operations that require the **complete** message list — compression
+        triggers, archiving, summarisation, decision-making — use
+        ``get_all_messages()`` instead.
+        """
         pass
 
     @abstractmethod

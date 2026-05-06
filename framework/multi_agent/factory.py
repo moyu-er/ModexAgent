@@ -17,16 +17,17 @@ from framework.core.runtime_context import RuntimeContextManager
 from framework.core.tool_manager import InMemoryToolManager
 
 try:
-    from framework.extensions.llm import LiteLLMProvider
+    from framework.providers import LiteLLMProvider
 except ImportError:
     LiteLLMProvider = None  # type: ignore[misc,assignment]
 
 from framework.hook import HookRunner
 from framework.hook.builtin import InboxFlushHook
 
-from .agent_skill_manager import AgentSkillManager
+from framework.core.skills.manager import SkillManager
+from framework.core.skills.filter import SkillWhitelistFilter
 from .descriptor import AgentDescriptor, AgentInstance
-from .filtered_tool_manager import FilteredToolManager
+from framework.tools.filter import FilteredToolManager
 from .inbox.consumer import InboxConsumer
 from .inbox.producer import InboxProducer
 from .inbox.server import InboxServer
@@ -50,7 +51,7 @@ class AgentFactory(ABC):
         context_manager: ContextManager | None = None,
         broker: Any | None = None,
         tool_manager: InMemoryToolManager | None = None,
-        skill_manager: AgentSkillManager | None = None,
+        skill_manager: SkillManager | None = None,
         sanitizer: Any | None = None,
         command_interceptor: Any | None = None,
         subagent_manager: Any | None = None,
@@ -69,7 +70,7 @@ class DefaultAgentFactory(AgentFactory):
         self,
         default_llm_provider: Any | None = None,
         default_tool_manager: InMemoryToolManager | None = None,
-        skill_manager: AgentSkillManager | None = None,
+        skill_manager: SkillManager | None = None,
         sanitizer: Any | None = None,
         command_interceptor: Any | None = None,
         subagent_manager: Any | None = None,
@@ -154,7 +155,7 @@ class DefaultAgentFactory(AgentFactory):
         context_manager: ContextManager | None = None,
         broker: Any | None = None,
         tool_manager: InMemoryToolManager | None = None,
-        skill_manager: Any | None = None,
+        skill_manager: SkillManager | None = None,
         sanitizer: Any | None = None,
         command_interceptor: Any | None = None,
         subagent_manager: Any | None = None,
@@ -179,7 +180,7 @@ class DefaultAgentFactory(AgentFactory):
         # Skill manager filtering (wrap if skills configured)
         skill_mgr = skill_manager or self._skill_manager
         if descriptor.allowed_skills is not None and skill_mgr is not None:
-            skill_mgr = AgentSkillManager(
+            skill_mgr = SkillWhitelistFilter(
                 base=skill_mgr,
                 allowed_skills=descriptor.allowed_skills,
             )

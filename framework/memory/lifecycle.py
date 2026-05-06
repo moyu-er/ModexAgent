@@ -322,7 +322,7 @@ class DefaultMemoryMaintenancePolicy(MemoryMaintenancePolicy):
 
 
 class SessionRetentionPolicy(ABC):
-    """Session layer aging: compression trigger, cooldown, checkpoint expiry."""
+    """Session layer aging: compression trigger, checkpoint expiry."""
 
     @abstractmethod
     async def should_compact(
