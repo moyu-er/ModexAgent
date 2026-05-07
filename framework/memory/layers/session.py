@@ -148,14 +148,16 @@ class ScopedSessionMemoryManager(SessionMemoryManager):
             payload = raw
         else:
             return None
-        return payload.get("checkpoint_id")
+        checkpoint_id = payload.get("checkpoint_id")
+        return checkpoint_id if isinstance(checkpoint_id, str) else None
 
     async def get_last_recovered_checkpoint_id(
         self, context: MemoryContext
     ) -> str | None:
         """Return the checkpoint_id of the last successfully recovered checkpoint."""
         storage = await self._storage_factory(context)
-        return await storage.get(self._config.last_recovered_key)
+        checkpoint_id = await storage.get(self._config.last_recovered_key)
+        return checkpoint_id if isinstance(checkpoint_id, str) else None
 
     async def set_last_recovered_checkpoint_id(
         self, context: MemoryContext, checkpoint_id: str

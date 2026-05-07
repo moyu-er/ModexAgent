@@ -48,10 +48,12 @@ from framework.interceptor.builtin.tool_approval import ArgumentMatcher
 from framework.interceptor.chain import InterceptorChain
 from framework.memory.context_governance import (
     CompositeGovernance,
-    MicrocompactGovernance,
-    TokenBudgetGovernance,
+    FinalContextLegalityGovernance,
+    LossyContentCompactionGovernance,
+    PriorityBudgetGovernance,
     ToolChainRepairGovernance,
 )
+from framework.memory.retention import DefaultMessageRetentionPolicy
 from framework.memory.core.scope import MemoryContext
 from framework.memory.injection import FullInjectionPolicy
 from framework.memory.system import (
@@ -542,6 +544,7 @@ class BotService(AgentBuilderMixin):
             print("[OK] Main agent pool pipeline injected with ReActRuntime")
 
         # Register subagents as residents (pool mode requires all targets to be resident)
+        subagent_memory_config = self.config.get("memory", {}).get("subagents", {})
         for sub_key in ("subagent_sync", "subagent"):
             sub_config = multi_agent_config.get(sub_key, {})
             if not sub_config or not sub_config.get("enabled", True):
@@ -549,6 +552,10 @@ class BotService(AgentBuilderMixin):
             descriptor, _, _ = await self._build_subagent_descriptor(sub_config)
             if descriptor.address.name != parent_agent_name:
                 await self.agent_pool.register_resident(descriptor)
+                # Inject lightweight governance into subagent pipeline
+                sub_instance = self.agent_pool.get(descriptor.address.name)
+                if sub_instance and sub_instance.pipeline:
+                    sub_instance.pipeline.governance = self._build_peer_governance(subagent_memory_config)
                 print(f"[OK] Subagent '{descriptor.address.name}' registered as resident")
 
         # Initialize peer agents
@@ -815,11 +822,16 @@ class BotService(AgentBuilderMixin):
     # Memory helpers
     # ------------------------------------------------------------------ #
 
+    def _build_retention_policy(self, main_memory_config: dict[str, Any]) -> DefaultMessageRetentionPolicy:
+        return DefaultMessageRetentionPolicy.from_config(main_memory_config.get("retention", {}))
+
     def _build_governance(self) -> Any | None:
         """Build ContextGovernance chain from config."""
         memory_config = self.config.get("memory", {})
         main_memory = memory_config.get("main", {})
         gov_config = main_memory.get("governance", {})
+        retention_config = main_memory.get("retention", {})
+        anchor_config = retention_config.get("anchors", {})
         if not gov_config.get("enabled", True):
             return None
 
@@ -827,28 +839,35 @@ class BotService(AgentBuilderMixin):
         if gov_config.get("tool_chain_repair", True):
             strategies.append(ToolChainRepairGovernance())
 
-        microcompact = gov_config.get("microcompact", {})
-        if microcompact.get("enabled", True):
-            strategies.append(
-                MicrocompactGovernance(
-                    keep_recent=microcompact.get("keep_recent", 10),
-                )
-            )
+        retention_policy = self._build_retention_policy(main_memory)
 
         token_budget = gov_config.get("token_budget", {})
         if token_budget.get("enabled", True):
             llm_max_tokens = self.config.get("llm", {}).get("max_tokens", 80000)
             budget_ratio = token_budget.get("budget_ratio", 0.5)
-            max_tokens = int(llm_max_tokens * budget_ratio)
-            cap = 128000
-            if max_tokens > cap:
-                max_tokens = cap
+            max_tokens = min(int(llm_max_tokens * budget_ratio), 128000)
             strategies.append(
-                TokenBudgetGovernance(
+                PriorityBudgetGovernance(
                     max_tokens=max_tokens,
                     safety_buffer=token_budget.get("safety_buffer", 1024),
+                    retention_policy=retention_policy,
+                    min_recent_user_turns=anchor_config.get("min_recent_user_turns", 1),
+                    min_recent_agent_turns=anchor_config.get("min_recent_agent_turns", 1),
                 )
             )
+
+        lossy_config = gov_config.get("lossy_compaction", {})
+        if lossy_config.get("enabled", True):
+            strategies.append(
+                LossyContentCompactionGovernance(
+                    tool_result_head_chars=lossy_config.get("tool_result_head_chars", 1200),
+                    assistant_head_chars=lossy_config.get("assistant_head_chars", 1200),
+                    agent_head_chars=lossy_config.get("agent_head_chars", 2000),
+                    user_head_chars=lossy_config.get("user_head_chars", 4000),
+                )
+            )
+
+        strategies.append(FinalContextLegalityGovernance())
 
         if not strategies:
             return None
@@ -943,21 +962,23 @@ class BotService(AgentBuilderMixin):
         else:
             compaction = ConservativeCompactionPolicy(high_value_tools=high_value_tools)
 
+        retention_policy = self._build_retention_policy(main_memory_config)
+
         # Build boundary policy from config
+        boundary = None
         boundary_name = compaction_config.get("boundary", "tool_chain")
         if boundary_name == "user_turn_tool_chain":
             boundary = UserTurnToolChainBoundaryPolicy()
-        else:
+        elif boundary_name == "tool_chain":
             boundary = ToolChainBoundaryPolicy()
 
+        # Let DefaultMemoryCompressionCoordinator use its own defaults for
+        # numeric thresholds; only pass the strategy objects built from config.
         return DefaultMemoryCompressionCoordinator(
-            max_messages=auto_compact.get("max_messages", short_term.get("max_messages", 100)),
-            max_tokens=auto_compact.get("max_tokens", short_term.get("max_tokens", 8000)),
-            keep_ratio_for_messages=short_term.get("keep_ratio_for_messages", 0.5),
-            keep_ratio_for_token=short_term.get("keep_ratio_for_token", 0.5),
             summary=summary_strategy,
             compaction=compaction,
             boundary=boundary,
+            retention=retention_policy,
         )
 
     async def _init_auto_compact(

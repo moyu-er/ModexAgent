@@ -68,7 +68,7 @@ class SummarizerStrategy(SummaryStrategy):
         # Delegate to SummarizerAgent
         summary = await self.agent.summarize(
             formatted,
-            prompt=SummarizerAgent.PROMPT_COMPRESSION,
+            prompt=SummarizerAgent.PROMPT_MEMORY_COMPRESSION,
             max_tokens=self.max_summary_length,
         )
 

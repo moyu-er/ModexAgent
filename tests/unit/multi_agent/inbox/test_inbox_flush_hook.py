@@ -35,7 +35,7 @@ class TestInboxFlushHook:
         assert len(msgs) == 1
         assert msgs[0]["role"] == "agent"
         assert msgs[0]["source_agent"] == "helper"
-        assert "done" in msgs[0]["content"]
+        assert msgs[0]["content"] == "[From Agent helper]\ndone"
         assert msgs[0].get("meta_inbox") is True
 
     async def test_before_turn_no_session_id(self):

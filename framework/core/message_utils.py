@@ -23,6 +23,32 @@ AGENT_COMMUNICATION_SYSTEM_NOTE = (
 )
 
 
+def agent_source_prefix(source_agent: str) -> str:
+    return f"[From Agent {source_agent}]\n"
+
+
+def ensure_agent_source_prefix(
+    content: str | list[dict[str, Any]] | None,
+    source_agent: str,
+) -> str | list[dict[str, Any]]:
+    prefix = agent_source_prefix(source_agent)
+    if content is None:
+        return prefix
+    if isinstance(content, list):
+        new_content = copy.deepcopy(content)
+        for block in new_content:
+            if block.get("type") == "text":
+                text = str(block.get("text", ""))
+                if not text.startswith(prefix):
+                    block["text"] = prefix + text
+                return new_content
+        new_content.insert(0, {"type": "text", "text": prefix})
+        return new_content
+    if isinstance(content, str) and content.startswith(prefix):
+        return content
+    return prefix + str(content)
+
+
 def _msg_to_dict(msg: ChatMessage | dict[str, Any]) -> dict[str, Any]:
     """将 ChatMessage 或 dict 统一转换为 dict。"""
     if isinstance(msg, ChatMessage):
@@ -61,32 +87,12 @@ def normalize_agent_messages_for_llm(
             continue
 
         has_agent = True
-        source_agent = msg_dict.get("source_agent", "unknown")
         original_content = msg_dict.get("content", "")
 
         converted_msg: dict[str, Any] = {
             "role": MessageRole.USER,
+            "content": original_content,
         }
-
-        # 支持多模态 content（list[dict]）和纯文本 content（str）
-        if isinstance(original_content, list):
-            # 在第一个 text block 前添加前缀，如果没有 text block 则在开头添加
-            prefix = f"[From Agent {source_agent}]\n"
-            new_content: list[dict[str, Any]] = []
-            prefix_added = False
-            for block in original_content:
-                if not prefix_added and block.get("type") == "text":
-                    new_block = copy.deepcopy(block)  # 深拷贝避免嵌套 dict 污染
-                    new_block["text"] = prefix + new_block.get("text", "")
-                    new_content.append(new_block)
-                    prefix_added = True
-                else:
-                    new_content.append(copy.deepcopy(block))
-            if not prefix_added:
-                new_content.insert(0, {"type": "text", "text": prefix})
-            converted_msg["content"] = new_content
-        else:
-            converted_msg["content"] = f"[From Agent {source_agent}]\n{original_content}"
 
         # 保留 meta_* 字段用于溯源
         for key, value in msg_dict.items():

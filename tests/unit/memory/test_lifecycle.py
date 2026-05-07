@@ -7,11 +7,10 @@ DreamEngine cursor semantics, and ConsolidationEngine ABC.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
-from datetime import datetime
 
 from framework.core.types import MessageRole
 from framework.memory.core.layers import MemoryLayerSet
@@ -109,13 +108,16 @@ class TestDefaultMemoryLifecyclePolicy:
         coordinator.maybe_compress.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_on_messages_added_skips_when_no_archive(self):
+    async def test_on_messages_added_triggers_compression_even_without_archive(self):
+        """Peer/subagent use SessionOnlyCommitPolicy — compression runs without archive."""
         coordinator = AsyncMock()
         policy = DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator)
         ctx = MemoryContext(session_id="s1", user_id="u1")
         layers = MemoryLayerSet(session=AsyncMock(), archive=None)
         await policy.on_messages_added(ctx, layers)
-        coordinator.maybe_compress.assert_not_called()
+        coordinator.maybe_compress.assert_called_once_with(
+            session=layers.session, archive=None, context=ctx,
+        )
 
     @pytest.mark.asyncio
     async def test_on_messages_added_handles_coordinator_failure(self):
@@ -125,6 +127,7 @@ class TestDefaultMemoryLifecyclePolicy:
         ctx = MemoryContext(session_id="s1", user_id="u1")
         layers = MemoryLayerSet(session=AsyncMock(), archive=AsyncMock())
         await policy.on_messages_added(ctx, layers)
+
 
     @pytest.mark.asyncio
     async def test_on_messages_added_skips_when_no_coordinator(self):
@@ -285,7 +288,7 @@ class TestDefaultMemoryMaintenancePolicy:
     @pytest.mark.asyncio
     async def test_scan_once_knowledge_eviction_prunes_stale_files(self):
         import time
-        from datetime import datetime, timedelta, UTC
+        from datetime import UTC, datetime, timedelta
 
         registry = InMemoryStoreRegistry()
         layer_set = MemoryLayerFactory.single_user(registry=registry)

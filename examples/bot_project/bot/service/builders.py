@@ -53,8 +53,11 @@ class AgentBuilderMixin:
 
         from framework.tools.standard import (
             EditFileTool,
+            FindFilesTool,
             ListDirTool,
             ReadFileTool,
+            SearchFilesTool,
+            ShellTool,
             WriteFileTool,
         )
 
@@ -70,8 +73,6 @@ class AgentBuilderMixin:
 
         shell_tools_config = tools_config.get("shell_tools", {})
         if shell_tools_config.get("enabled", True):
-            from framework.tools.standard import ShellTool
-
             shell_tool = ShellTool(
                 timeout=shell_tools_config.get("timeout", 60),
                 enable_safety_guard=shell_tools_config.get("enable_safety_guard", True),
@@ -80,8 +81,7 @@ class AgentBuilderMixin:
             print("   [OK] Shell tool registered (shell)")
 
         search_tools_config = tools_config.get("search_tools", {})
-        if search_tools_config.get("enabled", "search_tools" in tools_config):
-            from framework.tools.standard import SearchFilesTool, FindFilesTool
+        if search_tools_config.get("enabled", True):
             self.tool_manager.register(SearchFilesTool())
             self.tool_manager.register(FindFilesTool())
             print("   [OK] Search tools registered (search_files, find_files)")
@@ -202,8 +202,11 @@ class AgentBuilderMixin:
 
         from framework.tools.standard import (
             EditFileTool,
+            FindFilesTool,
             ListDirTool,
             ReadFileTool,
+            SearchFilesTool,
+            ShellTool,
             WriteFileTool,
         )
 
@@ -214,8 +217,6 @@ class AgentBuilderMixin:
             tm.register(EditFileTool())
             tm.register(ListDirTool())
 
-        from framework.tools.standard import ShellTool
-
         shell_tools_config = tools_config.get("shell_tools", {})
         if shell_tools_config.get("enabled", "shell_tools" in tools_config):
             tm.register(ShellTool(
@@ -225,7 +226,6 @@ class AgentBuilderMixin:
 
         search_tools_config = tools_config.get("search_tools", {})
         if search_tools_config.get("enabled", "search_tools" in tools_config):
-            from framework.tools.standard import SearchFilesTool, FindFilesTool
             tm.register(SearchFilesTool())
             tm.register(FindFilesTool())
 
@@ -300,23 +300,127 @@ class AgentBuilderMixin:
     def _session_only_memory_config(self, section: dict[str, Any]) -> MemoryLayerConfigSet:
         short_term = section.get("short_term", {})
         return MemoryLayerConfigSet(
-            session=SessionMemoryConfig(max_messages=short_term.get("max_messages", 50)),
+            session=SessionMemoryConfig(
+                max_messages=short_term.get("max_messages", 50),
+            ),
             archive=None,
             knowledge=None,
         )
+
+    def _merge_peer_memory_config(self, peer_config: dict[str, Any]) -> dict[str, Any]:
+        """Merge global peer memory config with a peer-specific override."""
+        memory_config = peer_config.get("memory", {})
+        global_peer_memory = self.config.get("memory", {}).get("peers", {})
+        merged_memory = {
+            **global_peer_memory,
+            **{key: value for key, value in memory_config.items() if key != "enabled"},
+        }
+        for section_name in ("short_term", "governance"):
+            if section_name in global_peer_memory or section_name in memory_config:
+                merged_memory[section_name] = {
+                    **global_peer_memory.get(section_name, {}),
+                    **memory_config.get(section_name, {}),
+                }
+        if "governance" in merged_memory:
+            global_governance = global_peer_memory.get("governance", {})
+            peer_governance = memory_config.get("governance", {})
+            if "token_budget" in global_governance or "token_budget" in peer_governance:
+                merged_memory["governance"]["token_budget"] = {
+                    **global_governance.get("token_budget", {}),
+                    **peer_governance.get("token_budget", {}),
+                }
+        return merged_memory
+
+    def _build_peer_compression_coordinator(
+        self, memory_section: dict[str, Any],
+    ) -> Any:
+        """Build a session-only compression coordinator for peer/subagent.
+
+        Uses the same trigger/plan/keep logic as main agent, but skips
+        LLM summary generation and archive writes.
+        """
+        from framework.memory.compaction.policy import ConservativeCompactionPolicy
+        from framework.memory.compression.planner import PriorityCompressionKeepPlanner
+        from framework.memory.compression.policies import (
+            DefaultMemoryCompressionCoordinator,
+            HeuristicSummaryStrategy,
+            SessionOnlyCommitPolicy,
+        )
+        from framework.memory.retention import DefaultMessageRetentionPolicy
+
+        short_term = memory_section.get("short_term", {})
+        return DefaultMemoryCompressionCoordinator(
+            max_messages=short_term.get("max_messages", 50),
+            max_tokens=short_term.get("max_tokens", 8000),
+            keep_ratio_for_messages=short_term.get("keep_ratio_for_messages", 0.5),
+            keep_ratio_for_token=short_term.get("keep_ratio_for_token", 0.5),
+            summary=HeuristicSummaryStrategy(),
+            compaction=ConservativeCompactionPolicy(),
+            retention=DefaultMessageRetentionPolicy(),
+            keep_planner=PriorityCompressionKeepPlanner(),
+            commit=SessionOnlyCommitPolicy(),
+        )
+
+    def _build_peer_governance(
+        self, memory_section: dict[str, Any] | None = None,
+    ) -> Any | None:
+        """Build lightweight ContextGovernance for peer/subagent pipelines.
+
+        Lighter than main agent: ToolChainRepair + PriorityBudget + FinalContextLegality.
+        No LossyContentCompaction — peer/subagent already have small session windows.
+        """
+        from framework.memory.context_governance import (
+            CompositeGovernance,
+            FinalContextLegalityGovernance,
+            PriorityBudgetGovernance,
+            ToolChainRepairGovernance,
+        )
+        from framework.memory.retention import DefaultMessageRetentionPolicy
+
+        gov_config = (memory_section or {}).get("governance", {})
+        if not gov_config.get("enabled", True):
+            return None
+
+        strategies: list[Any] = []
+        if gov_config.get("tool_chain_repair", True):
+            strategies.append(ToolChainRepairGovernance())
+
+        token_budget = gov_config.get("token_budget", {})
+        if token_budget.get("enabled", True):
+            llm_max_tokens = self.config.get("llm", {}).get("max_tokens", 80000)
+            budget_ratio = token_budget.get("budget_ratio", 0.3)
+            max_tokens = min(int(llm_max_tokens * budget_ratio), 64000)
+            strategies.append(
+                PriorityBudgetGovernance(
+                    max_tokens=max_tokens,
+                    safety_buffer=token_budget.get("safety_buffer", 512),
+                    retention_policy=DefaultMessageRetentionPolicy(),
+                    min_recent_user_turns=1,
+                    min_recent_agent_turns=1,
+                )
+            )
+
+        strategies.append(FinalContextLegalityGovernance())
+        return CompositeGovernance(strategies)
 
     async def _create_subagent_memory(
         self,
         sub_name: str,
         base_system_prompt: str = "",
     ) -> ContextManager:
+        from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
+
         memory_config = self.config.get("memory", {}).get("subagents", {})
         sub_dir = self._resolve_path("memory_dir", "data/memory") / "subagents" / sub_name
         sub_dir.mkdir(parents=True, exist_ok=True)
+        coordinator = self._build_peer_compression_coordinator(memory_config)
         memory_system = create_memory_system(
             workspace=sub_dir,
             config=self._session_only_memory_config(memory_config),
             session_only=True,
+            lifecycle_policy=DefaultMemoryLifecyclePolicy(
+                compression_coordinator=coordinator,
+            ),
         )
         await memory_system.initialize()
         _pi = getattr(self, "plugin_integration", None)
@@ -342,23 +446,19 @@ class AgentBuilderMixin:
             from framework.core.context import InMemoryContextManager
             return InMemoryContextManager(base_system_prompt=system_prompt)
 
-        global_peer_memory = self.config.get("memory", {}).get("peers", {})
-        merged_memory = {
-            **global_peer_memory,
-            **{key: value for key, value in memory_config.items() if key != "enabled"},
-        }
-        if "short_term" in global_peer_memory or "short_term" in memory_config:
-            merged_memory["short_term"] = {
-                **global_peer_memory.get("short_term", {}),
-                **memory_config.get("short_term", {}),
-            }
-
+        merged_memory = self._merge_peer_memory_config(peer_config)
         peer_dir = self._resolve_path("memory_dir", "data/memory") / "peers" / peer_name
         peer_dir.mkdir(parents=True, exist_ok=True)
+        from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
+
+        coordinator = self._build_peer_compression_coordinator(merged_memory)
         memory_system = create_memory_system(
             workspace=peer_dir,
             config=self._session_only_memory_config(merged_memory),
             session_only=True,
+            lifecycle_policy=DefaultMemoryLifecyclePolicy(
+                compression_coordinator=coordinator,
+            ),
         )
         await memory_system.initialize()
         _pi = getattr(self, "plugin_integration", None)
@@ -637,6 +737,12 @@ class AgentBuilderMixin:
                 skill_manager=skill_manager,
                 output_adapter=NullOutputAdapter(),
             )
+
+            # 6.5 Inject lightweight governance into peer pipeline
+            instance = self.agent_pool.get(peer_name)
+            if instance and instance.pipeline:
+                merged_memory = self._merge_peer_memory_config(peer_config)
+                instance.pipeline.governance = self._build_peer_governance(merged_memory)
 
             # 7. Clear context_manager_factory so peer uses its own context manager
             instance = self.agent_pool.get(peer_name)

@@ -72,7 +72,7 @@ class DefaultMemoryLifecyclePolicy(MemoryLifecyclePolicy):
     ) -> None:
         """Trigger compression check after messages are added."""
         _ = revision
-        if self._coordinator is not None and layers.archive is not None:
+        if self._coordinator is not None:
             try:
                 await self._coordinator.maybe_compress(
                     session=layers.session, archive=layers.archive, context=context,

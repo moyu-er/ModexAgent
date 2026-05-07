@@ -18,15 +18,22 @@ from framework.memory.compaction.policy import (
     MessageCompactionDecision,
     MessageCompactionPolicy,
 )
+from framework.memory.compression.planner import (
+    CompressionBudget,
+    CompressionKeepPlanner,
+    PriorityCompressionKeepPlanner,
+)
 from framework.memory.core.layers import ArchiveMemoryManager, SessionMemoryManager
 from framework.memory.core.models import (
     ArchiveEntry,
     CompressionPlan,
     CompressionReason,
     CompressionResult,
+    CompressionResultReason,
     CompressionTrigger,
 )
 from framework.memory.core.scope import MemoryContext
+from framework.memory.retention import DefaultMessageRetentionPolicy, MessageRetentionPolicy
 from framework.memory.utils import normalize_memory_summary
 
 logger = logging.getLogger(__name__)
@@ -44,6 +51,15 @@ class CompressionTriggerPolicy(ABC):
         session: SessionMemoryManager,
         context: MemoryContext,
     ) -> CompressionTrigger | None: ...
+
+    @staticmethod
+    def estimate_tokens(messages: Sequence[Any]) -> int:
+        """Estimate token count for a list of messages."""
+        try:
+            from framework.memory.utils import estimate_token_count
+            return estimate_token_count([m.to_dict() if hasattr(m, "to_dict") else m for m in messages])
+        except Exception:
+            return sum(len(str(m)) // 4 for m in messages)
 
 
 class DefaultCompressionTriggerPolicy(CompressionTriggerPolicy):
@@ -85,14 +101,6 @@ class DefaultCompressionTriggerPolicy(CompressionTriggerPolicy):
                     metadata={"estimated_tokens": estimated_tokens},
                 )
         return None
-
-    @staticmethod
-    def estimate_tokens(messages: Sequence[Any]) -> int:
-        try:
-            from framework.memory.utils import estimate_token_count
-            return estimate_token_count([m.to_dict() if hasattr(m, 'to_dict') else m for m in messages])
-        except Exception:
-            return sum(len(str(m)) // 4 for m in messages)
 
 
 # ── Summary ─────────────────────────────────────────────────────────────────
@@ -235,7 +243,7 @@ class DefaultCommitPolicy(CommitPolicy):
             or current_revision.message_count != plan.expected_revision.message_count
         ):
             await error_policy.on_commit_conflict(plan, context)
-            return CompressionResult(committed=False, retryable=False, reason="revision_changed")
+            return CompressionResult(committed=False, retryable=False, reason=CompressionResultReason.REVISION_CHANGED)
 
         # Archive first — skip empty or placeholder summaries
         normalized_summary = normalize_memory_summary(plan.summary)
@@ -251,7 +259,7 @@ class DefaultCommitPolicy(CommitPolicy):
             except Exception as exc:
                 proceed = await error_policy.on_archive_failure(exc, plan, context)
                 if not proceed:
-                    return CompressionResult(committed=False, retryable=True, reason="archive_failed")
+                    return CompressionResult(committed=False, retryable=True, reason=CompressionResultReason.ARCHIVE_FAILED)
                 # Fall through to still mutate session (error policy said proceed)
 
         extra_state: dict[str, Any] = {}
@@ -266,12 +274,49 @@ class DefaultCommitPolicy(CommitPolicy):
         )
         if revision is None:
             await error_policy.on_commit_conflict(plan, context)
-            return CompressionResult(committed=False, retryable=False, reason="revision_changed")
+            return CompressionResult(committed=False, retryable=False, reason=CompressionResultReason.REVISION_CHANGED)
 
         if not wrote_archive:
-            return CompressionResult(committed=True, reason="nothing_to_archive")
+            return CompressionResult(committed=True, reason=CompressionResultReason.NOTHING_TO_ARCHIVE)
 
         return CompressionResult(committed=True)
+
+
+class SessionOnlyCommitPolicy(CommitPolicy):
+    """Commit policy for peer/subagent: replace session messages without archive write.
+
+    Uses the same trigger/plan/keep logic as main agent, but skips the
+    summary generation and archive append steps entirely.
+    """
+
+    async def commit(
+        self,
+        *,
+        plan: CompressionPlan,
+        session: SessionMemoryManager,
+        archive: ArchiveMemoryManager,
+        context: MemoryContext,
+        error_policy: CompressionErrorPolicy,
+    ) -> CompressionResult:
+        _ = archive  # intentionally ignored — no archive for peer/subagent
+        current_revision = await session.get_revision(context)
+        if (
+            current_revision.version != plan.expected_revision.version
+            or current_revision.message_count != plan.expected_revision.message_count
+        ):
+            await error_policy.on_commit_conflict(plan, context)
+            return CompressionResult(committed=False, retryable=False, reason=CompressionResultReason.REVISION_CHANGED)
+
+        revision = await session.replace_messages_if_revision(
+            context,
+            plan.keep_messages,
+            plan.expected_revision,
+        )
+        if revision is None:
+            await error_policy.on_commit_conflict(plan, context)
+            return CompressionResult(committed=False, retryable=False, reason=CompressionResultReason.REVISION_CHANGED)
+
+        return CompressionResult(committed=True, reason=CompressionResultReason.NOTHING_TO_ARCHIVE)
 
 
 # ── Coordinator ──────────────────────────────────────────────────────────────
@@ -316,6 +361,8 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
         compaction: MessageCompactionPolicy | None = None,
         keep_ratio_for_messages: float = 0.5,
         keep_ratio_for_token: float = 0.5,
+        retention: MessageRetentionPolicy | None = None,
+        keep_planner: CompressionKeepPlanner | None = None,
     ) -> None:
         self._max_messages = max_messages
         self._trigger = trigger or DefaultCompressionTriggerPolicy(
@@ -328,6 +375,8 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
         self._compaction = compaction or ConservativeCompactionPolicy()
         self._keep_ratio_for_messages = max(0.2, min(keep_ratio_for_messages, 0.9))
         self._keep_ratio_for_token = max(0.2, min(keep_ratio_for_token, 0.9))
+        self._retention = retention or DefaultMessageRetentionPolicy()
+        self._keep_planner = keep_planner or PriorityCompressionKeepPlanner()
 
     async def maybe_compress(
         self,
@@ -339,53 +388,56 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
         # Phase 1: Trigger check
         trigger = await self._trigger.should_compress(session=session, context=context)
         if trigger is None:
-            return CompressionResult(committed=True, reason="not_needed")
+            return CompressionResult(committed=True, reason=CompressionResultReason.NOT_NEEDED)
 
         # Phase 2: Read ALL stored messages and classify every one.
         all_msgs = [m.to_dict() for m in await session.get_all_messages(context)]
         if not all_msgs:
-            return CompressionResult(committed=True, reason="empty")
+            return CompressionResult(committed=True, reason=CompressionResultReason.EMPTY)
 
         decisions = self._compaction.decide_all(all_msgs, context, str(trigger.reason))
+
+        retention = [
+            self._retention.decide(m, index=i, messages=all_msgs, context=context)
+            for i, m in enumerate(all_msgs)
+        ]
 
         # Phase 3: Compute boundary and summary (LLM may be called — NO lock)
         if trigger.reason == CompressionReason.TOKEN_PRESSURE:
             all_tokens = self._trigger.estimate_tokens(all_msgs)
-            target_tokens = int(all_tokens * self._keep_ratio_for_token)
-            keep_target = self._compute_keep_by_token_budget(all_msgs, target_tokens)
-            logger.info(
-                "Compression by TOKEN_PRESSURE: all_tokens=%d, target_tokens=%d, keep_target=%d",
-                all_tokens, target_tokens, keep_target,
-            )
-        elif trigger.reason == CompressionReason.MESSAGE_COUNT:
-            trigger_max_messages = getattr(self._trigger, "_max_messages", self._max_messages)
-            keep_target = max(1, int((trigger_max_messages or 100) * self._keep_ratio_for_messages))
-            logger.info(
-                "Compression by MESSAGE_COUNT: keep_target=%d (max_messages=%s * keep_ratio_for_messages=%.2f)",
-                keep_target, trigger_max_messages or 100, self._keep_ratio_for_messages,
+            max_keep_tokens = max(1, int(all_tokens * self._keep_ratio_for_token))
+            budget = CompressionBudget(
+                reason=trigger.reason,
+                max_keep_messages=None,
+                max_keep_tokens=max_keep_tokens,
             )
         else:
             trigger_max_messages = getattr(self._trigger, "_max_messages", self._max_messages)
-            keep_target = max(1, int((trigger_max_messages or 100) * self._keep_ratio_for_messages))
+            max_keep_messages = max(
+                1,
+                int((trigger_max_messages or len(all_msgs)) * self._keep_ratio_for_messages),
+            )
+            budget = CompressionBudget(
+                reason=trigger.reason,
+                max_keep_messages=max_keep_messages,
+                max_keep_tokens=None,
+            )
 
-        prune_count = max(0, len(all_msgs) - keep_target)
-        if prune_count <= 0:
-            return CompressionResult(committed=True, reason="within_budget")
+        keep_plan = self._keep_planner.plan_keep_set(all_msgs, decisions, retention, budget)
+        if not keep_plan.keep_messages or not keep_plan.within_budget:
+            logger.info("No safe priority keep plan found: reason=%s", keep_plan.reason)
+            return CompressionResult(committed=True, reason=CompressionResultReason.NO_SAFE_BOUNDARY)
 
-        boundary_idx = self._find_boundary(all_msgs, decisions, prune_count)
-        if boundary_idx <= 0:
-            logger.info("No safe boundary found for compression (prune_count=%d)", prune_count)
-            return CompressionResult(committed=True, reason="no_safe_boundary")
+        boundary_idx = keep_plan.keep_start_index
+        pruned = keep_plan.pruned_messages
+        keep = keep_plan.keep_messages
 
+        prune_count = len(pruned)
         logger.info(
             "Compression plan: total_msgs=%d, prune_count=%d, keep_count=%d, boundary_idx=%d",
-            len(all_msgs), prune_count, len(all_msgs) - boundary_idx, boundary_idx,
+            len(all_msgs), prune_count, len(keep), boundary_idx,
         )
-
-        # Pruned prefix: classify by decision
-        pruned = all_msgs[:boundary_idx]
-        keep = all_msgs[boundary_idx:]
-        pruned_decisions = decisions[:boundary_idx]
+        pruned_decisions = [decisions[idx] for idx in keep_plan.pruned_indices]
 
         # Messages marked SUMMARIZE go to the LLM/heuristic summary
         summarized = [

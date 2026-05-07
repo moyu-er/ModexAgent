@@ -229,15 +229,33 @@ Priority  30: Auto-compact summary  │ 空闲压缩摘要
    → 删除孤儿 tool result (无对应 tool_calls 声明)
    → 补全缺失 tool result (有 tool_calls 声明但无对应 result)
 
-2. MicrocompactGovernance
-   → 旧的可压缩 tool result → 一行摘要
-   → 示例: [read_file result omitted from context: 8,123 chars]
-   → 保留最近 keep_recent=10 个
+2. PriorityBudgetGovernance
+   → 基于 retention priority 排名选择消息
+   → 高优先级消息（user_input > agent_input > assistant_final > ...）优先保留
+   → 总 token 超 budget 时丢弃低优先级消息
 
-3. TokenBudgetGovernance
-   → 总 token 超 budget_ratio × llm.max_tokens → 从头部截断
-   → 保留 system 消息 + 以 user 消息开头的最远历史
+3. LossyContentCompactionGovernance
+   → 对超长消息进行确定性截断，保留头部内容
+   → 标记 `meta_context_lossy=True`，记录原始字符数和截断原因
+   → 仅作用于 LLM 输入副本，不写入持久化存储
+
+4. FinalContextLegalityGovernance
+   → 删除孤儿 tool result（无对应 tool_calls 声明）
+   → 确保消息格式符合 LLM API 要求
 ```
+
+## Bot Project Defaults
+
+The bot project uses `compaction.boundary: priority_input`. Human user messages
+are the highest task anchors. `role=agent` messages from peer/subagent
+communication are also anchors, but rank below human user input.
+
+Agent messages are stored with their source prefix, for example:
+
+`[From Agent office-expert]`
+
+The internal role remains `agent`; the framework converts it to `user` only at
+the final LLM API boundary.
 
 ## 8. 老化清理汇总
 
@@ -269,17 +287,39 @@ memory:
     short_term:
       max_messages: 50           # 超过此值触发压缩
       auto_llm_compression: true # SummarizerStrategy (LLM) 生成 Archive 摘要
+    retention:
+      priority_order:
+        - system_critical
+        - user_input
+        - agent_input
+        - assistant_final
+        - tool_chain_structure
+        - tool_result_recent
+        - assistant_intermediate
+        - tool_result_old
+        - low_value_noise
+      recent_tool_result_count: 3
+
     compaction:
       policy: "conservative"     # 消息分类: 全部 SUMMARIZE
-      boundary: "tool_chain"     # tool chain 不切割
+      boundary: "priority_input" # 优先保留用户/Agent 输入锚点
       high_value_tools: [...]    # 高价值工具结果可纳入摘要
     long_term:
       enabled: true
       init_defaults: true        # 自动创建 SOUL/USER/MEMORY
     governance:                  # 上下文预处理链
+      enabled: true
       tool_chain_repair: true
-      microcompact: {keep_recent: 10}
-      token_budget: {budget_ratio: 0.5, safety_buffer: 1024}
+      token_budget:
+        enabled: true
+        budget_ratio: 0.5
+        safety_buffer: 1024
+      lossy_compaction:
+        enabled: true
+        tool_result_head_chars: 1200
+        assistant_head_chars: 1200
+        agent_head_chars: 2000
+        user_head_chars: 4000
     auto_compact:
       idle_threshold_seconds: 1800
       keep_recent_messages: 8

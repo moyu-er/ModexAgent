@@ -175,7 +175,7 @@ async def test_summarizer_falls_back_on_llm_failure():
 
 @pytest.mark.asyncio
 async def test_summarizer_uses_compression_prompt():
-    """SummarizerStrategy passes PROMPT_COMPRESSION to the LLM agent."""
+    """SummarizerStrategy passes PROMPT_MEMORY_COMPRESSION to the LLM agent."""
     mock_agent = MockSummarizerAgent("[LLM] ok")
     strategy = SummarizerStrategy(mock_agent)
 
@@ -185,10 +185,9 @@ async def test_summarizer_uses_compression_prompt():
         CompressionReason.MESSAGE_COUNT,
     )
 
-    # The prompt should be the compression prompt
+    # The prompt should be the memory compression prompt
     assert mock_agent.captured_prompt is not None
-    assert "archive" in mock_agent.captured_prompt.lower() or \
-           "summarize" in mock_agent.captured_prompt.lower()
+    assert "reference context" in mock_agent.captured_prompt.lower()
 
 
 # ── Integration: coordinator + mock summarizer ────────────────────────────

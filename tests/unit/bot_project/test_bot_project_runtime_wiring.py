@@ -38,8 +38,12 @@ from framework.interceptor.builtin.tool_approval import ArgumentMatcher
 from framework.interceptor.chain import InterceptorChain
 from framework.memory.context_governance import (
     CompositeGovernance,
+    FinalContextLegalityGovernance,
+    LossyContentCompactionGovernance,
+    PriorityBudgetGovernance,
     ToolChainRepairGovernance,
 )
+from framework.memory.core.scope import MemoryAgentRole, MemoryContext
 from framework.memory.system import create_memory_system
 from framework.pipeline.adapters import InputAdapter, OutputAdapter
 
@@ -243,23 +247,22 @@ class TestApprovalRuntimeWiring:
 # ===================================================================
 
 class TestGovernanceWiring:
-    """Verify _build_governance() returns a CompositeGovernance with
-    ToolChainRepairGovernance."""
+    """Verify _build_governance() returns a CompositeGovernance with the
+    priority-based governance chain."""
 
-    def test_governance_includes_tool_chain_repair(self):
+    def test_governance_uses_priority_chain(self):
         cfg = _make_minimal_config()
         svc = _make_service(config=cfg)
         gov = svc._build_governance()
-        assert gov is not None
+
         assert isinstance(gov, CompositeGovernance)
-        # At least one strategy should be ToolChainRepairGovernance
-        has_repair = any(
-            isinstance(s, ToolChainRepairGovernance) for s in gov._strategies
-        )
-        assert has_repair, (
-            f"Expected ToolChainRepairGovernance in strategies, "
-            f"got {[type(s).__name__ for s in gov._strategies]}"
-        )
+        strategy_names = [type(s).__name__ for s in gov._strategies]
+        assert strategy_names == [
+            "ToolChainRepairGovernance",
+            "PriorityBudgetGovernance",
+            "LossyContentCompactionGovernance",
+            "FinalContextLegalityGovernance",
+        ]
 
     def test_governance_disabled_returns_none(self):
         cfg = _make_minimal_config()
@@ -270,30 +273,50 @@ class TestGovernanceWiring:
 
     def test_governance_defaults_to_enabled(self):
         """When governance section is missing entirely, it defaults to enabled
-        and should return None (empty strategies fallback, or it returns None
-        when no strategies are configured)."""
+        and should return a CompositeGovernance with the full priority chain."""
         cfg = _make_minimal_config()
-        # Remove all individual strategy flags — defaults to enabled, but
-        # all strategies are enabled so CompositeGovernance is built.
-        # Keep defaults: tool_chain_repair=True, microcompact.enabled=True, token_budget.enabled=True
-        # So governance should be non-None.
         svc = _make_service(config=cfg)
         gov = svc._build_governance()
         assert gov is not None
         assert isinstance(gov, CompositeGovernance)
+        strategy_names = [type(s).__name__ for s in gov._strategies]
+        assert "PriorityBudgetGovernance" in strategy_names
+        assert "LossyContentCompactionGovernance" in strategy_names
+        assert "FinalContextLegalityGovernance" in strategy_names
 
     def test_governance_empty_strategies_returns_none(self):
         """When all strategies are individually disabled, return None."""
         cfg = _make_minimal_config()
         gov_cfg = cfg["memory"]["main"]["governance"]
         gov_cfg["tool_chain_repair"] = False
-        gov_cfg["microcompact"] = gov_cfg.get("microcompact", {})
-        gov_cfg["microcompact"]["enabled"] = False
         gov_cfg["token_budget"] = gov_cfg.get("token_budget", {})
         gov_cfg["token_budget"]["enabled"] = False
+        gov_cfg["lossy_compaction"] = gov_cfg.get("lossy_compaction", {})
+        gov_cfg["lossy_compaction"]["enabled"] = False
         svc = _make_service(config=cfg)
         gov = svc._build_governance()
-        assert gov is None
+        # FinalContextLegalityGovernance is always appended, so not empty
+        assert isinstance(gov, CompositeGovernance)
+        assert len(gov._strategies) == 1
+        assert isinstance(gov._strategies[0], FinalContextLegalityGovernance)
+
+    def test_example_config_uses_priority_input_boundary(self) -> None:
+        from bot.utils.config_loader import ConfigLoader
+
+        config_dir = (
+            Path(__file__).parent.parent.parent.parent
+            / "examples"
+            / "bot_project"
+            / "config"
+        )
+        config = ConfigLoader(config_dir).load_yaml("bot_config.yml")
+
+        assert config["memory"]["main"]["compaction"]["boundary"] == "priority_input"
+        assert config["memory"]["main"]["retention"]["priority_order"][:3] == [
+            "system_critical",
+            "user_input",
+            "agent_input",
+        ]
 
 
 # ===================================================================
@@ -456,6 +479,128 @@ class TestBotProjectPluginAndCapabilityWiring:
             await subagent_context.memory_system.close()
             await svc.plugin_integration.shutdown()
 
+    def test_peer_memory_config_deep_merges_governance_token_budget(self) -> None:
+        cfg = _make_minimal_config(
+            memory={
+                "peers": {
+                    "short_term": {"max_messages": 50, "keep_ratio_for_messages": 0.5},
+                    "governance": {
+                        "enabled": True,
+                        "tool_chain_repair": True,
+                        "token_budget": {
+                            "enabled": True,
+                            "budget_ratio": 0.3,
+                            "safety_buffer": 512,
+                        },
+                    },
+                },
+            },
+        )
+        svc = _make_service(config=cfg)
+
+        merged = svc._merge_peer_memory_config(
+            {
+                "name": "office-expert",
+                "memory": {
+                    "short_term": {"max_messages": 20},
+                    "governance": {"token_budget": {"safety_buffer": 128}},
+                },
+            }
+        )
+
+        assert merged["short_term"] == {
+            "max_messages": 20,
+            "keep_ratio_for_messages": 0.5,
+        }
+        assert merged["governance"]["enabled"] is True
+        assert merged["governance"]["tool_chain_repair"] is True
+        assert merged["governance"]["token_budget"] == {
+            "enabled": True,
+            "budget_ratio": 0.3,
+            "safety_buffer": 128,
+        }
+
+    async def test_peer_memory_uses_keep_only_truncation_without_archive_or_knowledge(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        cfg = _make_minimal_config(
+            memory={
+                "peers": {
+                    "short_term": {
+                        "max_messages": 4,
+                        "max_tokens": 8000,
+                        "keep_ratio_for_messages": 0.5,
+                        "keep_ratio_for_token": 0.5,
+                    },
+                },
+            },
+        )
+        svc = _make_service(config=cfg)
+        monkeypatch.setattr(
+            svc,
+            "_resolve_path",
+            lambda _config_key, _default_relative: tmp_path,
+        )
+        peer_context = await svc._create_peer_memory(
+            "office-expert",
+            {"system_prompt": "docs", "memory": {"enabled": True}},
+        )
+        memory_system = peer_context.memory_system
+        ctx = MemoryContext(
+            session_id="conv:main:office-expert",
+            agent_id="office-expert",
+            agent_role=MemoryAgentRole.PEER,
+        )
+
+        try:
+            assert memory_system.layers.archive is None
+            assert memory_system.layers.knowledge is None
+
+            # Add 5 messages (> max_messages=4) → triggers session truncation
+            # Coordinator keeps the suffix (same planner logic as main,
+            # but SessionOnlyCommitPolicy skips archive write).
+            await memory_system.add_messages(
+                ctx,
+                [
+                    {"role": "user", "content": "old task"},
+                    {"role": "assistant", "content": "old answer"},
+                    {"role": "user", "content": "latest task"},
+                    {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [{"id": "call-1", "function": {"name": "search_files"}}],
+                    },
+                    {"role": "tool", "tool_call_id": "call-1", "content": "search result"},
+                ],
+            )
+
+            # After truncation, session should be bounded by keep planner
+            # (PriorityCompressionKeepPlanner keeps user anchor, drops process
+            # assistant/tool groups to fit budget — same logic as main agent).
+            process_messages = [
+                msg.to_dict() for msg in await memory_system.layers.session.get_all_messages(ctx)
+            ]
+            assert len(process_messages) <= 4
+            # No orphan tool results (legal suffix check)
+            if any(m.get("role") == "tool" for m in process_messages):
+                assert any(m.get("role") == "assistant" and m.get("tool_calls") for m in process_messages)
+
+            # Add final assistant message (total now <= max_messages, no new trigger)
+            await memory_system.add_messages(
+                ctx,
+                [{"role": "assistant", "content": "done"}],
+            )
+            kept = [msg.to_dict() for msg in await memory_system.layers.session.get_all_messages(ctx)]
+            assert len(kept) <= 4
+            assert kept[-1]["role"] == "assistant"
+
+            loaded = await peer_context.load("conv:main:office-expert")
+            assert loaded.system_prompt == "docs"
+        finally:
+            await memory_system.close()
+
     def test_query_12306_peer_has_no_skills_and_uses_mcp_only(self):
         """query-12306 peer has no skill_dirs (MCP-only) and uses 12306-mcp."""
         from bot.utils.config_loader import ConfigLoader
@@ -578,8 +723,18 @@ class TestBotProjectPluginAndCapabilityWiring:
 
         assert "memory" not in peers["office-expert"]
         assert "memory" not in peers["query-12306"]
-        assert config["memory"]["peers"]["short_term"] == {"max_messages": 50}
-        assert config["memory"]["subagents"]["short_term"] == {"max_messages": 50}
+        # Peer/subagent short_term config now includes all coordinator fields
+        # (max_messages, max_tokens, keep_ratio_for_messages, keep_ratio_for_token)
+        peers_short = config["memory"]["peers"]["short_term"]
+        assert peers_short["max_messages"] == 50
+        assert peers_short["max_tokens"] == 50000
+        assert peers_short["keep_ratio_for_messages"] == 0.5
+        assert peers_short["keep_ratio_for_token"] == 0.5
+        sub_short = config["memory"]["subagents"]["short_term"]
+        assert sub_short["max_messages"] == 50
+        assert sub_short["max_tokens"] == 50000
+        assert sub_short["keep_ratio_for_messages"] == 0.5
+        assert sub_short["keep_ratio_for_token"] == 0.5
 
     def test_example_config_keeps_disabled_plugin_config_minimal(self) -> None:
         """Disabled plugins should not keep an inactive configuration payload."""

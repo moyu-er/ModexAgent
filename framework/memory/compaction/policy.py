@@ -113,6 +113,9 @@ class ConservativeCompactionPolicy(MessageCompactionPolicy):
         if role == MessageRole.SYSTEM:
             return MessageCompactionDecision.KEEP_RAW
 
+        if role == MessageRole.AGENT:
+            return MessageCompactionDecision.SUMMARIZE
+
         if role == MessageRole.ASSISTANT and _has_tool_calls(message):
             return MessageCompactionDecision.SUMMARIZE
 

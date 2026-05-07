@@ -28,6 +28,7 @@ from framework.memory.core.models import (
     CompressionPlan,
     CompressionReason,
     CompressionResult,
+    CompressionResultReason,
     CompressionTrigger,
     StorageRevision,
 )
@@ -134,7 +135,7 @@ async def test_compression_abc_registration():
 
     class MyCoordinator(MemoryCompressionCoordinator):
         async def maybe_compress(self, *, session, archive, context):
-            return CompressionResult(committed=True, reason="test")
+            return CompressionResult(committed=True, reason=CompressionResultReason.NOT_NEEDED)
 
     assert isinstance(MyTrigger(), CompressionTriggerPolicy)
     assert isinstance(MySummary(), SummaryStrategy)
@@ -155,7 +156,8 @@ async def test_coordinator_no_compress_when_under_budget(registry):
         session=session, archive=archive, context=ctx,
     )
     assert result.committed
-    assert result.reason in ("not_needed", "within_budget")
+    assert result.reason in (CompressionResultReason.NOT_NEEDED, None), \
+        f"unexpected reason: {result.reason}"
 
 
 async def test_coordinator_does_not_lose_data_on_archive_failure(registry):
@@ -177,7 +179,7 @@ async def test_coordinator_does_not_lose_data_on_archive_failure(registry):
 
     class FailingCommit(DefaultCommitPolicy):
         async def commit(self, *, plan, session, archive, context, error_policy):
-            return CompressionResult(committed=False, retryable=True, reason="archive_failed")
+            return CompressionResult(committed=False, retryable=True, reason=CompressionResultReason.ARCHIVE_FAILED)
 
     layer_set = MemoryLayerFactory.single_user(registry=registry)
     coordinator = DefaultMemoryCompressionCoordinator(max_messages=10, commit=FailingCommit())
@@ -201,13 +203,14 @@ async def test_coordinator_commit_replaces_session_and_persists_summary(registry
     messages = [{"role": "user", "content": f"message {index}"} for index in range(6)]
     await session.add_messages(ctx, messages)
 
-    # keep_ratio=0.9 (clamp max): keep_target=2, prune=4 from 6 msgs
+    # keep_ratio=0.9 (clamp max): max_keep=4 from 6 msgs.
+    # Planner uses budget_suffix because latest_user (index 5) >= min_start (2).
     coordinator = DefaultMemoryCompressionCoordinator(max_messages=5, keep_ratio_for_messages=0.9)
     result = await coordinator.maybe_compress(session=session, archive=archive, context=ctx)
 
     assert result.committed
     remaining = await session.get_all_messages(ctx)
-    # keep_target = int(5*0.9) = 4, prune=2 from 6 → keep last 4
+    # Budget suffix keeps messages 2-5 (4 messages), which includes the user anchor.
     assert [message.content for message in remaining] == [
         "message 2", "message 3", "message 4", "message 5",
     ]
@@ -277,7 +280,7 @@ async def test_commit_skips_empty_summary_and_reports_no_op(registry):
     )
 
     assert result.committed is True  # session truncated, just no archive
-    assert result.reason == "nothing_to_archive"
+    assert result.reason == CompressionResultReason.NOTHING_TO_ARCHIVE
 
 
 async def test_commit_skips_placeholder_summaries(registry):
@@ -308,7 +311,7 @@ async def test_commit_skips_placeholder_summaries(registry):
             error_policy=DefaultCompressionErrorPolicy(),
         )
         assert result.committed is True, f"placeholder '{placeholder}' — session truncated, no archive"
-        assert result.reason == "nothing_to_archive", f"placeholder '{placeholder}'"
+        assert result.reason == CompressionResultReason.NOTHING_TO_ARCHIVE, f"placeholder '{placeholder}'"
 
 
 # ── Regression: trigger no-op on hidden history ───────────────────────────
@@ -342,7 +345,7 @@ async def test_commit_skips_long_whitespace_summary(registry):
     )
 
     assert result.committed is True  # session still truncated
-    assert result.reason == "nothing_to_archive"
+    assert result.reason == CompressionResultReason.NOTHING_TO_ARCHIVE
     assert await archive.get_recent(ctx, limit=10) == []  # no archive entries written
 
 
@@ -511,9 +514,13 @@ async def test_high_value_tool_results_included_in_summary(registry):
     assert result.committed
 
     roles = [m.get("role") for m in summary.messages]
-    # user + web_search result + assistant answer (3 roles, tool_calls excluded)
+    # High-value process evidence is summarized, while the recent user input is
+    # kept raw by priority retention under the hard keep budget.
     assert "tool" in roles, "high-value tool result should be in summary"
-    assert "user" in roles
+    assert "user" not in roles
+
+    kept_roles = [m.to_dict().get("role") for m in await session.get_all_messages(ctx)]
+    assert kept_roles == ["user"]
 
 
 async def test_trigger_does_not_fire_when_total_within_budget(registry):
@@ -748,7 +755,7 @@ async def test_coordinator_creates_headroom_no_recompress_on_small_growth(regist
 
     # Trigger should NOT fire
     result2 = await coordinator.maybe_compress(session=session, archive=archive, context=ctx)
-    assert result2.reason in ("not_needed", "within_budget"), \
+    assert result2.reason in (CompressionResultReason.NOT_NEEDED, None), \
         f"should NOT compress, total={total} < max=50, got {result2.reason}"
 
 
