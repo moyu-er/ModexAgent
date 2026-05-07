@@ -349,6 +349,45 @@ async def test_commit_skips_long_whitespace_summary(registry):
     assert await archive.get_recent(ctx, limit=10) == []  # no archive entries written
 
 
+async def test_default_commit_replaces_session_when_archive_is_none(registry):
+    """archive=None means session-only compression, not archive failure."""
+    layer_set = MemoryLayerFactory.single_user(registry=registry)
+    session = layer_set.session
+    ctx = MemoryContext(session_id="session-only-commit")
+    await session.add_messages(
+        ctx,
+        [
+            {"role": "user", "content": "old"},
+            {"role": "assistant", "content": "old answer"},
+            {"role": "user", "content": "new"},
+        ],
+    )
+
+    plan = CompressionPlan(
+        trigger=CompressionTrigger(reason=CompressionReason.MANUAL),
+        expected_revision=await session.get_revision(ctx),
+        expected_cursor=None,
+        keep_messages=[{"role": "user", "content": "new"}],
+        summarize_messages=[{"role": "user", "content": "old"}],
+        archive_raw_messages=[],
+        drop_messages=[],
+        summary="old task summary",
+    )
+
+    result = await DefaultCommitPolicy().commit(
+        plan=plan,
+        session=session,
+        archive=None,
+        context=ctx,
+        error_policy=DefaultCompressionErrorPolicy(),
+    )
+
+    assert result.committed is True
+    assert result.reason == CompressionResultReason.NOTHING_TO_ARCHIVE
+    kept = [msg.to_dict() for msg in await session.get_all_messages(ctx)]
+    assert kept == [{"role": "user", "content": "new"}]
+
+
 async def test_coordinator_excludes_dropped_messages_from_summary_input(registry):
     """Coordinator should only summarize messages classified as SUMMARIZE."""
     from framework.memory.core.scope import MemoryLayerName
@@ -410,10 +449,10 @@ async def test_coordinator_excludes_dropped_messages_from_summary_input(registry
 
 async def test_conservative_policy_excludes_tool_from_summary(registry):
     """bot_project default: ConservativeCompactionPolicy + coordinator → tool excluded."""
+    from framework.memory.compaction.policy import ConservativeCompactionPolicy
     from framework.memory.core.scope import MemoryLayerName
     from framework.memory.layers.config import SessionMemoryConfig
     from framework.memory.layers.session import ScopedSessionMemoryManager
-    from framework.memory.compaction.policy import ConservativeCompactionPolicy
 
     class FixedBoundary(BoundaryPolicy):
         def find_prune_boundary(self, messages, decisions, target_prune_count):
@@ -467,10 +506,10 @@ async def test_conservative_policy_excludes_tool_from_summary(registry):
 
 async def test_high_value_tool_results_included_in_summary(registry):
     """When tool is in high_value_tools, its result IS included in summary."""
+    from framework.memory.compaction.policy import ConservativeCompactionPolicy
     from framework.memory.core.scope import MemoryLayerName
     from framework.memory.layers.config import SessionMemoryConfig
     from framework.memory.layers.session import ScopedSessionMemoryManager
-    from framework.memory.compaction.policy import ConservativeCompactionPolicy
 
     class FixedBoundary(BoundaryPolicy):
         def find_prune_boundary(self, messages, decisions, target_prune_count):

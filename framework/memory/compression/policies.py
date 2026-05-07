@@ -213,7 +213,7 @@ class CommitPolicy(ABC):
         *,
         plan: CompressionPlan,
         session: SessionMemoryManager,
-        archive: ArchiveMemoryManager,
+        archive: ArchiveMemoryManager | None,
         context: MemoryContext,
         error_policy: CompressionErrorPolicy,
     ) -> CompressionResult: ...
@@ -224,8 +224,12 @@ class DefaultCommitPolicy(CommitPolicy):
 
     1. Re-read revision from session storage.
     2. If revision changed → skip (concurrent modification).
-    3. Write archive entry.
+    3. Write archive entry when an archive layer is configured.
     4. Replace session messages with keep_messages.
+
+    archive=None is the session-only mode used by peer/subagent memory:
+    the same trigger, planner, and hard keep constraints still apply, but
+    commit only replaces the session and does not create an archive entry.
     """
 
     async def commit(
@@ -233,7 +237,7 @@ class DefaultCommitPolicy(CommitPolicy):
         *,
         plan: CompressionPlan,
         session: SessionMemoryManager,
-        archive: ArchiveMemoryManager,
+        archive: ArchiveMemoryManager | None,
         context: MemoryContext,
         error_policy: CompressionErrorPolicy,
     ) -> CompressionResult:
@@ -246,9 +250,10 @@ class DefaultCommitPolicy(CommitPolicy):
             return CompressionResult(committed=False, retryable=False, reason=CompressionResultReason.REVISION_CHANGED)
 
         # Archive first — skip empty or placeholder summaries
-        normalized_summary = normalize_memory_summary(plan.summary)
+        normalized_summary = normalize_memory_summary(plan.summary) if archive is not None else None
         wrote_archive = False
         if normalized_summary is not None:
+            assert archive is not None
             try:
                 entry = ArchiveEntry(
                     summary=normalized_summary,
@@ -282,43 +287,6 @@ class DefaultCommitPolicy(CommitPolicy):
         return CompressionResult(committed=True)
 
 
-class SessionOnlyCommitPolicy(CommitPolicy):
-    """Commit policy for peer/subagent: replace session messages without archive write.
-
-    Uses the same trigger/plan/keep logic as main agent, but skips the
-    summary generation and archive append steps entirely.
-    """
-
-    async def commit(
-        self,
-        *,
-        plan: CompressionPlan,
-        session: SessionMemoryManager,
-        archive: ArchiveMemoryManager,
-        context: MemoryContext,
-        error_policy: CompressionErrorPolicy,
-    ) -> CompressionResult:
-        _ = archive  # intentionally ignored — no archive for peer/subagent
-        current_revision = await session.get_revision(context)
-        if (
-            current_revision.version != plan.expected_revision.version
-            or current_revision.message_count != plan.expected_revision.message_count
-        ):
-            await error_policy.on_commit_conflict(plan, context)
-            return CompressionResult(committed=False, retryable=False, reason=CompressionResultReason.REVISION_CHANGED)
-
-        revision = await session.replace_messages_if_revision(
-            context,
-            plan.keep_messages,
-            plan.expected_revision,
-        )
-        if revision is None:
-            await error_policy.on_commit_conflict(plan, context)
-            return CompressionResult(committed=False, retryable=False, reason=CompressionResultReason.REVISION_CHANGED)
-
-        return CompressionResult(committed=True, reason=CompressionResultReason.NOTHING_TO_ARCHIVE)
-
-
 # ── Coordinator ──────────────────────────────────────────────────────────────
 
 
@@ -335,7 +303,7 @@ class MemoryCompressionCoordinator(ABC):
         self,
         *,
         session: SessionMemoryManager,
-        archive: ArchiveMemoryManager,
+        archive: ArchiveMemoryManager | None,
         context: MemoryContext,
     ) -> CompressionResult: ...
 
@@ -382,7 +350,7 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
         self,
         *,
         session: SessionMemoryManager,
-        archive: ArchiveMemoryManager,
+        archive: ArchiveMemoryManager | None,
         context: MemoryContext,
     ) -> CompressionResult:
         # Phase 1: Trigger check
@@ -456,7 +424,7 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
         ]
 
         summary = ""
-        if summarized:
+        if archive is not None and summarized:
             summary = await self._summarize_with_fallback(summarized, context, trigger.reason)
 
         # Phase 4: Build plan

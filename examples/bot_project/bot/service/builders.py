@@ -334,19 +334,15 @@ class AgentBuilderMixin:
     def _build_peer_compression_coordinator(
         self, memory_section: dict[str, Any],
     ) -> Any:
-        """Build a session-only compression coordinator for peer/subagent.
+        """Build standard compression coordinator for session-only memory.
 
-        Uses the same trigger/plan/keep logic as main agent, but skips
-        LLM summary generation and archive writes.
+        Peer/subagent memory passes archive=None through create_memory_system,
+        so DefaultCommitPolicy performs the same keep/truncation path as main
+        memory and simply skips archive writes.
         """
-        from framework.memory.compaction.policy import ConservativeCompactionPolicy
-        from framework.memory.compression.planner import PriorityCompressionKeepPlanner
         from framework.memory.compression.policies import (
             DefaultMemoryCompressionCoordinator,
-            HeuristicSummaryStrategy,
-            SessionOnlyCommitPolicy,
         )
-        from framework.memory.retention import DefaultMessageRetentionPolicy
 
         short_term = memory_section.get("short_term", {})
         return DefaultMemoryCompressionCoordinator(
@@ -354,11 +350,6 @@ class AgentBuilderMixin:
             max_tokens=short_term.get("max_tokens", 8000),
             keep_ratio_for_messages=short_term.get("keep_ratio_for_messages", 0.5),
             keep_ratio_for_token=short_term.get("keep_ratio_for_token", 0.5),
-            summary=HeuristicSummaryStrategy(),
-            compaction=ConservativeCompactionPolicy(),
-            retention=DefaultMessageRetentionPolicy(),
-            keep_planner=PriorityCompressionKeepPlanner(),
-            commit=SessionOnlyCommitPolicy(),
         )
 
     def _build_peer_governance(

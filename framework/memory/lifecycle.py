@@ -10,6 +10,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
+from framework.core.types import MessageRole
 from framework.memory.core.layers import MemoryLayerSet
 from framework.memory.core.scope import (
     MemoryAgentRole,
@@ -74,11 +75,72 @@ class DefaultMemoryLifecyclePolicy(MemoryLifecyclePolicy):
         _ = revision
         if self._coordinator is not None:
             try:
+                # ReAct writes one logical tool interaction in multiple session
+                # appends: assistant(tool_calls) first, then tool(result), then
+                # a final assistant answer. Compression must not run while that
+                # chain is incomplete or waiting for the model continuation,
+                # otherwise it can keep a later tool result while pruning the
+                # assistant message that declared its tool_call_id.
+                if await self._has_open_react_process(context, layers):
+                    logger.debug(
+                        "Post-append compression skipped: ReAct process message is pending for %s",
+                        context.session_id,
+                    )
+                    return
                 await self._coordinator.maybe_compress(
                     session=layers.session, archive=layers.archive, context=context,
                 )
             except Exception:
                 logger.warning("Post-append compression check failed", exc_info=True)
+
+    async def _has_open_react_process(
+        self,
+        context: MemoryContext,
+        layers: MemoryLayerSet,
+    ) -> bool:
+        """Return True when compression could split a tool_call/tool result pair.
+
+        The requirement is structural, not cosmetic: every role=tool message
+        sent back to an LLM must have a preceding assistant.tool_calls entry
+        with the same id. During a ReAct turn those messages are persisted in
+        separate writes, so post-append compression is only safe after the
+        chain has reached a normal assistant response.
+        """
+        try:
+            raw_messages = await layers.session.get_all_messages(context)
+            messages = [
+                msg.to_dict() if hasattr(msg, "to_dict") else dict(msg)
+                for msg in raw_messages
+            ]
+        except Exception:
+            logger.debug("Unable to inspect session before compression", exc_info=True)
+            return False
+        if not messages:
+            return False
+
+        last = messages[-1]
+        last_role = last.get("role")
+        # assistant(tool_calls) means the tool has not finished yet. role=tool
+        # means the tool result exists, but the model has not consumed it to
+        # produce the next assistant response yet. Both states are unsafe cut
+        # points for session compression.
+        if last_role == str(MessageRole.TOOL):
+            return True
+        if last_role == str(MessageRole.ASSISTANT) and last.get("tool_calls"):
+            return True
+
+        declared: set[str] = set()
+        fulfilled: set[str] = set()
+        for msg in messages:
+            if msg.get("role") == str(MessageRole.ASSISTANT):
+                for call in msg.get("tool_calls") or []:
+                    if isinstance(call, dict) and call.get("id"):
+                        declared.add(str(call["id"]))
+            elif msg.get("role") == str(MessageRole.TOOL):
+                call_id = msg.get("tool_call_id")
+                if call_id is not None:
+                    fulfilled.add(str(call_id))
+        return not declared.issubset(fulfilled)
 
     async def on_turn_end(self, context: MemoryContext, layers: MemoryLayerSet) -> None:
         """Flush provider recorder, save checkpoint if configured."""

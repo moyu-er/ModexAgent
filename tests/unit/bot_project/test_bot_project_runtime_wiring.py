@@ -558,9 +558,9 @@ class TestBotProjectPluginAndCapabilityWiring:
             assert memory_system.layers.archive is None
             assert memory_system.layers.knowledge is None
 
-            # Add 5 messages (> max_messages=4) → triggers session truncation
-            # Coordinator keeps the suffix (same planner logic as main,
-            # but SessionOnlyCommitPolicy skips archive write).
+            # Add 5 messages (> max_messages=4), ending in a tool result.
+            # Lifecycle defers compression until the final assistant consumes it.
+            # DefaultCommitPolicy handles archive=None as session-only keep.
             await memory_system.add_messages(
                 ctx,
                 [
@@ -576,18 +576,14 @@ class TestBotProjectPluginAndCapabilityWiring:
                 ],
             )
 
-            # After truncation, session should be bounded by keep planner
-            # (PriorityCompressionKeepPlanner keeps user anchor, drops process
-            # assistant/tool groups to fit budget — same logic as main agent).
+            # While the tool result is open, compression has not run yet.
             process_messages = [
                 msg.to_dict() for msg in await memory_system.layers.session.get_all_messages(ctx)
             ]
-            assert len(process_messages) <= 4
-            # No orphan tool results (legal suffix check)
-            if any(m.get("role") == "tool" for m in process_messages):
-                assert any(m.get("role") == "assistant" and m.get("tool_calls") for m in process_messages)
+            assert len(process_messages) == 5
+            assert process_messages[-1]["role"] == "tool"
 
-            # Add final assistant message (total now <= max_messages, no new trigger)
+            # Add final assistant message: now archive=None uses default session-only commit.
             await memory_system.add_messages(
                 ctx,
                 [{"role": "assistant", "content": "done"}],
@@ -595,6 +591,8 @@ class TestBotProjectPluginAndCapabilityWiring:
             kept = [msg.to_dict() for msg in await memory_system.layers.session.get_all_messages(ctx)]
             assert len(kept) <= 4
             assert kept[-1]["role"] == "assistant"
+            if any(m.get("role") == "tool" for m in kept):
+                assert any(m.get("role") == "assistant" and m.get("tool_calls") for m in kept)
 
             loaded = await peer_context.load("conv:main:office-expert")
             assert loaded.system_prompt == "docs"
