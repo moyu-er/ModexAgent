@@ -174,7 +174,7 @@ BotService 支持两种运行时模式，可通过 `mode="pipeline"` 或 `mode="
 | **ReActAgent** | ReAct 执行循环，支持 Thought → Action → Observation 模式 |
 | **LiteLLMProvider** | LLM 调用，支持 OpenAI 兼容接口，可接入 100+ 模型 |
 | **ToolManager** | 工具注册与执行管理，支持并行/异步执行模式 |
-| **MemorySystem** | 四层记忆架构 (Working / Short-term / History / Long-term) |
+| **MemorySystem** | 三层记忆架构 (Short-term / History / Long-term) |
 | **Governance** | 上下文治理链：ToolChainRepair + Microcompact + TokenBudget |
 | **AutoCompact** | 后台自动压缩服务，按空闲阈值扫描并压缩过长的 short-term 记忆 |
 | **DreamEngine** | 离线记忆整合引擎，定期将历史记忆归档到长期记忆 |
@@ -199,12 +199,28 @@ BotService 支持两种运行时模式，可通过 `mode="pipeline"` 或 `mode="
 
 ## 快速开始
 
-### 1. 环境配置
+### 1. 安装框架依赖
 
-复制环境变量模板并填写：
+先在仓库根目录按 [根 README 的快速开始](../../README.md#快速开始) 使用 Python 3.12+ 和 `uv` 创建虚拟环境，并安装 `uv pip install -e ".[all]"`；本节只说明 bot_project 自己的配置和启动。
+
+### 2. 配置 `.env`
+
+`.env` 必须在 `examples/bot_project/` 下单独创建并填写真实值；`.env.example` 只是字段参考，不是可直接运行的配置。
+
+macOS / Linux:
 
 ```bash
+cd examples/bot_project
 cp .env.example .env
+# 运行前必须编辑 .env
+```
+
+Windows PowerShell:
+
+```powershell
+cd examples\bot_project
+Copy-Item .env.example .env
+# 运行前必须编辑 .env
 ```
 
 编辑 `.env`：
@@ -226,23 +242,7 @@ MCP_BEARER_TOKEN=your_modelscope_bearer_token
 MINIMAX_MCP_API_KEY=your_minimax_api_key
 ```
 
-### 2. 安装依赖
-
-```bash
-# 创建虚拟环境
-uv venv
-
-# Windows
-.venv\Scripts\activate
-
-# 安装框架及所有依赖
-uv pip install -e ".[all]"
-
-# 或仅安装开发依赖
-uv pip install -e ".[dev]"
-```
-
-### 3. 配置
+### 3. 配置 `bot_config.yml` 和 MCP
 
 编辑 `config/bot_config.yml`（支持 `${ENV_VAR}` 环境变量插值）：
 
@@ -260,15 +260,44 @@ llm:
   model: "${LLM_MODEL:-openai/MiniMax-M2.5}"
   temperature: 0.7
   max_tokens: 80000
+
+mcp:
+  enabled: true
+  config_file: "mcp.json"
+
+tools:
+  mcp_tools:
+    enabled: true
+    server_filter:
+      - "fetch"
 ```
+
+`config/mcp.json` 也需要按你的 MCP server 自行配置，当前文件只是示例；`bot_config.yml` 中通过 `mcp.enabled` 和 `mcp.config_file: "mcp.json"` 启用 MCP，并让 `tools.mcp_tools.server_filter` 或 peer 的 `tools.mcp_tools.server_filter` 匹配 `mcp.json` 里的 server key。
 
 ### 4. 运行
 
+macOS / Linux:
+
 ```bash
-# 默认 Pool 模式（多 Agent 协作）
+cd examples/bot_project
+
+# Default: Pool mode (multi-agent collaboration)
 python bot_service.py
 
-# 或显式指定模式
+# Or explicitly choose a mode
+python bot_service.py --mode pool
+python bot_service.py --mode pipeline
+```
+
+Windows PowerShell:
+
+```powershell
+cd examples\bot_project
+
+# Default: Pool mode (multi-agent collaboration)
+python bot_service.py
+
+# Or explicitly choose a mode
 python bot_service.py --mode pool
 python bot_service.py --mode pipeline
 ```
@@ -369,7 +398,6 @@ context_manager = MemorySystemContextManager(memory_system)
 
 | 层级 | 存储 | 默认分组维度 | 说明 |
 |------|------|--------------|------|
-| **Working** | 内存 | `SessionScope` | 当前会话热缓存 |
 | **Short-term** | 文件 | `SessionScope` | 当前会话近期对话历史 |
 | **History** | 文件 | `UserScope` | 用户级别的长期历史归档 |
 | **Long-term** | 文件 | `UserScope` | SOUL.md / USER.md / MEMORY.md |
@@ -448,7 +476,7 @@ memory:
 
 ### MCP 配置
 
-编辑 `config/mcp.json`：
+`config/mcp.json` 中的 server、URL、命令和凭据需要按你的环境自行填写，下面只是结构示例：
 
 ```json
 {
@@ -504,14 +532,8 @@ multi_agent:
   peers:
     - name: "office-expert"
       role: "document"
-      role_description: "Office document specialist"
-      specialties: ["word", "excel", "powerpoint", "pdf"]
       capabilities: ["document", "office"]
-      capabilities_detail: ["生成 Word/Excel/PPT/PDF", "格式转换", "文档批注"]
-      example_tasks: ["将 data/report.csv 转换为 Excel 并加图表"]
-      preferred_communication: "both"   # both | sync | async
       system_prompt: "..."
-      context_strategy: "persistent"
       skill_dirs:
         - "skills/peers/docx"
         - "skills/peers/pdf"
@@ -520,14 +542,9 @@ multi_agent:
       tools:
         file_tools:
           enabled: true
-          allowed_directories:
-            - "./workspace"
         shell_tools:
           enabled: true
           timeout: 60
-        mcp_tools:
-          enabled: true
-          server_filter: ["fetch"]
 ```
 
 **关键概念**：
@@ -537,7 +554,7 @@ multi_agent:
   - `mode="bilateral"`（默认）：包含收发双边记录，适合主动调用 peer 后回顾完整上下文
   - `mode="receiver_only"`：仅包含从 peer 接收到的消息，适合 peer 异步回复后快速查看 inbox
 
-Peer 的 `send_message` 工具描述会**动态注入**当前可见的 peer 列表及其 specialties，帮助 LLM 判断应该联系谁。
+Peer 的 `send_message` 工具描述会**动态注入**当前可见的 peer 列表，帮助 LLM 判断应该联系谁。
 
 ### Agent Tool/Skill 配置指南
 
@@ -546,7 +563,7 @@ Peer 的 `send_message` 工具描述会**动态注入**当前可见的 peer 列�
 | Agent | 文件 | Shell | MCP | 通信工具 | Skills |
 |-------|:----:|:-----:|:---:|----------|--------|
 | **main** | ✅ | ✅ | ✅ (全部) | send_message, view_peer_history | skills/main/* (11个) |
-| **office-expert** | ✅ | ✅ | ✅ (fetch) | send_message_async(→main), view_peer_history | skills/peers/docx,pdf,pptx,xlsx |
+| **office-expert** | ✅ | ✅ | — | send_message_async(→main), view_peer_history | skills/peers/docx,pdf,pptx,xlsx |
 | **query-12306** | ✅ | ✅ | ✅ (12306-mcp, fetch) | send_message_async(→main), view_peer_history | — |
 | **helper-sync** | ✅ | ✅ | — | — (spawn 同步返回) | skills/subagents/* |
 
@@ -559,15 +576,11 @@ tools:
   # 文件工具：读写文件、列出目录
   file_tools:
     enabled: true
-    allowed_directories:
-      - "./workspace"
-      - "./data"
 
   # Shell 工具：执行命令
   shell_tools:
     enabled: true
     timeout: 60
-    restrict_to_workspace: true
     enable_safety_guard: false
 
   # MCP 工具：按 server 过滤，server 名必须与 mcp.json 中的 key 一致
@@ -647,25 +660,13 @@ multi_agent:
 peers:
   - name: "my-new-agent"
     role: "custom"
-    role_description: "What this agent does"
-    specialties: ["keyword1", "keyword2"]
     capabilities: ["capability1"]
-    capabilities_detail: ["详细能力描述"]
-    example_tasks: ["示例任务"]
-    preferred_communication: "async"
     system_prompt: |
       你是一个...的 Agent。
       完成后必须通过 send_message_async 将结果回复给主 Agent（target_agent="main"）
-    context_strategy: "persistent"
-    memory:
-      enabled: true
-      short_term:
-        max_messages: 30
-        budget_ratio: 0.4
     tools:
       file_tools:
         enabled: true
-        allowed_directories: ["./workspace"]
       shell_tools:
         enabled: false
       mcp_tools:
@@ -738,7 +739,7 @@ MCP 工具通过 `MCPTool` 动态加载，支持：
 - ✅ QQ 消息收发 (C2C 私聊 + 群聊 + 附件接收)
 - ✅ LLM 对话 (支持流式/非流式输出)
 - ✅ 工具调用 (内置 + MCP + 自定义)
-- ✅ 四层记忆系统 (Working / Short-term / History / Long-term)
+- ✅ 三层记忆系统 (Short-term / History / Long-term)
 - ✅ 用户白名单
 - ✅ ReAct 执行模式
 - ✅ 多平台抽象适配（可扩展 Discord / 飞书 / 钉钉 / Telegram / CLI 等）

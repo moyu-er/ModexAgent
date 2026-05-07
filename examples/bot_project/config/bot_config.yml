@@ -1,7 +1,53 @@
 # QQ Bot configuration
 # Secrets are loaded from .env file via ${ENV_VAR} interpolation.
-# Copy .env.example to .env and fill in your values.
+# Create .env separately and fill in your values; .env.example is only a field reference.
 
+# ==================== System Overview (系统架构概览) ====================
+#
+# 本配置文件统一管理 main agent、subagent、peer agent 的所有能力来源。
+# 每个 Agent 的能力由三个维度组成：Tools（工具）、MCP（外部服务）、Skills（技能）。
+#
+# ---- Tools（内置工具） ----
+#   file_tools    : read_file, write_file, edit_file, list_dir
+#                   main 默认启用；peer/subagent 在各自 tools 段显式配置后启用
+#   shell_tools   : shell（命令执行）
+#                   main 默认启用；peer/subagent 在各自 tools 段显式配置后启用
+#                   timeout / enable_safety_guard 可调
+#   search_tools  : search_files, find_files
+#                   main 默认启用；peer/subagent 在各自 tools 段显式配置后启用
+#
+# ---- MCP（外部工具服务） ----
+#   通过 MCP 协议连接外部工具服务器（如 fetch、playwright、12306-mcp）
+#   默认不启用，需显式设置 enabled: true + server_filter
+#   主配置在 mcp: 段，各 agent 通过 tools.mcp_tools 选择要加载的服务器
+#
+# ---- Skills（技能脚本） ----
+#   从 SKILL.md 文件加载的领域知识/操作手册
+#   Main agent  : 自动加载 paths.skills_dir 下的所有 SKILL.md
+#   Peer/Subagent: 通过 skill_dirs 显式指定要加载的 skill 目录
+#   可通过 allowed_skills 限制可用 skill 列表（白名单）
+#
+# ---- 各 Agent 能力矩阵（快速参考） ----
+#   ┌──────────────┬───────┬───────┬───────┬────────────────────────────┬──────────────────┐
+#   │ Agent        │ file  │ shell │ search│ MCP (server_filter)        │ Skills           │
+#   ├──────────────┼───────┼───────┼───────┼────────────────────────────┼──────────────────┤
+#   │ main         │   ✓   │   ✓   │   ✓   │ fetch, deepwiki, MiniMax,  │ skills/main/*    │
+#   │              │       │       │       │ playwright                 │ (自动加载)       │
+#   ├──────────────┼───────┼───────┼───────┼────────────────────────────┼──────────────────┤
+#   │ helper-sync  │   ✓   │   ✓   │   ✓   │ —                          │ —                │
+#   │ (subagent)   │       │       │       │                            │                  │
+#   ├──────────────┼───────┼───────┼───────┼────────────────────────────┼──────────────────┤
+#   │ office-expert│   ✓   │   ✓   │   ✓   │ —                          │ peers/docx, pdf, │
+#   │              │       │       │       │                            │ pptx, xlsx       │
+#   ├──────────────┼───────┼───────┼───────┼────────────────────────────┼──────────────────┤
+#   │ query-12306  │   ✗   │   ✗   │   ✗   │ 12306-mcp                  │ —                │
+#   └──────────────┴───────┴───────┴───────┴────────────────────────────┴──────────────────┘
+#
+# ---- Approval（审批） ----
+#   只有 agent.approval.tools 中列出的工具才会触发审批流程
+#   未列出的工具默认无需审批
+#   详见 agent.approval 段的注释说明
+#
 # ==================== Paths ====================
 # All paths are relative to the project root (where bot_service.py lives).
 # Override these to relocate data without code changes.
@@ -61,11 +107,21 @@ agent:
 
   max_iterations: 50
 
-  # Tool approval: only tools listed here are subject to approval.
-  # Tools NOT listed are always NORMAL (no approval needed).
-  # enabled: true → approval checking is active
-  # allowed_paths: empty list [] → ALL paths require approval (DANGEROUS)
-  # allowed_paths: ["*"] → NO paths require approval (NORMAL)
+  # ---- Tool Approval (审批配置) ----
+  # 只有在这里列出的工具才会触发审批流程，未列出的工具默认无需审批。
+  # enabled: true   → 启用审批检查
+  # enabled: false  → 所有工具都无需审批（调试时可用，生产环境慎用）
+  #
+  # 各工具 allowed_paths 含义：
+  #   - ["./*"]      → 仅限项目目录内操作需要审批（推荐用于 write/edit）
+  #   - ["*"]        → 所有路径都不需要审批（宽松模式）
+  #   - []           → 所有路径都需要审批（最严格，相当于每次都要确认）
+  #
+  # 当前配置说明：
+  #   edit_file / write_file : 限制在项目目录内，超出需审批
+  #   shell                  : 宽松模式，所有命令都不需要审批
+  #   search_files / find_files: 宽松模式，搜索操作不需要审批
+  #   read_file / list_dir   : 未列出，默认无需审批（读取操作相对安全）
   approval:
     enabled: true
     tools:
@@ -102,18 +158,22 @@ multi_agent:
       - 你没有通信工具，也不需要主动发送消息
       - 你的输出内容会直接返回给调用方，确保结果完整、准确
       - 遇到障碍时尝试替代方案，如实记录尝试过程
-    context_strategy: "ephemeral"
     denied_tools:
       - "spawn_subagent_sync"
       - "send_message"
       - "send_message_async"
     max_iterations: 10
-    max_tools_per_turn: 10
-    execution_strategy: "react"
-    # Independent tool config (inherits main ToolManager with filtering if not set)
+    # Independent tool config (same schema as main tools)
+    # Subagent 默认拥有 file + shell + search 工具，按需禁用
     tools:
-      file_tools: {}
-      shell_tools: {}
+      file_tools:
+        enabled: true
+      shell_tools:
+        enabled: true
+        timeout: 60
+        enable_safety_guard: true
+      search_tools:
+        enabled: true
 
   # ==================== Peer Agents ====================
   # Key difference from subagent: context_strategy="persistent", MemorySystem-backed
@@ -121,12 +181,7 @@ multi_agent:
   peers:
     - name: "office-expert"
       role: "document"
-      role_description: "Office document specialist"
-      specialties: ["word", "excel", "powerpoint", "pdf"]
       capabilities: ["document", "office"]
-      capabilities_detail: ["生成 Word/Excel/PPT/PDF", "格式转换", "文档批注"]
-      example_tasks: ["将 data/report.csv 转换为 Excel 并加图表"]
-      preferred_communication: "both"
       system_prompt: |
         你是文档专家 Agent（peer agent），擅长处理各种 Office 文档（Word、Excel、PowerPoint、PDF）。
 
@@ -157,37 +212,31 @@ multi_agent:
         - 对处理结果进行质量检查，确保输出正确
         - **完成后通过 send_message_async 向 main 发送结果**
 
-      memory:
-        enabled: true
-        short_term:
-          max_messages: 50
-
-      context_strategy: "persistent"
       skill_dirs:
         - "skills/peers/docx"
         - "skills/peers/pdf"
         - "skills/peers/pptx"
         - "skills/peers/xlsx"
       max_iterations: 30
-      max_tools_per_turn: 10
-      execution_strategy: "react"
 
       subagent:
         enabled: true
 
-      # Independent tool config
+      # Independent tool config (same schema as main tools)
+      # office-expert: 文档处理专家，需要文件操作和搜索能力
       tools:
-        file_tools: {}
-        shell_tools: {}
+        file_tools:
+          enabled: true
+        shell_tools:
+          enabled: true
+          timeout: 60
+          enable_safety_guard: true
+        search_tools:
+          enabled: true
 
     - name: "query-12306"
       role: "travel"
-      role_description: "China railway ticket query assistant"
-      specialties: ["12306", "train_ticket", "itinerary"]
       capabilities: ["travel", "railway"]
-      capabilities_detail: ["查询 12306 余票", "车次时刻表", "行程规划"]
-      example_tasks: ["查询北京到上海的高铁余票"]
-      preferred_communication: "async"
       system_prompt: |
         你是 12306 火车票查询助手 Agent（peer agent），专门处理火车票查询、余票查询、车次时刻表等任务。
 
@@ -218,24 +267,27 @@ multi_agent:
         - 将查询结果整理为清晰的格式
         - **完成后通过 send_message_async 向 main 发送结果**
 
-      memory:
-        enabled: true
-        short_term:
-          max_messages: 30
-
-      context_strategy: "persistent"
       max_iterations: 20
       max_tools_per_turn: 5
-      execution_strategy: "react"
 
       subagent:
         enabled: false
 
+      # Independent tool config (same schema as main tools)
+      # query-12306: 火车票查询专家，仅需 MCP 工具（12306-mcp），禁用其他工具
       tools:
+        file_tools:
+          enabled: false
+        shell_tools:
+          enabled: false
+        search_tools:
+          enabled: false
         mcp_tools:
           enabled: true
+          tool_timeout: 60
           server_filter:
             - "12306-mcp"
+          tool_filter: {}
 
 # ==================== Memory ====================
 memory:
@@ -246,18 +298,32 @@ memory:
     #   例如 50×0.6=30 — 留 20 条余量防止频繁触发
     # auto_llm_compression: 启用 LLM (SummarizerAgent) 生成 Archive 摘要
     short_term:
-      max_messages: 60            # 消息数触发阈值 (超过才压缩)
+      max_messages: 100            # 消息数触发阈值 (超过才压缩)
       max_tokens: 100000          # Token 触发阈值 (超过才压缩)
-      keep_ratio_for_messages: 0.5  # MESSAGE_COUNT 触发时保留 max_messages × 此比例
-      keep_ratio_for_token: 0.5     # TOKEN_PRESSURE 触发时保留当前 token 数 × 此比例
+      keep_ratio_for_messages: 0.4  # MESSAGE_COUNT 触发时保留 max_messages × 此比例
+      keep_ratio_for_token: 0.4     # TOKEN_PRESSURE 触发时保留当前 token 数 × 此比例
       auto_llm_compression: true
 
     # -- 消息分类策略 (压缩时使用) --
+    retention:
+      priority_order:
+        - system_critical
+        - user_input
+        - agent_input
+        - assistant_final
+        - tool_chain_structure
+        - tool_result_recent
+        - assistant_intermediate
+        - tool_result_old
+        - low_value_noise
+      recent_tool_result_count: 3
+      anchors:
+        min_recent_user_turns: 2
+        min_recent_agent_turns: 1
+
     compaction:
-      policy: "conservative"         # "conservative" | "keep_all" | "semantic"
-      boundary: "tool_chain"         # "tool_chain" | "user_turn_tool_chain"
-      high_value_tools:              # 高价值工具结果可纳入摘要 (其余结果压缩前截断)
-        - "mcp-deepwiki"
+      policy: "conservative"
+      boundary: "priority_input"
 
     # -- 长期记忆 (Knowledge: SOUL.md / USER.md / MEMORY.md) --
     # DreamEngine 定时从 Archive 提取事实写入 Knowledge 文件
@@ -269,12 +335,16 @@ memory:
     governance:
       enabled: true
       tool_chain_repair: true        # 修复孤儿 tool result / 补全缺失 tool call
-      microcompact:
-        enabled: true
-        keep_recent: 5              # 保留最近 N 个 tool result 不压缩
       token_budget:                  # 注入上下文的总 token 上限
         enabled: true
         budget_ratio: 0.5            # llm.max_tokens × 此比例 = 注入上限
+        safety_buffer: 1024
+      lossy_compaction:
+        enabled: true
+        tool_result_head_chars: 1200
+        assistant_head_chars: 1200
+        agent_head_chars: 2000
+        user_head_chars: 4000
 
     # -- 空闲自动压缩 (session 空闲超过阈值时触发) --
     # auto_compact:
@@ -289,18 +359,37 @@ memory:
       enabled: true
       interval: 600                  # 扫描间隔 (秒)
 
-  # Peer Agent 记忆: 仅 Session 层, 不压缩, 不归档
+  # Peer Agent 记忆: 仅 Session 层, 不归档
+  # Session 超过阈值后自动截断旧消息 (同 main 的 trigger/plan/keep 逻辑, 不写 archive)
   peers:
     short_term:
       max_messages: 50
-      auto_llm_compression: false
+      max_tokens: 50000
+      keep_ratio_for_messages: 0.5
+      keep_ratio_for_token: 0.5
+    governance:
+      enabled: true
+      tool_chain_repair: true
+      token_budget:
+        enabled: true
+        budget_ratio: 0.3
+        safety_buffer: 512
 
-  # Subagent 记忆: 仅 Session 层, 更小窗口, 任务结束清除
+  # Subagent 记忆: 仅 Session 层, 任务结束清除
+  # Session 超过阈值后自动截断旧消息 (同 main 的 trigger/plan/keep 逻辑, 不写 archive)
   subagents:
     short_term:
-      max_messages: 20
-      max_tokens: 4000
-      auto_llm_compression: false
+      max_messages: 50
+      max_tokens: 50000
+      keep_ratio_for_messages: 0.5
+      keep_ratio_for_token: 0.5
+    governance:
+      enabled: true
+      tool_chain_repair: true
+      token_budget:
+        enabled: true
+        budget_ratio: 0.3
+        safety_buffer: 512
 
 # ==================== Plugins ====================
 plugins:
@@ -327,26 +416,6 @@ plugins:
     #   framework's llm_provider credentials if embedding_api_key/base_url are empty.
     mem0_memory:
       enabled: false
-      workspace: "./data/vector_memory"
-      vector_store: "chroma"
-      collection_name: "bot_memories"
-
-      # Embedding — remote API mode (OpenAI-compatible)
-      embedding_provider: "openai"
-      embedding_model: "${MEM0_EMBEDDING_MODEL}"
-      embedding_base_url: "${MEM0_EMBEDDING_BASE_URL}"
-      embedding_api_key: "${MEM0_EMBEDDING_API_KEY}"
-      # Leave embedding_api_key empty to inherit llm.api_key and llm.base_url
-
-      # Alternative: local model (slow startup, no external API needed)
-      # embedding_provider: "huggingface"
-      # embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
-
-      prefetch_top_k: 5
-      prefetch_min_score: 0.3
-      search_top_k: 5
-      operation_timeout: 20
-      disable_telemetry: true
 
 # ==================== Runtime Safety ====================
 runtime_safety:
@@ -378,11 +447,42 @@ mcp:
   config_file: "mcp.json"
 
 # ==================== Tools ====================
+# Main agent tool configuration. All tool categories follow the same schema
+# across main agent, subagents, and peer agents.
+#
+# ---- 工具配置统一说明 ----
+# main agent 的标准工具（file_tools / shell_tools / search_tools）默认启用。
+# peer/subagent 的独立 tools 段只有配置过的标准工具类别才默认启用；
+# 如需禁用某个已配置工具类别，将其 enabled 设为 false。
+#
+# file_tools（文件操作）:
+#   - enabled: true/false  → 是否注册文件操作工具
+#   包含工具: read_file, write_file, edit_file, list_dir
+#
+# shell_tools（命令执行）:
+#   - enabled: true/false   → 是否注册 shell 工具
+#   - timeout: 秒数         → shell 命令超时时间
+#   - enable_safety_guard: true/false → 是否启用安全校验（禁止 rm -rf / 等危险命令）
+#
+# search_tools（文件搜索）:
+#   - enabled: true/false   → 是否注册搜索工具
+#   包含工具: search_files, find_files
+#
+# mcp_tools（MCP 外部工具）:
+#   - enabled: true/false   → 是否加载 MCP 工具
+#   - tool_timeout: 秒数    → MCP 工具调用超时
+#   - server_filter:        → 只加载指定 MCP 服务器的工具（白名单）
+#   - tool_filter:          → 只加载指定名称的工具（高级过滤，通常留空）
+#
 tools:
-  # Standard tools for main agent
-  search_tools: {}
-
-  # MCP tools for main agent (peers have their own tool configs)
+  file_tools:
+    enabled: true
+  shell_tools:
+    enabled: true
+    timeout: 60
+    enable_safety_guard: true
+  search_tools:
+    enabled: true
   mcp_tools:
     enabled: true
     tool_timeout: 60

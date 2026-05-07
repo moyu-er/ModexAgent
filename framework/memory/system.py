@@ -154,7 +154,7 @@ class MemorySystemContextManager(ContextManager):
                 set_pending = getattr(self.memory_system, "set_pending_user_turn", None)
                 if set_pending is not None:
                     msg_id = metadata.get("message_id", "") if metadata else ""
-                    await set_pending(ctx, msg_id, time.time())  # type: ignore[misc]
+                    await set_pending(ctx, msg_id, time.time())
             except Exception:
                 logger.debug("Failed to set pending user turn for %s", session_id, exc_info=True)
 
@@ -163,7 +163,7 @@ class MemorySystemContextManager(ContextManager):
             try:
                 clear_pending = getattr(self.memory_system, "clear_pending_user_turn", None)
                 if clear_pending is not None:
-                    await clear_pending(ctx)  # type: ignore[misc]
+                    await clear_pending(ctx)
             except Exception:
                 logger.debug("Failed to clear pending user turn for %s", session_id, exc_info=True)
 
@@ -292,7 +292,7 @@ class MemorySystemContextManager(ContextManager):
         try:
             clear_pending = getattr(self.memory_system, "clear_pending_user_turn", None)
             if clear_pending is not None:
-                await clear_pending(ctx)  # type: ignore[misc]
+                await clear_pending(ctx)
         except Exception:
             logger.debug("Failed to clear pending user turn for %s", session_id, exc_info=True)
 

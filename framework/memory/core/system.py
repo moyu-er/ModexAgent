@@ -135,6 +135,16 @@ class CheckpointMemorySystem(Protocol):
 
     async def clear_checkpoint(self, context: MemoryContext) -> None: ...
 
+    async def get_checkpoint_id(self, context: MemoryContext) -> str | None: ...
+
+    async def get_last_recovered_checkpoint_id(self, context: MemoryContext) -> str | None: ...
+
+    async def set_last_recovered_checkpoint_id(
+        self,
+        context: MemoryContext,
+        checkpoint_id: str,
+    ) -> None: ...
+
 
 class BudgetManagedMemorySystem(Protocol):
     """Optional pre-load budget hook used by the context-manager bridge."""

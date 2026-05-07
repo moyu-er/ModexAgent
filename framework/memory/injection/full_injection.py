@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any
 
 from framework.core.context import ContextState
@@ -15,13 +16,10 @@ from framework.memory.injection.filter import (
     InjectionFilterStrategy,
     ToolMessageFilterStrategy,
 )
+from framework.memory.injection.policy import MemoryInjectionPolicy
 from framework.memory.utils import estimate_text_tokens, normalize_memory_summary
 
 logger = logging.getLogger(__name__)
-
-
-from framework.memory.injection.policy import MemoryInjectionPolicy
-
 class FullInjectionPolicy(MemoryInjectionPolicy):
     """Main agent policy — knowledge + archive + providers + session.
 
@@ -131,7 +129,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                     time_str = ""
                     if isinstance(created_at, str):
                         time_str = f" {created_at.replace('T', ' ')[:16]}"
-                    elif hasattr(created_at, "strftime"):
+                    elif isinstance(created_at, datetime):
                         time_str = f" {created_at.strftime('%Y-%m-%d %H:%M')}"
                     blocks.append(f"--- [Historical Record {idx}]{time_str} ---\n{summary}")
                 if blocks:

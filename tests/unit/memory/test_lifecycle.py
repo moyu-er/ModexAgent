@@ -7,11 +7,10 @@ DreamEngine cursor semantics, and ConsolidationEngine ABC.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
-from datetime import datetime
 
 from framework.core.types import MessageRole
 from framework.memory.core.layers import MemoryLayerSet
@@ -104,18 +103,96 @@ class TestDefaultMemoryLifecyclePolicy:
         policy = DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator)
         ctx = MemoryContext(session_id="s1", user_id="u1")
         archive = AsyncMock()
-        layers = MemoryLayerSet(session=AsyncMock(), archive=archive)
+        session = AsyncMock()
+        session.get_all_messages = AsyncMock(return_value=[])
+        layers = MemoryLayerSet(session=session, archive=archive)
         await policy.on_messages_added(ctx, layers)
         coordinator.maybe_compress.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_on_messages_added_skips_when_no_archive(self):
+    async def test_on_messages_added_triggers_compression_even_without_archive(self):
+        """archive=None still runs session-only compression through the default coordinator."""
         coordinator = AsyncMock()
         policy = DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator)
         ctx = MemoryContext(session_id="s1", user_id="u1")
-        layers = MemoryLayerSet(session=AsyncMock(), archive=None)
+        session = AsyncMock()
+        session.get_all_messages = AsyncMock(return_value=[])
+        layers = MemoryLayerSet(session=session, archive=None)
         await policy.on_messages_added(ctx, layers)
+        coordinator.maybe_compress.assert_called_once_with(
+            session=layers.session, archive=None, context=ctx,
+        )
+
+    @pytest.mark.asyncio
+    async def test_on_messages_added_skips_open_assistant_tool_call(self):
+        coordinator = AsyncMock()
+        coordinator.maybe_compress = AsyncMock()
+        policy = DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator)
+        ctx = MemoryContext(session_id="s1", user_id="u1")
+        session = AsyncMock()
+        session.get_all_messages = AsyncMock(
+            return_value=[
+                {
+                    "role": str(MessageRole.ASSISTANT),
+                    "content": "",
+                    "tool_calls": [{"id": "call-1", "function": {"name": "search_files"}}],
+                }
+            ]
+        )
+        layers = MemoryLayerSet(session=session, archive=None)
+
+        await policy.on_messages_added(ctx, layers)
+
         coordinator.maybe_compress.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_on_messages_added_skips_tool_result_until_final_assistant(self):
+        coordinator = AsyncMock()
+        coordinator.maybe_compress = AsyncMock()
+        policy = DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator)
+        ctx = MemoryContext(session_id="s1", user_id="u1")
+        session = AsyncMock()
+        session.get_all_messages = AsyncMock(
+            return_value=[
+                {
+                    "role": str(MessageRole.ASSISTANT),
+                    "content": "",
+                    "tool_calls": [{"id": "call-1", "function": {"name": "search_files"}}],
+                },
+                {"role": str(MessageRole.TOOL), "tool_call_id": "call-1", "content": "result"},
+            ]
+        )
+        layers = MemoryLayerSet(session=session, archive=None)
+
+        await policy.on_messages_added(ctx, layers)
+
+        coordinator.maybe_compress.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_on_messages_added_runs_after_final_assistant_consumes_tool_result(self):
+        coordinator = AsyncMock()
+        coordinator.maybe_compress = AsyncMock()
+        policy = DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator)
+        ctx = MemoryContext(session_id="s1", user_id="u1")
+        session = AsyncMock()
+        session.get_all_messages = AsyncMock(
+            return_value=[
+                {
+                    "role": str(MessageRole.ASSISTANT),
+                    "content": "",
+                    "tool_calls": [{"id": "call-1", "function": {"name": "search_files"}}],
+                },
+                {"role": str(MessageRole.TOOL), "tool_call_id": "call-1", "content": "result"},
+                {"role": str(MessageRole.ASSISTANT), "content": "done"},
+            ]
+        )
+        layers = MemoryLayerSet(session=session, archive=None)
+
+        await policy.on_messages_added(ctx, layers)
+
+        coordinator.maybe_compress.assert_called_once_with(
+            session=layers.session, archive=None, context=ctx,
+        )
 
     @pytest.mark.asyncio
     async def test_on_messages_added_handles_coordinator_failure(self):
@@ -125,6 +202,7 @@ class TestDefaultMemoryLifecyclePolicy:
         ctx = MemoryContext(session_id="s1", user_id="u1")
         layers = MemoryLayerSet(session=AsyncMock(), archive=AsyncMock())
         await policy.on_messages_added(ctx, layers)
+
 
     @pytest.mark.asyncio
     async def test_on_messages_added_skips_when_no_coordinator(self):
@@ -285,7 +363,7 @@ class TestDefaultMemoryMaintenancePolicy:
     @pytest.mark.asyncio
     async def test_scan_once_knowledge_eviction_prunes_stale_files(self):
         import time
-        from datetime import datetime, timedelta, UTC
+        from datetime import UTC, datetime, timedelta
 
         registry = InMemoryStoreRegistry()
         layer_set = MemoryLayerFactory.single_user(registry=registry)

@@ -9,6 +9,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from ..core.emitter import AgentResult
+from ..core.message_utils import ensure_agent_source_prefix
 from ..core.types import InputMessage, MessageRole
 from ..memory.history import (
     ListMessageHistory,
@@ -91,10 +92,10 @@ async def assemble_context(
         multimodal_content = sanitized_content
 
     if source_agent:
-        user_message: dict[str, Any] = {
+        user_message = {
             "role": MessageRole.AGENT,
             "source_agent": source_agent,
-            "content": multimodal_content,
+            "content": ensure_agent_source_prefix(multimodal_content, str(source_agent)),
         }
     else:
         user_message = {"role": MessageRole.USER, "content": multimodal_content}

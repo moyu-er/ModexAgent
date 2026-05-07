@@ -269,7 +269,7 @@ class TestInboxFlushHook:
         msgs = await history.to_list()
         agent_msgs = [m for m in msgs if m.get("meta_inbox")]
         assert len(agent_msgs) == 1
-        assert agent_msgs[0]["content"] == "incoming task"
+        assert agent_msgs[0]["content"] == "[From Agent main]\nincoming task"
 
     async def test_sanitize_removes_system_tags(self):
         """_sanitize_content removes system tags for injection defense."""

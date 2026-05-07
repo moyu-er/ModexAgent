@@ -316,6 +316,23 @@ context_manager = MemorySystemContextManager(
 # 使用方式与普通 ContextManager 相同
 ```
 
+## Priority Retention and Compression
+
+Persistent session compression uses a priority retention policy. The default
+priority order is:
+
+`system_critical > user_input > agent_input > assistant_final > tool_chain_structure > tool_result_recent > assistant_intermediate > tool_result_old > low_value_noise`.
+
+`keep_ratio_for_messages` and `keep_ratio_for_token` are hard caps for
+persistent compression. Compression never stores truncated assistant/tool
+content in session memory. If no legal retained suffix fits the hard cap,
+compression skips mutation and tries again on a later lifecycle pass.
+
+Context governance is separate from compression. Governance operates on the
+LLM input copy and may truncate tool, assistant, agent, or user content in
+that priority order. Lossy governance output is never written back to session
+memory.
+
 ---
 
 ## 6. 压缩策略详解

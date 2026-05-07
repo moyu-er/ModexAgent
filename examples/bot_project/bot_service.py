@@ -6,6 +6,7 @@ Run with: python bot_service.py
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import sys
 from pathlib import Path
@@ -47,7 +48,7 @@ class QQBotService(BotService):
     Defaults to pipeline mode; pass mode="pool" for multi-agent collaboration.
     """
 
-    def __init__(self, config_dir: Path, mode: Literal["pipeline", "pool"] = "pipeline"):
+    def __init__(self, config_dir: Path, mode: Literal["pipeline", "pool"] = "pipeline") -> None:
         config_loader = ConfigLoader(config_dir)
         config = config_loader.load_yaml("bot_config.yml")
         mcp_config = config_loader.load_mcp_config(config.get("mcp", {}))
@@ -83,10 +84,23 @@ def create_qq_service(
     return QQBotService(config_dir, mode=mode)
 
 
-async def main() -> None:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for the bot service."""
+    parser = argparse.ArgumentParser(description="Run the QQ Bot example service.")
+    parser.add_argument(
+        "--mode",
+        choices=("pipeline", "pool"),
+        default="pool",
+        help="Runtime mode: pipeline for single-agent mode, pool for AgentPool mode.",
+    )
+    return parser.parse_args(argv)
+
+
+async def main(argv: list[str] | None = None) -> None:
     """Main entry point."""
+    args = parse_args(argv)
     config_dir = Path(__file__).parent / "config"
-    service = create_qq_service(config_dir, mode="pool")
+    service = create_qq_service(config_dir, mode=args.mode)
     await service.initialize()
     await service.start()
 

@@ -10,10 +10,34 @@ is never modified.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from enum import StrEnum
 from typing import Any
 
 from framework.core.types import MessageRole
+from framework.memory.retention import DefaultMessageRetentionPolicy, MessageRetentionPolicy
+from framework.memory.retention.types import MessageRetentionDecision, RetentionPriority
 from framework.memory.utils import estimate_token_count
+
+TOOL_RESULT_UNAVAILABLE_CONTENT = (
+    "[Tool result unavailable - the tool call may have been interrupted "
+    "or its result was removed from the model-visible context]"
+)
+
+
+class ContextReductionType(StrEnum):
+    """Type of lossy reduction applied to a message for governance."""
+
+    TOOL_RESULT_TRUNCATED = "tool_result_truncated"
+    ASSISTANT_TRUNCATED = "assistant_truncated"
+    AGENT_INPUT_TRUNCATED = "agent_input_truncated"
+    USER_INPUT_TRUNCATED = "user_input_truncated"
+    CONTENT_TRUNCATED = "content_truncated"
+
+
+# Metadata keys used by governance to mark lossy-compacted messages
+META_CONTEXT_LOSSY = "meta_context_lossy"
+META_ORIGINAL_CHARS = "meta_original_chars"
+META_CONTEXT_REDUCTION = "meta_context_reduction"
 
 
 class ContextGovernance(ABC):
@@ -78,6 +102,7 @@ class ToolChainRepairGovernance(ContextGovernance):
         "[Tool result unavailable — the tool call may have been interrupted "
         "or its result was lost before the response could be recorded]"
     )
+    _BACKFILL_CONTENT = TOOL_RESULT_UNAVAILABLE_CONTENT
 
     async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # Step 1: drop orphans
@@ -137,6 +162,212 @@ class ToolChainRepairGovernance(ContextGovernance):
                 },
             )
         return updated
+
+class PriorityBudgetGovernance(ContextGovernance):
+    """Select model-visible messages using retention priorities."""
+
+    def __init__(
+        self,
+        max_tokens: int,
+        retention_policy: MessageRetentionPolicy | None = None,
+        safety_buffer: int = 1024,
+        min_recent_user_turns: int | None = None,
+        min_recent_agent_turns: int | None = None,
+    ) -> None:
+        self._max_tokens = max_tokens
+        self._safety_buffer = safety_buffer
+        self._retention = retention_policy or DefaultMessageRetentionPolicy()
+        self._min_recent_user_turns = (
+            min_recent_user_turns
+            if min_recent_user_turns is not None
+            else int(getattr(self._retention, "min_recent_user_turns", 1))
+        )
+        self._min_recent_agent_turns = (
+            min_recent_agent_turns
+            if min_recent_agent_turns is not None
+            else int(getattr(self._retention, "min_recent_agent_turns", 1))
+        )
+
+    async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not messages:
+            return []
+        budget = max(128, self._max_tokens - self._safety_buffer)
+        selected: list[dict[str, Any]] = []
+        selected_tokens = 0
+        decisions = [
+            self._retention.decide(msg, index=idx, messages=messages)
+            for idx, msg in enumerate(messages)
+        ]
+        protected_indices = self._recent_anchor_indices(
+            decisions,
+            RetentionPriority.USER_INPUT,
+            self._min_recent_user_turns,
+        )
+        protected_indices.update(
+            self._recent_anchor_indices(
+                decisions,
+                RetentionPriority.AGENT_INPUT,
+                self._min_recent_agent_turns,
+            )
+        )
+        ranked_indices = sorted(range(len(messages)), key=lambda idx: (decisions[idx].rank, -idx))
+        kept_indices: set[int] = set()
+        for idx in sorted(protected_indices):
+            msg = dict(messages[idx])
+            kept_indices.add(idx)
+            selected_tokens += estimate_token_count([msg])
+        for idx in ranked_indices:
+            if idx in kept_indices:
+                continue
+            msg = dict(messages[idx])
+            token_count = estimate_token_count([msg])
+            if kept_indices and selected_tokens + token_count > budget:
+                continue
+            kept_indices.add(idx)
+            selected_tokens += token_count
+        for idx, msg in enumerate(messages):
+            if idx in kept_indices:
+                selected.append(dict(msg))
+        return selected
+
+    @staticmethod
+    def _recent_anchor_indices(
+        decisions: list[MessageRetentionDecision],
+        priority: RetentionPriority,
+        limit: int,
+    ) -> set[int]:
+        if limit <= 0:
+            return set()
+        matches = [idx for idx, decision in enumerate(decisions) if decision.priority == priority]
+        return set(matches[-limit:])
+
+
+class LossyContentCompactionGovernance(ContextGovernance):
+    """Apply deterministic lossy reductions to LLM context copies only."""
+
+    def __init__(
+        self,
+        tool_result_head_chars: int = 1200,
+        assistant_head_chars: int = 1200,
+        agent_head_chars: int = 2000,
+        user_head_chars: int = 4000,
+    ) -> None:
+        self._limits = {
+            str(MessageRole.TOOL): tool_result_head_chars,
+            str(MessageRole.ASSISTANT): assistant_head_chars,
+            str(MessageRole.AGENT): agent_head_chars,
+            str(MessageRole.USER): user_head_chars,
+        }
+
+    async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
+        for msg in messages:
+            updated = dict(msg)
+            role = str(updated.get("role", ""))
+            limit = self._limits.get(role)
+            content = updated.get("content")
+            if limit is not None and isinstance(content, str) and len(content) > limit:
+                updated["content"] = self._truncate_content(
+                    content,
+                    limit,
+                    role,
+                    source_agent=str(updated.get("source_agent", "")),
+                )
+                updated[META_CONTEXT_LOSSY] = True
+                updated[META_ORIGINAL_CHARS] = len(content)
+                updated[META_CONTEXT_REDUCTION] = self._reduction_name(role)
+            result.append(updated)
+        return result
+
+    @staticmethod
+    def _truncate_content(
+        content: str,
+        limit: int,
+        role: str,
+        *,
+        source_agent: str = "",
+    ) -> str:
+        suffix = f"\n[Context content truncated for role={role}; original chars={len(content)}]"
+        prefix = f"[From Agent {source_agent}]\n" if role == str(MessageRole.AGENT) and source_agent else ""
+        body = content
+        if prefix and body.startswith(prefix):
+            body = body[len(prefix):]
+        reserved = len(prefix) + len(suffix)
+        if prefix and reserved >= limit:
+            return prefix + suffix.lstrip()
+        if prefix:
+            head_limit = max(0, limit - reserved)
+            return prefix + body[:head_limit] + suffix
+        head_limit = max(0, limit - len(suffix))
+        return body[:head_limit] + suffix
+
+    @staticmethod
+    def _reduction_name(role: str) -> ContextReductionType:
+        if role == str(MessageRole.TOOL):
+            return ContextReductionType.TOOL_RESULT_TRUNCATED
+        if role == str(MessageRole.ASSISTANT):
+            return ContextReductionType.ASSISTANT_TRUNCATED
+        if role == str(MessageRole.AGENT):
+            return ContextReductionType.AGENT_INPUT_TRUNCATED
+        if role == str(MessageRole.USER):
+            return ContextReductionType.USER_INPUT_TRUNCATED
+        return ContextReductionType.CONTENT_TRUNCATED
+
+
+class FinalContextLegalityGovernance(ContextGovernance):
+    """Final provider-legality pass for model-visible context."""
+
+    async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        declared: set[str] = set()
+        fulfilled: set[str] = set()
+        result: list[dict[str, Any]] = []
+        for msg in messages:
+            role = msg.get("role")
+            if role == str(MessageRole.ASSISTANT):
+                for tc in msg.get("tool_calls") or []:
+                    if isinstance(tc, dict) and tc.get("id"):
+                        declared.add(str(tc["id"]))
+                result.append(dict(msg))
+                continue
+            if role == str(MessageRole.TOOL):
+                call_id = msg.get("tool_call_id")
+                if call_id is not None and str(call_id) in declared:
+                    fulfilled.add(str(call_id))
+                    result.append(dict(msg))
+                continue
+            result.append(dict(msg))
+        missing = declared - fulfilled
+        if not missing:
+            return result
+
+        updated = list(result)
+        for call_id in sorted(missing):
+            insert_at = self._find_tool_insert_position(updated, call_id)
+            updated.insert(
+                insert_at,
+                {
+                    "role": str(MessageRole.TOOL),
+                    "tool_call_id": call_id,
+                    "content": TOOL_RESULT_UNAVAILABLE_CONTENT,
+                    META_CONTEXT_LOSSY: True,
+                    META_CONTEXT_REDUCTION: ContextReductionType.CONTENT_TRUNCATED,
+                },
+            )
+        return updated
+
+    @staticmethod
+    def _find_tool_insert_position(messages: list[dict[str, Any]], call_id: str) -> int:
+        for idx, msg in enumerate(messages):
+            if msg.get("role") != str(MessageRole.ASSISTANT):
+                continue
+            for tc in msg.get("tool_calls") or []:
+                if isinstance(tc, dict) and str(tc.get("id", "")) == call_id:
+                    insert_at = idx + 1
+                    while insert_at < len(messages) and messages[insert_at].get("role") == str(MessageRole.TOOL):
+                        insert_at += 1
+                    return insert_at
+        return len(messages)
+
 
 class MicrocompactGovernance(ContextGovernance):
     """将旧的可压缩 tool result 替换为一行摘要，保留最近 N 个。"""

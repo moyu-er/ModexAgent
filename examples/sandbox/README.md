@@ -27,10 +27,29 @@
 
 ## 快速开始
 
+先在仓库根目录准备 Python 3.12 环境：
+
+```bash
+uv venv --python 3.12
+uv pip install -e ".[sandbox]"
+```
+
+Activate it:
+
+```powershell
+# Windows PowerShell
+.venv\Scripts\Activate.ps1
+```
+
+```bash
+# macOS / Linux
+source .venv/bin/activate
+```
+
 ### 1. 运行基础示例
 
 ```bash
-cd /Users/gyt/tool/project/pythonProject/multiDemo/backend/app/framework
+# From repository root
 
 # 基础执行
 python examples/sandbox/01_basic_python_execution.py
@@ -53,10 +72,13 @@ python examples/sandbox/04_docker_sandbox.py
 确保已配置 E2B_API_KEY：
 
 ```bash
-# 方式1: 环境变量
+# macOS / Linux
 export E2B_API_KEY="your_api_key"
+```
 
-# 方式2: 配置文件（已配置在 backend/app/config/sandbox.yaml）
+```powershell
+# Windows PowerShell
+$env:E2B_API_KEY="your_api_key"
 ```
 
 然后运行：

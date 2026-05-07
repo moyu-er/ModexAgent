@@ -288,7 +288,7 @@ class DefaultMemorySystem(MemorySystem):
         )
         await storage.delete(".pending_user_turn")
 
-    async def get_pending_user_turn(self, context: MemoryContext) -> dict | None:
+    async def get_pending_user_turn(self, context: MemoryContext) -> dict[str, Any] | None:
         """Retrieve the pending user turn marker if present."""
         storage = await self._registry.resolve(
             layer=MemoryLayerName.SESSION,

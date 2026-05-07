@@ -28,6 +28,17 @@ class CompressionReason(StrEnum):
     SHUTDOWN = "shutdown"
 
 
+class CompressionResultReason(StrEnum):
+    """Reason codes for compression result outcomes."""
+
+    NOT_NEEDED = "not_needed"
+    EMPTY = "empty"
+    NO_SAFE_BOUNDARY = "no_safe_boundary"
+    REVISION_CHANGED = "revision_changed"
+    ARCHIVE_FAILED = "archive_failed"
+    NOTHING_TO_ARCHIVE = "nothing_to_archive"
+
+
 @dataclass(frozen=True)
 class CompressionTrigger:
     reason: CompressionReason
@@ -66,7 +77,7 @@ class UnprocessedResult:
 class CompressionResult:
     committed: bool
     retryable: bool = False
-    reason: str | None = None
+    reason: CompressionResultReason | None = None
 
 
 @dataclass(frozen=True)
@@ -128,6 +139,7 @@ from framework.memory.core.consolidation import (  # noqa: E402
 __all__ = [
     "ArchiveEntry",
     "CompressionResult",
+    "CompressionResultReason",
     "CompressionPlan",
     "CompressionReason",
     "CompressionTrigger",

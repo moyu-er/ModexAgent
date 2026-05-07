@@ -5,7 +5,7 @@ This package implements the **flexible-tiered-memory** architecture for the agen
 ## Architecture Overview
 
 ```
-Working Memory ──► Short-term Memory ──► History Archive ──► Long-term Memory
+Short-term Memory ──► History Archive ──► Long-term Memory
    (ephemeral)       (token-bounded)      (append-only)       (structured KV)
 ```
 
@@ -13,7 +13,6 @@ Working Memory ──► Short-term Memory ──► History Archive ──► L
 
 | Layer | Scope | Storage | Responsibility |
 |-------|-------|---------|----------------|
-| Working | `SessionScope` (default) | `InMemoryStorage` | Per-turn ephemeral cache |
 | Short-term | `SessionScope` (default) | `FileStorage` | Bounded message history for LLM context |
 | History | `UserScope` (default) | `FileStorage` | Compressed summaries with cursor tracking |
 | Long-term | `UserScope` (default) | `FileStorage` | SOUL.md, USER.md, MEMORY.md |

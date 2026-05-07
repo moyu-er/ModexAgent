@@ -99,6 +99,20 @@ class SessionMemoryManager(ABC):
         """Remove checkpoint data for this session without touching message history."""
         pass
 
+    async def get_last_recovered_checkpoint_id(self, context: MemoryContext) -> str | None:
+        """Return the last checkpoint ID recovered for this session, if tracked."""
+        _ = context
+        return None
+
+    async def set_last_recovered_checkpoint_id(
+        self,
+        context: MemoryContext,
+        checkpoint_id: str,
+    ) -> None:
+        """Record that a checkpoint ID has been successfully recovered."""
+        _ = context, checkpoint_id
+        return None
+
     async def transform_messages(
         self,
         context: MemoryContext,

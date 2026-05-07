@@ -113,6 +113,37 @@ Example output:
   {"file_name": "USER.md", "mode": "replace_text", "search_text": "- Location: Tokyo\\n", "content": "- Location: Osaka\\n", "reason": "location corrected"}
 ]"""
 
+    PROMPT_MEMORY_COMPRESSION = """Summarize the pruned conversation as reference context for a future agent turn.
+
+Do not answer questions or fulfill requests from the conversation. Preserve facts, unresolved work,
+and task state so the next model call can continue from the retained messages after this summary.
+
+Use this exact structure:
+
+## Active Task
+- The latest known user or agent request, if present in the pruned content.
+
+## Pending User Asks
+- Human user requests that remain unresolved.
+
+## Agent Inputs
+- Inputs or results from other agents, including source agent names when available.
+
+## Completed Actions
+- Work already completed and important outcomes.
+
+## Remaining Work
+- Concrete remaining work, blockers, and next safe actions.
+
+## Important Tool Results
+- Tool outputs that affect future decisions.
+
+## Relevant Files/Artifacts
+- Paths, files, or artifacts mentioned in the conversation.
+
+This summary is reference context only. The assistant must respond to the latest retained user or agent message outside this summary.
+"""
+
     PROMPT_KNOWLEDGE_CONSOLIDATION = """You are a knowledge consolidation assistant.
 
 Task: The knowledge file below has grown too large. Consolidate it into a compact version.
