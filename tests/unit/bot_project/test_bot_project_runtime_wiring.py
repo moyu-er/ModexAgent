@@ -19,12 +19,13 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "examples" / "bot_project"))
 
 from bot.service.core import BotService
+
 from framework.agents.react.approval import (
     ApprovalRuntime,
     TieredToolApprovalClassifier,
 )
-from framework.approval.config import AgentApprovalConfig, ToolApprovalConfig
 from framework.agents.react.runtime import ReActRuntime
+from framework.approval.config import AgentApprovalConfig, ToolApprovalConfig
 from framework.approval.constants import ApprovalTier
 from framework.core.types import InputMessage, OutputMessage, ToolCall
 from framework.hook import HookRunner
@@ -41,7 +42,6 @@ from framework.memory.context_governance import (
 )
 from framework.memory.system import create_memory_system
 from framework.pipeline.adapters import InputAdapter, OutputAdapter
-
 
 # ---------------------------------------------------------------------------
 # Minimal mock adapters so we can construct BotService without I/O
@@ -275,7 +275,6 @@ class TestGovernanceWiring:
         cfg = _make_minimal_config()
         # Remove all individual strategy flags — defaults to enabled, but
         # all strategies are enabled so CompositeGovernance is built.
-        gov_cfg = cfg["memory"]["main"]["governance"]
         # Keep defaults: tool_chain_repair=True, microcompact.enabled=True, token_budget.enabled=True
         # So governance should be non-None.
         svc = _make_service(config=cfg)
@@ -513,6 +512,89 @@ class TestBotProjectPluginAndCapabilityWiring:
         assert descriptor.address.name == "query-12306"
         # query-12306 has no skill_dirs → skill_manager is None
         assert skill_manager is None
+
+    def test_example_config_does_not_keep_ignored_peer_metadata(self) -> None:
+        """bot_config.yml should not carry peer metadata fields ignored by builders."""
+        from bot.utils.config_loader import ConfigLoader
+
+        config_dir = (
+            Path(__file__).parent.parent.parent.parent
+            / "examples"
+            / "bot_project"
+            / "config"
+        )
+        config = ConfigLoader(config_dir).load_yaml("bot_config.yml")
+        peers = config.get("multi_agent", {}).get("peers", [])
+
+        ignored_keys = {
+            "role_description",
+            "specialties",
+            "capabilities_detail",
+            "example_tasks",
+            "preferred_communication",
+        }
+        for peer in peers:
+            assert ignored_keys.isdisjoint(peer)
+
+    def test_example_config_removes_redundant_agent_defaults(self) -> None:
+        """Default-valued descriptor fields should not be repeated in bot_config.yml."""
+        from bot.utils.config_loader import ConfigLoader
+
+        config_dir = (
+            Path(__file__).parent.parent.parent.parent
+            / "examples"
+            / "bot_project"
+            / "config"
+        )
+        config = ConfigLoader(config_dir).load_yaml("bot_config.yml")
+        multi_agent = config.get("multi_agent", {})
+
+        subagent_sync = multi_agent["subagent_sync"]
+        assert "context_strategy" not in subagent_sync
+        assert "execution_strategy" not in subagent_sync
+        assert "max_tools_per_turn" not in subagent_sync
+
+        for peer in multi_agent.get("peers", []):
+            assert "context_strategy" not in peer
+            assert "execution_strategy" not in peer
+            if peer["name"] == "office-expert":
+                assert "max_tools_per_turn" not in peer
+
+    def test_example_config_removes_inactive_or_ignored_memory_fields(self) -> None:
+        """Session-only peer/subagent memory config only consumes short_term.max_messages."""
+        from bot.utils.config_loader import ConfigLoader
+
+        config_dir = (
+            Path(__file__).parent.parent.parent.parent
+            / "examples"
+            / "bot_project"
+            / "config"
+        )
+        config = ConfigLoader(config_dir).load_yaml("bot_config.yml")
+        peers = {
+            peer["name"]: peer
+            for peer in config.get("multi_agent", {}).get("peers", [])
+        }
+
+        assert "memory" not in peers["office-expert"]
+        assert "memory" not in peers["query-12306"]
+        assert config["memory"]["peers"]["short_term"] == {"max_messages": 50}
+        assert config["memory"]["subagents"]["short_term"] == {"max_messages": 50}
+
+    def test_example_config_keeps_disabled_plugin_config_minimal(self) -> None:
+        """Disabled plugins should not keep an inactive configuration payload."""
+        from bot.utils.config_loader import ConfigLoader
+
+        config_dir = (
+            Path(__file__).parent.parent.parent.parent
+            / "examples"
+            / "bot_project"
+            / "config"
+        )
+        config = ConfigLoader(config_dir).load_yaml("bot_config.yml")
+        plugin_configs = config.get("plugins", {}).get("configurations", {})
+
+        assert plugin_configs.get("mem0_memory") == {"enabled": False}
 
     async def test_subagent_descriptor_passes_mcp_server_filter(self, monkeypatch: pytest.MonkeyPatch):
         svc = _make_service(config=_make_minimal_config())

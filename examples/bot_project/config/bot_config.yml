@@ -1,6 +1,6 @@
 # QQ Bot configuration
 # Secrets are loaded from .env file via ${ENV_VAR} interpolation.
-# Copy .env.example to .env and fill in your values.
+# Create .env separately and fill in your values; .env.example is only a field reference.
 
 # ==================== Paths ====================
 # All paths are relative to the project root (where bot_service.py lives).
@@ -102,14 +102,11 @@ multi_agent:
       - 你没有通信工具，也不需要主动发送消息
       - 你的输出内容会直接返回给调用方，确保结果完整、准确
       - 遇到障碍时尝试替代方案，如实记录尝试过程
-    context_strategy: "ephemeral"
     denied_tools:
       - "spawn_subagent_sync"
       - "send_message"
       - "send_message_async"
     max_iterations: 10
-    max_tools_per_turn: 10
-    execution_strategy: "react"
     # Independent tool config (inherits main ToolManager with filtering if not set)
     tools:
       file_tools: {}
@@ -121,12 +118,7 @@ multi_agent:
   peers:
     - name: "office-expert"
       role: "document"
-      role_description: "Office document specialist"
-      specialties: ["word", "excel", "powerpoint", "pdf"]
       capabilities: ["document", "office"]
-      capabilities_detail: ["生成 Word/Excel/PPT/PDF", "格式转换", "文档批注"]
-      example_tasks: ["将 data/report.csv 转换为 Excel 并加图表"]
-      preferred_communication: "both"
       system_prompt: |
         你是文档专家 Agent（peer agent），擅长处理各种 Office 文档（Word、Excel、PowerPoint、PDF）。
 
@@ -157,20 +149,12 @@ multi_agent:
         - 对处理结果进行质量检查，确保输出正确
         - **完成后通过 send_message_async 向 main 发送结果**
 
-      memory:
-        enabled: true
-        short_term:
-          max_messages: 50
-
-      context_strategy: "persistent"
       skill_dirs:
         - "skills/peers/docx"
         - "skills/peers/pdf"
         - "skills/peers/pptx"
         - "skills/peers/xlsx"
       max_iterations: 30
-      max_tools_per_turn: 10
-      execution_strategy: "react"
 
       subagent:
         enabled: true
@@ -182,12 +166,7 @@ multi_agent:
 
     - name: "query-12306"
       role: "travel"
-      role_description: "China railway ticket query assistant"
-      specialties: ["12306", "train_ticket", "itinerary"]
       capabilities: ["travel", "railway"]
-      capabilities_detail: ["查询 12306 余票", "车次时刻表", "行程规划"]
-      example_tasks: ["查询北京到上海的高铁余票"]
-      preferred_communication: "async"
       system_prompt: |
         你是 12306 火车票查询助手 Agent（peer agent），专门处理火车票查询、余票查询、车次时刻表等任务。
 
@@ -218,15 +197,8 @@ multi_agent:
         - 将查询结果整理为清晰的格式
         - **完成后通过 send_message_async 向 main 发送结果**
 
-      memory:
-        enabled: true
-        short_term:
-          max_messages: 30
-
-      context_strategy: "persistent"
       max_iterations: 20
       max_tools_per_turn: 5
-      execution_strategy: "react"
 
       subagent:
         enabled: false
@@ -246,18 +218,16 @@ memory:
     #   例如 50×0.6=30 — 留 20 条余量防止频繁触发
     # auto_llm_compression: 启用 LLM (SummarizerAgent) 生成 Archive 摘要
     short_term:
-      max_messages: 60            # 消息数触发阈值 (超过才压缩)
+      max_messages: 100            # 消息数触发阈值 (超过才压缩)
       max_tokens: 100000          # Token 触发阈值 (超过才压缩)
-      keep_ratio_for_messages: 0.5  # MESSAGE_COUNT 触发时保留 max_messages × 此比例
-      keep_ratio_for_token: 0.5     # TOKEN_PRESSURE 触发时保留当前 token 数 × 此比例
+      keep_ratio_for_messages: 0.4  # MESSAGE_COUNT 触发时保留 max_messages × 此比例
+      keep_ratio_for_token: 0.4     # TOKEN_PRESSURE 触发时保留当前 token 数 × 此比例
       auto_llm_compression: true
 
     # -- 消息分类策略 (压缩时使用) --
     compaction:
       policy: "conservative"         # "conservative" | "keep_all" | "semantic"
       boundary: "tool_chain"         # "tool_chain" | "user_turn_tool_chain"
-      high_value_tools:              # 高价值工具结果可纳入摘要 (其余结果压缩前截断)
-        - "mcp-deepwiki"
 
     # -- 长期记忆 (Knowledge: SOUL.md / USER.md / MEMORY.md) --
     # DreamEngine 定时从 Archive 提取事实写入 Knowledge 文件
@@ -293,14 +263,11 @@ memory:
   peers:
     short_term:
       max_messages: 50
-      auto_llm_compression: false
 
   # Subagent 记忆: 仅 Session 层, 更小窗口, 任务结束清除
   subagents:
     short_term:
-      max_messages: 20
-      max_tokens: 4000
-      auto_llm_compression: false
+      max_messages: 50
 
 # ==================== Plugins ====================
 plugins:
@@ -327,26 +294,6 @@ plugins:
     #   framework's llm_provider credentials if embedding_api_key/base_url are empty.
     mem0_memory:
       enabled: false
-      workspace: "./data/vector_memory"
-      vector_store: "chroma"
-      collection_name: "bot_memories"
-
-      # Embedding — remote API mode (OpenAI-compatible)
-      embedding_provider: "openai"
-      embedding_model: "${MEM0_EMBEDDING_MODEL}"
-      embedding_base_url: "${MEM0_EMBEDDING_BASE_URL}"
-      embedding_api_key: "${MEM0_EMBEDDING_API_KEY}"
-      # Leave embedding_api_key empty to inherit llm.api_key and llm.base_url
-
-      # Alternative: local model (slow startup, no external API needed)
-      # embedding_provider: "huggingface"
-      # embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
-
-      prefetch_top_k: 5
-      prefetch_min_score: 0.3
-      search_top_k: 5
-      operation_timeout: 20
-      disable_telemetry: true
 
 # ==================== Runtime Safety ====================
 runtime_safety:
@@ -379,9 +326,6 @@ mcp:
 
 # ==================== Tools ====================
 tools:
-  # Standard tools for main agent
-  search_tools: {}
-
   # MCP tools for main agent (peers have their own tool configs)
   mcp_tools:
     enabled: true

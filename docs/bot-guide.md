@@ -244,11 +244,6 @@ multi_agent:
       capabilities: ["document", "office"]
       system_prompt: |
         你是文档专家 Agent...
-      memory:
-        enabled: true
-        short_term:
-          max_messages: 50
-      context_strategy: "persistent"
       skill_dirs:
         - "skills/peers/docx"
         - "skills/peers/pdf"
@@ -292,17 +287,10 @@ memory:
   peers:
     short_term:
       max_messages: 50
-      budget_ratio: 0.5
-      compression_mode: "delete"
-      auto_llm_compression: false
 
   subagents:
     short_term:
-      max_messages: 20
-      max_tokens: 4000
-      budget_ratio: 0.5
-      compression_mode: "delete"
-      auto_llm_compression: false
+      max_messages: 50
 ```
 
 ### 4.7 插件配置
@@ -333,11 +321,9 @@ mcp:
 tools:
   file_tools:
     enabled: true
-    allowed_directories: ["."]
   shell_tools:
     enabled: true
     timeout: 60
-    restrict_to_workspace: true
   mcp_tools:
     enabled: true
     server_filter:
@@ -370,9 +356,6 @@ peers:
   - name: "office-expert"
     role: "document"
     capabilities: ["document", "office"]
-    context_strategy: "persistent"  # 持久化上下文
-    memory:
-      enabled: true                 # 独立记忆系统
 ```
 
 **关键特性**：
@@ -416,7 +399,7 @@ send_message_async(target_agent="office-expert", content="请后台处理")
 
 **Mem0MemoryProvider**（可选）：
 - 向量检索增强的记忆系统
-- 需要安装：`pip install mem0ai chromadb sentence-transformers`
+- 需要安装：`uv pip install mem0ai chromadb sentence-transformers`
 
 ### 6.2 配置插件
 
@@ -436,42 +419,7 @@ plugins:
 
 ## 7. 运行方式
 
-### 7.1 环境准备
-
-```bash
-# 1. 安装依赖
-pip install -e ".[dev,llm,storage]"
-
-# 2. 配置环境变量
-cp .env.example .env
-# 编辑 .env 文件，填写：
-# - QQ_APP_ID
-# - QQ_SECRET
-# - LLM_API_KEY
-```
-
-### 7.2 启动服务
-
-```bash
-# 进入示例目录
-cd examples/bot_project
-
-# 启动 Bot 服务
-python bot_service.py
-```
-
-### 7.3 使用 Docker（可选）
-
-```bash
-# 构建镜像
-docker build -t ModexAgent-bot .
-
-# 运行容器
-docker run -d \
-  --env-file .env \
-  -v $(pwd)/data:/app/data \
-  ModexAgent-bot
-```
+仓库级 Python 3.12+、`uv` 虚拟环境和依赖安装见 [根 README](../README.md#快速开始)；bot_project 的 `.env`、`config/mcp.json`、`config/bot_config.yml` 配置和跨平台启动命令见 [examples/bot_project/README.md](../examples/bot_project/README.md#快速开始)。
 
 ---
 
@@ -539,8 +487,7 @@ service = BotService(
 
 ### 10.4 安全建议
 
-- 限制 `allowed_directories` 防止文件越界访问
-- 启用 `restrict_to_workspace` 限制 Shell 工具
+- 文件和 Shell 工具的安全边界由框架工具实现与审批配置共同控制
 - 配置 `allow_from` 限制可访问的用户
 ## Current Runtime Status
 

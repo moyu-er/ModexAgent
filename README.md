@@ -56,18 +56,29 @@ Agent 调用敏感工具时，框架暂停执行并渲染审批提示，用户�
 git clone git@github.com:moyu-er/ModexAgent.git
 cd ModexAgent
 
-uv venv
+# Create a Python 3.12 virtual environment
+uv venv --python 3.12
+```
 
-# Windows
-.venv\Scripts\activate
+Activate it:
 
+```powershell
+# Windows PowerShell
+.venv\Scripts\Activate.ps1
+```
+
+```bash
 # macOS / Linux
-# source .venv/bin/activate
+source .venv/bin/activate
+```
 
+Install the full example/runtime dependency set:
+
+```bash
 uv pip install -e ".[all]"
 ```
 
-只安装开发依赖：
+For framework development and tests only:
 
 ```bash
 uv pip install -e ".[dev]"
@@ -88,36 +99,7 @@ uv pip install -e ".[dev]"
 
 它的作用是展示“如何使用框架搭一个完整应用”。不要把它理解成框架唯一推荐形态；你可以只使用其中很小一部分能力。
 
-运行示例：
-
-```bash
-cd examples/bot_project
-cp .env.example .env
-```
-
-编辑 `.env`，填入模型和平台配置：
-
-```bash
-LLM_API_KEY=your_api_key
-LLM_BASE_URL=https://api.example.com/v1
-LLM_MODEL=openai/your-model
-
-# 如果要接 QQ Bot，再配置平台凭据
-QQ_APP_ID=your_app_id
-QQ_SECRET=your_secret
-```
-
-启动：
-
-```bash
-# 单 Agent pipeline
-python bot_service.py --mode pipeline
-
-# AgentPool + broker，多 Agent 示例
-python bot_service.py --mode pool
-```
-
-更多说明见 [examples/bot_project/README.md](examples/bot_project/README.md)。
+bot_project 的 `.env`、`config/mcp.json` 和 `config/bot_config.yml` 都需要按你的 QQ Bot、模型和 MCP 服务单独配置；跨平台启动方式见 [examples/bot_project/README.md](examples/bot_project/README.md)。
 
 ## 项目结构
 
@@ -162,13 +144,13 @@ tests/               单元、集成和端到端测试
 ## 开发命令
 
 ```bash
-pytest
-pytest tests/unit
-pytest -m "not integration"
+python -m pytest
+python -m pytest tests/unit
+python -m pytest -m "not integration"
 
-ruff check framework tests
-ruff format framework
-mypy framework
+python -m ruff check framework tests
+python -m ruff format framework
+python -m mypy framework
 ```
 
 ## 当前状态

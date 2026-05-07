@@ -662,7 +662,7 @@ class MemoryProvider(ABC):
 
 | 组件 | 技术 |
 |------|------|
-| 语言 | Python 3.11+ |
+| 语言 | Python 3.12+ |
 | LLM 调用 | LiteLLM（统一 100+ 模型） |
 | QQ Bot | qq-botpy（腾讯官方 SDK） |
 | MCP | MCP Protocol（工具服务器） |
