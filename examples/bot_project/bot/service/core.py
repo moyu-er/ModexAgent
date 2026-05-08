@@ -38,7 +38,6 @@ from framework.core.skills import (
     ResolutionContext,
     SkillManager,
 )
-from framework.providers.litellm_provider import LiteLLMProvider
 from framework.hook.builtin import InboxFlushHook
 from framework.interceptor.builtin import (
     ControlDrainInterceptor,
@@ -53,7 +52,6 @@ from framework.memory.context_governance import (
     PriorityBudgetGovernance,
     ToolChainRepairGovernance,
 )
-from framework.memory.retention import DefaultMessageRetentionPolicy
 from framework.memory.core.scope import MemoryContext
 from framework.memory.injection import FullInjectionPolicy
 from framework.memory.layers.config import (
@@ -61,6 +59,7 @@ from framework.memory.layers.config import (
     PendingPrunedInputMemoryConfig,
     SessionMemoryConfig,
 )
+from framework.memory.retention import DefaultMessageRetentionPolicy
 from framework.memory.system import (
     MemorySystemContextManager,
     create_memory_system,
@@ -84,6 +83,7 @@ from framework.multi_agent.inbox.consumer import InboxConsumer
 from framework.multi_agent.inbox.producer import InboxProducer
 from framework.multi_agent.inbox.server_local import LocalFileInboxServer
 from framework.pipeline.adapters import InputAdapter, OutputAdapter
+from framework.providers.litellm_provider import LiteLLMProvider
 
 from .builders import AgentBuilderMixin
 

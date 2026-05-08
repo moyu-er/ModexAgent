@@ -943,6 +943,39 @@ async def test_compression_does_not_pending_completed_pruned_input(registry):
 
 
 @pytest.mark.asyncio
+async def test_compression_input_does_not_include_pending_entries(registry):
+    layers = MemoryLayerFactory.single_user(registry=registry)
+    ctx = MemoryContext(session_id="pending-not-compressed")
+    assert layers.pending is not None
+    await layers.pending.append_entries(ctx, [
+        PendingPrunedInputEntry.from_message(
+            {"role": "user", "content": "pending only"},
+            pruned_at=100.0,
+        )
+    ])
+    await layers.session.add_messages(ctx, [
+        {"role": "user", "content": "s0"},
+        {"role": "assistant", "content": "a0"},
+        {"role": "user", "content": "s1"},
+        {"role": "assistant", "content": "a1"},
+    ])
+    coordinator = DefaultMemoryCompressionCoordinator(
+        max_messages=3,
+        keep_ratio_for_messages=0.5,
+    )
+
+    await coordinator.maybe_compress(
+        session=layers.session,
+        archive=layers.archive,
+        pending=layers.pending,
+        context=ctx,
+    )
+
+    session_contents = [msg.content for msg in await layers.session.get_all_messages(ctx)]
+    assert "pending only" not in session_contents
+
+
+@pytest.mark.asyncio
 async def test_trigger_no_false_positive_below_threshold(registry):
     """Compression must NOT trigger when both message count and tokens are within budget.
 

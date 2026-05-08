@@ -38,9 +38,9 @@ from ..multi_agent import (
     AgentMessageRouter,
     SubagentManager,
 )
+from ..session.agent_session import _dream_locks
 from ..utils.context_builder import MultiAgentContextBuilder
 from ..utils.deduplicator import MessageDeduplicator
-from ..session.agent_session import _dream_locks
 from .adapters import InputAdapter, OutputAdapter, OutputMessage
 from .approval_renderer import ApprovalRenderer, format_approval_prompt
 from .context_assembler import assemble_context

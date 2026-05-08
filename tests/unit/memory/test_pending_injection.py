@@ -1,7 +1,17 @@
 from __future__ import annotations
 
+import time
+
 from framework.agents.react.nodes.llm import LLMNode
-from framework.memory.core.scope import MemoryContext
+from framework.memory.core.scope import MemoryContext, MemoryLayerName, SessionScope
+from framework.memory.layers.config import PendingPrunedInputMemoryConfig
+from framework.memory.layers.factory import MemoryLayerFactory
+from framework.memory.layers.pending import (
+    PendingPrunedInputEntry,
+    ScopedPendingPrunedInputMemoryManager,
+)
+from framework.memory.pending import DefaultPendingPrunedInputInjector
+from framework.memory.registry.in_memory import InMemoryStoreRegistry
 
 
 async def test_llm_node_applies_pending_injector_after_governance() -> None:
@@ -41,4 +51,36 @@ async def test_llm_node_applies_pending_injector_after_governance() -> None:
         "pending",
         "current",
         "from governance",
+    ]
+
+
+async def test_injected_pending_message_is_never_pending_role() -> None:
+    registry = InMemoryStoreRegistry()
+    manager = ScopedPendingPrunedInputMemoryManager(
+        MemoryLayerFactory._storage_factory(
+            registry,
+            MemoryLayerName.PENDING,
+            SessionScope(),
+        ),
+        PendingPrunedInputMemoryConfig(),
+    )
+    ctx = MemoryContext(session_id="s1")
+    await manager.append_entries(ctx, [
+        PendingPrunedInputEntry.from_message(
+            {"role": "user", "content": "unfinished"},
+            pruned_at=time.time(),
+        )
+    ])
+
+    result = await DefaultPendingPrunedInputInjector(manager).apply([], ctx)
+
+    assert result == [
+        {
+            "role": "user",
+            "content": "unfinished",
+            "metadata": {
+                "memory_source": "pending_pruned_inputs",
+                "entry_count": 1,
+            },
+        }
     ]

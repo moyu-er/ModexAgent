@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from bot.service.core import BotService
+
 from framework.memory.layers.config import PendingPrunedInputMemoryConfig
 
 
