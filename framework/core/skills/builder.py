@@ -60,8 +60,8 @@ def _render_skill_table(
         "",
         prompt_template,
         "",
-        "| Skill | Description | Location | Resources | Metadata |",
-        "|-------|-------------|----------|-----------|----------|",
+        "| Skill | Description | Location | Resources |",
+        "|-------|-------------|----------|-----------|",
     ]
     for skill in skills:
         # Location: absolute path to SKILL.md (platform-native format)
@@ -81,7 +81,7 @@ def _render_skill_table(
             meta_parts.append(f"tags: {', '.join(skill.metadata.tags)}")
         metadata = "; ".join(meta_parts)
         lines.append(
-            f"| {skill.name} | {skill.description or ''} | {loc} | {resources} | {metadata} |"
+            f"| {skill.name} | {skill.description or ''} | {loc} | {resources} |"
         )
     lines.append("")
     return "\n".join(lines).strip()

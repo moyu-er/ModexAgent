@@ -1,8 +1,23 @@
-# Type Safety
+# Type Safety Rules
 
-1. 用枚举/常量代替硬编码字符串（MessageRole、MessageType、FinishReason、DefaultValues 等）
-2. 用结构体代替 dict（ChatMessage、ToolCall、LLMResponse、InputMessage、OutputMessage 等）
-3. 函数签名必须写参数和返回值类型，禁止 bare Any / list / dict / list[Any]
-4. 类设计必须做好抽象化, 禁止直接使用具体实现类, 而是应该使用抽象类或接口, 便于扩展/拔插/自定义
-5. framework目录中的都是框架代码, examples中的都是业务代码使用示例, 必须按照业务需求和框架设计/通用性区分修改内容, 例如不能将业务代码中的配置写死到框架中
-6. 非必要不使用getattr等方式, 非关键方法/字段可适当修改可见性
+This file is the shared source for type-safety guidance. Tools do not necessarily load it
+directly, so keep active agent rule files in sync when this file changes.
+
+1. Use enums and constants instead of raw strings for categories, roles, states, and
+   protocol values. Examples include `MessageRole`, `MessageType`, `FinishReason`, and
+   `DefaultValues`.
+2. Use typed structures instead of loose dictionaries. Prefer existing dataclasses and
+   typed models such as `ChatMessage`, `ToolCall`, `LLMResponse`, `InputMessage`, and
+   `OutputMessage`.
+3. Function signatures must declare parameter and return types. Avoid bare `Any`,
+   `list`, `dict`, and `list[Any]` in framework-facing APIs.
+4. Design abstractions before depending on implementations. Use ABCs or Protocols for
+   cross-cutting concerns and extension points, rather than directly binding framework
+   code to concrete implementations.
+5. Keep framework code and example business code separated. `framework/` contains
+   reusable framework behavior; `examples/` contains usage examples and business wiring.
+   Do not hard-code example-specific configuration or business assumptions into the
+   framework.
+6. Avoid dynamic access patterns such as `getattr` unless they are necessary for a real
+   extension boundary or compatibility layer. Prefer explicit typed attributes and
+   method calls so contracts stay visible and checkable.

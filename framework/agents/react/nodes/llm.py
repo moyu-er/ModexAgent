@@ -104,6 +104,11 @@ class LLMNode(Node):
         governance = ctx.runtime.governance if ctx.runtime else None
         if governance is not None:
             messages = await governance.apply(messages)
+
+        pending_injector = ctx.runtime.pending_injector if ctx.runtime else None
+        memory_context = ctx.runtime.memory_context if ctx.runtime else None
+        if pending_injector is not None and memory_context is not None:
+            messages = await pending_injector.apply(messages, memory_context)
         return messages
 
     async def _call_llm(

@@ -1,5 +1,27 @@
 # Memory System — bot_project 记忆系统详解
 
+## Current bot_project memory behavior
+
+- Main memory uses full session/archive/knowledge layers. Peer and subagent
+  memory use session-only storage by configuring `archive=None` and
+  `knowledge=None`.
+- Peer/subagent compression reuses the standard
+  `DefaultMemoryCompressionCoordinator` and `DefaultCommitPolicy`; there is no
+  peer/subagent-specific truncation or commit strategy.
+- With `archive=None`, compression still applies the same trigger, retention
+  priority, planner, and keep-ratio hard caps as main memory. It replaces
+  session messages only and skips archive writes/summary generation.
+- Governance runs only before LLM calls on a context copy. The bot project
+  governance chain is `ToolChainRepairGovernance`,
+  `PriorityBudgetGovernance`, optional `LossyContentCompactionGovernance`, and
+  `FinalContextLegalityGovernance`.
+- Compression is checked after session append. It skips open ReAct tool states
+  such as a trailing `assistant(tool_calls)` or trailing `tool` result, then
+  can run after the final assistant message is appended.
+- Consecutive user messages and assistant messages with multiple tool calls are
+  supported by the shared retention/planner/governance rules.
+- Subagent session memory is temporary and should be cleared when the subagent finishes.
+
 > 基于 ModexAgent 框架代码逐项验证。本文档覆盖 bot_project 中各级记忆的
 > **生成/更新/压缩/归档/检索/注入/老化清理** 全流程，以及各环节的可替换抽象层。
 

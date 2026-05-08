@@ -15,6 +15,7 @@ from framework.core.agent_runtime_config import BusyInputMode
 from framework.core.llm_error import RuntimeSafetyPolicy
 from framework.core.skills import SkillManager
 from framework.memory.core.message import ChatMessage
+from framework.memory.core.scope import MemoryContext
 
 from ..approval.response import parse_approval_action
 from ..approval.types import ApprovalAction
@@ -37,9 +38,9 @@ from ..multi_agent import (
     AgentMessageRouter,
     SubagentManager,
 )
+from ..session.agent_session import _dream_locks
 from ..utils.context_builder import MultiAgentContextBuilder
 from ..utils.deduplicator import MessageDeduplicator
-from ..session.agent_session import _dream_locks
 from .adapters import InputAdapter, OutputAdapter, OutputMessage
 from .approval_renderer import ApprovalRenderer, format_approval_prompt
 from .context_assembler import assemble_context
@@ -512,6 +513,30 @@ class AgentPipeline:
             session_id, asyncio.Queue(maxsize=50)
         )
 
+        extensions: dict[Any, Any] = {
+            ExtensionKey.RUNTIME_CTX_MGR: self.runtime_context_manager,
+            ExtensionKey.ON_CHECKPOINT: on_checkpoint,
+            ExtensionKey.MAX_TOOLS_PER_TURN: None,
+        }
+        memory_system = getattr(ctx_mgr, "memory_system", None)
+        layers = getattr(memory_system, "layers", None)
+        pending = getattr(layers, "pending", None)
+        session = getattr(layers, "session", None)
+        memory_context = MemoryContext(
+            session_id=session_id,
+            user_id=getattr(ctx_mgr, "default_user_id", "default"),
+            agent_id=getattr(ctx_mgr, "default_agent_id", None),
+            agent_role=getattr(ctx_mgr, "default_agent_role", None),
+        )
+        if pending is not None:
+            from framework.memory.pending import DefaultPendingPrunedInputInjector
+
+            extensions["pending_pruned_input_injector"] = DefaultPendingPrunedInputInjector(
+                pending,
+                session,
+            )
+            extensions["memory_context"] = memory_context
+
         agent_context = AgentContext(
             system_prompt=context_state.system_prompt,
             history=context_state.history,
@@ -519,11 +544,7 @@ class AgentPipeline:
             session_id=session_id,
             max_iterations=self.max_iterations,
             metadata={"session_id": session_id},
-            extensions={
-                ExtensionKey.RUNTIME_CTX_MGR: self.runtime_context_manager,
-                ExtensionKey.ON_CHECKPOINT: on_checkpoint,
-                ExtensionKey.MAX_TOOLS_PER_TURN: None,
-            },
+            extensions=extensions,
         )
 
         # If a prebuilt runtime is provided, assign it directly to the agent context.
@@ -532,6 +553,14 @@ class AgentPipeline:
         # the pipeline starts.
         if self._prebuilt_runtime is not None:
             agent_context.runtime = self._prebuilt_runtime
+            agent_context.runtime.memory_context = memory_context
+            if pending is not None:
+                from framework.memory.pending import DefaultPendingPrunedInputInjector
+
+                agent_context.runtime.pending_injector = DefaultPendingPrunedInputInjector(
+                    pending,
+                    session,
+                )
 
         # Emitter selection
         if self.emitter_factory:

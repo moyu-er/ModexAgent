@@ -1,6 +1,7 @@
 """Tests for compression policies (Phase 4)."""
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 import pytest
@@ -34,6 +35,7 @@ from framework.memory.core.models import (
 )
 from framework.memory.core.scope import MemoryContext
 from framework.memory.layers.factory import MemoryLayerFactory
+from framework.memory.layers.pending import PendingPrunedInputEntry
 from framework.memory.registry.in_memory import InMemoryStoreRegistry
 
 
@@ -130,11 +132,12 @@ async def test_compression_abc_registration():
             return False
 
     class MyCommit(CommitPolicy):
-        async def commit(self, *, plan, session, archive, context, error_policy):
+        async def commit(self, *, plan, session, archive, pending=None, context, error_policy):
+            _ = pending
             return CompressionResult(committed=True)
 
     class MyCoordinator(MemoryCompressionCoordinator):
-        async def maybe_compress(self, *, session, archive, context):
+        async def maybe_compress(self, *, session, archive, pending=None, context):
             return CompressionResult(committed=True, reason=CompressionResultReason.NOT_NEEDED)
 
     assert isinstance(MyTrigger(), CompressionTriggerPolicy)
@@ -142,6 +145,12 @@ async def test_compression_abc_registration():
     assert isinstance(MyError(), CompressionErrorPolicy)
     assert isinstance(MyCommit(), CommitPolicy)
     assert isinstance(MyCoordinator(), MemoryCompressionCoordinator)
+
+
+def test_compression_coordinator_contract_accepts_pending_layer():
+    signature = inspect.signature(MemoryCompressionCoordinator.maybe_compress)
+
+    assert "pending" in signature.parameters
 
 
 async def test_coordinator_no_compress_when_under_budget(registry):
@@ -178,7 +187,8 @@ async def test_coordinator_does_not_lose_data_on_archive_failure(registry):
     assert initial_count == 150
 
     class FailingCommit(DefaultCommitPolicy):
-        async def commit(self, *, plan, session, archive, context, error_policy):
+        async def commit(self, *, plan, session, archive, pending=None, context, error_policy):
+            _ = pending
             return CompressionResult(committed=False, retryable=True, reason=CompressionResultReason.ARCHIVE_FAILED)
 
     layer_set = MemoryLayerFactory.single_user(registry=registry)
@@ -188,6 +198,111 @@ async def test_coordinator_does_not_lose_data_on_archive_failure(registry):
     )
     assert not result.committed
     assert len(await session.get_all_messages(ctx)) == 150  # untouched
+
+
+async def test_commit_does_not_persist_pending_when_archive_write_fails(registry):
+    layer_set = MemoryLayerFactory.single_user(registry=registry)
+    session = layer_set.session
+    pending = layer_set.pending
+    assert pending is not None
+    ctx = MemoryContext(session_id="pending-archive-failure")
+    await session.add_messages(ctx, [
+        {"role": "user", "content": "unfinished"},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "t1"}]},
+        {"role": "tool", "tool_call_id": "t1", "content": "result"},
+    ])
+
+    class FailingArchive:
+        async def append(self, context, entry):
+            _ = context, entry
+            raise RuntimeError("archive down")
+
+    revision = await session.get_revision(ctx)
+    plan = CompressionPlan(
+        trigger=CompressionTrigger(reason=CompressionReason.MESSAGE_COUNT),
+        expected_revision=revision,
+        expected_cursor=None,
+        keep_messages=[{"role": "tool", "tool_call_id": "t1", "content": "result"}],
+        summarize_messages=[{"role": "user", "content": "unfinished"}],
+        archive_raw_messages=[],
+        drop_messages=[],
+        summary="unfinished",
+        pending_pruned_input_entries=[
+            PendingPrunedInputEntry.from_message(
+                {"role": "user", "content": "unfinished"},
+                pruned_at=100.0,
+            )
+        ],
+    )
+
+    result = await DefaultCommitPolicy().commit(
+        plan=plan,
+        session=session,
+        archive=FailingArchive(),  # type: ignore[arg-type]
+        pending=pending,
+        context=ctx,
+        error_policy=DefaultCompressionErrorPolicy(),
+    )
+
+    assert not result.committed
+    assert result.reason == CompressionResultReason.ARCHIVE_FAILED
+    assert [message.content for message in await session.get_all_messages(ctx)] == [
+        "unfinished",
+        "",
+        "result",
+    ]
+    assert await pending.get_entries(ctx) == []
+
+
+async def test_commit_restores_pending_snapshot_when_session_revision_conflicts(registry):
+    layer_set = MemoryLayerFactory.single_user(registry=registry)
+    pending = layer_set.pending
+    assert pending is not None
+    ctx = MemoryContext(session_id="pending-revision-conflict")
+    existing = PendingPrunedInputEntry.from_message(
+        {"role": "user", "content": "already pending"},
+        pruned_at=50.0,
+    )
+    await pending.append_entries(ctx, [existing])
+    expected_revision = StorageRevision(message_count=3, updated_at=None, version=1)
+
+    class ConflictingSession:
+        async def get_revision(self, context):
+            _ = context
+            return expected_revision
+
+        async def replace_messages_if_revision(self, context, messages, revision, state_updates=None):
+            _ = context, messages, revision, state_updates
+            return None
+
+    plan = CompressionPlan(
+        trigger=CompressionTrigger(reason=CompressionReason.MESSAGE_COUNT),
+        expected_revision=expected_revision,
+        expected_cursor=None,
+        keep_messages=[{"role": "tool", "tool_call_id": "t1", "content": "result"}],
+        summarize_messages=[],
+        archive_raw_messages=[],
+        drop_messages=[],
+        summary="",
+        pending_pruned_input_entries=[
+            PendingPrunedInputEntry.from_message(
+                {"role": "user", "content": "new pending"},
+                pruned_at=100.0,
+            )
+        ],
+    )
+
+    result = await DefaultCommitPolicy().commit(
+        plan=plan,
+        session=ConflictingSession(),  # type: ignore[arg-type]
+        archive=None,
+        pending=pending,
+        context=ctx,
+        error_policy=DefaultCompressionErrorPolicy(),
+    )
+
+    assert result.reason == CompressionResultReason.REVISION_CHANGED
+    assert [entry.content for entry in await pending.get_entries(ctx)] == ["already pending"]
 
 
 async def test_coordinator_commit_replaces_session_and_persists_summary(registry):
@@ -880,6 +995,100 @@ async def test_trigger_message_count_respects_threshold(registry):
 
 
 @pytest.mark.asyncio
+async def test_compression_persists_pruned_unfinished_input_to_pending(registry):
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    config = SessionMemoryConfig(max_messages=None)
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(storage_factory=factory, config=config)
+    layers = MemoryLayerFactory.single_user(registry=registry)
+    ctx = MemoryContext(session_id="pending-compress")
+    assert layers.pending is not None
+    await session.add_messages(ctx, [
+        {"role": "user", "content": "unfinished"},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "t1"}]},
+        {"role": "tool", "tool_call_id": "t1", "content": "result"},
+        {"role": "user", "content": "follow up"},
+    ])
+
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=2)
+    result = await coordinator.maybe_compress(
+        session=session,
+        archive=None,
+        pending=layers.pending,
+        context=ctx,
+    )
+
+    assert result.committed
+    assert [entry.content for entry in await layers.pending.get_entries(ctx)] == ["unfinished"]
+
+
+@pytest.mark.asyncio
+async def test_compression_does_not_pending_completed_pruned_input(registry):
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    config = SessionMemoryConfig(max_messages=None)
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(storage_factory=factory, config=config)
+    layers = MemoryLayerFactory.single_user(registry=registry)
+    ctx = MemoryContext(session_id="pending-completed")
+    assert layers.pending is not None
+    await session.add_messages(ctx, [
+        {"role": "user", "content": "finished"},
+        {"role": "assistant", "content": "done"},
+        {"role": "user", "content": "current"},
+    ])
+
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=1)
+    result = await coordinator.maybe_compress(
+        session=session,
+        archive=None,
+        pending=layers.pending,
+        context=ctx,
+    )
+
+    assert result.committed
+    assert await layers.pending.get_entries(ctx) == []
+
+
+@pytest.mark.asyncio
+async def test_compression_input_does_not_include_pending_entries(registry):
+    layers = MemoryLayerFactory.single_user(registry=registry)
+    ctx = MemoryContext(session_id="pending-not-compressed")
+    assert layers.pending is not None
+    await layers.pending.append_entries(ctx, [
+        PendingPrunedInputEntry.from_message(
+            {"role": "user", "content": "pending only"},
+            pruned_at=100.0,
+        )
+    ])
+    await layers.session.add_messages(ctx, [
+        {"role": "user", "content": "s0"},
+        {"role": "assistant", "content": "a0"},
+        {"role": "user", "content": "s1"},
+        {"role": "assistant", "content": "a1"},
+    ])
+    coordinator = DefaultMemoryCompressionCoordinator(
+        max_messages=3,
+        keep_ratio_for_messages=0.5,
+    )
+
+    await coordinator.maybe_compress(
+        session=layers.session,
+        archive=layers.archive,
+        pending=layers.pending,
+        context=ctx,
+    )
+
+    session_contents = [msg.content for msg in await layers.session.get_all_messages(ctx)]
+    assert "pending only" not in session_contents
+
+
+@pytest.mark.asyncio
 async def test_trigger_no_false_positive_below_threshold(registry):
     """Compression must NOT trigger when both message count and tokens are within budget.
 
@@ -902,3 +1111,171 @@ async def test_trigger_no_false_positive_below_threshold(registry):
     result = await trigger.should_compress(session=session, context=ctx)
 
     assert result is None, "should not trigger: 30 msgs < 50, tokens well below 100k"
+
+
+async def test_coordinator_removes_stale_invalid_tool_chain_without_archive(registry):
+    """Stale incomplete tool-chain that is NOT the last assistant with tool_calls
+    must be removed. The last tool-call assistant has a complete chain."""
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(factory, SessionMemoryConfig(max_messages=None))
+    ctx = MemoryContext(session_id="sanitize-cleanup")
+    await session.add_messages(ctx, [
+        {"role": str(MessageRole.USER), "content": "start"},
+        {
+            "role": str(MessageRole.ASSISTANT),
+            "content": "",
+            "tool_calls": [
+                {"id": "stale-a", "function": {"name": "tool_stale_a"}},
+                {"id": "stale-b", "function": {"name": "tool_stale_b"}},
+            ],
+        },
+        {"role": str(MessageRole.TOOL), "tool_call_id": "stale-a", "content": "partial"},
+        {"role": str(MessageRole.USER), "content": "continued"},
+        {
+            "role": str(MessageRole.ASSISTANT),
+            "content": "",
+            "tool_calls": [
+                {"id": "c", "function": {"name": "tool_c"}},
+            ],
+        },
+        {"role": str(MessageRole.TOOL), "tool_call_id": "c", "content": "result_c"},
+        {"role": str(MessageRole.ASSISTANT), "content": "done"},
+    ])
+
+    # Use token-pressure trigger with high keep-ratio to avoid over-trimming
+    coordinator = DefaultMemoryCompressionCoordinator(
+        max_messages=None,
+        max_tokens=1,
+        keep_ratio_for_token=0.9,
+    )
+    result = await coordinator.maybe_compress(
+        session=session,
+        archive=None,
+        context=ctx,
+    )
+
+    assert result.committed
+    remaining = [msg.to_dict() for msg in await session.get_all_messages(ctx)]
+    remaining_str = str(remaining)
+    # Stale incomplete tool-chain records must be removed
+    assert "stale-a" not in remaining_str
+    assert "stale-b" not in remaining_str
+    # Since commit succeeded and stale records are gone, sanitizer worked.
+    # (Keep planner may also trim older messages — that is expected behavior.)
+
+
+async def test_coordinator_preserves_active_open_tail_but_removes_older_invalid_chain(registry):
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(factory, SessionMemoryConfig(max_messages=None))
+    ctx = MemoryContext(session_id="sanitize-open-tail")
+    open_tail = {
+        "role": str(MessageRole.ASSISTANT),
+        "content": "",
+        "tool_calls": [
+            {"id": "tail-a", "function": {"name": "tool_tail_a"}},
+            {"id": "tail-b", "function": {"name": "tool_tail_b"}},
+        ],
+    }
+    await session.add_messages(ctx, [
+        {"role": str(MessageRole.USER), "content": "start"},
+        {
+            "role": str(MessageRole.ASSISTANT),
+            "content": "",
+            "tool_calls": [{"id": "old-a", "function": {"name": "tool_old_a"}}],
+        },
+        {"role": str(MessageRole.USER), "content": "continued"},
+        open_tail,
+        {"role": str(MessageRole.TOOL), "tool_call_id": "tail-a", "content": "partial"},
+    ])
+
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=3)
+    result = await coordinator.maybe_compress(
+        session=session,
+        archive=None,
+        context=ctx,
+    )
+
+    assert result.committed
+    assert [msg.to_dict() for msg in await session.get_all_messages(ctx)] == [
+        {"role": str(MessageRole.USER), "content": "start"},
+        {"role": str(MessageRole.USER), "content": "continued"},
+        open_tail,
+        {"role": str(MessageRole.TOOL), "tool_call_id": "tail-a", "content": "partial"},
+    ]
+
+
+async def test_sanitizer_removed_messages_do_not_create_pending_entries(registry):
+    """Sanitizer-removed invalid records must not produce pending entries."""
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    layer_set = MemoryLayerFactory.single_user(registry=registry)
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(factory, SessionMemoryConfig(max_messages=None))
+    ctx = MemoryContext(session_id="pending-boundary")
+    await session.add_messages(ctx, [
+        {
+            "role": str(MessageRole.ASSISTANT),
+            "content": "",
+            "tool_calls": [{"id": "old-a", "function": {"name": "tool_old_a"}}],
+        },
+        {"role": str(MessageRole.USER), "content": "unfinished"},
+    ])
+
+    assert layer_set.pending is not None
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=1)
+    await coordinator.maybe_compress(
+        session=session,
+        archive=None,
+        pending=layer_set.pending,
+        context=ctx,
+    )
+
+    entries = await layer_set.pending.get_entries(ctx)
+    assert [entry.content for entry in entries] == []
+
+
+async def test_sanitizer_removed_messages_are_not_archived(registry):
+    """Sanitizer-removed invalid records must not be written to archive."""
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(factory, SessionMemoryConfig(max_messages=None))
+    ctx = MemoryContext(session_id="archive-boundary")
+    await session.add_messages(ctx, [
+        {
+            "role": str(MessageRole.ASSISTANT),
+            "content": "",
+            "tool_calls": [{"id": "old-a", "function": {"name": "tool_old_a"}}],
+        },
+        {"role": str(MessageRole.ASSISTANT), "content": "plain"},
+    ])
+
+    class RecordingArchive:
+        def __init__(self):
+            self.entries = []
+
+        async def append(self, context, entry):
+            _ = context
+            self.entries.append(entry)
+
+    archive = RecordingArchive()
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=1)
+    await coordinator.maybe_compress(
+        session=session,
+        archive=archive,  # type: ignore[arg-type]
+        context=ctx,
+    )
+
+    assert archive.entries == []

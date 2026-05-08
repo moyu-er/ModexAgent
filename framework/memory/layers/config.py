@@ -40,7 +40,18 @@ class KnowledgeMemoryConfig:
 
 
 @dataclass(frozen=True)
+class PendingPrunedInputMemoryConfig:
+    enabled: bool = True
+    max_entries: int = 8
+    max_chars: int = 12000
+    scope: MemoryScope = field(default_factory=SessionScope)
+
+
+@dataclass(frozen=True)
 class MemoryLayerConfigSet:
     session: SessionMemoryConfig = field(default_factory=SessionMemoryConfig)
     archive: ArchiveMemoryConfig | None = field(default_factory=ArchiveMemoryConfig)
     knowledge: KnowledgeMemoryConfig | None = field(default_factory=KnowledgeMemoryConfig)
+    pending: PendingPrunedInputMemoryConfig | None = field(
+        default_factory=PendingPrunedInputMemoryConfig
+    )

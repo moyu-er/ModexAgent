@@ -38,7 +38,6 @@ from framework.core.skills import (
     ResolutionContext,
     SkillManager,
 )
-from framework.providers.litellm_provider import LiteLLMProvider
 from framework.hook.builtin import InboxFlushHook
 from framework.interceptor.builtin import (
     ControlDrainInterceptor,
@@ -53,9 +52,14 @@ from framework.memory.context_governance import (
     PriorityBudgetGovernance,
     ToolChainRepairGovernance,
 )
-from framework.memory.retention import DefaultMessageRetentionPolicy
 from framework.memory.core.scope import MemoryContext
 from framework.memory.injection import FullInjectionPolicy
+from framework.memory.layers.config import (
+    MemoryLayerConfigSet,
+    PendingPrunedInputMemoryConfig,
+    SessionMemoryConfig,
+)
+from framework.memory.retention import DefaultMessageRetentionPolicy
 from framework.memory.system import (
     MemorySystemContextManager,
     create_memory_system,
@@ -79,6 +83,7 @@ from framework.multi_agent.inbox.consumer import InboxConsumer
 from framework.multi_agent.inbox.producer import InboxProducer
 from framework.multi_agent.inbox.server_local import LocalFileInboxServer
 from framework.pipeline.adapters import InputAdapter, OutputAdapter
+from framework.providers.litellm_provider import LiteLLMProvider
 
 from .builders import AgentBuilderMixin
 
@@ -258,6 +263,7 @@ class BotService(AgentBuilderMixin):
             )
         self.memory_system = create_memory_system(
             workspace=memory_dir,
+            config=self._build_memory_layer_config(main_memory_config),
             llm_provider=self.provider,
             lifecycle_policy=lifecycle_policy,
         )
@@ -825,6 +831,25 @@ class BotService(AgentBuilderMixin):
     def _build_retention_policy(self, main_memory_config: dict[str, Any]) -> DefaultMessageRetentionPolicy:
         return DefaultMessageRetentionPolicy.from_config(main_memory_config.get("retention", {}))
 
+    def _build_memory_layer_config(self, main_memory_config: dict[str, Any]) -> MemoryLayerConfigSet:
+        short_term = main_memory_config.get("short_term", {})
+        pending_raw = main_memory_config.get("pending_pruned_inputs", {})
+        pending_config = (
+            None
+            if pending_raw.get("enabled") is False
+            else PendingPrunedInputMemoryConfig(
+                enabled=True,
+                max_entries=pending_raw.get("max_entries", 8),
+                max_chars=pending_raw.get("max_chars", 12000),
+            )
+        )
+        return MemoryLayerConfigSet(
+            session=SessionMemoryConfig(
+                max_messages=short_term.get("max_messages", 100),
+            ),
+            pending=pending_config,
+        )
+
     def _build_governance(self) -> Any | None:
         """Build ContextGovernance chain from config."""
         memory_config = self.config.get("memory", {})
@@ -972,13 +997,17 @@ class BotService(AgentBuilderMixin):
         elif boundary_name == "tool_chain":
             boundary = ToolChainBoundaryPolicy()
 
-        # Let DefaultMemoryCompressionCoordinator use its own defaults for
-        # numeric thresholds; only pass the strategy objects built from config.
+        # Pass short-term numeric thresholds from bot_config.yml so the
+        # coordinator respects user configuration instead of hard-coded defaults.
         return DefaultMemoryCompressionCoordinator(
             summary=summary_strategy,
             compaction=compaction,
             boundary=boundary,
             retention=retention_policy,
+            max_messages=short_term.get("max_messages", 100),
+            max_tokens=short_term.get("max_tokens", 8000),
+            keep_ratio_for_messages=short_term.get("keep_ratio_for_messages", 0.5),
+            keep_ratio_for_token=short_term.get("keep_ratio_for_token", 0.5),
         )
 
     async def _init_auto_compact(

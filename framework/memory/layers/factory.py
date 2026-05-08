@@ -12,8 +12,14 @@ from framework.memory.core.scope import (
 )
 from framework.memory.core.storage import MemoryStorage
 from framework.memory.layers.archive import ScopedArchiveMemoryManager
-from framework.memory.layers.config import MemoryLayerConfigSet, SessionMemoryConfig, StorageFactory
+from framework.memory.layers.config import (
+    MemoryLayerConfigSet,
+    PendingPrunedInputMemoryConfig,
+    SessionMemoryConfig,
+    StorageFactory,
+)
 from framework.memory.layers.knowledge import ScopedKnowledgeMemoryManager
+from framework.memory.layers.pending import ScopedPendingPrunedInputMemoryManager
 from framework.memory.layers.session import ScopedSessionMemoryManager
 from framework.memory.registry import MemoryStoreRegistry
 
@@ -56,10 +62,21 @@ class MemoryLayerFactory:
             if config.knowledge is not None
             else None
         )
+        pending_manager = (
+            ScopedPendingPrunedInputMemoryManager(
+                MemoryLayerFactory._storage_factory(
+                    registry, MemoryLayerName.PENDING, config.pending.scope
+                ),
+                config.pending,
+            )
+            if config.pending is not None and config.pending.enabled
+            else None
+        )
         return MemoryLayerSet(
             session=session_manager,
             archive=archive_manager,
             knowledge=knowledge_manager,
+            pending=pending_manager,
         )
 
     @staticmethod
@@ -67,6 +84,7 @@ class MemoryLayerFactory:
         *,
         registry: MemoryStoreRegistry,
         config: SessionMemoryConfig | None = None,
+        pending_config: PendingPrunedInputMemoryConfig | None = None,
     ) -> MemoryLayerSet:
         session_manager = ScopedSessionMemoryManager(
             MemoryLayerFactory._storage_factory(
@@ -76,7 +94,20 @@ class MemoryLayerFactory:
             ),
             config,
         )
-        return MemoryLayerSet(session=session_manager)
+        effective_pending_config = pending_config or PendingPrunedInputMemoryConfig()
+        pending_manager = (
+            ScopedPendingPrunedInputMemoryManager(
+                MemoryLayerFactory._storage_factory(
+                    registry,
+                    MemoryLayerName.PENDING,
+                    effective_pending_config.scope,
+                ),
+                effective_pending_config,
+            )
+            if effective_pending_config.enabled
+            else None
+        )
+        return MemoryLayerSet(session=session_manager, pending=pending_manager)
 
     @staticmethod
     def _storage_factory(

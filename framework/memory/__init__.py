@@ -19,7 +19,11 @@ from framework.memory.archive import (
     PreserveSummaryArchiveStrategy,
     RawDumpArchiveStrategy,
 )
-from framework.memory.compaction.boundary import BoundaryPolicy, ToolChainBoundaryPolicy, UserTurnToolChainBoundaryPolicy
+from framework.memory.compaction.boundary import (
+    BoundaryPolicy,
+    ToolChainBoundaryPolicy,
+    UserTurnToolChainBoundaryPolicy,
+)
 from framework.memory.compaction.policy import (
     ConservativeCompactionPolicy,
     KeepAllCompactionPolicy,
@@ -28,6 +32,14 @@ from framework.memory.compaction.policy import (
     SemanticToolCompactionPolicy,
 )
 from framework.memory.compression.importance import HeuristicImportanceScorer, ImportanceScorer
+from framework.memory.compression.tool_chain_sanitizer import (
+    DefaultSessionToolChainSanitizer,
+    SessionToolChainSanitizer,
+    ToolChainSanitizationIssue,
+    ToolChainSanitizationMode,
+    ToolChainSanitizationReason,
+    ToolChainSanitizationResult,
+)
 from framework.memory.context_governance import (
     CompositeGovernance,
     ContextGovernance,
@@ -45,6 +57,7 @@ from framework.memory.core.layers import (
     ArchiveMemoryManager,
     KnowledgeMemoryManager,
     MemoryLayerSet,
+    PendingPrunedInputMemoryManager,
     SessionMemoryManager,
 )
 from framework.memory.core.models import (
@@ -92,10 +105,19 @@ from framework.memory.layers import (
     KnowledgeMemoryConfig,
     MemoryLayerConfigSet,
     MemoryLayerFactory,
+    PendingPrunedInputEntry,
+    PendingPrunedInputMemoryConfig,
     ScopedArchiveMemoryManager,
     ScopedKnowledgeMemoryManager,
+    ScopedPendingPrunedInputMemoryManager,
     ScopedSessionMemoryManager,
     SessionMemoryConfig,
+)
+from framework.memory.pending import (
+    DefaultPendingPrunedInputExtractor,
+    DefaultPendingPrunedInputInjector,
+    PendingPrunedInputExtractor,
+    PendingPrunedInputInjector,
 )
 from framework.memory.recorder import MemoryAppendRecorder, MemoryAppendSource
 from framework.memory.registry import (
@@ -120,6 +142,9 @@ __all__ = [
     "SessionMemoryManager",
     "ArchiveMemoryManager",
     "KnowledgeMemoryManager",
+    "PendingPrunedInputMemoryManager",
+    "PendingPrunedInputMemoryConfig",
+    "PendingPrunedInputEntry",
     # Context & scope
     "MemoryContext",
     "MemoryScope",
@@ -146,6 +171,7 @@ __all__ = [
     "ScopedSessionMemoryManager",
     "ScopedArchiveMemoryManager",
     "ScopedKnowledgeMemoryManager",
+    "ScopedPendingPrunedInputMemoryManager",
     # Shared models
     "ArchiveEntry",
     "CompressionPlan",
@@ -165,6 +191,13 @@ __all__ = [
     # Compression (strategies live in compression sub-package)
     "ImportanceScorer",
     "HeuristicImportanceScorer",
+    # Tool-chain sanitizer
+    "DefaultSessionToolChainSanitizer",
+    "SessionToolChainSanitizer",
+    "ToolChainSanitizationIssue",
+    "ToolChainSanitizationMode",
+    "ToolChainSanitizationReason",
+    "ToolChainSanitizationResult",
     # Consolidation
     "ConsolidationEngine",
     "ConsolidationResult",
@@ -189,6 +222,10 @@ __all__ = [
     "ToolChainRepairGovernance",
     "MicrocompactGovernance",
     "TokenBudgetGovernance",
+    "DefaultPendingPrunedInputExtractor",
+    "DefaultPendingPrunedInputInjector",
+    "PendingPrunedInputExtractor",
+    "PendingPrunedInputInjector",
     # Auto compact (removed; use DefaultMemoryMaintenancePolicy directly)
     # Compaction policy / boundary (pipeline removed; workflow unified under coordinator)
     "MessageCompactionPolicy",

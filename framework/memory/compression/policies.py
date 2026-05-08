@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from collections import Counter
 from collections.abc import Sequence
 from typing import Any
 
@@ -23,7 +24,16 @@ from framework.memory.compression.planner import (
     CompressionKeepPlanner,
     PriorityCompressionKeepPlanner,
 )
-from framework.memory.core.layers import ArchiveMemoryManager, SessionMemoryManager
+from framework.memory.compression.tool_chain_sanitizer import (
+    DefaultSessionToolChainSanitizer,
+    SessionToolChainSanitizer,
+    ToolChainSanitizationMode,
+)
+from framework.memory.core.layers import (
+    ArchiveMemoryManager,
+    PendingPrunedInputMemoryManager,
+    SessionMemoryManager,
+)
 from framework.memory.core.models import (
     ArchiveEntry,
     CompressionPlan,
@@ -33,6 +43,7 @@ from framework.memory.core.models import (
     CompressionTrigger,
 )
 from framework.memory.core.scope import MemoryContext
+from framework.memory.pending import DefaultPendingPrunedInputExtractor, PendingPrunedInputExtractor
 from framework.memory.retention import DefaultMessageRetentionPolicy, MessageRetentionPolicy
 from framework.memory.utils import normalize_memory_summary
 
@@ -214,6 +225,7 @@ class CommitPolicy(ABC):
         plan: CompressionPlan,
         session: SessionMemoryManager,
         archive: ArchiveMemoryManager | None,
+        pending: PendingPrunedInputMemoryManager | None = None,
         context: MemoryContext,
         error_policy: CompressionErrorPolicy,
     ) -> CompressionResult: ...
@@ -238,6 +250,7 @@ class DefaultCommitPolicy(CommitPolicy):
         plan: CompressionPlan,
         session: SessionMemoryManager,
         archive: ArchiveMemoryManager | None,
+        pending: PendingPrunedInputMemoryManager | None = None,
         context: MemoryContext,
         error_policy: CompressionErrorPolicy,
     ) -> CompressionResult:
@@ -267,6 +280,19 @@ class DefaultCommitPolicy(CommitPolicy):
                     return CompressionResult(committed=False, retryable=True, reason=CompressionResultReason.ARCHIVE_FAILED)
                 # Fall through to still mutate session (error policy said proceed)
 
+        pending_snapshot: list[Any] | None = None
+        if pending is not None and plan.pending_pruned_input_entries:
+            try:
+                pending_snapshot = await pending.get_entries(context)
+                await pending.append_entries(context, plan.pending_pruned_input_entries)
+            except Exception:
+                logger.warning("Pending input persistence failed; preserving session", exc_info=True)
+                return CompressionResult(
+                    committed=False,
+                    retryable=True,
+                    reason=CompressionResultReason.PENDING_FAILED,
+                )
+
         extra_state: dict[str, Any] = {}
         if wrote_archive and normalized_summary is not None:
             extra_state[".compression_summary"] = normalized_summary
@@ -278,6 +304,14 @@ class DefaultCommitPolicy(CommitPolicy):
             extra_state,
         )
         if revision is None:
+            if pending is not None and pending_snapshot is not None:
+                try:
+                    await pending.replace_entries(context, pending_snapshot)
+                except Exception:
+                    logger.warning(
+                        "Failed to restore pending input snapshot after commit conflict",
+                        exc_info=True,
+                    )
             await error_policy.on_commit_conflict(plan, context)
             return CompressionResult(committed=False, retryable=False, reason=CompressionResultReason.REVISION_CHANGED)
 
@@ -304,6 +338,7 @@ class MemoryCompressionCoordinator(ABC):
         *,
         session: SessionMemoryManager,
         archive: ArchiveMemoryManager | None,
+        pending: PendingPrunedInputMemoryManager | None = None,
         context: MemoryContext,
     ) -> CompressionResult: ...
 
@@ -331,6 +366,8 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
         keep_ratio_for_token: float = 0.5,
         retention: MessageRetentionPolicy | None = None,
         keep_planner: CompressionKeepPlanner | None = None,
+        pending_extractor: PendingPrunedInputExtractor | None = None,
+        tool_chain_sanitizer: SessionToolChainSanitizer | None = None,
     ) -> None:
         self._max_messages = max_messages
         self._trigger = trigger or DefaultCompressionTriggerPolicy(
@@ -345,12 +382,15 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
         self._keep_ratio_for_token = max(0.2, min(keep_ratio_for_token, 0.9))
         self._retention = retention or DefaultMessageRetentionPolicy()
         self._keep_planner = keep_planner or PriorityCompressionKeepPlanner()
+        self._pending_extractor = pending_extractor or DefaultPendingPrunedInputExtractor()
+        self._tool_chain_sanitizer = tool_chain_sanitizer or DefaultSessionToolChainSanitizer()
 
     async def maybe_compress(
         self,
         *,
         session: SessionMemoryManager,
         archive: ArchiveMemoryManager | None,
+        pending: PendingPrunedInputMemoryManager | None = None,
         context: MemoryContext,
     ) -> CompressionResult:
         # Phase 1: Trigger check
@@ -358,10 +398,85 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
         if trigger is None:
             return CompressionResult(committed=True, reason=CompressionResultReason.NOT_NEEDED)
 
-        # Phase 2: Read ALL stored messages and classify every one.
+        # Phase 2: Read ALL stored messages and sanitize tool-chain structure.
         all_msgs = [m.to_dict() for m in await session.get_all_messages(context)]
         if not all_msgs:
             return CompressionResult(committed=True, reason=CompressionResultReason.EMPTY)
+
+        try:
+            sanitization = self._tool_chain_sanitizer.sanitize(
+                all_msgs,
+                mode=ToolChainSanitizationMode.PERSISTENT_SESSION,
+            )
+        except Exception:
+            logger.warning("Session tool-chain sanitization failed", exc_info=True)
+            return CompressionResult(committed=True, reason=CompressionResultReason.NO_SAFE_BOUNDARY)
+
+        if sanitization.removed_messages:
+            counts = Counter(issue.reason for issue in sanitization.issues)
+            logger.info(
+                "Session tool-chain sanitizer removed invalid messages: "
+                "session=%s removed=%d reasons=%s open_tail=%s",
+                context.session_id,
+                len(sanitization.removed_messages),
+                {str(reason): count for reason, count in counts.items()},
+                sanitization.has_open_tail,
+            )
+
+        sanitized_msgs = sanitization.messages
+        if not sanitized_msgs:
+            revision = await session.get_revision(context)
+            plan = CompressionPlan(
+                trigger=trigger,
+                expected_revision=revision,
+                expected_cursor=None,
+                keep_messages=[],
+                summarize_messages=[],
+                archive_raw_messages=[],
+                drop_messages=[],
+                summary="",
+                drop_without_archive_messages=sanitization.removed_messages,
+                sanitization_issues=sanitization.issues,
+                has_open_tail=sanitization.has_open_tail,
+            )
+            return await self._commit.commit(
+                plan=plan,
+                session=session,
+                archive=None,
+                pending=pending,
+                context=context,
+                error_policy=self._error,
+            )
+
+        if sanitization.has_open_tail:
+            if not sanitization.removed_messages:
+                return CompressionResult(
+                    committed=True, reason=CompressionResultReason.NO_SAFE_BOUNDARY,
+                )
+            revision = await session.get_revision(context)
+            plan = CompressionPlan(
+                trigger=trigger,
+                expected_revision=revision,
+                expected_cursor=None,
+                keep_messages=sanitized_msgs,
+                summarize_messages=[],
+                archive_raw_messages=[],
+                drop_messages=[],
+                summary="",
+                drop_without_archive_messages=sanitization.removed_messages,
+                sanitization_issues=sanitization.issues,
+                has_open_tail=True,
+            )
+            return await self._commit.commit(
+                plan=plan,
+                session=session,
+                archive=None,
+                pending=pending,
+                context=context,
+                error_policy=self._error,
+            )
+
+        all_msgs = sanitized_msgs
 
         decisions = self._compaction.decide_all(all_msgs, context, str(trigger.reason))
 
@@ -399,6 +514,7 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
         boundary_idx = keep_plan.keep_start_index
         pruned = keep_plan.pruned_messages
         keep = keep_plan.keep_messages
+        pruned_indices_set = set(keep_plan.pruned_indices)
 
         prune_count = len(pruned)
         logger.info(
@@ -438,6 +554,13 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
             archive_raw_messages=archive_raw,
             drop_messages=dropped,
             summary=summary,
+            pending_pruned_input_entries=self._pending_extractor.extract(
+                all_msgs,
+                pruned_indices_set,
+            ),
+            drop_without_archive_messages=sanitization.removed_messages,
+            sanitization_issues=sanitization.issues,
+            has_open_tail=sanitization.has_open_tail,
         )
 
         # Phase 5: Commit (caller ensures lock is held)
@@ -445,6 +568,7 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
             plan=plan,
             session=session,
             archive=archive,
+            pending=pending,
             context=context,
             error_policy=self._error,
         )

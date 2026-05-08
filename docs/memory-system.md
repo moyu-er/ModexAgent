@@ -333,6 +333,34 @@ LLM input copy and may truncate tool, assistant, agent, or user content in
 that priority order. Lossy governance output is never written back to session
 memory.
 
+### Current compression/governance contract
+
+- Persistent compression is checked from `DefaultMemoryLifecyclePolicy` after
+  session messages are appended. It mutates session storage only after the
+  configured message/token trigger fires.
+- Governance runs only before an LLM call and only on the model-visible message
+  copy. It may repair tool-call legality or truncate content for context
+  budget, but it must not be saved back to session memory.
+- `keep_ratio_for_messages` and `keep_ratio_for_token` are hard upper bounds
+  for persistent compression. The planner tries to keep as many recent
+  user/agent-started rounds as fit, but never exceeds the configured cap.
+- Human `user` input is the highest non-system task anchor. `role=agent` input
+  is also a task anchor, but has lower priority than human `user` and higher
+  priority than assistant/tool process messages.
+- Consecutive user messages are valid task anchors. When budget allows, the
+  priority planner keeps multiple recent user-started rounds, including
+  adjacent user messages without an assistant in between.
+- A single assistant message may contain multiple `tool_calls`. Compression
+  treats the assistant call declaration and all matching tool results as one
+  structural process group: keep it complete, or drop the complete process
+  group when the hard keep budget is too small.
+- Compression must not run while a ReAct tool process is open. A trailing
+  `assistant(tool_calls)` or trailing `tool` result is an unsafe cut point until
+  the final assistant response has been appended.
+- `archive=None` is the canonical session-only mode. It reuses
+  `DefaultMemoryCompressionCoordinator` and `DefaultCommitPolicy`; commit
+  replaces session messages but skips archive writes and summary generation.
+
 ---
 
 ## 6. 压缩策略详解

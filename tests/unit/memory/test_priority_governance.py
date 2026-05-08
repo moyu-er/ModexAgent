@@ -62,7 +62,8 @@ async def test_lossy_governance_does_not_mutate_input_messages() -> None:
     assert result[0]["content"] != original_content
 
 
-async def test_final_legality_drops_orphan_tool_result() -> None:
+async def test_final_legality_passes_messages_through_unchanged() -> None:
+    """FinalContextLegality is a no-op — see test_context_governance.py."""
     messages = [
         {"role": MessageRole.TOOL, "tool_call_id": "missing", "content": "orphan"},
         {"role": MessageRole.USER, "content": "hello"},
@@ -71,7 +72,7 @@ async def test_final_legality_drops_orphan_tool_result() -> None:
 
     result = await gov.apply(messages)
 
-    assert result == [{"role": MessageRole.USER, "content": "hello"}]
+    assert result == messages
 
 
 async def test_priority_budget_preserves_recent_user_and_agent_anchors() -> None:
@@ -95,7 +96,33 @@ async def test_priority_budget_preserves_recent_user_and_agent_anchors() -> None
     assert any(msg.get("content") == "[From Agent peer]\nrecent agent" for msg in result)
 
 
-async def test_final_legality_backfills_missing_tool_result() -> None:
+async def test_priority_budget_preserves_consecutive_recent_user_inputs_when_configured() -> None:
+    messages = [
+        {"role": MessageRole.USER, "content": "old human " * 200},
+        {"role": MessageRole.ASSISTANT, "content": "old answer " * 200},
+        {"role": MessageRole.USER, "content": "recent part 1"},
+        {"role": MessageRole.USER, "content": "recent part 2"},
+        {"role": MessageRole.ASSISTANT, "content": "working " * 200},
+    ]
+    gov = PriorityBudgetGovernance(
+        max_tokens=8,
+        safety_buffer=0,
+        retention_policy=DefaultMessageRetentionPolicy(),
+        min_recent_user_turns=2,
+        min_recent_agent_turns=0,
+    )
+
+    result = await gov.apply(messages)
+
+    assert [msg["content"] for msg in result if msg.get("role") == MessageRole.USER] == [
+        "recent part 1",
+        "recent part 2",
+    ]
+
+
+async def test_final_legality_returns_messages_unchanged_when_tool_result_missing() -> None:
+    """FinalContextLegality is a no-op; incomplete groups are removed by
+    ToolChainRepairGovernance earlier in the chain."""
     messages = [
         {
             "role": MessageRole.ASSISTANT,
@@ -108,7 +135,24 @@ async def test_final_legality_backfills_missing_tool_result() -> None:
 
     result = await gov.apply(messages)
 
-    assert result[0]["role"] == MessageRole.ASSISTANT
-    assert result[1]["role"] == "tool"
-    assert result[1]["tool_call_id"] == "call-1"
-    assert result[1][META_CONTEXT_LOSSY] is True
+    assert result == messages
+
+
+async def test_final_legality_returns_messages_unchanged_for_multi_tool_call() -> None:
+    """FinalContextLegality is a no-op regardless of call count."""
+    messages = [
+        {
+            "role": MessageRole.ASSISTANT,
+            "content": "",
+            "tool_calls": [
+                {"id": "call-1", "type": "function", "function": {"name": "search"}},
+                {"id": "call-2", "type": "function", "function": {"name": "read_file"}},
+            ],
+        },
+        {"role": MessageRole.USER, "content": "next"},
+    ]
+    gov = FinalContextLegalityGovernance()
+
+    result = await gov.apply(messages)
+
+    assert result == messages

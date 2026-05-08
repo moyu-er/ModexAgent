@@ -21,6 +21,7 @@ class MemoryLayerName(StrEnum):
     ARCHIVE = "archive"
     KNOWLEDGE = "knowledge"
     PROVIDER = "provider"
+    PENDING = "pending"
 
 
 @dataclass

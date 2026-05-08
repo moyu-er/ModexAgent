@@ -238,6 +238,34 @@ class KnowledgeMemoryManager(ABC):
         return UserScope()
 
 
+class PendingPrunedInputMemoryManager(ABC):
+    """Auxiliary memory for pruned unfinished user/agent inputs."""
+
+    @abstractmethod
+    async def append_entries(
+        self,
+        context: MemoryContext,
+        entries: Sequence[Any],
+    ) -> None:
+        pass
+
+    @abstractmethod
+    async def get_entries(self, context: MemoryContext) -> list[Any]:
+        pass
+
+    @abstractmethod
+    async def replace_entries(
+        self,
+        context: MemoryContext,
+        entries: Sequence[Any],
+    ) -> None:
+        pass
+
+    @abstractmethod
+    async def clear(self, context: MemoryContext) -> None:
+        pass
+
+
 @dataclass(frozen=True)
 class MemoryLayerSet:
     """Fieldized memory layer ownership for the default tiered system."""
@@ -245,6 +273,7 @@ class MemoryLayerSet:
     session: SessionMemoryManager
     archive: ArchiveMemoryManager | None = None
     knowledge: KnowledgeMemoryManager | None = None
+    pending: PendingPrunedInputMemoryManager | None = None
 
     def with_session(self, manager: SessionMemoryManager) -> MemoryLayerSet:
         return replace(self, session=manager)
@@ -254,3 +283,9 @@ class MemoryLayerSet:
 
     def with_knowledge(self, manager: KnowledgeMemoryManager | None) -> MemoryLayerSet:
         return replace(self, knowledge=manager)
+
+    def with_pending(
+        self,
+        manager: PendingPrunedInputMemoryManager | None,
+    ) -> MemoryLayerSet:
+        return replace(self, pending=manager)

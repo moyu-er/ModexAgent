@@ -1,7 +1,7 @@
 """Context governance — in-turn token budget management for LLM context.
 
 Governance chain:
-  drop_orphans → backfill → microcompact → tool_budget → snip_history
+  tool_chain_repair → priority_budget → lossy_compaction → final_legality
 
 All governance operates on a *copy* of messages; the persisted history
 is never modified.
@@ -14,6 +14,10 @@ from enum import StrEnum
 from typing import Any
 
 from framework.core.types import MessageRole
+from framework.memory.compression.tool_chain_sanitizer import (
+    DefaultSessionToolChainSanitizer,
+    ToolChainSanitizationMode,
+)
 from framework.memory.retention import DefaultMessageRetentionPolicy, MessageRetentionPolicy
 from framework.memory.retention.types import MessageRetentionDecision, RetentionPriority
 from framework.memory.utils import estimate_token_count
@@ -75,93 +79,26 @@ class CompositeGovernance(ContextGovernance):
 
 
 class ToolChainRepairGovernance(ContextGovernance):
-    """修复 tool-call 链完整性，在每次 LLM 调用前对消息列表进行兜底修复。
+    """Repair tool-call chain integrity by removing structurally invalid records.
 
-    统一处理两种常见的消息序列断裂场景（可能由崩溃、checkpoint 恢复、
-    异常中断等原因引起）：
+    Uses the session tool-chain sanitizer in MODEL_VISIBLE_CONTEXT mode to
+    remove orphan tool results and incomplete assistant/tool groups from the
+    model-visible message copy. Incomplete tool-call groups are deleted rather
+    than backfilled; LLM providers cannot receive assistant messages with
+    tool_calls but no matching tool results.
 
-    1. **移除孤儿 tool 结果（orphan drop）**：如果存在 tool 消息但
-       之前没有对应的 assistant 消息声明该 tool_call_id，说明该 tool
-       结果已失去上下文，直接移除，避免 LLM 见到"来源不明"的 tool 结果。
+    This pass also handles orphan tool results with no preceding assistant
+    declaration.
 
-    2. **补全缺失的 tool 结果（backfill）**：如果 assistant 消息声明了
-       tool_calls 但对应 tool_call_id 的 tool 消息缺失，在 assistant
-       之后插入占位 tool 结果，避免 LLM 收到含 tool_calls 但无 tool
-       响应的断裂消息序列。
-
-    此策略在 ReActAgent.run() 每次迭代的 LLM 请求前通过
-    context.governance.apply() 调用。操作在消息副本上进行，
-    不修改持久化历史。
-
-    Note: multi_agent/governance.py 曾包含与此功能重复的
-    _drop_orphan_tool_results / _backfill_missing_tool_results，
-    现已统一下沉到此实现。
+    Operates on a message copy only — persisted history is never modified.
     """
 
-    _BACKFILL_CONTENT = (
-        "[Tool result unavailable — the tool call may have been interrupted "
-        "or its result was lost before the response could be recorded]"
-    )
-    _BACKFILL_CONTENT = TOOL_RESULT_UNAVAILABLE_CONTENT
-
     async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        # Step 1: drop orphans
-        declared: set[str] = set()
-        dropped: list[dict[str, Any]] | None = None
-        for idx, msg in enumerate(messages):
-            role = msg.get("role")
-            if role == str(MessageRole.ASSISTANT):
-                for tc in msg.get("tool_calls") or []:
-                    if isinstance(tc, dict) and tc.get("id"):
-                        declared.add(str(tc["id"]))
-            if role == str(MessageRole.TOOL):
-                tid = msg.get("tool_call_id")
-                if tid and str(tid) not in declared:
-                    if dropped is None:
-                        dropped = [dict(m) for m in messages[:idx]]
-                    continue
-            if dropped is not None:
-                dropped.append(dict(msg))
-
-        cleaned = dropped if dropped is not None else list(messages)
-
-        # Step 2: backfill missing
-        declared_calls: list[tuple[int, str, str]] = []
-        fulfilled: set[str] = set()
-        for idx, msg in enumerate(cleaned):
-            role = msg.get("role")
-            if role == str(MessageRole.ASSISTANT):
-                for tc in msg.get("tool_calls") or []:
-                    if isinstance(tc, dict) and tc.get("id"):
-                        name = ""
-                        func = tc.get("function")
-                        if isinstance(func, dict):
-                            name = func.get("name", "")
-                        declared_calls.append((idx, str(tc["id"]), name))
-            elif role == str(MessageRole.TOOL):
-                tid = msg.get("tool_call_id")
-                if tid:
-                    fulfilled.add(str(tid))
-
-        missing = [(ai, cid, name) for ai, cid, name in declared_calls if cid not in fulfilled]
-        if not missing:
-            return cleaned
-
-        updated = list(cleaned)
-        for offset, (assistant_idx, call_id, name) in enumerate(missing):
-            insert_at = assistant_idx + 1 + offset
-            while insert_at < len(updated) and updated[insert_at].get("role") == str(MessageRole.TOOL):
-                insert_at += 1
-            updated.insert(
-                insert_at,
-                {
-                    "role": str(MessageRole.TOOL),
-                    "tool_call_id": call_id,
-                    "name": name,
-                    "content": self._BACKFILL_CONTENT,
-                },
-            )
-        return updated
+        result = DefaultSessionToolChainSanitizer().sanitize(
+            messages,
+            mode=ToolChainSanitizationMode.MODEL_VISIBLE_CONTEXT,
+        )
+        return result.messages
 
 class PriorityBudgetGovernance(ContextGovernance):
     """Select model-visible messages using retention priorities."""
@@ -315,58 +252,16 @@ class LossyContentCompactionGovernance(ContextGovernance):
 
 
 class FinalContextLegalityGovernance(ContextGovernance):
-    """Final provider-legality pass for model-visible context."""
+    """Final provider-legality pass for model-visible context.
+
+    ToolChainRepairGovernance already removes all incomplete tool-call groups
+    and orphan tool results upstream via the tool-chain sanitizer. This pass
+    returns the messages unchanged; it exists for config compatibility so
+    existing governance chains do not break.
+    """
 
     async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        declared: set[str] = set()
-        fulfilled: set[str] = set()
-        result: list[dict[str, Any]] = []
-        for msg in messages:
-            role = msg.get("role")
-            if role == str(MessageRole.ASSISTANT):
-                for tc in msg.get("tool_calls") or []:
-                    if isinstance(tc, dict) and tc.get("id"):
-                        declared.add(str(tc["id"]))
-                result.append(dict(msg))
-                continue
-            if role == str(MessageRole.TOOL):
-                call_id = msg.get("tool_call_id")
-                if call_id is not None and str(call_id) in declared:
-                    fulfilled.add(str(call_id))
-                    result.append(dict(msg))
-                continue
-            result.append(dict(msg))
-        missing = declared - fulfilled
-        if not missing:
-            return result
-
-        updated = list(result)
-        for call_id in sorted(missing):
-            insert_at = self._find_tool_insert_position(updated, call_id)
-            updated.insert(
-                insert_at,
-                {
-                    "role": str(MessageRole.TOOL),
-                    "tool_call_id": call_id,
-                    "content": TOOL_RESULT_UNAVAILABLE_CONTENT,
-                    META_CONTEXT_LOSSY: True,
-                    META_CONTEXT_REDUCTION: ContextReductionType.CONTENT_TRUNCATED,
-                },
-            )
-        return updated
-
-    @staticmethod
-    def _find_tool_insert_position(messages: list[dict[str, Any]], call_id: str) -> int:
-        for idx, msg in enumerate(messages):
-            if msg.get("role") != str(MessageRole.ASSISTANT):
-                continue
-            for tc in msg.get("tool_calls") or []:
-                if isinstance(tc, dict) and str(tc.get("id", "")) == call_id:
-                    insert_at = idx + 1
-                    while insert_at < len(messages) and messages[insert_at].get("role") == str(MessageRole.TOOL):
-                        insert_at += 1
-                    return insert_at
-        return len(messages)
+        return messages
 
 
 class MicrocompactGovernance(ContextGovernance):

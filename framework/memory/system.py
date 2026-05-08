@@ -46,7 +46,12 @@ def create_memory_system(
     registry = DefaultMemoryStoreRegistry(workspace)
     if session_only:
         session_config = config.session if config else None
-        layer_set = MemoryLayerFactory.session_only(registry=registry, config=session_config)
+        pending_config = config.pending if config else None
+        layer_set = MemoryLayerFactory.session_only(
+            registry=registry,
+            config=session_config,
+            pending_config=pending_config,
+        )
     else:
         layer_set = MemoryLayerFactory.single_user(
             registry=registry,

@@ -8,6 +8,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
+from framework.memory.compression.tool_chain_sanitizer import ToolChainSanitizationIssue
 from framework.memory.core.message import ChatMessage
 
 
@@ -36,6 +37,7 @@ class CompressionResultReason(StrEnum):
     NO_SAFE_BOUNDARY = "no_safe_boundary"
     REVISION_CHANGED = "revision_changed"
     ARCHIVE_FAILED = "archive_failed"
+    PENDING_FAILED = "pending_failed"
     NOTHING_TO_ARCHIVE = "nothing_to_archive"
 
 
@@ -56,6 +58,10 @@ class CompressionPlan:
     archive_raw_messages: list[dict[str, Any]]
     drop_messages: list[dict[str, Any]]
     summary: str | None = None
+    pending_pruned_input_entries: list[Any] = field(default_factory=list)
+    drop_without_archive_messages: list[dict[str, Any]] = field(default_factory=list)
+    sanitization_issues: list[ToolChainSanitizationIssue] = field(default_factory=list)
+    has_open_tail: bool = False
 
 
 @dataclass(frozen=True)
