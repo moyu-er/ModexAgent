@@ -163,6 +163,32 @@ def test_planner_preserves_multiple_user_rounds_when_budget_allows() -> None:
     assert [m["content"] for m in plan.keep_messages] == ["u2", "a2", "u3", "a3"]
 
 
+def test_planner_preserves_consecutive_user_inputs_when_budget_allows() -> None:
+    messages = [
+        {"role": MessageRole.USER, "content": "old"},
+        {"role": MessageRole.ASSISTANT, "content": "old answer"},
+        {"role": MessageRole.USER, "content": "latest part 1"},
+        {"role": MessageRole.USER, "content": "latest part 2"},
+        {"role": MessageRole.ASSISTANT, "content": "working"},
+    ]
+    policy = DefaultMessageRetentionPolicy()
+    retention = [policy.decide(m, index=i, messages=messages) for i, m in enumerate(messages)]
+    planner = PriorityCompressionKeepPlanner()
+
+    plan = planner.plan_keep_set(
+        messages,
+        _decisions(len(messages)),
+        retention,
+        CompressionBudget(reason=CompressionReason.MESSAGE_COUNT, max_keep_messages=3, max_keep_tokens=None),
+    )
+
+    assert [m["content"] for m in plan.keep_messages] == [
+        "latest part 1",
+        "latest part 2",
+        "working",
+    ]
+
+
 def test_planner_trims_earliest_assistant_tool_chain_after_user_to_satisfy_budget() -> None:
     messages = [
         {"role": MessageRole.USER, "content": "current task"},
@@ -189,3 +215,34 @@ def test_planner_trims_earliest_assistant_tool_chain_after_user_to_satisfy_budge
     assert [m["content"] for m in plan.keep_messages] == ["current task", "after tool", "final"]
     assert all(m.get("tool_call_id") != "t1" for m in plan.keep_messages)
     assert all(not m.get("tool_calls") for m in plan.keep_messages)
+
+
+def test_planner_drops_multi_tool_call_process_as_one_group_when_budget_is_tight() -> None:
+    messages = [
+        {"role": MessageRole.USER, "content": "current task"},
+        {
+            "role": MessageRole.ASSISTANT,
+            "content": "",
+            "tool_calls": [
+                {"id": "t1", "type": "function", "function": {"name": "search"}},
+                {"id": "t2", "type": "function", "function": {"name": "read_file"}},
+            ],
+        },
+        {"role": MessageRole.TOOL, "tool_call_id": "t1", "content": "search result"},
+        {"role": MessageRole.TOOL, "tool_call_id": "t2", "content": "file result"},
+        {"role": MessageRole.ASSISTANT, "content": "final"},
+    ]
+    policy = DefaultMessageRetentionPolicy()
+    retention = [policy.decide(m, index=i, messages=messages) for i, m in enumerate(messages)]
+    planner = PriorityCompressionKeepPlanner()
+
+    plan = planner.plan_keep_set(
+        messages,
+        _decisions(len(messages)),
+        retention,
+        CompressionBudget(reason=CompressionReason.MESSAGE_COUNT, max_keep_messages=2, max_keep_tokens=None),
+    )
+
+    assert [m["content"] for m in plan.keep_messages] == ["current task", "final"]
+    assert all(not m.get("tool_calls") for m in plan.keep_messages)
+    assert all(m.get("role") != MessageRole.TOOL for m in plan.keep_messages)

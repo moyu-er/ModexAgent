@@ -95,6 +95,30 @@ async def test_priority_budget_preserves_recent_user_and_agent_anchors() -> None
     assert any(msg.get("content") == "[From Agent peer]\nrecent agent" for msg in result)
 
 
+async def test_priority_budget_preserves_consecutive_recent_user_inputs_when_configured() -> None:
+    messages = [
+        {"role": MessageRole.USER, "content": "old human " * 200},
+        {"role": MessageRole.ASSISTANT, "content": "old answer " * 200},
+        {"role": MessageRole.USER, "content": "recent part 1"},
+        {"role": MessageRole.USER, "content": "recent part 2"},
+        {"role": MessageRole.ASSISTANT, "content": "working " * 200},
+    ]
+    gov = PriorityBudgetGovernance(
+        max_tokens=8,
+        safety_buffer=0,
+        retention_policy=DefaultMessageRetentionPolicy(),
+        min_recent_user_turns=2,
+        min_recent_agent_turns=0,
+    )
+
+    result = await gov.apply(messages)
+
+    assert [msg["content"] for msg in result if msg.get("role") == MessageRole.USER] == [
+        "recent part 1",
+        "recent part 2",
+    ]
+
+
 async def test_final_legality_backfills_missing_tool_result() -> None:
     messages = [
         {
@@ -112,3 +136,24 @@ async def test_final_legality_backfills_missing_tool_result() -> None:
     assert result[1]["role"] == "tool"
     assert result[1]["tool_call_id"] == "call-1"
     assert result[1][META_CONTEXT_LOSSY] is True
+
+
+async def test_final_legality_backfills_each_missing_tool_result_for_multi_tool_call() -> None:
+    messages = [
+        {
+            "role": MessageRole.ASSISTANT,
+            "content": "",
+            "tool_calls": [
+                {"id": "call-1", "type": "function", "function": {"name": "search"}},
+                {"id": "call-2", "type": "function", "function": {"name": "read_file"}},
+            ],
+        },
+        {"role": MessageRole.USER, "content": "next"},
+    ]
+    gov = FinalContextLegalityGovernance()
+
+    result = await gov.apply(messages)
+
+    tool_results = [msg for msg in result if msg.get("role") == "tool"]
+    assert [msg["tool_call_id"] for msg in tool_results] == ["call-1", "call-2"]
+    assert all(msg[META_CONTEXT_LOSSY] is True for msg in tool_results)
