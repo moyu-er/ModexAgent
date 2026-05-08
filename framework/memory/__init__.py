@@ -92,8 +92,11 @@ from framework.memory.layers import (
     KnowledgeMemoryConfig,
     MemoryLayerConfigSet,
     MemoryLayerFactory,
+    PendingPrunedInputEntry,
+    PendingPrunedInputMemoryConfig,
     ScopedArchiveMemoryManager,
     ScopedKnowledgeMemoryManager,
+    ScopedPendingPrunedInputMemoryManager,
     ScopedSessionMemoryManager,
     SessionMemoryConfig,
 )
@@ -120,6 +123,8 @@ __all__ = [
     "SessionMemoryManager",
     "ArchiveMemoryManager",
     "KnowledgeMemoryManager",
+    "PendingPrunedInputMemoryConfig",
+    "PendingPrunedInputEntry",
     # Context & scope
     "MemoryContext",
     "MemoryScope",
@@ -146,6 +151,7 @@ __all__ = [
     "ScopedSessionMemoryManager",
     "ScopedArchiveMemoryManager",
     "ScopedKnowledgeMemoryManager",
+    "ScopedPendingPrunedInputMemoryManager",
     # Shared models
     "ArchiveEntry",
     "CompressionPlan",
