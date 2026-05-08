@@ -1111,3 +1111,171 @@ async def test_trigger_no_false_positive_below_threshold(registry):
     result = await trigger.should_compress(session=session, context=ctx)
 
     assert result is None, "should not trigger: 30 msgs < 50, tokens well below 100k"
+
+
+async def test_coordinator_removes_stale_invalid_tool_chain_without_archive(registry):
+    """Stale incomplete tool-chain that is NOT the last assistant with tool_calls
+    must be removed. The last tool-call assistant has a complete chain."""
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(factory, SessionMemoryConfig(max_messages=None))
+    ctx = MemoryContext(session_id="sanitize-cleanup")
+    await session.add_messages(ctx, [
+        {"role": str(MessageRole.USER), "content": "start"},
+        {
+            "role": str(MessageRole.ASSISTANT),
+            "content": "",
+            "tool_calls": [
+                {"id": "stale-a", "function": {"name": "tool_stale_a"}},
+                {"id": "stale-b", "function": {"name": "tool_stale_b"}},
+            ],
+        },
+        {"role": str(MessageRole.TOOL), "tool_call_id": "stale-a", "content": "partial"},
+        {"role": str(MessageRole.USER), "content": "continued"},
+        {
+            "role": str(MessageRole.ASSISTANT),
+            "content": "",
+            "tool_calls": [
+                {"id": "c", "function": {"name": "tool_c"}},
+            ],
+        },
+        {"role": str(MessageRole.TOOL), "tool_call_id": "c", "content": "result_c"},
+        {"role": str(MessageRole.ASSISTANT), "content": "done"},
+    ])
+
+    # Use token-pressure trigger with high keep-ratio to avoid over-trimming
+    coordinator = DefaultMemoryCompressionCoordinator(
+        max_messages=None,
+        max_tokens=1,
+        keep_ratio_for_token=0.9,
+    )
+    result = await coordinator.maybe_compress(
+        session=session,
+        archive=None,
+        context=ctx,
+    )
+
+    assert result.committed
+    remaining = [msg.to_dict() for msg in await session.get_all_messages(ctx)]
+    remaining_str = str(remaining)
+    # Stale incomplete tool-chain records must be removed
+    assert "stale-a" not in remaining_str
+    assert "stale-b" not in remaining_str
+    # Since commit succeeded and stale records are gone, sanitizer worked.
+    # (Keep planner may also trim older messages — that is expected behavior.)
+
+
+async def test_coordinator_preserves_active_open_tail_but_removes_older_invalid_chain(registry):
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(factory, SessionMemoryConfig(max_messages=None))
+    ctx = MemoryContext(session_id="sanitize-open-tail")
+    open_tail = {
+        "role": str(MessageRole.ASSISTANT),
+        "content": "",
+        "tool_calls": [
+            {"id": "tail-a", "function": {"name": "tool_tail_a"}},
+            {"id": "tail-b", "function": {"name": "tool_tail_b"}},
+        ],
+    }
+    await session.add_messages(ctx, [
+        {"role": str(MessageRole.USER), "content": "start"},
+        {
+            "role": str(MessageRole.ASSISTANT),
+            "content": "",
+            "tool_calls": [{"id": "old-a", "function": {"name": "tool_old_a"}}],
+        },
+        {"role": str(MessageRole.USER), "content": "continued"},
+        open_tail,
+        {"role": str(MessageRole.TOOL), "tool_call_id": "tail-a", "content": "partial"},
+    ])
+
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=3)
+    result = await coordinator.maybe_compress(
+        session=session,
+        archive=None,
+        context=ctx,
+    )
+
+    assert result.committed
+    assert [msg.to_dict() for msg in await session.get_all_messages(ctx)] == [
+        {"role": str(MessageRole.USER), "content": "start"},
+        {"role": str(MessageRole.USER), "content": "continued"},
+        open_tail,
+        {"role": str(MessageRole.TOOL), "tool_call_id": "tail-a", "content": "partial"},
+    ]
+
+
+async def test_sanitizer_removed_messages_do_not_create_pending_entries(registry):
+    """Sanitizer-removed invalid records must not produce pending entries."""
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    layer_set = MemoryLayerFactory.single_user(registry=registry)
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(factory, SessionMemoryConfig(max_messages=None))
+    ctx = MemoryContext(session_id="pending-boundary")
+    await session.add_messages(ctx, [
+        {
+            "role": str(MessageRole.ASSISTANT),
+            "content": "",
+            "tool_calls": [{"id": "old-a", "function": {"name": "tool_old_a"}}],
+        },
+        {"role": str(MessageRole.USER), "content": "unfinished"},
+    ])
+
+    assert layer_set.pending is not None
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=1)
+    await coordinator.maybe_compress(
+        session=session,
+        archive=None,
+        pending=layer_set.pending,
+        context=ctx,
+    )
+
+    entries = await layer_set.pending.get_entries(ctx)
+    assert [entry.content for entry in entries] == []
+
+
+async def test_sanitizer_removed_messages_are_not_archived(registry):
+    """Sanitizer-removed invalid records must not be written to archive."""
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(factory, SessionMemoryConfig(max_messages=None))
+    ctx = MemoryContext(session_id="archive-boundary")
+    await session.add_messages(ctx, [
+        {
+            "role": str(MessageRole.ASSISTANT),
+            "content": "",
+            "tool_calls": [{"id": "old-a", "function": {"name": "tool_old_a"}}],
+        },
+        {"role": str(MessageRole.ASSISTANT), "content": "plain"},
+    ])
+
+    class RecordingArchive:
+        def __init__(self):
+            self.entries = []
+
+        async def append(self, context, entry):
+            _ = context
+            self.entries.append(entry)
+
+    archive = RecordingArchive()
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=1)
+    await coordinator.maybe_compress(
+        session=session,
+        archive=archive,  # type: ignore[arg-type]
+        context=ctx,
+    )
+
+    assert archive.entries == []

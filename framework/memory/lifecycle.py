@@ -11,6 +11,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from framework.core.types import MessageRole
+from framework.memory.compression.tool_chain_sanitizer import (
+    DefaultSessionToolChainSanitizer,
+    ToolChainSanitizationMode,
+)
 from framework.memory.core.layers import MemoryLayerSet
 from framework.memory.core.scope import (
     MemoryAgentRole,
@@ -102,13 +106,11 @@ class DefaultMemoryLifecyclePolicy(MemoryLifecyclePolicy):
         context: MemoryContext,
         layers: MemoryLayerSet,
     ) -> bool:
-        """Return True when compression could split a tool_call/tool result pair.
+        """Return True when compression could split the active tool-call tail.
 
-        The requirement is structural, not cosmetic: every role=tool message
-        sent back to an LLM must have a preceding assistant.tool_calls entry
-        with the same id. During a ReAct turn those messages are persisted in
-        separate writes, so post-append compression is only safe after the
-        chain has reached a normal assistant response.
+        Only protects the *last* assistant with tool_calls. Older stale
+        incomplete groups are cleaned by the sanitizer during compression
+        and must not block compression forever.
         """
         try:
             raw_messages = await layers.session.get_all_messages(context)
@@ -124,27 +126,23 @@ class DefaultMemoryLifecyclePolicy(MemoryLifecyclePolicy):
 
         last = messages[-1]
         last_role = last.get("role")
-        # assistant(tool_calls) means the tool has not finished yet. role=tool
-        # means the tool result exists, but the model has not consumed it to
-        # produce the next assistant response yet. Both states are unsafe cut
-        # points for session compression.
+        # Fast-path: the physical last message is a tool result or an
+        # assistant+tools_calls. The current ReAct turn is writing its
+        # results; compression must wait for a plain assistant to close
+        # the chain.
         if last_role == str(MessageRole.TOOL):
             return True
         if last_role == str(MessageRole.ASSISTANT) and last.get("tool_calls"):
             return True
 
-        declared: set[str] = set()
-        fulfilled: set[str] = set()
-        for msg in messages:
-            if msg.get("role") == str(MessageRole.ASSISTANT):
-                for call in msg.get("tool_calls") or []:
-                    if isinstance(call, dict) and call.get("id"):
-                        declared.add(str(call["id"]))
-            elif msg.get("role") == str(MessageRole.TOOL):
-                call_id = msg.get("tool_call_id")
-                if call_id is not None:
-                    fulfilled.add(str(call_id))
-        return not declared.issubset(fulfilled)
+        # The session ends with a plain assistant or user. Run the full
+        # sanitizer pass to check whether the last assistant with tool_calls
+        # is still incomplete.
+        result = DefaultSessionToolChainSanitizer().sanitize(
+            messages,
+            mode=ToolChainSanitizationMode.PERSISTENT_SESSION,
+        )
+        return result.has_open_tail
 
     async def _clear_pending_on_completed_assistant(
         self,

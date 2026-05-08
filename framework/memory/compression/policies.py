@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from collections import Counter
 from collections.abc import Sequence
 from typing import Any
 
@@ -22,6 +23,11 @@ from framework.memory.compression.planner import (
     CompressionBudget,
     CompressionKeepPlanner,
     PriorityCompressionKeepPlanner,
+)
+from framework.memory.compression.tool_chain_sanitizer import (
+    DefaultSessionToolChainSanitizer,
+    SessionToolChainSanitizer,
+    ToolChainSanitizationMode,
 )
 from framework.memory.core.layers import (
     ArchiveMemoryManager,
@@ -361,6 +367,7 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
         retention: MessageRetentionPolicy | None = None,
         keep_planner: CompressionKeepPlanner | None = None,
         pending_extractor: PendingPrunedInputExtractor | None = None,
+        tool_chain_sanitizer: SessionToolChainSanitizer | None = None,
     ) -> None:
         self._max_messages = max_messages
         self._trigger = trigger or DefaultCompressionTriggerPolicy(
@@ -376,6 +383,7 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
         self._retention = retention or DefaultMessageRetentionPolicy()
         self._keep_planner = keep_planner or PriorityCompressionKeepPlanner()
         self._pending_extractor = pending_extractor or DefaultPendingPrunedInputExtractor()
+        self._tool_chain_sanitizer = tool_chain_sanitizer or DefaultSessionToolChainSanitizer()
 
     async def maybe_compress(
         self,
@@ -390,10 +398,85 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
         if trigger is None:
             return CompressionResult(committed=True, reason=CompressionResultReason.NOT_NEEDED)
 
-        # Phase 2: Read ALL stored messages and classify every one.
+        # Phase 2: Read ALL stored messages and sanitize tool-chain structure.
         all_msgs = [m.to_dict() for m in await session.get_all_messages(context)]
         if not all_msgs:
             return CompressionResult(committed=True, reason=CompressionResultReason.EMPTY)
+
+        try:
+            sanitization = self._tool_chain_sanitizer.sanitize(
+                all_msgs,
+                mode=ToolChainSanitizationMode.PERSISTENT_SESSION,
+            )
+        except Exception:
+            logger.warning("Session tool-chain sanitization failed", exc_info=True)
+            return CompressionResult(committed=True, reason=CompressionResultReason.NO_SAFE_BOUNDARY)
+
+        if sanitization.removed_messages:
+            counts = Counter(issue.reason for issue in sanitization.issues)
+            logger.info(
+                "Session tool-chain sanitizer removed invalid messages: "
+                "session=%s removed=%d reasons=%s open_tail=%s",
+                context.session_id,
+                len(sanitization.removed_messages),
+                {str(reason): count for reason, count in counts.items()},
+                sanitization.has_open_tail,
+            )
+
+        sanitized_msgs = sanitization.messages
+        if not sanitized_msgs:
+            revision = await session.get_revision(context)
+            plan = CompressionPlan(
+                trigger=trigger,
+                expected_revision=revision,
+                expected_cursor=None,
+                keep_messages=[],
+                summarize_messages=[],
+                archive_raw_messages=[],
+                drop_messages=[],
+                summary="",
+                drop_without_archive_messages=sanitization.removed_messages,
+                sanitization_issues=sanitization.issues,
+                has_open_tail=sanitization.has_open_tail,
+            )
+            return await self._commit.commit(
+                plan=plan,
+                session=session,
+                archive=None,
+                pending=pending,
+                context=context,
+                error_policy=self._error,
+            )
+
+        if sanitization.has_open_tail:
+            if not sanitization.removed_messages:
+                return CompressionResult(
+                    committed=True, reason=CompressionResultReason.NO_SAFE_BOUNDARY,
+                )
+            revision = await session.get_revision(context)
+            plan = CompressionPlan(
+                trigger=trigger,
+                expected_revision=revision,
+                expected_cursor=None,
+                keep_messages=sanitized_msgs,
+                summarize_messages=[],
+                archive_raw_messages=[],
+                drop_messages=[],
+                summary="",
+                drop_without_archive_messages=sanitization.removed_messages,
+                sanitization_issues=sanitization.issues,
+                has_open_tail=True,
+            )
+            return await self._commit.commit(
+                plan=plan,
+                session=session,
+                archive=None,
+                pending=pending,
+                context=context,
+                error_policy=self._error,
+            )
+
+        all_msgs = sanitized_msgs
 
         decisions = self._compaction.decide_all(all_msgs, context, str(trigger.reason))
 
@@ -475,6 +558,9 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
                 all_msgs,
                 pruned_indices_set,
             ),
+            drop_without_archive_messages=sanitization.removed_messages,
+            sanitization_issues=sanitization.issues,
+            has_open_tail=sanitization.has_open_tail,
         )
 
         # Phase 5: Commit (caller ensures lock is held)
