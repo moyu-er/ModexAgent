@@ -189,11 +189,16 @@ assistant tool-call message to the LLM without matching tool results is not
 provider-legal. Persistent session storage may temporarily contain such a tail;
 LLM input should not.
 
-Governance can either:
+Governance integration:
 
-- Call the same analyzer in `MODEL_VISIBLE_CONTEXT` mode, then apply token budget
-  and lossy content reductions; or
-- Keep the existing governance chain but update it to match these semantics.
+- `ToolChainRepairGovernance` calls the sanitizer in `MODEL_VISIBLE_CONTEXT`
+  mode as the first governance step. This removes all incomplete tool-call groups
+  and orphan tool results in one pass.
+- `FinalContextLegalityGovernance` becomes a lightweight no-op / verification
+  pass. Because `ToolChainRepair` already removed all illegal records, there is
+  nothing left for `FinalContextLegality` to repair. The class definition is
+  preserved for config compatibility, but its internal logic should not
+  duplicate the sanitizer call.
 
 The important rule is that governance may repair the model-visible copy, while
 the sanitizer is the only layer that physically removes stale session data.
@@ -380,7 +385,7 @@ For sanitizer cleanup:
 global declared-vs-fulfilled check across the entire session. That global check
 treats old stale data as an active process and can block compression forever.
 
-Instead, lifecycle should either:
+Instead, lifecycle should:
 
 - Ask the sanitizer/analyzer whether `has_open_tail=True`; or
 - Use equivalent logic focused only on the last assistant with `tool_calls`.
@@ -389,6 +394,14 @@ If `has_open_tail=True`, lifecycle should skip normal compression that could
 split the active tail. It should not skip cleanup forever because of older stale
 incomplete groups; those should be handled by the sanitizer during the next
 compression attempt.
+
+The existing fast-path shortcut should be preserved as a performance
+optimization: if the last message is `role=tool` or
+`role=assistant`+`tool_calls`, return `True` immediately without running the
+full sanitizer analysis. Only messages that end in a plain assistant or user
+need the sanitizer scan — stale incomplete groups in the middle of the session
+do not make the *current* tail unsafe to compress, so the fast-path check
+against the physical last message is correct and cheap.
 
 ## Pending-Pruned-Input Interaction
 
@@ -501,6 +514,15 @@ Framework unit tests:
 9. `archive=None` behavior:
    - Peer/subagent session-only compression still removes sanitizer-invalid
      records and commits replacement without archive.
+
+10. Interleaved `role=agent` messages:
+    - Multi-agent communication inserts `role=agent` messages into session
+      history between assistant/tool groups.
+    - Sanitizer must preserve `role=agent` messages and their content while
+      still classifying assistant/tool groups correctly.
+    - Example: `user → assistant(tool_calls=[a]) → agent("from peer") →
+      tool(a) → assistant(plain)` — sanitizer preserves all, treats the
+      assistant/tool group as complete despite interleaved agent messages.
 
 Bot project tests:
 

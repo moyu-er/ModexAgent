@@ -76,6 +76,14 @@ def _tool(call_id: str, content: str = "result") -> dict:
     }
 
 
+def _agent(sender: str, content: str = "message") -> dict:
+    return {
+        "role": str(MessageRole.AGENT),
+        "content": content,
+        "source_agent": sender,
+    }
+
+
 def test_persistent_mode_removes_orphan_tool_result() -> None:
     messages = [
         {"role": str(MessageRole.USER), "content": "hi"},
@@ -187,6 +195,29 @@ def test_duplicate_tool_result_keeps_first_and_removes_later_duplicate() -> None
     assert [issue.reason for issue in result.issues] == [
         ToolChainSanitizationReason.DUPLICATE_TOOL_RESULT,
     ]
+
+
+def test_persistent_mode_preserves_agent_messages_interleaved_with_tool_chain() -> None:
+    """Multi-agent: role=agent messages must be preserved and not disturb
+    assistant/tool group classification."""
+    messages = [
+        {"role": str(MessageRole.USER), "content": "start"},
+        _assistant_tool_call("a", "b"),
+        _agent("peer1", "forwarded from peer"),
+        _tool("a", "result_a"),
+        _tool("b", "result_b"),
+        {"role": str(MessageRole.ASSISTANT), "content": "done"},
+    ]
+
+    result = DefaultSessionToolChainSanitizer().sanitize(
+        messages,
+        mode=ToolChainSanitizationMode.PERSISTENT_SESSION,
+    )
+
+    assert result.messages == messages
+    assert result.removed_messages == []
+    assert result.removed_indices == set()
+    assert result.has_open_tail is False
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -601,18 +632,28 @@ Replace `ToolChainRepairGovernance.apply` with:
         return result.messages
 ```
 
-Replace `FinalContextLegalityGovernance.apply` with:
+Simplify `FinalContextLegalityGovernance.apply` to a lightweight no-op pass.
+Because `ToolChainRepairGovernance` already removes every structurally-illegal
+record via the sanitizer, there is nothing left for `FinalContextLegality` to
+backfill or repair:
 
 ```python
+class FinalContextLegalityGovernance(ContextGovernance):
+    """Final provider-legality pass for model-visible context.
+
+    ToolChainRepairGovernance already removes all incomplete tool-call groups
+    and orphan tool results upstream. This pass returns the messages unchanged;
+    it exists for config compatibility so existing governance chains do not
+    break.
+    """
+
     async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        result = DefaultSessionToolChainSanitizer().sanitize(
-            messages,
-            mode=ToolChainSanitizationMode.MODEL_VISIBLE_CONTEXT,
-        )
-        return result.messages
+        return messages
 ```
 
-Leave the existing classes in place so bot configuration does not change. Do not write sanitizer results back to session.
+Leave the existing class definition and public API in place so bot
+configuration does not change. The old backfill/repair implementation is
+replaced.
 
 - [ ] **Step 4: Run governance and sanitizer tests**
 
@@ -622,14 +663,13 @@ Run:
 python -m pytest --rootdir F:\tool\pythonProject\ModexAgent F:\tool\pythonProject\ModexAgent\tests\unit\memory\test_context_governance.py F:\tool\pythonProject\ModexAgent\tests\unit\memory\test_tool_chain_sanitizer.py -q
 ```
 
-Expected: all tests pass.
+Expected: all tests pass. Note: existing governance tests that verify backfill behavior (e.g. `test_tool_chain_repair_backfills_missing`) must be updated to expect deletion instead of insertion.
 
 - [ ] **Step 5: Commit governance changes**
 
 ```bash
 git add framework/memory/context_governance.py tests/unit/memory/test_context_governance.py
 git commit -m "fix(memory): sanitize model-visible tool chains"
-```
 
 ## Task 4: Compression Plan Fields And Cleanup-Only Tests
 
@@ -990,6 +1030,21 @@ from framework.memory.compression.tool_chain_sanitizer import (
 Replace the body after messages are loaded in `_has_open_react_process` with:
 
 ```python
+        last = messages[-1]
+        last_role = last.get("role")
+        # Fast-path: the physical last message is a tool or assistant+tools_calls.
+        # This is the current ReAct turn writing its results; compression must not
+        # run until a plain assistant response closes the chain.
+        if last_role == str(MessageRole.TOOL):
+            return True
+        if last_role == str(MessageRole.ASSISTANT) and last.get("tool_calls"):
+            return True
+
+        # The physical last message is a plain assistant or user. Run the full
+        # sanitizer pass to check whether a stale incomplete assistant/tool group
+        # from an earlier turn is still open. Only the last assistant with
+        # tool_calls matters; older stale groups are cleaned by the sanitizer
+        # during the next compression attempt.
         result = DefaultSessionToolChainSanitizer().sanitize(
             messages,
             mode=ToolChainSanitizationMode.PERSISTENT_SESSION,
@@ -997,7 +1052,12 @@ Replace the body after messages are loaded in `_has_open_react_process` with:
         return result.has_open_tail
 ```
 
-Keep the existing docstring but update it to say the check protects only the active last assistant tool-call tail.
+Keep the existing docstring but update it to say the check protects only the
+active last assistant tool-call tail. The fast-path check against the physical
+last message is preserved as a performance optimization — stale incomplete
+groups in the middle of the session do not make the current tail unsafe, so the
+full sanitizer scan is only needed when the session ends with a plain assistant
+or user.
 
 - [ ] **Step 4: Run lifecycle tests**
 
@@ -1151,13 +1211,36 @@ mypy F:\tool\pythonProject\ModexAgent\framework\memory
 
 Expected: ruff passes. Mypy passes for `framework\memory`; if unrelated existing issues appear outside touched memory files, record exact file and line in the final handoff.
 
-- [ ] **Step 4: Check git status**
+- [ ] **Step 4: Fix bot_config boundary value**
+
+The current `examples/bot_project/config/bot_config.yml` has
+`boundary: "priority_input"` under `memory.main.compaction`. This value is
+not recognized by `_build_compression_coordinator()` — it only handles
+`"tool_chain"` and `"user_turn_tool_chain"`. Unknown values fall through to
+the `ToolChainBoundaryPolicy()` default.
+
+Change it to `"tool_chain"` (the existing default behavior):
+
+```yaml
+    compaction:
+      policy: "conservative"
+      boundary: "tool_chain"
+```
+
+This is an independent fix, committed separately from the sanitizer work:
+
+```bash
+git add examples/bot_project/config/bot_config.yml
+git commit -m "fix(config): correct bot boundary to recognized value"
+```
+
+- [ ] **Step 5: Check git status**
 
 Run:
 
 ```bash
 git -C F:\tool\pythonProject\ModexAgent status --short
-git -C F:\tool\pythonProject\ModexAgent log --oneline -8
+git -C F:\tool\pythonProject\ModexAgent log --oneline -9
 ```
 
 Expected: only pre-existing unrelated worktree entries remain unstaged. The sanitizer implementation commits appear at the top of the log.
@@ -1167,11 +1250,15 @@ Expected: only pre-existing unrelated worktree entries remain unstaged. The sani
 - Spec coverage:
   - Full-session sanitizer: Tasks 1 and 2.
   - Last assistant persistent-session exception: Tasks 1 and 2.
+  - Multi-agent role=agent interleaved messages: Task 1.
   - Governance removes incomplete model-visible tool chains: Task 3.
+  - FinalContextLegality simplified to no-op after ToolChainRepair: Task 3.
   - Compression cleanup without archive: Tasks 4 and 5.
   - Active open tail prevents normal compression while allowing stale cleanup: Tasks 4, 5, and 6.
+  - Lifecycle fast-path preserved for performance: Task 6.
   - Archive and pending exclusion: Task 7.
   - Main/peer/subagent shared behavior through `archive=None`: Tasks 5, 7, and 8.
+  - Bot config boundary value corrected: Task 8.
 - Placeholder scan:
   - No placeholder markers or undefined step references are present.
 - Type consistency:
