@@ -45,6 +45,7 @@ from framework.memory.core.layers import (
     ArchiveMemoryManager,
     KnowledgeMemoryManager,
     MemoryLayerSet,
+    PendingPrunedInputMemoryManager,
     SessionMemoryManager,
 )
 from framework.memory.core.models import (
@@ -110,6 +111,12 @@ from framework.memory.system import (
     MemorySystemContextManager,
     create_memory_system,
 )
+from framework.memory.pending import (
+    DefaultPendingPrunedInputExtractor,
+    DefaultPendingPrunedInputInjector,
+    PendingPrunedInputExtractor,
+    PendingPrunedInputInjector,
+)
 
 __all__ = [
     # Entry points
@@ -123,6 +130,7 @@ __all__ = [
     "SessionMemoryManager",
     "ArchiveMemoryManager",
     "KnowledgeMemoryManager",
+    "PendingPrunedInputMemoryManager",
     "PendingPrunedInputMemoryConfig",
     "PendingPrunedInputEntry",
     # Context & scope
@@ -195,6 +203,10 @@ __all__ = [
     "ToolChainRepairGovernance",
     "MicrocompactGovernance",
     "TokenBudgetGovernance",
+    "DefaultPendingPrunedInputExtractor",
+    "DefaultPendingPrunedInputInjector",
+    "PendingPrunedInputExtractor",
+    "PendingPrunedInputInjector",
     # Auto compact (removed; use DefaultMemoryMaintenancePolicy directly)
     # Compaction policy / boundary (pipeline removed; workflow unified under coordinator)
     "MessageCompactionPolicy",

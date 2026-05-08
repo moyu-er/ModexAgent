@@ -19,7 +19,11 @@ from framework.core.skills import (
 )
 from framework.memory.core.scope import MemoryAgentRole, MemoryContext
 from framework.memory.injection import RestrictedInjectionPolicy
-from framework.memory.layers.config import MemoryLayerConfigSet, SessionMemoryConfig
+from framework.memory.layers.config import (
+    MemoryLayerConfigSet,
+    PendingPrunedInputMemoryConfig,
+    SessionMemoryConfig,
+)
 from framework.memory.system import MemorySystemContextManager, create_memory_system
 from framework.multi_agent import (
     AgentAddress,
@@ -299,12 +303,23 @@ class AgentBuilderMixin:
 
     def _session_only_memory_config(self, section: dict[str, Any]) -> MemoryLayerConfigSet:
         short_term = section.get("short_term", {})
+        pending_raw = section.get("pending_pruned_inputs", {})
+        pending_config = (
+            None
+            if pending_raw.get("enabled") is False
+            else PendingPrunedInputMemoryConfig(
+                enabled=True,
+                max_entries=pending_raw.get("max_entries", 6),
+                max_chars=pending_raw.get("max_chars", 8000),
+            )
+        )
         return MemoryLayerConfigSet(
             session=SessionMemoryConfig(
                 max_messages=short_term.get("max_messages", 50),
             ),
             archive=None,
             knowledge=None,
+            pending=pending_config,
         )
 
     def _merge_peer_memory_config(self, peer_config: dict[str, Any]) -> dict[str, Any]:

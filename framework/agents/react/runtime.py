@@ -16,6 +16,8 @@ if TYPE_CHECKING:
     from framework.hook import HookRunner
     from framework.interceptor.chain import InterceptorChain
     from framework.memory.context_governance import ContextGovernance
+    from framework.memory.core.scope import MemoryContext
+    from framework.memory.pending import PendingPrunedInputInjector
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +59,8 @@ class ReActRuntime:
     checkpoint_store: RuntimeStateStore | None = None
     injection_queue: asyncio.Queue[str] | None = None
     governance: ContextGovernance | None = None
+    pending_injector: PendingPrunedInputInjector | None = None
+    memory_context: MemoryContext | None = None
     safety: RuntimeSafetyPolicy | None = None
 
     @classmethod
@@ -97,6 +101,8 @@ class ReActRuntime:
             checkpoint_store=ctx.extensions.pop("checkpoint_store", None),
             injection_queue=ctx.extensions.pop("injection_queue", None),
             governance=ctx.extensions.pop(ExtensionKey.GOVERNANCE, None),
+            pending_injector=ctx.extensions.pop("pending_pruned_input_injector", None),
+            memory_context=ctx.extensions.pop("memory_context", None),
             safety=ctx.extensions.pop(ExtensionKey.SAFETY, None),
         )
 
