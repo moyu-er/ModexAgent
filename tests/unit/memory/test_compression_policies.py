@@ -1210,3 +1210,72 @@ async def test_coordinator_preserves_active_open_tail_but_removes_older_invalid_
         open_tail,
         {"role": str(MessageRole.TOOL), "tool_call_id": "tail-a", "content": "partial"},
     ]
+
+
+async def test_sanitizer_removed_messages_do_not_create_pending_entries(registry):
+    """Sanitizer-removed invalid records must not produce pending entries."""
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    layer_set = MemoryLayerFactory.single_user(registry=registry)
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(factory, SessionMemoryConfig(max_messages=None))
+    ctx = MemoryContext(session_id="pending-boundary")
+    await session.add_messages(ctx, [
+        {
+            "role": str(MessageRole.ASSISTANT),
+            "content": "",
+            "tool_calls": [{"id": "old-a", "function": {"name": "tool_old_a"}}],
+        },
+        {"role": str(MessageRole.USER), "content": "unfinished"},
+    ])
+
+    assert layer_set.pending is not None
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=1)
+    await coordinator.maybe_compress(
+        session=session,
+        archive=None,
+        pending=layer_set.pending,
+        context=ctx,
+    )
+
+    entries = await layer_set.pending.get_entries(ctx)
+    assert [entry.content for entry in entries] == []
+
+
+async def test_sanitizer_removed_messages_are_not_archived(registry):
+    """Sanitizer-removed invalid records must not be written to archive."""
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(factory, SessionMemoryConfig(max_messages=None))
+    ctx = MemoryContext(session_id="archive-boundary")
+    await session.add_messages(ctx, [
+        {
+            "role": str(MessageRole.ASSISTANT),
+            "content": "",
+            "tool_calls": [{"id": "old-a", "function": {"name": "tool_old_a"}}],
+        },
+        {"role": str(MessageRole.ASSISTANT), "content": "plain"},
+    ])
+
+    class RecordingArchive:
+        def __init__(self):
+            self.entries = []
+
+        async def append(self, context, entry):
+            _ = context
+            self.entries.append(entry)
+
+    archive = RecordingArchive()
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=1)
+    await coordinator.maybe_compress(
+        session=session,
+        archive=archive,  # type: ignore[arg-type]
+        context=ctx,
+    )
+
+    assert archive.entries == []
