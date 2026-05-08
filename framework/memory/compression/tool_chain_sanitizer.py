@@ -102,10 +102,16 @@ class DefaultSessionToolChainSanitizer(SessionToolChainSanitizer):
 
         for group in groups:
             is_last_tool_assistant = group.assistant_index == last_tool_assistant
+            tail_closed = (
+                is_last_tool_assistant
+                and not group.is_complete
+                and self._has_plain_assistant_after(copied, group.assistant_index)
+            )
             preserve_incomplete_tail = (
                 mode == ToolChainSanitizationMode.PERSISTENT_SESSION
                 and is_last_tool_assistant
                 and not group.is_complete
+                and not tail_closed
             )
 
             if group.is_complete or preserve_incomplete_tail:
@@ -186,6 +192,19 @@ class DefaultSessionToolChainSanitizer(SessionToolChainSanitizer):
             if message.get("role") == str(MessageRole.ASSISTANT) and message.get("tool_calls"):
                 result = index
         return result
+
+    @staticmethod
+    def _has_plain_assistant_after(
+        messages: Sequence[dict[str, Any]], tool_assistant_index: int,
+    ) -> bool:
+        """Return True if a plain assistant (no tool_calls) appears after the
+        tool-call assistant. Such an assistant closes the ReAct turn, making
+        the tool-call chain stale rather than an active open tail."""
+        for msg in messages[tool_assistant_index + 1:]:
+            role = msg.get("role")
+            if role == str(MessageRole.ASSISTANT) and not msg.get("tool_calls"):
+                return True
+        return False
 
     def _collect_groups(self, messages: Sequence[dict[str, Any]]) -> list[_AssistantGroup]:
         groups: list[_AssistantGroup] = []

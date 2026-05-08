@@ -273,6 +273,39 @@ class TestDefaultMemoryLifecyclePolicy:
         assert await layers.pending.get_entries(ctx) == []
 
 
+    @pytest.mark.asyncio
+    async def test_on_messages_added_does_not_skip_for_old_stale_incomplete_tool_call(self):
+        coordinator = AsyncMock()
+        coordinator.maybe_compress = AsyncMock()
+        policy = DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator)
+        ctx = MemoryContext(session_id="s1", user_id="u1")
+        session = AsyncMock()
+        session.get_all_messages = AsyncMock(
+            return_value=[
+                {
+                    "role": str(MessageRole.ASSISTANT),
+                    "content": "",
+                    "tool_calls": [
+                        {"id": "old-a", "function": {"name": "search_files"}},
+                        {"id": "old-b", "function": {"name": "search_files"}},
+                    ],
+                },
+                {"role": str(MessageRole.TOOL), "tool_call_id": "old-a", "content": "partial"},
+                {"role": str(MessageRole.ASSISTANT), "content": "done"},
+            ]
+        )
+        layers = MemoryLayerSet(session=session, archive=None)
+
+        await policy.on_messages_added(ctx, layers)
+
+        coordinator.maybe_compress.assert_called_once_with(
+            session=layers.session,
+            archive=None,
+            pending=None,
+            context=ctx,
+        )
+
+
 # ── Maintenance ─────────────────────────────────────────────────────────────
 
 
