@@ -44,6 +44,9 @@ def test_memory_layer_set_accepts_optional_pending_manager() -> None:
         async def get_entries(self, context):
             return []
 
+        async def replace_entries(self, context, entries):
+            return None
+
         async def clear(self, context):
             return None
 
@@ -178,3 +181,31 @@ async def test_pending_injector_clears_and_skips_when_session_has_completed_assi
 
     assert result == messages
     assert await layer_set.pending.get_entries(ctx) == []
+
+
+@pytest.mark.asyncio
+async def test_pending_injector_serializes_structured_content_stably() -> None:
+    registry = InMemoryStoreRegistry()
+    layer_set = MemoryLayerFactory.single_user(registry=registry)
+    ctx = MemoryContext(session_id="structured")
+    assert layer_set.pending is not None
+    await layer_set.pending.append_entries(ctx, [
+        PendingPrunedInputEntry.from_message(
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "look at this"},
+                    {"type": "image_url", "image_url": {"url": "memory://image"}},
+                ],
+            },
+            pruned_at=time.time(),
+        )
+    ])
+
+    injector = DefaultPendingPrunedInputInjector(layer_set.pending)
+    result = await injector.apply([], ctx)
+
+    assert len(result) == 1
+    assert result[0]["role"] == "user"
+    assert '"type": "text"' in result[0]["content"]
+    assert "'type': 'text'" not in result[0]["content"]

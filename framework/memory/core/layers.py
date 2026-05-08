@@ -254,6 +254,14 @@ class PendingPrunedInputMemoryManager(ABC):
         pass
 
     @abstractmethod
+    async def replace_entries(
+        self,
+        context: MemoryContext,
+        entries: Sequence[Any],
+    ) -> None:
+        pass
+
+    @abstractmethod
     async def clear(self, context: MemoryContext) -> None:
         pass
 

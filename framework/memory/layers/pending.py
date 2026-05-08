@@ -150,6 +150,19 @@ class ScopedPendingPrunedInputMemoryManager(PendingPrunedInputMemoryManager):
         storage = await self._storage_factory(context)
         return self._decode_entries(await storage.get(_PENDING_MESSAGES_KEY))
 
+    async def replace_entries(
+        self,
+        context: MemoryContext,
+        entries: Sequence[PendingPrunedInputEntry],
+    ) -> None:
+        storage = await self._storage_factory(context)
+        async with storage.get_lock().write():
+            if not self._config.enabled:
+                await storage.delete(_PENDING_MESSAGES_KEY)
+                return
+            ordered = self._enforce_limits(list(entries))
+            await storage.set(_PENDING_MESSAGES_KEY, [entry.to_dict() for entry in ordered])
+
     async def clear(self, context: MemoryContext) -> None:
         storage = await self._storage_factory(context)
         async with storage.get_lock().write():

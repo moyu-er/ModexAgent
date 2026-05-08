@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from abc import ABC, abstractmethod
@@ -131,7 +132,7 @@ class DefaultPendingPrunedInputInjector(PendingPrunedInputInjector):
     def _entry_content(entry: PendingPrunedInputEntry) -> str:
         if isinstance(entry.content, str):
             return entry.content
-        return str(entry.content)
+        return json.dumps(entry.content, ensure_ascii=False, sort_keys=True)
 
     @staticmethod
     def _after_system_messages(messages: Sequence[dict[str, Any]]) -> int:

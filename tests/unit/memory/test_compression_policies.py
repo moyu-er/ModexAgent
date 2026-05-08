@@ -1,6 +1,7 @@
 """Tests for compression policies (Phase 4)."""
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 import pytest
@@ -131,11 +132,12 @@ async def test_compression_abc_registration():
             return False
 
     class MyCommit(CommitPolicy):
-        async def commit(self, *, plan, session, archive, context, error_policy):
+        async def commit(self, *, plan, session, archive, pending=None, context, error_policy):
+            _ = pending
             return CompressionResult(committed=True)
 
     class MyCoordinator(MemoryCompressionCoordinator):
-        async def maybe_compress(self, *, session, archive, context):
+        async def maybe_compress(self, *, session, archive, pending=None, context):
             return CompressionResult(committed=True, reason=CompressionResultReason.NOT_NEEDED)
 
     assert isinstance(MyTrigger(), CompressionTriggerPolicy)
@@ -143,6 +145,12 @@ async def test_compression_abc_registration():
     assert isinstance(MyError(), CompressionErrorPolicy)
     assert isinstance(MyCommit(), CommitPolicy)
     assert isinstance(MyCoordinator(), MemoryCompressionCoordinator)
+
+
+def test_compression_coordinator_contract_accepts_pending_layer():
+    signature = inspect.signature(MemoryCompressionCoordinator.maybe_compress)
+
+    assert "pending" in signature.parameters
 
 
 async def test_coordinator_no_compress_when_under_budget(registry):
@@ -190,6 +198,111 @@ async def test_coordinator_does_not_lose_data_on_archive_failure(registry):
     )
     assert not result.committed
     assert len(await session.get_all_messages(ctx)) == 150  # untouched
+
+
+async def test_commit_does_not_persist_pending_when_archive_write_fails(registry):
+    layer_set = MemoryLayerFactory.single_user(registry=registry)
+    session = layer_set.session
+    pending = layer_set.pending
+    assert pending is not None
+    ctx = MemoryContext(session_id="pending-archive-failure")
+    await session.add_messages(ctx, [
+        {"role": "user", "content": "unfinished"},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "t1"}]},
+        {"role": "tool", "tool_call_id": "t1", "content": "result"},
+    ])
+
+    class FailingArchive:
+        async def append(self, context, entry):
+            _ = context, entry
+            raise RuntimeError("archive down")
+
+    revision = await session.get_revision(ctx)
+    plan = CompressionPlan(
+        trigger=CompressionTrigger(reason=CompressionReason.MESSAGE_COUNT),
+        expected_revision=revision,
+        expected_cursor=None,
+        keep_messages=[{"role": "tool", "tool_call_id": "t1", "content": "result"}],
+        summarize_messages=[{"role": "user", "content": "unfinished"}],
+        archive_raw_messages=[],
+        drop_messages=[],
+        summary="unfinished",
+        pending_pruned_input_entries=[
+            PendingPrunedInputEntry.from_message(
+                {"role": "user", "content": "unfinished"},
+                pruned_at=100.0,
+            )
+        ],
+    )
+
+    result = await DefaultCommitPolicy().commit(
+        plan=plan,
+        session=session,
+        archive=FailingArchive(),  # type: ignore[arg-type]
+        pending=pending,
+        context=ctx,
+        error_policy=DefaultCompressionErrorPolicy(),
+    )
+
+    assert not result.committed
+    assert result.reason == CompressionResultReason.ARCHIVE_FAILED
+    assert [message.content for message in await session.get_all_messages(ctx)] == [
+        "unfinished",
+        "",
+        "result",
+    ]
+    assert await pending.get_entries(ctx) == []
+
+
+async def test_commit_restores_pending_snapshot_when_session_revision_conflicts(registry):
+    layer_set = MemoryLayerFactory.single_user(registry=registry)
+    pending = layer_set.pending
+    assert pending is not None
+    ctx = MemoryContext(session_id="pending-revision-conflict")
+    existing = PendingPrunedInputEntry.from_message(
+        {"role": "user", "content": "already pending"},
+        pruned_at=50.0,
+    )
+    await pending.append_entries(ctx, [existing])
+    expected_revision = StorageRevision(message_count=3, updated_at=None, version=1)
+
+    class ConflictingSession:
+        async def get_revision(self, context):
+            _ = context
+            return expected_revision
+
+        async def replace_messages_if_revision(self, context, messages, revision, state_updates=None):
+            _ = context, messages, revision, state_updates
+            return None
+
+    plan = CompressionPlan(
+        trigger=CompressionTrigger(reason=CompressionReason.MESSAGE_COUNT),
+        expected_revision=expected_revision,
+        expected_cursor=None,
+        keep_messages=[{"role": "tool", "tool_call_id": "t1", "content": "result"}],
+        summarize_messages=[],
+        archive_raw_messages=[],
+        drop_messages=[],
+        summary="",
+        pending_pruned_input_entries=[
+            PendingPrunedInputEntry.from_message(
+                {"role": "user", "content": "new pending"},
+                pruned_at=100.0,
+            )
+        ],
+    )
+
+    result = await DefaultCommitPolicy().commit(
+        plan=plan,
+        session=ConflictingSession(),  # type: ignore[arg-type]
+        archive=None,
+        pending=pending,
+        context=ctx,
+        error_policy=DefaultCompressionErrorPolicy(),
+    )
+
+    assert result.reason == CompressionResultReason.REVISION_CHANGED
+    assert [entry.content for entry in await pending.get_entries(ctx)] == ["already pending"]
 
 
 async def test_coordinator_commit_replaces_session_and_persists_summary(registry):

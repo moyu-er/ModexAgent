@@ -163,10 +163,10 @@ class DefaultMemoryLifecyclePolicy(MemoryLifecyclePolicy):
         except Exception:
             logger.debug("Unable to inspect session for pending clear", exc_info=True)
             return
-        if not messages:
-            return
-        last = messages[-1]
-        if last.get("role") == MessageRole.ASSISTANT.value and not last.get("tool_calls"):
+        if any(
+            message.get("role") == MessageRole.ASSISTANT.value and not message.get("tool_calls")
+            for message in messages
+        ):
             try:
                 await pending.clear(context)
             except Exception:

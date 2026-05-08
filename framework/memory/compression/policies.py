@@ -257,17 +257,6 @@ class DefaultCommitPolicy(CommitPolicy):
             return CompressionResult(committed=False, retryable=False, reason=CompressionResultReason.REVISION_CHANGED)
 
         # Archive first — skip empty or placeholder summaries
-        if pending is not None and plan.pending_pruned_input_entries:
-            try:
-                await pending.append_entries(context, plan.pending_pruned_input_entries)
-            except Exception:
-                logger.warning("Pending input persistence failed; preserving session", exc_info=True)
-                return CompressionResult(
-                    committed=False,
-                    retryable=True,
-                    reason=CompressionResultReason.PENDING_FAILED,
-                )
-
         normalized_summary = normalize_memory_summary(plan.summary) if archive is not None else None
         wrote_archive = False
         if normalized_summary is not None:
@@ -285,6 +274,19 @@ class DefaultCommitPolicy(CommitPolicy):
                     return CompressionResult(committed=False, retryable=True, reason=CompressionResultReason.ARCHIVE_FAILED)
                 # Fall through to still mutate session (error policy said proceed)
 
+        pending_snapshot: list[Any] | None = None
+        if pending is not None and plan.pending_pruned_input_entries:
+            try:
+                pending_snapshot = await pending.get_entries(context)
+                await pending.append_entries(context, plan.pending_pruned_input_entries)
+            except Exception:
+                logger.warning("Pending input persistence failed; preserving session", exc_info=True)
+                return CompressionResult(
+                    committed=False,
+                    retryable=True,
+                    reason=CompressionResultReason.PENDING_FAILED,
+                )
+
         extra_state: dict[str, Any] = {}
         if wrote_archive and normalized_summary is not None:
             extra_state[".compression_summary"] = normalized_summary
@@ -296,6 +298,14 @@ class DefaultCommitPolicy(CommitPolicy):
             extra_state,
         )
         if revision is None:
+            if pending is not None and pending_snapshot is not None:
+                try:
+                    await pending.replace_entries(context, pending_snapshot)
+                except Exception:
+                    logger.warning(
+                        "Failed to restore pending input snapshot after commit conflict",
+                        exc_info=True,
+                    )
             await error_policy.on_commit_conflict(plan, context)
             return CompressionResult(committed=False, retryable=False, reason=CompressionResultReason.REVISION_CHANGED)
 
@@ -322,6 +332,7 @@ class MemoryCompressionCoordinator(ABC):
         *,
         session: SessionMemoryManager,
         archive: ArchiveMemoryManager | None,
+        pending: PendingPrunedInputMemoryManager | None = None,
         context: MemoryContext,
     ) -> CompressionResult: ...
 

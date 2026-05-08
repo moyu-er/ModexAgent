@@ -233,6 +233,27 @@ class TestDefaultMemoryLifecyclePolicy:
         assert await layers.pending.get_entries(ctx) == []
 
     @pytest.mark.asyncio
+    async def test_completed_assistant_in_appended_batch_clears_pending_memory(self):
+        registry = InMemoryStoreRegistry()
+        layers = MemoryLayerFactory.single_user(registry=registry)
+        ctx = MemoryContext(session_id="pending-clear-batch")
+        assert layers.pending is not None
+        await layers.pending.append_entries(ctx, [
+            PendingPrunedInputEntry.from_message(
+                {"role": "user", "content": "unfinished"},
+                pruned_at=100.0,
+            )
+        ])
+        await layers.session.add_messages(ctx, [
+            {"role": str(MessageRole.ASSISTANT), "content": "done"},
+            {"role": str(MessageRole.USER), "content": "next"},
+        ])
+
+        await DefaultMemoryLifecyclePolicy().on_messages_added(ctx, layers)
+
+        assert await layers.pending.get_entries(ctx) == []
+
+    @pytest.mark.asyncio
     async def test_subagent_session_end_clears_pending_memory(self):
         registry = InMemoryStoreRegistry()
         layers = MemoryLayerFactory.single_user(registry=registry)
@@ -349,7 +370,6 @@ class TestDefaultMemoryMaintenancePolicy:
 
     @pytest.mark.asyncio
     async def test_scan_once_archive_retention_prunes_by_max_age_days(self):
-        import time
         from datetime import datetime, timedelta
 
         registry = InMemoryStoreRegistry()
@@ -402,7 +422,6 @@ class TestDefaultMemoryMaintenancePolicy:
 
     @pytest.mark.asyncio
     async def test_scan_once_knowledge_eviction_prunes_stale_files(self):
-        import time
         from datetime import UTC, datetime, timedelta
 
         registry = InMemoryStoreRegistry()
