@@ -14,11 +14,6 @@ from collections.abc import Sequence
 from typing import Any
 
 from framework.memory.compaction.boundary import BoundaryPolicy, ToolChainBoundaryPolicy
-from framework.memory.compression.tool_chain_sanitizer import (
-    DefaultSessionToolChainSanitizer,
-    SessionToolChainSanitizer,
-    ToolChainSanitizationMode,
-)
 from framework.memory.compaction.policy import (
     ConservativeCompactionPolicy,
     MessageCompactionDecision,
@@ -28,6 +23,11 @@ from framework.memory.compression.planner import (
     CompressionBudget,
     CompressionKeepPlanner,
     PriorityCompressionKeepPlanner,
+)
+from framework.memory.compression.tool_chain_sanitizer import (
+    DefaultSessionToolChainSanitizer,
+    SessionToolChainSanitizer,
+    ToolChainSanitizationMode,
 )
 from framework.memory.core.layers import (
     ArchiveMemoryManager,

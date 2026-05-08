@@ -62,7 +62,8 @@ async def test_lossy_governance_does_not_mutate_input_messages() -> None:
     assert result[0]["content"] != original_content
 
 
-async def test_final_legality_drops_orphan_tool_result() -> None:
+async def test_final_legality_passes_messages_through_unchanged() -> None:
+    """FinalContextLegality is a no-op — see test_context_governance.py."""
     messages = [
         {"role": MessageRole.TOOL, "tool_call_id": "missing", "content": "orphan"},
         {"role": MessageRole.USER, "content": "hello"},
@@ -71,7 +72,7 @@ async def test_final_legality_drops_orphan_tool_result() -> None:
 
     result = await gov.apply(messages)
 
-    assert result == [{"role": MessageRole.USER, "content": "hello"}]
+    assert result == messages
 
 
 async def test_priority_budget_preserves_recent_user_and_agent_anchors() -> None:
@@ -119,7 +120,9 @@ async def test_priority_budget_preserves_consecutive_recent_user_inputs_when_con
     ]
 
 
-async def test_final_legality_backfills_missing_tool_result() -> None:
+async def test_final_legality_returns_messages_unchanged_when_tool_result_missing() -> None:
+    """FinalContextLegality is a no-op; incomplete groups are removed by
+    ToolChainRepairGovernance earlier in the chain."""
     messages = [
         {
             "role": MessageRole.ASSISTANT,
@@ -132,13 +135,11 @@ async def test_final_legality_backfills_missing_tool_result() -> None:
 
     result = await gov.apply(messages)
 
-    assert result[0]["role"] == MessageRole.ASSISTANT
-    assert result[1]["role"] == "tool"
-    assert result[1]["tool_call_id"] == "call-1"
-    assert result[1][META_CONTEXT_LOSSY] is True
+    assert result == messages
 
 
-async def test_final_legality_backfills_each_missing_tool_result_for_multi_tool_call() -> None:
+async def test_final_legality_returns_messages_unchanged_for_multi_tool_call() -> None:
+    """FinalContextLegality is a no-op regardless of call count."""
     messages = [
         {
             "role": MessageRole.ASSISTANT,
@@ -154,6 +155,4 @@ async def test_final_legality_backfills_each_missing_tool_result_for_multi_tool_
 
     result = await gov.apply(messages)
 
-    tool_results = [msg for msg in result if msg.get("role") == "tool"]
-    assert [msg["tool_call_id"] for msg in tool_results] == ["call-1", "call-2"]
-    assert all(msg[META_CONTEXT_LOSSY] is True for msg in tool_results)
+    assert result == messages
