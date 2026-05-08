@@ -32,6 +32,14 @@ from framework.memory.compaction.policy import (
     SemanticToolCompactionPolicy,
 )
 from framework.memory.compression.importance import HeuristicImportanceScorer, ImportanceScorer
+from framework.memory.compression.tool_chain_sanitizer import (
+    DefaultSessionToolChainSanitizer,
+    SessionToolChainSanitizer,
+    ToolChainSanitizationIssue,
+    ToolChainSanitizationMode,
+    ToolChainSanitizationReason,
+    ToolChainSanitizationResult,
+)
 from framework.memory.context_governance import (
     CompositeGovernance,
     ContextGovernance,
@@ -183,6 +191,13 @@ __all__ = [
     # Compression (strategies live in compression sub-package)
     "ImportanceScorer",
     "HeuristicImportanceScorer",
+    # Tool-chain sanitizer
+    "DefaultSessionToolChainSanitizer",
+    "SessionToolChainSanitizer",
+    "ToolChainSanitizationIssue",
+    "ToolChainSanitizationMode",
+    "ToolChainSanitizationReason",
+    "ToolChainSanitizationResult",
     # Consolidation
     "ConsolidationEngine",
     "ConsolidationResult",
