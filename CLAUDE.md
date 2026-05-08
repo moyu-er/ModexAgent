@@ -247,13 +247,6 @@ Design doc: `docs/architecture-graph-approval.md`
 4. **Abstract early**: Every cross-cutting concern needs an ABC (Storage, Compression, Adapters, Skills).
 5. **Config vs Runtime**: Config classes are pure data; Runtime classes hold state/connections.
 
-## Type Safety Rules (from `.claude/rules/type-safety.md`)
-
-1. **Use enums/constants over raw strings** (`MessageRole`, `MessageType`, `FinishReason`, etc.)
-2. **Use structs over dicts** (`ChatMessage`, `ToolCall`, `LLMResponse`, etc.)
-3. **Function signatures must have parameter and return types**. No bare `Any` / `list` / `dict` / `list[Any]`.
-4. **Class design must abstract early**. Do not use concrete implementation classes directly; use abstract classes or interfaces for extensibility.
-
 ## Configuration
 
 ### Optional Dependencies
