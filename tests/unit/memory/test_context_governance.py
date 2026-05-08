@@ -28,8 +28,9 @@ async def test_tool_chain_repair_drops_orphans():
 
 
 @pytest.mark.asyncio
-async def test_tool_chain_repair_backfills_missing():
-    """为缺失 tool result 的 assistant tool_call 插入占位符."""
+async def test_tool_chain_repair_removes_incomplete_assistant_in_model_context():
+    """In MODEL_VISIBLE_CONTEXT mode, incomplete assistant+tool group is removed,
+    not backfilled."""
     messages = [
         {"role": str(MessageRole.ASSISTANT), "content": "", "tool_calls": [
             {"id": "call_1", "type": "function", "function": {"name": "read_file", "arguments": "{}"}},
@@ -39,10 +40,9 @@ async def test_tool_chain_repair_backfills_missing():
     gov = ToolChainRepairGovernance()
     result = await gov.apply(messages)
 
-    assert len(result) == 3
-    assert result[1]["role"] == str(MessageRole.TOOL)
-    assert result[1]["tool_call_id"] == "call_1"
-    assert "unavailable" in result[1]["content"]
+    assert result == [
+        {"role": str(MessageRole.USER), "content": "next"},
+    ]
 
 
 @pytest.mark.asyncio
@@ -203,6 +203,53 @@ async def test_composite_runs_strategies_in_order():
     assert len(result) == 3
     assert result[1]["content"] == "a"
     assert result[2]["content"] == "b"
+
+
+@pytest.mark.asyncio
+async def test_tool_chain_repair_removes_last_incomplete_assistant_for_model_visible_context() -> None:
+    messages = [
+        {"role": str(MessageRole.USER), "content": "start"},
+        {
+            "role": str(MessageRole.ASSISTANT),
+            "content": "",
+            "tool_calls": [
+                {"id": "a", "function": {"name": "tool_a"}},
+                {"id": "b", "function": {"name": "tool_b"}},
+            ],
+        },
+        {"role": str(MessageRole.TOOL), "tool_call_id": "a", "content": "result_a"},
+        {"role": str(MessageRole.USER), "content": "next"},
+    ]
+
+    result = await ToolChainRepairGovernance().apply(messages)
+
+    assert result == [
+        {"role": str(MessageRole.USER), "content": "start"},
+        {"role": str(MessageRole.USER), "content": "next"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_final_legality_passes_messages_through_unchanged() -> None:
+    """FinalContextLegality is a no-op; ToolChainRepair already sanitizes upstream."""
+    from framework.memory.context_governance import FinalContextLegalityGovernance
+
+    messages = [
+        {"role": str(MessageRole.TOOL), "tool_call_id": "orphan", "content": "orphan_result"},
+        {
+            "role": str(MessageRole.ASSISTANT),
+            "content": "",
+            "tool_calls": [
+                {"id": "a", "function": {"name": "tool_a"}},
+            ],
+        },
+        {"role": str(MessageRole.TOOL), "tool_call_id": "a", "content": "result_a"},
+        {"role": str(MessageRole.ASSISTANT), "content": "plain"},
+    ]
+
+    result = await FinalContextLegalityGovernance().apply(messages)
+
+    assert result == messages
 
 
 @pytest.mark.asyncio
