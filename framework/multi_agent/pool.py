@@ -67,6 +67,9 @@ class AgentPool(AgentRegistry):
         self._agent_tasks: dict[str, list[asyncio.Task]] = {}
         self._active_session_counts: dict[str, int] = {}
         self._error_counts: dict[str, int] = {}
+        self._max_error_retries: int = 5
+        self._max_backoff_seconds: float = 10.0
+        self._dispatch_locks: dict[str, asyncio.Lock] = {}
         self._inbox_poll_task: asyncio.Task | None = None
         self._valid_transitions: dict[AgentState, set[AgentState]] = {
             AgentState.INITIALIZING: {AgentState.IDLE, AgentState.ERROR, AgentState.SHUTTING_DOWN},
@@ -151,14 +154,45 @@ class AgentPool(AgentRegistry):
     # Watchdog: warn when dispatch exceeds this threshold (P0-a, seconds)
     _DISPATCH_WARN_SECONDS: float = 300.0
 
+    def _get_dispatch_lock(self, agent_name: str) -> asyncio.Lock:
+        return self._dispatch_locks.setdefault(agent_name, asyncio.Lock())
+
+    def _bump_error_count(self, agent_name: str) -> int:
+        """递增错误计数并返回当前值（上限受 _max_error_retries 限制）。"""
+        error_count = self._error_counts.get(agent_name, 0)
+        if error_count < self._max_error_retries:
+            error_count += 1
+            self._error_counts[agent_name] = error_count
+        return error_count
+
+    async def _maybe_backoff(self, agent_name: str, error_count: int) -> None:
+        """根据错误计数执行退避睡眠；达到上限时停止 consume 循环并退出。"""
+        if error_count >= self._max_error_retries:
+            logger.error(
+                "Agent %s exceeded max error retries (%d), stopping consumer",
+                agent_name, self._max_error_retries,
+            )
+            self._transition(agent_name, AgentState.ERROR, reason="max_errors_exceeded")
+            consumer_task = self._consumers.get(agent_name)
+            if consumer_task is not None and not consumer_task.done():
+                consumer_task.cancel()
+        else:
+            sleep_seconds = min(self._max_backoff_seconds, 2**error_count)
+            logger.debug(
+                "Agent %s backing off for %.1fs (error_count=%d)",
+                agent_name, sleep_seconds, error_count,
+            )
+            await asyncio.sleep(sleep_seconds)
+
     async def _run_dispatch(self, agent_name: str, coro) -> None:
         """包装 dispatch 协程，维护活跃计数和状态转换。
 
         consumer 循环快速 create_task，实际处理在后台执行，
         通过 per-session lock 保证同 session 串行，但不同 session 可以并发。
         """
-        active_count = self._active_session_counts.get(agent_name, 0) + 1
-        self._active_session_counts[agent_name] = active_count
+        async with self._get_dispatch_lock(agent_name):
+            self._active_session_counts[agent_name] = self._active_session_counts.get(agent_name, 0) + 1
+            active_count = self._active_session_counts[agent_name]
         start_time = time.monotonic()
         if self._status.get(agent_name) != AgentState.WORKING:
             self._transition(agent_name, AgentState.WORKING, reason="dispatch_start")
@@ -180,13 +214,8 @@ class AgentPool(AgentRegistry):
                 agent_name, elapsed, dispatch_timeout,
             )
             self._transition(agent_name, AgentState.ERROR, reason="dispatch_timeout")
-            error_count = self._error_counts.get(agent_name, 0) + 1
-            self._error_counts[agent_name] = error_count
-            sleep_seconds = min(30.0, 2**error_count)
-            if error_count >= 10:
-                logger.error("Agent %s exceeded max error retries", agent_name)
-            else:
-                await asyncio.sleep(sleep_seconds)
+            error_count = self._bump_error_count(agent_name)
+            await self._maybe_backoff(agent_name, error_count)
         except Exception:
             # GraphInterrupt must propagate to the pipeline's approval handler;
             # do not treat it as a dispatch error.
@@ -198,27 +227,24 @@ class AgentPool(AgentRegistry):
                 agent_name, elapsed, active_count,
             )
             self._transition(agent_name, AgentState.ERROR, reason="dispatch_error")
-            error_count = self._error_counts.get(agent_name, 0) + 1
-            self._error_counts[agent_name] = error_count
-            sleep_seconds = min(30.0, 2**error_count)
-            if error_count >= 10:
-                logger.error("Agent %s exceeded max error retries", agent_name)
-            else:
-                await asyncio.sleep(sleep_seconds)
+            error_count = self._bump_error_count(agent_name)
+            await self._maybe_backoff(agent_name, error_count)
         finally:
-            elapsed = time.monotonic() - start_time
-            remaining = max(0, active_count - 1)
-            self._active_session_counts[agent_name] = remaining
-            if elapsed > self._DISPATCH_WARN_SECONDS:
-                logger.warning(
-                    "Dispatch watchdog: agent=%s elapsed=%.1fs active=%d threshold=%.0fs",
-                    agent_name, elapsed, remaining, self._DISPATCH_WARN_SECONDS,
-                )
-            if remaining == 0 and self._status.get(agent_name) not in (
-                AgentState.SHUTTING_DOWN,
-                AgentState.SHUTDOWN,
-            ):
-                self._transition(agent_name, AgentState.IDLE, reason="dispatch_idle")
+            async with self._get_dispatch_lock(agent_name):
+                current = self._active_session_counts.get(agent_name, 0)
+                remaining = max(0, current - 1)
+                self._active_session_counts[agent_name] = remaining
+                elapsed = time.monotonic() - start_time
+                if elapsed > self._DISPATCH_WARN_SECONDS:
+                    logger.warning(
+                        "Dispatch watchdog: agent=%s elapsed=%.1fs active=%d threshold=%.0fs",
+                        agent_name, elapsed, remaining, self._DISPATCH_WARN_SECONDS,
+                    )
+                if remaining == 0 and self._status.get(agent_name) not in (
+                    AgentState.SHUTTING_DOWN,
+                    AgentState.SHUTDOWN,
+                ):
+                    self._transition(agent_name, AgentState.IDLE, reason="dispatch_idle")
 
     async def _consume_messages(self, instance: AgentInstance, descriptor: AgentDescriptor) -> None:
         """常驻 Agent 的消息消费循环（基于消息类型的分发器）。"""
@@ -307,14 +333,14 @@ class AgentPool(AgentRegistry):
             except Exception:
                 logger.exception("Error consuming messages for %s", address.name)
                 self._transition(address.name, AgentState.ERROR, reason="consume_error")
-                error_count = self._error_counts.get(address.name, 0) + 1
-                self._error_counts[address.name] = error_count
-                sleep_seconds = min(30.0, 2**error_count)
-                if error_count >= 10:
+                error_count = self._bump_error_count(address.name)
+                if error_count >= self._max_error_retries:
                     logger.error(
-                        "Agent %s exceeded max error retries, stopping consumer", address.name
+                        "Agent %s exceeded max error retries (%d), stopping consumer",
+                        address.name, self._max_error_retries,
                     )
                     break
+                sleep_seconds = min(self._max_backoff_seconds, 2**error_count)
                 await asyncio.sleep(sleep_seconds)
                 self._transition(address.name, AgentState.IDLE, reason="consume_recover")
 
@@ -689,6 +715,8 @@ class AgentPool(AgentRegistry):
         self._consumers.clear()
         self._agent_tasks.clear()
         self._active_session_counts.clear()
+        self._error_counts.clear()
+        self._dispatch_locks.clear()
         self._session_locks.clear()
         for name in list(self._status.keys()):
             self._status[name] = AgentState.SHUTDOWN
