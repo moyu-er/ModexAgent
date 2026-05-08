@@ -260,6 +260,41 @@ All reason strings must come from enums. The implementation should use
 `framework.core.types.MessageRole` and typed dataclasses rather than loose
 string constants or ad hoc dicts.
 
+## Implementation File Map
+
+The implementation should be small and centered around the existing memory
+compression package.
+
+- `framework/memory/compression/tool_chain_sanitizer.py`: new sanitizer
+  contracts, enums, result dataclasses, and default implementation. This file
+  performs no storage I/O.
+- `framework/memory/compression/policies.py`: inject the sanitizer into
+  `DefaultMemoryCompressionCoordinator`, run it immediately after reading raw
+  session messages, and keep archive/pending inputs based only on sanitized
+  legal messages.
+- `framework/memory/core/models.py`: extend `CompressionPlan` with sanitizer
+  cleanup fields so commit behavior can distinguish invalid physical drops from
+  legal pruned archive candidates.
+- `framework/memory/lifecycle.py`: replace the global open-tool-chain check with
+  sanitizer analysis of the last assistant tool-call tail.
+- `framework/memory/context_governance.py`: update model-visible tool-chain
+  repair to remove incomplete tool-call groups in `MODEL_VISIBLE_CONTEXT` mode
+  before budget reductions.
+- `framework/memory/__init__.py`: export the new sanitizer interfaces for
+  framework consumers.
+- `tests/unit/memory/test_tool_chain_sanitizer.py`: focused sanitizer unit
+  tests that do not require storage.
+- `tests/unit/memory/test_context_governance.py`: governance tests for
+  model-visible incomplete-tail removal.
+- `tests/unit/memory/test_compression_policies.py`: integration tests for
+  compression commit, archive exclusion, pending exclusion, and `archive=None`.
+- `tests/unit/memory/test_lifecycle.py`: lifecycle tests showing old stale
+  incomplete data no longer blocks compression while the active tail still does.
+
+Do not add new peer/subagent-specific code paths. Main, peer, and subagent
+memory should all receive this behavior through the shared coordinator and
+existing `archive=None` session-only mode.
+
 ## Compression Flow
 
 The default coordinator should change from:
