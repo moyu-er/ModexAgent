@@ -30,6 +30,7 @@ from framework.memory.layers.config import (
 )
 from framework.memory.layers.factory import MemoryLayerFactory
 from framework.memory.layers.knowledge import ScopedKnowledgeMemoryManager
+from framework.memory.layers.pending import PendingPrunedInputEntry
 from framework.memory.layers.session import ScopedSessionMemoryManager
 from framework.memory.lifecycle import (
     DefaultArchiveRetentionPolicy,
@@ -120,7 +121,7 @@ class TestDefaultMemoryLifecyclePolicy:
         layers = MemoryLayerSet(session=session, archive=None)
         await policy.on_messages_added(ctx, layers)
         coordinator.maybe_compress.assert_called_once_with(
-            session=layers.session, archive=None, context=ctx,
+            session=layers.session, archive=None, pending=None, context=ctx,
         )
 
     @pytest.mark.asyncio
@@ -191,7 +192,7 @@ class TestDefaultMemoryLifecyclePolicy:
         await policy.on_messages_added(ctx, layers)
 
         coordinator.maybe_compress.assert_called_once_with(
-            session=layers.session, archive=None, context=ctx,
+            session=layers.session, archive=None, pending=None, context=ctx,
         )
 
     @pytest.mark.asyncio
@@ -210,6 +211,45 @@ class TestDefaultMemoryLifecyclePolicy:
         ctx = MemoryContext(session_id="s1", user_id="u1")
         layers = MemoryLayerSet(session=AsyncMock(), archive=AsyncMock())
         await policy.on_messages_added(ctx, layers)
+
+    @pytest.mark.asyncio
+    async def test_completed_assistant_append_clears_pending_memory(self):
+        registry = InMemoryStoreRegistry()
+        layers = MemoryLayerFactory.single_user(registry=registry)
+        ctx = MemoryContext(session_id="pending-clear")
+        assert layers.pending is not None
+        await layers.pending.append_entries(ctx, [
+            PendingPrunedInputEntry.from_message(
+                {"role": "user", "content": "unfinished"},
+                pruned_at=100.0,
+            )
+        ])
+        await layers.session.add_messages(ctx, [
+            {"role": str(MessageRole.ASSISTANT), "content": "done"},
+        ])
+
+        await DefaultMemoryLifecyclePolicy().on_messages_added(ctx, layers)
+
+        assert await layers.pending.get_entries(ctx) == []
+
+    @pytest.mark.asyncio
+    async def test_subagent_session_end_clears_pending_memory(self):
+        registry = InMemoryStoreRegistry()
+        layers = MemoryLayerFactory.single_user(registry=registry)
+        ctx = MemoryContext(session_id="subagent", agent_role="subagent")
+        assert layers.pending is not None
+        await layers.session.add_messages(ctx, [{"role": "user", "content": "tmp"}])
+        await layers.pending.append_entries(ctx, [
+            PendingPrunedInputEntry.from_message(
+                {"role": "user", "content": "unfinished"},
+                pruned_at=100.0,
+            )
+        ])
+
+        await DefaultMemoryLifecyclePolicy().on_session_end(ctx, layers)
+
+        assert await layers.session.get_all_messages(ctx) == []
+        assert await layers.pending.get_entries(ctx) == []
 
 
 # ── Maintenance ─────────────────────────────────────────────────────────────

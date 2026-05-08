@@ -225,6 +225,8 @@ class DefaultMemorySystem(MemorySystem):
             await self._layers.archive.clear(context)
         if self._layers.knowledge is not None:
             await self._layers.knowledge.clear(context)
+        if self._layers.pending is not None:
+            await self._layers.pending.clear(context)
 
     # -- Provider management ---------------------------------------------
 

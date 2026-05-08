@@ -73,6 +73,7 @@ class DefaultMemoryLifecyclePolicy(MemoryLifecyclePolicy):
     ) -> None:
         """Trigger compression check after messages are added."""
         _ = revision
+        await self._clear_pending_on_completed_assistant(context, layers)
         if self._coordinator is not None:
             try:
                 # ReAct writes one logical tool interaction in multiple session
@@ -88,7 +89,10 @@ class DefaultMemoryLifecyclePolicy(MemoryLifecyclePolicy):
                     )
                     return
                 await self._coordinator.maybe_compress(
-                    session=layers.session, archive=layers.archive, context=context,
+                    session=layers.session,
+                    archive=layers.archive,
+                    pending=layers.pending,
+                    context=context,
                 )
             except Exception:
                 logger.warning("Post-append compression check failed", exc_info=True)
@@ -142,6 +146,32 @@ class DefaultMemoryLifecyclePolicy(MemoryLifecyclePolicy):
                     fulfilled.add(str(call_id))
         return not declared.issubset(fulfilled)
 
+    async def _clear_pending_on_completed_assistant(
+        self,
+        context: MemoryContext,
+        layers: MemoryLayerSet,
+    ) -> None:
+        pending = layers.pending
+        if pending is None:
+            return
+        try:
+            raw_messages = await layers.session.get_all_messages(context)
+            messages = [
+                msg.to_dict() if hasattr(msg, "to_dict") else dict(msg)
+                for msg in raw_messages
+            ]
+        except Exception:
+            logger.debug("Unable to inspect session for pending clear", exc_info=True)
+            return
+        if not messages:
+            return
+        last = messages[-1]
+        if last.get("role") == MessageRole.ASSISTANT.value and not last.get("tool_calls"):
+            try:
+                await pending.clear(context)
+            except Exception:
+                logger.warning("Failed to clear pending pruned inputs", exc_info=True)
+
     async def on_turn_end(self, context: MemoryContext, layers: MemoryLayerSet) -> None:
         """Flush provider recorder, save checkpoint if configured."""
         _ = context, layers
@@ -157,6 +187,8 @@ class DefaultMemoryLifecyclePolicy(MemoryLifecyclePolicy):
         if role == MemoryAgentRole.SUBAGENT:
             try:
                 await layers.session.clear(context)
+                if layers.pending is not None:
+                    await layers.pending.clear(context)
                 logger.debug("Cleared subagent session for %s", context.session_id)
             except Exception:
                 logger.warning("Failed to clear subagent session", exc_info=True)
@@ -243,7 +275,10 @@ class DefaultMemoryMaintenancePolicy(MemoryMaintenancePolicy):
                             continue
 
                     await self._coordinator.maybe_compress(
-                        session=layers.session, archive=layers.archive, context=ctx,
+                        session=layers.session,
+                        archive=layers.archive,
+                        pending=layers.pending,
+                        context=ctx,
                     )
                     await storage.set(".last_activity", time.time())
                     results.append(MaintenanceResult(

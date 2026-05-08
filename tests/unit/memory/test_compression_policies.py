@@ -34,6 +34,7 @@ from framework.memory.core.models import (
 )
 from framework.memory.core.scope import MemoryContext
 from framework.memory.layers.factory import MemoryLayerFactory
+from framework.memory.layers.pending import PendingPrunedInputEntry
 from framework.memory.registry.in_memory import InMemoryStoreRegistry
 
 
@@ -178,7 +179,8 @@ async def test_coordinator_does_not_lose_data_on_archive_failure(registry):
     assert initial_count == 150
 
     class FailingCommit(DefaultCommitPolicy):
-        async def commit(self, *, plan, session, archive, context, error_policy):
+        async def commit(self, *, plan, session, archive, pending=None, context, error_policy):
+            _ = pending
             return CompressionResult(committed=False, retryable=True, reason=CompressionResultReason.ARCHIVE_FAILED)
 
     layer_set = MemoryLayerFactory.single_user(registry=registry)
@@ -877,6 +879,67 @@ async def test_trigger_message_count_respects_threshold(registry):
     assert result is not None
     assert result.reason == CompressionReason.MESSAGE_COUNT
     # Log should show: "Compression triggered by MESSAGE_COUNT: msgs=55 > max_messages=50"
+
+
+@pytest.mark.asyncio
+async def test_compression_persists_pruned_unfinished_input_to_pending(registry):
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    config = SessionMemoryConfig(max_messages=None)
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(storage_factory=factory, config=config)
+    layers = MemoryLayerFactory.single_user(registry=registry)
+    ctx = MemoryContext(session_id="pending-compress")
+    assert layers.pending is not None
+    await session.add_messages(ctx, [
+        {"role": "user", "content": "unfinished"},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "t1"}]},
+        {"role": "tool", "tool_call_id": "t1", "content": "result"},
+        {"role": "user", "content": "follow up"},
+    ])
+
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=2)
+    result = await coordinator.maybe_compress(
+        session=session,
+        archive=None,
+        pending=layers.pending,
+        context=ctx,
+    )
+
+    assert result.committed
+    assert [entry.content for entry in await layers.pending.get_entries(ctx)] == ["unfinished"]
+
+
+@pytest.mark.asyncio
+async def test_compression_does_not_pending_completed_pruned_input(registry):
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    config = SessionMemoryConfig(max_messages=None)
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(storage_factory=factory, config=config)
+    layers = MemoryLayerFactory.single_user(registry=registry)
+    ctx = MemoryContext(session_id="pending-completed")
+    assert layers.pending is not None
+    await session.add_messages(ctx, [
+        {"role": "user", "content": "finished"},
+        {"role": "assistant", "content": "done"},
+        {"role": "user", "content": "current"},
+    ])
+
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=1)
+    result = await coordinator.maybe_compress(
+        session=session,
+        archive=None,
+        pending=layers.pending,
+        context=ctx,
+    )
+
+    assert result.committed
+    assert await layers.pending.get_entries(ctx) == []
 
 
 @pytest.mark.asyncio

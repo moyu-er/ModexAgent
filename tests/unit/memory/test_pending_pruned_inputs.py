@@ -13,6 +13,10 @@ from framework.memory.layers.pending import (
     PendingPrunedInputEntry,
     ScopedPendingPrunedInputMemoryManager,
 )
+from framework.memory.pending import (
+    DefaultPendingPrunedInputExtractor,
+    DefaultPendingPrunedInputInjector,
+)
 from framework.memory.registry.in_memory import InMemoryStoreRegistry
 
 
@@ -127,3 +131,50 @@ async def test_pending_layer_uses_distinct_storage_from_session() -> None:
     pending_entries = await layer_set.pending.get_entries(ctx)
     assert [msg.content for msg in session_messages] == ["session"]
     assert [entry.content for entry in pending_entries] == ["pending"]
+
+
+def test_pending_extractor_ignores_pruned_input_completed_later() -> None:
+    messages = [
+        {"role": "user", "content": "finished"},
+        {"role": "assistant", "content": "done"},
+    ]
+
+    entries = DefaultPendingPrunedInputExtractor().extract(messages, {0})
+
+    assert entries == []
+
+
+def test_pending_extractor_keeps_pruned_input_without_plain_assistant_completion() -> None:
+    messages = [
+        {"role": "user", "content": "unfinished"},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "t1"}]},
+        {"role": "tool", "tool_call_id": "t1", "content": "result"},
+    ]
+
+    entries = DefaultPendingPrunedInputExtractor().extract(messages, {0})
+
+    assert [entry.content for entry in entries] == ["unfinished"]
+
+
+@pytest.mark.asyncio
+async def test_pending_injector_clears_and_skips_when_session_has_completed_assistant() -> None:
+    registry = InMemoryStoreRegistry()
+    layer_set = MemoryLayerFactory.single_user(registry=registry)
+    ctx = MemoryContext(session_id="completed")
+    assert layer_set.pending is not None
+    await layer_set.pending.append_entries(ctx, [
+        PendingPrunedInputEntry.from_message(
+            {"role": "user", "content": "stale"},
+            pruned_at=time.time(),
+        )
+    ])
+    await layer_set.session.add_messages(ctx, [
+        {"role": "assistant", "content": "done"},
+    ])
+
+    injector = DefaultPendingPrunedInputInjector(layer_set.pending, layer_set.session)
+    messages = [{"role": "user", "content": "current"}]
+    result = await injector.apply(messages, ctx)
+
+    assert result == messages
+    assert await layer_set.pending.get_entries(ctx) == []

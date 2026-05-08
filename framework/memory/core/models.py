@@ -36,6 +36,7 @@ class CompressionResultReason(StrEnum):
     NO_SAFE_BOUNDARY = "no_safe_boundary"
     REVISION_CHANGED = "revision_changed"
     ARCHIVE_FAILED = "archive_failed"
+    PENDING_FAILED = "pending_failed"
     NOTHING_TO_ARCHIVE = "nothing_to_archive"
 
 
@@ -56,6 +57,7 @@ class CompressionPlan:
     archive_raw_messages: list[dict[str, Any]]
     drop_messages: list[dict[str, Any]]
     summary: str | None = None
+    pending_pruned_input_entries: list[Any] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

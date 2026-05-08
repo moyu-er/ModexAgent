@@ -23,7 +23,11 @@ from framework.memory.compression.planner import (
     CompressionKeepPlanner,
     PriorityCompressionKeepPlanner,
 )
-from framework.memory.core.layers import ArchiveMemoryManager, SessionMemoryManager
+from framework.memory.core.layers import (
+    ArchiveMemoryManager,
+    PendingPrunedInputMemoryManager,
+    SessionMemoryManager,
+)
 from framework.memory.core.models import (
     ArchiveEntry,
     CompressionPlan,
@@ -33,6 +37,7 @@ from framework.memory.core.models import (
     CompressionTrigger,
 )
 from framework.memory.core.scope import MemoryContext
+from framework.memory.pending import DefaultPendingPrunedInputExtractor, PendingPrunedInputExtractor
 from framework.memory.retention import DefaultMessageRetentionPolicy, MessageRetentionPolicy
 from framework.memory.utils import normalize_memory_summary
 
@@ -214,6 +219,7 @@ class CommitPolicy(ABC):
         plan: CompressionPlan,
         session: SessionMemoryManager,
         archive: ArchiveMemoryManager | None,
+        pending: PendingPrunedInputMemoryManager | None = None,
         context: MemoryContext,
         error_policy: CompressionErrorPolicy,
     ) -> CompressionResult: ...
@@ -238,6 +244,7 @@ class DefaultCommitPolicy(CommitPolicy):
         plan: CompressionPlan,
         session: SessionMemoryManager,
         archive: ArchiveMemoryManager | None,
+        pending: PendingPrunedInputMemoryManager | None = None,
         context: MemoryContext,
         error_policy: CompressionErrorPolicy,
     ) -> CompressionResult:
@@ -250,6 +257,17 @@ class DefaultCommitPolicy(CommitPolicy):
             return CompressionResult(committed=False, retryable=False, reason=CompressionResultReason.REVISION_CHANGED)
 
         # Archive first — skip empty or placeholder summaries
+        if pending is not None and plan.pending_pruned_input_entries:
+            try:
+                await pending.append_entries(context, plan.pending_pruned_input_entries)
+            except Exception:
+                logger.warning("Pending input persistence failed; preserving session", exc_info=True)
+                return CompressionResult(
+                    committed=False,
+                    retryable=True,
+                    reason=CompressionResultReason.PENDING_FAILED,
+                )
+
         normalized_summary = normalize_memory_summary(plan.summary) if archive is not None else None
         wrote_archive = False
         if normalized_summary is not None:
@@ -331,6 +349,7 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
         keep_ratio_for_token: float = 0.5,
         retention: MessageRetentionPolicy | None = None,
         keep_planner: CompressionKeepPlanner | None = None,
+        pending_extractor: PendingPrunedInputExtractor | None = None,
     ) -> None:
         self._max_messages = max_messages
         self._trigger = trigger or DefaultCompressionTriggerPolicy(
@@ -345,12 +364,14 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
         self._keep_ratio_for_token = max(0.2, min(keep_ratio_for_token, 0.9))
         self._retention = retention or DefaultMessageRetentionPolicy()
         self._keep_planner = keep_planner or PriorityCompressionKeepPlanner()
+        self._pending_extractor = pending_extractor or DefaultPendingPrunedInputExtractor()
 
     async def maybe_compress(
         self,
         *,
         session: SessionMemoryManager,
         archive: ArchiveMemoryManager | None,
+        pending: PendingPrunedInputMemoryManager | None = None,
         context: MemoryContext,
     ) -> CompressionResult:
         # Phase 1: Trigger check
@@ -399,6 +420,7 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
         boundary_idx = keep_plan.keep_start_index
         pruned = keep_plan.pruned_messages
         keep = keep_plan.keep_messages
+        pruned_indices_set = set(keep_plan.pruned_indices)
 
         prune_count = len(pruned)
         logger.info(
@@ -438,6 +460,10 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
             archive_raw_messages=archive_raw,
             drop_messages=dropped,
             summary=summary,
+            pending_pruned_input_entries=self._pending_extractor.extract(
+                all_msgs,
+                pruned_indices_set,
+            ),
         )
 
         # Phase 5: Commit (caller ensures lock is held)
@@ -445,6 +471,7 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
             plan=plan,
             session=session,
             archive=archive,
+            pending=pending,
             context=context,
             error_policy=self._error,
         )
