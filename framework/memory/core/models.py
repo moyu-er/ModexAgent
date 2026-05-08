@@ -8,6 +8,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
+from framework.memory.compression.tool_chain_sanitizer import ToolChainSanitizationIssue
 from framework.memory.core.message import ChatMessage
 
 
@@ -58,6 +59,9 @@ class CompressionPlan:
     drop_messages: list[dict[str, Any]]
     summary: str | None = None
     pending_pruned_input_entries: list[Any] = field(default_factory=list)
+    drop_without_archive_messages: list[dict[str, Any]] = field(default_factory=list)
+    sanitization_issues: list[ToolChainSanitizationIssue] = field(default_factory=list)
+    has_open_tail: bool = False
 
 
 @dataclass(frozen=True)

@@ -1111,3 +1111,83 @@ async def test_trigger_no_false_positive_below_threshold(registry):
     result = await trigger.should_compress(session=session, context=ctx)
 
     assert result is None, "should not trigger: 30 msgs < 50, tokens well below 100k"
+
+
+async def test_coordinator_removes_stale_invalid_tool_chain_without_archive(registry):
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(factory, SessionMemoryConfig(max_messages=None))
+    ctx = MemoryContext(session_id="sanitize-cleanup")
+    await session.add_messages(ctx, [
+        {"role": str(MessageRole.USER), "content": "start"},
+        {
+            "role": str(MessageRole.ASSISTANT),
+            "content": "",
+            "tool_calls": [
+                {"id": "a", "function": {"name": "tool_a"}},
+                {"id": "b", "function": {"name": "tool_b"}},
+            ],
+        },
+        {"role": str(MessageRole.TOOL), "tool_call_id": "a", "content": "partial"},
+        {"role": str(MessageRole.ASSISTANT), "content": "plain"},
+    ])
+
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=3)
+    result = await coordinator.maybe_compress(
+        session=session,
+        archive=None,
+        context=ctx,
+    )
+
+    assert result.committed
+    assert [msg.to_dict() for msg in await session.get_all_messages(ctx)] == [
+        {"role": str(MessageRole.USER), "content": "start"},
+        {"role": str(MessageRole.ASSISTANT), "content": "plain"},
+    ]
+
+
+async def test_coordinator_preserves_active_open_tail_but_removes_older_invalid_chain(registry):
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(factory, SessionMemoryConfig(max_messages=None))
+    ctx = MemoryContext(session_id="sanitize-open-tail")
+    open_tail = {
+        "role": str(MessageRole.ASSISTANT),
+        "content": "",
+        "tool_calls": [
+            {"id": "tail-a", "function": {"name": "tool_tail_a"}},
+            {"id": "tail-b", "function": {"name": "tool_tail_b"}},
+        ],
+    }
+    await session.add_messages(ctx, [
+        {"role": str(MessageRole.USER), "content": "start"},
+        {
+            "role": str(MessageRole.ASSISTANT),
+            "content": "",
+            "tool_calls": [{"id": "old-a", "function": {"name": "tool_old_a"}}],
+        },
+        {"role": str(MessageRole.USER), "content": "continued"},
+        open_tail,
+        {"role": str(MessageRole.TOOL), "tool_call_id": "tail-a", "content": "partial"},
+    ])
+
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=3)
+    result = await coordinator.maybe_compress(
+        session=session,
+        archive=None,
+        context=ctx,
+    )
+
+    assert result.committed
+    assert [msg.to_dict() for msg in await session.get_all_messages(ctx)] == [
+        {"role": str(MessageRole.USER), "content": "start"},
+        {"role": str(MessageRole.USER), "content": "continued"},
+        open_tail,
+        {"role": str(MessageRole.TOOL), "tool_call_id": "tail-a", "content": "partial"},
+    ]
