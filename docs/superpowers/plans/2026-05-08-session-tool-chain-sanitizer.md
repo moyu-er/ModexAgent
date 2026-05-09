@@ -22,9 +22,10 @@
 - Modify: `framework/memory/compression/policies.py`
   - Inject sanitizer into `DefaultMemoryCompressionCoordinator`.
   - Run sanitizer before compaction/retention/keep planning.
-  - Build cleanup-only plans for invalid physical drops when an active tail exists.
+  - Feed sanitized messages into normal compaction/retention/keep planning.
+  - Let the keep planner protect active open-tail suffixes while still pruning older complete history.
 - Modify: `framework/memory/lifecycle.py`
-  - Use sanitizer persistent-session analysis for active tail detection.
+  - Delegate append-time compression checks directly to the coordinator.
 - Modify: `framework/memory/__init__.py`
   - Export sanitizer public interfaces.
 - Create: `tests/unit/memory/test_tool_chain_sanitizer.py`
@@ -704,224 +705,23 @@ class CompressionPlan:
     has_open_tail: bool = False
 ```
 
-- [ ] **Step 2: Add failing cleanup-only compression test**
+- [ ] **Step 2: Add compression/sanitizer regression tests**
 
-Append to `tests/unit/memory/test_compression_policies.py`:
+Append focused tests to `tests/unit/memory/test_compression_policies.py`:
 
-```python
-async def test_coordinator_removes_stale_invalid_tool_chain_without_archive(registry):
-    from framework.memory.core.scope import MemoryLayerName
-    from framework.memory.layers.config import SessionMemoryConfig
-    from framework.memory.layers.session import ScopedSessionMemoryManager
+- stale invalid assistant/tool records are removed without archive;
+- an active open tail is preserved as a protected suffix;
+- older complete assistant/tool history before that active tail is still compressed;
+- complete assistant(tool_calls)+tool chains remain legal compression boundaries.
 
-    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
-    session = ScopedSessionMemoryManager(factory, SessionMemoryConfig(max_messages=None))
-    ctx = MemoryContext(session_id="sanitize-cleanup")
-    await session.add_messages(ctx, [
-        {"role": str(MessageRole.USER), "content": "start"},
-        {
-            "role": str(MessageRole.ASSISTANT),
-            "content": "",
-            "tool_calls": [
-                {"id": "a", "function": {"name": "tool_a"}},
-                {"id": "b", "function": {"name": "tool_b"}},
-            ],
-        },
-        {"role": str(MessageRole.TOOL), "tool_call_id": "a", "content": "partial"},
-        {"role": str(MessageRole.ASSISTANT), "content": "plain"},
-    ])
+- [ ] **Step 3: Update coordinator and planner flow**
 
-    coordinator = DefaultMemoryCompressionCoordinator(max_messages=3)
-    result = await coordinator.maybe_compress(
-        session=session,
-        archive=None,
-        context=ctx,
-    )
+Coordinator should always feed sanitized messages into the normal compaction,
+retention, keep-planning, summary, and commit flow. It should not return early
+just because `sanitization.has_open_tail=True`. The keep planner is responsible
+for preserving the active open tail as an indivisible suffix while pruning older
+complete history where the configured budget requires it.
 
-    assert result.committed
-    assert [msg.to_dict() for msg in await session.get_all_messages(ctx)] == [
-        {"role": str(MessageRole.USER), "content": "start"},
-        {"role": str(MessageRole.ASSISTANT), "content": "plain"},
-    ]
-```
-
-- [ ] **Step 3: Add failing open-tail cleanup-only test**
-
-Append to `tests/unit/memory/test_compression_policies.py`:
-
-```python
-async def test_coordinator_preserves_active_open_tail_but_removes_older_invalid_chain(registry):
-    from framework.memory.core.scope import MemoryLayerName
-    from framework.memory.layers.config import SessionMemoryConfig
-    from framework.memory.layers.session import ScopedSessionMemoryManager
-
-    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
-    session = ScopedSessionMemoryManager(factory, SessionMemoryConfig(max_messages=None))
-    ctx = MemoryContext(session_id="sanitize-open-tail")
-    open_tail = {
-        "role": str(MessageRole.ASSISTANT),
-        "content": "",
-        "tool_calls": [
-            {"id": "tail-a", "function": {"name": "tool_tail_a"}},
-            {"id": "tail-b", "function": {"name": "tool_tail_b"}},
-        ],
-    }
-    await session.add_messages(ctx, [
-        {"role": str(MessageRole.USER), "content": "start"},
-        {
-            "role": str(MessageRole.ASSISTANT),
-            "content": "",
-            "tool_calls": [{"id": "old-a", "function": {"name": "tool_old_a"}}],
-        },
-        {"role": str(MessageRole.USER), "content": "continued"},
-        open_tail,
-        {"role": str(MessageRole.TOOL), "tool_call_id": "tail-a", "content": "partial"},
-    ])
-
-    coordinator = DefaultMemoryCompressionCoordinator(max_messages=3)
-    result = await coordinator.maybe_compress(
-        session=session,
-        archive=None,
-        context=ctx,
-    )
-
-    assert result.committed
-    assert [msg.to_dict() for msg in await session.get_all_messages(ctx)] == [
-        {"role": str(MessageRole.USER), "content": "start"},
-        {"role": str(MessageRole.USER), "content": "continued"},
-        open_tail,
-        {"role": str(MessageRole.TOOL), "tool_call_id": "tail-a", "content": "partial"},
-    ]
-```
-
-- [ ] **Step 4: Run tests to verify failure**
-
-Run:
-
-```bash
-python -m pytest --rootdir F:\tool\pythonProject\ModexAgent F:\tool\pythonProject\ModexAgent\tests\unit\memory\test_compression_policies.py::test_coordinator_removes_stale_invalid_tool_chain_without_archive F:\tool\pythonProject\ModexAgent\tests\unit\memory\test_compression_policies.py::test_coordinator_preserves_active_open_tail_but_removes_older_invalid_chain -q
-```
-
-Expected: FAIL because the coordinator has not run sanitizer yet.
-
-- [ ] **Step 5: Commit failing integration tests and model field**
-
-```bash
-git add framework/memory/core/models.py tests/unit/memory/test_compression_policies.py
-git commit -m "test(memory): cover sanitizer compression cleanup"
-```
-
-## Task 5: Wire Sanitizer Into Compression Coordinator
-
-**Files:**
-- Modify: `framework/memory/compression/policies.py`
-- Test: `tests/unit/memory/test_compression_policies.py`
-
-- [ ] **Step 1: Add sanitizer imports and constructor injection**
-
-Modify imports in `framework/memory/compression/policies.py`:
-
-```python
-from collections import Counter
-
-from framework.memory.compression.tool_chain_sanitizer import (
-    DefaultSessionToolChainSanitizer,
-    SessionToolChainSanitizer,
-    ToolChainSanitizationMode,
-)
-```
-
-Add constructor parameter to `DefaultMemoryCompressionCoordinator.__init__`:
-
-```python
-        tool_chain_sanitizer: SessionToolChainSanitizer | None = None,
-```
-
-Assign it:
-
-```python
-        self._tool_chain_sanitizer = tool_chain_sanitizer or DefaultSessionToolChainSanitizer()
-```
-
-- [ ] **Step 2: Sanitize before compaction planning**
-
-In `maybe_compress`, immediately after reading `all_msgs`, insert:
-
-```python
-        try:
-            sanitization = self._tool_chain_sanitizer.sanitize(
-                all_msgs,
-                mode=ToolChainSanitizationMode.PERSISTENT_SESSION,
-            )
-        except Exception:
-            logger.warning("Session tool-chain sanitization failed", exc_info=True)
-            return CompressionResult(committed=True, reason=CompressionResultReason.NO_SAFE_BOUNDARY)
-
-        if sanitization.removed_messages:
-            counts = Counter(issue.reason for issue in sanitization.issues)
-            logger.info(
-                "Session tool-chain sanitizer removed invalid messages: session=%s removed=%d reasons=%s open_tail=%s",
-                context.session_id,
-                len(sanitization.removed_messages),
-                {str(reason): count for reason, count in counts.items()},
-                sanitization.has_open_tail,
-            )
-
-        sanitized_msgs = sanitization.messages
-        if not sanitized_msgs:
-            revision = await session.get_revision(context)
-            plan = CompressionPlan(
-                trigger=trigger,
-                expected_revision=revision,
-                expected_cursor=None,
-                keep_messages=[],
-                summarize_messages=[],
-                archive_raw_messages=[],
-                drop_messages=[],
-                summary="",
-                drop_without_archive_messages=sanitization.removed_messages,
-                sanitization_issues=sanitization.issues,
-                has_open_tail=sanitization.has_open_tail,
-            )
-            return await self._commit.commit(
-                plan=plan,
-                session=session,
-                archive=None,
-                pending=pending,
-                context=context,
-                error_policy=self._error,
-            )
-
-        if sanitization.has_open_tail:
-            if not sanitization.removed_messages:
-                return CompressionResult(committed=True, reason=CompressionResultReason.NO_SAFE_BOUNDARY)
-            revision = await session.get_revision(context)
-            plan = CompressionPlan(
-                trigger=trigger,
-                expected_revision=revision,
-                expected_cursor=None,
-                keep_messages=sanitized_msgs,
-                summarize_messages=[],
-                archive_raw_messages=[],
-                drop_messages=[],
-                summary="",
-                drop_without_archive_messages=sanitization.removed_messages,
-                sanitization_issues=sanitization.issues,
-                has_open_tail=True,
-            )
-            return await self._commit.commit(
-                plan=plan,
-                session=session,
-                archive=None,
-                pending=pending,
-                context=context,
-                error_policy=self._error,
-            )
-
-        all_msgs = sanitized_msgs
-```
-
-This makes cleanup-only plans skip archive writing because invalid sanitizer removals must not be archived.
 
 - [ ] **Step 3: Preserve sanitizer metadata in normal plans**
 
@@ -1006,58 +806,23 @@ Append to `TestDefaultMemoryLifecyclePolicy` in `tests/unit/memory/test_lifecycl
         )
 ```
 
-- [ ] **Step 2: Run lifecycle test to verify failure**
+- [ ] **Step 2: Run lifecycle regression test**
 
 Run:
 
 ```bash
-python -m pytest --rootdir F:\tool\pythonProject\ModexAgent F:\tool\pythonProject\ModexAgent\tests\unit\memory\test_lifecycle.py::TestDefaultMemoryLifecyclePolicy::test_on_messages_added_does_not_skip_for_old_stale_incomplete_tool_call -q
+python -m pytest --rootdir F:\tool\pythonProject\ModexAgent F:\tool\pythonProject\ModexAgent\tests\unit\memory\test_lifecycle.py::TestDefaultMemoryLifecyclePolicy::test_on_messages_added_delegates_open_assistant_tool_call_to_coordinator -q
 ```
 
-Expected: FAIL because `_has_open_react_process` currently treats old incomplete data as active.
+Expected: lifecycle delegates append-time compression checks directly to the coordinator.
 
-- [ ] **Step 3: Update lifecycle open-tail detection**
+- [ ] **Step 3: Remove lifecycle open-tail gating**
 
-Modify `framework/memory/lifecycle.py` imports:
+Lifecycle should always call `coordinator.maybe_compress(...)` after session append when a coordinator is configured. The coordinator, sanitizer, and keep planner own the safety decision:
 
-```python
-from framework.memory.compression.tool_chain_sanitizer import (
-    DefaultSessionToolChainSanitizer,
-    ToolChainSanitizationMode,
-)
-```
-
-Replace the body after messages are loaded in `_has_open_react_process` with:
-
-```python
-        last = messages[-1]
-        last_role = last.get("role")
-        # Fast-path: the physical last message is a tool or assistant+tools_calls.
-        # This is the current ReAct turn writing its results; compression must not
-        # run until a plain assistant response closes the chain.
-        if last_role == str(MessageRole.TOOL):
-            return True
-        if last_role == str(MessageRole.ASSISTANT) and last.get("tool_calls"):
-            return True
-
-        # The physical last message is a plain assistant or user. Run the full
-        # sanitizer pass to check whether a stale incomplete assistant/tool group
-        # from an earlier turn is still open. Only the last assistant with
-        # tool_calls matters; older stale groups are cleaned by the sanitizer
-        # during the next compression attempt.
-        result = DefaultSessionToolChainSanitizer().sanitize(
-            messages,
-            mode=ToolChainSanitizationMode.PERSISTENT_SESSION,
-        )
-        return result.has_open_tail
-```
-
-Keep the existing docstring but update it to say the check protects only the
-active last assistant tool-call tail. The fast-path check against the physical
-last message is preserved as a performance optimization — stale incomplete
-groups in the middle of the session do not make the current tail unsafe, so the
-full sanitizer scan is only needed when the session ends with a plain assistant
-or user.
+- unmatched active `assistant(tool_calls)` tail -> protected suffix in normal compression planning;
+- complete `assistant(tool_calls)` plus matching `tool` results -> legal compression boundary;
+- stale invalid groups -> sanitizer cleanup path.
 
 - [ ] **Step 4: Run lifecycle tests**
 
@@ -1215,7 +980,7 @@ Expected: ruff passes. Mypy passes for `framework\memory`; if unrelated existing
 
 The current `examples/bot_project/config/bot_config.yml` has
 `boundary: "priority_input"` under `memory.main.compaction`. This value is
-not recognized by `_build_compression_coordinator()` — it only handles
+not recognized by `_build_compression_coordinator()` �?it only handles
 `"tool_chain"` and `"user_turn_tool_chain"`. Unknown values fall through to
 the `ToolChainBoundaryPolicy()` default.
 
@@ -1254,8 +1019,8 @@ Expected: only pre-existing unrelated worktree entries remain unstaged. The sani
   - Governance removes incomplete model-visible tool chains: Task 3.
   - FinalContextLegality simplified to no-op after ToolChainRepair: Task 3.
   - Compression cleanup without archive: Tasks 4 and 5.
-  - Active open tail prevents normal compression while allowing stale cleanup: Tasks 4, 5, and 6.
-  - Lifecycle fast-path preserved for performance: Task 6.
+  - Active open tail is preserved as a protected suffix while older complete history can still be compressed: Tasks 4, 5, and 6.
+  - Lifecycle open-tail fast-path removed; planner protects active tails in normal compression: Task 6.
   - Archive and pending exclusion: Task 7.
   - Main/peer/subagent shared behavior through `archive=None`: Tasks 5, 7, and 8.
   - Bot config boundary value corrected: Task 8.

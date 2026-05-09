@@ -15,9 +15,12 @@
   governance chain is `ToolChainRepairGovernance`,
   `PriorityBudgetGovernance`, optional `LossyContentCompactionGovernance`, and
   `FinalContextLegalityGovernance`.
-- Compression is checked after session append. It skips open ReAct tool states
-  such as a trailing `assistant(tool_calls)` or trailing `tool` result, then
-  can run after the final assistant message is appended.
+- Compression is checked after session append and delegated to the shared
+  coordinator. A truly unmatched open `assistant(tool_calls)` tail is kept as a
+  protected suffix, while earlier complete assistant/tool history can still be
+  planned, archived, and pruned. A trailing `tool` result whose call id is fully
+  matched is a legal compression boundary and does not wait for the final
+  assistant message.
 - Consecutive user messages and assistant messages with multiple tool calls are
   supported by the shared retention/planner/governance rules.
 - Subagent session memory is temporary and should be cleared when the subagent finishes.

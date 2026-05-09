@@ -314,10 +314,9 @@ to:
 trigger
   -> read full session
   -> sanitize full session
-  -> if only sanitizer cleanup is possible, build cleanup-only plan
   -> compaction decisions on sanitized messages
   -> retention decisions on sanitized messages
-  -> keep planner on sanitized messages
+  -> keep planner on sanitized messages, protecting any active open tail suffix
   -> summary/archive/pending from legal pruned messages only
   -> commit replacement
 ```
@@ -331,9 +330,10 @@ Details:
   `drop_without_archive_messages`.
 - `drop_without_archive_messages` are not summarized, archived raw, or passed to
   pending-pruned-input extraction.
-- If `has_open_tail=True`, normal compression should not prune through that
-  active tail. The coordinator may still commit a cleanup-only session replace
-  if sanitizer removed stale invalid records.
+- If `has_open_tail=True`, the active tail is a protected suffix in the same
+  keep-planning flow. Normal compression may still prune older complete
+  assistant/tool history before that suffix, and sanitizer-removed stale
+  invalid records are still dropped without archive.
 - If `has_open_tail=False`, the coordinator proceeds with existing keep-ratio
   hard constraints and normal archive behavior.
 - For `archive=None`, the same plan still replaces session messages but skips
@@ -381,27 +381,14 @@ For sanitizer cleanup:
 
 ## Lifecycle Changes
 
-`DefaultMemoryLifecyclePolicy._has_open_react_process()` should stop using a
-global declared-vs-fulfilled check across the entire session. That global check
-treats old stale data as an active process and can block compression forever.
+Current implementation note: lifecycle no longer owns ReAct open-tail
+detection. It only triggers the compression coordinator after session append.
+The sanitizer marks invalid/stale records and any active open tail; the keep
+planner then protects that tail as a suffix while still allowing older complete
+assistant/tool history to be planned, archived, and pruned. Do not restore a
+lifecycle fast-path that skips whenever the physical last message is
+`role=tool`; a trailing tool result can already be a complete legal boundary.
 
-Instead, lifecycle should:
-
-- Ask the sanitizer/analyzer whether `has_open_tail=True`; or
-- Use equivalent logic focused only on the last assistant with `tool_calls`.
-
-If `has_open_tail=True`, lifecycle should skip normal compression that could
-split the active tail. It should not skip cleanup forever because of older stale
-incomplete groups; those should be handled by the sanitizer during the next
-compression attempt.
-
-The existing fast-path shortcut should be preserved as a performance
-optimization: if the last message is `role=tool` or
-`role=assistant`+`tool_calls`, return `True` immediately without running the
-full sanitizer analysis. Only messages that end in a plain assistant or user
-need the sanitizer scan â€” stale incomplete groups in the middle of the session
-do not make the *current* tail unsafe to compress, so the fast-path check
-against the physical last message is correct and cheap.
 
 ## Pending-Pruned-Input Interaction
 
@@ -520,8 +507,8 @@ Framework unit tests:
       history between assistant/tool groups.
     - Sanitizer must preserve `role=agent` messages and their content while
       still classifying assistant/tool groups correctly.
-    - Example: `user â†’ assistant(tool_calls=[a]) â†’ agent("from peer") â†’
-      tool(a) â†’ assistant(plain)` â€” sanitizer preserves all, treats the
+    - Example: `user â†?assistant(tool_calls=[a]) â†?agent("from peer") â†?
+      tool(a) â†?assistant(plain)` â€?sanitizer preserves all, treats the
       assistant/tool group as complete despite interleaved agent messages.
 
 Bot project tests:
