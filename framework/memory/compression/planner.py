@@ -129,14 +129,31 @@ class PriorityCompressionKeepPlanner:
         keep_indices = set(range(anchor_start, len(messages)))
         if not keep_indices:
             return None
-        protected_indices = {anchor_start}
+        active_tail_indices = self._active_open_tail_indices(messages)
+        protected_indices = {anchor_start} | active_tail_indices
+        keep_indices.update(protected_indices)
         drop_groups = self._drop_groups_after_anchor(messages, anchor_start)
 
         while True:
             keep_messages = [dict(messages[idx]) for idx in sorted(keep_indices)]
-            if self._fits(keep_messages, budget) and self._legal_sequence(keep_messages):
+            if self._fits(keep_messages, budget) and self._legal_sequence(
+                keep_messages,
+                allow_open_tail=bool(active_tail_indices),
+            ):
                 return keep_indices, keep_messages
+            if anchor_start in keep_indices and active_tail_indices:
+                without_anchor = keep_indices - {anchor_start}
+                keep_messages = [dict(messages[idx]) for idx in sorted(without_anchor)]
+                if self._fits(keep_messages, budget) and self._legal_sequence(
+                    keep_messages,
+                    allow_open_tail=True,
+                ):
+                    return without_anchor, keep_messages
             if not drop_groups:
+                if active_tail_indices:
+                    keep_messages = [dict(messages[idx]) for idx in sorted(active_tail_indices)]
+                    if self._legal_sequence(keep_messages, allow_open_tail=True):
+                        return active_tail_indices, keep_messages
                 return None
             group = drop_groups.pop(0)
             if group & protected_indices:
@@ -175,6 +192,46 @@ class PriorityCompressionKeepPlanner:
                 groups.append({idx})
             idx += 1
         return groups
+
+    @staticmethod
+    def _active_open_tail_indices(messages: Sequence[dict[str, Any]]) -> set[int]:
+        """Return the final incomplete assistant/tool group that must survive.
+
+        A ReAct turn may append an assistant with multiple tool_calls and only
+        some tool results so far. Compression may still prune older complete
+        history, but it must not drop this active tail or split the partial
+        result from the assistant that declared its tool_call_id.
+        """
+        assistant_index: int | None = None
+        call_ids: set[str] = set()
+        for idx, message in enumerate(messages):
+            if message.get("role") != str(MessageRole.ASSISTANT) or not message.get("tool_calls"):
+                continue
+            assistant_index = idx
+            call_ids = {
+                str(call.get("id"))
+                for call in message.get("tool_calls") or []
+                if isinstance(call, dict) and call.get("id")
+            }
+
+        if assistant_index is None or not call_ids:
+            return set()
+
+        fulfilled: set[str] = set()
+        protected = {assistant_index}
+        for idx in range(assistant_index + 1, len(messages)):
+            message = messages[idx]
+            if message.get("role") == str(MessageRole.ASSISTANT) and not message.get("tool_calls"):
+                return set()
+            if message.get("role") == str(MessageRole.TOOL):
+                tool_call_id = message.get("tool_call_id")
+                if tool_call_id is not None and str(tool_call_id) in call_ids:
+                    fulfilled.add(str(tool_call_id))
+                    protected.add(idx)
+
+        if call_ids.issubset(fulfilled):
+            return set()
+        return protected
 
     def _candidate_starts(
         self,
@@ -263,19 +320,31 @@ class PriorityCompressionKeepPlanner:
         return True
 
     @staticmethod
-    def _legal_sequence(messages: Sequence[dict[str, Any]]) -> bool:
+    def _legal_sequence(
+        messages: Sequence[dict[str, Any]],
+        *,
+        allow_open_tail: bool = False,
+    ) -> bool:
         declared: set[str] = set()
         fulfilled: set[str] = set()
+        last_tool_assistant_ids: set[str] = set()
         for msg in messages:
             if msg.get("role") == str(MessageRole.ASSISTANT):
+                current_ids: set[str] = set()
                 for call in msg.get("tool_calls") or []:
                     if isinstance(call, dict) and call.get("id"):
-                        declared.add(str(call["id"]))
+                        call_id = str(call["id"])
+                        declared.add(call_id)
+                        current_ids.add(call_id)
+                if current_ids:
+                    last_tool_assistant_ids = current_ids
             if msg.get("role") == str(MessageRole.TOOL):
-                call_id = msg.get("tool_call_id")
-                if call_id is None or str(call_id) not in declared:
+                tool_call_id = msg.get("tool_call_id")
+                if tool_call_id is None or str(tool_call_id) not in declared:
                     return False
-                fulfilled.add(str(call_id))
+                fulfilled.add(str(tool_call_id))
+        if allow_open_tail and last_tool_assistant_ids:
+            return (declared - last_tool_assistant_ids).issubset(fulfilled)
         return declared.issubset(fulfilled)
 
     @staticmethod

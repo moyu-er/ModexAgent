@@ -11,10 +11,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from framework.core.types import MessageRole
-from framework.memory.compression.tool_chain_sanitizer import (
-    DefaultSessionToolChainSanitizer,
-    ToolChainSanitizationMode,
-)
 from framework.memory.core.layers import MemoryLayerSet
 from framework.memory.core.scope import (
     MemoryAgentRole,
@@ -80,18 +76,10 @@ class DefaultMemoryLifecyclePolicy(MemoryLifecyclePolicy):
         await self._clear_pending_on_completed_assistant(context, layers)
         if self._coordinator is not None:
             try:
-                # ReAct writes one logical tool interaction in multiple session
-                # appends: assistant(tool_calls) first, then tool(result), then
-                # a final assistant answer. Compression must not run while that
-                # chain is incomplete or waiting for the model continuation,
-                # otherwise it can keep a later tool result while pruning the
-                # assistant message that declared its tool_call_id.
-                if await self._has_open_react_process(context, layers):
-                    logger.debug(
-                        "Post-append compression skipped: ReAct process message is pending for %s",
-                        context.session_id,
-                    )
-                    return
+                # Lifecycle is only the append-time trigger. The coordinator
+                # and keep planner own tool-chain legality: an active
+                # assistant(tool_calls) tail is protected as a suffix while
+                # older complete assistant/tool history can still be pruned.
                 await self._coordinator.maybe_compress(
                     session=layers.session,
                     archive=layers.archive,
@@ -100,49 +88,6 @@ class DefaultMemoryLifecyclePolicy(MemoryLifecyclePolicy):
                 )
             except Exception:
                 logger.warning("Post-append compression check failed", exc_info=True)
-
-    async def _has_open_react_process(
-        self,
-        context: MemoryContext,
-        layers: MemoryLayerSet,
-    ) -> bool:
-        """Return True when compression could split the active tool-call tail.
-
-        Only protects the *last* assistant with tool_calls. Older stale
-        incomplete groups are cleaned by the sanitizer during compression
-        and must not block compression forever.
-        """
-        try:
-            raw_messages = await layers.session.get_all_messages(context)
-            messages = [
-                msg.to_dict() if hasattr(msg, "to_dict") else dict(msg)
-                for msg in raw_messages
-            ]
-        except Exception:
-            logger.debug("Unable to inspect session before compression", exc_info=True)
-            return False
-        if not messages:
-            return False
-
-        last = messages[-1]
-        last_role = last.get("role")
-        # Fast-path: the physical last message is a tool result or an
-        # assistant+tools_calls. The current ReAct turn is writing its
-        # results; compression must wait for a plain assistant to close
-        # the chain.
-        if last_role == str(MessageRole.TOOL):
-            return True
-        if last_role == str(MessageRole.ASSISTANT) and last.get("tool_calls"):
-            return True
-
-        # The session ends with a plain assistant or user. Run the full
-        # sanitizer pass to check whether the last assistant with tool_calls
-        # is still incomplete.
-        result = DefaultSessionToolChainSanitizer().sanitize(
-            messages,
-            mode=ToolChainSanitizationMode.PERSISTENT_SESSION,
-        )
-        return result.has_open_tail
 
     async def _clear_pending_on_completed_assistant(
         self,

@@ -125,7 +125,7 @@ class TestDefaultMemoryLifecyclePolicy:
         )
 
     @pytest.mark.asyncio
-    async def test_on_messages_added_skips_open_assistant_tool_call(self):
+    async def test_on_messages_added_delegates_open_assistant_tool_call_to_coordinator(self):
         coordinator = AsyncMock()
         coordinator.maybe_compress = AsyncMock()
         policy = DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator)
@@ -144,10 +144,12 @@ class TestDefaultMemoryLifecyclePolicy:
 
         await policy.on_messages_added(ctx, layers)
 
-        coordinator.maybe_compress.assert_not_called()
+        coordinator.maybe_compress.assert_called_once_with(
+            session=layers.session, archive=None, pending=None, context=ctx,
+        )
 
     @pytest.mark.asyncio
-    async def test_on_messages_added_skips_tool_result_until_final_assistant(self):
+    async def test_on_messages_added_delegates_tool_result_to_coordinator(self):
         coordinator = AsyncMock()
         coordinator.maybe_compress = AsyncMock()
         policy = DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator)
@@ -167,7 +169,41 @@ class TestDefaultMemoryLifecyclePolicy:
 
         await policy.on_messages_added(ctx, layers)
 
-        coordinator.maybe_compress.assert_not_called()
+        coordinator.maybe_compress.assert_called_once_with(
+            session=layers.session, archive=None, pending=None, context=ctx,
+        )
+
+    @pytest.mark.asyncio
+    async def test_on_messages_added_runs_after_matched_tool_result(self):
+        """A matched tool result is a legal boundary for compression checks.
+
+        The coordinator still owns the final safety decision. Lifecycle must
+        not defer every complete assistant/tool pair until a final plain
+        assistant, otherwise long ReAct loops can exceed max_messages by a
+        large margin.
+        """
+        coordinator = AsyncMock()
+        coordinator.maybe_compress = AsyncMock()
+        policy = DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator)
+        ctx = MemoryContext(session_id="s1", user_id="u1")
+        session = AsyncMock()
+        session.get_all_messages = AsyncMock(
+            return_value=[
+                {
+                    "role": str(MessageRole.ASSISTANT),
+                    "content": "",
+                    "tool_calls": [{"id": "call-1", "function": {"name": "search_files"}}],
+                },
+                {"role": str(MessageRole.TOOL), "tool_call_id": "call-1", "content": "result"},
+            ]
+        )
+        layers = MemoryLayerSet(session=session, archive=None)
+
+        await policy.on_messages_added(ctx, layers)
+
+        coordinator.maybe_compress.assert_called_once_with(
+            session=layers.session, archive=None, pending=None, context=ctx,
+        )
 
     @pytest.mark.asyncio
     async def test_on_messages_added_runs_after_final_assistant_consumes_tool_result(self):
@@ -784,3 +820,63 @@ async def test_scoped_message_history_triggers_compression():
     archive_entries = await layer_set.archive.get_recent(ctx, limit=20)
     assert len(archive_entries) > 0, \
         f"archive should have compression entries, got {len(archive_entries)}"
+
+
+async def test_scoped_message_history_compresses_during_long_tool_loop():
+    """Matched tool results must not delay compression until a final answer.
+
+    This reproduces long bot_project ReAct loops where the model repeatedly
+    emits assistant(tool_calls) followed by tool results. The hard message
+    threshold must still be enforced after matched tool results, while the
+    coordinator keeps assistant/tool pairs structurally legal.
+    """
+    from framework.memory.compression.policies import DefaultMemoryCompressionCoordinator
+    from framework.memory.default_system import DefaultMemorySystem
+    from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
+    from framework.memory.registry.in_memory import InMemoryStoreRegistry
+
+    registry = InMemoryStoreRegistry()
+    layer_set = MemoryLayerFactory.single_user(registry=registry)
+    ctx = MemoryContext(session_id="e2e-long-tool-loop")
+
+    coordinator = DefaultMemoryCompressionCoordinator(
+        max_messages=10,
+        keep_ratio_for_messages=0.4,
+    )
+    lifecycle = DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator)
+    system = DefaultMemorySystem(
+        layer_set=layer_set, store_registry=registry, lifecycle_policy=lifecycle,
+    )
+    await system.initialize()
+
+    history = system.create_message_history(ctx)
+    await history.append({"role": "user", "content": "inspect a large project"})
+    for i in range(18):
+        call_id = f"call-{i}"
+        await history.append({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": call_id, "type": "function", "function": {"name": "read_file"}}
+            ],
+        })
+        await history.append({
+            "role": "tool",
+            "tool_call_id": call_id,
+            "name": "read_file",
+            "content": f"result {i}",
+        })
+
+    remaining = [message.to_dict() for message in await system.get_history(ctx, max_messages=None)]
+    assert len(remaining) <= 10, \
+        f"matched tool loop should compress at threshold, got {len(remaining)} messages"
+
+    declared_call_ids = {
+        tool_call["id"]
+        for message in remaining
+        for tool_call in message.get("tool_calls", []) or []
+        if isinstance(tool_call, dict) and tool_call.get("id")
+    }
+    for message in remaining:
+        if message.get("role") == str(MessageRole.TOOL):
+            assert message.get("tool_call_id") in declared_call_ids
