@@ -28,6 +28,12 @@ we should not preserve old runtime-state APIs. Temporary compatibility may be
 used during implementation, but the final result must remove historical state
 paths and duplicate stores.
 
+This means no final deprecation re-exports, no legacy aliases, and no fallback
+reads from old approval, resume, metadata, extension, or checkpoint formats.
+Implementation phases may use temporary adapters only to keep the work
+sequenced; those adapters are part of the migration work and must be deleted
+before completion.
+
 The end state should be simple enough for contributors who understand the
 project architecture, but have not studied the current runtime internals, to
 extend safely.
@@ -228,6 +234,41 @@ class MessageDeltaSource(StrEnum):
     SYSTEM = "system"
 
 
+class ToolBatchStatus(StrEnum):
+    CREATED = "created"
+    RUNNING = "running"
+    SUSPENDED = "suspended"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class ToolCallStatus(StrEnum):
+    PENDING = "pending"
+    ALLOWED = "allowed"
+    DENIED = "denied"
+    PREEMPTED = "preempted"
+    EXECUTING = "executing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class CancellationSource(StrEnum):
+    USER_COMMAND = "user_command"
+    TIMEOUT = "timeout"
+    POLICY = "policy"
+    TOOL_DENIAL = "tool_denial"
+    CONTROL_COMMAND = "control_command"
+
+
+class ControlCommandKind(StrEnum):
+    CANCEL_TURN = "cancel_turn"
+    PAUSE_TURN = "pause_turn"
+    RESUME_TURN = "resume_turn"
+    INJECT_INPUT = "inject_input"
+
+
 class SnapshotReason(StrEnum):
     LLM_COMPLETED = "llm_completed"
     TOOL_APPROVAL_REQUIRED = "tool_approval_required"
@@ -274,7 +315,9 @@ class ToolArguments:
 
 `ToolArguments` is a value object because tool arguments are part of approval,
 audit, and recovery. Tool code may convert it to provider-specific call formats
-at the edge, but state models should keep the typed wrapper.
+at the edge, but state models should keep the typed wrapper. Consumers must treat
+`ToolArguments.values` as read-only. Codecs should copy mutable dictionaries on
+decode so tool code cannot mutate persisted state through shared references.
 
 ### AgentContext
 
@@ -330,11 +373,36 @@ class AgentRuntimeServices:
     hooks: HookRunner | None = None
     interceptors: InterceptorChain | None = None
     control: ControlRuntime | None = None
+    approval: ApprovalRuntime | None = None
     governance: ContextGovernance | None = None
-    state_store: RuntimeStateStore | None = None
+    turn_store: TurnStateStore | None = None
+    command_store: RuntimeCommandStore | None = None
     pending_input_queue: asyncio.Queue[str] | None = None
     safety: RuntimeSafetyPolicy = field(default_factory=RuntimeSafetyPolicy)
 ```
+
+`ApprovalRuntime` is retained as a policy/classification service, not as a state
+owner:
+
+```python
+@dataclass
+class ApprovalRuntime:
+    classifier: ApprovalClassifier
+    default_deny_policy: ApprovalDenyPolicy
+```
+
+The old `suspend_strategy` is removed. Suspension is owned by the agent node,
+`ApprovalTransaction`, `SnapshotPolicy`, and `TurnStateStore`. The old
+`deny_as_cancel` flag becomes a typed policy value:
+
+```python
+class ApprovalDenyPolicy(StrEnum):
+    TOOL_RESULT_ONLY = "tool_result_only"
+    CANCEL_TURN = "cancel_turn"
+```
+
+When the policy cancels a turn, the runtime writes `CancellationState` with
+`CancellationSource.TOOL_DENIAL`.
 
 ## Generic Turn State
 
@@ -367,6 +435,12 @@ provider envelope required for recovery, such as an assistant tool-call payload.
 It is not a place to store raw provider clients, full request bodies, or
 unbounded debug data.
 
+The size limit is enforced by the codec, not by convention. The default
+`RuntimeStateCodecConfig.max_provider_payload_keys` is `10`; encoding fails with
+a clear codec error when a provider payload exceeds that limit. If a provider
+needs more recoverable data, add a typed field to the relevant operation state
+instead of expanding this free-form payload.
+
 ### Operation State
 
 Operations are the structured history of work performed inside a turn. They
@@ -378,6 +452,14 @@ class RuntimeErrorState:
     error_type: str
     message: str
     retryable: bool
+
+
+@dataclass
+class CancellationState:
+    reason: str
+    source: CancellationSource
+    requested_at: float
+    operation_id: str | None = None
 
 
 @dataclass
@@ -403,6 +485,32 @@ domain payload stays in typed models such as:
 The operation list is useful for generic inspection and audit. Agent-specific
 state keeps typed fields, such as `ReActTurnState.tool_batches`, so nodes do not
 need to scan the operation list repeatedly or downcast untyped payloads.
+
+This is deliberate denormalization. To keep it safe, concrete turn states should
+expose helpers such as:
+
+```python
+def add_operation(
+    self,
+    kind: OperationKind,
+    subject_id: str | None,
+    status: OperationStatus = OperationStatus.CREATED,
+) -> OperationState: ...
+
+
+def update_operation(
+    self,
+    operation_id: str,
+    status: OperationStatus,
+    error: RuntimeErrorState | None = None,
+) -> None: ...
+```
+
+Graph nodes and services should not append to `operations` manually. Whenever a
+mode-specific field represents turn work, such as a tool batch, plan step, LLM
+call, approval transaction, or control command, the helper must create or update
+the matching `OperationState`. Tests should assert that typed fields and the
+operation index stay consistent.
 
 ## ReAct Turn State
 
@@ -467,6 +575,23 @@ class ApprovalTransaction:
     updated_at: float = field(default_factory=time.time)
 ```
 
+`ApprovalRequestState` is the persistable runtime version of an approval request.
+It should replace the existing transient `ApprovalRequest` wherever approval
+data crosses a suspend/resume boundary.
+
+```python
+@dataclass
+class ApprovalRequestState:
+    request_id: str
+    approval_id: str
+    tool_call_id: str
+    tool_name: str
+    arguments: ToolArguments
+    tier: ApprovalTier
+    iteration: int
+    created_at: float
+```
+
 Tool approval data belongs with tool execution data.
 
 ```python
@@ -507,9 +632,6 @@ The store persists snapshots, not services and not full session history.
 class ResumePoint:
     agent_kind: AgentKind
     phase: TurnPhase
-    node: StrEnum | None = None
-    iteration: int | None = None
-    operation_id: str | None = None
 
 
 @dataclass
@@ -524,8 +646,14 @@ class TurnSnapshot:
     schema_version: int = 1
 ```
 
-`ResumePoint.node` is an enum value. ReAct uses `ReActNode`; future modes should
-define their own node or phase enum rather than storing raw node strings.
+`ResumePoint` is intentionally minimal. It is query metadata, not the source of
+truth for graph recovery. ReAct node, ReAct iteration, active operation, tool
+batches, approval, and cancellation are decoded from `state_payload`. This
+avoids drift between duplicate resume fields and the actual mode-specific state.
+
+`TurnSnapshot` is mutable because it represents an evolving in-progress turn.
+It should not be used as a dictionary key. Durable identity comes from
+`TurnSnapshot.identity`.
 
 Snapshots are created by a policy object so persistence decisions do not leak
 into graph nodes.
@@ -550,6 +678,36 @@ class SnapshotPolicy(ABC):
 ReAct should provide `ReActSnapshotPolicy`. Plan-and-Execute should provide its
 own policy if its resume points differ.
 
+Snapshot policy and codec are paired per agent kind. The policy knows how to
+extract the mode-specific payload; the codec knows how to reconstruct that same
+mode-specific state.
+
+```python
+class RuntimeStateCodec(ABC):
+    agent_kind: AgentKind
+
+    @abstractmethod
+    def encode_turn(self, snapshot: TurnSnapshot) -> Mapping[str, JsonValue]: ...
+
+    @abstractmethod
+    def decode_turn(self, payload: Mapping[str, JsonValue]) -> TurnSnapshot: ...
+
+
+@dataclass(frozen=True)
+class RuntimeStateCodecConfig:
+    max_provider_payload_keys: int = 10
+
+
+@dataclass
+class RuntimeStateCodecRegistry:
+    codecs: Mapping[AgentKind, RuntimeStateCodec]
+
+    def get(self, agent_kind: AgentKind) -> RuntimeStateCodec: ...
+```
+
+Shared codec helpers should handle identity, enum serialization, timestamps,
+schema version, and message deltas. Agent-kind codecs handle `state_payload`.
+
 For ReAct, `state_payload` contains only recoverable ReAct fields:
 
 - current node,
@@ -568,12 +726,12 @@ It must not contain:
 - control channel instances,
 - memory system objects.
 
-## Runtime Store Abstraction
+## Turn Store Abstraction
 
 The store API is semantic, not file-based.
 
 ```python
-class RuntimeStateStore(ABC):
+class TurnStateStore(ABC):
     @abstractmethod
     async def save_turn(self, snapshot: TurnSnapshot) -> None: ...
 
@@ -603,25 +761,23 @@ class StateQueryScope:
     created_before: float | None = None
 ```
 
+The new interface is named `TurnStateStore` during implementation to avoid
+confusion with the existing `framework.control.checkpoint.RuntimeStateStore`.
+After historical cleanup, the old checkpoint store is deleted. Keeping the new
+name is preferred because the contract stores turn snapshots, not every kind of
+runtime datum.
+
 ## Codec Layer
 
 Models should not be dumped directly with `json.dumps(dataclass)`.
 
-```python
-class RuntimeStateCodec(ABC):
-    @abstractmethod
-    def encode_turn(self, snapshot: TurnSnapshot) -> Mapping[str, JsonValue]: ...
-
-    @abstractmethod
-    def decode_turn(self, payload: Mapping[str, JsonValue]) -> TurnSnapshot: ...
-```
-
-The codec owns:
+The codec layer owns:
 
 - schema versioning,
 - enum serialization,
 - dataclass conversion,
 - rejecting unserializable process objects,
+- enforcing `provider_payload` size limits,
 - future payload migrations.
 
 The first implementation does not need backward compatibility with historical
@@ -634,11 +790,11 @@ phase.
 The first implementation only needs local JSON files.
 
 ```python
-class JsonFileRuntimeStateStore(RuntimeStateStore):
+class JsonFileTurnStateStore(TurnStateStore):
     def __init__(
         self,
         workspace: Path,
-        codec: RuntimeStateCodec | None = None,
+        codec_registry: RuntimeStateCodecRegistry,
     ) -> None: ...
 ```
 
@@ -651,7 +807,10 @@ data/runtime_state/
       <turn_id>.json
 ```
 
-This is an implementation detail. Callers never construct paths.
+Callers never construct paths. The default safe ID algorithm replaces every
+character outside `[A-Za-z0-9_-]` with `_`. If two raw IDs sanitize to the same
+path segment, the store must either append a short stable hash suffix or reject
+the second ID with a collision error. Silent overwrite is not allowed.
 
 ## RuntimeContext Disposition
 
@@ -698,6 +857,14 @@ interceptor context models instead of passing raw metadata.
 
 ```python
 @dataclass
+class TurnContext:
+    turn_state: TurnStateBase
+    prompt: str
+    turn_id: str
+    max_iterations: int
+
+
+@dataclass
 class ToolCallContext:
     turn_state: TurnStateBase
     tool_name: str
@@ -711,6 +878,20 @@ class IterationContext:
 
 
 @dataclass
+class LLMRequest:
+    messages: Sequence[ChatMessage]
+    model: str | None = None
+    stream: bool = False
+    provider_options: Mapping[str, JsonValue] = field(default_factory=dict)
+
+
+@dataclass
+class LLMCallContext:
+    turn_state: TurnStateBase
+    request: LLMRequest
+
+
+@dataclass
 class LLMStreamContext:
     turn_state: TurnStateBase
     request: LLMRequest
@@ -719,12 +900,29 @@ class LLMStreamContext:
 Interceptors may return typed decisions or mutations. They should not write
 protocol flags into untyped dictionaries.
 
+All five current interceptor contexts should receive `turn_state`: `TurnContext`,
+`IterationContext`, `LLMCallContext`, `LLMStreamContext`, and `ToolCallContext`.
+`LLMRequest` is the typed replacement for loosely assembled message/model
+dictionaries at the interception boundary.
+
 ## ControlRuntime Integration
 
 `ControlRuntime` remains the command plane and lives in
 `AgentRuntimeServices.control`. It should not own a separate checkpoint model.
 
 ```python
+@dataclass
+class ControlCommandState:
+    command_id: str
+    kind: ControlCommandKind
+    agent_id: str
+    session_id: str | None
+    payload: Mapping[str, JsonValue]
+    status: OperationStatus
+    created_at: float
+    applied_at: float | None = None
+
+
 @dataclass(frozen=True)
 class ControlMutation:
     command_id: str
@@ -747,11 +945,36 @@ Command handling should follow this shape:
 This keeps command routing as a service concern and command effects as state
 concerns.
 
+`ControlStore` is not merged into turn snapshots because durable commands can
+exist before a turn is active or while the process is down. It remains a narrow
+command-store contract, renamed to `RuntimeCommandStore` under `framework/runtime`
+so all runtime persistence contracts live together:
+
+```python
+class RuntimeCommandStore(ABC):
+    @abstractmethod
+    async def save_command(self, command: ControlCommandState) -> None: ...
+
+    @abstractmethod
+    async def load_pending_commands(
+        self,
+        scope: StateQueryScope,
+    ) -> list[ControlCommandState]: ...
+
+    @abstractmethod
+    async def mark_command_applied(self, command_id: str) -> None: ...
+```
+
+The default JSON backend may implement both `TurnStateStore` and
+`RuntimeCommandStore`, but the contracts stay separate because they have
+different scopes and lifecycles. The old `framework.control.store.ControlStore`
+is removed in the final cleanup.
+
 ## AgentSession and Clean Runtime Mode
 
 `AgentSession` should create the same runtime shape as the pipeline:
 `TurnIdentity`, `AgentRuntimeServices`, and a mode-specific `TurnStateBase`.
-Session APIs may choose a `NoOpRuntimeStateStore` when persistence is disabled,
+Session APIs may choose a `NoOpTurnStateStore` when persistence is disabled,
 but they should not bypass turn state.
 
 Clean runtime mode means optional services are absent or no-op. It does not mean
@@ -790,7 +1013,7 @@ When a ReAct tool batch needs approval:
 5. `state.current_node = ReActNode.TOOL`.
 6. `SnapshotPolicy.capture(state, SnapshotReason.TOOL_APPROVAL_REQUIRED)`
    creates a `TurnSnapshot`.
-7. `RuntimeStateStore.save_turn(snapshot)` persists it.
+7. `TurnStateStore.save_turn(snapshot)` persists it.
 8. The agent returns a suspend signal or raises `GraphInterrupt`.
 9. The UI renders approval requests.
 
@@ -808,7 +1031,7 @@ denied results and no pending prompt is rendered for those calls.
 
 When the user sends `/approve` or `/deny`:
 
-1. Pipeline asks `RuntimeStateStore` for active suspended turns in the session.
+1. Pipeline asks `TurnStateStore` for active suspended turns in the session.
 2. Pipeline loads the matching `TurnSnapshot`.
 3. The codec restores `ReActTurnState`.
 4. The approval decision updates `state.approval`.
@@ -851,7 +1074,7 @@ Successful turn completion:
 
 1. Commit `state.message_delta` to conversation memory.
 2. Emit final result.
-3. Delete the runtime snapshot with `state_store.delete_turn(identity)`.
+3. Delete the runtime snapshot with `turn_store.delete_turn(identity)`.
 4. Clear turn-local state.
 
 Failed or interrupted turn:
@@ -861,6 +1084,21 @@ Failed or interrupted turn:
   snapshot.
 - If audit is needed, write a lightweight `TurnSummary`; do not keep a full
   snapshot forever.
+
+```python
+@dataclass
+class TurnSummary:
+    identity: TurnIdentity
+    agent_kind: AgentKind
+    final_phase: TurnPhase
+    completed_at: float
+    operation_count: int
+    error: RuntimeErrorState | None = None
+    cancellation: CancellationState | None = None
+```
+
+`TurnSummary` is optional audit output. It is not used for resume and must not
+contain message history or provider payloads.
 
 ## Relationship to Memory
 
@@ -899,8 +1137,10 @@ Remove:
 
 Merge or replace:
 
-- `control.checkpoint.RuntimeStateStore` becomes the new
-  `runtime.store.RuntimeStateStore`.
+- `control.checkpoint.RuntimeStateStore` is deleted and replaced by
+  `runtime.store.TurnStateStore`.
+- `control.store.ControlStore` is deleted and replaced by
+  `runtime.store.RuntimeCommandStore`.
 - runtime checkpoint, approval state, and resume state become one
   `TurnSnapshot`.
 - memory execution checkpoint should be replaced by runtime `message_delta`
@@ -909,8 +1149,8 @@ Merge or replace:
 Keep, but reposition:
 
 - `ControlRuntime` remains the command plane.
-- `ApprovalRuntime` can remain as classifier/policy service, but not as a state
-  owner.
+- `ApprovalRuntime` remains only as classifier/policy service, with no
+  `suspend_strategy`, no state ownership, and no persistence.
 - `RuntimeAssembler` can remain as a service assembler, but should create
   `AgentRuntimeServices`, not hide state in `AgentContext.extensions`.
 
@@ -919,8 +1159,9 @@ Keep, but reposition:
 ### Phase 1: Runtime Models and Store
 
 - Add `framework/runtime/`.
-- Add enums, identities, state models, snapshot models, codec, in-memory store,
-  and JSON file store.
+- Add enums, identities, state models, snapshot models, codec registry,
+  `TurnStateStore`, `RuntimeCommandStore`, in-memory stores, no-op stores, and
+  JSON file stores.
 - Add focused unit tests.
 
 ### Phase 2: ReAct State Migration
@@ -941,7 +1182,7 @@ Keep, but reposition:
 - Change Pipeline to create `TurnIdentity`, `AgentRuntimeServices`, and
   agent-specific turn state.
 - Make approval command handling load suspended turns through
-  `RuntimeStateStore`.
+  `TurnStateStore`.
 - Stop constructing checkpoint IDs in Pipeline.
 - Generate `turn_id` with `uuid4().hex`.
 - Enforce the default one-active-turn-per-agent-session rule.
@@ -955,13 +1196,13 @@ Keep, but reposition:
 
 ### Phase 6: Bot Project Rewire
 
-- Configure a single `JsonFileRuntimeStateStore`.
+- Configure a single `JsonFileTurnStateStore`.
 - Inject it through runtime services.
 - Remove bot-project approval workspace/store special cases.
 - Update `BotService` startup to build `AgentRuntimeServices` once and pass it
   into every pipeline or session turn.
 - Update bot approval command routing to query suspended turns through
-  `RuntimeStateStore.list_active_turns(StateQueryScope(...))`.
+  `TurnStateStore.list_active_turns(StateQueryScope(...))`.
 - Replace bot-specific resume command payloads with typed approval decisions.
 - Remove bot code that reads or writes old approval files, resume files, or
   runtime checkpoint IDs.
@@ -972,6 +1213,8 @@ Keep, but reposition:
 
 - Delete obsolete stores, state files, metadata keys, extension plumbing, and
   tests for removed behavior.
+- Delete all temporary migration adapters, deprecated aliases, and compatibility
+  imports introduced during earlier phases.
 - Update AGENTS and runtime documentation.
 
 ## Testing Strategy
@@ -983,10 +1226,19 @@ New tests should mirror the new boundaries.
 
 - `tests/unit/runtime/test_codec.py`
   Validate encode/decode, schema versioning, and rejection of unserializable
-  process services.
+  process services. Include provider payload size-limit failures.
+
+- `tests/unit/runtime/test_codec_registry.py`
+  Validate `AgentKind` dispatch to agent-kind-specific codecs and clear errors
+  for unsupported agent kinds.
 
 - `tests/unit/runtime/test_file_store.py`
-  Validate save/load/delete/list behavior for the default file backend.
+  Validate save/load/delete/list behavior for the default file backend,
+  including safe ID sanitization and collision handling.
+
+- `tests/unit/runtime/test_command_store.py`
+  Validate durable command save/load/apply lifecycle independently from turn
+  snapshots.
 
 - `tests/unit/runtime/test_runtime_services.py`
   Validate service assembly, no-op clean services, and absence of serialized
@@ -1006,6 +1258,8 @@ New tests should mirror the new boundaries.
 
 - `tests/unit/agents/react/test_turn_state.py`
   Validate ReAct nodes update `ReActTurnState` instead of `ctx.metadata`.
+  Include assertions that typed tool batches and the generic `operations` index
+  stay consistent.
 
 - `tests/unit/hook/test_runtime_state_hooks.py`
   Validate hooks receive typed runtime state and do not depend on metadata.
