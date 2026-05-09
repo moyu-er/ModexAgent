@@ -1,8 +1,9 @@
-"""ToolNode — classify tools → strategy → batch execute."""
+"""ToolNode — classify tools -> strategy -> batch execute."""
 from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
@@ -17,13 +18,22 @@ from framework.core.emitter import ToolCall
 from framework.core.graph.node import Node, NodeTransition
 from framework.core.tool_manager import ToolResult
 from framework.hook import HookPayload, HookPoint
+from framework.runtime.enums import (
+    OperationKind,
+    OperationStatus,
+    SnapshotReason,
+    ToolBatchStatus,
+    ToolCallStatus,
+    TurnPhase,
+)
+from framework.runtime.models import ToolArguments, ToolBatchState, ToolCallState
 
 if TYPE_CHECKING:
     from framework.agents.react.agent import ReActAgent
 
 
 class ToolNode(Node):
-    """Two-phase tool node: classify all → strategy solicit → batch execute."""
+    """Two-phase tool node: classify all -> strategy solicit -> batch execute."""
 
     def __init__(self, agent: ReActAgent) -> None:
         super().__init__(ReActNode.TOOL)
@@ -33,6 +43,11 @@ class ToolNode(Node):
         response = ctx.metadata.pop(ReActMetaKey.LLM_RESPONSE)
         tool_calls: list[ToolCall] = response.tool_calls
         max_tools = ctx_ext(ctx, ExtensionKey.MAX_TOOLS_PER_TURN)
+
+        # ---- typed ReActTurnState path (new) ----
+        react_state = self._get_react_state(ctx)
+        if react_state is not None:
+            react_state.current_node = ReActNode.TOOL
 
         if max_tools is not None and len(tool_calls) > max_tools:
             if ctx.emitter is not None:
@@ -61,12 +76,32 @@ class ToolNode(Node):
         # Phase 1: classify all tools
         decisions = self._classify_all(tool_calls, ctx)
 
+        # ---- typed: create ToolBatchState (new) ----
+        if react_state is not None:
+            call_states = [
+                ToolCallState(
+                    call_id=tc.call_id or uuid4().hex,
+                    tool_name=tc.tool_name,
+                    arguments=ToolArguments(values=tc.arguments or {}),
+                )
+                for tc in tool_calls
+            ]
+            batch = react_state.create_tool_batch(
+                iteration=ctx.metadata[ReActMetaKey.ITERATION],
+                calls=call_states,
+            )
+            # Update batch decisions from classifier
+            for cs, dec in zip(batch.calls, decisions, strict=False):
+                cs.decision = ApprovalDecision(dec) if isinstance(dec, str) else dec
+                if dec == ApprovalDecision.ALLOWED:
+                    cs.status = ToolCallStatus.ALLOWED
+                elif dec == ApprovalDecision.DENIED:
+                    cs.status = ToolCallStatus.DENIED
+
         # Phase 2: if any need approval, delegate to strategy
         if ApprovalDecision.PENDING in decisions:
             strategy = ctx.runtime.approval.suspend_strategy if ctx.runtime and ctx.runtime.approval else None
             if strategy is None:
-                # No strategy configured — approval is effectively disabled.
-                # Treat all PENDING tools as ALLOWED so execution proceeds normally.
                 decisions = [
                     ApprovalDecision.ALLOWED if d == ApprovalDecision.PENDING else d
                     for d in decisions
@@ -104,6 +139,22 @@ class ToolNode(Node):
         # Phase 3: batch execute (all decisions resolved)
         return await self._execute_batch(tool_calls, decisions, ctx)
 
+    # ---- typed state helpers ----
+
+    @staticmethod
+    def _get_react_state(ctx: AgentContext) -> Any:
+        if ctx.identity is None or ctx.runtime is None:
+            return None
+        if not hasattr(ctx.runtime, "state"):
+            return None
+        from framework.agents.react.state import ReActTurnState
+        state = ctx.runtime.state
+        if isinstance(state, ReActTurnState):
+            return state
+        return None
+
+    # ---- classification ----
+
     def _classify_all(
         self, tool_calls: list[ToolCall], ctx: AgentContext,
     ) -> list[str]:
@@ -118,13 +169,13 @@ class ToolNode(Node):
             else:
                 decisions.append(ApprovalDecision.PENDING)
         logger.info(
-            "ToolNode._classify_all: %d tools → %s",
+            "ToolNode._classify_all: %d tools -> %s",
             len(decisions),
             [d for d in decisions],
         )
         return decisions
 
-    def _get_tier(self, tc: ToolCall, ctx: AgentContext[Any]) -> str:
+    def _get_tier(self, tc: ToolCall, ctx: AgentContext) -> str:
         runtime = ctx.runtime
         if runtime and runtime.approval:
             return runtime.approval.classifier.classify(tc, ctx)
@@ -138,6 +189,8 @@ class ToolNode(Node):
                 result[i] = resolved[ri]
                 ri += 1
         return result
+
+    # ---- batch execution ----
 
     async def _execute_batch(
         self, tool_calls: list[ToolCall], decisions: list[str], ctx: AgentContext,
@@ -154,8 +207,6 @@ class ToolNode(Node):
                 payload=HookPayload(data={"tool_calls": tool_calls}),
             )
 
-        # Mark pre-approved tools so TieredToolApprovalInterceptor.around_tool_call
-        # skips redundant control-channel approval (already resolved in Phase 2).
         approved_ids: set[str] = {
             tc.call_id or ""
             for tc, d in zip(tool_calls, decisions, strict=False)
@@ -193,6 +244,18 @@ class ToolNode(Node):
                 msgs.append(tool_msg)
                 await self._agent._save_checkpoint(msgs, ctx)
 
+                # ---- typed: update ToolCallState result (new) ----
+                react_state = self._get_react_state(ctx)
+                if react_state is not None:
+                    batch = react_state.active_tool_batch()
+                    if batch is not None:
+                        batch.status = ToolBatchStatus.RUNNING
+                        for cs in batch.calls:
+                            if cs.call_id == tc.call_id:
+                                cs.result = result
+                                cs.status = ToolCallStatus.COMPLETED if result.error is None else ToolCallStatus.FAILED
+                                batch.operation_id = batch.operation_id
+
                 if dec in (ApprovalDecision.DENIED, ApprovalDecision.PREEMPTED):
                     denied_encountered = True
 
@@ -214,6 +277,15 @@ class ToolNode(Node):
                     "iteration": ctx.metadata.get(ReActMetaKey.ITERATION),
                     "has_tool_calls": True,
                 })
+
+            # ---- typed: mark batch completed (new) ----
+            react_state = self._get_react_state(ctx)
+            if react_state is not None:
+                batch = react_state.active_tool_batch()
+                if batch is not None and not denied_encountered:
+                    batch.status = ToolBatchStatus.COMPLETED
+                    if batch.operation_id:
+                        react_state.update_operation(batch.operation_id, OperationStatus.COMPLETED)
 
             if denied_encountered and ctx.metadata.get(ReActMetaKey.DENY_AS_CANCEL):
                 await self._agent._save_denial_checkpoint(

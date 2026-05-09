@@ -10,6 +10,7 @@ from framework.core.constants import FinishReason
 from framework.core.emitter import AgentResult
 from framework.core.graph.constants import GraphMetaKey, GraphNode
 from framework.core.graph.node import Node, NodeTransition
+from framework.runtime.enums import TurnPhase
 
 if TYPE_CHECKING:
     from framework.agents.react.agent import ReActAgent
@@ -22,11 +23,16 @@ class EndNode(Node):
         super().__init__(ReActNode.END)
         self._agent = agent
 
-    async def execute(self, ctx: AgentContext[Any]) -> NodeTransition:
+    async def execute(self, ctx: AgentContext) -> NodeTransition:
         response = ctx.metadata.pop(ReActMetaKey.LLM_RESPONSE, None)
         messages = ctx.metadata.pop(ReActMetaKey.ITERATION_MSGS, [])
         end_reason = ctx.metadata.pop(ReActMetaKey.END_REASON, None)
         cancel_reason = ctx.metadata.pop(ReActMetaKey.CANCEL_REASON, None)
+
+        # ---- typed ReActTurnState path (new) ----
+        react_state = self._get_react_state(ctx)
+        if react_state is not None:
+            react_state.current_node = ReActNode.END
 
         if response is not None and response.finish_reason == FinishReason.ERROR.value:
             error_text = response.error or response.content or "LLM request failed"
@@ -63,8 +69,27 @@ class EndNode(Node):
                 attachments=ctx.attachments,
             )
 
+        if react_state is not None:
+            react_state.phase = TurnPhase.COMPLETING
+
         await self._agent._clear_checkpoint(ctx)
         if ctx.emitter is not None:
             await ctx.emitter.emit_complete(result)
         ctx.metadata[GraphMetaKey.GRAPH_RESULT] = result
+
+        if react_state is not None:
+            react_state.mark_completed()
+
         return NodeTransition(GraphNode.END, ReActReason.DONE)
+
+    @staticmethod
+    def _get_react_state(ctx: AgentContext) -> Any:
+        if ctx.identity is None or ctx.runtime is None:
+            return None
+        if not hasattr(ctx.runtime, "state"):
+            return None
+        from framework.agents.react.state import ReActTurnState
+        state = ctx.runtime.state
+        if isinstance(state, ReActTurnState):
+            return state
+        return None

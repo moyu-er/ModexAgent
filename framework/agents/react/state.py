@@ -97,6 +97,20 @@ class ReActTurnState(TurnStateBase):
         self.updated_at = time.time()
 
 
+def require_react_state(ctx: object) -> ReActTurnState:
+    """Validate and return typed ReActTurnState from AgentContext.runtime.state."""
+    from framework.core.agent import AgentContext
+    if not isinstance(ctx, AgentContext):
+        raise TypeError(f"require_react_state expects AgentContext, got {type(ctx).__name__}")
+    runtime = ctx.runtime
+    if runtime is None or not hasattr(runtime, "state"):
+        raise TypeError("AgentContext.runtime is not an AgentRuntime")
+    state = runtime.state
+    if isinstance(state, ReActTurnState):
+        return state
+    raise TypeError(f"ReAct requires ReActTurnState, got {type(state).__name__}")
+
+
 # =========================================================================
 # ReActSnapshotPolicy
 # =========================================================================

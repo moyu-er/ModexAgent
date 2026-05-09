@@ -13,6 +13,7 @@ from framework.core.provider import StreamingLLMProvider
 from framework.core.types import LLMResponse
 from framework.hook import HookPayload, HookPoint
 from framework.interceptor.abc import InterceptorScope, IterationContext
+from framework.runtime.enums import OperationKind, TurnPhase
 
 if TYPE_CHECKING:
     from framework.agents.react.agent import ReActAgent
@@ -25,9 +26,16 @@ class LLMNode(Node):
         super().__init__(ReActNode.LLM)
         self._agent = agent
 
-    async def execute(self, ctx: AgentContext[Any]) -> NodeTransition:
+    async def execute(self, ctx: AgentContext) -> NodeTransition:
         iteration = ctx.metadata[ReActMetaKey.ITERATION] + 1
         ctx.metadata[ReActMetaKey.ITERATION] = iteration
+
+        # ---- typed ReActTurnState path (new) ----
+        react_state = self._get_react_state(ctx)
+        if react_state is not None:
+            react_state.iteration = iteration
+            react_state.current_node = ReActNode.LLM
+            react_state.phase = TurnPhase.RUNNING
 
         if iteration > ctx.max_iterations:
             if ctx.emitter is not None:
@@ -58,6 +66,8 @@ class LLMNode(Node):
 
             if response.finish_reason == FinishReason.ERROR.value:
                 ctx.metadata[ReActMetaKey.LLM_RESPONSE] = response
+                if react_state is not None:
+                    react_state.llm_response = response
                 return
 
             assistant_msg = self._agent._build_assistant_message(
@@ -67,6 +77,17 @@ class LLMNode(Node):
             ctx.metadata[ReActMetaKey.LLM_RESPONSE] = response
             msgs: list = ctx.metadata.setdefault(ReActMetaKey.ITERATION_MSGS, [])
             msgs.append(assistant_msg)
+
+            # typed state writes
+            if react_state is not None:
+                react_state.llm_response = response
+                react_state.add_operation(OperationKind.LLM_CALL, None)
+                from framework.runtime.enums import MessageDeltaSource
+                from framework.runtime.models import MessageDelta
+                from framework.memory.core.message import ChatMessage
+                cm = ChatMessage.from_dict(assistant_msg) if isinstance(assistant_msg, dict) else ChatMessage(role="assistant", content=response.content or "")
+                react_state.message_delta.append(MessageDelta(message=cm, source=MessageDeltaSource.ASSISTANT))
+
             if runtime and runtime.checkpoint_store:
                 await self._agent._save_checkpoint(msgs, ctx)
 
@@ -94,6 +115,18 @@ class LLMNode(Node):
                 "iteration": iteration, "has_tool_calls": False,
             })
         return NodeTransition(ReActNode.END, ReActReason.NO_TOOLS)
+
+    @staticmethod
+    def _get_react_state(ctx: AgentContext) -> Any:
+        if ctx.identity is None or ctx.runtime is None:
+            return None
+        if not hasattr(ctx.runtime, "state"):
+            return None
+        from framework.agents.react.state import ReActTurnState
+        state = ctx.runtime.state
+        if isinstance(state, ReActTurnState):
+            return state
+        return None
 
     async def _build_messages(self, ctx: AgentContext) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = []

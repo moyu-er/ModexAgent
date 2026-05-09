@@ -8,6 +8,7 @@ from framework.agents.react.constants import ReActMetaKey, ReActNode, ReActReaso
 from framework.core.agent import AgentContext
 from framework.core.graph.node import Node, NodeTransition
 from framework.core.types import LLMResponse, ToolCall
+from framework.runtime.enums import TurnPhase
 
 
 class StartNode(Node):
@@ -16,9 +17,21 @@ class StartNode(Node):
     def __init__(self) -> None:
         super().__init__(ReActNode.START)
 
-    async def execute(self, ctx: AgentContext[Any]) -> NodeTransition:
-        resume_state = ctx.metadata.get(ReActMetaKey.RESUME_STATE)
+    async def execute(self, ctx: AgentContext) -> NodeTransition:
+        # ---- typed ReActTurnState path (new) ----
+        if ctx.identity is not None and ctx.runtime is not None and hasattr(ctx.runtime, "state"):
+            from framework.agents.react.state import ReActTurnState
+            state = ctx.runtime.state
+            if isinstance(state, ReActTurnState):
+                state.phase = TurnPhase.RUNNING
+                state.current_node = ReActNode.START
+                state.iteration = 0
+                if ctx.emitter is not None:
+                    await ctx.emitter.emit(ReActEvent.START)
+                return NodeTransition(ReActNode.LLM, ReActReason.NORMAL_START)
 
+        # ---- legacy metadata path (backward compat) ----
+        resume_state = ctx.metadata.get(ReActMetaKey.RESUME_STATE)
         if resume_state is not None:
             resume_node = getattr(resume_state, "resume_node", ReActNode.TOOL)
             resume_reason = getattr(resume_state, "resume_reason", ReActReason.RESUME_TOOLS)
