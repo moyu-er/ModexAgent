@@ -1,9 +1,9 @@
 """Tests for TurnResumeState and TurnResumeStateStore."""
 import pytest
 
-from framework.agents.react.state import (
+from framework.agents.react.strategy import (
     InMemoryTurnResumeStateStore,
-    TurnResumeState,
+    _TurnResumeState as TurnResumeState,  # compat alias
 )
 
 

@@ -6,7 +6,7 @@ from framework.agents.react.approval import (
     TieredToolApprovalClassifier, ApprovalRuntime, ApprovalClassifier,
 )
 from framework.agents.react.strategy import SuspendResumeStrategy
-from framework.agents.react.state import InMemoryTurnResumeStateStore
+from framework.agents.react.strategy import InMemoryTurnResumeStateStore
 from framework.approval.store import LocalFileApprovalStateStore
 from framework.approval.constants import ApprovalDecision, ApprovalTier
 from framework.approval.state import ApprovalRequest, ApprovalState

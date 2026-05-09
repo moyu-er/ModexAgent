@@ -3,7 +3,7 @@ import pytest
 from framework.agents.react.strategy import (
     SuspendStrategy, SuspendResumeStrategy, InlineWaitStrategy,
 )
-from framework.agents.react.state import InMemoryTurnResumeStateStore
+from framework.agents.react.strategy import InMemoryTurnResumeStateStore
 from framework.approval.store import LocalFileApprovalStateStore
 from framework.approval.state import ApprovalRequest
 from framework.control.channel import InMemoryControlChannel

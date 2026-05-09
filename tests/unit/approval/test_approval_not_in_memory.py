@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from framework.agents.react.constants import ReActMetaKey
-from framework.agents.react.state import TurnResumeState
+from framework.agents.react.strategy import TurnResumeState
 from framework.approval.constants import ApprovalDecision
 from framework.approval.state import ApprovalRequest, ApprovalState
 from framework.core.agent import AgentContext

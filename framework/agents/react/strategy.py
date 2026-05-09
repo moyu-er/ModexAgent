@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from framework.approval.constants import ApprovalDecision
@@ -9,10 +10,25 @@ from framework.approval.state import ApprovalRequest, ApprovalState
 from framework.core.graph.interrupt import interrupt
 
 from .constants import ReActMetaKey
-from .state import TurnResumeState
 
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
+
+
+@dataclass
+class _TurnResumeState:
+    """DEPRECATED: Used only by ``SuspendResumeStrategy`` during migration."""
+    iteration: int
+    tool_calls: list[dict[str, Any]]
+    tool_decisions: list[str]
+    all_new_messages: list[dict[str, Any]]
+    llm_content: str = ""
+    llm_reasoning: str | None = None
+    resume_node: str = "tool"
+    resume_reason: str = "resume_tools"
+
+
+TurnResumeState = _TurnResumeState  # public alias for backward compat
 
 
 class SuspendStrategy(ABC):
@@ -99,6 +115,49 @@ class SuspendResumeStrategy(SuspendStrategy):
     async def delete_resume_state(self, session_id: str) -> None:
         await self._resume_store.delete(session_id)
 
+
+# ── Legacy store types (used by old SuspendResumeStrategy, exported for test compat) ──
+
+
+class InMemoryTurnResumeStateStore:
+    """In-memory TurnResumeState store for testing."""
+    def __init__(self) -> None:
+        self._store: dict[str, _TurnResumeState] = {}
+    async def save(self, session_id: str, state: _TurnResumeState) -> None:
+        self._store[session_id] = state
+    async def load(self, session_id: str) -> _TurnResumeState | None:
+        return self._store.get(session_id)
+    async def delete(self, session_id: str) -> None:
+        self._store.pop(session_id, None)
+
+
+class StateStoreTurnResumeStateStore:
+    """Wraps a checkpoint store for TurnResumeState persistence."""
+    def __init__(self, checkpoint_store: Any) -> None:
+        self._store = checkpoint_store
+    @staticmethod
+    def _key(session_id: str) -> str:
+        return f"{session_id}:turn_resume"
+    async def save(self, session_id: str, state: _TurnResumeState) -> None:
+        await self._store.save(self._key(session_id), {
+            "iteration": state.iteration, "tool_calls": state.tool_calls,
+            "tool_decisions": state.tool_decisions, "all_new_messages": state.all_new_messages,
+            "llm_content": state.llm_content, "llm_reasoning": state.llm_reasoning,
+            "resume_node": state.resume_node, "resume_reason": state.resume_reason,
+        })
+    async def load(self, session_id: str) -> _TurnResumeState | None:
+        data = await self._store.load(self._key(session_id))
+        if data is None:
+            return None
+        return _TurnResumeState(
+            iteration=data["iteration"], tool_calls=data["tool_calls"],
+            tool_decisions=data["tool_decisions"], all_new_messages=data["all_new_messages"],
+            llm_content=data.get("llm_content", ""), llm_reasoning=data.get("llm_reasoning"),
+            resume_node=data.get("resume_node", "tool"), resume_reason=data.get("resume_reason", "resume_tools"),
+        )
+    async def delete(self, session_id: str) -> None:
+        await self._store.clear(self._key(session_id))
+
     async def solicit_approval(
         self,
         requests: list[ApprovalRequest],
@@ -119,7 +178,7 @@ class SuspendResumeStrategy(SuspendStrategy):
         approval_state = ApprovalState(session_id=ctx.session_id, requests=list(requests))
         await self._approval_store.save(approval_state)
 
-        resume_state = TurnResumeState(
+        resume_state = _TurnResumeState(
             iteration=ctx.metadata[ReActMetaKey.ITERATION],
             tool_calls=all_tool_calls or [],
             tool_decisions=[ApprovalDecision.PENDING] * len(requests),

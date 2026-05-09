@@ -2,7 +2,7 @@
 import pytest
 
 from framework.agents.react.constants import ReActMetaKey
-from framework.agents.react.state import InMemoryTurnResumeStateStore
+from framework.agents.react.strategy import InMemoryTurnResumeStateStore
 from framework.agents.react.strategy import (
     InlineWaitStrategy,
     SuspendResumeStrategy,

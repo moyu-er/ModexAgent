@@ -6,7 +6,7 @@ from framework.agents.react.nodes.tool import ToolNode
 from framework.agents.react.agent import ReActAgent, ReActEvent
 from framework.agents.react.constants import ReActMetaKey, ReActNode, ReActReason
 from framework.agents.react.strategy import SuspendResumeStrategy
-from framework.agents.react.state import InMemoryTurnResumeStateStore
+from framework.agents.react.strategy import InMemoryTurnResumeStateStore
 from framework.approval.store import LocalFileApprovalStateStore
 from framework.core.agent import AgentContext
 from framework.core.tool_manager import InMemoryToolManager, ToolResult

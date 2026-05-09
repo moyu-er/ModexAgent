@@ -23,7 +23,7 @@ from framework.agents.react.nodes.llm import LLMNode
 from framework.agents.react.nodes.tool import ToolNode
 from framework.agents.react.nodes.end import EndNode
 from framework.agents.react.strategy import SuspendResumeStrategy
-from framework.agents.react.state import (
+from framework.agents.react.strategy import (
     TurnResumeState, InMemoryTurnResumeStateStore, StateStoreTurnResumeStateStore,
 )
 from framework.agents.react.constants import ReActNode, ReActReason, ReActMetaKey
