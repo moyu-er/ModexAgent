@@ -1204,12 +1204,65 @@ async def test_coordinator_preserves_active_open_tail_but_removes_older_invalid_
     )
 
     assert result.committed
-    assert [msg.to_dict() for msg in await session.get_all_messages(ctx)] == [
-        {"role": str(MessageRole.USER), "content": "start"},
-        {"role": str(MessageRole.USER), "content": "continued"},
+    remaining = [msg.to_dict() for msg in await session.get_all_messages(ctx)]
+    assert remaining == [
         open_tail,
         {"role": str(MessageRole.TOOL), "tool_call_id": "tail-a", "content": "partial"},
     ]
+    assert "old-a" not in str(remaining)
+
+
+async def test_coordinator_compresses_complete_history_before_active_open_tail(registry):
+    """An active open tail protects only itself, not all earlier history."""
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(factory, SessionMemoryConfig(max_messages=None))
+    ctx = MemoryContext(session_id="compress-before-open-tail")
+    await session.add_messages(ctx, [{"role": str(MessageRole.USER), "content": "start"}])
+    for idx in range(6):
+        call_id = f"done-{idx}"
+        await session.add_messages(ctx, [
+            {
+                "role": str(MessageRole.ASSISTANT),
+                "content": "",
+                "tool_calls": [{"id": call_id, "function": {"name": "tool_done"}}],
+            },
+            {"role": str(MessageRole.TOOL), "tool_call_id": call_id, "content": f"result {idx}"},
+        ])
+    open_tail = {
+        "role": str(MessageRole.ASSISTANT),
+        "content": "",
+        "tool_calls": [
+            {"id": "tail-a", "function": {"name": "tool_tail_a"}},
+            {"id": "tail-b", "function": {"name": "tool_tail_b"}},
+        ],
+    }
+    await session.add_messages(ctx, [
+        open_tail,
+        {"role": str(MessageRole.TOOL), "tool_call_id": "tail-a", "content": "partial"},
+    ])
+
+    coordinator = DefaultMemoryCompressionCoordinator(
+        max_messages=6,
+        keep_ratio_for_messages=0.5,
+    )
+    result = await coordinator.maybe_compress(
+        session=session,
+        archive=None,
+        context=ctx,
+    )
+
+    assert result.committed
+    remaining = [msg.to_dict() for msg in await session.get_all_messages(ctx)]
+    assert len(remaining) <= 3
+    assert remaining[-2:] == [
+        open_tail,
+        {"role": str(MessageRole.TOOL), "tool_call_id": "tail-a", "content": "partial"},
+    ]
+    assert "done-0" not in str(remaining)
 
 
 async def test_sanitizer_removed_messages_do_not_create_pending_entries(registry):

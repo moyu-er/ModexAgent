@@ -448,34 +448,6 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
                 error_policy=self._error,
             )
 
-        if sanitization.has_open_tail:
-            if not sanitization.removed_messages:
-                return CompressionResult(
-                    committed=True, reason=CompressionResultReason.NO_SAFE_BOUNDARY,
-                )
-            revision = await session.get_revision(context)
-            plan = CompressionPlan(
-                trigger=trigger,
-                expected_revision=revision,
-                expected_cursor=None,
-                keep_messages=sanitized_msgs,
-                summarize_messages=[],
-                archive_raw_messages=[],
-                drop_messages=[],
-                summary="",
-                drop_without_archive_messages=sanitization.removed_messages,
-                sanitization_issues=sanitization.issues,
-                has_open_tail=True,
-            )
-            return await self._commit.commit(
-                plan=plan,
-                session=session,
-                archive=None,
-                pending=pending,
-                context=context,
-                error_policy=self._error,
-            )
-
         all_msgs = sanitized_msgs
 
         decisions = self._compaction.decide_all(all_msgs, context, str(trigger.reason))

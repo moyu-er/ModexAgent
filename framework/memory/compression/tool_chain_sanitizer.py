@@ -219,13 +219,13 @@ class DefaultSessionToolChainSanitizer(SessionToolChainSanitizer):
                     active_by_call_id[call_id] = group
                 continue
             if role == str(MessageRole.TOOL):
-                call_id = message.get("tool_call_id")
-                if call_id is None:
+                tool_call_id = message.get("tool_call_id")
+                if tool_call_id is None:
                     continue
-                group = active_by_call_id.get(str(call_id))
-                if group is None:
+                active_group = active_by_call_id.get(str(tool_call_id))
+                if active_group is None:
                     continue
-                group.tool_indices_by_call_id.setdefault(str(call_id), []).append(index)
+                active_group.tool_indices_by_call_id.setdefault(str(tool_call_id), []).append(index)
         return groups
 
     @staticmethod
