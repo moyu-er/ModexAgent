@@ -130,3 +130,97 @@ class SuspendResumeStrategy(SuspendStrategy):
         await self._resume_store.save(ctx.session_id, resume_state)
 
         return interrupt(requests)
+
+
+class TurnStateSuspendStrategy(SuspendStrategy):
+    """Typed interrupt-resume approval — uses ``TurnStateStore`` + ``TurnSnapshot``.
+
+    Replaces ``SuspendResumeStrategy`` by persisting ``ApprovalTransaction``
+    inside ``ReActTurnState`` as a single ``TurnSnapshot``.
+    """
+
+    def __init__(self, turn_store: Any, snapshot_policy: Any) -> None:
+        from framework.runtime.store import TurnStateStore
+        from framework.runtime.policy import SnapshotPolicy
+        self._turn_store: TurnStateStore = turn_store
+        self._snapshot_policy: SnapshotPolicy = snapshot_policy
+
+    async def solicit_approval(
+        self,
+        requests: list[ApprovalRequest],
+        ctx: AgentContext,
+        all_tool_calls: list[dict[str, Any]] | None = None,
+        llm_content: str = "",
+        llm_reasoning: str | None = None,
+    ) -> list[str]:
+        from framework.core.graph.interrupt import _current_resume
+
+        # On resume: consume decisions once
+        resume_val = _current_resume.get(None)
+        if resume_val is not None:
+            _current_resume.set(None)
+            return resume_val
+
+        # Build ApprovalTransaction and save TurnSnapshot
+        react_state = self._get_react_state(ctx)
+        if react_state is not None:
+            from uuid import uuid4
+            from framework.runtime.enums import ApprovalSubjectType, SnapshotReason, TurnPhase
+            from framework.runtime.models import ApprovalRequestState, ApprovalTransaction, ToolArguments
+            from framework.approval.constants import ApprovalStatus
+
+            approval_id = uuid4().hex
+            req_states: list[ApprovalRequestState] = [
+                ApprovalRequestState(
+                    request_id=uuid4().hex,
+                    approval_id=approval_id,
+                    tool_call_id=r.tool_call_id,
+                    tool_name=r.tool_name,
+                    arguments=ToolArguments(values=r.arguments),
+                    tier=r.tier,
+                    iteration=r.iteration,
+                )
+                for r in requests
+            ]
+            tx = ApprovalTransaction(
+                approval_id=approval_id,
+                turn_id=react_state.identity.turn_id,
+                subject_type=ApprovalSubjectType.TOOL_BATCH,
+                subject_ids=[r.tool_call_id for r in requests],
+                requests=req_states,
+                status=ApprovalStatus.PENDING,
+            )
+            react_state.approval = tx
+            react_state.phase = TurnPhase.SUSPENDED
+
+            snapshot = self._snapshot_policy.capture(
+                react_state, SnapshotReason.TOOL_APPROVAL_REQUIRED,
+            )
+            await self._turn_store.save_turn(snapshot)
+
+        return interrupt(requests)
+
+    async def load_approval_state(self, session_id: str) -> Any | None:
+        from framework.runtime.models import StateQueryScope
+        from framework.runtime.enums import TurnPhase, SnapshotReason
+        results = await self._turn_store.list_active_turns(
+            StateQueryScope(session_id=session_id, phase=TurnPhase.SUSPENDED, reason=SnapshotReason.TOOL_APPROVAL_REQUIRED),
+        )
+        return results[0] if results else None
+
+    async def delete_approval_state(self, session_id: str) -> None:
+        snapshot = await self.load_approval_state(session_id)
+        if snapshot is not None:
+            await self._turn_store.delete_turn(snapshot.identity)
+
+    @staticmethod
+    def _get_react_state(ctx: AgentContext) -> Any:
+        if getattr(ctx, "identity", None) is None or ctx.runtime is None:
+            return None
+        if not hasattr(ctx.runtime, "state"):
+            return None
+        from .state import ReActTurnState
+        state = ctx.runtime.state
+        if isinstance(state, ReActTurnState):
+            return state
+        return None
