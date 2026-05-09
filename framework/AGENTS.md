@@ -14,6 +14,7 @@ Core multi-agent framework package. Contains all abstractions, implementations, 
 |-----------|---------|
 | `core/` | Abstract base classes, AgentContext, events, emitter, provider, tool manager (see `core/AGENTS.md`) |
 | `agents/` | Agent reasoning pattern implementations — ReAct, Summarizer (see `agents/AGENTS.md`) |
+| `approval/` | Tiered tool-approval system — tiers, batch atomicity, state store (see `approval/AGENTS.md`) |
 | `pipeline/` | AgentPipeline end-to-end flow orchestration, I/O adapters |
 | `session/` | AgentSession (request/response mode) |
 | `control/` | Runtime control plane — ControlChannel, ControlEventBus, RuntimeStateStore, exceptions (see `control/AGENTS.md`) |

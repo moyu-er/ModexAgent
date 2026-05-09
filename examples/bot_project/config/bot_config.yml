@@ -292,6 +292,31 @@ multi_agent:
 # ==================== Memory ====================
 memory:
   main:
+    # -- Default session cleanup + compression flow --
+    # 1. Writes enter through DefaultMemorySystem.add_messages() or
+    #    ScopedMessageHistory.append/extend(); both call
+    #    DefaultMemoryLifecyclePolicy.on_messages_added() after session append.
+    # 2. DefaultMemoryLifecyclePolicy delegates to
+    #    DefaultMemoryCompressionCoordinator.maybe_compress(); lifecycle does
+    #    not decide ReAct/tool-call safety.
+    # 3. DefaultCompressionTriggerPolicy checks all stored session messages.
+    #    Compression starts when count > short_term.max_messages or
+    #    estimated tokens > short_term.max_tokens.
+    # 4. DefaultSessionToolChainSanitizer cleans invalid stored tool chains:
+    #    orphan tool results, stale incomplete assistant(tool_calls), duplicate
+    #    tool results, and partial tools belonging to stale groups. The final
+    #    active assistant(tool_calls) tail is kept out of cleanup/compression.
+    # 5. PriorityCompressionKeepPlanner applies keep ratios and retention
+    #    priority. It can prune/archive older complete
+    #    user/agent + (assistant(tool_calls)+tool*)* + assistant rounds while
+    #    protecting only the active open tail as an indivisible suffix.
+    # 6. DefaultPendingPrunedInputExtractor saves pruned unfinished user/agent
+    #    inputs into the pending layer; DefaultPendingPrunedInputInjector
+    #    injects them into model-visible context until a plain assistant
+    #    completion clears pending.
+    # 7. DefaultCommitPolicy writes archive summaries first, then replaces the
+    #    session keep set. Peer/subagent session-only memory passes archive=None:
+    #    it still trims session with the same planner but writes no archive.
     # -- 短期记忆 (Session) --
     # max_messages: 触发压缩阈值 (超过才压缩，不等于保留数)
     # keep_ratio: 压缩后保留 max_messages × 此比例 (默认 0.6)，

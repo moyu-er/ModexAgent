@@ -8,27 +8,9 @@ import asyncio
 import contextlib
 import json
 import logging
-import os
 import time
 from collections.abc import Callable
 from typing import Any
-
-os.environ["LITELLM_LOG"] = "ERROR"
-os.environ["LITELLM_SUPPRESS_DEBUG"] = "true"
-
-_SUPPRESSED_LOGGERS = [
-    "litellm",
-    "litellm.llm_provider",
-    "litellm.utils",
-    "httpx",
-    "httpcore",
-]
-for _name in _SUPPRESSED_LOGGERS:
-    _lg = logging.getLogger(_name)
-    _lg.setLevel(logging.CRITICAL)
-    _lg.propagate = False
-    for _h in _lg.handlers[:]:
-        _lg.removeHandler(_h)
 
 from framework.core.constants import DefaultValues, FinishReason, ToolChoice
 from framework.core.llm_error import (
@@ -45,6 +27,18 @@ from framework.core.tool_call_accumulator import (
 )
 from framework.core.types import LLMResponse, ToolCall
 from framework.utils.think_tag import ThinkTagExtractor
+
+try:
+    import litellm
+    from litellm import acompletion
+
+    litellm.suppress_debug_info = True
+    litellm.set_verbose = False
+
+except ImportError as err:
+    raise ImportError(
+        "litellm is required for LiteLLMProvider. Install with: pip install litellm"
+    ) from err
 
 logger = logging.getLogger(__name__)
 
@@ -76,18 +70,6 @@ class LiteLLMProvider(StreamingLLMProvider):
         safety: RuntimeSafetyPolicy | None = None,
         **kwargs,
     ):
-        try:
-            import litellm
-            from litellm import acompletion
-
-            litellm.suppress_debug_info = True
-            litellm.set_verbose = False
-
-        except ImportError as err:
-            raise ImportError(
-                "litellm is required for LiteLLMProvider. Install with: pip install litellm"
-            ) from err
-
         self._model = model
         self._api_key = api_key
         self._base_url = base_url

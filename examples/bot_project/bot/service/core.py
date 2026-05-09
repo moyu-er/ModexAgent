@@ -997,8 +997,14 @@ class BotService(AgentBuilderMixin):
         elif boundary_name == "tool_chain":
             boundary = ToolChainBoundaryPolicy()
 
-        # Pass short-term numeric thresholds from bot_config.yml so the
-        # coordinator respects user configuration instead of hard-coded defaults.
+        # Persistent session cleanup/compression is append-triggered:
+        # DefaultMemoryLifecyclePolicy calls DefaultMemoryCompressionCoordinator,
+        # whose DefaultCompressionTriggerPolicy checks all stored messages
+        # against these short_term thresholds. The coordinator then runs
+        # DefaultSessionToolChainSanitizer, PriorityCompressionKeepPlanner,
+        # DefaultPendingPrunedInputExtractor, and DefaultCommitPolicy. An
+        # active final assistant(tool_calls) tail is protected by the planner,
+        # while older complete assistant/tool chains remain compressible.
         return DefaultMemoryCompressionCoordinator(
             summary=summary_strategy,
             compaction=compaction,
