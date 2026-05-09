@@ -19,8 +19,7 @@ from .message_utils import normalize_agent_messages_for_llm
 from .tool_manager import ToolManager
 
 if TYPE_CHECKING:
-    from framework.runtime.models import TurnIdentity
-    from framework.runtime.services import AgentRuntime
+    pass
 
 
 @dataclass

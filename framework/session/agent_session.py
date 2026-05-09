@@ -362,6 +362,16 @@ class AgentSession(Generic[E]):
 
             agent_name = self._agent_descriptor.address.name if self._agent_descriptor else "main"
 
+            # ---- typed TurnIdentity (new) ----
+            from uuid import uuid4
+            from framework.runtime.models import TurnIdentity
+            turn_identity = TurnIdentity(
+                agent_id=agent_name,
+                session_id=session_id,
+                turn_id=uuid4().hex,
+                conversation_id=session_id,
+            )
+
             agent_context = AgentContext(
                 system_prompt=context_state.system_prompt,
                 history=context_state.history,
@@ -376,6 +386,7 @@ class AgentSession(Generic[E]):
                     ExtensionKey.ON_CHECKPOINT: on_checkpoint,
                 },
             )
+            agent_context.identity = turn_identity
 
             # Build ReActRuntime via framework RuntimeAssembler
             if self._hook_runner or self._interceptor_chain or self._checkpoint_store:
