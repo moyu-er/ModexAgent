@@ -1,0 +1,77 @@
+"""framework.runtime — typed runtime state governance.
+
+Replaces scattered ``ctx.metadata`` / ``ctx.extensions`` state with scoped,
+persistable turn snapshots and typed operation records.
+"""
+
+from __future__ import annotations
+
+from .enums import (
+    AgentKind,
+    ApprovalDenyPolicy,
+    ApprovalSubjectType,
+    CancellationSource,
+    ControlCommandKind,
+    MessageDeltaSource,
+    OperationKind,
+    OperationStatus,
+    SnapshotReason,
+    StateScope,
+    ToolBatchStatus,
+    ToolCallStatus,
+    TurnPhase,
+)
+from .models import (
+    ApprovalRequestState,
+    ApprovalTransaction,
+    CancellationState,
+    ControlCommandState,
+    ControlMutation,
+    JsonValue,
+    MessageDelta,
+    OperationState,
+    ResumePoint,
+    RuntimeErrorState,
+    StateQueryScope,
+    ToolArguments,
+    ToolBatchState,
+    ToolCallState,
+    TurnIdentity,
+    TurnSnapshot,
+    TurnStateBase,
+    TurnSummary,
+)
+
+__all__ = [
+    "AgentKind",
+    "ApprovalDenyPolicy",
+    "ApprovalRequestState",
+    "ApprovalSubjectType",
+    "ApprovalTransaction",
+    "CancellationSource",
+    "CancellationState",
+    "ControlCommandKind",
+    "ControlCommandState",
+    "ControlMutation",
+    "JsonValue",
+    "MessageDelta",
+    "MessageDeltaSource",
+    "OperationKind",
+    "OperationState",
+    "OperationStatus",
+    "ResumePoint",
+    "RuntimeErrorState",
+    "SnapshotReason",
+    "StateQueryScope",
+    "StateScope",
+    "ToolArguments",
+    "ToolBatchState",
+    "ToolBatchStatus",
+    "ToolCallState",
+    "ToolCallStatus",
+    "TurnIdentity",
+    "TurnPhase",
+    "TurnSnapshot",
+    "TurnStateBase",
+    "TurnSummary",
+]
