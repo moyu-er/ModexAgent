@@ -154,6 +154,8 @@ class AgentPipeline:
         approval_workspace: str = ".modex_approval",
         user_interface: ControlUserInterface | None = None,
         prebuilt_runtime: Any | None = None,
+        turn_store: Any | None = None,
+        command_store: Any | None = None,
     ):
         """
         Args:
@@ -161,6 +163,8 @@ class AgentPipeline:
             safety: P0-a 运行时安全策略（timeout、retry 等），None 则使用默认
             approval_workspace: approval 状态持久化目录（默认 .modex_approval）
             user_interface: 审批通知 UI 接口（CLI/IM/Noop），None 则不通知
+            turn_store: TurnStateStore — typed turn snapshot persistence
+            command_store: RuntimeCommandStore — durable command queue
         """
         if sanitizer is _UNSET:
             from framework.utils.sanitizer import ContentSanitizer
@@ -199,6 +203,8 @@ class AgentPipeline:
         self.busy_input_mode = busy_input_mode
         self._approval_workspace = Path(approval_workspace)
         self._prebuilt_runtime = prebuilt_runtime
+        self.turn_store = turn_store
+        self.command_store = command_store
         self._approval = ApprovalRenderer(
             approval_workspace=self._approval_workspace,
             checkpoint_store=checkpoint_store,
@@ -537,6 +543,16 @@ class AgentPipeline:
             )
             extensions["memory_context"] = memory_context
 
+        # ---- typed TurnIdentity (new) ----
+        from uuid import uuid4
+        from framework.runtime.models import TurnIdentity
+        turn_identity = TurnIdentity(
+            agent_id=getattr(self.agent, "name", "agent"),
+            session_id=session_id,
+            turn_id=uuid4().hex,
+            conversation_id=session_id,
+        )
+
         agent_context = AgentContext(
             system_prompt=context_state.system_prompt,
             history=context_state.history,
@@ -546,17 +562,36 @@ class AgentPipeline:
             metadata={"session_id": session_id},
             extensions=extensions,
         )
+        agent_context.identity = turn_identity
 
-        # If a prebuilt runtime is provided, assign it directly to the agent context.
-        # This allows callers (e.g. bot_project BotService) to assemble the full
-        # ReActRuntime including approval, control, hooks, and interceptors before
-        # the pipeline starts.
-        if self._prebuilt_runtime is not None:
+        # ---- typed AgentRuntime with ReActTurnState (new) ----
+        if self.turn_store is not None:
+            from framework.runtime.services import AgentRuntime, AgentRuntimeServices
+            from framework.agents.react.state import ReActTurnState
+            from framework.runtime.enums import AgentKind, TurnPhase as RTurnPhase
+            react_state = ReActTurnState(
+                identity=turn_identity,
+                agent_kind=AgentKind.REACT,
+                phase=RTurnPhase.CREATED,
+            )
+            services = AgentRuntimeServices(
+                hooks=self.hook_runner,
+                interceptors=self.interceptor_chain,
+                control=getattr(self._prebuilt_runtime, "control", None) if self._prebuilt_runtime else None,
+                approval=getattr(self._prebuilt_runtime, "approval", None) if self._prebuilt_runtime else None,
+                governance=self.governance,
+                turn_store=self.turn_store,
+                command_store=self.command_store,
+                pending_input_queue=self._injection_queues.get(session_id),
+                safety=self.safety,
+            )
+            agent_context.runtime = AgentRuntime(services=services, state=react_state)
+        elif self._prebuilt_runtime is not None:
+            # Legacy prebuilt runtime (backward compat)
             agent_context.runtime = self._prebuilt_runtime
             agent_context.runtime.memory_context = memory_context
             if pending is not None:
                 from framework.memory.pending import DefaultPendingPrunedInputInjector
-
                 agent_context.runtime.pending_injector = DefaultPendingPrunedInputInjector(
                     pending,
                     session,
