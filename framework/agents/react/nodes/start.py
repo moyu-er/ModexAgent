@@ -19,7 +19,7 @@ class StartNode(Node):
 
     async def execute(self, ctx: AgentContext) -> NodeTransition:
         # ---- typed ReActTurnState path (new) ----
-        if ctx.identity is not None and ctx.runtime is not None and hasattr(ctx.runtime, "state"):
+        if getattr(ctx, "identity", None) is not None and ctx.runtime is not None and hasattr(ctx.runtime, "state"):
             from framework.agents.react.state import ReActTurnState
             state = ctx.runtime.state
             if isinstance(state, ReActTurnState):

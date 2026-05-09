@@ -84,7 +84,7 @@ class EndNode(Node):
 
     @staticmethod
     def _get_react_state(ctx: AgentContext) -> Any:
-        if ctx.identity is None or ctx.runtime is None:
+        if getattr(ctx, "identity", None) is None or ctx.runtime is None:
             return None
         if not hasattr(ctx.runtime, "state"):
             return None
