@@ -22,7 +22,7 @@ from ..memory.history import inject_attachments_to_history
 
 if TYPE_CHECKING:
     from ..agents.react.runtime import ReActRuntime
-    from ..agents.react.strategy import SuspendStrategy, TurnResumeState as TurnResumeStateStore
+    from ..agents.react.strategy import SuspendStrategy, TurnResumeState
     from ..approval.state import ApprovalState
     from ..control.ui.abc import ControlUserInterface
     from ..core.agent import AgentContext
@@ -70,7 +70,7 @@ class ApprovalRenderer:
         self._user_interface = user_interface
         self._on_drain = on_drain
         self._approval_stores: dict[str, LocalFileApprovalStateStore] = {}
-        self._resume_stores: dict[str, "TurnResumeStateStore"] = {}
+        self._resume_stores: dict[str, "TurnResumeState"] = {}
         self._approval_pending: dict[str, list[InputMessage]] = {}
 
     async def detect(

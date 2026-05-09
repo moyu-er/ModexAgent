@@ -3,7 +3,7 @@ import pytest
 
 from framework.agents.react.strategy import (
     InMemoryTurnResumeStateStore,
-    _TurnResumeState as TurnResumeState,  # compat alias
+    TurnResumeState,
 )
 
 

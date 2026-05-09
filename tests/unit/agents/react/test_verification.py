@@ -13,7 +13,7 @@ from framework.approval.store import InMemoryApprovalStateStore
 from framework.approval.response import parse_approval_action
 from framework.approval.types import ApprovalAction
 from framework.agents.react.strategy import (
-    _TurnResumeState as TurnResumeState, InMemoryTurnResumeStateStore,
+    TurnResumeState, InMemoryTurnResumeStateStore,
 )
 from framework.agents.react.strategy import SuspendResumeStrategy, InlineWaitStrategy
 from framework.agents.react.constants import ReActNode, ReActReason, ReActMetaKey

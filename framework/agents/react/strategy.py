@@ -16,8 +16,8 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class _TurnResumeState:
-    """DEPRECATED: Used only by ``SuspendResumeStrategy`` during migration."""
+class TurnResumeState:
+    """Legacy resume state used by ``SuspendResumeStrategy``."""
     iteration: int
     tool_calls: list[dict[str, Any]]
     tool_decisions: list[str]
@@ -26,9 +26,6 @@ class _TurnResumeState:
     llm_reasoning: str | None = None
     resume_node: str = "tool"
     resume_reason: str = "resume_tools"
-
-
-TurnResumeState = _TurnResumeState  # public alias for backward compat
 
 
 class SuspendStrategy(ABC):
@@ -99,10 +96,10 @@ class InlineWaitStrategy(SuspendStrategy):
 class InMemoryTurnResumeStateStore:
     """In-memory TurnResumeState store for testing."""
     def __init__(self) -> None:
-        self._store: dict[str, _TurnResumeState] = {}
-    async def save(self, session_id: str, state: _TurnResumeState) -> None:
+        self._store: dict[str, TurnResumeState] = {}
+    async def save(self, session_id: str, state: TurnResumeState) -> None:
         self._store[session_id] = state
-    async def load(self, session_id: str) -> _TurnResumeState | None:
+    async def load(self, session_id: str) -> TurnResumeState | None:
         return self._store.get(session_id)
     async def delete(self, session_id: str) -> None:
         self._store.pop(session_id, None)
@@ -115,18 +112,18 @@ class StateStoreTurnResumeStateStore:
     @staticmethod
     def _key(session_id: str) -> str:
         return f"{session_id}:turn_resume"
-    async def save(self, session_id: str, state: _TurnResumeState) -> None:
+    async def save(self, session_id: str, state: TurnResumeState) -> None:
         await self._store.save(self._key(session_id), {
             "iteration": state.iteration, "tool_calls": state.tool_calls,
             "tool_decisions": state.tool_decisions, "all_new_messages": state.all_new_messages,
             "llm_content": state.llm_content, "llm_reasoning": state.llm_reasoning,
             "resume_node": state.resume_node, "resume_reason": state.resume_reason,
         })
-    async def load(self, session_id: str) -> _TurnResumeState | None:
+    async def load(self, session_id: str) -> TurnResumeState | None:
         data = await self._store.load(self._key(session_id))
         if data is None:
             return None
-        return _TurnResumeState(
+        return TurnResumeState(
             iteration=data["iteration"], tool_calls=data["tool_calls"],
             tool_decisions=data["tool_decisions"], all_new_messages=data["all_new_messages"],
             llm_content=data.get("llm_content", ""), llm_reasoning=data.get("llm_reasoning"),
@@ -178,7 +175,7 @@ class SuspendResumeStrategy(SuspendStrategy):
         approval_state = ApprovalState(session_id=ctx.session_id, requests=list(requests))
         await self._approval_store.save(approval_state)
 
-        resume_state = _TurnResumeState(
+        resume_state = TurnResumeState(
             iteration=ctx.metadata[ReActMetaKey.ITERATION],
             tool_calls=all_tool_calls or [],
             tool_decisions=[ApprovalDecision.PENDING] * len(requests),
