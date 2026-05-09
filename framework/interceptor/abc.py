@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Generic, Protocol
 from typing_extensions import TypeVar
@@ -41,49 +41,66 @@ class InterceptorScope(str, Enum):
 
 
 @dataclass(frozen=True)
+class LLMRequest:
+    """Typed LLM request — replaces loosely assembled message/model dicts."""
+
+    messages: Sequence[dict[str, Any]]
+    model: str | None = None
+    stream: bool = False
+    provider_options: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class ToolCallContext:
-    """工具调用上下文。"""
+    """工具调用上下文 — ``turn_state`` added for typed runtime access."""
 
     tool_call: ToolCall
     tool_name: str
     arguments: Mapping[str, object]
     session_id: str
     turn_id: str = ""
+    turn_state: object | None = None  # TurnStateBase | None
 
 
 @dataclass(frozen=True)
 class TurnContext:
-    """Turn 上下文。"""
+    """Turn 上下文 — ``turn_state`` added for typed runtime access."""
 
     prompt: str
     turn_id: str
     max_iterations: int = 10
+    turn_state: object | None = None  # TurnStateBase | None
 
 
 @dataclass(frozen=True)
 class IterationContext:
-    """迭代上下文。"""
+    """迭代上下文 — ``turn_state`` added for typed runtime access."""
 
     iteration: int
     turn_id: str
+    turn_state: object | None = None  # TurnStateBase | None
 
 
 @dataclass(frozen=True)
 class LLMCallContext:
-    """LLM 调用上下文。"""
+    """LLM 调用上下文 — ``turn_state`` + ``request`` added."""
 
     messages: Sequence[dict[str, Any]]
     model: str | None = None
     stream: bool = False
+    turn_state: object | None = None  # TurnStateBase | None
+    request: LLMRequest | None = None
 
 
 @dataclass(frozen=True)
 class LLMStreamContext:
-    """LLM 流式调用上下文。"""
+    """LLM 流式调用上下文 — ``turn_state`` + ``request`` added."""
 
     messages: Sequence[dict[str, Any]]
     model: str | None = None
     session_id: str = ""
+    turn_state: object | None = None  # TurnStateBase | None
+    request: LLMRequest | None = None
 
 
 @dataclass
@@ -133,7 +150,7 @@ class Interceptor(Protocol, Generic[R]):
 
     async def around_tool_call(
         self,
-        ctx: AgentContext[R],
+        ctx: AgentContext,
         call: ToolCallContext,
         next_call: ToolCallNext,
     ) -> ToolResult:
@@ -142,7 +159,7 @@ class Interceptor(Protocol, Generic[R]):
 
     async def around_turn(
         self,
-        ctx: AgentContext[R],
+        ctx: AgentContext,
         next_call: TurnNext,
     ) -> AgentResult:
         """包裹单个 turn。"""
@@ -150,7 +167,7 @@ class Interceptor(Protocol, Generic[R]):
 
     async def around_iteration(
         self,
-        ctx: AgentContext[R],
+        ctx: AgentContext,
         call: IterationContext,
         next_call: IterationNext,
     ) -> None:
@@ -159,7 +176,7 @@ class Interceptor(Protocol, Generic[R]):
 
     async def around_llm_stream(
         self,
-        ctx: AgentContext[R],
+        ctx: AgentContext,
         call: LLMStreamContext,
         next_stream: LLMStreamNext,
     ) -> AsyncIterator[LLMStreamChunk]:
