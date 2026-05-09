@@ -22,8 +22,7 @@ from ..memory.history import inject_attachments_to_history
 
 if TYPE_CHECKING:
     from ..agents.react.runtime import ReActRuntime
-    from ..agents.react.state import TurnResumeStateStore
-    from ..agents.react.strategy import SuspendStrategy
+    from ..agents.react.strategy import SuspendStrategy, TurnResumeState as TurnResumeStateStore
     from ..approval.state import ApprovalState
     from ..control.ui.abc import ControlUserInterface
     from ..core.agent import AgentContext
@@ -82,7 +81,7 @@ class ApprovalRenderer:
         prebuilt_runtime: "ReActRuntime | None" = None,
     ) -> tuple[bool, "ApprovalState | None"]:
         """检测审批命令。返回 (is_approval, approval_state)。"""
-        from ..agents.react.state import StateStoreTurnResumeStateStore
+        from ..agents.react.strategy import StateStoreTurnResumeStateStore
 
         if self.checkpoint_store is not None:
             if session_id not in self._approval_stores:

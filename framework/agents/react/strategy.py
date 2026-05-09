@@ -93,29 +93,6 @@ class InlineWaitStrategy(SuspendStrategy):
         return state.final_decisions()
 
 
-class SuspendResumeStrategy(SuspendStrategy):
-    """Interrupt-resume approval — persists state, raises GraphInterrupt."""
-
-    def __init__(self, approval_store: Any, resume_store: Any) -> None:
-        self._approval_store = approval_store
-        self._resume_store = resume_store
-
-    async def load_approval_state(self, session_id: str) -> Any | None:
-        return await self._approval_store.load(session_id)
-
-    async def save_approval_state(self, state: Any) -> None:
-        await self._approval_store.save(state)
-
-    async def delete_approval_state(self, session_id: str) -> None:
-        await self._approval_store.delete(session_id)
-
-    async def load_resume_state(self, session_id: str) -> Any | None:
-        return await self._resume_store.load(session_id)
-
-    async def delete_resume_state(self, session_id: str) -> None:
-        await self._resume_store.delete(session_id)
-
-
 # ── Legacy store types (used by old SuspendResumeStrategy, exported for test compat) ──
 
 
@@ -157,6 +134,29 @@ class StateStoreTurnResumeStateStore:
         )
     async def delete(self, session_id: str) -> None:
         await self._store.clear(self._key(session_id))
+
+
+class SuspendResumeStrategy(SuspendStrategy):
+    """Interrupt-resume approval — persists state, raises GraphInterrupt."""
+
+    def __init__(self, approval_store: Any, resume_store: Any) -> None:
+        self._approval_store = approval_store
+        self._resume_store = resume_store
+
+    async def load_approval_state(self, session_id: str) -> Any | None:
+        return await self._approval_store.load(session_id)
+
+    async def save_approval_state(self, state: Any) -> None:
+        await self._approval_store.save(state)
+
+    async def delete_approval_state(self, session_id: str) -> None:
+        await self._approval_store.delete(session_id)
+
+    async def load_resume_state(self, session_id: str) -> Any | None:
+        return await self._resume_store.load(session_id)
+
+    async def delete_resume_state(self, session_id: str) -> None:
+        await self._resume_store.delete(session_id)
 
     async def solicit_approval(
         self,
