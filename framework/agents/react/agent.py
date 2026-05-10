@@ -160,14 +160,20 @@ class ReActAgent(Agent[ReActEvent]):
         context.attachments = []
         context.emitter = emitter
 
-        # Use prebuilt runtime if already set on context; otherwise build from context.
+        # Use prebuilt runtime if already set on context; otherwise build clean runtime.
         if context.runtime is None:
-            from framework.agents.react.runtime import ReActRuntime
-
-            runtime = ReActRuntime.from_context(context, mode=self.mode)
-            context.runtime = runtime
-        else:
-            runtime = context.runtime
+            from framework.agents.react.state import ReActTurnState
+            from framework.runtime.enums import AgentKind
+            from framework.runtime.models import TurnIdentity
+            from framework.runtime.services import AgentRuntime, AgentRuntimeServices
+            state = ReActTurnState(
+                identity=context.identity
+                or TurnIdentity(agent_id="react", session_id=context.session_id, turn_id="default"),
+                agent_kind=AgentKind.REACT,
+                phase=TurnPhase.CREATED,
+            )
+            context.runtime = AgentRuntime(services=AgentRuntimeServices(), state=state)
+        runtime = context.runtime
         runtime.validate()
         ctx_token = current_agent_context.set(context)
 

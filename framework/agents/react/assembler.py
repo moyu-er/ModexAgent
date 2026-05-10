@@ -1,7 +1,7 @@
-"""Runtime 装配器 — ReActRuntime + ApprovalRuntime + ControlRuntime 的唯一构造入口。
+"""Runtime 装配器 — AgentRuntime + ApprovalRuntime + ControlRuntime 的唯一构造入口。
 
-contract invariant (design_doc/2026-05-04-runtime-contract-design.md §3.3):
-    全仓只有 RuntimeAssembler.assemble() 构造 ReActRuntime / ApprovalRuntime 实例。
+contract invariant:
+    全仓只有 RuntimeAssembler.assemble() 构造 AgentRuntime / ApprovalRuntime 实例。
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from framework.agents.react.approval import ApprovalRuntime
-from framework.agents.react.runtime import ReActRuntime
+from framework.agents.react.state import ReActTurnState
 from framework.control.channel import ControlChannel
 from framework.control.runtime import ControlRuntime
 from framework.control.store import ControlStore
@@ -21,6 +21,9 @@ from framework.hook.runner import HookRunner
 from framework.interceptor.abc import Interceptor
 from framework.interceptor.chain import InterceptorChain
 from framework.interceptor.handler import CommandHandlerRegistry
+from framework.runtime.enums import AgentKind, TurnPhase
+from framework.runtime.models import TurnIdentity
+from framework.runtime.services import AgentRuntime, AgentRuntimeServices
 
 
 @dataclass
@@ -38,19 +41,24 @@ class RuntimeServicesConfig:
     control_channel: ControlChannel | None = None
     control_store: ControlStore | None = None
     command_handlers: list[tuple[ControlCommandType, Any]] | None = None
-    checkpoint_store: Any = None               # RuntimeStateStore
+    checkpoint_store: Any = None               # TurnStateStore
     injection_queue: asyncio.Queue[str] | None = None
     governance: Any = None                     # ContextGovernance
     safety: Any = None                         # RuntimeSafetyPolicy
 
 
 class RuntimeAssembler:
-    """ReActRuntime + ApprovalRuntime + ControlRuntime 唯一装配入口。"""
+    """AgentRuntime + ApprovalRuntime + ControlRuntime 唯一装配入口。"""
 
     @staticmethod
-    async def assemble(config: RuntimeServicesConfig) -> ReActRuntime:
+    async def assemble(config: RuntimeServicesConfig) -> AgentRuntime:
         if config.mode == "clean":
-            return ReActRuntime.clean()
+            state = ReActTurnState(
+                identity=TurnIdentity(agent_id="clean", session_id="clean", turn_id="clean"),
+                agent_kind=AgentKind.REACT,
+                phase=TurnPhase.CREATED,
+            )
+            return AgentRuntime(services=AgentRuntimeServices(), state=state)
 
         interceptor_chain = (
             InterceptorChain(list(config.interceptors))
@@ -75,14 +83,20 @@ class RuntimeAssembler:
                 registry=registry,
             )
 
-        return ReActRuntime(
-            mode="full",
+        state = ReActTurnState(
+            identity=TurnIdentity(agent_id="react", session_id="assembled", turn_id="initial"),
+            agent_kind=AgentKind.REACT,
+            phase=TurnPhase.CREATED,
+        )
+        services = AgentRuntimeServices(
             hooks=config.hooks,
             interceptors=interceptor_chain,
-            approval=approval,
             control=control,
-            checkpoint_store=config.checkpoint_store,
-            injection_queue=config.injection_queue,
+            approval=approval,
             governance=config.governance,
-            safety=config.safety,
+            turn_store=config.checkpoint_store,
+            pending_input_queue=config.injection_queue,
         )
+        if config.safety is not None:
+            services.safety = config.safety
+        return AgentRuntime(services=services, state=state)

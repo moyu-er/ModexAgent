@@ -91,18 +91,6 @@ class AgentRuntime:
         return self.services.pending_input_queue
 
     @property
-    def pending_injector(self) -> None:
-        return None
-
-    @property
-    def memory_context(self) -> None:
-        return None
-
-    @property
-    def checkpoint_store(self) -> None:
-        return None
-
-    @property
     def safety(self) -> RuntimeSafetyPolicy:
         return self.services.safety
 

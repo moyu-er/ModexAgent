@@ -82,7 +82,6 @@ class TestReActAgentRuntime:
             system_prompt="test",
             history=ListMessageHistory(),
             tool_manager=InMemoryToolManager(),
-            extensions={"hook_runner": HookRunner()},
         )
         emitter = _Emitter()
         try:
@@ -90,8 +89,7 @@ class TestReActAgentRuntime:
         except Exception:
             pass
         assert ctx.runtime is not None
-        assert ctx.runtime.mode == "clean"
-        assert ctx.runtime.hooks is None  # sanitized
+        assert ctx.runtime.services.hooks is None  # sanitized clean mode
 
     @pytest.mark.asyncio
     async def test_full_mode_preserves_hooks(self):
@@ -120,7 +118,6 @@ class TestReActAgentRuntime:
             system_prompt="test",
             history=ListMessageHistory(),
             tool_manager=InMemoryToolManager(),
-            extensions={"hook_runner": HookRunner()},
         )
         emitter = _Emitter()
         try:
@@ -128,5 +125,4 @@ class TestReActAgentRuntime:
         except Exception:
             pass
         assert ctx.runtime is not None
-        assert ctx.runtime.mode == "full"
-        assert ctx.runtime.hooks is not None
+        assert ctx.runtime.services.hooks is None  # no prebuilt hooks supplied

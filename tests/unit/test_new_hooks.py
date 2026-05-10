@@ -10,15 +10,23 @@ from framework.core.types import LLMResponse
 from framework.hook.builtin.llm_output_guard import LLMOutputGuardHook
 from framework.hook.builtin.tool_result_transform import ToolResultTransformHook
 from framework.memory.history import ListMessageHistory
+from framework.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
+from framework.runtime.models import TurnIdentity, TurnStateBase
+from framework.runtime.services import AgentRuntime, AgentRuntimeServices
 
 
 def _ctx() -> AgentContext:
+    state = TurnStateBase(
+        identity=TurnIdentity(agent_id="test", session_id="s1", turn_id="t1"),
+        agent_kind=AgentKind.REACT, phase=TurnPhase.RUNNING,
+    )
+    runtime = AgentRuntime(services=AgentRuntimeServices(), state=state)
     return AgentContext(
         system_prompt="test",
         history=ListMessageHistory([]),
         tool_manager=MagicMock(),
         session_id="s1",
-        metadata={},
+        runtime=runtime,
     )
 
 
@@ -52,9 +60,10 @@ class TestLLMOutputGuardHook:
         response = _MutableResponse("Here is an exploit for the vulnerability")
 
         await hook.after_llm_response(ctx, response)
-        assert ctx.metadata.get("_llm_output_risk") is not None
-        assert "exploit" in ctx.metadata["_llm_output_risk"]
-        assert "vulnerability" in ctx.metadata["_llm_output_risk"]
+        risk = ctx.runtime.state.custom.get(TurnCustomKey.LLM_OUTPUT_RISK)
+        assert risk is not None
+        assert "exploit" in risk
+        assert "vulnerability" in risk
 
     async def test_empty_content_noop(self):
         hook = LLMOutputGuardHook()
@@ -62,7 +71,7 @@ class TestLLMOutputGuardHook:
         response = _MutableResponse(None)
 
         await hook.after_llm_response(ctx, response)
-        assert ctx.metadata.get("_llm_output_risk") is None
+        assert ctx.runtime.state.custom.get(TurnCustomKey.LLM_OUTPUT_RISK) is None
 
 
 class TestToolResultTransformHook:
