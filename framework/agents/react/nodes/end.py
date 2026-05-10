@@ -63,7 +63,6 @@ class EndNode(Node):
         if state is not None:
             state.phase = TurnPhase.COMPLETING
 
-        await self._agent._clear_checkpoint(ctx)
         if ctx.emitter is not None:
             await ctx.emitter.emit_complete(result)
         ctx.runtime.state.custom[TurnCustomKey.GRAPH_RESULT] = result

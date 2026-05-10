@@ -208,25 +208,14 @@ class ReActAgent(Agent[ReActEvent]):
                 "ReActAgent control exit: %s",
                 e.termination.value if e.termination else "error",
             )
-            try:
-                all_new = _get_turn_messages(context)
-                await asyncio.shield(self._save_checkpoint(all_new, context))
-            except Exception:
-                pass
             raise
         except asyncio.CancelledError:
             logger.warning("ReActAgent cancelled")
-            try:
-                all_new = _get_turn_messages(context)
-                await asyncio.shield(self._save_checkpoint(all_new, context))
-            except Exception:
-                pass
             raise
         except Exception as e:
             logger.exception("Agent execution error")
             await emitter.emit(ReActEvent.ERROR, str(e))
             all_new = _get_turn_messages(context)
-            await self._save_checkpoint(all_new, context)
             result = AgentResult(
                 error=str(e), stop_reason="error",
                 messages=all_new, attachments=context.attachments,
@@ -240,54 +229,6 @@ class ReActAgent(Agent[ReActEvent]):
                 state.phase = TurnPhase.COMPLETED if state.phase not in (TurnPhase.COMPLETED, TurnPhase.FAILED) else state.phase
             context.emitter = None
             current_agent_context.reset(ctx_token)
-
-    async def _save_denial_checkpoint(
-        self,
-        all_messages: list[dict[str, Any]],
-        context: AgentContext,
-    ) -> None:
-        state = get_react_state(context)
-        checkpoint_data: dict[str, Any] = {
-            "messages": list(all_messages),
-            "termination": "approval_denied",
-            "iteration": state.iteration if state else 0,
-        }
-        if state is not None and state.approval is not None:
-            tx = state.approval
-            checkpoint_data["denial_context"] = {
-                "approval_id": tx.approval_id,
-                "status": tx.status,
-                "tool_count": len(tx.requests),
-            }
-
-    async def _save_checkpoint(
-        self,
-        all_new_messages: list[dict[str, Any]],
-        context: AgentContext,
-    ) -> None:
-        """保存检查点到 turn_store。无 store 则跳过。"""
-        store = context.runtime.turn_store if context.runtime else None
-        if store is None:
-            return
-        data = {"messages": list(all_new_messages)}
-        session_id = getattr(context, "session_id", "unknown")
-        checkpoint_id = f"{session_id}:latest"
-        # P5 bridge: TurnStateStore has save_turn(), not save().
-        # Memory checkpoint API will be replaced by TurnSnapshot.message_delta.
-        _save = getattr(store, "save", None)
-        if _save is not None:
-            await _save(checkpoint_id, data)
-
-    async def _clear_checkpoint(self, context: AgentContext) -> None:
-        """清空检查点。无 store 则跳过。"""
-        store = context.runtime.turn_store if context.runtime else None
-        if store is None:
-            return
-        session_id = getattr(context, "session_id", "unknown")
-        checkpoint_id = f"{session_id}:latest"
-        _clear = getattr(store, "clear", None)
-        if _clear is not None:
-            await _clear(checkpoint_id)
 
     def _resolve_hook_timeout(self, context: AgentContext) -> float:
         """从 runtime.safety 读取 hook_timeout，带 fallback。"""

@@ -559,11 +559,15 @@ class TestReActAgentRegression:
 
 
 class TestReActAgentCheckpoint:
-    """崩溃恢复检查点测试。"""
+    """崩溃恢复检查点测试 — P5: 旧 save/clear checkpoint 已替换为 TurnSnapshot.message_delta。"""
 
     @pytest.fixture
     def streaming_provider(self):
         return MockStreamingProvider()
+
+    @pytest.fixture
+    def non_streaming_provider(self):
+        return MockNonStreamingProvider()
 
     @pytest.fixture
     def non_streaming_provider(self):
@@ -586,6 +590,7 @@ class TestReActAgentCheckpoint:
 
     @pytest.mark.asyncio
     async def test_checkpoint_saved_after_assistant_and_tool_messages(self, streaming_provider, context, emitter):
+        pytest.skip("P5: old save/clear checkpoint replaced by TurnSnapshot.message_delta")
         tool_call = ToolCall(tool_name="weather", arguments={"city": "Beijing"}, call_id="call_1")
         iteration = 0
 
@@ -636,6 +641,7 @@ class TestReActAgentCheckpoint:
 
     @pytest.mark.asyncio
     async def test_checkpoint_cleared_on_final_output(self, non_streaming_provider, context, emitter):
+        pytest.skip("P5: old save/clear checkpoint replaced by TurnSnapshot.message_delta")
         async def mock_chat(*args, **kwargs):
             return LLMResponse(content="Final answer")
 
@@ -667,6 +673,7 @@ class TestReActAgentCheckpoint:
 
     @pytest.mark.asyncio
     async def test_checkpoint_saved_on_error(self, non_streaming_provider, context, emitter):
+        pytest.skip("P5: old save/clear checkpoint replaced by TurnSnapshot.message_delta")
         async def mock_chat(*args, **kwargs):
             raise ValueError("LLM failure")
 
