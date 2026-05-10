@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from framework.core.agent import AgentContext
     from framework.runtime.store import TurnStateStore
     from framework.runtime.policy import SnapshotPolicy
+    from .state import ReActTurnState
 
 
 @dataclass
@@ -270,12 +271,11 @@ class TurnStateSuspendStrategy(SuspendStrategy):
             await self._turn_store.delete_turn(snapshot.identity)
 
     @staticmethod
-    def _get_react_state(ctx: AgentContext) -> Any:
+    def _get_react_state(ctx: AgentContext) -> ReActTurnState | None:
         if getattr(ctx, "identity", None) is None or ctx.runtime is None:
             return None
         if not hasattr(ctx.runtime, "state"):
             return None
-        from .state import ReActTurnState
         state = ctx.runtime.state
         if isinstance(state, ReActTurnState):
             return state
