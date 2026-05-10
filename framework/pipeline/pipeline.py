@@ -150,12 +150,10 @@ class AgentPipeline:
         safety: RuntimeSafetyPolicy | None = None,
         hook_runner: Any | None = None,
         interceptor_chain: Any | None = None,
-        checkpoint_store: Any | None = None,  # DEPRECATED: old memory checkpoint, separate from turn_store
         control_channel: Any | None = None,
         busy_input_mode: BusyInputMode = BusyInputMode.QUEUE,
         approval_workspace: str = ".modex_approval",
         user_interface: ControlUserInterface | None = None,
-        prebuilt_runtime: Any | None = None,
         turn_store: Any | None = None,
         command_store: Any | None = None,
     ):
@@ -200,16 +198,13 @@ class AgentPipeline:
         self.safety = safety or RuntimeSafetyPolicy()
         self.hook_runner = hook_runner
         self.interceptor_chain = interceptor_chain
-        self.checkpoint_store = checkpoint_store
         self.control_channel = control_channel
         self.busy_input_mode = busy_input_mode
         self._approval_workspace = Path(approval_workspace)
-        self._prebuilt_runtime = prebuilt_runtime
         self.turn_store = turn_store
         self.command_store = command_store
         self._approval = ApprovalRenderer(
             approval_workspace=self._approval_workspace,
-            checkpoint_store=checkpoint_store,
             agent=agent,
             user_interface=user_interface,
             on_drain=self._process_message,
@@ -548,8 +543,6 @@ class AgentPipeline:
             services = AgentRuntimeServices(
                 hooks=self.hook_runner,
                 interceptors=self.interceptor_chain,
-                control=getattr(self._prebuilt_runtime, "control", None) if self._prebuilt_runtime else None,
-                approval=getattr(self._prebuilt_runtime, "approval", None) if self._prebuilt_runtime else None,
                 governance=self.governance,
                 turn_store=self.turn_store,
                 command_store=self.command_store,
@@ -559,12 +552,6 @@ class AgentPipeline:
             )
             agent_context.runtime = AgentRuntime(services=services, state=react_state)
             agent_context.runtime.state.custom[TurnCustomKey.MAX_TOOLS_PER_TURN] = None
-        elif self._prebuilt_runtime is not None:
-            # Legacy path — prebuilt runtime without turn_store.
-            # Bot project not yet rewired (P6), so this path is unused.
-            # The deleted memory_context/pending_injector properties no longer
-            # exist on AgentRuntime.
-            agent_context.runtime = self._prebuilt_runtime
 
         # Emitter selection
         if self.emitter_factory:

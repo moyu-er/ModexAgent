@@ -15,7 +15,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from framework.core.agent import AgentContext
-from framework.runtime.enums import TurnCustomKey
+from framework.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
+from framework.runtime.models import TurnIdentity, TurnStateBase
+from framework.runtime.services import AgentRuntime, AgentRuntimeServices
 from framework.core.emitter import AgentResult, BufferingEmitter, ContentEmitter
 from framework.core.provider import StreamingLLMProvider
 from framework.core.runtime_context import RuntimeContextManager
@@ -242,7 +244,6 @@ class TestAsyncSendMessage:
 class TestInboxFlushHook:
     """Verify InboxFlushHook delivers inbox messages to agent context."""
 
-    @pytest.mark.skip(reason="P6: needs AgentRuntime wiring for RuntimeContextManager")
     async def test_flushes_inbox_on_before_turn(self):
         """InboxFlushHook.before_turn() flushes pending messages to history."""
         server, producer, consumer = _make_inbox()
@@ -263,7 +264,7 @@ class TestInboxFlushHook:
 
         ctx = MagicMock()
         ctx.history = history
-        ctx.metadata = {"session_id": "conv-1:peer"}
+        ctx.session_id = "conv-1:peer"
 
         await hook.before_turn(ctx)
 
@@ -318,7 +319,6 @@ class TestSessionRouting:
 class TestPeerAutoSendHookBot:
     """Verify PeerAutoSendHook forwards peer content to main."""
 
-    @pytest.mark.skip(reason="P6: needs AgentRuntime wiring for RuntimeContextManager")
     async def test_auto_forwards_when_no_tool_called(self):
         """If peer didn't call send_message_async, hook auto-forwards."""
         broker = _make_broker()
@@ -332,13 +332,13 @@ class TestPeerAutoSendHookBot:
             parent_name="main",
         )
 
-        ctx = MagicMock()
-        ctx.session_id = "conv-1:office-expert"
-        ctx.metadata = {"session_id": "conv-1:office-expert"}
-        ctx.extensions = {
-            "runtime_context": None,
-            "runtime_context_manager": runtime_mgr,
-        }
+        session_id = "conv-1:office-expert"
+        identity = TurnIdentity(agent_id="office-expert", session_id=session_id, turn_id="t1")
+        state = TurnStateBase(identity=identity, agent_kind=AgentKind.REACT, phase=TurnPhase.RUNNING)
+        services = AgentRuntimeServices(runtime_context_manager=runtime_mgr)
+        ctx = MagicMock(spec=AgentContext)
+        ctx.session_id = session_id
+        ctx.runtime = AgentRuntime(services=services, state=state)
 
         result = AgentResult(content="Document created successfully", stop_reason="completed")
 
@@ -353,7 +353,6 @@ class TestPeerAutoSendHookBot:
 
         await broker.stop()
 
-    @pytest.mark.skip(reason="P6: needs AgentRuntime wiring for RuntimeContextManager")
     async def test_skips_when_send_message_tool_already_called(self):
         """If peer already called send_message_async, hook skips auto-forward."""
         broker = _make_broker()
@@ -368,14 +367,16 @@ class TestPeerAutoSendHookBot:
         )
 
         session_id = "conv-2:office-expert"
-        metadata = {"session_id": session_id}
-        ctx = MagicMock()
+        identity = TurnIdentity(agent_id="office-expert", session_id=session_id, turn_id="t1")
+        state = TurnStateBase(identity=identity, agent_kind=AgentKind.REACT, phase=TurnPhase.RUNNING)
+        services = AgentRuntimeServices(runtime_context_manager=runtime_mgr)
+        ctx = MagicMock(spec=AgentContext)
         ctx.session_id = session_id
-        ctx.metadata = metadata
-        ctx.extensions = {
-            "runtime_context": None,
-            "runtime_context_manager": runtime_mgr,
-        }
+        ctx.runtime = AgentRuntime(services=services, state=state)
+
+        # Record that send_message_async was already called
+        metadata = {"session_id": session_id}
+        rc = await runtime_mgr.get_context(session_id, metadata)
 
         # Record that send_message_async was already called
         rc = await runtime_mgr.get_context(session_id, metadata)

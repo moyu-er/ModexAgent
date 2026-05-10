@@ -164,7 +164,6 @@ class BotService(AgentBuilderMixin):
 
         # Approval components
         self._approval_workspace: Path | None = None
-        self._checkpoint_store: Any | None = None
         self._im_ui: IMUserInterface | None = None
         self._turn_store: Any | None = None
         self._command_store: Any | None = None
@@ -349,7 +348,7 @@ class BotService(AgentBuilderMixin):
         self._approval_workspace = self._project_dir / approval_cfg.get(
             "workspace", "data/approval"
         )
-        self._checkpoint_store = NoOpTurnStateStore()
+        self._turn_store = NoOpTurnStateStore()
         self._im_ui = IMUserInterface(
             output_adapter=self.output_adapter,
             channel=self.control_channel,
@@ -466,10 +465,8 @@ class BotService(AgentBuilderMixin):
             context_manager_factory=self._get_context_manager,
             governance=self._build_governance(),
             safety=self.safety_policy,
-            checkpoint_store=self._checkpoint_store,
             approval_workspace=str(self._approval_workspace),
             user_interface=self._im_ui,
-            prebuilt_runtime=runtime,
             turn_store=self._turn_store,
             command_store=self._command_store,
         )
@@ -548,20 +545,17 @@ class BotService(AgentBuilderMixin):
         await self.agent_pool.register_resident(main_descriptor)
         print(f"[OK] AgentPool initialized, main agent '{parent_agent_name}' registered as resident")
 
-        # Inject AgentRuntime into main agent's pool pipeline
+        # Wire AgentRuntime services into main agent's pool pipeline
         main_instance = self.agent_pool._agents.get(parent_agent_name)
         if main_instance is not None and main_instance.pipeline is not None:
             # Build AgentRuntime via framework RuntimeAssembler
             runtime = await self._assemble_runtime(hooks=main_instance.pipeline.hook_runner)
 
-            # Inject runtime into pipeline; AgentPipeline._build_runtime_and_context
-            # will assign it directly to agent_context.runtime when set.
-            main_instance.pipeline._prebuilt_runtime = runtime
             main_instance.pipeline.interceptor_chain = runtime.interceptors
-            main_instance.pipeline.checkpoint_store = self._checkpoint_store
+            main_instance.pipeline.turn_store = self._turn_store
             main_instance.pipeline._approval_workspace = self._approval_workspace
             main_instance.pipeline._user_interface = self._im_ui
-            print("[OK] Main agent pool pipeline injected with AgentRuntime")
+            print("[OK] Main agent pool pipeline wired with AgentRuntime services")
 
         # Register subagents as residents (pool mode requires all targets to be resident)
         subagent_memory_config = self.config.get("memory", {}).get("subagents", {})
@@ -823,7 +817,7 @@ class BotService(AgentBuilderMixin):
             control_channel=self.control_channel,
             control_store=InMemoryControlStore(),
             command_handlers=[(ControlCommandType.CANCEL_TURN, DefaultCancelHandler())],
-            turn_store=self._checkpoint_store,
+            turn_store=self._turn_store,
             project_root=self._project_dir,
             governance=self._build_governance(),
             safety=self.safety_policy,
