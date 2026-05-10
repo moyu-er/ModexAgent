@@ -7,6 +7,9 @@ from unittest.mock import AsyncMock, MagicMock
 from framework.agents.react.agent import ReActAgent
 from framework.core.context_extensions import ExtensionKey
 from framework.core.types import LLMResponse
+from framework.runtime.enums import AgentKind, TurnPhase
+from framework.runtime.models import TurnIdentity, TurnStateBase
+from framework.runtime.services import AgentRuntime, AgentRuntimeServices
 
 
 class _FakeHistory:
@@ -41,16 +44,15 @@ class _FakeContext:
         self.max_tokens = None
         self.session_id = "test-session"
         self.metadata: dict = {}
-        self.extensions: dict[str, Any] = {
-            ExtensionKey.MAX_TOOLS_PER_TURN: None,
-            ExtensionKey.GOVERNANCE: None,
-            ExtensionKey.ON_CHECKPOINT: None,
-            ExtensionKey.SAFETY: None,
-            ExtensionKey.RUNTIME_CTX_MGR: None,
-            ExtensionKey.RUNTIME_CTX: None,
-        }
-        from framework.agents.react.runtime import ReActRuntime
-        self.runtime: Any = ReActRuntime(mode="full", injection_queue=injection_queue)
+        self.extensions: dict[str, Any] = {}
+        state = TurnStateBase(
+            identity=TurnIdentity(agent_id="test", session_id="s1", turn_id="t1"),
+            agent_kind=AgentKind.REACT, phase=TurnPhase.RUNNING,
+        )
+        services = AgentRuntimeServices(
+            pending_input_queue=injection_queue,
+        )
+        self.runtime: Any = AgentRuntime(services=services, state=state)
 
     async def to_messages(self):
         return list(self.messages)

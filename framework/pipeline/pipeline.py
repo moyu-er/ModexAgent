@@ -507,14 +507,7 @@ class AgentPipeline:
         context_state: Any,
         ctx_mgr: Any,
     ) -> tuple[AgentContext, Any]:
-        """Build AgentContext and emitter for the turn.
-
-        Only uses the active ExtensionKey set: RUNTIME_CTX_MGR, GOVERNANCE, SAFETY,
-        MAX_TOOLS_PER_TURN, ON_CHECKPOINT.
-
-        Returns:
-            (agent_context, emitter)
-        """
+        """Build AgentContext and emitter for the turn."""
         async def on_checkpoint(messages: list[ChatMessage | dict[str, Any]]) -> None:
             await ctx_mgr.save_checkpoint(session_id, messages)
 
@@ -525,8 +518,6 @@ class AgentPipeline:
 
         extensions: dict[Any, Any] = {
             ExtensionKey.RUNTIME_CTX_MGR: self.runtime_context_manager,
-            ExtensionKey.ON_CHECKPOINT: on_checkpoint,
-            ExtensionKey.MAX_TOOLS_PER_TURN: None,
         }
         memory_system = getattr(ctx_mgr, "memory_system", None)
         layers = getattr(memory_system, "layers", None)
@@ -563,7 +554,6 @@ class AgentPipeline:
             tool_manager=self.tool_manager,
             session_id=session_id,
             max_iterations=self.max_iterations,
-            metadata={"session_id": session_id},
             extensions=extensions,
         )
         agent_context.identity = turn_identity
@@ -572,7 +562,7 @@ class AgentPipeline:
         if self.turn_store is not None:
             from framework.runtime.services import AgentRuntime, AgentRuntimeServices
             from framework.agents.react.state import ReActTurnState
-            from framework.runtime.enums import AgentKind, TurnPhase as RTurnPhase
+            from framework.runtime.enums import AgentKind, TurnCustomKey, TurnPhase as RTurnPhase
             react_state = ReActTurnState(
                 identity=turn_identity,
                 agent_kind=AgentKind.REACT,
@@ -588,8 +578,10 @@ class AgentPipeline:
                 command_store=self.command_store,
                 pending_input_queue=self._injection_queues.get(session_id),
                 safety=self.safety,
+                runtime_context_manager=self.runtime_context_manager,
             )
             agent_context.runtime = AgentRuntime(services=services, state=react_state)
+            agent_context.runtime.state.custom[TurnCustomKey.MAX_TOOLS_PER_TURN] = None
         elif self._prebuilt_runtime is not None:
             # Legacy prebuilt runtime (backward compat)
             agent_context.runtime = self._prebuilt_runtime

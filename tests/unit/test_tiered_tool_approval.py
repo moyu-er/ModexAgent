@@ -41,7 +41,6 @@ def _make_ctx() -> AgentContext:
         history=ListMessageHistory([]),
         tool_manager=MagicMock(),
         session_id="s1",
-        metadata={},
         runtime=runtime,
     )
 

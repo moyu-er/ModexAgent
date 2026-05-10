@@ -153,7 +153,7 @@ class ToolWatchInterceptor:
             tool_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await tool_task
-            ctx.metadata.setdefault("_cancelled_tool_records", {})[
+            _get_state_custom(ctx).setdefault(TurnCustomKey.CANCELLED_TOOL_RECORDS, {})[
                 call.tool_call.call_id or ""
             ] = {"tool_name": call.tool_name}
             raise AgentCancelled(f"Tool '{call.tool_name}' cancelled")

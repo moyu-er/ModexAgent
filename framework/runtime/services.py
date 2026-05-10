@@ -6,7 +6,7 @@ Services are not serialized into snapshots.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from framework.core.llm_error import RuntimeSafetyPolicy
 
@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from framework.interceptor.chain import InterceptorChain
     from framework.control.runtime import ControlRuntime
     from framework.agents.react.approval import ApprovalRuntime
+    from framework.core.runtime_context import RuntimeContext, RuntimeContextManager
     from framework.memory.context_governance import ContextGovernance
     from .store import TurnStateStore, RuntimeCommandStore
 
@@ -37,6 +38,7 @@ class AgentRuntimeServices:
     command_store: RuntimeCommandStore | None = None
     pending_input_queue: asyncio.Queue[str] | None = None
     safety: RuntimeSafetyPolicy = field(default_factory=RuntimeSafetyPolicy)
+    runtime_context_manager: RuntimeContextManager | None = None
 
 
 @dataclass
@@ -50,6 +52,7 @@ class AgentRuntime:
 
     services: AgentRuntimeServices
     state: TurnStateBase
+    _runtime_context: Any = field(default=None, repr=False)
 
     @property
     def hooks(self) -> HookRunner | None:

@@ -5,6 +5,18 @@ from framework.core.graph.graph import Graph
 from framework.core.graph.node import Node, NodeTransition
 from framework.core.graph.constants import GraphNode, GraphMetaKey
 from framework.core.graph.interrupt import GraphInterrupt
+from framework.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
+from framework.runtime.models import TurnIdentity, TurnStateBase
+from framework.runtime.services import AgentRuntime, AgentRuntimeServices
+
+
+class _MinimalRuntime:
+    def __init__(self) -> None:
+        self.state = TurnStateBase(
+            identity=TurnIdentity(agent_id="test", session_id="s1", turn_id="t1"),
+            agent_kind=AgentKind.REACT,
+            phase=TurnPhase.RUNNING,
+        )
 
 
 class _TrackedNode(Node):
@@ -25,6 +37,7 @@ class _TrackedNode(Node):
 class _Ctx:
     def __init__(self):
         self.metadata = {}
+        self.runtime = _MinimalRuntime()
 
 
 class TestGraphEngine:
@@ -53,10 +66,10 @@ class TestGraphEngine:
         assert n2.call_count == 1
 
     @pytest.mark.asyncio
-    async def test_build_result_reads_metadata(self):
+    async def test_build_result_reads_typed_state(self):
         g = Graph()
         def side(ctx):
-            ctx.metadata[GraphMetaKey.GRAPH_RESULT] = 42
+            ctx.runtime.state.custom[TurnCustomKey.GRAPH_RESULT] = 42
         node = _TrackedNode("start", GraphNode.END, "done", side_effect=side)
         g.add_node(node)
 

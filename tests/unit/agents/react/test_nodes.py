@@ -16,10 +16,10 @@ from framework.core.agent import AgentContext
 from framework.core.constants import FinishReason
 from framework.core.context_extensions import ExtensionKey
 from framework.core.emitter import ToolCall, ToolResult
-from framework.core.graph.constants import GraphMetaKey, GraphNode
+from framework.core.graph.constants import GraphNode
 from framework.core.tool_manager import InMemoryToolManager
 from framework.memory.history import ListMessageHistory
-from framework.runtime.enums import AgentKind, TurnPhase
+from framework.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from framework.runtime.models import TurnIdentity
 from framework.runtime.services import AgentRuntime, AgentRuntimeServices
 
@@ -140,7 +140,7 @@ class TestEndNode:
 
         t = await node.execute(ctx)
         assert t.target == GraphNode.END
-        result = ctx.metadata[GraphMetaKey.GRAPH_RESULT]
+        result = ctx.runtime.state.custom[TurnCustomKey.GRAPH_RESULT]
         assert result.content == "Done!"
 
     @pytest.mark.asyncio
@@ -160,7 +160,7 @@ class TestEndNode:
 
         t = await node.execute(ctx)
         assert t.target == GraphNode.END
-        result = ctx.metadata[GraphMetaKey.GRAPH_RESULT]
+        result = ctx.runtime.state.custom[TurnCustomKey.GRAPH_RESULT]
         assert result.content == "max iterations reached"
         assert result.stop_reason == "max_iterations"
 
@@ -181,7 +181,7 @@ class TestEndNode:
 
         t = await node.execute(ctx)
         assert t.target == GraphNode.END
-        result = ctx.metadata[GraphMetaKey.GRAPH_RESULT]
+        result = ctx.runtime.state.custom[TurnCustomKey.GRAPH_RESULT]
         assert result.content == "max iterations reached"
 
 
@@ -439,10 +439,10 @@ class TestToolNode:
 
         runtime = _make_runtime()
         runtime.state.llm_response = response
+        runtime.state.custom[TurnCustomKey.MAX_TOOLS_PER_TURN] = 3
         ctx = AgentContext(
             system_prompt="test", history=_MockHistory(),
             tool_manager=InMemoryToolManager(),
-            extensions={ExtensionKey.MAX_TOOLS_PER_TURN: 3},
             identity=runtime.state.identity, runtime=runtime,
         )
         ctx.emitter = _MockEmitter()

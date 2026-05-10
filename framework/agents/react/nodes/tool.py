@@ -11,7 +11,6 @@ from framework.agents.react.state import ReActSnapshotPolicy, get_react_state
 from framework.approval.constants import ApprovalDecision, ApprovalTier
 from framework.control.runtime import ControlPhase
 from framework.core.agent import AgentContext
-from framework.core.context_extensions import ExtensionKey
 from framework.core.emitter import ToolCall
 from framework.core.graph.interrupt import interrupt
 from framework.core.graph.node import Node, NodeTransition
@@ -25,6 +24,7 @@ from framework.runtime.enums import (
     SnapshotReason,
     ToolBatchStatus,
     ToolCallStatus,
+    TurnCustomKey,
     TurnPhase,
 )
 from framework.runtime.models import (
@@ -61,7 +61,7 @@ class ToolNode(Node):
         state.llm_response = None
         state.current_node = ReActNode.TOOL
 
-        max_tools = ctx.extensions.get(ExtensionKey.MAX_TOOLS_PER_TURN)
+        max_tools = ctx.runtime.state.custom.get(TurnCustomKey.MAX_TOOLS_PER_TURN) if ctx.runtime else None
         if max_tools is not None and len(tool_calls) > max_tools:
             if ctx.emitter is not None:
                 await ctx.emitter.emit(ReActEvent.ERROR, f"Exceeded max_tools_per_turn ({max_tools})")

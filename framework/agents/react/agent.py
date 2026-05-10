@@ -11,7 +11,7 @@ from enum import Enum
 from typing import Any, Literal
 
 from framework.agents.react.state import get_react_state
-from framework.runtime.enums import TurnPhase
+from framework.runtime.enums import TurnCustomKey, TurnPhase
 from framework.control.exceptions import AgentControlError
 from framework.control.runtime import ControlPhase
 from framework.hook import HookPayload, HookPoint
@@ -259,8 +259,8 @@ class ReActAgent(Agent[ReActEvent]):
         all_new_messages: list[dict[str, Any]],
         context: AgentContext,
     ) -> None:
-        """保存检查点到 checkpoint_store。无 store 则跳过。"""
-        checkpoint_store = context.runtime.checkpoint_store if context.runtime else None
+        """保存检查点到 turn_store。无 store 则跳过。"""
+        checkpoint_store = context.runtime.turn_store if context.runtime else None
         if checkpoint_store is None:
             return
         data = {"messages": list(all_new_messages)}
@@ -270,7 +270,7 @@ class ReActAgent(Agent[ReActEvent]):
 
     async def _clear_checkpoint(self, context: AgentContext) -> None:
         """清空检查点。无 store 则跳过。"""
-        checkpoint_store = context.runtime.checkpoint_store if context.runtime else None
+        checkpoint_store = context.runtime.turn_store if context.runtime else None
         if checkpoint_store is None:
             return
         session_id = getattr(context, "session_id", "unknown")
@@ -475,7 +475,7 @@ class ReActAgent(Agent[ReActEvent]):
         if q is None:
             return []
 
-        cycle_count: int = context.metadata.get("_injection_cycle_count", 0)
+        cycle_count: int = context.runtime.state.custom.get(TurnCustomKey.INJECTION_CYCLE_COUNT, 0) if context.runtime else 0
         if cycle_count >= _MAX_INJECTION_CYCLES:
             while True:
                 try:
@@ -506,7 +506,8 @@ class ReActAgent(Agent[ReActEvent]):
             injected.append(msg)
 
         if injected:
-            context.metadata["_injection_cycle_count"] = cycle_count + 1
+            if context.runtime:
+                context.runtime.state.custom[TurnCustomKey.INJECTION_CYCLE_COUNT] = cycle_count + 1
 
         return injected
 

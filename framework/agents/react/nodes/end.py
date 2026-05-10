@@ -9,9 +9,9 @@ from framework.agents.react.state import get_react_state
 from framework.core.agent import AgentContext
 from framework.core.constants import FinishReason
 from framework.core.emitter import AgentResult
-from framework.core.graph.constants import GraphMetaKey, GraphNode
+from framework.core.graph.constants import GraphNode
 from framework.core.graph.node import Node, NodeTransition
-from framework.runtime.enums import TurnPhase
+from framework.runtime.enums import TurnCustomKey, TurnPhase
 
 if TYPE_CHECKING:
     from framework.agents.react.agent import ReActAgent
@@ -66,7 +66,7 @@ class EndNode(Node):
         await self._agent._clear_checkpoint(ctx)
         if ctx.emitter is not None:
             await ctx.emitter.emit_complete(result)
-        ctx.metadata[GraphMetaKey.GRAPH_RESULT] = result
+        ctx.runtime.state.custom[TurnCustomKey.GRAPH_RESULT] = result
 
         if state is not None:
             state.mark_completed()

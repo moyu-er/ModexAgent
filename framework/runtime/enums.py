@@ -129,3 +129,6 @@ class TurnCustomKey(StrEnum):
     APPROVAL_YOLO = "approval_yolo"
     POLICY_DENIED_TOOLS = "_policy_denied_tools"
     TOOL_USAGE = "usage"
+    GRAPH_RESULT = "_graph_result"
+    MAX_TOOLS_PER_TURN = "max_tools_per_turn"
+    INJECTION_CYCLE_COUNT = "_injection_cycle_count"

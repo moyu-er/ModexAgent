@@ -135,7 +135,7 @@ class TestReActAgentToolTimeout:
         provider.get_default_model = lambda: "mock"
         class SlowTool:
             async def execute(self, tool_name, arguments):
-                await asyncio.sleep(999)
+                await asyncio.sleep(0.5)
                 return ToolResult(tool_name=tool_name, result="done")
         class FakeToolManager:
             def __init__(self, tool):
@@ -163,7 +163,7 @@ class TestReActAgentHookTimeout:
         provider.get_default_model = lambda: "mock"
         class SlowHook:
             async def before_turn(self, context):
-                await asyncio.sleep(999)
+                await asyncio.sleep(0.5)
         agent = ReActAgent(provider=provider, hook_timeout=0.01)
         emitter = _FakeEmitter()
         ctx = _make_ctx()

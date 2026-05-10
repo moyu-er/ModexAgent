@@ -36,7 +36,6 @@ class AgentContext:
     max_tokens: int | None = None
     attachments: list[str] = field(default_factory=list)
     extensions: dict[str, Any] = field(default_factory=dict)
-    metadata: dict[str, Any] = field(default_factory=dict)
     emitter: ContentEmitter | None = None
     runtime: AgentRuntime | None = None
     identity: TurnIdentity | None = None
@@ -56,11 +55,6 @@ class AgentContext:
 
     def get_tool_descriptions(self) -> list[dict[str, Any]]:
         return self.tool_manager.get_tool_descriptions()
-
-
-def ctx_ext(ctx: AgentContext, key: str, default: Any = None) -> Any:
-    """Safe accessor for AgentContext.extensions."""
-    return ctx.extensions.get(key, default)
 
 
 current_agent_context: contextvars.ContextVar[AgentContext] = contextvars.ContextVar(

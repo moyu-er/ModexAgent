@@ -78,7 +78,7 @@ class LLMNode(Node):
             cm = ChatMessage.from_dict(assistant_msg) if isinstance(assistant_msg, dict) else ChatMessage(role="assistant", content=response.content or "")
             state.message_delta.append(MessageDelta(message=cm, source=MessageDeltaSource.ASSISTANT))
 
-            if runtime and runtime.checkpoint_store:
+            if runtime and runtime.turn_store:
                 await self._agent._save_checkpoint([assistant_msg], ctx)
 
         if (
