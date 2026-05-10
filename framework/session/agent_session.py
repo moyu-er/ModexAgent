@@ -81,7 +81,6 @@ class AgentSession(Generic[E]):
         runtime_context_manager: Any | None = None,
         hook_runner: Any | None = None,
         interceptor_chain: Any | None = None,
-        checkpoint_store: Any | None = None,  # DEPRECATED renamed to turn_store
         turn_store: Any | None = None,
     ):
         """初始化 AgentSession
@@ -130,8 +129,7 @@ class AgentSession(Generic[E]):
         self._runtime_context_manager = runtime_context_manager
         self._hook_runner = hook_runner
         self._interceptor_chain = interceptor_chain
-        self._checkpoint_store = checkpoint_store  # DEPRECATED
-        self._turn_store = turn_store if turn_store is not None else checkpoint_store
+        self._turn_store = turn_store
 
     async def process_message(
         self,

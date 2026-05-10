@@ -31,7 +31,6 @@ class RuntimeControl:
 
     channel: ControlChannel | None = None
     event_bus: ControlEventBus | None = None
-    checkpoint_store: TurnStateStore | None = None  # DEPRECATED renamed to turn_store
     turn_store: TurnStateStore | None = None
     preset_rules: list[PresetControlRule] = field(default_factory=list)
     busy_input_mode: BusyInputMode = BusyInputMode.QUEUE

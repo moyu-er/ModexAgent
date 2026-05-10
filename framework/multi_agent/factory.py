@@ -303,7 +303,7 @@ class DefaultAgentFactory(AgentFactory):
                 runtime_context_manager=self._runtime_context_manager,
                 hook_runner=hook_runner,
                 interceptor_chain=session_interceptor_chain,
-                checkpoint_store=self._default_turn_store,
+                turn_store=self._default_turn_store,
             )
 
         return AgentInstance(
