@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from framework.agents.react.constants import ReActMetaKey
 from framework.agents.react.nodes.tool import ToolNode
 from framework.approval.constants import ApprovalDecision, ApprovalStatus
 from framework.approval.state import ApprovalRequest, ApprovalState
@@ -162,9 +161,9 @@ class TestToolNodeBatchAtomicity:
             tool_manager=InMemoryToolManager(),
             session_id="s1",
             metadata={
-                ReActMetaKey.ITERATION: 1,
-                ReActMetaKey.ITERATION_MSGS: [],
-                ReActMetaKey.DENY_AS_CANCEL: True,
+                "_react_iteration": 1,
+                "_iteration_messages": [],
+                "_deny_as_cancel": True,
                 "APPROVAL_DENY_REASON": 'unrelated input: "hello"',
             },
         )
@@ -210,9 +209,9 @@ class TestToolNodeBatchAtomicity:
             tool_manager=InMemoryToolManager(),
             session_id="s1",
             metadata={
-                ReActMetaKey.ITERATION: 1,
-                ReActMetaKey.ITERATION_MSGS: [],
-                ReActMetaKey.DENY_AS_CANCEL: True,
+                "_react_iteration": 1,
+                "_iteration_messages": [],
+                "_deny_as_cancel": True,
             },
         )
         ctx.emitter = _FakeEmitter()

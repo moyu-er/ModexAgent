@@ -257,7 +257,7 @@ class TestToolNodeDenyReasonError:
     async def test_denied_tool_includes_deny_reason_in_error(self):
         """When APPROVAL_DENY_REASON is in metadata, denied tool error includes it."""
         from framework.agents.react.agent import ReActAgent
-        from framework.agents.react.constants import ReActMetaKey
+
         from framework.agents.react.nodes.tool import ToolNode
         from framework.approval.constants import ApprovalDecision
         from framework.core.types import LLMResponse
@@ -292,9 +292,9 @@ class TestToolNodeDenyReasonError:
             tool_manager=InMemoryToolManager(),
             session_id="s1",
             metadata={
-                ReActMetaKey.ITERATION: 1,
-                ReActMetaKey.ITERATION_MSGS: [],
-                ReActMetaKey.DENY_AS_CANCEL: False,
+                "_react_iteration": 1,
+                "_iteration_messages": [],
+                "_deny_as_cancel": False,
                 "APPROVAL_DENY_REASON": 'unrelated input: "tell me a story"',
             },
         )
@@ -316,7 +316,7 @@ class TestToolNodeDenyReasonError:
     @pytest.mark.asyncio
     async def test_preempted_tool_does_not_include_deny_reason(self):
         """PREEMPTED tools (cascaded) should show preempted error."""
-        from framework.agents.react.constants import ReActMetaKey
+
         from framework.agents.react.nodes.tool import ToolNode
         from framework.approval.constants import ApprovalDecision
         from framework.core.emitter import ContentEmitter, ToolCall
@@ -350,9 +350,9 @@ class TestToolNodeDenyReasonError:
             tool_manager=InMemoryToolManager(),
             session_id="s1",
             metadata={
-                ReActMetaKey.ITERATION: 1,
-                ReActMetaKey.ITERATION_MSGS: [],
-                ReActMetaKey.DENY_AS_CANCEL: False,
+                "_react_iteration": 1,
+                "_iteration_messages": [],
+                "_deny_as_cancel": False,
             },
         )
         from framework.agents.react.agent import ReActEvent
@@ -371,7 +371,7 @@ class TestToolNodeDenyReasonError:
     @pytest.mark.asyncio
     async def test_explicit_deny_without_reason_uses_plain_error(self):
         """Explicit /deny (no deny_reason) → plain 'Error: denied'."""
-        from framework.agents.react.constants import ReActMetaKey
+
         from framework.agents.react.nodes.tool import ToolNode
         from framework.approval.constants import ApprovalDecision
         from framework.core.emitter import ContentEmitter, ToolCall
@@ -403,9 +403,9 @@ class TestToolNodeDenyReasonError:
             tool_manager=InMemoryToolManager(),
             session_id="s1",
             metadata={
-                ReActMetaKey.ITERATION: 1,
-                ReActMetaKey.ITERATION_MSGS: [],
-                ReActMetaKey.DENY_AS_CANCEL: False,
+                "_react_iteration": 1,
+                "_iteration_messages": [],
+                "_deny_as_cancel": False,
             },
         )
         from framework.agents.react.agent import ReActEvent

@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from framework.agents.react.constants import ReActMetaKey
 from framework.approval.constants import ApprovalDecision
 from framework.approval.state import ApprovalRequest, ApprovalState
 from framework.core.agent import AgentContext
@@ -130,8 +129,8 @@ class TestApprovalCommandNotInHistory:
                 system_prompt="test", history=history,
                 tool_manager=InMemoryToolManager(), session_id="s1",
                 metadata={
-                    ReActMetaKey.ITERATION: 1,
-                    ReActMetaKey.ITERATION_MSGS: [],
+                    "_react_iteration": 1,
+                    "_iteration_messages": [],
                 },
             )
             mock_build.return_value = (mock_ctx, emitter)
@@ -200,9 +199,9 @@ class TestApprovalCommandNotInHistory:
                 system_prompt="test", history=history,
                 tool_manager=InMemoryToolManager(), session_id="s1",
                 metadata={
-                    ReActMetaKey.ITERATION: 1,
-                    ReActMetaKey.ITERATION_MSGS: [],
-                    ReActMetaKey.DENY_AS_CANCEL: True,
+                    "_react_iteration": 1,
+                    "_iteration_messages": [],
+                    "_deny_as_cancel": True,
                 },
             )
             mock_build.return_value = (mock_ctx, emitter)
@@ -252,8 +251,8 @@ class TestApprovalCommandNotInHistory:
                 system_prompt="test", history=history,
                 tool_manager=InMemoryToolManager(), session_id="s1",
                 metadata={
-                    ReActMetaKey.ITERATION: 1,
-                    ReActMetaKey.ITERATION_MSGS: [],
+                    "_react_iteration": 1,
+                    "_iteration_messages": [],
                 },
             )
             mock_build.return_value = (mock_ctx, emitter)
@@ -273,6 +272,6 @@ class TestApprovalCommandNotInHistory:
         # No RESUME_STATE for normal turns
         agent.run.assert_called_once()
         called_ctx = agent.run.call_args[0][0]
-        assert ReActMetaKey.RESUME_STATE not in called_ctx.metadata, (
+        assert "_turn_resume_state" not in called_ctx.metadata, (
             "BUG: normal turns should NOT have RESUME_STATE"
         )

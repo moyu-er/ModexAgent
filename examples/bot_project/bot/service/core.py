@@ -792,10 +792,9 @@ class BotService(AgentBuilderMixin):
         """
         from framework.agents.react.approval import TieredToolApprovalClassifier
         from framework.agents.react.assembler import RuntimeAssembler, RuntimeServicesConfig
-        from framework.agents.react.state import StateStoreTurnResumeStateStore
-        from framework.agents.react.strategy import SuspendResumeStrategy
+        from framework.agents.react.state import ReActSnapshotPolicy
+        from framework.agents.react.strategy import TurnStateSuspendStrategy
         from framework.approval.config import AgentApprovalConfig, ToolApprovalConfig
-        from framework.approval.store import LocalFileApprovalStateStore
         from framework.control.store import InMemoryControlStore
         from framework.control.types import ControlCommandType
         from framework.interceptor.handler import DefaultCancelHandler
@@ -823,9 +822,9 @@ class BotService(AgentBuilderMixin):
                 config=approval_config,
                 argument_matcher=ArgumentMatcher(project_root=self._project_dir),
             ),
-            approval_strategy=SuspendResumeStrategy(
-                LocalFileApprovalStateStore(self._approval_workspace),
-                StateStoreTurnResumeStateStore(self._checkpoint_store),
+            approval_strategy=TurnStateSuspendStrategy(
+                self._turn_store if self._turn_store is not None else self._checkpoint_store,
+                ReActSnapshotPolicy(),
             ),
             control_channel=self.control_channel,
             control_store=InMemoryControlStore(),
