@@ -20,6 +20,18 @@ from framework.core.provider import StreamingLLMProvider
 from framework.core.tool_manager import ToolResult
 from framework.core.types import LLMResponse, ToolCall
 from framework.memory.history import ListMessageHistory
+from framework.runtime.enums import AgentKind, TurnPhase
+from framework.runtime.models import TurnIdentity
+from framework.runtime.services import AgentRuntime, AgentRuntimeServices
+from framework.agents.react.state import ReActTurnState
+
+
+def _make_runtime():
+    state = ReActTurnState(
+        identity=TurnIdentity(agent_id="test", session_id="s1", turn_id="t1"),
+        agent_kind=AgentKind.REACT, phase=TurnPhase.CREATED,
+    )
+    return AgentRuntime(services=AgentRuntimeServices(), state=state)
 
 
 class MockNonStreamingProvider:
@@ -86,11 +98,13 @@ class TestReActAgentUnifiedLoop:
 
     @pytest.fixture
     def context(self):
+        runtime = _make_runtime()
         return AgentContext(
             system_prompt="You are a helpful assistant.",
             history=ListMessageHistory([{"role": "user", "content": "Hello"}]),
             tool_manager=MagicMock(),
             max_iterations=3,
+            identity=runtime.state.identity, runtime=runtime,
         )
 
     @pytest.fixture
@@ -409,11 +423,13 @@ class TestReActAgentRegression:
 
     @pytest.fixture
     def context(self):
+        runtime = _make_runtime()
         return AgentContext(
             system_prompt="You are a helpful assistant.",
             history=ListMessageHistory([{"role": "user", "content": "Hello"}]),
             tool_manager=MagicMock(),
             max_iterations=3,
+            identity=runtime.state.identity, runtime=runtime,
         )
 
     @pytest.mark.asyncio
@@ -549,11 +565,13 @@ class TestReActAgentCheckpoint:
 
     @pytest.fixture
     def context(self):
+        runtime = _make_runtime()
         return AgentContext(
             system_prompt="You are a helpful assistant.",
             history=ListMessageHistory([{"role": "user", "content": "Hello"}]),
             tool_manager=MagicMock(),
             max_iterations=3,
+            identity=runtime.state.identity, runtime=runtime,
         )
 
     @pytest.fixture
