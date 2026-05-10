@@ -99,8 +99,6 @@ class AgentRuntime:
     def validate(self) -> None:
         """Validate runtime configuration. No-op for new AgentRuntime."""
         if self.services.interceptors is not None and self.services.control is None:
-            import logging
-            logger = logging.getLogger(__name__)
             from framework.interceptor.builtin import ControlDrainInterceptor
             for interceptor in self.services.interceptors.interceptors:
                 if isinstance(interceptor, ControlDrainInterceptor):
