@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 def _get_iteration(ctx: AgentContext[Any]) -> int:
-    state = getattr(ctx.runtime, "state", None) if ctx.runtime else None
+    state = ctx.runtime.state if ctx.runtime else None
     return getattr(state, "iteration", 0)
 
 

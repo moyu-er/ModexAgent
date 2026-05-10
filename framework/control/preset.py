@@ -55,10 +55,11 @@ class TokenBudgetControlRule:
         self._last_triggered: float = 0.0
 
     async def evaluate(self, ctx: AgentContext) -> ControlCommand | None:
-        session_id = getattr(ctx, "session_id", "")
-        meta = getattr(ctx, "metadata", None) or {}
-        usage = meta.get("usage", {}) if isinstance(meta, dict) else {}
-        total = usage.get("total_tokens", 0)
+        session_id = ctx.session_id
+        usage: dict[str, int] = {}
+        if ctx.runtime is not None and ctx.runtime.state is not None:
+            usage = ctx.runtime.state.custom.get("usage", {})
+        total = usage.get("total_tokens", 0) if isinstance(usage, dict) else 0
 
         if total < self._max_tokens:
             return None
