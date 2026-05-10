@@ -1,4 +1,4 @@
-"""Tests for TieredToolApprovalInterceptor — 3-tier approval + deny_as_cancel."""
+﻿"""Tests for TieredToolApprovalInterceptor — 3-tier approval + cancel_turn."""
 
 import asyncio
 import pytest
@@ -114,9 +114,9 @@ class TestDangerous:
 
 
 class TestDenyAsCancel:
-    """deny_as_cancel 设置 _deny_as_cancel 标记，不抛异常，返回合法 ToolResult。"""
+    """cancel_turn 返回合法 ToolResult 并取消当前 turn。"""
 
-    async def test_deny_as_cancel_sets_flag_and_returns_tool_result(self):
+    async def test_cancel_turn_returns_tool_result(self):
         ch = InMemoryControlChannel()
         interceptor = TieredToolApprovalInterceptor(
             channel=ch,
@@ -168,7 +168,7 @@ class TestSensitiveYolo:
 class TestTimeout:
     """审批超时处理。"""
 
-    async def test_timeout_as_cancel_sets_flag(self):
+    async def test_timeout_cancel_turn_sets_flag(self):
         ch = InMemoryControlChannel()
         interceptor = TieredToolApprovalInterceptor(
             channel=ch,
