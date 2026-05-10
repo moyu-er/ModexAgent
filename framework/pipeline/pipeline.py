@@ -583,15 +583,11 @@ class AgentPipeline:
             agent_context.runtime = AgentRuntime(services=services, state=react_state)
             agent_context.runtime.state.custom[TurnCustomKey.MAX_TOOLS_PER_TURN] = None
         elif self._prebuilt_runtime is not None:
-            # Legacy prebuilt runtime (backward compat)
+            # Legacy path — prebuilt runtime without turn_store.
+            # Bot project not yet rewired (P6), so this path is unused.
+            # The deleted memory_context/pending_injector properties no longer
+            # exist on AgentRuntime.
             agent_context.runtime = self._prebuilt_runtime
-            agent_context.runtime.memory_context = memory_context
-            if pending is not None:
-                from framework.memory.pending import DefaultPendingPrunedInputInjector
-                agent_context.runtime.pending_injector = DefaultPendingPrunedInputInjector(
-                    pending,
-                    session,
-                )
 
         # Emitter selection
         if self.emitter_factory:
