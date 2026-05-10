@@ -16,16 +16,17 @@
 
 | Phase | Tasks | Description | Status |
 |-------|-------|-------------|:------:|
-| A | 1-4 | Immediate Bug Fixes & Dead Code Removal | ✅ Done |
-| B | 5-7 | Recover 3 Skipped Test Files | ✅ Done |
-| C | 8-16 | `checkpoint_store` → `turn_store` Everywhere | ✅ Done |
-| D | 17-19 | Migrate agent_session.py → AgentRuntimeServices | ✅ Done |
-| E | — | Delete dead _save/_clear_checkpoint (P5) | ✅ Done |
-| G | — | Deprecation shim removal + ruff fix (P7) | ✅ Done |
-| F | TBD | Bot Project Rewire (P6) — Separate Plan | 🔴 |
+| A | 1-4 | Immediate Bug Fixes & Dead Code Removal | ✅ |
+| B | 5-7 | Recover 3 Skipped Test Files | ✅ |
+| C | 8-16 | `checkpoint_store` → `turn_store` Everywhere | ✅ |
+| D | 17-19 | Migrate agent_session.py → AgentRuntimeServices | ✅ |
+| E | — | Delete dead _save/_clear_checkpoint (P5) | ✅ |
+| G | — | Deprecation shim removal + docs + ruff (P7) | ✅ |
+| F (P6) | — | Bot Project Rewire | ✅ |
 
-**Current test baseline:** 1273 passed, 1 failed (pre-existing summarizer), 11 skipped.
-**Last commit:** `0d61066 fix: remove unused logger variable in AgentRuntime.validate()`
+**All phases complete.**
+**Final test baseline:** 1273 unit + 101 bot = 1374 passed, 1 summarizer fail (pre-existing).
+**Last commit:** `3681821 refactor: complete P6 Bot Project Rewire`
 
 ---
 

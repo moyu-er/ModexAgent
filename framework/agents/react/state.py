@@ -170,9 +170,7 @@ def get_react_state(ctx: object) -> ReActTurnState | None:
     from framework.core.agent import AgentContext
     if not isinstance(ctx, AgentContext):
         return None
-    if getattr(ctx, "identity", None) is None or ctx.runtime is None:
-        return None
-    if not hasattr(ctx.runtime, "state"):
+    if ctx.identity is None or ctx.runtime is None:
         return None
     state = ctx.runtime.state
     return state if isinstance(state, ReActTurnState) else None

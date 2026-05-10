@@ -262,7 +262,7 @@ class DefaultAgentFactory(AgentFactory):
                 hooks=agent_hooks,
                 hook_runner=hook_runner,
                 interceptor_chain=agent_interceptor_chain,
-                checkpoint_store=self._default_turn_store,
+                turn_store=self._default_turn_store,
                 context_manager_factory=context_manager_factory,
                 runtime_context_manager=self._runtime_context_manager,
                 safety=descriptor.safety_policy,
