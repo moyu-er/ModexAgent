@@ -41,10 +41,67 @@ class AgentRuntimeServices:
 
 @dataclass
 class AgentRuntime:
-    """Runtime = services (process-local) + state (turn-local, snapshot-able)."""
+    """Runtime = services (process-local) + state (turn-local, snapshot-able).
+
+    Delegation properties (hooks, interceptors, control, etc.) are provided
+    for backward compatibility with code that accesses services directly on
+    the runtime object.
+    """
 
     services: AgentRuntimeServices
     state: TurnStateBase
+
+    @property
+    def hooks(self) -> HookRunner | None:
+        return self.services.hooks
+
+    @property
+    def interceptors(self) -> InterceptorChain | None:
+        return self.services.interceptors
+
+    @property
+    def control(self) -> ControlRuntime | None:
+        return self.services.control
+
+    @property
+    def approval(self) -> ApprovalRuntime | None:
+        return self.services.approval
+
+    @property
+    def governance(self) -> ContextGovernance | None:
+        return self.services.governance
+
+    @property
+    def turn_store(self) -> TurnStateStore | None:
+        return self.services.turn_store
+
+    @property
+    def command_store(self) -> RuntimeCommandStore | None:
+        return self.services.command_store
+
+    @property
+    def injection_queue(self) -> asyncio.Queue[str] | None:
+        return self.services.pending_input_queue
+
+    @property
+    def pending_input_queue(self) -> asyncio.Queue[str] | None:
+        return self.services.pending_input_queue
+
+    @property
+    def pending_injector(self) -> None:
+        return None
+
+    @property
+    def memory_context(self) -> None:
+        return None
+
+    @property
+    def checkpoint_store(self) -> TurnStateStore | None:
+        return self.services.turn_store
+
+    @property
+    def safety(self) -> RuntimeSafetyPolicy:
+        return self.services.safety
 
 
 def require_runtime_state(runtime: AgentRuntime, state_type: type[TState]) -> TState:

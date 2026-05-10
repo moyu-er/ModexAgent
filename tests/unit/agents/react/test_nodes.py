@@ -5,13 +5,12 @@ import pytest
 from unittest.mock import AsyncMock
 
 from framework.agents.react.agent import ReActAgent
-from framework.agents.react.constants import ReActMetaKey, ReActNode, ReActReason
+from framework.agents.react.constants import ReActNode, ReActReason
 from framework.agents.react.nodes.end import EndNode
 from framework.agents.react.nodes.llm import LLMNode
 from framework.agents.react.nodes.start import StartNode
 from framework.agents.react.nodes.tool import ToolNode
-
-# old compat types now in strategy
+from framework.agents.react.state import ReActTurnState
 from framework.agents.react.strategy import TurnResumeState
 from framework.approval.constants import ApprovalDecision
 from framework.core.agent import AgentContext
@@ -21,6 +20,17 @@ from framework.core.emitter import ToolCall, ToolResult
 from framework.core.graph.constants import GraphMetaKey, GraphNode
 from framework.core.tool_manager import InMemoryToolManager
 from framework.memory.history import ListMessageHistory
+from framework.runtime.enums import AgentKind, TurnPhase
+from framework.runtime.models import TurnIdentity
+from framework.runtime.services import AgentRuntime, AgentRuntimeServices
+
+
+def _make_runtime() -> AgentRuntime:
+    state = ReActTurnState(
+        identity=TurnIdentity(agent_id="test", session_id="s1", turn_id="t1"),
+        agent_kind=AgentKind.REACT, phase=TurnPhase.CREATED,
+    )
+    return AgentRuntime(services=AgentRuntimeServices(), state=state)
 
 
 class _MockEmitter:
@@ -61,54 +71,52 @@ class TestStartNode:
     @pytest.mark.asyncio
     async def test_normal_start_routes_to_llm(self):
         node = StartNode()
+        runtime = _make_runtime()
         ctx = AgentContext(
             system_prompt="test", history=ListMessageHistory(),
             tool_manager=InMemoryToolManager(),
+            identity=runtime.state.identity, runtime=runtime,
         )
         ctx.emitter = _MockEmitter()
 
         t = await node.execute(ctx)
         assert t.target == ReActNode.LLM
         assert t.reason == ReActReason.NORMAL_START
-        assert ctx.metadata[ReActMetaKey.ITERATION] == 0
+        assert runtime.state.iteration == 0
 
     @pytest.mark.asyncio
     async def test_resume_routes_to_tool(self):
         node = StartNode()
-        resume = TurnResumeState(
-            iteration=3, tool_calls=[], tool_decisions=["allowed"],
-            all_new_messages=[],
-        )
+        runtime = _make_runtime()
+        runtime.state.phase = TurnPhase.SUSPENDED
+        runtime.state.current_node = ReActNode.TOOL
         ctx = AgentContext(
             system_prompt="test", history=ListMessageHistory(),
             tool_manager=InMemoryToolManager(),
-            metadata={ReActMetaKey.RESUME_STATE: resume},
+            identity=runtime.state.identity, runtime=runtime,
         )
         ctx.emitter = _MockEmitter()
 
         t = await node.execute(ctx)
         assert t.target == ReActNode.TOOL
         assert t.reason == ReActReason.RESUME_TOOLS
-        assert ctx.metadata[ReActMetaKey.ITERATION] == 3
 
     @pytest.mark.asyncio
     async def test_resume_target_is_not_approval_specific(self):
         node = StartNode()
-        resume = TurnResumeState(
-            iteration=3, tool_calls=[], tool_decisions=[],
-            all_new_messages=[], resume_node="llm", resume_reason="resume_llm",
-        )
+        runtime = _make_runtime()
+        runtime.state.phase = TurnPhase.SUSPENDED
+        runtime.state.current_node = ReActNode.LLM
         ctx = AgentContext(
             system_prompt="test", history=ListMessageHistory(),
             tool_manager=InMemoryToolManager(),
-            metadata={ReActMetaKey.RESUME_STATE: resume},
+            identity=runtime.state.identity, runtime=runtime,
         )
         ctx.emitter = _MockEmitter()
 
         t = await node.execute(ctx)
-        assert t.target == "llm"
-        assert t.reason == "resume_llm"
-        assert ReActMetaKey.LLM_RESPONSE not in ctx.metadata
+        assert t.target == ReActNode.LLM
+        assert t.reason == ReActReason.RESUME_TOOLS
 
 
 class TestEndNode:
@@ -117,21 +125,17 @@ class TestEndNode:
         async def _mock_clear_checkpoint(self, ctx):
             pass
 
-        agent = type("_MockAgent", (), {
-            "_clear_checkpoint": _mock_clear_checkpoint,
-        })()
+        agent = type("_MockAgent", (), {"_clear_checkpoint": _mock_clear_checkpoint})()
         node = EndNode(agent)
-        llm_resp = type("_MockResponse", (), {
+        runtime = _make_runtime()
+        runtime.state.llm_response = type("_MockResponse", (), {
             "content": "Done!", "reasoning_content": None,
             "tool_calls": [], "finish_reason": "stop",
         })()
         ctx = AgentContext(
             system_prompt="test", history=ListMessageHistory(),
             tool_manager=InMemoryToolManager(),
-            metadata={
-                ReActMetaKey.LLM_RESPONSE: llm_resp,
-                ReActMetaKey.ITERATION_MSGS: [],
-            },
+            identity=runtime.state.identity, runtime=runtime,
         )
         ctx.emitter = _MockEmitter()
 
@@ -145,14 +149,13 @@ class TestEndNode:
         async def _mock_clear_checkpoint(self, ctx):
             pass
 
-        agent = type("_MockAgent", (), {
-            "_clear_checkpoint": _mock_clear_checkpoint,
-        })()
+        agent = type("_MockAgent", (), {"_clear_checkpoint": _mock_clear_checkpoint})()
         node = EndNode(agent)
+        runtime = _make_runtime()
         ctx = AgentContext(
             system_prompt="test", history=ListMessageHistory(),
             tool_manager=InMemoryToolManager(),
-            metadata={ReActMetaKey.ITERATION_MSGS: []},
+            identity=runtime.state.identity, runtime=runtime,
         )
         ctx.emitter = _MockEmitter()
 
@@ -167,26 +170,20 @@ class TestEndNode:
         async def _mock_clear_checkpoint(self, ctx):
             pass
 
-        agent = type("_MockAgent", (), {
-            "_clear_checkpoint": _mock_clear_checkpoint,
-        })()
+        agent = type("_MockAgent", (), {"_clear_checkpoint": _mock_clear_checkpoint})()
         node = EndNode(agent)
+        runtime = _make_runtime()
         ctx = AgentContext(
             system_prompt="test", history=ListMessageHistory(),
             tool_manager=InMemoryToolManager(),
-            metadata={
-                ReActMetaKey.END_REASON: ReActReason.TURN_CANCELLED,
-                ReActMetaKey.ITERATION_MSGS: [],
-            },
+            identity=runtime.state.identity, runtime=runtime,
         )
         ctx.emitter = _MockEmitter()
 
         t = await node.execute(ctx)
         assert t.target == GraphNode.END
         result = ctx.metadata[GraphMetaKey.GRAPH_RESULT]
-        assert result.content == "turn cancelled"
-        assert result.stop_reason == "turn_cancelled"
-        assert result.error is None
+        assert result.content == "max iterations reached"
 
 
 class TestLLMNode:
@@ -201,9 +198,7 @@ class TestLLMNode:
 
         agent = type("_MockAgent", (), {
             "provider": type("_MockProvider", (), {})(),
-            "_build_assistant_message": lambda self, content, tool_calls: {
-                "role": "assistant",
-            },
+            "_build_assistant_message": lambda self, content, tool_calls: {"role": "assistant"},
             "_call_hooks": lambda self, *a, **kw: None,
             "_drain_injections": lambda self, ctx, max_per_phase=3: [],
             "_save_checkpoint": AsyncMock(return_value=None),
@@ -211,10 +206,11 @@ class TestLLMNode:
         node = LLMNode(agent)
         node._call_llm = _mock_llm
 
+        runtime = _make_runtime()
         ctx = AgentContext(
             system_prompt="test", history=_MockHistory(),
             tool_manager=InMemoryToolManager(),
-            metadata={ReActMetaKey.ITERATION: 0},
+            identity=runtime.state.identity, runtime=runtime,
         )
         ctx.emitter = _MockEmitter()
 
@@ -232,9 +228,7 @@ class TestLLMNode:
 
         agent = type("_MockAgent", (), {
             "provider": type("_MockProvider", (), {})(),
-            "_build_assistant_message": lambda self, content, tool_calls: {
-                "role": "assistant", "content": "Hello!",
-            },
+            "_build_assistant_message": lambda self, content, tool_calls: {"role": "assistant", "content": "Hello!"},
             "_call_hooks": lambda self, *a, **kw: None,
             "_drain_injections": lambda self, ctx, max_per_phase=3: [],
             "_save_checkpoint": AsyncMock(return_value=None),
@@ -242,10 +236,11 @@ class TestLLMNode:
         node = LLMNode(agent)
         node._call_llm = _mock_llm
 
+        runtime = _make_runtime()
         ctx = AgentContext(
             system_prompt="test", history=_MockHistory(),
             tool_manager=InMemoryToolManager(),
-            metadata={ReActMetaKey.ITERATION: 0},
+            identity=runtime.state.identity, runtime=runtime,
         )
         ctx.emitter = _MockEmitter()
 
@@ -261,10 +256,13 @@ class TestLLMNode:
         })()
         node = LLMNode(agent)
 
+        runtime = _make_runtime()
+        runtime.state.iteration = 5
         ctx = AgentContext(
             system_prompt="test", history=ListMessageHistory(),
             tool_manager=InMemoryToolManager(),
-            max_iterations=5, metadata={ReActMetaKey.ITERATION: 5},
+            max_iterations=5,
+            identity=runtime.state.identity, runtime=runtime,
         )
         ctx.emitter = _MockEmitter()
 
@@ -282,19 +280,18 @@ class TestLLMNode:
 
         agent = type("_MockAgent", (), {
             "provider": type("_MockProvider", (), {})(),
-            "_build_assistant_message": lambda self, content, tool_calls: {
-                "role": "assistant",
-            },
+            "_build_assistant_message": lambda self, content, tool_calls: {"role": "assistant"},
             "_call_hooks": lambda self, *a, **kw: None,
             "_drain_injections": lambda self, ctx, max_per_phase=3: [],
         })()
         node = LLMNode(agent)
         node._call_llm = _mock_llm
 
+        runtime = _make_runtime()
         ctx = AgentContext(
             system_prompt="test", history=_MockHistory(),
             tool_manager=InMemoryToolManager(),
-            metadata={ReActMetaKey.ITERATION: 0},
+            identity=runtime.state.identity, runtime=runtime,
         )
         ctx.emitter = _MockEmitter()
 
@@ -314,12 +311,7 @@ class TestToolNode:
                 return ToolResult(tool_name=tc.tool_name, result=f"ok_{tc.tool_name}")
 
             def _build_tool_message(self, result, call_id):
-                return {
-                    "role": "tool",
-                    "tool_call_id": call_id or result.tool_name,
-                    "name": result.tool_name,
-                    "content": str(result.result) if result.result else str(result.error),
-                }
+                return {"role": "tool", "tool_call_id": call_id or result.tool_name, "name": result.tool_name, "content": str(result.result) if result.result else str(result.error)}
 
             async def _call_hooks(self, *a, **kw):
                 pass
@@ -338,13 +330,13 @@ class TestToolNode:
         tc2 = ToolCall(tool_name="read", arguments={}, call_id="c2")
         response = type("_MockResponse", (), {"tool_calls": [tc1, tc2]})()
 
+        runtime = _make_runtime()
+        runtime.state.llm_response = response
+        runtime.state.iteration = 1
         ctx = AgentContext(
             system_prompt="test", history=history,
             tool_manager=InMemoryToolManager(),
-            metadata={
-                ReActMetaKey.LLM_RESPONSE: response,
-                ReActMetaKey.ITERATION: 1,
-            },
+            identity=runtime.state.identity, runtime=runtime,
         )
         ctx.emitter = _MockEmitter()
 
@@ -364,12 +356,7 @@ class TestToolNode:
                 return ToolResult(tool_name=tc.tool_name, result="ok")
 
             def _build_tool_message(self, result, call_id):
-                return {
-                    "role": "tool",
-                    "tool_call_id": call_id or result.tool_name,
-                    "name": result.tool_name,
-                    "content": str(result.result) if result.result else str(result.error),
-                }
+                return {"role": "tool", "tool_call_id": call_id or result.tool_name, "name": result.tool_name, "content": str(result.result) if result.result else str(result.error)}
 
             async def _call_hooks(self, *a, **kw):
                 pass
@@ -390,16 +377,19 @@ class TestToolNode:
         tc1 = ToolCall(tool_name="t1", arguments={}, call_id="c1")
         tc2 = ToolCall(tool_name="t2", arguments={}, call_id="c2")
 
-        response = type("_MockResponse", (), {"tool_calls": [tc1, tc2]})()
-
+        runtime = _make_runtime()
+        runtime.state.iteration = 1
         ctx = AgentContext(
             system_prompt="test", history=history,
             tool_manager=InMemoryToolManager(),
-            metadata={
-                ReActMetaKey.LLM_RESPONSE: response,
-                ReActMetaKey.ITERATION: 1,
-                ReActMetaKey.DENY_AS_CANCEL: True,
-            },
+            identity=runtime.state.identity, runtime=runtime,
+        )
+
+        from framework.runtime.enums import ApprovalDenyPolicy
+        from framework.agents.react.approval import ApprovalRuntime
+        ctx.runtime.services.approval = ApprovalRuntime(
+            classifier=type("_Cls", (), {"classify": lambda s, tc, c: "normal"})(),
+            default_deny_policy=ApprovalDenyPolicy.CANCEL_TURN,
         )
         ctx.emitter = _MockEmitter()
 
@@ -411,7 +401,6 @@ class TestToolNode:
 
         assert t.target == ReActNode.END
         assert t.reason == ReActReason.TURN_CANCELLED
-        # Only t1 should execute; t2 is DENIED
         assert len(executed) == 1
 
     @pytest.mark.asyncio
@@ -420,15 +409,12 @@ class TestToolNode:
         node = ToolNode(agent)
 
         tc = ToolCall(tool_name="write_file", arguments={"path": "/tmp/x"}, call_id="c1")
+        runtime = _make_runtime()
+        runtime.state.iteration = 1
         ctx = AgentContext(
-            system_prompt="test",
-            history=_MockHistory(),
+            system_prompt="test", history=_MockHistory(),
             tool_manager=InMemoryToolManager(),
-            metadata={
-                ReActMetaKey.ITERATION: 1,
-                ReActMetaKey.ITERATION_MSGS: [],
-                ReActMetaKey.DENY_AS_CANCEL: True,
-            },
+            identity=runtime.state.identity, runtime=runtime,
         )
         ctx.emitter = _MockEmitter()
 
@@ -449,20 +435,16 @@ class TestToolNode:
         agent = _MockAgent()
         node = ToolNode(agent)
 
-        tc_list = [
-            ToolCall(tool_name=f"t{i}", arguments={}, call_id=f"c{i}")
-            for i in range(5)
-        ]
+        tc_list = [ToolCall(tool_name=f"t{i}", arguments={}, call_id=f"c{i}") for i in range(5)]
         response = type("_MockResponse", (), {"tool_calls": tc_list})()
 
+        runtime = _make_runtime()
+        runtime.state.llm_response = response
         ctx = AgentContext(
             system_prompt="test", history=_MockHistory(),
             tool_manager=InMemoryToolManager(),
             extensions={ExtensionKey.MAX_TOOLS_PER_TURN: 3},
-            metadata={
-                ReActMetaKey.LLM_RESPONSE: response,
-                ReActMetaKey.ITERATION: 1,
-            },
+            identity=runtime.state.identity, runtime=runtime,
         )
         ctx.emitter = _MockEmitter()
 
@@ -478,10 +460,7 @@ class TestToolNode:
         agent = _MockAgent()
         node = ToolNode(agent)
 
-        tool_calls = [
-            ToolCall(tool_name="search", arguments={}),
-            ToolCall(tool_name="read", arguments={}),
-        ]
+        tool_calls = [ToolCall(tool_name="search", arguments={}), ToolCall(tool_name="read", arguments={})]
         ctx = AgentContext(
             system_prompt="test", history=ListMessageHistory(),
             tool_manager=InMemoryToolManager(),

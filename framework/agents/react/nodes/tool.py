@@ -14,6 +14,7 @@ from framework.approval.constants import ApprovalDecision, ApprovalTier
 from framework.approval.state import ApprovalRequest
 from framework.control.runtime import ControlPhase
 from framework.core.agent import AgentContext
+from framework.core.context_extensions import ExtensionKey
 from framework.core.emitter import ToolCall
 from framework.core.graph.node import Node, NodeTransition
 from framework.core.tool_manager import ToolResult
@@ -48,6 +49,12 @@ class ToolNode(Node):
         tool_calls: list[ToolCall] = response.tool_calls
         state.llm_response = None
         state.current_node = ReActNode.TOOL
+
+        max_tools = ctx.extensions.get(ExtensionKey.MAX_TOOLS_PER_TURN)
+        if max_tools is not None and len(tool_calls) > max_tools:
+            if ctx.emitter is not None:
+                await ctx.emitter.emit(ReActEvent.ERROR, f"Exceeded max_tools_per_turn ({max_tools})")
+            return NodeTransition(ReActNode.END, ReActReason.TURN_CANCELLED)
 
         # Phase 1: classify all tools
         decisions = self._classify_all(tool_calls, ctx)
@@ -211,8 +218,12 @@ class ToolNode(Node):
                 "iteration": state.iteration if state else 0, "has_tool_calls": True,
             })
 
-        if denied_encountered and ctx.runtime and ctx.runtime.approval and ctx.runtime.approval.default_deny_policy == ApprovalDenyPolicy.CANCEL_TURN:
-            return NodeTransition(ReActNode.END, ReActReason.TURN_CANCELLED)
+        if denied_encountered:
+            deny_policy = ApprovalDenyPolicy.CANCEL_TURN
+            if ctx.runtime and ctx.runtime.approval:
+                deny_policy = ctx.runtime.approval.default_deny_policy
+            if deny_policy == ApprovalDenyPolicy.CANCEL_TURN:
+                return NodeTransition(ReActNode.END, ReActReason.TURN_CANCELLED)
 
         return NodeTransition(ReActNode.LLM, ReActReason.TOOLS_DONE)
 
