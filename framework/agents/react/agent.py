@@ -10,7 +10,9 @@ import logging
 from enum import Enum
 from typing import Any, Literal
 
-from framework.agents.react.constants import ReActMetaKey
+from framework.agents.react.constants import ReActMetaKey  # TODO: remove after agent.py migration
+from framework.agents.react.state import get_react_state
+from framework.runtime.enums import TurnPhase
 from framework.control.exceptions import AgentControlError
 from framework.control.runtime import ControlPhase
 from framework.hook import HookPayload, HookPoint
@@ -78,6 +80,16 @@ class ReActEvent(AgentEvent, Enum):
     ERROR = "error"
     MAX_ITERATIONS = "max_iterations"
     PROGRESS = "progress"
+
+
+def _get_turn_messages(ctx: AgentContext) -> list[dict[str, Any]]:
+    """Extract current-turn messages from typed state or metadata fallback."""
+    from framework.agents.react.state import get_react_state as _grs
+    state = _grs(ctx)
+    if state is not None:
+        return [md.message.to_dict() if hasattr(md.message, 'to_dict') else md.message
+                for md in state.message_delta]
+    return ctx.metadata.get(ReActMetaKey.ITERATION_MSGS, [])
 
 
 class ReActAgent(Agent[ReActEvent]):
@@ -192,7 +204,7 @@ class ReActAgent(Agent[ReActEvent]):
                 e.termination.value if e.termination else "error",
             )
             try:
-                all_new = context.metadata.get(ReActMetaKey.ITERATION_MSGS, [])
+                all_new = _get_turn_messages(context)
                 await asyncio.shield(self._save_checkpoint(all_new, context))
             except Exception:
                 pass
@@ -200,7 +212,7 @@ class ReActAgent(Agent[ReActEvent]):
         except asyncio.CancelledError:
             logger.warning("ReActAgent cancelled")
             try:
-                all_new = context.metadata.get(ReActMetaKey.ITERATION_MSGS, [])
+                all_new = _get_turn_messages(context)
                 await asyncio.shield(self._save_checkpoint(all_new, context))
             except Exception:
                 pass
@@ -208,7 +220,7 @@ class ReActAgent(Agent[ReActEvent]):
         except Exception as e:
             logger.exception("Agent execution error")
             await emitter.emit(ReActEvent.ERROR, str(e))
-            all_new = context.metadata.get(ReActMetaKey.ITERATION_MSGS, [])
+            all_new = _get_turn_messages(context)
             await self._save_checkpoint(all_new, context)
             result = AgentResult(
                 error=str(e), stop_reason="error",
@@ -217,14 +229,17 @@ class ReActAgent(Agent[ReActEvent]):
             await emitter.emit_complete(result)
             return result
         finally:
-            context.metadata.pop(ReActMetaKey.DENY_AS_CANCEL, None)
-            context.metadata.pop(ReActMetaKey.APPROVAL_DENIAL, None)
-            context.metadata.pop(ReActMetaKey.INJECTION_CYCLE, None)
-            context.metadata.pop(ReActMetaKey.RESUME_STATE, None)
-            context.metadata.pop(ReActMetaKey.TOOL_DECISIONS, None)
+            # Clean up typed state
+            state = get_react_state(context)
+            if state is not None:
+                state.phase = TurnPhase.COMPLETED if state.phase not in (TurnPhase.COMPLETED, TurnPhase.FAILED) else state.phase
+            # Legacy metadata cleanup (remove after full migration)
+            for key in (ReActMetaKey.DENY_AS_CANCEL, ReActMetaKey.APPROVAL_DENIAL,
+                         ReActMetaKey.INJECTION_CYCLE, ReActMetaKey.RESUME_STATE,
+                         ReActMetaKey.TOOL_DECISIONS):
+                context.metadata.pop(key, None)
             context.emitter = None
             current_agent_context.reset(ctx_token)
-            # Reset resume contextvar to prevent cross-turn approval state leaks
             from framework.core.graph.interrupt import _current_resume
             _current_resume.set(None)
 
