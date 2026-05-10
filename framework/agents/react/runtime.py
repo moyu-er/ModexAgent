@@ -10,7 +10,7 @@ from framework.core.context_extensions import ExtensionKey
 
 if TYPE_CHECKING:
     from framework.agents.react.approval import ApprovalRuntime
-    from framework.control.checkpoint import RuntimeStateStore
+    from framework.runtime.store import TurnStateStore
     from framework.control.runtime import ControlRuntime
     from framework.core.llm_error import RuntimeSafetyPolicy
     from framework.hook import HookRunner
@@ -56,7 +56,7 @@ class ReActRuntime:
     interceptors: InterceptorChain | None = None
     approval: ApprovalRuntime | None = None
     control: ControlRuntime | None = None
-    checkpoint_store: RuntimeStateStore | None = None
+    checkpoint_store: TurnStateStore | None = None
     injection_queue: asyncio.Queue[str] | None = None
     governance: ContextGovernance | None = None
     pending_injector: PendingPrunedInputInjector | None = None

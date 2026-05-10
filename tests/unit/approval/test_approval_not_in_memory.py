@@ -12,7 +12,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from framework.agents.react.constants import ReActMetaKey
-from framework.agents.react.strategy import TurnResumeState
 from framework.approval.constants import ApprovalDecision
 from framework.approval.state import ApprovalRequest, ApprovalState
 from framework.core.agent import AgentContext
@@ -22,6 +21,20 @@ from framework.core.tool_manager import InMemoryToolManager
 from framework.core.types import InputMessage
 from framework.memory.history import ListMessageHistory
 from framework.pipeline.pipeline import AgentPipeline
+
+
+class _ResumeState:
+    """Minimal resume state replacement for TurnResumeState."""
+    def __init__(self, iteration, tool_calls, tool_decisions, all_new_messages,
+                 llm_content="", llm_reasoning=None):
+        self.iteration = iteration
+        self.tool_calls = tool_calls
+        self.tool_decisions = tool_decisions
+        self.all_new_messages = all_new_messages
+        self.llm_content = llm_content
+        self.llm_reasoning = llm_reasoning
+        self.resume_node = "tool"
+        self.resume_reason = "resume_tools"
 
 
 def _make_pipeline(strategy, agent=None):
@@ -79,7 +92,7 @@ class TestApprovalCommandNotInHistory:
     async def test_approve_cmd_not_in_history_and_resumes_correctly(self):
         """/approve with pending approval → skip history, set RESUME_STATE, call agent.run()."""
         approval_state = _pending_state()
-        resume_state = TurnResumeState(
+        resume_state = _ResumeState(
             iteration=1,
             tool_calls=[{"id": "c1", "type": "function",
                          "function": {"name": "write_file", "arguments": {}}}],
@@ -156,7 +169,7 @@ class TestApprovalCommandNotInHistory:
     async def test_deny_cmd_not_in_history_and_sets_deny_decisions(self):
         """/deny with pending approval → skip history, set DENIED decisions, call agent.run()."""
         approval_state = _pending_state()
-        resume_state = TurnResumeState(
+        resume_state = _ResumeState(
             iteration=1,
             tool_calls=[{"id": "c1", "type": "function",
                          "function": {"name": "write_file", "arguments": {}}}],

@@ -1,8 +1,6 @@
 """Tests for interrupt(), GraphInterrupt."""
 import pytest
-from framework.core.graph.interrupt import (
-    GraphInterrupt, interrupt, _current_resume,
-)
+from framework.core.graph.interrupt import GraphInterrupt, interrupt
 
 
 class TestGraphInterrupt:
@@ -24,19 +22,7 @@ class TestGraphInterrupt:
 
 
 class TestInterruptFunction:
-    def test_raises_when_no_resume(self):
-        token = _current_resume.set(None)
-        try:
-            with pytest.raises(GraphInterrupt) as exc_info:
-                interrupt(["req_a", "req_b"])
-            assert exc_info.value.value == ["req_a", "req_b"]
-        finally:
-            _current_resume.reset(token)
-
-    def test_returns_resume_value_when_set(self):
-        token = _current_resume.set(["ALLOWED", "DENIED"])
-        try:
-            result = interrupt(["req_a", "req_b"])
-            assert result == ["ALLOWED", "DENIED"]
-        finally:
-            _current_resume.reset(token)
+    def test_always_raises_graphinterrupt(self):
+        with pytest.raises(GraphInterrupt) as exc_info:
+            interrupt(["req_a", "req_b"])
+        assert exc_info.value.value == ["req_a", "req_b"]

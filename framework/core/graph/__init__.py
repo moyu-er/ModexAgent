@@ -2,7 +2,7 @@
 from .constants import GraphMetaKey, GraphNode
 from .engine import GraphEngine
 from .graph import Edge, Graph
-from .interrupt import GraphInterrupt, _current_resume, interrupt
+from .interrupt import GraphInterrupt, interrupt
 from .node import Node, NodeTransition
 
 __all__ = [
@@ -14,6 +14,5 @@ __all__ = [
     "GraphNode",
     "Node",
     "NodeTransition",
-    "_current_resume",
     "interrupt",
 ]

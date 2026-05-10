@@ -11,7 +11,6 @@ from framework.agents.react.nodes.llm import LLMNode
 from framework.agents.react.nodes.start import StartNode
 from framework.agents.react.nodes.tool import ToolNode
 from framework.agents.react.state import ReActTurnState
-from framework.agents.react.strategy import TurnResumeState
 from framework.approval.constants import ApprovalDecision
 from framework.core.agent import AgentContext
 from framework.core.constants import FinishReason

@@ -240,8 +240,6 @@ class ReActAgent(Agent[ReActEvent]):
                 context.metadata.pop(key, None)
             context.emitter = None
             current_agent_context.reset(ctx_token)
-            from framework.core.graph.interrupt import _current_resume
-            _current_resume.set(None)
 
     async def _save_denial_checkpoint(
         self,

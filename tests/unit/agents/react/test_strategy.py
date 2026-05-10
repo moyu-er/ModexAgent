@@ -1,16 +1,9 @@
 """Tests for SuspendStrategy implementations."""
 import pytest
 
-from framework.agents.react.constants import ReActMetaKey
-from framework.agents.react.strategy import InMemoryTurnResumeStateStore
-from framework.agents.react.strategy import (
-    InlineWaitStrategy,
-    SuspendResumeStrategy,
-)
+from framework.agents.react.strategy import InlineWaitStrategy
 from framework.approval.constants import ApprovalDecision
 from framework.approval.state import ApprovalRequest
-from framework.approval.store import InMemoryApprovalStateStore
-from framework.core.graph.interrupt import GraphInterrupt, _current_resume
 
 
 class _MockChannel:
@@ -51,36 +44,3 @@ class TestInlineWaitStrategy:
         ctx = type("Ctx", (), {"session_id": "s1", "emitter": _MockEmitter()})()
         decisions = await strategy.solicit_approval(reqs, ctx)
         assert decisions == [ApprovalDecision.DENIED, ApprovalDecision.PREEMPTED]
-
-
-class TestSuspendResumeStrategy:
-    @pytest.mark.asyncio
-    async def test_first_call_raises(self):
-        strategy = SuspendResumeStrategy(
-            InMemoryApprovalStateStore(), InMemoryTurnResumeStateStore(),
-        )
-        reqs = [ApprovalRequest("t1", "c1", {}, "dangerous", 1)]
-        ctx = type("Ctx", (), {
-            "session_id": "s1",
-            "metadata": {ReActMetaKey.ITERATION: 1, ReActMetaKey.ITERATION_MSGS: []},
-        })()
-        with pytest.raises(GraphInterrupt):
-            await strategy.solicit_approval(reqs, ctx)
-
-    @pytest.mark.asyncio
-    async def test_second_call_returns_resume(self):
-        store = InMemoryApprovalStateStore()
-        strategy = SuspendResumeStrategy(store, InMemoryTurnResumeStateStore())
-        reqs = [ApprovalRequest("t1", "c1", {}, "dangerous", 1)]
-        ctx = type("Ctx", (), {
-            "session_id": "s1",
-            "metadata": {ReActMetaKey.ITERATION: 1, ReActMetaKey.ITERATION_MSGS: []},
-        })()
-        with pytest.raises(GraphInterrupt):
-            await strategy.solicit_approval(reqs, ctx)
-        token = _current_resume.set([ApprovalDecision.ALLOWED])
-        try:
-            decisions = await strategy.solicit_approval(reqs, ctx)
-            assert decisions == [ApprovalDecision.ALLOWED]
-        finally:
-            _current_resume.reset(token)

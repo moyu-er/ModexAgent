@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from framework.agents.react.constants import ReActMetaKey
-from framework.control.checkpoint import ApprovalDenialContext
+from framework.runtime.models import ApprovalDenialContext
 from framework.control.types import (
     ControlCommand,
     ControlCommandType,

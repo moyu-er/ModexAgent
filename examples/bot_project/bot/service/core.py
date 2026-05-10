@@ -24,7 +24,7 @@ from framework import (
     ToolManagerConfig,
 )
 from framework.control.channel import InMemoryControlChannel
-from framework.control.checkpoint import JsonFileRuntimeStateStore
+from framework.runtime.store import JsonFileTurnStateStore, NoOpTurnStateStore
 from framework.control.ui.im import IMUserInterface
 from framework.core.emitter import ContentEmitter
 from framework.core.llm_error import (
@@ -349,9 +349,7 @@ class BotService(AgentBuilderMixin):
         self._approval_workspace = self._project_dir / approval_cfg.get(
             "workspace", "data/approval"
         )
-        self._checkpoint_store = JsonFileRuntimeStateStore(
-            self._approval_workspace / "checkpoints"
-        )
+        self._checkpoint_store = NoOpTurnStateStore()
         self._im_ui = IMUserInterface(
             output_adapter=self.output_adapter,
             channel=self.control_channel,
@@ -362,7 +360,7 @@ class BotService(AgentBuilderMixin):
         from framework.runtime.codec import RuntimeStateCodecRegistry
         from framework.runtime.enums import AgentKind
         from framework.agents.react.state import ReActRuntimeStateCodec
-        from framework.runtime.store import JsonFileTurnStateStore, JsonFileRuntimeCommandStore
+        from framework.runtime.store import JsonFileTurnStateStore, NoOpTurnStateStore, JsonFileRuntimeCommandStore
 
         runtime_data_dir = self._project_dir / "data" / "runtime_state"
         codec_registry = RuntimeStateCodecRegistry({AgentKind.REACT: ReActRuntimeStateCodec()})

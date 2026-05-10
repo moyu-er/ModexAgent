@@ -211,6 +211,21 @@ class ApprovalTransaction:
         )
 
 
+@dataclass(frozen=True)
+class ApprovalDenialContext:
+    """审批拒绝时的完整上下文，写入 checkpoint 供恢复分析。"""
+
+    tool_name: str
+    tool_call_id: str
+    arguments: dict[str, object]
+    tier: str
+    denied_at: float
+    reason: str
+    session_id: str
+    turn_id: str = ""
+    iteration: int = 0
+
+
 # ---------------------------------------------------------------------------
 # Tool execution state (ReAct and future modes)
 # ---------------------------------------------------------------------------

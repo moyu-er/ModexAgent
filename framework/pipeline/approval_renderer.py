@@ -16,13 +16,13 @@ from ..approval.constants import ApprovalDecision
 from ..approval.response import parse_approval_action
 from ..approval.store import LocalFileApprovalStateStore
 from ..approval.types import ApprovalAction
-from ..core.graph.interrupt import GraphInterrupt, _current_resume
+from ..core.graph.interrupt import GraphInterrupt
 from ..core.types import InputMessage
 from ..memory.history import inject_attachments_to_history
 
 if TYPE_CHECKING:
     from ..agents.react.runtime import ReActRuntime
-    from ..agents.react.strategy import SuspendStrategy, TurnResumeState
+    from ..agents.react.strategy import SuspendStrategy
     from ..approval.state import ApprovalState
     from ..control.ui.abc import ControlUserInterface
     from ..core.agent import AgentContext
@@ -70,7 +70,6 @@ class ApprovalRenderer:
         self._user_interface = user_interface
         self._on_drain = on_drain
         self._approval_stores: dict[str, LocalFileApprovalStateStore] = {}
-        self._resume_stores: dict[str, "TurnResumeState"] = {}
         self._approval_pending: dict[str, list[InputMessage]] = {}
 
     async def detect(
@@ -81,17 +80,6 @@ class ApprovalRenderer:
         prebuilt_runtime: "ReActRuntime | None" = None,
     ) -> tuple[bool, "ApprovalState | None"]:
         """检测审批命令。返回 (is_approval, approval_state)。"""
-        from ..agents.react.strategy import StateStoreTurnResumeStateStore
-
-        if self.checkpoint_store is not None:
-            if session_id not in self._approval_stores:
-                self._approval_stores[session_id] = LocalFileApprovalStateStore(
-                    self._approval_workspace
-                )
-            if session_id not in self._resume_stores:
-                self._resume_stores[session_id] = StateStoreTurnResumeStateStore(
-                    self.checkpoint_store
-                )
 
         _is_approval_cmd = False
         approval_state: "ApprovalState | None" = None
@@ -158,12 +146,10 @@ class ApprovalRenderer:
                 break
 
         if approval_state.every_tool_decided:
-            resume_state: object | None = None
             if strategy is not None:
                 resume_state = await strategy.load_resume_state(session_id)
             else:
-                _resume_store = self._resume_stores.get(session_id)
-                resume_state = await _resume_store.load(session_id) if _resume_store else None
+                resume_state = None
             if resume_state is not None and self.agent is not None:
                 agent_context.metadata[ReActMetaKey.RESUME_STATE] = resume_state
                 agent_context.metadata[ReActMetaKey.TOOL_DECISIONS] = (
@@ -173,7 +159,8 @@ class ApprovalRenderer:
                 if deny_reason is not None:
                     agent_context.metadata["APPROVAL_DENY_REASON"] = deny_reason
 
-                _current_resume.set(approval_state.final_decisions())
+                if hasattr(strategy, "save_resume_decisions"):
+                    strategy.save_resume_decisions(session_id, approval_state.final_decisions())
                 try:
                     result = await self.agent.run(agent_context, emitter)  # type: ignore[union-attr]
                 except GraphInterrupt as interrupt_exc:
@@ -187,18 +174,11 @@ class ApprovalRenderer:
                                 break
                     await self._drain(session_id)
                     return None
-                finally:
-                    _current_resume.set(None)
 
                 if strategy is not None:
                     await strategy.delete_approval_state(session_id)
-                    await strategy.delete_resume_state(session_id)
-                else:
-                    if approval_store is not None:
-                        await approval_store.delete(session_id)
-                    _resume_store = self._resume_stores.get(session_id)
-                    if _resume_store is not None:
-                        await _resume_store.delete(session_id)
+                elif approval_store is not None:
+                    await approval_store.delete(session_id)
 
                 await self._drain(session_id)
 
@@ -232,7 +212,6 @@ class ApprovalRenderer:
         """Clean up per-session approval resources."""
         self._approval_pending.pop(session_id, None)
         self._approval_stores.pop(session_id, None)
-        self._resume_stores.pop(session_id, None)
 
     async def _drain(self, session_id: str) -> None:
         """Replay buffered agent messages after approval completes."""

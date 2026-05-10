@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from framework.control.channel import ControlChannel
-    from framework.control.checkpoint import RuntimeStateStore
+    from framework.runtime.store import TurnStateStore
     from framework.control.event_bus import ControlEventBus
     from framework.control.preset import PresetControlRule
     from framework.hook.abc import HookSpec
@@ -31,7 +31,7 @@ class RuntimeControl:
 
     channel: ControlChannel | None = None
     event_bus: ControlEventBus | None = None
-    checkpoint_store: RuntimeStateStore | None = None
+    checkpoint_store: TurnStateStore | None = None
     preset_rules: list[PresetControlRule] = field(default_factory=list)
     busy_input_mode: BusyInputMode = BusyInputMode.QUEUE
 

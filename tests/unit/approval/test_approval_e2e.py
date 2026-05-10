@@ -5,9 +5,22 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from framework.agents.react.approval import (
     TieredToolApprovalClassifier, ApprovalRuntime, ApprovalClassifier,
 )
-from framework.agents.react.strategy import SuspendResumeStrategy
-from framework.agents.react.strategy import InMemoryTurnResumeStateStore
-from framework.approval.store import LocalFileApprovalStateStore
+from framework.agents.react.strategy import TurnStateSuspendStrategy
+from framework.runtime.store import InMemoryTurnStateStore
+from framework.runtime.policy import SnapshotPolicy
+from framework.runtime.models import TurnSnapshot
+from framework.runtime.enums import SnapshotReason
+
+
+class _FakeSnapshotPolicy(SnapshotPolicy):
+    def should_capture(self, state, reason):
+        return True
+    def capture(self, state, reason):
+        return TurnSnapshot(
+            identity=state.identity, agent_kind=state.agent_kind,
+            phase=state.phase, reason=reason, resume_point=None,
+            state_payload={},
+        )
 from framework.approval.constants import ApprovalDecision, ApprovalTier
 from framework.approval.state import ApprovalRequest, ApprovalState
 from framework.approval.config import AgentApprovalConfig, ToolApprovalConfig
@@ -65,63 +78,12 @@ class TestApprovalFlowE2E:
                       arguments={"command": "ls", "working_dir": "."})
         assert c.classify(tc, make_ctx()) == ApprovalTier.DANGEROUS
 
-    def test_strategy_saves_approval_state_and_interrupts(self, tmp_path):
-        """SuspendResumeStrategy saves state and raises GraphInterrupt."""
-        workspace = tmp_path / "approval"
-        strategy = SuspendResumeStrategy(
-            LocalFileApprovalStateStore(workspace),
-            InMemoryTurnResumeStateStore(),
-        )
-
-        ctx = make_ctx()
-        ctx.metadata["_react_iteration"] = 1
-        ctx.metadata["ITERATION_MSGS"] = []
-
-        requests = [
-            ApprovalRequest(
-                tool_name="edit_file", tool_call_id="2",
-                arguments={"path": "/etc/shadow"},
-                tier="dangerous", iteration=1,
-            )
-        ]
-
-        # solicit_approval should raise GraphInterrupt (suspends execution)
-        from framework.core.graph.interrupt import GraphInterrupt
-
-        async def _test():
-            with pytest.raises(GraphInterrupt):
-                await strategy.solicit_approval(
-                    requests, ctx,
-                    all_tool_calls=[
-                        {"id": "2", "type": "function",
-                         "function": {"name": "edit_file", "arguments": {"path": "/etc/shadow"}}}
-                    ],
-                    llm_content="ok",
-                )
-
-            # After interrupt, approval state should be saved to disk
-            loaded = await strategy.load_approval_state(ctx.session_id)
-            assert loaded is not None
-            assert loaded.session_id == ctx.session_id
-            assert len(loaded.requests) == 1
-            assert loaded.requests[0].tool_name == "edit_file"
-
-            # Resume state should also be saved
-            resume = await strategy.load_resume_state(ctx.session_id)
-            assert resume is not None
-            assert resume.resume_node == "tool"
-
-            # Cleanup
-            await strategy.delete_approval_state(ctx.session_id)
-            await strategy.delete_resume_state(ctx.session_id)
-
-        asyncio.run(_test())
-
     def test_approval_runtime_bundles_classifier_and_strategy(self):
         """ApprovalRuntime correctly bundles classifier + strategy."""
         c = self._make_classifier()
-        strategy = SuspendResumeStrategy(
-            MagicMock(), MagicMock(),
+        strategy = TurnStateSuspendStrategy(
+            InMemoryTurnStateStore(),
+            _FakeSnapshotPolicy(),
         )
         runtime = ApprovalRuntime(classifier=c, suspend_strategy=strategy)
         assert runtime.classifier is c
