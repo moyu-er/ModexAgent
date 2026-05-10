@@ -15,7 +15,6 @@ from framework.core.agent_runtime_config import BusyInputMode
 from framework.core.llm_error import RuntimeSafetyPolicy
 from framework.core.skills import SkillManager
 from framework.memory.core.message import ChatMessage
-from framework.memory.core.scope import MemoryContext
 
 from ..approval.constants import ApprovalDecision
 from ..approval.response import parse_input_command
@@ -516,28 +515,6 @@ class AgentPipeline:
             session_id, asyncio.Queue(maxsize=50)
         )
 
-        extensions: dict[str, object] = {
-            "runtime_context_manager": self.runtime_context_manager,
-        }
-        memory_system = getattr(ctx_mgr, "memory_system", None)
-        layers = getattr(memory_system, "layers", None)
-        pending = getattr(layers, "pending", None)
-        session = getattr(layers, "session", None)
-        memory_context = MemoryContext(
-            session_id=session_id,
-            user_id=getattr(ctx_mgr, "default_user_id", "default"),
-            agent_id=getattr(ctx_mgr, "default_agent_id", None),
-            agent_role=getattr(ctx_mgr, "default_agent_role", None),
-        )
-        if pending is not None:
-            from framework.memory.pending import DefaultPendingPrunedInputInjector
-
-            extensions["pending_pruned_input_injector"] = DefaultPendingPrunedInputInjector(
-                pending,
-                session,
-            )
-            extensions["memory_context"] = memory_context
-
         # ---- typed TurnIdentity (new) ----
         from uuid import uuid4
         from framework.runtime.models import TurnIdentity
@@ -554,7 +531,6 @@ class AgentPipeline:
             tool_manager=self.tool_manager,
             session_id=session_id,
             max_iterations=self.max_iterations,
-            extensions=extensions,
         )
         agent_context.identity = turn_identity
 

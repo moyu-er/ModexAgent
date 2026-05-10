@@ -35,8 +35,6 @@ class AgentContext:
     temperature: float | None = None
     max_tokens: int | None = None
     attachments: list[str] = field(default_factory=list)
-    # Deprecated (Phase D): delete after agent_session + pipeline migration.
-    extensions: dict[str, object] = field(default_factory=dict)
     emitter: ContentEmitter | None = None
     runtime: AgentRuntime | None = None
     identity: TurnIdentity | None = None

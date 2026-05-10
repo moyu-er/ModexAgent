@@ -357,21 +357,39 @@ class AgentSession(Generic[E]):
                 else:
                     context_state.history = ListMessageHistory(non_system)
 
-            async def on_checkpoint(msgs: list[dict[str, Any]]) -> None:
-                save_checkpoint = getattr(self._context_manager, "save_checkpoint", None)
-                if save_checkpoint is not None:
-                    await save_checkpoint(session_id, msgs)
-
             agent_name = self._agent_descriptor.address.name if self._agent_descriptor else "main"
 
-            # ---- typed TurnIdentity (new) ----
+            # ---- typed AgentRuntime with ReActTurnState ----
             from uuid import uuid4
+            from framework.runtime.enums import AgentKind, TurnPhase as RTurnPhase
             from framework.runtime.models import TurnIdentity
+            from framework.agents.react.state import ReActTurnState
+            from framework.runtime.services import AgentRuntime, AgentRuntimeServices
+            from framework.core.llm_error import RuntimeSafetyPolicy
+            from framework.interceptor.chain import InterceptorChain
+
             turn_identity = TurnIdentity(
                 agent_id=agent_name,
                 session_id=session_id,
                 turn_id=uuid4().hex,
                 conversation_id=session_id,
+            )
+
+            services = AgentRuntimeServices(
+                hooks=self._hook_runner,
+                interceptors=(
+                    InterceptorChain(list(self._interceptor_chain.interceptors))
+                    if self._interceptor_chain
+                    else None
+                ),
+                turn_store=self._turn_store,
+                runtime_context_manager=self._runtime_context_manager,
+            )
+
+            react_state = ReActTurnState(
+                identity=turn_identity,
+                agent_kind=AgentKind.REACT,
+                phase=RTurnPhase.CREATED,
             )
 
             agent_context = AgentContext(
@@ -382,25 +400,9 @@ class AgentSession(Generic[E]):
                 max_iterations=getattr(self._agent, "max_iterations", 10),
                 temperature=getattr(message, "metadata", {}).get("temperature"),
                 max_tokens=getattr(message, "metadata", {}).get("max_tokens"),
-                extensions={
-                    "runtime_context_manager": self._runtime_context_manager,
-                    "on_checkpoint": on_checkpoint,
-                },
+                runtime=AgentRuntime(services=services, state=react_state),
+                identity=turn_identity,
             )
-            agent_context.identity = turn_identity
-
-            # Build ReActRuntime via framework RuntimeAssembler
-            if self._hook_runner or self._interceptor_chain or self._turn_store:
-                from framework.agents.react.assembler import RuntimeAssembler, RuntimeServicesConfig
-
-                # type: ignore[assignment] — old ReActRuntime assigned during migration.
-                # Replaced by AgentRuntime+ReActTurnState when turn_store is wired.
-                agent_context.runtime = await RuntimeAssembler.assemble(RuntimeServicesConfig(  # type: ignore[assignment]
-                    mode="full",
-                    hooks=self._hook_runner,
-                    interceptors=list(self._interceptor_chain.interceptors) if self._interceptor_chain else None,
-                    turn_store=self._turn_store,
-                ))
 
             # 5.5 设置当前 conversation_id 上下文变量（供 peer 通信工具使用）
             from ..multi_agent.session_id import DefaultSessionIdStrategy
