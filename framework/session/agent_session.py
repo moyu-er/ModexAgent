@@ -380,7 +380,6 @@ class AgentSession(Generic[E]):
                 max_iterations=getattr(self._agent, "max_iterations", 10),
                 temperature=getattr(message, "metadata", {}).get("temperature"),
                 max_tokens=getattr(message, "metadata", {}).get("max_tokens"),
-                metadata={"session_id": session_id, "agent_name": agent_name},
                 extensions={
                     ExtensionKey.RUNTIME_CTX_MGR: self._runtime_context_manager,
                     ExtensionKey.ON_CHECKPOINT: on_checkpoint,
