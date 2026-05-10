@@ -12,7 +12,9 @@ Covers:
 from unittest.mock import AsyncMock, MagicMock
 
 from framework.core.agent import AgentContext
-from framework.runtime.enums import TurnCustomKey
+from framework.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
+from framework.runtime.models import TurnIdentity, TurnStateBase
+from framework.runtime.services import AgentRuntime, AgentRuntimeServices
 from framework.core.emitter import AgentResult
 from framework.core.runtime_context import InMemoryRuntimeContext, RuntimeContextManager
 from framework.core.tool_manager import ToolManager
@@ -30,12 +32,16 @@ class TestPeerAutoSendHook:
 
     def _make_ctx(self, history_entries, session_id="conv_001:main", runtime_mgr=None):
         history = ListMessageHistory(list(history_entries))
+        identity = TurnIdentity(agent_id="test", session_id=session_id, turn_id="t1")
+        state = TurnStateBase(identity=identity, agent_kind=AgentKind.REACT, phase=TurnPhase.RUNNING)
+        services = AgentRuntimeServices(runtime_context_manager=runtime_mgr)
         return AgentContext(
             system_prompt="",
             history=history,
             tool_manager=MagicMock(spec=ToolManager),
             session_id=session_id,
-            extensions={"runtime_context_manager": runtime_mgr},
+            runtime=AgentRuntime(services=services, state=state),
+            identity=identity,
         )
 
     # ------------------------------------------------------------------

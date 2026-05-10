@@ -13,11 +13,26 @@ import pytest
 
 from framework.core.agent import AgentContext
 from framework.core.context import InMemoryContextManager
-from framework.runtime.enums import TurnCustomKey
+from framework.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
+from framework.runtime.models import TurnIdentity, TurnStateBase
+from framework.runtime.services import AgentRuntime, AgentRuntimeServices
 from framework.core.emitter import AgentResult, ContentEmitter
 from framework.hook import Hook, HookErrorPolicy, HookSpec, HookRunner
 from framework.hook.builtin import RuntimeContextHook
 from framework.core.runtime_context import RuntimeContextManager
+
+
+def _make_runtime(hook_runner=None, runtime_mgr=None):
+    """Build a minimal AgentRuntime with typed state for test contexts."""
+    identity = TurnIdentity(agent_id="test", session_id="test", turn_id="t1")
+    state = TurnStateBase(
+        identity=identity, agent_kind=AgentKind.REACT, phase=TurnPhase.RUNNING,
+    )
+    services = AgentRuntimeServices(
+        hooks=hook_runner,
+        runtime_context_manager=runtime_mgr,
+    )
+    return AgentRuntime(services=services, state=state), identity
 from framework.core.tool_manager import InMemoryToolManager
 from framework.memory.history import ListMessageHistory
 from framework.hook.builtin import PeerAutoSendHook, RuntimeContextHook
@@ -35,8 +50,10 @@ class FakeAgent:
         self.max_iterations = 5
 
     async def run(self, context: AgentContext, emitter: ContentEmitter) -> AgentResult:
-        # Simulate ReActAgent._call_hooks(): prefer HOOK_RUNNER, fallback to HOOKS
-        hook_runner = context.extensions.get("hook_runner")
+        # Simulate ReActAgent._call_hooks(): prefer services.hooks, fallback to extension hooks
+        hook_runner = None
+        if context.runtime is not None and context.runtime.services is not None:
+            hook_runner = context.runtime.services.hooks
 
         async def _call_hook_point(method_name: str, *args):
             if hook_runner is not None:
@@ -53,7 +70,7 @@ class FakeAgent:
                     HookPayload(data=payload_data), hook_timeout=10.0,
                 )
                 return
-            for hook in context.extensions.get("hooks", []):
+            for hook in _get_hooks_from_context(context):
                 method = getattr(hook, method_name, None)
                 if method is not None:
                     await method(context, *args)
@@ -181,15 +198,14 @@ class TestHookCollaboration:
 
         # Run the agent
         from framework.memory.history import ListMessageHistory
+        runtime, identity = _make_runtime(hook_runner=hook_runner, runtime_mgr=runtime_mgr)
         ctx = AgentContext(
             system_prompt="",
             history=ListMessageHistory([]),
             tool_manager=InMemoryToolManager(),
             session_id="conv_001:main:doc-expert",
-            extensions={
-                "hook_runner": hook_runner,
-                "runtime_context_manager": runtime_mgr,
-            },
+            runtime=runtime,
+            identity=identity,
         )
         await FakeAgent(tool_calls=[
             FakeToolCall("search", "tc_1", {"q": "foo"})
@@ -204,21 +220,22 @@ class TestHookCollaboration:
         rch = RuntimeContextHook()
 
         from framework.memory.history import ListMessageHistory
+        hook_runner = HookRunner()
+        hook_runner.add(HookSpec(hook=rch, on_error=HookErrorPolicy.LOG))
+        runtime, identity = _make_runtime(hook_runner=hook_runner, runtime_mgr=runtime_mgr)
         ctx = AgentContext(
             system_prompt="",
             history=ListMessageHistory([]),
             tool_manager=InMemoryToolManager(),
             session_id="test_session",
 
-            extensions={
-                "hooks": [rch],
-                "runtime_context_manager": runtime_mgr,
-            },
+            runtime=runtime,
+            identity=identity,
         )
 
         # Resolve context
         await rch.before_turn(ctx)
-        runtime_ctx = ctx.extensions.get("runtime_context")
+        runtime_ctx = ctx.runtime._runtime_context
         assert runtime_ctx is not None
 
         # Simulate tool execution
@@ -255,16 +272,15 @@ class TestHookCollaboration:
         hook_runner.add(HookSpec(hook=peer_hook, on_error=HookErrorPolicy.LOG))
 
         from framework.memory.history import ListMessageHistory
+        runtime, identity = _make_runtime(hook_runner=hook_runner, runtime_mgr=runtime_mgr)
         ctx = AgentContext(
             system_prompt="",
             history=ListMessageHistory([]),
             tool_manager=InMemoryToolManager(),
             session_id="conv_001:main:doc-expert",
 
-            extensions={
-                "hook_runner": hook_runner,
-                "runtime_context_manager": runtime_mgr,
-            },
+            runtime=runtime,
+            identity=identity,
         )
 
         await FakeAgent().run(ctx, MagicMock(spec=ContentEmitter))
@@ -296,21 +312,19 @@ class TestHookCollaboration:
         hook_runner.add(HookSpec(hook=peer_hook, on_error=HookErrorPolicy.LOG))
 
         from framework.memory.history import ListMessageHistory
+        runtime, identity = _make_runtime(hook_runner=hook_runner, runtime_mgr=runtime_mgr)
         ctx = AgentContext(
             system_prompt="",
             history=ListMessageHistory([]),
             tool_manager=InMemoryToolManager(),
             session_id="conv_001:main:doc-expert",
 
-            extensions={
-                "hook_runner": hook_runner,
-                "hooks": [],
-                "runtime_context_manager": runtime_mgr,
-            },
+            runtime=runtime,
+            identity=identity,
         )
 
-        # Without the fix: hook_runner has no RuntimeContextHook â†?
-        # PeerAutoSendHook sees empty tool_calls â†?auto-forwards â†?duplicate.
+        # Without the fix: hook_runner has no RuntimeContextHook ï¿½?
+        # PeerAutoSendHook sees empty tool_calls ï¿½?auto-forwards ï¿½?duplicate.
         await FakeAgent(tool_calls=[
             FakeToolCall("send_message_async", "tc_1", {"target_agent": "main"})
         ]).run(ctx, MagicMock(spec=ContentEmitter))
@@ -332,13 +346,12 @@ class TestHookCollaboration:
             tool_manager=InMemoryToolManager(),
             session_id="conv_001:main:doc-expert",
 
-            extensions={
-                "hook_runner": hook_runner,
-                "hooks": [],
-                "runtime_context_manager": runtime_mgr,
-            },
+            runtime=runtime,
+            identity=identity,
         )
         await FakeAgent(tool_calls=[
             FakeToolCall("send_message_async", "tc_1", {"target_agent": "main"})
         ]).run(ctx2, MagicMock(spec=ContentEmitter))
         bus.send.assert_not_awaited()  # FIX: correctly skipped
+
+

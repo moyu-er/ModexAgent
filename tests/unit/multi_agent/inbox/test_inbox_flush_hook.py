@@ -83,6 +83,7 @@ class TestInboxFlushHook:
             system_prompt="",
             history=history,
             tool_manager=MagicMock(spec=ToolManager),
+            session_id="s1",
         )
         await hook.before_iteration(ctx)
 

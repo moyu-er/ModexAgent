@@ -22,10 +22,10 @@
 | D | 17-19 | Migrate agent_session.py → AgentRuntimeServices | ✅ Done |
 | E | TBD | Memory Checkpoint Cleanup (P5) | 🔴 Needs exploration |
 | F | TBD | Bot Project Rewire (P6) — Separate Plan | 🔴 |
-| G | TBD | Final Cleanup (P7) — Separate Plan | 🔴 |
+| G | TBD | Final Cleanup (P7) — Separate Plan | 🟡 In progress |
 
 **Current test baseline:** 1256 passed, 21 failed (pre-existing: 20 multi_agent hook + 1 summarizer), 8 skipped.
-**Last commit:** `7a46dc1 refactor: migrate agent_session.py to AgentRuntimeServices, delete extensions (Phase D)`
+**Last commit:** `d48632e docs: update AGENTS.md references from ctx.metadata/extensions to typed runtime state (Phase G)`
 
 ---
 
