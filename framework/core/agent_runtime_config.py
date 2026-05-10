@@ -31,7 +31,8 @@ class RuntimeControl:
 
     channel: ControlChannel | None = None
     event_bus: ControlEventBus | None = None
-    checkpoint_store: TurnStateStore | None = None
+    checkpoint_store: TurnStateStore | None = None  # DEPRECATED renamed to turn_store
+    turn_store: TurnStateStore | None = None
     preset_rules: list[PresetControlRule] = field(default_factory=list)
     busy_input_mode: BusyInputMode = BusyInputMode.QUEUE
 
@@ -47,7 +48,7 @@ class AgentRuntimeConfig:
         runtime = AgentRuntimeConfig(
             hooks=[HookSpec(hook=RunLoggingHook(), on_error=HookErrorPolicy.LOG)],
             interceptors=[ControlDrainInterceptor(channel=ctrl_channel)],
-            control=RuntimeControl(channel=ctrl_channel, checkpoint_store=store),
+            control=RuntimeControl(channel=ctrl_channel, turn_store=store),
         )
     """
 

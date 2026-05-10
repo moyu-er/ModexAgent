@@ -42,6 +42,7 @@ class RuntimeServicesConfig:
     control_store: ControlStore | None = None
     command_handlers: list[tuple[ControlCommandType, Any]] | None = None
     checkpoint_store: Any = None               # TurnStateStore (DEPRECATED renamed to turn_store)
+    turn_store: Any = None                     # TurnStateStore
     injection_queue: asyncio.Queue[str] | None = None
     governance: Any = None                     # ContextGovernance
     safety: Any = None                         # RuntimeSafetyPolicy
@@ -94,7 +95,7 @@ class RuntimeAssembler:
             control=control,
             approval=approval,
             governance=config.governance,
-            turn_store=config.checkpoint_store,
+            turn_store=config.turn_store if config.turn_store is not None else config.checkpoint_store,
             pending_input_queue=config.injection_queue,
         )
         if config.safety is not None:

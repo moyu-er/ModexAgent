@@ -59,7 +59,7 @@ class ApprovalRenderer:
         self,
         *,
         approval_workspace: Path,
-        checkpoint_store: object | None = None,
+        checkpoint_store: object | None = None,  # DEPRECATED: old memory checkpoint, remove in P5
         agent: object | None = None,
         user_interface: "ControlUserInterface | None" = None,
         on_drain: Callable[[InputMessage], Awaitable[None]] | None = None,

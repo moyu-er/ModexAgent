@@ -54,14 +54,14 @@ class TestRuntimeAssembler:
             control_channel=InMemoryControlChannel(),
             control_store=InMemoryControlStore(),
             command_handlers=[(ControlCommandType.CANCEL_RUN, _FakeHandler())],
-            checkpoint_store=_FakeStore(),
+            turn_store=_FakeStore(),
         )
         runtime = await RuntimeAssembler.assemble(config)
         assert isinstance(runtime, AgentRuntime)
         assert isinstance(runtime.interceptors, InterceptorChain)
         assert isinstance(runtime.approval, ApprovalRuntime)
         assert isinstance(runtime.control, ControlRuntime)
-        assert runtime.turn_store is config.checkpoint_store
+        assert runtime.turn_store is config.turn_store
 
     async def test_assemble_full_approval_only(self):
         config = RuntimeServicesConfig(

@@ -823,7 +823,7 @@ class BotService(AgentBuilderMixin):
             control_channel=self.control_channel,
             control_store=InMemoryControlStore(),
             command_handlers=[(ControlCommandType.CANCEL_TURN, DefaultCancelHandler())],
-            checkpoint_store=self._checkpoint_store,
+            turn_store=self._checkpoint_store,
             project_root=self._project_dir,
             governance=self._build_governance(),
             safety=self.safety_policy,

@@ -152,7 +152,7 @@ class AgentPipeline:
         safety: RuntimeSafetyPolicy | None = None,
         hook_runner: Any | None = None,
         interceptor_chain: Any | None = None,
-        checkpoint_store: Any | None = None,
+        checkpoint_store: Any | None = None,  # DEPRECATED: old memory checkpoint, separate from turn_store
         control_channel: Any | None = None,
         busy_input_mode: BusyInputMode = BusyInputMode.QUEUE,
         approval_workspace: str = ".modex_approval",

@@ -266,26 +266,26 @@ class ReActAgent(Agent[ReActEvent]):
         context: AgentContext,
     ) -> None:
         """保存检查点到 turn_store。无 store 则跳过。"""
-        checkpoint_store = context.runtime.turn_store if context.runtime else None
-        if checkpoint_store is None:
+        store = context.runtime.turn_store if context.runtime else None
+        if store is None:
             return
         data = {"messages": list(all_new_messages)}
         session_id = getattr(context, "session_id", "unknown")
         checkpoint_id = f"{session_id}:latest"
         # P5 bridge: TurnStateStore has save_turn(), not save().
         # Memory checkpoint API will be replaced by TurnSnapshot.message_delta.
-        _save = getattr(checkpoint_store, "save", None)
+        _save = getattr(store, "save", None)
         if _save is not None:
             await _save(checkpoint_id, data)
 
     async def _clear_checkpoint(self, context: AgentContext) -> None:
         """清空检查点。无 store 则跳过。"""
-        checkpoint_store = context.runtime.turn_store if context.runtime else None
-        if checkpoint_store is None:
+        store = context.runtime.turn_store if context.runtime else None
+        if store is None:
             return
         session_id = getattr(context, "session_id", "unknown")
         checkpoint_id = f"{session_id}:latest"
-        _clear = getattr(checkpoint_store, "clear", None)
+        _clear = getattr(store, "clear", None)
         if _clear is not None:
             await _clear(checkpoint_id)
 

@@ -78,7 +78,7 @@ class DefaultAgentFactory(AgentFactory):
         default_hooks: list[Any] | None = None,
         default_hook_runner: Any | None = None,
         default_interceptor_chain: Any | None = None,
-        default_checkpoint_store: Any | None = None,
+        default_turn_store: Any | None = None,
     ):
         self._default_llm_provider = default_llm_provider
         self._default_tool_manager = default_tool_manager
@@ -90,7 +90,7 @@ class DefaultAgentFactory(AgentFactory):
         self._default_hooks = list(default_hooks) if default_hooks else []
         self._default_hook_runner = default_hook_runner
         self._default_interceptor_chain = default_interceptor_chain
-        self._default_checkpoint_store = default_checkpoint_store
+        self._default_turn_store = default_turn_store
         self._inbox_producer = InboxProducer(inbox_server) if inbox_server else None
         self._inbox_consumer = InboxConsumer(inbox_server) if inbox_server else None
         # Shared runtime-context manager across all agents created by this factory.
@@ -262,7 +262,7 @@ class DefaultAgentFactory(AgentFactory):
                 hooks=agent_hooks,
                 hook_runner=hook_runner,
                 interceptor_chain=agent_interceptor_chain,
-                checkpoint_store=self._default_checkpoint_store,
+                checkpoint_store=self._default_turn_store,
                 context_manager_factory=context_manager_factory,
                 runtime_context_manager=self._runtime_context_manager,
                 safety=descriptor.safety_policy,
@@ -303,7 +303,7 @@ class DefaultAgentFactory(AgentFactory):
                 runtime_context_manager=self._runtime_context_manager,
                 hook_runner=hook_runner,
                 interceptor_chain=session_interceptor_chain,
-                checkpoint_store=self._default_checkpoint_store,
+                checkpoint_store=self._default_turn_store,
             )
 
         return AgentInstance(

@@ -82,7 +82,8 @@ class AgentSession(Generic[E]):
         runtime_context_manager: Any | None = None,
         hook_runner: Any | None = None,
         interceptor_chain: Any | None = None,
-        checkpoint_store: Any | None = None,
+        checkpoint_store: Any | None = None,  # DEPRECATED renamed to turn_store
+        turn_store: Any | None = None,
     ):
         """初始化 AgentSession
 
@@ -130,7 +131,8 @@ class AgentSession(Generic[E]):
         self._runtime_context_manager = runtime_context_manager
         self._hook_runner = hook_runner
         self._interceptor_chain = interceptor_chain
-        self._checkpoint_store = checkpoint_store
+        self._checkpoint_store = checkpoint_store  # DEPRECATED
+        self._turn_store = turn_store if turn_store is not None else checkpoint_store
 
     async def process_message(
         self,
@@ -388,7 +390,7 @@ class AgentSession(Generic[E]):
             agent_context.identity = turn_identity
 
             # Build ReActRuntime via framework RuntimeAssembler
-            if self._hook_runner or self._interceptor_chain or self._checkpoint_store:
+            if self._hook_runner or self._interceptor_chain or self._turn_store:
                 from framework.agents.react.assembler import RuntimeAssembler, RuntimeServicesConfig
 
                 # type: ignore[assignment] — old ReActRuntime assigned during migration.
@@ -397,7 +399,7 @@ class AgentSession(Generic[E]):
                     mode="full",
                     hooks=self._hook_runner,
                     interceptors=list(self._interceptor_chain.interceptors) if self._interceptor_chain else None,
-                    checkpoint_store=self._checkpoint_store,
+                    turn_store=self._turn_store,
                 ))
 
             # 5.5 设置当前 conversation_id 上下文变量（供 peer 通信工具使用）
