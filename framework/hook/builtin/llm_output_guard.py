@@ -24,7 +24,7 @@ _SENSITIVE_PATTERNS: list[tuple[str, str]] = [
 class LLMOutputGuardHook:
     """在 after_llm_response 中检查 LLM 输出，进行脱敏和风险评估。
 
-    风险标记写入 ctx.metadata["_llm_output_risk"]，
+    风险标记写入 runtime state custom 字段，
     供下游组件（如 ProgressReportHook）决策是否告警。
     """
 
@@ -70,7 +70,9 @@ class LLMOutputGuardHook:
         lower = content.lower()
         matched_risks = [kw for kw in self._risk_keywords if kw.lower() in lower]
         if matched_risks:
-            ctx.metadata["_llm_output_risk"] = matched_risks
+            state = ctx.runtime.state if ctx.runtime else None
+            if state is not None:
+                state.custom["_llm_output_risk"] = matched_risks
             logger.warning(
                 "LLMOutputGuard: risk keywords detected session=%s keywords=%s",
                 ctx.session_id, matched_risks,

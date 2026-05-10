@@ -121,6 +121,14 @@ class TurnStateBase:
     message_delta: list[MessageDelta] = field(default_factory=list)
     operations: list[OperationState] = field(default_factory=list)
     cancellation: CancellationState | None = None
+    custom: dict[str, Any] = field(default_factory=dict)
+    """Typed migration target for hook/interceptor per-turn data.
+    
+    Hooks and interceptors may store lightweight per-turn state here
+    instead of the old ``ctx.metadata`` dict. Values must be JSON-serializable
+    if turn snapshots are persisted. Process-local services and provider
+    instances must never be placed here.
+    """
 
     def add_operation(
         self,

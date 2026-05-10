@@ -19,6 +19,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _get_iteration(ctx: AgentContext[Any]) -> int:
+    state = getattr(ctx.runtime, "state", None) if ctx.runtime else None
+    return getattr(state, "iteration", 0)
+
+
 class ProgressReportHook:
     """推送进度事件到 ControlEventBus。
 
@@ -29,11 +34,11 @@ class ProgressReportHook:
         self._event_bus = event_bus
 
     async def before_iteration(self, ctx: AgentContext[Any]) -> None:
-        iteration = ctx.metadata.get("iteration", 0)
+        iteration = _get_iteration(ctx)
         await self._emit(ctx, {"phase": "iteration_start", "iteration": iteration})
 
     async def after_iteration(self, ctx: AgentContext[Any]) -> None:
-        iteration = ctx.metadata.get("iteration", 0)
+        iteration = _get_iteration(ctx)
         await self._emit(ctx, {"phase": "iteration_end", "iteration": iteration})
 
     async def before_tool_execution(
