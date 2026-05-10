@@ -763,8 +763,10 @@ class AgentPipeline:
     async def _load_pending_approval_snapshot(self, session_id: str) -> TurnSnapshot | None:
         if self.turn_store is None:
             return None
+        agent_id = getattr(self.agent, "name", None)
         snapshots = await self.turn_store.list_active_turns(
             StateQueryScope(
+                agent_id=agent_id,
                 session_id=session_id,
                 phase=TurnPhase.SUSPENDED,
                 reason=SnapshotReason.TOOL_APPROVAL_REQUIRED,

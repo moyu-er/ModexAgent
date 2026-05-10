@@ -115,11 +115,8 @@ class TestReActAgentCancelledError:
         agent = ReActAgent(provider=provider)
         emitter = _FakeEmitter()
         ctx = _make_ctx()
-        saved_checkpoint: list | None = None
-        # P5: on_checkpoint removed from extensions. Test needs rewrite
-        # to use TurnSnapshot.message_delta instead.
-        import pytest
-        pytest.skip("P5: on_checkpoint removed, test needs TurnSnapshot rewrite")
+        # CancelledError propagates to caller; crash recovery will use
+        # TurnSnapshot.message_delta saved by pipeline's snapshot policy.
         with pytest.raises(asyncio.CancelledError):
             await agent.run(ctx, emitter)
 

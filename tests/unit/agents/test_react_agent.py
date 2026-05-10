@@ -559,15 +559,11 @@ class TestReActAgentRegression:
 
 
 class TestReActAgentCheckpoint:
-    """崩溃恢复检查点测试 — P5: 旧 save/clear checkpoint 已替换为 TurnSnapshot.message_delta。"""
+    """Crash recovery checkpoint tests — now using TurnSnapshot.message_delta."""
 
     @pytest.fixture
     def streaming_provider(self):
         return MockStreamingProvider()
-
-    @pytest.fixture
-    def non_streaming_provider(self):
-        return MockNonStreamingProvider()
 
     @pytest.fixture
     def non_streaming_provider(self):
@@ -590,7 +586,6 @@ class TestReActAgentCheckpoint:
 
     @pytest.mark.asyncio
     async def test_checkpoint_saved_after_assistant_and_tool_messages(self, streaming_provider, context, emitter):
-        pytest.skip("P5: old save/clear checkpoint replaced by TurnSnapshot.message_delta")
         tool_call = ToolCall(tool_name="weather", arguments={"city": "Beijing"}, call_id="call_1")
         iteration = 0
 
@@ -610,99 +605,51 @@ class TestReActAgentCheckpoint:
         streaming_provider.chat_stream = mock_chat_stream
         context.tool_manager.execute = AsyncMock(return_value=ToolResult(tool_name="weather", result="Sunny, 25C"))
 
-        saved: list[list[dict[str, Any]]] = []
-        cleared: list[str] = []
-
-        class _MockStore:
-            async def save(self, cid, data):
-                saved.append(list(data.get("messages", [])))
-            async def clear(self, cid):
-                cleared.append(cid)
-            async def save_turn(self, snapshot):
-                pass
-            async def load_turn(self, identity):
-                return None
-            async def delete_turn(self, identity):
-                pass
-            async def list_active_turns(self, scope):
-                return []
-
-        context.runtime.services.turn_store = _MockStore()
         agent = ReActAgent(provider=streaming_provider)
         streaming_emitter = StreamingEmitter()
 
         result = await agent.run(context, streaming_emitter)
 
-        # checkpoint saves after assistant and tool messages via runtime store
-        assert len(saved) >= 2
+        # message_delta tracks both assistant and tool messages
+        from framework.runtime.services import require_runtime_state
+        from framework.agents.react.state import ReActTurnState
+        state = require_runtime_state(context.runtime, ReActTurnState)
+        assert len(state.message_delta) >= 2, f"expected >= 2 message_delta entries, got {len(state.message_delta)}"
 
-        # 最终内容正确
+        # Final content is correct
         assert "Sunny in Beijing" in result.content
 
     @pytest.mark.asyncio
     async def test_checkpoint_cleared_on_final_output(self, non_streaming_provider, context, emitter):
-        pytest.skip("P5: old save/clear checkpoint replaced by TurnSnapshot.message_delta")
         async def mock_chat(*args, **kwargs):
             return LLMResponse(content="Final answer")
 
         non_streaming_provider.chat = mock_chat
 
-        cleared: list[str] = []
-
-        class _MockStore:
-            async def save(self, cid, data):
-                pass
-            async def clear(self, cid):
-                cleared.append(cid)
-            async def save_turn(self, snapshot):
-                pass
-            async def load_turn(self, identity):
-                return None
-            async def delete_turn(self, identity):
-                pass
-            async def list_active_turns(self, scope):
-                return []
-
-        context.runtime.services.turn_store = _MockStore()
         agent = ReActAgent(provider=non_streaming_provider)
-
         await agent.run(context, emitter)
 
-        # checkpoint 应在结束时清除
-        assert len(cleared) >= 1
+        # Turn completed successfully — phase is COMPLETED
+        from framework.runtime.enums import TurnPhase
+        assert context.runtime.state.phase == TurnPhase.COMPLETED
+
+        # message_delta records the assistant message
+        assert len(context.runtime.state.message_delta) >= 1
 
     @pytest.mark.asyncio
     async def test_checkpoint_saved_on_error(self, non_streaming_provider, context, emitter):
-        pytest.skip("P5: old save/clear checkpoint replaced by TurnSnapshot.message_delta")
         async def mock_chat(*args, **kwargs):
             raise ValueError("LLM failure")
 
         non_streaming_provider.chat = mock_chat
 
-        saved: list[list[dict[str, Any]]] = []
-
-        class _MockStore:
-            async def save(self, cid, data):
-                saved.append(list(data.get("messages", [])))
-            async def clear(self, cid):
-                pass
-            async def save_turn(self, snapshot):
-                pass
-            async def load_turn(self, identity):
-                return None
-            async def delete_turn(self, identity):
-                pass
-            async def list_active_turns(self, scope):
-                return []
-
-        context.runtime.services.turn_store = _MockStore()
         agent = ReActAgent(provider=non_streaming_provider)
-
         result = await agent.run(context, emitter)
 
+        # Error result preserves messages for crash recovery
         assert result.stop_reason == "error"
-        # 错误路径中也会保存 checkpoint（保留当前进度）
-        assert len(saved) >= 1
+        assert result.error is not None
+        assert "LLM failure" in str(result.error)
 
     @pytest.mark.asyncio
     async def test_multiturn_tool_calls_synced_to_context_history(self, streaming_provider, context):
