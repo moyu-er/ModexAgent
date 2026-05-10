@@ -20,7 +20,7 @@ from .tool_manager import ToolManager
 
 if TYPE_CHECKING:
     from framework.runtime.models import TurnIdentity
-    from framework.runtime.services import AgentRuntime as _AgentRuntime
+    from framework.runtime.services import AgentRuntime
 
 
 @dataclass
@@ -38,7 +38,7 @@ class AgentContext:
     extensions: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     emitter: ContentEmitter | None = None
-    runtime: _AgentRuntime | None = None
+    runtime: AgentRuntime | None = None
     identity: TurnIdentity | None = None
 
     def add_attachment(self, path: str) -> None:

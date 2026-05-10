@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from framework.hook import HookRunner
     from framework.interceptor.chain import InterceptorChain
     from framework.control.runtime import ControlRuntime
-    from framework.agents.react.approval import ApprovalRuntime as _ApprovalRuntime
+    from framework.agents.react.approval import ApprovalRuntime
     from framework.memory.context_governance import ContextGovernance
     from .store import TurnStateStore, RuntimeCommandStore
 
@@ -31,7 +31,7 @@ class AgentRuntimeServices:
     hooks: HookRunner | None = None
     interceptors: InterceptorChain | None = None
     control: ControlRuntime | None = None
-    approval: _ApprovalRuntime | None = None
+    approval: ApprovalRuntime | None = None
     governance: ContextGovernance | None = None
     turn_store: TurnStateStore | None = None
     command_store: RuntimeCommandStore | None = None

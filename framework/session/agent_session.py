@@ -392,7 +392,9 @@ class AgentSession(Generic[E]):
             if self._hook_runner or self._interceptor_chain or self._checkpoint_store:
                 from framework.agents.react.assembler import RuntimeAssembler, RuntimeServicesConfig
 
-                agent_context.runtime = await RuntimeAssembler.assemble(RuntimeServicesConfig(
+                # type: ignore[assignment] — old ReActRuntime assigned during migration.
+                # Replaced by AgentRuntime+ReActTurnState when turn_store is wired.
+                agent_context.runtime = await RuntimeAssembler.assemble(RuntimeServicesConfig(  # type: ignore[assignment]
                     mode="full",
                     hooks=self._hook_runner,
                     interceptors=list(self._interceptor_chain.interceptors) if self._interceptor_chain else None,
