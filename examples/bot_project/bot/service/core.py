@@ -166,6 +166,8 @@ class BotService(AgentBuilderMixin):
         self._approval_workspace: Path | None = None
         self._checkpoint_store: Any | None = None
         self._im_ui: IMUserInterface | None = None
+        self._turn_store: Any | None = None
+        self._command_store: Any | None = None
 
         # Runtime control
         self._shutdown_event = asyncio.Event()
@@ -356,6 +358,18 @@ class BotService(AgentBuilderMixin):
         )
         print(f"[OK] Approval infrastructure initialized (workspace: {self._approval_workspace})")
 
+        # 7.6. Initialize typed runtime stores (TurnStateStore + RuntimeCommandStore)
+        from framework.runtime.codec import RuntimeStateCodecRegistry
+        from framework.runtime.enums import AgentKind
+        from framework.agents.react.state import ReActRuntimeStateCodec
+        from framework.runtime.store import JsonFileTurnStateStore, JsonFileRuntimeCommandStore
+
+        runtime_data_dir = self._project_dir / "data" / "runtime_state"
+        codec_registry = RuntimeStateCodecRegistry({AgentKind.REACT: ReActRuntimeStateCodec()})
+        self._turn_store = JsonFileTurnStateStore(runtime_data_dir / "turns", codec_registry)
+        self._command_store = JsonFileRuntimeCommandStore(runtime_data_dir / "commands")
+        print(f"[OK] Typed runtime stores initialized (data/runtime_state/)")
+
         # 8. Create ReActAgent (main agent in full mode with approval)
         self.agent = ReActAgent(provider=provider, mode="full")
         print("[OK] ReActAgent initialized")
@@ -458,6 +472,8 @@ class BotService(AgentBuilderMixin):
             approval_workspace=str(self._approval_workspace),
             user_interface=self._im_ui,
             prebuilt_runtime=runtime,
+            turn_store=self._turn_store,
+            command_store=self._command_store,
         )
         print("[OK] AgentPipeline initialized")
         print(f"   Input: {self.input_adapter.name}")

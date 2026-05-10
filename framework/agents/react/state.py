@@ -78,7 +78,9 @@ class ReActTurnState(TurnStateBase):
 
     def active_tool_batch(self) -> ToolBatchState | None:
         for b in reversed(self.tool_batches):
-            if b.status not in (ToolBatchStatus.COMPLETED, ToolBatchStatus.FAILED, ToolBatchStatus.CANCELLED):
+            if b.status not in (
+                ToolBatchStatus.COMPLETED, ToolBatchStatus.FAILED, ToolBatchStatus.CANCELLED,
+            ):
                 return b
         return None
 

@@ -18,8 +18,7 @@ from framework.agents.react.approval import TieredToolApprovalClassifier
 from framework.agents.react.constants import ReActMetaKey, ReActNode, ReActReason
 from framework.agents.react.nodes.start import StartNode
 from framework.agents.react.nodes.tool import ToolNode
-from framework.agents.react.state import InMemoryTurnResumeStateStore
-from framework.agents.react.strategy import SuspendResumeStrategy
+from framework.agents.react.strategy import InMemoryTurnResumeStateStore, SuspendResumeStrategy
 from framework.approval.config import AgentApprovalConfig, ToolApprovalConfig
 from framework.approval.constants import ApprovalDecision, ApprovalTier
 from framework.approval.state import ApprovalRequest
