@@ -400,7 +400,7 @@ class TestToolNode:
 
         assert t.target == ReActNode.END
         assert t.reason == ReActReason.TURN_CANCELLED
-        assert len(executed) == 1
+        assert len(executed) == 0  # atomic batch: ALLOWED converted to PREEMPTED when any DENIED present
 
     @pytest.mark.asyncio
     async def test_denied_tool_cancel_path_uses_real_agent_checkpoint_signature(self):

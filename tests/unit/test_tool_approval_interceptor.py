@@ -1,4 +1,4 @@
-﻿"""Tests for ToolApprovalInterceptor — tool_error vs cancel_turn."""
+"""Tests for ToolApprovalInterceptor — deny_as_tool_error vs deny_as_cancel."""
 
 from __future__ import annotations
 
@@ -120,10 +120,10 @@ class TestToolApprovalDenyAsToolError:
 
 
 class TestToolApprovalDenyAsCancel:
-    """cancel_turn / timeout cancel_turn must raise AgentControlError."""
+    """deny_as_cancel / timeout_as_cancel must raise AgentControlError."""
 
     @pytest.mark.asyncio
-    async def test_timeout_cancel_turn_raises_agent_cancelled(self, fake_ctx, channel, matched_tool_call):
+    async def test_timeout_as_cancel_raises_agent_cancelled(self, fake_ctx, channel, matched_tool_call):
         """Timeout with CANCEL_TURN raises AgentCancelled (AgentControlError)."""
         from framework.control.exceptions import AgentControlError
 

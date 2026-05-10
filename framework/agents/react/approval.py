@@ -1,14 +1,14 @@
-﻿"""ApprovalRuntime — typed approval service for ReActAgent.
+"""ApprovalRuntime — typed approval service for ReActAgent.
 
 Approval classification (``ApprovalClassifier``) is a policy service;
 ``ApprovalTransaction`` inside ``ReActTurnState`` owns the state.
-``ApprovalDenyPolicy`` defines turn-cancel behaviour for denied approvals.
+``ApprovalDenyPolicy`` replaces the old ``deny_as_cancel: bool`` flag.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from framework.approval.config import AgentApprovalConfig
 from framework.approval.constants import ApprovalTier
@@ -16,6 +16,10 @@ from framework.core.agent import AgentContext
 from framework.core.types import ToolCall
 from framework.interceptor.builtin.tool_approval import ArgumentMatcher
 from framework.runtime.enums import ApprovalDenyPolicy
+
+if TYPE_CHECKING:
+    from framework.agents.react.strategy import SuspendStrategy
+
 
 class ApprovalClassifier(Protocol):
     """Classify a tool call into an ``ApprovalTier`` value."""
@@ -65,9 +69,15 @@ class TieredToolApprovalClassifier:
 class ApprovalRuntime:
     """Approval policy service — classification + deny behaviour.
 
-    ``ApprovalTransaction`` inside ``ReActTurnState`` owns state and persistence;
-    this service only classifies tools and defines denial behaviour.
+    ``ApprovalTransaction`` inside ``ReActTurnState`` owns the state and
+    persistence; this service only classifies tools.
+
+    .. deprecated::
+        ``suspend_strategy`` is retained for backward compat during migration.
+        New code should use ``TurnStateSuspendStrategy`` from
+        ``framework.agents.react.strategy``, wired through ``AgentRuntimeServices``.
     """
 
     classifier: ApprovalClassifier
     default_deny_policy: ApprovalDenyPolicy = ApprovalDenyPolicy.CANCEL_TURN
+    suspend_strategy: SuspendStrategy | None = None
