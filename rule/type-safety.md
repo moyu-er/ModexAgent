@@ -10,7 +10,7 @@ directly, so keep active agent rule files in sync when this file changes.
    typed models such as `ChatMessage`, `ToolCall`, `LLMResponse`, `InputMessage`, and
    `OutputMessage`.
 3. Function signatures must declare parameter and return types. Avoid bare `Any`,
-   `list`, `dict`, and `list[Any]` in framework-facing APIs.
+   `list`, `dict`, `object`, and `list[Any]` in framework-facing APIs.
 4. Design abstractions before depending on implementations. Use ABCs or Protocols for
    cross-cutting concerns and extension points, rather than directly binding framework
    code to concrete implementations.
@@ -18,6 +18,6 @@ directly, so keep active agent rule files in sync when this file changes.
    reusable framework behavior; `examples/` contains usage examples and business wiring.
    Do not hard-code example-specific configuration or business assumptions into the
    framework.
-6. Avoid dynamic access patterns such as `getattr` unless they are necessary for a real
+6. Avoid dynamic access patterns such as `getattr`, `hasattr`, `*attr` unless they are necessary for a real
    extension boundary or compatibility layer. Prefer explicit typed attributes and
    method calls so contracts stay visible and checkable.

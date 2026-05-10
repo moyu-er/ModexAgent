@@ -16,5 +16,4 @@ Security policies, validators, and approval handlers. Protects agent from execut
 ## Current Runtime Status
 
 Security policy can participate in approval and tool execution policy, but
-approval suspend/resume is owned by the ReAct runtime. See
-`docs/current-runtime.md`.
+approval suspend/resume is owned by the ReAct runtime.

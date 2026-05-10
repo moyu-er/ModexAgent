@@ -22,13 +22,13 @@
 
 ## Coding Rules
 
-- Python 3.11+, `from __future__ import annotations` in framework modules.
+- Python 3.12+, `from __future__ import annotations` in framework modules.
 - Prefer enums/constants over raw strings for categories, roles, states, and protocol values.
 - Prefer typed structures over loose dicts, using existing models such as `ChatMessage`, `ToolCall`, `LLMResponse`, `InputMessage`, and `OutputMessage`.
-- Public functions need typed parameters and return values; avoid bare `Any`, `list`, `dict`, and `list[Any]` in framework-facing APIs.
+- Public functions need typed parameters and return values; avoid bare `Any`, `list`, `dict`, `object`, and `list[Any]` in framework-facing APIs.
 - Use Protocols/ABCs for extension points; avoid depending on concrete implementations where a pluggable contract exists.
 - Keep reusable framework behavior in `framework/` and example/business wiring in `examples/`; do not hard-code example-specific configuration into the framework.
-- Avoid dynamic access such as `getattr` unless it is needed for a real extension boundary or compatibility layer.
+- Avoid dynamic access such as `getattr`, `hasattr`, `*attr` unless it is needed for a real extension boundary or compatibility layer.
 - `MessageRole` lives in `framework.core.types.MessageRole`; do not introduce
   another role enum in constants or feature modules.
 - Hook per-turn state belongs in `ctx.metadata`, not shared instance attributes, unless keyed by `session_id`.
@@ -43,7 +43,7 @@
 - ReAct tool processes must stay structurally legal: do not split `assistant.tool_calls` from matching `tool` results. Compression should skip open tool-call states and governance should repair model-visible copies.
 - Subagent session memory is temporary and should be cleared after the subagent finishes.
 
-See `docs/memory-system.md`, `docs/superpowers/specs/2026-05-07-memory-retention-compression-design.md`, and `examples/bot_project/docs/memory-system.md` for details.
+See `examples/bot_project/docs/memory-system.md` for details.
 
 ## Testing
 

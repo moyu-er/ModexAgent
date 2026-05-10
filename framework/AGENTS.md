@@ -64,5 +64,4 @@ Core multi-agent framework package. Contains all abstractions, implementations, 
 ## Current Runtime Status
 
 The current ReAct runtime is graph-based and integrates hooks, interceptors,
-control, approval, and runtime state through explicit runtime services. See
-`docs/current-runtime.md` before changing cross-cutting runtime behavior.
+control, approval, and runtime state through explicit runtime services.

@@ -36,5 +36,4 @@ Test suites for the ModexAgent framework, organized by test level: unit, integra
 ## Current Runtime Status
 
 Runtime tests should cover graph node behavior, resume target/reason, cancellation
-result mapping, runtime-store aliases, and default bot interceptor wiring. See
-`docs/current-runtime.md`.
+result mapping, runtime-store aliases, and default bot interceptor wiring.

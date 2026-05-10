@@ -44,5 +44,4 @@ class MyTool(Tool):
 ## Current Runtime Status
 
 Tools execute through the ReAct `ToolNode`. Approval, cancellation metadata, and
-runtime control boundaries should be handled by the runtime services described in
-`docs/current-runtime.md`.
+runtime control boundaries should be handled by the runtime services.

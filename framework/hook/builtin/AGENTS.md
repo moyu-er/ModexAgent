@@ -42,4 +42,4 @@ Framework-provided hooks — ready-to-use lifecycle extensions. There are 10 bui
 
 Built-in hooks must remain pool-safe: per-turn state belongs in `ctx.metadata`.
 Hooks should not wrap execution or implement control flow that belongs to
-interceptors/control services. See `docs/current-runtime.md`.
+interceptors/control services.

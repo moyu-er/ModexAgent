@@ -49,4 +49,4 @@ Runtime control plane — the command input and event output layer. Provides `Co
 
 Control is the runtime command plane, not just a graph node. Current code supports
 safe-boundary command/event/checkpoint handling; future live intervention should
-target active LLM/tool operation IDs. See `docs/current-runtime.md`.
+target active LLM/tool operation IDs.

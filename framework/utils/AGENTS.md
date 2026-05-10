@@ -20,4 +20,4 @@ General-purpose utilities — media processing, tokenization, helpers. No domain
 ## Current Runtime Status
 
 Utility code should stay runtime-agnostic unless it is explicitly part of the
-hook/interceptor/control integration described in `docs/current-runtime.md`.
+hook/interceptor/control integration.

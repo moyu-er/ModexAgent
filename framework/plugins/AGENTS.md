@@ -22,4 +22,4 @@ Plugin system — convention-based extensibility. Three discovery sources: bundl
 
 Plugins may contribute hooks, tools, or policies, but ReAct clean mode should run
 without plugin-provided runtime services unless explicitly re-enabled by full
-mode assembly. See `docs/current-runtime.md`.
+mode assembly.

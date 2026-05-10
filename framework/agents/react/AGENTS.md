@@ -61,4 +61,4 @@ Tool cancellation paths should set `ReActMetaKey.END_REASON` and
 - Cover resume target/reason, approval deny checkpoint signatures, cancellation
   result mapping, and clean/full mode boundaries when those paths change.
 
-See `docs/current-runtime.md` for the cross-project runtime summary.
+

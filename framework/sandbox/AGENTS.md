@@ -23,4 +23,4 @@ Sandboxed code execution — isolates tool execution from the agent runtime. Mul
 
 Sandbox tool execution is invoked from the ReAct tool node path. Tool timeout is
 owned by ReAct tool execution/runtime safety policy, not by the default bot
-interceptor chain. See `docs/current-runtime.md`.
+interceptor chain.

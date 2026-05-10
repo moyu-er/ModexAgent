@@ -50,4 +50,4 @@ InputAdapter.receive()
 
 Pipeline should assemble runtime services and handle platform I/O; ReAct owns
 turn, LLM, tool, approval, and resume boundaries. Keep hook/interceptor/control
-policy out of pipeline glue where possible. See `docs/current-runtime.md`.
+policy out of pipeline glue where possible.

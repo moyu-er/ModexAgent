@@ -55,5 +55,4 @@ QQ Gateway → QQInputAdapter → AgentPipeline
 
 The bot project is the primary full-mode reference. Its default interceptor chain
 currently wires `ControlDrainInterceptor` and `ToolResultLimitInterceptor` only,
-and runtime persistence should use `JsonFileRuntimeStateStore`. See
-`docs/current-runtime.md`.
+and runtime persistence should use `JsonFileRuntimeStateStore`.

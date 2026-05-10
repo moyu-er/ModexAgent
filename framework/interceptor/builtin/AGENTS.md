@@ -52,5 +52,4 @@ Framework-provided interceptors — ready-to-use AOP wrappers for common control
 
 Built-in interceptors should keep scope ownership explicit. The current bot
 project default chain uses `ControlDrainInterceptor` and `ToolResultLimitInterceptor`
-only; turn/tool timeout interceptors are not default wiring. See
-`docs/current-runtime.md`.
+only; turn/tool timeout interceptors are not default wiring.

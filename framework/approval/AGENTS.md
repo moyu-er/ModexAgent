@@ -43,5 +43,4 @@ Tiered tool-approval system with batch atomicity. Supports HARDLINE → DANGEROU
 ## Current Runtime Status
 
 Approval is integrated at the `ToolNode` level in the ReAct graph. Suspend/resume
-for approval uses `TurnResumeState` with `resume_node="tool"`. See
-`docs/current-runtime.md` for runtime boundary details.
+for approval uses `TurnResumeState` with `resume_node="tool"`.

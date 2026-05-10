@@ -38,8 +38,7 @@ Three-layer memory system with scope isolation. Layers: Short-term (session wind
 
 ### Design Documents
 - `design_doc/2026-05-05-memory-architecture-design.md` — 最新记忆架构设计
-- `docs/memory-system.md` — 当前记忆系统架构说明
 ## Current Runtime Status
 
 Memory providers are separate from ReAct runtime-state persistence. Suspend/resume
-uses the `RuntimeStateStore` naming described in `docs/current-runtime.md`.
+uses the `RuntimeStateStore` naming.

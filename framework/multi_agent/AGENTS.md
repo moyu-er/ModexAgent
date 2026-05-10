@@ -69,5 +69,4 @@ The following components were previously in this package but have been relocated
 ## Current Runtime Status
 
 Pool and multi-agent code may share hook/interceptor instances. Keep per-turn
-state in `ctx.metadata` and follow the current ReAct runtime boundaries in
-`docs/current-runtime.md`.
+state in `ctx.metadata` and follow the current ReAct runtime boundaries.
