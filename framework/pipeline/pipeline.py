@@ -16,14 +16,13 @@ from framework.core.llm_error import RuntimeSafetyPolicy
 from framework.core.skills import SkillManager
 from framework.memory.core.message import ChatMessage
 
+from ..agents.react.state import ReActSnapshotPolicy
 from ..approval.constants import ApprovalDecision
 from ..approval.response import parse_input_command
 from ..approval.types import ApprovalAction
-from ..agents.react.state import ReActSnapshotPolicy
 from ..control.ui.abc import ControlUserInterface
 from ..core.agent import Agent, AgentContext
 from ..core.context import ContextManager
-
 from ..core.emitter import AgentResult, StreamingAwareEmitter
 from ..core.graph.interrupt import GraphInterrupt
 from ..core.runtime_context import RuntimeContextManager
@@ -39,14 +38,14 @@ from ..multi_agent import (
     AgentMessageRouter,
     SubagentManager,
 )
+from ..runtime.enums import SnapshotReason, TurnPhase
+from ..runtime.models import StateQueryScope, TurnSnapshot
 from ..session.agent_session import _dream_locks
 from ..utils.context_builder import MultiAgentContextBuilder
 from ..utils.deduplicator import MessageDeduplicator
 from .adapters import InputAdapter, OutputAdapter, OutputMessage
 from .approval_renderer import ApprovalRenderer, format_approval_prompt
 from .context_assembler import assemble_context
-from ..runtime.enums import SnapshotReason, TurnPhase
-from ..runtime.models import StateQueryScope, TurnSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -517,6 +516,7 @@ class AgentPipeline:
 
         # ---- typed TurnIdentity (new) ----
         from uuid import uuid4
+
         from framework.runtime.models import TurnIdentity
         turn_identity = TurnIdentity(
             agent_id=getattr(self.agent, "name", "agent"),
@@ -536,9 +536,10 @@ class AgentPipeline:
 
         # ---- typed AgentRuntime with ReActTurnState (new) ----
         if self.turn_store is not None:
-            from framework.runtime.services import AgentRuntime, AgentRuntimeServices
             from framework.agents.react.state import ReActTurnState
-            from framework.runtime.enums import AgentKind, TurnCustomKey, TurnPhase as RTurnPhase
+            from framework.runtime.enums import AgentKind, TurnCustomKey
+            from framework.runtime.enums import TurnPhase as RTurnPhase
+            from framework.runtime.services import AgentRuntime, AgentRuntimeServices
             react_state = ReActTurnState(
                 identity=turn_identity,
                 agent_kind=AgentKind.REACT,

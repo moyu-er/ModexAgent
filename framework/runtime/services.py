@@ -14,13 +14,15 @@ from .models import TurnStateBase
 
 if TYPE_CHECKING:
     import asyncio
+
+    from framework.agents.react.approval import ApprovalRuntime
+    from framework.control.runtime import ControlRuntime
+    from framework.core.runtime_context import RuntimeContextManager
     from framework.hook import HookRunner
     from framework.interceptor.chain import InterceptorChain
-    from framework.control.runtime import ControlRuntime
-    from framework.agents.react.approval import ApprovalRuntime
-    from framework.core.runtime_context import RuntimeContext, RuntimeContextManager
     from framework.memory.context_governance import ContextGovernance
-    from .store import TurnStateStore, RuntimeCommandStore
+
+    from .store import RuntimeCommandStore, TurnStateStore
 
 TState = TypeVar("TState", bound=TurnStateBase)
 

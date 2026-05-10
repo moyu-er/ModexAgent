@@ -11,10 +11,10 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from framework.control.channel import ControlChannel
-    from framework.runtime.store import TurnStateStore
     from framework.control.event_bus import ControlEventBus
     from framework.control.preset import PresetControlRule
     from framework.hook.abc import HookSpec
+    from framework.runtime.store import TurnStateStore
 
 
 class BusyInputMode(str, Enum):

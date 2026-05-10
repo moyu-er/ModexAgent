@@ -4,8 +4,8 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
-from .models import ResolutionContext, Skill
 from .manager import SkillManager
+from .models import ResolutionContext, Skill
 
 logger = logging.getLogger(__name__)
 

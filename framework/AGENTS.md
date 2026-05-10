@@ -48,7 +48,7 @@ Core multi-agent framework package. Contains all abstractions, implementations, 
 ### Common Patterns
 - `Protocol` for contracts, dataclass `@dataclass` for plain data
 - `scopes: frozenset[InterceptorScope]` for declaring interceptor scopes
-- Hook state stored in `ctx.metadata` (session-scoped), not instance attributes
+- Hook state stored in `ctx.runtime.state` (typed per-turn state), not instance attributes
 - Control commands flow through `ControlChannel`; events flow through `ControlEventBus`
 
 ## Dependencies

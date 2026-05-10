@@ -23,7 +23,7 @@ Lifecycle extension points — lightweight observation, context injection, polic
 ### Working In This Directory
 - New hooks implement the `Hook` Protocol — all methods are optional
 - Hook method names must match `HookPoint` values (e.g., `before_turn`, `after_llm_response`)
-- Per-turn state MUST be stored in `ctx.metadata`, NOT instance attributes (pool mode safety)
+- Per-turn state MUST be stored in `ctx.runtime.state` (typed `TurnStateBase`), NOT instance attributes (pool mode safety)
 - Instance-level state (if unavoidable) must be keyed by `session_id` (e.g., `self._state[sid]`)
 - Hooks can return `HookResult(veto=True)` to veto an operation (lightweight denial)
 
@@ -49,10 +49,10 @@ Lifecycle extension points — lightweight observation, context injection, polic
 ```python
 class MyHook:
     async def before_iteration(self, ctx: AgentContext) -> None:
-        ctx.metadata["my_state"] = value
+        ctx.runtime.state.custom[TurnCustomKey.STREAM_CANCELLED] = value
 
     async def after_iteration(self, ctx: AgentContext) -> None:
-        ctx.metadata.pop("my_state", None)
+        ctx.runtime.state.custom.pop(TurnCustomKey.STREAM_CANCELLED, None)
 ```
 
 ## Dependencies
@@ -65,5 +65,5 @@ class MyHook:
 ## Current Runtime Status
 
 Hooks observe or transform lifecycle payloads; they do not wrap execution.
-Per-turn state belongs in `ctx.metadata`, especially in pool mode. ReAct clean
+Per-turn state belongs in `ctx.runtime.state`, especially in pool mode. ReAct clean
 mode should run without hook services.

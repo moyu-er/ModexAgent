@@ -9,6 +9,7 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from framework.control.task_supervision import TaskSupervisor, TimeoutSupervisionPolicy
 from framework.core.context import InMemoryContextManager
 from framework.core.emitter import AgentResult, BufferingEmitter
 
@@ -16,7 +17,6 @@ from .address import AgentAddress
 from .coordinator import InMemoryTaskCoordinator, NullTaskCoordinator, TaskCoordinator, TaskRecord
 from .descriptor import AgentDescriptor
 from .factory import AgentFactory
-from framework.control.task_supervision import TaskSupervisor, TimeoutSupervisionPolicy
 
 if TYPE_CHECKING:
     from framework.messaging.broker import MessageBroker

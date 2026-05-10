@@ -9,6 +9,7 @@ import contextvars
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic
+
 from typing_extensions import TypeVar
 
 from framework.memory.history import MessageHistory

@@ -11,7 +11,10 @@ from framework.memory.layers.config import (
 )
 from framework.memory.layers.factory import MemoryLayerFactory
 from framework.memory.layers.knowledge import ScopedKnowledgeMemoryManager
-from framework.memory.layers.pending import PendingPrunedInputEntry, ScopedPendingPrunedInputMemoryManager
+from framework.memory.layers.pending import (
+    PendingPrunedInputEntry,
+    ScopedPendingPrunedInputMemoryManager,
+)
 from framework.memory.layers.session import ScopedSessionMemoryManager
 
 __all__ = [

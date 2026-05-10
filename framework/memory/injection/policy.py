@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
 
 from framework.memory.core.models import MemoryContextBundle
 from framework.memory.core.scope import MemoryContext

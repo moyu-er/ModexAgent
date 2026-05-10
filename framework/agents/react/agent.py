@@ -11,7 +11,6 @@ from enum import Enum
 from typing import Any, Literal
 
 from framework.agents.react.state import get_react_state
-from framework.runtime.enums import TurnCustomKey, TurnPhase
 from framework.control.exceptions import AgentControlError
 from framework.control.runtime import ControlPhase
 from framework.hook import HookPayload, HookPoint
@@ -20,6 +19,7 @@ from framework.interceptor.abc import (
     LLMStreamContext,
     ToolCallContext,
 )
+from framework.runtime.enums import TurnCustomKey, TurnPhase
 
 from ...core.agent import Agent, AgentContext, current_agent_context
 from ...core.constants import DefaultValues

@@ -21,13 +21,13 @@ try:
 except ImportError:
     LiteLLMProvider = None  # type: ignore[misc,assignment]
 
+from framework.core.skills.filter import SkillWhitelistFilter
+from framework.core.skills.manager import SkillManager
 from framework.hook import HookRunner
 from framework.hook.builtin import InboxFlushHook
-
-from framework.core.skills.manager import SkillManager
-from framework.core.skills.filter import SkillWhitelistFilter
-from .descriptor import AgentDescriptor, AgentInstance
 from framework.tools.filter import FilteredToolManager
+
+from .descriptor import AgentDescriptor, AgentInstance
 from .inbox.consumer import InboxConsumer
 from .inbox.producer import InboxProducer
 from .inbox.server import InboxServer

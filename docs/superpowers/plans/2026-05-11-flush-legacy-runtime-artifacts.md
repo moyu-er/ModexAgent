@@ -18,14 +18,14 @@
 |-------|-------|-------------|:------:|
 | A | 1-4 | Immediate Bug Fixes & Dead Code Removal | ✅ Done |
 | B | 5-7 | Recover 3 Skipped Test Files | ✅ Done |
-| C | 8-16 | `checkpoint_store` → `turn_store` Everywhere | 🔴 Not started |
-| D | 17-19 | Migrate agent_session.py → AgentRuntimeServices | 🔴 Not started |
+| C | 8-16 | `checkpoint_store` → `turn_store` Everywhere | ✅ Done |
+| D | 17-19 | Migrate agent_session.py → AgentRuntimeServices | ✅ Done |
 | E | TBD | Memory Checkpoint Cleanup (P5) | 🔴 Needs exploration |
 | F | TBD | Bot Project Rewire (P6) — Separate Plan | 🔴 |
 | G | TBD | Final Cleanup (P7) — Separate Plan | 🔴 |
 
-**Current test baseline:** 1258 passed, 20 failed (pre-existing multi_agent hook tests), 7 skipped.
-**Last commit:** `86ead6e refactor: flush legacy runtime artifacts (Phase A+B - Tasks 1-6)`
+**Current test baseline:** 1256 passed, 21 failed (pre-existing: 20 multi_agent hook + 1 summarizer), 8 skipped.
+**Last commit:** `7a46dc1 refactor: migrate agent_session.py to AgentRuntimeServices, delete extensions (Phase D)`
 
 ---
 

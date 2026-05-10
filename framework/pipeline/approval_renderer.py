@@ -8,9 +8,9 @@ from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ..agents.react.state import ReActSnapshotPolicy
 from ..approval.constants import ApprovalDecision
 from ..approval.types import ApprovalAction
-from ..agents.react.state import ReActSnapshotPolicy
 from ..core.types import InputMessage
 from ..runtime.models import ToolArguments, TurnSnapshot
 
@@ -61,7 +61,7 @@ class ApprovalRenderer:
         approval_workspace: Path,
         checkpoint_store: object | None = None,  # DEPRECATED: old memory checkpoint, remove in P5
         agent: object | None = None,
-        user_interface: "ControlUserInterface | None" = None,
+        user_interface: ControlUserInterface | None = None,
         on_drain: Callable[[InputMessage], Awaitable[None]] | None = None,
     ) -> None:
         self._approval_workspace = approval_workspace

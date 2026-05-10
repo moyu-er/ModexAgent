@@ -30,12 +30,12 @@ the integration points for hooks, interceptors, and control.
   queues should be stripped at turn entry, with one concise log line explaining
   the sanitization. Do not add repeated clean-mode conditionals in every node.
 - `full`: wires hook, interceptor, control, approval, and runtime state services
-  through `AgentContext` extensions.
+  through `AgentRuntimeServices`.
 
 ## Hook / Interceptor / Control Rules
 
 - Hooks observe or transform lifecycle payloads. Store per-turn hook state in
-  `ctx.metadata`, never in shared hook instance attributes.
+  `ctx.runtime.state`, never in shared hook instance attributes.
 - Interceptors wrap execution boundaries such as turn, iteration, LLM stream, and
   tool call. Tool call wrapping is active; turn/iteration wrapping should only be
   enabled when `ReActAgent` owns those scopes explicitly.

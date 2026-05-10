@@ -331,7 +331,8 @@ class JsonFileRuntimeCommandStore(RuntimeCommandStore):
                     continue
                 if scope.session_id is not None and data.get("session_id") != scope.session_id:
                     continue
-                from .enums import ControlCommandKind, OperationStatus as OS
+                from .enums import ControlCommandKind
+                from .enums import OperationStatus as OS
                 result.append(ControlCommandState(
                     command_id=data["command_id"],
                     kind=ControlCommandKind(data["kind"]),
