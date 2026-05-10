@@ -469,6 +469,7 @@ class BotService(AgentBuilderMixin):
             user_interface=self._im_ui,
             turn_store=self._turn_store,
             command_store=self._command_store,
+            runtime_services=runtime.services,
         )
         print("[OK] AgentPipeline initialized")
         print(f"   Input: {self.input_adapter.name}")
@@ -552,6 +553,7 @@ class BotService(AgentBuilderMixin):
             runtime = await self._assemble_runtime(hooks=main_instance.pipeline.hook_runner)
 
             main_instance.pipeline.interceptor_chain = runtime.interceptors
+            main_instance.pipeline.runtime_services = runtime.services
             main_instance.pipeline.turn_store = self._turn_store
             main_instance.pipeline._approval_workspace = self._approval_workspace
             main_instance.pipeline._user_interface = self._im_ui

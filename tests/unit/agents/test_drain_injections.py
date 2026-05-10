@@ -42,8 +42,6 @@ class _FakeContext:
         self.temperature = 0.7
         self.max_tokens = None
         self.session_id = "test-session"
-        self.metadata: dict = {}
-        self.extensions: dict[str, Any] = {}
         state = TurnStateBase(
             identity=TurnIdentity(agent_id="test", session_id="s1", turn_id="t1"),
             agent_kind=AgentKind.REACT, phase=TurnPhase.RUNNING,
@@ -82,8 +80,6 @@ class TestDrainInjectionsMessagePreservation:
 
         # Call _drain_injections directly to isolate the test
         ctx = _FakeContext(history=history, injection_queue=injection_queue)
-        ctx.metadata = {}
-
         injected = await agent._drain_injections(ctx)
 
         # Assert: message should be back in queue (put_back on failure)

@@ -114,7 +114,7 @@ class TestDetect:
         is_cmd, state = asyncio.run(
             renderer.detect(msg, "s1", {}, pending_snapshot=snapshot)
         )
-        assert is_cmd is False
+        assert is_cmd is True
         assert state is not None
         approval = ReActSnapshotPolicy.approval_from_snapshot(state)
         assert approval is not None
@@ -137,7 +137,7 @@ class TestDetect:
                 pending_snapshot=snapshot,
             )
         )
-        assert is_cmd is False
+        assert is_cmd is True
         assert state is snapshot
         assert renderer._approval_pending["s1"][0] is msg
         approval = ReActSnapshotPolicy.approval_from_snapshot(snapshot)

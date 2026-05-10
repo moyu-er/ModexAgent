@@ -22,7 +22,6 @@ def _ctx(sid="s1"):
     from unittest.mock import MagicMock
     ctx = MagicMock()
     ctx.session_id = sid
-    ctx.metadata = {}
     return ctx
 
 

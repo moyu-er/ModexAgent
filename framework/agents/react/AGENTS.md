@@ -15,9 +15,8 @@ the integration points for hooks, interceptors, and control.
 |------|-------------|
 | `agent.py` | `ReActAgent` entry point. Builds turn context and delegates execution to the graph. |
 | `graph.py` | `ReActGraph` composition for `start -> llm -> tool -> end`. |
-| `state.py` | Runtime state types, including `TurnResumeState` and runtime store aliases. |
-| `strategy.py` | Suspend/resume strategy used by approval flows. |
-| `constants.py` | Metadata keys and runtime constants shared by nodes. |
+| `state.py` | Typed ReAct turn state, snapshot policy, and runtime state codec. |
+| `constants.py` | ReAct node and transition reason enums. |
 | `nodes/start.py` | Start/resume node. Restores state and routes to the stored resume target. |
 | `nodes/llm.py` | Model node. Handles prompt/model execution and streaming integration. |
 | `nodes/tool.py` | Tool node. Handles tool execution, approval suspend/resume, and cancellation metadata. |
@@ -26,9 +25,8 @@ the integration points for hooks, interceptors, and control.
 ## Runtime Modes
 
 - `clean`: should execute as a plain ReAct graph. Hooks, approval, interceptors,
-  control services, suspend/resume strategy, runtime state store, and injection
-  queues should be stripped at turn entry, with one concise log line explaining
-  the sanitization. Do not add repeated clean-mode conditionals in every node.
+  control services, runtime state store, and injection queues should be absent
+  from the turn runtime. Do not add repeated clean-mode conditionals in every node.
 - `full`: wires hook, interceptor, control, approval, and runtime state services
   through `AgentRuntimeServices`.
 
@@ -45,20 +43,19 @@ the integration points for hooks, interceptors, and control.
 
 ## Resume And Cancellation
 
-`TurnResumeState` stores both `resume_node` and `resume_reason`. Approval resume
-currently returns to `ToolNode`, but new suspend points should set their own
-target instead of relying on approval-specific defaults.
+Suspended ReAct turns are represented by `TurnSnapshot` plus
+`ReActTurnState.current_node`. Approval resume re-enters through `StartNode`,
+which routes to the stored current node.
 
-Tool cancellation paths should set `ReActMetaKey.END_REASON` and
-`ReActMetaKey.CANCEL_REASON`. `EndNode` maps those values to an
-`AgentResult(stop_reason="turn_cancelled")`.
+Tool cancellation paths should set typed turn phase/cancellation state.
+`EndNode` maps cancelled turns to `AgentResult(stop_reason="turn_cancelled")`.
 
 ## Testing Requirements
 
 - Unit tests live under `tests/unit/agents/react/`.
 - Mock `LLMProvider`, tools, and emitters directly; avoid broad integration
   setup for node-level behavior.
-- Cover resume target/reason, approval deny checkpoint signatures, cancellation
-  result mapping, and clean/full mode boundaries when those paths change.
+- Cover START-based resume routing, approval transactions, cancellation result
+  mapping, and clean/full mode boundaries when those paths change.
 
 

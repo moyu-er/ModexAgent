@@ -87,11 +87,11 @@ class ApprovalRenderer:
 
         if input_metadata.get("source_agent"):
             self._approval_pending.setdefault(session_id, []).append(input_msg)
-            return False, pending_snapshot
+            return True, pending_snapshot
 
         approval = ReActSnapshotPolicy.approval_from_snapshot(pending_snapshot)
         if approval is None:
-            return False, pending_snapshot
+            return True, pending_snapshot
 
         truncated = (input_msg.content or "")[:_UNRELATED_INPUT_PREVIEW_LIMIT]
         for req in approval.requests:
@@ -104,7 +104,7 @@ class ApprovalRenderer:
                 )
                 break
 
-        return False, ReActSnapshotPolicy.replace_approval(pending_snapshot, approval)
+        return True, ReActSnapshotPolicy.replace_approval(pending_snapshot, approval)
 
     def cleanup_session(self, session_id: str) -> None:
         """Clean up per-session approval resources."""

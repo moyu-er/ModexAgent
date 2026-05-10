@@ -1,9 +1,4 @@
-"""ReAct typed turn state, snapshot policy, and runtime state codec.
-
-Replaces the old ``TurnResumeState`` / ``TurnResumeStateStore`` /
-``StateStoreTurnResumeStateStore`` with typed ``ReActTurnState`` and
-agent-kind-aware ``ReActSnapshotPolicy`` + ``ReActRuntimeStateCodec``.
-"""
+"""ReAct typed turn state, snapshot policy, and runtime state codec."""
 
 from __future__ import annotations
 
@@ -102,8 +97,8 @@ class ApprovalRequestSnapshotKey(StrEnum):
 class ReActTurnState(TurnStateBase):
     """ReAct-specific turn state — extends the generic turn state base.
 
-    Graph nodes read and write this object directly instead of reaching into
-    ``ctx.metadata``.
+    Graph nodes read and write this object directly through
+    ``AgentContext.runtime.state``.
     """
 
     current_node: ReActNode = ReActNode.START

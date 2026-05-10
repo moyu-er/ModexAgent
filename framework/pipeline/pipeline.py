@@ -40,6 +40,7 @@ from ..multi_agent import (
 )
 from ..runtime.enums import SnapshotReason, TurnPhase
 from ..runtime.models import StateQueryScope, TurnSnapshot
+from ..runtime.services import AgentRuntimeServices
 from ..session.agent_session import _dream_locks
 from ..utils.context_builder import MultiAgentContextBuilder
 from ..utils.deduplicator import MessageDeduplicator
@@ -156,6 +157,7 @@ class AgentPipeline:
         user_interface: ControlUserInterface | None = None,
         turn_store: Any | None = None,
         command_store: Any | None = None,
+        runtime_services: AgentRuntimeServices | None = None,
     ):
         """
         Args:
@@ -165,6 +167,7 @@ class AgentPipeline:
             user_interface: 审批通知 UI 接口（CLI/IM/Noop），None 则不通知
             turn_store: TurnStateStore — typed turn snapshot persistence
             command_store: RuntimeCommandStore — durable command queue
+            runtime_services: process-scope services copied into each turn runtime
         """
         if sanitizer is _UNSET:
             from framework.utils.sanitizer import ContentSanitizer
@@ -203,6 +206,7 @@ class AgentPipeline:
         self._approval_workspace = Path(approval_workspace)
         self.turn_store = turn_store
         self.command_store = command_store
+        self.runtime_services = runtime_services
         self._approval = ApprovalRenderer(
             approval_workspace=self._approval_workspace,
             agent=agent,
@@ -534,21 +538,44 @@ class AgentPipeline:
             from framework.agents.react.state import ReActTurnState
             from framework.runtime.enums import AgentKind, TurnCustomKey
             from framework.runtime.enums import TurnPhase as RTurnPhase
-            from framework.runtime.services import AgentRuntime, AgentRuntimeServices
+            from framework.runtime.services import AgentRuntime
             react_state = ReActTurnState(
                 identity=turn_identity,
                 agent_kind=AgentKind.REACT,
                 phase=RTurnPhase.CREATED,
             )
+            base_services = self.runtime_services
             services = AgentRuntimeServices(
-                hooks=self.hook_runner,
-                interceptors=self.interceptor_chain,
-                governance=self.governance,
-                turn_store=self.turn_store,
-                command_store=self.command_store,
+                hooks=base_services.hooks if base_services is not None else self.hook_runner,
+                interceptors=(
+                    base_services.interceptors
+                    if base_services is not None
+                    else self.interceptor_chain
+                ),
+                control=base_services.control if base_services is not None else None,
+                approval=base_services.approval if base_services is not None else None,
+                governance=(
+                    base_services.governance
+                    if base_services is not None and base_services.governance is not None
+                    else self.governance
+                ),
+                turn_store=(
+                    base_services.turn_store
+                    if base_services is not None and base_services.turn_store is not None
+                    else self.turn_store
+                ),
+                command_store=(
+                    base_services.command_store
+                    if base_services is not None and base_services.command_store is not None
+                    else self.command_store
+                ),
                 pending_input_queue=self._injection_queues.get(session_id),
-                safety=self.safety,
-                runtime_context_manager=self.runtime_context_manager,
+                safety=base_services.safety if base_services is not None else self.safety,
+                runtime_context_manager=(
+                    base_services.runtime_context_manager
+                    if base_services is not None and base_services.runtime_context_manager is not None
+                    else self.runtime_context_manager
+                ),
             )
             agent_context.runtime = AgentRuntime(services=services, state=react_state)
             agent_context.runtime.state.custom[TurnCustomKey.MAX_TOOLS_PER_TURN] = None
@@ -728,8 +755,9 @@ class AgentPipeline:
             input_metadata,
             ctx_mgr,
         )
-        await self.turn_store.delete_turn(snapshot.identity)
-        await self._approval.drain(session_id)
+        if result is not None:
+            await self.turn_store.delete_turn(snapshot.identity)
+            await self._approval.drain(session_id)
         return result
 
     async def _load_pending_approval_snapshot(self, session_id: str) -> TurnSnapshot | None:
