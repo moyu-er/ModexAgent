@@ -13,6 +13,7 @@ from framework.core.graph.node import Node, NodeTransition
 from framework.runtime.enums import TurnPhase
 
 if TYPE_CHECKING:
+    from framework.agents.react.state import ReActTurnState
     from framework.agents.react.agent import ReActAgent
 
 
@@ -83,7 +84,7 @@ class EndNode(Node):
         return NodeTransition(GraphNode.END, ReActReason.DONE)
 
     @staticmethod
-    def _get_react_state(ctx: AgentContext) -> Any:
+    def _get_react_state(ctx: AgentContext) -> ReActTurnState | None:
         if getattr(ctx, "identity", None) is None or ctx.runtime is None:
             return None
         if not hasattr(ctx.runtime, "state"):

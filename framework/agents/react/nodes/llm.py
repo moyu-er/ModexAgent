@@ -16,6 +16,7 @@ from framework.interceptor.abc import InterceptorScope, IterationContext
 from framework.runtime.enums import OperationKind, TurnPhase
 
 if TYPE_CHECKING:
+    from framework.agents.react.state import ReActTurnState
     from framework.agents.react.agent import ReActAgent
 
 
@@ -117,7 +118,7 @@ class LLMNode(Node):
         return NodeTransition(ReActNode.END, ReActReason.NO_TOOLS)
 
     @staticmethod
-    def _get_react_state(ctx: AgentContext) -> Any:
+    def _get_react_state(ctx: AgentContext) -> ReActTurnState | None:
         if getattr(ctx, "identity", None) is None or ctx.runtime is None:
             return None
         if not hasattr(ctx.runtime, "state"):

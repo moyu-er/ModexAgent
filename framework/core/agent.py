@@ -19,16 +19,13 @@ from .message_utils import normalize_agent_messages_for_llm
 from .tool_manager import ToolManager
 
 if TYPE_CHECKING:
-    pass
+    from framework.runtime.models import TurnIdentity
+    from framework.runtime.services import AgentRuntime as _AgentRuntime
 
 
 @dataclass
 class AgentContext:
-    """Agent execution context — typed runtime state replaces metadata/extensions.
-
-    During migration (Phases 1-9): ``metadata`` and ``extensions`` remain as compat
-    shims. Final cleanup (Phase 10) removes them.
-    """
+    """Agent execution context — typed runtime state replaces metadata/extensions."""
 
     system_prompt: str
     history: MessageHistory
@@ -41,10 +38,8 @@ class AgentContext:
     extensions: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     emitter: ContentEmitter | None = None
-    runtime: Any = None  # AgentRuntime | None — typed at usage sites via require_runtime_state()
-
-    # New typed fields (Phase 4+)
-    identity: Any = None  # TurnIdentity | None
+    runtime: _AgentRuntime | None = None
+    identity: TurnIdentity | None = None
 
     def add_attachment(self, path: str) -> None:
         self.attachments.append(path)

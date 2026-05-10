@@ -8,7 +8,7 @@ Approval classification (``ApprovalClassifier``) is a policy service;
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from framework.approval.config import AgentApprovalConfig
 from framework.approval.constants import ApprovalTier
@@ -17,6 +17,9 @@ from framework.runtime.enums import ApprovalDenyPolicy
 
 from framework.core.types import ToolCall
 from framework.core.agent import AgentContext
+
+if TYPE_CHECKING:
+    from framework.agents.react.strategy import SuspendStrategy
 
 
 class ApprovalClassifier(Protocol):
@@ -78,15 +81,4 @@ class ApprovalRuntime:
 
     classifier: ApprovalClassifier
     default_deny_policy: ApprovalDenyPolicy = ApprovalDenyPolicy.CANCEL_TURN
-    suspend_strategy: object | None = None  # DEPRECATED — moved to TurnStateStore
-
-    @property
-    def deny_as_cancel(self) -> bool:
-        """DEPRECATED compat — maps ``default_deny_policy`` to the old bool flag."""
-        return self.default_deny_policy == ApprovalDenyPolicy.CANCEL_TURN
-
-    @deny_as_cancel.setter
-    def deny_as_cancel(self, value: bool) -> None:
-        self.default_deny_policy = (
-            ApprovalDenyPolicy.CANCEL_TURN if value else ApprovalDenyPolicy.TOOL_RESULT_ONLY
-        )
+    suspend_strategy: SuspendStrategy | None = None

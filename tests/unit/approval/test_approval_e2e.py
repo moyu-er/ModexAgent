@@ -126,7 +126,8 @@ class TestApprovalFlowE2E:
         runtime = ApprovalRuntime(classifier=c, suspend_strategy=strategy)
         assert runtime.classifier is c
         assert runtime.suspend_strategy is strategy
-        assert runtime.deny_as_cancel is True
+        from framework.runtime.enums import ApprovalDenyPolicy
+        assert runtime.default_deny_policy is ApprovalDenyPolicy.CANCEL_TURN
 
     def test_no_classifier_no_strategy_everything_normal(self):
         """Without classifier in approval runtime, all tools are NORMAL."""

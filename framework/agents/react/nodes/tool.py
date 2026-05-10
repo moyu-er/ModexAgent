@@ -30,6 +30,7 @@ from framework.runtime.models import ToolArguments, ToolBatchState, ToolCallStat
 
 if TYPE_CHECKING:
     from framework.agents.react.agent import ReActAgent
+    from framework.agents.react.state import ReActTurnState
 
 
 class ToolNode(Node):
@@ -142,7 +143,7 @@ class ToolNode(Node):
     # ---- typed state helpers ----
 
     @staticmethod
-    def _get_react_state(ctx: AgentContext) -> Any:
+    def _get_react_state(ctx: AgentContext) -> ReActTurnState | None:
         if getattr(ctx, "identity", None) is None or ctx.runtime is None:
             return None
         if not hasattr(ctx.runtime, "state"):

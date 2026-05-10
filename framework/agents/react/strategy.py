@@ -13,6 +13,8 @@ from .constants import ReActMetaKey
 
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
+    from framework.runtime.store import TurnStateStore
+    from framework.runtime.policy import SnapshotPolicy
 
 
 @dataclass
@@ -195,11 +197,9 @@ class TurnStateSuspendStrategy(SuspendStrategy):
     inside ``ReActTurnState`` as a single ``TurnSnapshot``.
     """
 
-    def __init__(self, turn_store: Any, snapshot_policy: Any) -> None:
-        from framework.runtime.store import TurnStateStore
-        from framework.runtime.policy import SnapshotPolicy
-        self._turn_store: TurnStateStore = turn_store
-        self._snapshot_policy: SnapshotPolicy = snapshot_policy
+    def __init__(self, turn_store: TurnStateStore, snapshot_policy: SnapshotPolicy) -> None:
+        self._turn_store = turn_store
+        self._snapshot_policy = snapshot_policy
 
     async def solicit_approval(
         self,

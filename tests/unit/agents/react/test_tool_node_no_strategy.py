@@ -7,6 +7,7 @@ from framework.agents.react.agent import ReActAgent, ReActEvent
 from framework.agents.react.constants import ReActMetaKey, ReActNode, ReActReason
 from framework.agents.react.strategy import SuspendResumeStrategy
 from framework.agents.react.strategy import InMemoryTurnResumeStateStore
+from framework.runtime.enums import ApprovalDenyPolicy
 from framework.approval.store import LocalFileApprovalStateStore
 from framework.core.agent import AgentContext
 from framework.core.tool_manager import InMemoryToolManager, ToolResult
@@ -89,7 +90,7 @@ class TestToolNodeNoStrategyExecutesNormally:
             tools={"edit_file": ToolApprovalConfig(allowed_paths=[])},
         )
         ctx.runtime.approval.classifier = TieredToolApprovalClassifier(config=config)
-        ctx.runtime.approval.deny_as_cancel = True
+        ctx.runtime.approval.default_deny_policy = ApprovalDenyPolicy.CANCEL_TURN
         ctx.runtime.approval.suspend_strategy = None  # <-- strategy now under approval
         ctx.runtime.hooks = None
         ctx.runtime.interceptors = None
@@ -128,7 +129,7 @@ class TestToolNodeWithStrategyTriggersApproval:
             tools={"edit_file": ToolApprovalConfig(allowed_paths=[])},
         )
         ctx.runtime.approval.classifier = TieredToolApprovalClassifier(config=config)
-        ctx.runtime.approval.deny_as_cancel = True
+        ctx.runtime.approval.default_deny_policy = ApprovalDenyPolicy.CANCEL_TURN
         # Real strategy that will raise GraphInterrupt
         strategy = SuspendResumeStrategy(
             LocalFileApprovalStateStore(tmp_path / "approval"),
