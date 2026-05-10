@@ -646,7 +646,7 @@ class AgentPipeline:
             try:
                 result = await self.agent.run(agent_context, emitter)
             except GraphInterrupt as interrupt_exc:
-                # ToolNode suspended for approval — state already persisted by SuspendResumeStrategy
+                # ToolNode suspended for approval — snapshot persisted via TurnStateStore
                 # Send approval prompts to user via UI
                 if self._user_interface is not None:
                     requests = interrupt_exc.value
