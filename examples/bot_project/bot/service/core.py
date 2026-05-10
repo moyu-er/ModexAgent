@@ -348,6 +348,7 @@ class BotService(AgentBuilderMixin):
         self._approval_workspace = self._project_dir / approval_cfg.get(
             "workspace", "data/approval"
         )
+        from framework.runtime.store import NoOpTurnStateStore
         self._turn_store = NoOpTurnStateStore()
         self._im_ui = IMUserInterface(
             output_adapter=self.output_adapter,
@@ -359,7 +360,7 @@ class BotService(AgentBuilderMixin):
         from framework.runtime.codec import RuntimeStateCodecRegistry
         from framework.runtime.enums import AgentKind
         from framework.agents.react.state import ReActRuntimeStateCodec
-        from framework.runtime.store import JsonFileTurnStateStore, NoOpTurnStateStore, JsonFileRuntimeCommandStore
+        from framework.runtime.store import JsonFileTurnStateStore, JsonFileRuntimeCommandStore
 
         runtime_data_dir = self._project_dir / "data" / "runtime_state"
         codec_registry = RuntimeStateCodecRegistry({AgentKind.REACT: ReActRuntimeStateCodec()})
