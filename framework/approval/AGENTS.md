@@ -1,46 +1,31 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-05-09 -->
+<!-- Updated: 2026-05-10 -->
 
 # approval
 
 ## Purpose
-Tiered tool-approval system with batch atomicity. Supports HARDLINE → DANGEROUS → SENSITIVE → NORMAL tiers, per-tool path allowlists, and persistent approval state across ReAct turns.
+Tiered tool approval policies and command parsing. Approval persistence is not
+owned by this package; runtime approval state lives in
+`framework.runtime.models.ApprovalTransaction` inside a turn snapshot.
 
 ## Key Files
 | File | Description |
 |------|-------------|
-| `types.py` | `ApprovalTier`, `ApprovalAction`, `ApprovalResolution`, `DenyAction`, `TimeoutAction`, `ApprovalResultType` enums |
-| `constants.py` | `ApprovalDecision`, `ApprovalStatus` — state-machine values |
-| `state.py` | `ApprovalRequest`, `ApprovalState` — turn-scoped approval state with batch atomicity |
-| `store.py` | `ApprovalStateStore` ABC, `InMemoryApprovalStateStore`, `LocalFileApprovalStateStore` |
-| `config.py` | `ToolApprovalConfig`, `AgentApprovalConfig` — per-tool and per-agent approval configuration |
-| `response.py` | `parse_approval_action()` — pure function parsing user text into `ApprovalAction` |
+| `types.py` | approval actions, resolutions, timeout/deny policies, and result enums |
+| `constants.py` | `ApprovalDecision`, `ApprovalStatus`, `ApprovalTier` state values |
+| `config.py` | `ToolApprovalConfig`, `AgentApprovalConfig` per-tool and per-agent config |
+| `response.py` | command-first parsing for approval commands |
 
 ## For AI Agents
+- Approval tiers: `HARDLINE` > `DANGEROUS` > `SENSITIVE` > `NORMAL`.
+- Batch atomicity belongs to `ApprovalTransaction` and `ToolNode`: one deny
+  prevents execution of the whole pending batch.
+- Do not add approval-specific stores here. Use `TurnStateStore` backends from
+  `framework.runtime.store`.
+- Per-tool `allowed_paths`: `["*"]` means never require approval; `[]` means
+  always require approval.
 
-### Working In This Directory
-- Approval tiers: `HARDLINE` > `DANGEROUS` > `SENSITIVE` > `NORMAL`
-- Batch atomicity: one DENY preempts ALL pending and previously allowed tools in the same turn
-- `ApprovalState.apply()` implements the cascade logic; do not bypass it
-- Per-tool `allowed_paths`: `["*"]` means never require approval; `[]` means always require approval
-
-### Testing Requirements
-- Tests in `tests/unit/approval/`
-- Cover batch atomicity: deny must preempt all pending tools
-- Cover tier escalation and path allowlist matching
-
-### Common Patterns
-- `AgentApprovalConfig(enabled=True, tools={"shell": ToolApprovalConfig(allowed_paths=["/tmp/*"])})`
-- Store choice: `InMemoryApprovalStateStore` for tests/inline; `LocalFileApprovalStateStore` for production
-
-## Dependencies
-
-### Internal
-- `framework.core` — base types
-
-### External
-- None
-## Current Runtime Status
-
-Approval is integrated at the `ToolNode` level in the ReAct graph. Suspend/resume
-for approval uses `TurnResumeState` with `resume_node="tool"`.
+## Testing Requirements
+- Tests in `tests/unit/approval/` should cover command parsing, approval
+  transaction decisions, and ReAct turn-state resume behavior.
+- Store behavior belongs under `tests/unit/runtime/`.

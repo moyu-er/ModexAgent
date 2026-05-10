@@ -348,7 +348,7 @@ memory:
 
     compaction:
       policy: "conservative"
-      boundary: "tool_chain"
+      boundary: "priority_input"
 
     # -- 长期记忆 (Knowledge: SOUL.md / USER.md / MEMORY.md) --
     # DreamEngine 定时从 Archive 提取事实写入 Knowledge 文件

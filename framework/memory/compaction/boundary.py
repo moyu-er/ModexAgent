@@ -3,11 +3,20 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from enum import StrEnum
 from typing import Any
 
 from framework.memory.compaction.policy import MessageCompactionDecision
 from framework.memory.compression.tool_chain import _find_tool_chain, _is_tool_call
 from framework.memory.core.message import ChatMessage
+
+
+class BoundaryPolicyName(StrEnum):
+    """Configuration names for built-in compaction boundary policies."""
+
+    TOOL_CHAIN = "tool_chain"
+    PRIORITY_INPUT = "priority_input"
+    USER_TURN_TOOL_CHAIN = "user_turn_tool_chain"
 
 
 class BoundaryPolicy(ABC):
@@ -156,3 +165,13 @@ class UserTurnToolChainBoundaryPolicy(ToolChainBoundaryPolicy):
                 return min(idx + 1, base)  # cut after this message
 
         return base
+
+
+def create_boundary_policy(name: BoundaryPolicyName) -> BoundaryPolicy:
+    """Create a built-in boundary policy from a typed configuration value."""
+
+    if name is BoundaryPolicyName.TOOL_CHAIN:
+        return ToolChainBoundaryPolicy()
+    if name in (BoundaryPolicyName.PRIORITY_INPUT, BoundaryPolicyName.USER_TURN_TOOL_CHAIN):
+        return UserTurnToolChainBoundaryPolicy()
+    raise ValueError(f"Unsupported boundary policy: {name}")

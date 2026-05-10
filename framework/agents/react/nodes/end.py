@@ -31,7 +31,14 @@ class EndNode(Node):
 
         messages = [md.message for md in state.message_delta] if state else []
 
-        if response is not None and response.finish_reason == FinishReason.ERROR.value:
+        if state is not None and state.phase == TurnPhase.CANCELLED:
+            result = AgentResult(
+                content="turn cancelled",
+                stop_reason=ReActReason.TURN_CANCELLED.value,
+                messages=messages,
+                attachments=ctx.attachments,
+            )
+        elif response is not None and response.finish_reason == FinishReason.ERROR.value:
             error_text = response.error or response.content or "LLM request failed"
             result = AgentResult(
                 error=error_text, stop_reason="error",

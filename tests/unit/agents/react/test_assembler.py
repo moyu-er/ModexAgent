@@ -21,11 +21,6 @@ class _FakeClassifier:
         return "normal"
 
 
-class _FakeStrategy:
-    async def solicit_approval(self, ctx, tool_calls, reason):
-        return []
-
-
 class _FakeHandler:
     async def handle(self, cmd, ctx, scope) -> None:
         pass
@@ -58,7 +53,6 @@ class TestRuntimeAssembler:
             mode="full",
             interceptors=[],
             approval_classifier=_FakeClassifier(),
-            approval_strategy=_FakeStrategy(),
             control_channel=InMemoryControlChannel(),
             control_store=InMemoryControlStore(),
             command_handlers=[(ControlCommandType.CANCEL_RUN, _FakeHandler())],
@@ -75,7 +69,6 @@ class TestRuntimeAssembler:
         config = RuntimeServicesConfig(
             mode="full",
             approval_classifier=_FakeClassifier(),
-            approval_strategy=_FakeStrategy(),
         )
         runtime = await RuntimeAssembler.assemble(config)
         assert runtime.mode == "full"

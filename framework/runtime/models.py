@@ -210,6 +210,10 @@ class ApprovalTransaction:
             for tc_id in (r.tool_call_id for r in self.requests)
         )
 
+    @property
+    def every_tool_decided(self) -> bool:
+        return self._every_tool_decided()
+
 
 @dataclass(frozen=True)
 class ApprovalDenialContext:

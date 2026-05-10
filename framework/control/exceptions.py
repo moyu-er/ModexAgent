@@ -54,7 +54,7 @@ class AgentTimeout(AgentControlError):
 class ApprovalDenied(AgentControlError):
     """审批拒绝异常。
 
-    用于工具调用审批被拒绝且策略为 deny_as_cancel 时。
+    用于工具调用审批被拒绝且策略为 CANCEL_TURN 时。
     """
 
     def __init__(self, reason: str = "Tool approval denied") -> None:

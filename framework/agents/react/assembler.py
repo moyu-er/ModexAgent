@@ -34,7 +34,6 @@ class RuntimeServicesConfig:
     hooks: HookRunner | None = None
     interceptors: list[Interceptor] | None = None
     approval_classifier: Any = None            # ApprovalClassifier (Protocol)
-    approval_strategy: Any = None              # SuspendStrategy (ABC)
     project_root: Path | None = None           # NEW: for ArgumentMatcher path resolution
     control_channel: ControlChannel | None = None
     control_store: ControlStore | None = None
@@ -60,10 +59,9 @@ class RuntimeAssembler:
         )
 
         approval = None
-        if config.approval_classifier and config.approval_strategy:
+        if config.approval_classifier:
             approval = ApprovalRuntime(
                 classifier=config.approval_classifier,
-                suspend_strategy=config.approval_strategy,
             )
 
         control = None

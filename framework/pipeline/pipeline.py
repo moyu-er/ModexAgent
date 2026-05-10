@@ -1,4 +1,4 @@
-"""AgentPipeline - 端到端流程编排
+﻿"""AgentPipeline - 端到端流程编排
 
 提供 AgentPipeline 类，统一编排完整的输入→处理→输出流程。
 """
@@ -17,8 +17,10 @@ from framework.core.skills import SkillManager
 from framework.memory.core.message import ChatMessage
 from framework.memory.core.scope import MemoryContext
 
-from ..approval.response import parse_approval_action
+from ..approval.constants import ApprovalDecision
+from ..approval.response import parse_input_command
 from ..approval.types import ApprovalAction
+from ..agents.react.state import ReActSnapshotPolicy
 from ..control.ui.abc import ControlUserInterface
 from ..core.agent import Agent, AgentContext
 from ..core.context import ContextManager
@@ -44,6 +46,8 @@ from ..utils.deduplicator import MessageDeduplicator
 from .adapters import InputAdapter, OutputAdapter, OutputMessage
 from .approval_renderer import ApprovalRenderer, format_approval_prompt
 from .context_assembler import assemble_context
+from ..runtime.enums import SnapshotReason, TurnPhase
+from ..runtime.models import StateQueryScope, TurnSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -713,10 +717,88 @@ class AgentPipeline:
                 except Exception:
                     logger.exception("on_session_end failed for %s", session_id)
 
+    async def _handle_snapshot_approval(
+        self,
+        *,
+        action: ApprovalAction | None,
+        snapshot: TurnSnapshot,
+        agent_context: AgentContext,
+        emitter: Any,
+        session_id: str,
+        context_state: Any,
+        input_metadata: dict[str, Any],
+        ctx_mgr: Any,
+    ) -> AgentResult | None:
+        approval = ReActSnapshotPolicy.approval_from_snapshot(snapshot)
+        if approval is None:
+            return None
+
+        if action is not None:
+            decision = (
+                ApprovalDecision.ALLOWED
+                if action == ApprovalAction.ALLOW
+                else ApprovalDecision.DENIED
+            )
+            for req in approval.requests:
+                current = approval.decisions.get(req.tool_call_id, ApprovalDecision.PENDING)
+                if current == ApprovalDecision.PENDING:
+                    approval.apply_decision(req.tool_call_id, decision)
+                    break
+
+        snapshot = ReActSnapshotPolicy.replace_approval(snapshot, approval)
+        if self.turn_store is None:
+            logger.error("Approval resume requested but no TurnStateStore is configured")
+            return None
+
+        if not approval.every_tool_decided:
+            await self.turn_store.save_turn(snapshot)
+            if self._user_interface is not None:
+                for req in approval.requests:
+                    current = approval.decisions.get(req.tool_call_id, ApprovalDecision.PENDING)
+                    if current == ApprovalDecision.PENDING:
+                        await self._user_interface.render_message(
+                            session_id,
+                            format_approval_prompt(req),
+                        )
+                        break
+            return None
+
+        state = ReActSnapshotPolicy.state_from_snapshot(snapshot)
+        if agent_context.runtime is None:
+            return None
+        agent_context.identity = snapshot.identity
+        agent_context.runtime.state = state
+        result = await self._execute_turn(
+            agent_context,
+            emitter,
+            session_id,
+            context_state,
+            input_metadata,
+            ctx_mgr,
+        )
+        await self.turn_store.delete_turn(snapshot.identity)
+        await self._approval.drain(session_id)
+        return result
+
+    async def _load_pending_approval_snapshot(self, session_id: str) -> TurnSnapshot | None:
+        if self.turn_store is None:
+            return None
+        snapshots = await self.turn_store.list_active_turns(
+            StateQueryScope(
+                session_id=session_id,
+                phase=TurnPhase.SUSPENDED,
+                reason=SnapshotReason.TOOL_APPROVAL_REQUIRED,
+            )
+        )
+        if not snapshots:
+            return None
+        snapshots.sort(key=lambda snapshot: snapshot.created_at)
+        return snapshots[-1]
+
     async def _process_message_locked(
         self, input_msg: InputMessage, session_id: str, route_result: Any | None = None
     ) -> AgentResult | None:
-        """在 session 锁保护内处理单个消息"""
+        """Process one message while holding the session lock."""
         if self.on_session_start is not None:
             try:
                 await asyncio.wait_for(
@@ -734,50 +816,59 @@ class AgentPipeline:
         )
         input_metadata = getattr(input_msg, "metadata", None) or {}
 
-        # 1. Preprocess input
-        sanitized_content, media_blocks, _media_processor = await self._preprocess_input(
+        sanitized_content, media_blocks, media_processor = await self._preprocess_input(
             input_msg, session_id, input_metadata, route_result,
         )
         if sanitized_content is None:
-            return None  # Command interceptor consumed the message
+            return None
 
-        # 2. Detect approval command
+        parsed_command = parse_input_command(input_msg.content or "")
+        approval_action = (
+            parsed_command.approval_action
+            if parsed_command is not None
+            else None
+        )
+        pending_snapshot = await self._load_pending_approval_snapshot(session_id)
         is_approval_cmd, approval_state = await self._approval.detect(
-            input_msg, session_id, input_metadata,
-            prebuilt_runtime=self._prebuilt_runtime,
+            input_msg,
+            session_id,
+            input_metadata,
+            pending_snapshot=pending_snapshot,
+            approval_action=approval_action,
         )
 
-        # 3. Assemble context
         context_state = await self._assemble_context(
-            session_id, input_msg, input_metadata, sanitized_content,
-            media_blocks, _media_processor, ctx_mgr, route_result, is_approval_cmd,
+            session_id,
+            input_msg,
+            input_metadata,
+            sanitized_content,
+            media_blocks,
+            media_processor,
+            ctx_mgr,
+            route_result,
+            is_approval_cmd,
         )
-
-        # 4. Build runtime and context
         agent_context, emitter = self._build_runtime_and_context(
-            session_id, context_state, ctx_mgr,
+            session_id,
+            context_state,
+            ctx_mgr,
         )
 
-        # 5. Handle approval command if pending
         if approval_state is not None:
-            action = parse_approval_action(input_msg.content or "")
-            if action is not None or approval_state.every_tool_decided:
-                # Explicit command OR auto-deny resolved all tools → handle it
-                effective_action = action or ApprovalAction.DENY
-                strategy = None
-                if self._prebuilt_runtime and self._prebuilt_runtime.approval:
-                    strategy = getattr(self._prebuilt_runtime.approval, "suspend_strategy", None)
-                return await self._approval.handle(
-                    effective_action, approval_state, agent_context, emitter, session_id,
-                    context_state, input_metadata, strategy, ctx_mgr,
-                )
-            return None  # source_agent buffered
+            return await self._handle_snapshot_approval(
+                action=approval_action,
+                snapshot=approval_state,
+                agent_context=agent_context,
+                emitter=emitter,
+                session_id=session_id,
+                context_state=context_state,
+                input_metadata=input_metadata,
+                ctx_mgr=ctx_mgr,
+            )
 
-        # 6. Execute normal turn
         return await self._execute_turn(
             agent_context, emitter, session_id, context_state, input_metadata, ctx_mgr,
         )
-
     async def cleanup_session_resources(self, session_id: str) -> None:
         """清理 per-session 资源（长时间运行避免内存泄漏）。
 
@@ -805,5 +896,4 @@ class AgentPipeline:
         for sid in list(self._session_locks.keys()):
             await self.cleanup_session_resources(sid)
         logger.info("Pipeline stop requested, waiting for current message to complete...")
-
 

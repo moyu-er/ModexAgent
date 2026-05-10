@@ -27,7 +27,7 @@ from framework.agents.react.approval import (
 from framework.agents.react.runtime import ReActRuntime
 from framework.approval.config import AgentApprovalConfig, ToolApprovalConfig
 from framework.approval.constants import ApprovalTier
-from framework.core.types import InputMessage, OutputMessage, ToolCall
+from framework.core.types import InputMessage, MessageRole, OutputMessage, ToolCall
 from framework.hook import HookRunner
 from framework.hook.builtin import RuntimeContextHook
 from framework.interceptor.builtin import (
@@ -558,41 +558,52 @@ class TestBotProjectPluginAndCapabilityWiring:
             assert memory_system.layers.archive is None
             assert memory_system.layers.knowledge is None
 
-            # Add 5 messages (> max_messages=4), ending in a tool result.
-            # Lifecycle defers compression until the final assistant consumes it.
-            # DefaultCommitPolicy handles archive=None as session-only keep.
+            # Add 5 messages (> max_messages=4), ending in a complete
+            # assistant(tool_calls) + tool result group. Session-only memory
+            # may compact immediately; the invariant is no orphan tool result.
             await memory_system.add_messages(
                 ctx,
                 [
-                    {"role": "user", "content": "old task"},
-                    {"role": "assistant", "content": "old answer"},
-                    {"role": "user", "content": "latest task"},
+                    {"role": MessageRole.USER.value, "content": "old task"},
+                    {"role": MessageRole.ASSISTANT.value, "content": "old answer"},
+                    {"role": MessageRole.USER.value, "content": "latest task"},
                     {
-                        "role": "assistant",
+                        "role": MessageRole.ASSISTANT.value,
                         "content": "",
                         "tool_calls": [{"id": "call-1", "function": {"name": "search_files"}}],
                     },
-                    {"role": "tool", "tool_call_id": "call-1", "content": "search result"},
+                    {
+                        "role": MessageRole.TOOL.value,
+                        "tool_call_id": "call-1",
+                        "content": "search result",
+                    },
                 ],
             )
 
-            # While the tool result is open, compression has not run yet.
             process_messages = [
                 msg.to_dict() for msg in await memory_system.layers.session.get_all_messages(ctx)
             ]
-            assert len(process_messages) == 5
-            assert process_messages[-1]["role"] == "tool"
+            assert len(process_messages) <= 4
+            if any(m.get("role") == MessageRole.TOOL.value for m in process_messages):
+                assert any(
+                    m.get("role") == MessageRole.ASSISTANT.value and m.get("tool_calls")
+                    for m in process_messages
+                )
 
-            # Add final assistant message: now archive=None uses default session-only commit.
+            # Add final assistant message: archive=None still uses the default
+            # session-only commit path.
             await memory_system.add_messages(
                 ctx,
-                [{"role": "assistant", "content": "done"}],
+                [{"role": MessageRole.ASSISTANT.value, "content": "done"}],
             )
             kept = [msg.to_dict() for msg in await memory_system.layers.session.get_all_messages(ctx)]
             assert len(kept) <= 4
-            assert kept[-1]["role"] == "assistant"
-            if any(m.get("role") == "tool" for m in kept):
-                assert any(m.get("role") == "assistant" and m.get("tool_calls") for m in kept)
+            assert kept[-1]["role"] == MessageRole.ASSISTANT.value
+            if any(m.get("role") == MessageRole.TOOL.value for m in kept):
+                assert any(
+                    m.get("role") == MessageRole.ASSISTANT.value and m.get("tool_calls")
+                    for m in kept
+                )
 
             loaded = await peer_context.load("conv:main:office-expert")
             assert loaded.system_prompt == "docs"
@@ -814,7 +825,6 @@ class TestReActRuntimeAssembly:
         )
         approval = ApprovalRuntime(
             classifier=classifier,
-            suspend_strategy=Mock(),
         )
 
         return ReActRuntime(

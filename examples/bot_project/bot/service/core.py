@@ -792,8 +792,6 @@ class BotService(AgentBuilderMixin):
         """
         from framework.agents.react.approval import TieredToolApprovalClassifier
         from framework.agents.react.assembler import RuntimeAssembler, RuntimeServicesConfig
-        from framework.agents.react.state import ReActSnapshotPolicy
-        from framework.agents.react.strategy import TurnStateSuspendStrategy
         from framework.approval.config import AgentApprovalConfig, ToolApprovalConfig
         from framework.control.store import InMemoryControlStore
         from framework.control.types import ControlCommandType
@@ -821,10 +819,6 @@ class BotService(AgentBuilderMixin):
             approval_classifier=TieredToolApprovalClassifier(
                 config=approval_config,
                 argument_matcher=ArgumentMatcher(project_root=self._project_dir),
-            ),
-            approval_strategy=TurnStateSuspendStrategy(
-                self._turn_store if self._turn_store is not None else self._checkpoint_store,
-                ReActSnapshotPolicy(),
             ),
             control_channel=self.control_channel,
             control_store=InMemoryControlStore(),
@@ -974,8 +968,8 @@ class BotService(AgentBuilderMixin):
 
         from framework.agents.summarizer import SummarizerAgent, SummarizerStrategy
         from framework.memory.compaction.boundary import (
-            ToolChainBoundaryPolicy,
-            UserTurnToolChainBoundaryPolicy,
+            BoundaryPolicyName,
+            create_boundary_policy,
         )
         from framework.memory.compaction.policy import ConservativeCompactionPolicy
         from framework.memory.compression.policies import DefaultMemoryCompressionCoordinator
@@ -1002,13 +996,10 @@ class BotService(AgentBuilderMixin):
 
         retention_policy = self._build_retention_policy(main_memory_config)
 
-        # Build boundary policy from config
-        boundary = None
-        boundary_name = compaction_config.get("boundary", "tool_chain")
-        if boundary_name == "user_turn_tool_chain":
-            boundary = UserTurnToolChainBoundaryPolicy()
-        elif boundary_name == "tool_chain":
-            boundary = ToolChainBoundaryPolicy()
+        boundary_name = BoundaryPolicyName(
+            compaction_config.get("boundary", BoundaryPolicyName.TOOL_CHAIN.value)
+        )
+        boundary = create_boundary_policy(boundary_name)
 
         # Persistent session cleanup/compression is append-triggered:
         # DefaultMemoryLifecyclePolicy calls DefaultMemoryCompressionCoordinator,

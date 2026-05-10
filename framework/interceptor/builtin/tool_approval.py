@@ -1,7 +1,7 @@
-"""ToolApprovalInterceptor — 工具调用审批拦截器。
+﻿"""ToolApprovalInterceptor 鈥?宸ュ叿璋冪敤瀹℃壒鎷︽埅鍣ㄣ€?
 
-TieredToolApprovalInterceptor 提供三级审批 (hardline/dangerous/sensitive)。
-ToolApprovalInterceptor 保留为简化的单层审批实现（向后兼容）。
+TieredToolApprovalInterceptor 鎻愪緵涓夌骇瀹℃壒 (hardline/dangerous/sensitive)銆?
+ToolApprovalInterceptor 淇濈暀涓虹畝鍖栫殑鍗曞眰瀹℃壒瀹炵幇锛堝悜鍚庡吋瀹癸級銆?
 """
 
 from __future__ import annotations
@@ -41,26 +41,26 @@ logger = logging.getLogger(__name__)
 
 
 class ApprovalTier(str, Enum):
-    """审批层级。"""
+    """瀹℃壒灞傜骇銆?"""
 
-    HARDLINE = "hardline"    # 无条件拒绝，永不执行
-    DANGEROUS = "dangerous"  # 必须审批，YOLO 不可跳过
-    SENSITIVE = "sensitive"  # 需要审批，YOLO 可跳过
-    NORMAL = "normal"        # 直接放行
+    HARDLINE = "hardline"    # 鏃犳潯浠舵嫆缁濓紝姘镐笉鎵ц
+    DANGEROUS = "dangerous"  # 蹇呴』瀹℃壒锛孻OLO 涓嶅彲璺宠繃
+    SENSITIVE = "sensitive"  # 闇€瑕佸鎵癸紝YOLO 鍙烦杩?
+    NORMAL = "normal"        # 鐩存帴鏀捐
 
 
 class DenyAction(str, Enum):
-    """审批拒绝时的行为。"""
+    """瀹℃壒鎷掔粷鏃剁殑琛屼负銆?"""
 
-    TOOL_ERROR = "deny_as_tool_error"    # 返回伪 ToolResult，agent 继续
-    CANCEL_TURN = "deny_as_cancel"       # 终止，但补齐所有未执行 tool 的伪结果
+    TOOL_ERROR = "deny_as_tool_error"    # 杩斿洖浼?ToolResult锛宎gent 缁х画
+    CANCEL_TURN = "cancel_turn"       # 缁堟锛屼絾琛ラ綈鎵€鏈夋湭鎵ц tool 鐨勪吉缁撴灉
 
 
 class TimeoutAction(str, Enum):
-    """审批超时时的行为。"""
+    """瀹℃壒瓒呮椂鏃剁殑琛屼负銆?"""
 
     TOOL_ERROR = "timeout_as_tool_error"
-    CANCEL_TURN = "timeout_as_cancel"
+    CANCEL_TURN = "cancel_turn"
 
 
 def _looks_like_path(val: str) -> bool:
@@ -86,7 +86,7 @@ class ArgumentMatcher:
         """Returns True if all path arguments match at least one allowed pattern."""
         paths = self._extract_paths(arguments)
         if not paths:
-            return True  # No path arguments — nothing to check
+            return True  # No path arguments 鈥?nothing to check
         for path in paths:
             resolved = self._resolve_path(path)
             if not self._match_any(resolved, allowed_paths):
@@ -96,9 +96,9 @@ class ArgumentMatcher:
     def _resolve_path(self, raw: str) -> Path:
         """Resolve special path prefixes.
 
-        - . / ./xxx  → project_root (or cwd if project_root not set)
-        - ~ / ~/xxx  → Path.home()
-        - absolute   → as-is
+        - . / ./xxx  鈫?project_root (or cwd if project_root not set)
+        - ~ / ~/xxx  鈫?Path.home()
+        - absolute   鈫?as-is
         """
         if raw.startswith("~/"):
             return Path.home() / raw[2:]
@@ -137,7 +137,7 @@ class ArgumentMatcher:
     # ---- Legacy API (retained for backward compat during migration) ----
 
     def is_allowed(self, tool_call) -> bool:
-        """Legacy API — delegates to matches() with empty allowed_paths.
+        """Legacy API 鈥?delegates to matches() with empty allowed_paths.
 
         This returns False (not allowed) when no paths match, which in the
         old API meant "needs approval" (dangerous). Kept for interceptor use.
@@ -147,34 +147,34 @@ class ArgumentMatcher:
 
 
 class ToolNameMatcher:
-    """工具名称匹配器，支持精确匹配。"""
+    """宸ュ叿鍚嶇О鍖归厤鍣紝鏀寔绮剧‘鍖归厤銆?"""
 
     def __init__(self, patterns: set[str]) -> None:
         self._patterns = patterns
 
     def matches(self, tool_name: str) -> bool:
-        """检查工具名称是否匹配。"""
+        """妫€鏌ュ伐鍏峰悕绉版槸鍚﹀尮閰嶃€?"""
         return tool_name in self._patterns
 
 
-# ── Simple single-tier (backward compatible) ──
+# 鈹€鈹€ Simple single-tier (backward compatible) 鈹€鈹€
 
 
 class ApprovalDeniedAction(str, Enum):
-    """审批拒绝时的行为（兼容旧名）。"""
+    """瀹℃壒鎷掔粷鏃剁殑琛屼负锛堝吋瀹规棫鍚嶏級銆?"""
     TOOL_ERROR = "deny_as_tool_error"
-    CANCEL_TURN = "deny_as_cancel"
+    CANCEL_TURN = "cancel_turn"
 
 
 class ApprovalTimeoutAction(str, Enum):
-    """审批超时时的行为（兼容旧名）。"""
+    """瀹℃壒瓒呮椂鏃剁殑琛屼负锛堝吋瀹规棫鍚嶏級銆?"""
     TOOL_ERROR = "timeout_as_tool_error"
-    CANCEL_TURN = "timeout_as_cancel"
+    CANCEL_TURN = "cancel_turn"
 
 
 @dataclass(frozen=True)
 class ToolApprovalRequest:
-    """工具审批请求（脱敏后）。"""
+    """宸ュ叿瀹℃壒璇锋眰锛堣劚鏁忓悗锛夈€?"""
     agent_id: str
     session_id: str
     turn_id: str
@@ -185,9 +185,9 @@ class ToolApprovalRequest:
 
 
 class ToolApprovalInterceptor:
-    """简化的单层审批拦截器（向后兼容）。
+    """绠€鍖栫殑鍗曞眰瀹℃壒鎷︽埅鍣紙鍚戝悗鍏煎锛夈€?
 
-    推荐新代码使用 TieredToolApprovalInterceptor。
+    鎺ㄨ崘鏂颁唬鐮佷娇鐢?TieredToolApprovalInterceptor銆?
     """
 
     scopes = frozenset([InterceptorScope.TOOL_CALL])
@@ -267,14 +267,14 @@ class ToolApprovalInterceptor:
             return await next_call()
 
 
-# ── Tiered approval ──
+# 鈹€鈹€ Tiered approval 鈹€鈹€
 
 
 class TieredToolApprovalInterceptor:
-    """三级审批拦截器。
+    """涓夌骇瀹℃壒鎷︽埅鍣ㄣ€?
 
-    关键原则：永远返回合法 ToolResult。deny_as_cancel 时设置终止标记，
-    由 ReActAgent 在循环中检测并补齐剩余 tool call 的结果。
+    鍏抽敭鍘熷垯锛氭案杩滆繑鍥炲悎娉?ToolResult銆俤eny_as_cancel 鏃惰缃粓姝㈡爣璁帮紝
+    鐢?ReActAgent 鍦ㄥ惊鐜腑妫€娴嬪苟琛ラ綈鍓╀綑 tool call 鐨勭粨鏋溿€?
     """
 
     scopes = frozenset([InterceptorScope.TOOL_CALL])
@@ -317,7 +317,7 @@ class TieredToolApprovalInterceptor:
         if call_id in pre_approved:
             return await next_call()
 
-        # 1) Hardline: 无条件拒绝
+        # 1) Hardline: 鏃犳潯浠舵嫆缁?
         if self._hardline and self._hardline.matches(tool_name):
             return ToolResult(
                 tool_name=tool_name,
@@ -325,17 +325,17 @@ class TieredToolApprovalInterceptor:
                 error=f"Error: '{tool_name}' is blocked by safety policy (hardline).",
             )
 
-        # 2) Dangerous: 必须审批
+        # 2) Dangerous: 蹇呴』瀹℃壒
         if self._dangerous and self._dangerous.matches(tool_name):
             return await self._request_approval(ctx, call, next_call, ApprovalTier.DANGEROUS)
 
-        # 3) Sensitive: YOLO 可跳过
+        # 3) Sensitive: YOLO 鍙烦杩?
         if self._sensitive and self._sensitive.matches(tool_name):
             yolo = ctx.metadata.get("approval_yolo", False)
             if not yolo:
                 return await self._request_approval(ctx, call, next_call, ApprovalTier.SENSITIVE)
 
-        # 4) Normal: 直接放行
+        # 4) Normal: 鐩存帴鏀捐
         return await next_call()
 
     async def _request_approval(
@@ -415,7 +415,7 @@ class TieredToolApprovalInterceptor:
                 ),
             )
 
-        # deny_as_tool_error: 返回伪错误，agent 继续处理后续 tool
+        # deny_as_tool_error: 杩斿洖浼敊璇紝agent 缁х画澶勭悊鍚庣画 tool
         return ToolResult(
             tool_name=call.tool_name, call_id=call_id,
             error=f"Tool '{call.tool_name}' was not approved by the user. "
@@ -437,7 +437,7 @@ class TieredToolApprovalInterceptor:
         )
 
 
-# ── Shared helpers ──
+# 鈹€鈹€ Shared helpers 鈹€鈹€
 
 
 async def _drain_approval(

@@ -1,8 +1,7 @@
-"""Graph interrupt mechanism — interrupt() + GraphInterrupt.
+"""Graph interrupt mechanism: ``interrupt()`` + ``GraphInterrupt``.
 
-Used by SuspendStrategy to pause graph execution. Resume decisions are
-passed through the strategy's own mechanism (e.g. TurnStateSuspendStrategy
-uses in-memory dict), not through a global context variable.
+Agent nodes use this to pause graph execution after persisting resumable turn
+state through the runtime turn store.
 """
 
 from __future__ import annotations
@@ -30,5 +29,5 @@ class GraphInterrupt(Exception):  # noqa: N818
 
 
 def interrupt(value: Any) -> Any:
-    """Interrupt graph execution — always raises GraphInterrupt."""
+    """Interrupt graph execution by raising ``GraphInterrupt``."""
     raise GraphInterrupt(value=value)

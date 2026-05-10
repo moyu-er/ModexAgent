@@ -96,8 +96,8 @@ class AgentRuntime:
         return None
 
     @property
-    def checkpoint_store(self) -> TurnStateStore | None:
-        return self.services.turn_store
+    def checkpoint_store(self) -> None:
+        return None
 
     @property
     def safety(self) -> RuntimeSafetyPolicy:
