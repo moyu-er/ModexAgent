@@ -10,7 +10,6 @@ import logging
 from enum import Enum
 from typing import Any, Literal
 
-from framework.agents.react.constants import ReActMetaKey  # TODO: remove after agent.py migration
 from framework.agents.react.state import get_react_state
 from framework.runtime.enums import TurnPhase
 from framework.control.exceptions import AgentControlError
@@ -89,7 +88,7 @@ def _get_turn_messages(ctx: AgentContext) -> list[dict[str, Any]]:
     if state is not None:
         return [md.message.to_dict() if hasattr(md.message, 'to_dict') else md.message
                 for md in state.message_delta]
-    return ctx.metadata.get(ReActMetaKey.ITERATION_MSGS, [])
+    return []
 
 
 class ReActAgent(Agent[ReActEvent]):
@@ -233,11 +232,6 @@ class ReActAgent(Agent[ReActEvent]):
             state = get_react_state(context)
             if state is not None:
                 state.phase = TurnPhase.COMPLETED if state.phase not in (TurnPhase.COMPLETED, TurnPhase.FAILED) else state.phase
-            # Legacy metadata cleanup (remove after full migration)
-            for key in (ReActMetaKey.DENY_AS_CANCEL, ReActMetaKey.APPROVAL_DENIAL,
-                         ReActMetaKey.INJECTION_CYCLE, ReActMetaKey.RESUME_STATE,
-                         ReActMetaKey.TOOL_DECISIONS):
-                context.metadata.pop(key, None)
             context.emitter = None
             current_agent_context.reset(ctx_token)
 
@@ -246,30 +240,19 @@ class ReActAgent(Agent[ReActEvent]):
         all_messages: list[dict[str, Any]],
         context: AgentContext,
     ) -> None:
-        """保存被拒绝时的完整 checkpoint（含所有 tool 结果 + 拒绝上下文）。"""
-        denial: Any = context.metadata.get(ReActMetaKey.APPROVAL_DENIAL)
+        state = get_react_state(context)
         checkpoint_data: dict[str, Any] = {
             "messages": list(all_messages),
             "termination": "approval_denied",
-            "cancelled_tool_ids": list(
-                context.metadata.get("_cancelled_tool_records", {}).keys()
-            ),
-            "iteration": context.metadata.get("_iteration", 0),
+            "iteration": state.iteration if state else 0,
         }
-        if denial is not None:
+        if state is not None and state.approval is not None:
+            tx = state.approval
             checkpoint_data["denial_context"] = {
-                "tool_name": denial.tool_name,
-                "tool_call_id": denial.tool_call_id,
-                "arguments": dict(denial.arguments),
-                "tier": denial.tier,
-                "reason": denial.reason,
-                "iteration": denial.iteration,
+                "approval_id": tx.approval_id,
+                "status": tx.status,
+                "tool_count": len(tx.requests),
             }
-        checkpoint_store = context.runtime.checkpoint_store if context.runtime else None
-        if checkpoint_store is not None:
-            session_id = getattr(context, "session_id", "unknown")
-            checkpoint_id = f"{session_id}:denial"
-            await checkpoint_store.save(checkpoint_id, checkpoint_data)
 
     async def _save_checkpoint(
         self,

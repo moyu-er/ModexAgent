@@ -11,7 +11,6 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..agents.react.constants import ReActMetaKey
 from ..approval.constants import ApprovalDecision
 from ..approval.response import parse_approval_action
 from ..approval.store import LocalFileApprovalStateStore
@@ -146,19 +145,7 @@ class ApprovalRenderer:
                 break
 
         if approval_state.every_tool_decided:
-            if strategy is not None:
-                resume_state = await strategy.load_resume_state(session_id)
-            else:
-                resume_state = None
-            if resume_state is not None and self.agent is not None:
-                agent_context.metadata[ReActMetaKey.RESUME_STATE] = resume_state
-                agent_context.metadata[ReActMetaKey.TOOL_DECISIONS] = (
-                    approval_state.final_decisions()
-                )
-                deny_reason = getattr(approval_state, "deny_reason", None)
-                if deny_reason is not None:
-                    agent_context.metadata["APPROVAL_DENY_REASON"] = deny_reason
-
+            if self.agent is not None:
                 if hasattr(strategy, "save_resume_decisions"):
                     strategy.save_resume_decisions(session_id, approval_state.final_decisions())
                 try:

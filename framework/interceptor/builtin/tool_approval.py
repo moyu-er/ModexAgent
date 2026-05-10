@@ -17,7 +17,6 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from framework.agents.react.constants import ReActMetaKey
 from framework.runtime.models import ApprovalDenialContext
 from framework.control.types import (
     ControlCommand,
@@ -407,18 +406,6 @@ class TieredToolApprovalInterceptor:
         call_id = call.tool_call.call_id or ""
 
         if self._on_denied == DenyAction.CANCEL_TURN:
-            ctx.metadata[ReActMetaKey.APPROVAL_DENIAL] = ApprovalDenialContext(
-                tool_name=call.tool_name,
-                tool_call_id=call_id,
-                arguments=dict(_redact_args(call.arguments)),
-                tier=tier.value,
-                denied_at=time.monotonic(),
-                reason=f"Tool '{call.tool_name}' denied (tier={tier.value})",
-                session_id=ctx.session_id,
-                turn_id=call.turn_id,
-                iteration=ctx.metadata.get("iteration", 0),
-            )
-            ctx.metadata[ReActMetaKey.DENY_AS_CANCEL] = True
             return ToolResult(
                 tool_name=call.tool_name, call_id=call_id,
                 error=(
@@ -440,7 +427,6 @@ class TieredToolApprovalInterceptor:
     ) -> ToolResult:
         call_id = call.tool_call.call_id or ""
         if self._on_timeout == TimeoutAction.CANCEL_TURN:
-            ctx.metadata[ReActMetaKey.DENY_AS_CANCEL] = True
             return ToolResult(
                 tool_name=call.tool_name, call_id=call_id,
                 error="Error: Tool approval timed out (cancel_turn).",

@@ -136,11 +136,8 @@ class TestDenyAsCancel:
             return ToolResult(tool_name="shell", result="ok")
 
         result = await interceptor.around_tool_call(ctx, call, _next)
-        # 返回合法 ToolResult（非异常）
         assert isinstance(result, ToolResult)
         assert result.error is not None
-        # 设置标记
-        assert ctx.metadata.get("_deny_as_cancel") is True
 
 
 class TestSensitiveYolo:
@@ -193,7 +190,6 @@ class TestTimeout:
         result = await interceptor.around_tool_call(ctx, call, _next)
         assert result.error is not None
         assert "timed out" in result.error.lower()
-        assert ctx.metadata.get("_deny_as_cancel") is True
 
 
 class TestPreApprovedSkip:
