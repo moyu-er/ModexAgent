@@ -26,6 +26,7 @@ from .enums import (
     StateScope,
     ToolBatchStatus,
     ToolCallStatus,
+    TurnCustomKey,
     TurnPhase,
 )
 from .models import (
@@ -76,6 +77,7 @@ __all__ = [
     "StateScope",
     "ToolBatchStatus",
     "ToolCallStatus",
+    "TurnCustomKey",
     "TurnPhase",
     # Models
     "ApprovalRequestState",

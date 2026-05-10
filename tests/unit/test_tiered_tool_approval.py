@@ -20,6 +20,9 @@ from framework.interceptor.builtin.tool_approval import (
 )
 from framework.core.tool_manager import ToolResult
 from framework.memory.history import ListMessageHistory
+from framework.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
+from framework.runtime.models import TurnIdentity, TurnStateBase
+from framework.runtime.services import AgentRuntime, AgentRuntimeServices
 
 
 def _make_tool_call(name: str = "shell", call_id: str = "tc1") -> ToolCall:
@@ -27,12 +30,19 @@ def _make_tool_call(name: str = "shell", call_id: str = "tc1") -> ToolCall:
 
 
 def _make_ctx() -> AgentContext:
+    state = TurnStateBase(
+        identity=TurnIdentity(agent_id="agent-1", session_id="s1", turn_id="t1"),
+        agent_kind=AgentKind.REACT,
+        phase=TurnPhase.RUNNING,
+    )
+    runtime = AgentRuntime(services=AgentRuntimeServices(), state=state)
     return AgentContext(
         system_prompt="test",
         history=ListMessageHistory([]),
         tool_manager=MagicMock(),
         session_id="s1",
         metadata={},
+        runtime=runtime,
     )
 
 
@@ -150,7 +160,7 @@ class TestSensitiveYolo:
             sensitive_matcher=ToolNameMatcher({"shell"}),
         )
         ctx = _make_ctx()
-        ctx.metadata["approval_yolo"] = True
+        ctx.runtime.state.custom[TurnCustomKey.APPROVAL_YOLO] = True
         call = ToolCallContext(
             tool_call=_make_tool_call("shell", "tc1"),
             tool_name="shell",
@@ -217,7 +227,7 @@ class TestPreApprovedSkip:
         )
         ctx = _make_ctx()
         # Simulate ToolNode._execute_batch marking this tool as pre-approved
-        ctx.metadata["_pre_approved_tool_ids"] = {"tc1"}
+        ctx.runtime.state.custom[TurnCustomKey.PRE_APPROVED_TOOL_IDS] = {"tc1"}
 
         call = ToolCallContext(
             tool_call=_make_tool_call("shell", "tc1"),

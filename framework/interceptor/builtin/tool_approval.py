@@ -17,6 +17,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from framework.runtime.enums import TurnCustomKey
 from framework.runtime.models import ApprovalDenialContext
 from framework.control.types import (
     ControlCommand,
@@ -221,8 +222,9 @@ class ToolApprovalInterceptor:
         if self._matcher is not None and not self._matcher.matches(call.tool_name):
             return await next_call()
 
+        runtime = ctx.runtime
         approval_req = ToolApprovalRequest(
-            agent_id=ctx.metadata.get("agent_id", "unknown"),
+            agent_id=runtime.state.identity.agent_id if runtime else "unknown",
             session_id=ctx.session_id,
             turn_id=call.turn_id,
             tool_call_id=call.tool_call.call_id or "",
@@ -313,7 +315,9 @@ class TieredToolApprovalInterceptor:
         # If the ToolNode already resolved approval (Phase 2), skip redundant
         # control-channel approval here.  Pre-approved ids are written by
         # ToolNode._execute_batch before Phase 3.
-        pre_approved: set[str] = ctx.metadata.get("_pre_approved_tool_ids", set())  # type: ignore[assignment]
+        runtime = ctx.runtime
+        state = runtime.state if runtime else None
+        pre_approved: set[str] = state.custom.get(TurnCustomKey.PRE_APPROVED_TOOL_IDS, set()) if state else set()  # type: ignore[assignment]
         if call_id in pre_approved:
             return await next_call()
 
@@ -331,7 +335,7 @@ class TieredToolApprovalInterceptor:
 
         # 3) Sensitive: YOLO 鍙烦杩?
         if self._sensitive and self._sensitive.matches(tool_name):
-            yolo = ctx.metadata.get("approval_yolo", False)
+            yolo = state.custom.get(TurnCustomKey.APPROVAL_YOLO, False) if state else False
             if not yolo:
                 return await self._request_approval(ctx, call, next_call, ApprovalTier.SENSITIVE)
 

@@ -1,8 +1,8 @@
 """ToolPolicyInterceptor — 策略静默否决不合规 tool_call。
 
-插件或自定义 hook 可在 before_tool_execution 中将 ctx.metadata["_policy_denied_tools"]
-设置为 {tool_name: reason} 字典。本拦截器在 around_tool_call 中检查该标记，
-匹配时返回伪 ToolResult 阻止实际执行。
+插件或自定义 hook 可在 before_tool_execution 中将 runtime state 的
+``_policy_denied_tools`` 设置为 {tool_name: reason} 字典。
+本拦截器在 around_tool_call 中检查该标记，匹配时返回伪 ToolResult 阻止实际执行。
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from framework.interceptor.abc import (
     ToolCallContext,
     ToolCallNext,
 )
+from framework.runtime.enums import TurnCustomKey
 
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
@@ -41,7 +42,8 @@ class ToolPolicyInterceptor:
         call: ToolCallContext,
         next_call: ToolCallNext,
     ) -> ToolResult:
-        denied: dict[str, str] | None = ctx.metadata.get("_policy_denied_tools")
+        state = ctx.runtime.state if ctx.runtime else None
+        denied: dict[str, str] | None = state.custom.get(TurnCustomKey.POLICY_DENIED_TOOLS) if state else None
         if denied and call.tool_name in denied:
             from framework.core.tool_manager import ToolResult
 

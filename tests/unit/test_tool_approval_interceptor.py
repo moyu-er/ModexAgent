@@ -27,6 +27,7 @@ class FakeCtx:
     def __init__(self) -> None:
         self.session_id = "s1"
         self.metadata = {"agent_id": "agent-1"}
+        self.runtime = None  # compat with typed state migration
 
 
 @pytest.fixture

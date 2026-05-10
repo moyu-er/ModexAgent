@@ -108,3 +108,24 @@ class ApprovalSubjectType(StrEnum):
 class ApprovalDenyPolicy(StrEnum):
     TOOL_RESULT_ONLY = "tool_result_only"
     CANCEL_TURN = "cancel_turn"
+
+
+class TurnCustomKey(StrEnum):
+    """Keys for ``TurnStateBase.custom`` per-turn state used by hooks and interceptors.
+
+    Hooks and interceptors store lightweight per-turn data in ``TurnStateBase.custom``
+    using these typed keys. Values must be JSON-serializable if turn snapshots are
+    persisted.
+    """
+
+    STREAM_CANCELLED = "_stream_cancelled"
+    CANCEL_COMMAND_TYPE = "_cancel_cmd_type"
+    CANCELLED_TOOL_RECORDS = "_cancelled_tool_records"
+    LLM_OUTPUT_RISK = "_llm_output_risk"
+    CONSECUTIVE_ERRORS = "consecutive_errors"
+    DYNAMIC_TOOL_ACTIVE = "_dynamic_tool_active"
+    DYNAMIC_TOOL_DENIED = "_dynamic_tool_denied"
+    PRE_APPROVED_TOOL_IDS = "_pre_approved_tool_ids"
+    APPROVAL_YOLO = "approval_yolo"
+    POLICY_DENIED_TOOLS = "_policy_denied_tools"
+    TOOL_USAGE = "usage"

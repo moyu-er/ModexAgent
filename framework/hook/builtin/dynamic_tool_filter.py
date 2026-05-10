@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from framework.core.agent import AgentContext
 from framework.core.tool_manager import ToolManager
+from framework.runtime.enums import TurnCustomKey
 
 if TYPE_CHECKING:
     pass
@@ -43,13 +44,13 @@ class DynamicToolFilterHook:
         state = ctx.runtime.state if ctx.runtime else None
 
         # 规则1: Token 预算梯度降级
-        usage = (state.custom.get("usage", {}) or {}).get("total_tokens", 0) if state else 0
+        usage = (state.custom.get(TurnCustomKey.TOOL_USAGE, {}) or {}).get("total_tokens", 0) if state else 0
         for threshold, tools in self._token_thresholds.items():
             if usage > threshold:
                 denied.update(tools)
 
         # 规则2: 连续错误 → 只读
-        errors = state.custom.get("consecutive_errors", 0) if state else 0
+        errors = state.custom.get(TurnCustomKey.CONSECUTIVE_ERRORS, 0) if state else 0
         if errors >= self._error_readonly_threshold:
             denied.update({"write_file", "shell", "delete_file"})
 
@@ -59,11 +60,11 @@ class DynamicToolFilterHook:
             wrapper = FilteredToolManager(self._base, denied_tools=list(denied))
             ctx.tool_manager = wrapper
             if state is not None:
-                state.custom["_dynamic_tool_active"] = True
-                state.custom.setdefault("_dynamic_tool_denied", set()).update(denied)
+                state.custom[TurnCustomKey.DYNAMIC_TOOL_ACTIVE] = True
+                state.custom.setdefault(TurnCustomKey.DYNAMIC_TOOL_DENIED, set()).update(denied)
 
     async def after_iteration(self, ctx: AgentContext[Any]) -> None:
         ctx.tool_manager = self._base
         state = ctx.runtime.state if ctx.runtime else None
         if state is not None:
-            state.custom.pop("_dynamic_tool_active", None)
+            state.custom.pop(TurnCustomKey.DYNAMIC_TOOL_ACTIVE, None)

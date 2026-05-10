@@ -15,6 +15,7 @@ from framework.interceptor.abc import (
     ToolCallContext,
     ToolCallNext,
 )
+from framework.runtime.enums import TurnCustomKey
 
 if TYPE_CHECKING:
     from framework.control.channel import ControlChannel
@@ -22,6 +23,11 @@ if TYPE_CHECKING:
     from framework.core.tool_manager import ToolResult
 
 logger = logging.getLogger(__name__)
+
+
+def _get_state_custom(ctx: AgentContext[Any]) -> dict:
+    state = ctx.runtime.state if ctx.runtime else None
+    return state.custom if state is not None else {}
 
 
 class ToolCancelPolicy(str, Enum):
@@ -92,7 +98,9 @@ class ToolWatchInterceptor:
                                       ControlCommandType.CANCEL_RUN):
                         cancel_reason = f"Tool cancelled: {cmd.type.value}"
                         cancel_evt.set()
-                        ctx.metadata["_cancel_cmd_type"] = cmd.type.value
+                        state = ctx.runtime.state if ctx.runtime else None
+                        if state is not None:
+                            state.custom[TurnCustomKey.CANCEL_COMMAND_TYPE] = cmd.type.value
                         return
                 await asyncio.sleep(self._poll_interval)
 
@@ -108,7 +116,7 @@ class ToolWatchInterceptor:
             if tool_task in done:
                 result = await tool_task
                 if watcher in done:
-                    ctx.metadata.setdefault("_cancelled_tool_records", {})[
+                    _get_state_custom(ctx).setdefault(TurnCustomKey.CANCELLED_TOOL_RECORDS, {})[
                         call.tool_call.call_id or ""
                     ] = {"tool_name": call.tool_name, "result_retained": True}
                 return result
@@ -118,7 +126,7 @@ class ToolWatchInterceptor:
                 try:
                     result = await asyncio.wait_for(tool_task, timeout=5.0)
                     # tool completed within grace period — return result with annotation
-                    ctx.metadata.setdefault("_cancelled_tool_records", {})[
+                    _get_state_custom(ctx).setdefault(TurnCustomKey.CANCELLED_TOOL_RECORDS, {})[
                         call.tool_call.call_id or ""
                     ] = {"tool_name": call.tool_name, "result_retained": True}
                     cancelled_note = (
@@ -134,7 +142,7 @@ class ToolWatchInterceptor:
                     tool_task.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
                         await tool_task
-                    ctx.metadata.setdefault("_cancelled_tool_records", {})[
+                    _get_state_custom(ctx).setdefault(TurnCustomKey.CANCELLED_TOOL_RECORDS, {})[
                         call.tool_call.call_id or ""
                     ] = {"tool_name": call.tool_name}
                     raise AgentCancelled(

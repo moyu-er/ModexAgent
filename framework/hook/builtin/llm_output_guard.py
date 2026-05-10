@@ -7,6 +7,7 @@ import re
 from typing import TYPE_CHECKING
 
 from framework.core.agent import AgentContext
+from framework.runtime.enums import TurnCustomKey
 
 if TYPE_CHECKING:
     from framework.core.types import LLMResponse
@@ -72,7 +73,7 @@ class LLMOutputGuardHook:
         if matched_risks:
             state = ctx.runtime.state if ctx.runtime else None
             if state is not None:
-                state.custom["_llm_output_risk"] = matched_risks
+                state.custom[TurnCustomKey.LLM_OUTPUT_RISK] = matched_risks
             logger.warning(
                 "LLMOutputGuard: risk keywords detected session=%s keywords=%s",
                 ctx.session_id, matched_risks,
