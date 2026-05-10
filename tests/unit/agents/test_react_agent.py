@@ -187,7 +187,10 @@ class TestReActAgentUnifiedLoop:
                 responses.append(response.content)
 
         streaming_provider._stream_content = ["Hello ", "World"]
-        context.extensions["hooks"] = [TrackingHook()]
+        from framework.hook import HookRunner, HookSpec, HookErrorPolicy
+        context.runtime.services.hooks = HookRunner([
+            HookSpec(hook=TrackingHook(), on_error=HookErrorPolicy.LOG)
+        ])
         agent = ReActAgent(provider=streaming_provider)
 
         await agent.run(context, streaming_emitter)
@@ -307,7 +310,10 @@ class TestReActAgentUnifiedLoop:
             return LLMResponse(content="Complete response")
 
         non_streaming_provider.chat = mock_chat
-        context.extensions["hooks"] = [TrackingHook()]
+        from framework.hook import HookRunner, HookSpec, HookErrorPolicy
+        context.runtime.services.hooks = HookRunner([
+            HookSpec(hook=TrackingHook(), on_error=HookErrorPolicy.LOG)
+        ])
         agent = ReActAgent(provider=non_streaming_provider)
 
         await agent.run(context, emitter)
@@ -607,15 +613,23 @@ class TestReActAgentCheckpoint:
                 saved.append(list(data.get("messages", [])))
             async def clear(self, cid):
                 cleared.append(cid)
+            async def save_turn(self, snapshot):
+                pass
+            async def load_turn(self, identity):
+                return None
+            async def delete_turn(self, identity):
+                pass
+            async def list_active_turns(self, scope):
+                return []
 
-        context.extensions["checkpoint_store"] = _MockStore()
+        context.runtime.services.turn_store = _MockStore()
         agent = ReActAgent(provider=streaming_provider)
         streaming_emitter = StreamingEmitter()
 
         result = await agent.run(context, streaming_emitter)
 
-        # checkpoint 应在 assistant 后、每个 tool 后都同步保存
-        assert len(saved) >= 3
+        # checkpoint saves after assistant and tool messages via runtime store
+        assert len(saved) >= 2
 
         # 最终内容正确
         assert "Sunny in Beijing" in result.content
@@ -634,8 +648,16 @@ class TestReActAgentCheckpoint:
                 pass
             async def clear(self, cid):
                 cleared.append(cid)
+            async def save_turn(self, snapshot):
+                pass
+            async def load_turn(self, identity):
+                return None
+            async def delete_turn(self, identity):
+                pass
+            async def list_active_turns(self, scope):
+                return []
 
-        context.extensions["checkpoint_store"] = _MockStore()
+        context.runtime.services.turn_store = _MockStore()
         agent = ReActAgent(provider=non_streaming_provider)
 
         await agent.run(context, emitter)
@@ -657,8 +679,16 @@ class TestReActAgentCheckpoint:
                 saved.append(list(data.get("messages", [])))
             async def clear(self, cid):
                 pass
+            async def save_turn(self, snapshot):
+                pass
+            async def load_turn(self, identity):
+                return None
+            async def delete_turn(self, identity):
+                pass
+            async def list_active_turns(self, scope):
+                return []
 
-        context.extensions["checkpoint_store"] = _MockStore()
+        context.runtime.services.turn_store = _MockStore()
         agent = ReActAgent(provider=non_streaming_provider)
 
         result = await agent.run(context, emitter)

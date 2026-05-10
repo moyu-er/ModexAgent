@@ -141,11 +141,9 @@ class TestCleanup:
     def test_removes_all(self) -> None:
         r = ApprovalRenderer(approval_workspace=Path("/tmp/ar"))
         r._approval_stores["s1"] = MagicMock()
-        r._resume_stores["s1"] = MagicMock()
         r._approval_pending["s1"] = [InputMessage(content="x", session_id="s1")]
         r.cleanup_session("s1")
         assert "s1" not in r._approval_stores
-        assert "s1" not in r._resume_stores
         assert "s1" not in r._approval_pending
 
 

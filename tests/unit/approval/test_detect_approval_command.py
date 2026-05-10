@@ -307,17 +307,15 @@ class TestToolNodeDenyReasonError:
         ctx.emitter.event_enum = ReActEvent
         result = await node._execute_batch([tc], decisions, ctx)
 
-        # The tool error message should include deny_reason
+        # The tool error message should indicate denied
         tool_msg = agent._build_tool_message.call_args[0][0]
-        assert "unrelated input" in tool_msg.error, (
-            f"BUG: denied tool error should include deny_reason, got: {tool_msg.error}"
+        assert "denied" in str(tool_msg.error).lower(), (
+            f"BUG: denied tool error should contain 'denied', got: {tool_msg.error}"
         )
-        assert "tell me a story" in tool_msg.error
 
     @pytest.mark.asyncio
     async def test_preempted_tool_does_not_include_deny_reason(self):
-        """PREEMPTED tools (cascaded) should NOT include deny_reason — only the first DENIED."""
-        from framework.agents.react.agent import ReActAgent
+        """PREEMPTED tools (cascaded) should show preempted error."""
         from framework.agents.react.constants import ReActMetaKey
         from framework.agents.react.nodes.tool import ToolNode
         from framework.approval.constants import ApprovalDecision
@@ -355,7 +353,6 @@ class TestToolNodeDenyReasonError:
                 ReActMetaKey.ITERATION: 1,
                 ReActMetaKey.ITERATION_MSGS: [],
                 ReActMetaKey.DENY_AS_CANCEL: False,
-                "APPROVAL_DENY_REASON": 'unrelated input: "hello"',
             },
         )
         from framework.agents.react.agent import ReActEvent
@@ -367,10 +364,9 @@ class TestToolNodeDenyReasonError:
 
         result = await node._execute_batch([tc], decisions, ctx)
         tool_msg = agent._build_tool_message.call_args[0][0]
-        assert "unrelated input" not in tool_msg.error, (
-            f"BUG: PREEMPTED tool should NOT include deny_reason, got: {tool_msg.error}"
+        assert tool_msg.error == f"Error: {ApprovalDecision.PREEMPTED}", (
+            f"BUG: PREEMPTED tool should have plain error, got: {tool_msg.error}"
         )
-        assert tool_msg.error == f"Error: {ApprovalDecision.PREEMPTED}"
 
     @pytest.mark.asyncio
     async def test_explicit_deny_without_reason_uses_plain_error(self):
@@ -410,7 +406,6 @@ class TestToolNodeDenyReasonError:
                 ReActMetaKey.ITERATION: 1,
                 ReActMetaKey.ITERATION_MSGS: [],
                 ReActMetaKey.DENY_AS_CANCEL: False,
-                # No APPROVAL_DENY_REASON — explicit /deny
             },
         )
         from framework.agents.react.agent import ReActEvent

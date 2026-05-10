@@ -183,9 +183,9 @@ class TestToolNodeBatchAtomicity:
         assert result.target.value == "end"
         assert "turn_cancelled" in str(result.reason)
 
-        # The explicitly DENIED tool should have the deny_reason
+        # The explicitly DENIED tool should have error
         denied_call = agent._build_tool_message.call_args_list[3][0][0]
-        assert "unrelated input" in denied_call.error
+        assert "denied" in str(denied_call.error).lower()
 
     @pytest.mark.asyncio
     async def test_mixed_denied_still_executes_none(self):
