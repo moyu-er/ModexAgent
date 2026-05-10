@@ -111,6 +111,19 @@ def require_react_state(ctx: object) -> ReActTurnState:
     raise TypeError(f"ReAct requires ReActTurnState, got {type(state).__name__}")
 
 
+def get_react_state(ctx: object) -> ReActTurnState | None:
+    """Safely extract ReActTurnState from AgentContext, returning None if unavailable."""
+    from framework.core.agent import AgentContext
+    if not isinstance(ctx, AgentContext):
+        return None
+    if getattr(ctx, "identity", None) is None or ctx.runtime is None:
+        return None
+    if not hasattr(ctx.runtime, "state"):
+        return None
+    state = ctx.runtime.state
+    return state if isinstance(state, ReActTurnState) else None
+
+
 # =========================================================================
 # ReActSnapshotPolicy
 # =========================================================================

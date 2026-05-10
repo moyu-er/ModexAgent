@@ -12,11 +12,10 @@ from typing import TYPE_CHECKING, Protocol
 
 from framework.approval.config import AgentApprovalConfig
 from framework.approval.constants import ApprovalTier
+from framework.core.agent import AgentContext
+from framework.core.types import ToolCall
 from framework.interceptor.builtin.tool_approval import ArgumentMatcher
 from framework.runtime.enums import ApprovalDenyPolicy
-
-from framework.core.types import ToolCall
-from framework.core.agent import AgentContext
 
 if TYPE_CHECKING:
     from framework.agents.react.strategy import SuspendStrategy

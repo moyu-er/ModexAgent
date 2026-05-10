@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -25,7 +26,7 @@ class RuntimeStateCodecConfig:
     max_provider_payload_keys: int = 10
 
 
-class RuntimeStateCodec:
+class RuntimeStateCodec(ABC):
     """Codec per agent kind. Shared helpers handle identity, enums, timestamps."""
 
     agent_kind: AgentKind
@@ -33,11 +34,11 @@ class RuntimeStateCodec:
     def __init__(self, config: RuntimeStateCodecConfig | None = None) -> None:
         self._config = config or RuntimeStateCodecConfig()
 
-    def encode_turn(self, snapshot: TurnSnapshot) -> Mapping[str, JsonValue]:
-        raise NotImplementedError
+    @abstractmethod
+    def encode_turn(self, snapshot: TurnSnapshot) -> Mapping[str, JsonValue]: ...
 
-    def decode_turn(self, payload: Mapping[str, JsonValue]) -> TurnSnapshot:
-        raise NotImplementedError
+    @abstractmethod
+    def decode_turn(self, payload: Mapping[str, JsonValue]) -> TurnSnapshot: ...
 
     def _validate_provider_payload(self, provider_payload: Mapping[str, Any] | None) -> None:
         if provider_payload is not None and len(provider_payload) > self._config.max_provider_payload_keys:

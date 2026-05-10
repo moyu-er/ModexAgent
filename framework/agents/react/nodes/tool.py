@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 from framework.agents.react.agent import ReActEvent
 from framework.agents.react.constants import ReActMetaKey, ReActNode, ReActReason
+from framework.agents.react.state import get_react_state
 from framework.approval.constants import ApprovalDecision, ApprovalTier
 from framework.approval.state import ApprovalRequest
 from framework.control.runtime import ControlPhase
@@ -46,7 +47,7 @@ class ToolNode(Node):
         max_tools = ctx_ext(ctx, ExtensionKey.MAX_TOOLS_PER_TURN)
 
         # ---- typed ReActTurnState path (new) ----
-        react_state = self._get_react_state(ctx)
+        react_state = get_react_state(ctx)
         if react_state is not None:
             react_state.current_node = ReActNode.TOOL
 
@@ -140,20 +141,6 @@ class ToolNode(Node):
         # Phase 3: batch execute (all decisions resolved)
         return await self._execute_batch(tool_calls, decisions, ctx)
 
-    # ---- typed state helpers ----
-
-    @staticmethod
-    def _get_react_state(ctx: AgentContext) -> ReActTurnState | None:
-        if getattr(ctx, "identity", None) is None or ctx.runtime is None:
-            return None
-        if not hasattr(ctx.runtime, "state"):
-            return None
-        from framework.agents.react.state import ReActTurnState
-        state = ctx.runtime.state
-        if isinstance(state, ReActTurnState):
-            return state
-        return None
-
     # ---- classification ----
 
     def _classify_all(
@@ -246,7 +233,7 @@ class ToolNode(Node):
                 await self._agent._save_checkpoint(msgs, ctx)
 
                 # ---- typed: update ToolCallState result (new) ----
-                react_state = self._get_react_state(ctx)
+                react_state = get_react_state(ctx)
                 if react_state is not None:
                     batch = react_state.active_tool_batch()
                     if batch is not None:
@@ -280,7 +267,7 @@ class ToolNode(Node):
                 })
 
             # ---- typed: mark batch completed (new) ----
-            react_state = self._get_react_state(ctx)
+            react_state = get_react_state(ctx)
             if react_state is not None:
                 batch = react_state.active_tool_batch()
                 if batch is not None and not denied_encountered:
