@@ -12,7 +12,7 @@ from framework.core.skills import SkillManager
 
 from ..core.agent import Agent, AgentContext
 from ..core.context import ContextManager
-from ..core.context_extensions import ExtensionKey
+
 from ..core.emitter import AgentResult, ContentEmitter
 from ..core.events import AgentEvent
 from ..core.graph.interrupt import GraphInterrupt
@@ -381,8 +381,8 @@ class AgentSession(Generic[E]):
                 temperature=getattr(message, "metadata", {}).get("temperature"),
                 max_tokens=getattr(message, "metadata", {}).get("max_tokens"),
                 extensions={
-                    ExtensionKey.RUNTIME_CTX_MGR: self._runtime_context_manager,
-                    ExtensionKey.ON_CHECKPOINT: on_checkpoint,
+                    "runtime_context_manager": self._runtime_context_manager,
+                    "on_checkpoint": on_checkpoint,
                 },
             )
             agent_context.identity = turn_identity

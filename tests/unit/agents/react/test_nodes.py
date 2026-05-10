@@ -14,7 +14,6 @@ from framework.agents.react.state import ReActTurnState
 from framework.approval.constants import ApprovalDecision
 from framework.core.agent import AgentContext
 from framework.core.constants import FinishReason
-from framework.core.context_extensions import ExtensionKey
 from framework.core.emitter import ToolCall, ToolResult
 from framework.core.graph.constants import GraphNode
 from framework.core.tool_manager import InMemoryToolManager

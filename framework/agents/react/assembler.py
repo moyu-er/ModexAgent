@@ -41,7 +41,7 @@ class RuntimeServicesConfig:
     control_channel: ControlChannel | None = None
     control_store: ControlStore | None = None
     command_handlers: list[tuple[ControlCommandType, Any]] | None = None
-    checkpoint_store: Any = None               # TurnStateStore
+    checkpoint_store: Any = None               # TurnStateStore (DEPRECATED renamed to turn_store)
     injection_queue: asyncio.Queue[str] | None = None
     governance: Any = None                     # ContextGovernance
     safety: Any = None                         # RuntimeSafetyPolicy

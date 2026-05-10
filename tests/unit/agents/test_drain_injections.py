@@ -5,7 +5,6 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 from framework.agents.react.agent import ReActAgent
-from framework.core.context_extensions import ExtensionKey
 from framework.core.types import LLMResponse
 from framework.runtime.enums import AgentKind, TurnPhase
 from framework.runtime.models import TurnIdentity, TurnStateBase

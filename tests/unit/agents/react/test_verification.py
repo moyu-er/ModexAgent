@@ -20,7 +20,7 @@ from framework.agents.react.agent import ReActEvent
 from framework.core.graph.node import NodeTransition
 from framework.core.graph.graph import Graph, Edge
 from framework.core.graph.engine import GraphEngine
-from framework.core.graph.constants import GraphNode, GraphMetaKey
+from framework.core.graph.constants import GraphNode
 from framework.core.agent import AgentContext
 from framework.core.graph.interrupt import GraphInterrupt
 

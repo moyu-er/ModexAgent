@@ -24,7 +24,7 @@ from ..agents.react.state import ReActSnapshotPolicy
 from ..control.ui.abc import ControlUserInterface
 from ..core.agent import Agent, AgentContext
 from ..core.context import ContextManager
-from ..core.context_extensions import ExtensionKey
+
 from ..core.emitter import AgentResult, StreamingAwareEmitter
 from ..core.graph.interrupt import GraphInterrupt
 from ..core.runtime_context import RuntimeContextManager
@@ -516,8 +516,8 @@ class AgentPipeline:
             session_id, asyncio.Queue(maxsize=50)
         )
 
-        extensions: dict[Any, Any] = {
-            ExtensionKey.RUNTIME_CTX_MGR: self.runtime_context_manager,
+        extensions: dict[str, object] = {
+            "runtime_context_manager": self.runtime_context_manager,
         }
         memory_system = getattr(ctx_mgr, "memory_system", None)
         layers = getattr(memory_system, "layers", None)

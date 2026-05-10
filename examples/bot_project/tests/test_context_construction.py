@@ -51,7 +51,6 @@ class TestAgentContextConstruction:
         assert ctx.extensions.get("injection_queue") is None
 
     def test_agent_context_with_runtime_context_manager(self):
-        from framework.core.context_extensions import ExtensionKey
         from framework.core.runtime_context import RuntimeContextManager
         mgr = RuntimeContextManager()
         ctx = AgentContext(
@@ -59,21 +58,11 @@ class TestAgentContextConstruction:
             history=ListMessageHistory([]),
             tool_manager=MagicMock(),
             session_id="s1",
-            extensions={ExtensionKey.RUNTIME_CTX_MGR: mgr},
+            extensions={"runtime_context_manager": mgr},
         )
-        assert ctx.extensions.get(ExtensionKey.RUNTIME_CTX_MGR) is mgr
-
-    def test_agent_context_metadata(self):
-        ctx = AgentContext(
-            system_prompt="test",
-            history=ListMessageHistory([]),
-            tool_manager=MagicMock(),
-            metadata={"user_id": "u1", "chat_id": "c1"},
-        )
-        assert ctx.metadata["user_id"] == "u1"
+        assert ctx.extensions.get("runtime_context_manager") is mgr
 
     def test_agent_context_with_safety_governance(self):
-        from framework.core.context_extensions import ExtensionKey
         safety = MagicMock()
         governance = MagicMock()
         ctx = AgentContext(
@@ -81,12 +70,12 @@ class TestAgentContextConstruction:
             history=ListMessageHistory([]),
             tool_manager=MagicMock(),
             extensions={
-                ExtensionKey.SAFETY: safety,
-                ExtensionKey.GOVERNANCE: governance,
+                "safety": safety,
+                "governance": governance,
             },
         )
-        assert ctx.extensions.get(ExtensionKey.SAFETY) is safety
-        assert ctx.extensions.get(ExtensionKey.GOVERNANCE) is governance
+        assert ctx.extensions.get("safety") is safety
+        assert ctx.extensions.get("governance") is governance
 
 
 class TestAgentContextIsolation:

@@ -3,7 +3,7 @@ import pytest
 from framework.core.graph.engine import GraphEngine
 from framework.core.graph.graph import Graph
 from framework.core.graph.node import Node, NodeTransition
-from framework.core.graph.constants import GraphNode, GraphMetaKey
+from framework.core.graph.constants import GraphNode
 from framework.core.graph.interrupt import GraphInterrupt
 from framework.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from framework.runtime.models import TurnIdentity, TurnStateBase

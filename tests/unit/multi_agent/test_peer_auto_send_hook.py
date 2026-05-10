@@ -12,7 +12,7 @@ Covers:
 from unittest.mock import AsyncMock, MagicMock
 
 from framework.core.agent import AgentContext
-from framework.core.context_extensions import ExtensionKey
+from framework.runtime.enums import TurnCustomKey
 from framework.core.emitter import AgentResult
 from framework.core.runtime_context import InMemoryRuntimeContext, RuntimeContextManager
 from framework.core.tool_manager import ToolManager
@@ -34,9 +34,8 @@ class TestPeerAutoSendHook:
             system_prompt="",
             history=history,
             tool_manager=MagicMock(spec=ToolManager),
-            metadata={"session_id": session_id},
             session_id=session_id,
-            extensions={ExtensionKey.RUNTIME_CTX_MGR: runtime_mgr},
+            extensions={"runtime_context_manager": runtime_mgr},
         )
 
     # ------------------------------------------------------------------

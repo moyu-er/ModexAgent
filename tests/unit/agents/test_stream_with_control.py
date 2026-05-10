@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from framework.agents.react.agent import ReActEvent, ReActAgent
-from framework.core.context_extensions import ExtensionKey
 from framework.core.provider import StreamingLLMProvider
 from framework.core.types import LLMResponse, ToolCall
 from framework.interceptor.abc import InterceptorScope

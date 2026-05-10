@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from framework.core.agent import AgentContext
-from framework.core.context_extensions import ExtensionKey
+from framework.runtime.enums import TurnCustomKey
 from framework.core.emitter import AgentResult, BufferingEmitter, ContentEmitter
 from framework.core.provider import StreamingLLMProvider
 from framework.core.runtime_context import RuntimeContextManager
@@ -334,8 +334,8 @@ class TestPeerAutoSendHookBot:
         ctx.session_id = "conv-1:office-expert"
         ctx.metadata = {"session_id": "conv-1:office-expert"}
         ctx.extensions = {
-            ExtensionKey.RUNTIME_CTX: None,
-            ExtensionKey.RUNTIME_CTX_MGR: runtime_mgr,
+            "runtime_context": None,
+            "runtime_context_manager": runtime_mgr,
         }
 
         result = AgentResult(content="Document created successfully", stop_reason="completed")
@@ -370,8 +370,8 @@ class TestPeerAutoSendHookBot:
         ctx.session_id = session_id
         ctx.metadata = metadata
         ctx.extensions = {
-            ExtensionKey.RUNTIME_CTX: None,
-            ExtensionKey.RUNTIME_CTX_MGR: runtime_mgr,
+            "runtime_context": None,
+            "runtime_context_manager": runtime_mgr,
         }
 
         # Record that send_message_async was already called

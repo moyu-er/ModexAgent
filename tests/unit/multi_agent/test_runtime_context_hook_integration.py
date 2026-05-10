@@ -13,7 +13,7 @@ import pytest
 
 from framework.core.agent import AgentContext
 from framework.core.context import InMemoryContextManager
-from framework.core.context_extensions import ExtensionKey
+from framework.runtime.enums import TurnCustomKey
 from framework.core.emitter import AgentResult, ContentEmitter
 from framework.hook import Hook, HookErrorPolicy, HookSpec, HookRunner
 from framework.hook.builtin import RuntimeContextHook
@@ -186,42 +186,9 @@ class TestHookCollaboration:
             history=ListMessageHistory([]),
             tool_manager=InMemoryToolManager(),
             session_id="conv_001:main:doc-expert",
-            metadata={"session_id": "conv_001:main:doc-expert"},
             extensions={
                 "hook_runner": hook_runner,
-                ExtensionKey.RUNTIME_CTX_MGR: runtime_mgr,
-            },
-        )
-        await FakeAgent(tool_calls=[
-            FakeToolCall("send_message_async", "tc_1", {"target_agent": "main"})
-        ]).run(ctx, MagicMock(spec=ContentEmitter))
-
-        # PeerAutoSendHook should have skipped bus.send
-        bus.send.assert_not_awaited()
-
-    async def test_peer_auto_send_forwards_when_no_comm_tool_in_runtime_context(self):
-        """Full flow: no send_message_async recorded,
-        PeerAutoSendHook auto-forwards content."""
-        bus = self._make_bus()
-        runtime_mgr = RuntimeContextManager()
-
-        peer_hook = PeerAutoSendHook(
-            agent_bus=bus, self_name="doc-expert", parent_name="main"
-        )
-        hook_runner = HookRunner()
-        hook_runner.add(HookSpec(hook=RuntimeContextHook(), on_error=HookErrorPolicy.LOG))
-        hook_runner.add(HookSpec(hook=peer_hook, on_error=HookErrorPolicy.LOG))
-
-        from framework.memory.history import ListMessageHistory
-        ctx = AgentContext(
-            system_prompt="",
-            history=ListMessageHistory([]),
-            tool_manager=InMemoryToolManager(),
-            session_id="conv_001:main:doc-expert",
-            metadata={"session_id": "conv_001:main:doc-expert"},
-            extensions={
-                "hook_runner": hook_runner,
-                ExtensionKey.RUNTIME_CTX_MGR: runtime_mgr,
+                "runtime_context_manager": runtime_mgr,
             },
         )
         await FakeAgent(tool_calls=[
@@ -242,16 +209,16 @@ class TestHookCollaboration:
             history=ListMessageHistory([]),
             tool_manager=InMemoryToolManager(),
             session_id="test_session",
-            metadata={},
+
             extensions={
                 "hooks": [rch],
-                ExtensionKey.RUNTIME_CTX_MGR: runtime_mgr,
+                "runtime_context_manager": runtime_mgr,
             },
         )
 
         # Resolve context
         await rch.before_turn(ctx)
-        runtime_ctx = ctx.extensions.get(ExtensionKey.RUNTIME_CTX)
+        runtime_ctx = ctx.extensions.get("runtime_context")
         assert runtime_ctx is not None
 
         # Simulate tool execution
@@ -293,10 +260,10 @@ class TestHookCollaboration:
             history=ListMessageHistory([]),
             tool_manager=InMemoryToolManager(),
             session_id="conv_001:main:doc-expert",
-            metadata={"session_id": "conv_001:main:doc-expert"},
+
             extensions={
                 "hook_runner": hook_runner,
-                ExtensionKey.RUNTIME_CTX_MGR: runtime_mgr,
+                "runtime_context_manager": runtime_mgr,
             },
         )
 
@@ -334,16 +301,16 @@ class TestHookCollaboration:
             history=ListMessageHistory([]),
             tool_manager=InMemoryToolManager(),
             session_id="conv_001:main:doc-expert",
-            metadata={"session_id": "conv_001:main:doc-expert"},
+
             extensions={
                 "hook_runner": hook_runner,
                 "hooks": [],
-                ExtensionKey.RUNTIME_CTX_MGR: runtime_mgr,
+                "runtime_context_manager": runtime_mgr,
             },
         )
 
-        # Without the fix: hook_runner has no RuntimeContextHook â†’
-        # PeerAutoSendHook sees empty tool_calls â†’ auto-forwards â†’ duplicate.
+        # Without the fix: hook_runner has no RuntimeContextHook â†?
+        # PeerAutoSendHook sees empty tool_calls â†?auto-forwards â†?duplicate.
         await FakeAgent(tool_calls=[
             FakeToolCall("send_message_async", "tc_1", {"target_agent": "main"})
         ]).run(ctx, MagicMock(spec=ContentEmitter))
@@ -364,11 +331,11 @@ class TestHookCollaboration:
             history=ListMessageHistory([]),
             tool_manager=InMemoryToolManager(),
             session_id="conv_001:main:doc-expert",
-            metadata={"session_id": "conv_001:main:doc-expert"},
+
             extensions={
                 "hook_runner": hook_runner,
                 "hooks": [],
-                ExtensionKey.RUNTIME_CTX_MGR: runtime_mgr,
+                "runtime_context_manager": runtime_mgr,
             },
         )
         await FakeAgent(tool_calls=[

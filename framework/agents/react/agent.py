@@ -272,7 +272,11 @@ class ReActAgent(Agent[ReActEvent]):
         data = {"messages": list(all_new_messages)}
         session_id = getattr(context, "session_id", "unknown")
         checkpoint_id = f"{session_id}:latest"
-        await checkpoint_store.save(checkpoint_id, data)
+        # P5 bridge: TurnStateStore has save_turn(), not save().
+        # Memory checkpoint API will be replaced by TurnSnapshot.message_delta.
+        _save = getattr(checkpoint_store, "save", None)
+        if _save is not None:
+            await _save(checkpoint_id, data)
 
     async def _clear_checkpoint(self, context: AgentContext) -> None:
         """清空检查点。无 store 则跳过。"""
@@ -281,7 +285,9 @@ class ReActAgent(Agent[ReActEvent]):
             return
         session_id = getattr(context, "session_id", "unknown")
         checkpoint_id = f"{session_id}:latest"
-        await checkpoint_store.clear(checkpoint_id)
+        _clear = getattr(checkpoint_store, "clear", None)
+        if _clear is not None:
+            await _clear(checkpoint_id)
 
     def _resolve_hook_timeout(self, context: AgentContext) -> float:
         """从 runtime.safety 读取 hook_timeout，带 fallback。"""

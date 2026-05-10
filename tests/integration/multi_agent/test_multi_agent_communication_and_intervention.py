@@ -24,7 +24,6 @@ pytestmark = pytest.mark.integration
 from framework.agents.react import ReActAgent, ReActEvent
 from framework.core.agent import AgentContext
 from framework.core.context import InMemoryContextManager
-from framework.core.context_extensions import ExtensionKey
 from framework.core.emitter import AgentResult, BufferingEmitter
 from framework.core.provider import StreamingLLMProvider
 from framework.core.tool_manager import InMemoryToolManager, Tool, ToolConfig, ToolResult

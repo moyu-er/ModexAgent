@@ -9,7 +9,7 @@ import pytest
 from framework.agents.react.agent import ReActAgent
 from framework.agents.react.state import ReActTurnState
 from framework.core.constants import FinishReason
-from framework.core.context_extensions import ExtensionKey
+from framework.runtime.enums import TurnCustomKey
 from framework.core.emitter import AgentResult
 from framework.core.tool_manager import ToolResult
 from framework.core.types import LLMResponse, ToolCall
@@ -119,7 +119,7 @@ class TestReActAgentCancelledError:
         async def save_ckpt(messages):
             nonlocal saved_checkpoint
             saved_checkpoint = list(messages)
-        ctx.extensions[ExtensionKey.ON_CHECKPOINT] = save_ckpt
+        ctx.extensions["on_checkpoint"] = save_ckpt
         with pytest.raises(asyncio.CancelledError):
             await agent.run(ctx, emitter)
 
