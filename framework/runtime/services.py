@@ -103,6 +103,19 @@ class AgentRuntime:
     def safety(self) -> RuntimeSafetyPolicy:
         return self.services.safety
 
+    def validate(self) -> None:
+        """Validate runtime configuration. No-op for new AgentRuntime."""
+        if self.services.interceptors is not None and self.services.control is None:
+            import logging
+            logger = logging.getLogger(__name__)
+            from framework.interceptor.builtin import ControlDrainInterceptor
+            for interceptor in self.services.interceptors.interceptors:
+                if isinstance(interceptor, ControlDrainInterceptor):
+                    from framework.control.exceptions import PolicyViolation
+                    raise PolicyViolation(
+                        "ControlDrainInterceptor configured but no ControlRuntime present"
+                    )
+
 
 def require_runtime_state(runtime: AgentRuntime, state_type: type[TState]) -> TState:
     """Validate and narrow runtime state to the expected mode-specific type."""

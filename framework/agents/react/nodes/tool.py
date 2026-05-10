@@ -195,6 +195,12 @@ class ToolNode(Node):
 
             tool_msg = self._agent._build_tool_message(result, tc.call_id)
             await ctx.history.append(tool_msg)
+            if state is not None:
+                from framework.memory.core.message import ChatMessage
+                from framework.runtime.models import MessageDelta
+                from framework.runtime.enums import MessageDeltaSource
+                cm = ChatMessage.from_dict(tool_msg) if isinstance(tool_msg, dict) else ChatMessage(role="tool", content=str(result.result or result.error or ""))
+                state.message_delta.append(MessageDelta(message=cm, source=MessageDeltaSource.TOOL))
 
             if batch is not None:
                 for cs in batch.calls:
