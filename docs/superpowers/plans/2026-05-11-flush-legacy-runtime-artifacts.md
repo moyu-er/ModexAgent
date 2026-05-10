@@ -21,11 +21,11 @@
 | C | 8-16 | `checkpoint_store` → `turn_store` Everywhere | ✅ Done |
 | D | 17-19 | Migrate agent_session.py → AgentRuntimeServices | ✅ Done |
 | E | — | Delete dead _save/_clear_checkpoint (P5) | ✅ Done |
+| G | — | Deprecation shim removal + ruff fix (P7) | ✅ Done |
 | F | TBD | Bot Project Rewire (P6) — Separate Plan | 🔴 |
-| G | TBD | Final Cleanup (P7) — Separate Plan | 🟡 In progress |
 
 **Current test baseline:** 1273 passed, 1 failed (pre-existing summarizer), 11 skipped.
-**Last commit:** `2b69305 refactor: delete dead _save_checkpoint/_clear_checkpoint (Phase E - P5)`
+**Last commit:** `0d61066 fix: remove unused logger variable in AgentRuntime.validate()`
 
 ---
 

@@ -445,7 +445,7 @@ class BotService(AgentBuilderMixin):
         pipeline_hooks = [inbox_flush_hook]
         pipeline_hooks.extend(self._collect_run_hooks())
 
-        # Build ReActRuntime via framework RuntimeAssembler
+        # Build AgentRuntime via framework RuntimeAssembler
         runtime = await self._assemble_runtime(hooks=self._build_hook_runner(pipeline_hooks))
 
         self.pipeline = AgentPipeline(
@@ -548,10 +548,10 @@ class BotService(AgentBuilderMixin):
         await self.agent_pool.register_resident(main_descriptor)
         print(f"[OK] AgentPool initialized, main agent '{parent_agent_name}' registered as resident")
 
-        # Inject ReActRuntime into main agent's pool pipeline
+        # Inject AgentRuntime into main agent's pool pipeline
         main_instance = self.agent_pool._agents.get(parent_agent_name)
         if main_instance is not None and main_instance.pipeline is not None:
-            # Build ReActRuntime via framework RuntimeAssembler
+            # Build AgentRuntime via framework RuntimeAssembler
             runtime = await self._assemble_runtime(hooks=main_instance.pipeline.hook_runner)
 
             # Inject runtime into pipeline; AgentPipeline._build_runtime_and_context
@@ -561,7 +561,7 @@ class BotService(AgentBuilderMixin):
             main_instance.pipeline.checkpoint_store = self._checkpoint_store
             main_instance.pipeline._approval_workspace = self._approval_workspace
             main_instance.pipeline._user_interface = self._im_ui
-            print("[OK] Main agent pool pipeline injected with ReActRuntime")
+            print("[OK] Main agent pool pipeline injected with AgentRuntime")
 
         # Register subagents as residents (pool mode requires all targets to be resident)
         subagent_memory_config = self.config.get("memory", {}).get("subagents", {})
@@ -785,7 +785,7 @@ class BotService(AgentBuilderMixin):
     # ------------------------------------------------------------------ #
 
     async def _assemble_runtime(self, hooks: Any = None) -> Any:
-        """Build ReActRuntime via framework RuntimeAssembler.
+        """Build AgentRuntime via framework RuntimeAssembler.
 
         The only difference between pipeline and pool mode is the hooks source.
         Everything else — classifier, strategy, control, governance — is identical.
@@ -828,7 +828,7 @@ class BotService(AgentBuilderMixin):
             governance=self._build_governance(),
             safety=self.safety_policy,
         ))
-        print(f"[OK] ReActRuntime built (approval enabled={enabled}, tools={list(tools_approval.keys())})")
+        print(f"[OK] AgentRuntime built (approval enabled={enabled}, tools={list(tools_approval.keys())})")
         return runtime
 
     # ------------------------------------------------------------------ #
