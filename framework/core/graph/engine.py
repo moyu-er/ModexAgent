@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 from typing import Any, Generic
+
 from typing_extensions import TypeVar
 
 from framework.core.agent import AgentContext
+from framework.runtime.enums import TurnCustomKey
 
-from .constants import GraphMetaKey, GraphNode
+from .constants import GraphNode
 from .graph import Graph
 from .interrupt import GraphInterrupt
 
@@ -38,4 +40,4 @@ class GraphEngine(Generic[R]):
 
     def build_result(self, ctx: AgentContext[R]) -> Any:
         """Extract final result from ctx. Override for typed returns."""
-        return ctx.metadata.get(GraphMetaKey.GRAPH_RESULT)
+        return ctx.runtime.state.custom.get(TurnCustomKey.GRAPH_RESULT) if ctx.runtime else None

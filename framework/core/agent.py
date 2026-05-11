@@ -8,7 +8,8 @@ from __future__ import annotations
 import contextvars
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Generic
+from typing import TYPE_CHECKING, Any, Generic
+
 from typing_extensions import TypeVar
 
 from framework.memory.history import MessageHistory
@@ -18,12 +19,14 @@ from .events import AgentEvent
 from .message_utils import normalize_agent_messages_for_llm
 from .tool_manager import ToolManager
 
-R = TypeVar("R", default=Any)
+if TYPE_CHECKING:
+    from framework.runtime.models import TurnIdentity
+    from framework.runtime.services import AgentRuntime
 
 
 @dataclass
-class AgentContext(Generic[R]):
-    """Agent execution context — core fields only. Extensions for agent-type-specific services."""
+class AgentContext:
+    """Agent execution context — typed runtime state via ``runtime`` field."""
 
     system_prompt: str
     history: MessageHistory
@@ -33,10 +36,9 @@ class AgentContext(Generic[R]):
     temperature: float | None = None
     max_tokens: int | None = None
     attachments: list[str] = field(default_factory=list)
-    extensions: dict[str, Any] = field(default_factory=dict)
-    metadata: dict[str, Any] = field(default_factory=dict)
     emitter: ContentEmitter | None = None
-    runtime: R | None = None
+    runtime: AgentRuntime | None = None
+    identity: TurnIdentity | None = None
 
     def add_attachment(self, path: str) -> None:
         self.attachments.append(path)
@@ -55,12 +57,7 @@ class AgentContext(Generic[R]):
         return self.tool_manager.get_tool_descriptions()
 
 
-def ctx_ext(ctx: AgentContext[Any], key: str, default: Any = None) -> Any:
-    """Safe accessor for AgentContext.extensions."""
-    return ctx.extensions.get(key, default)
-
-
-current_agent_context: contextvars.ContextVar[AgentContext[Any]] = contextvars.ContextVar(
+current_agent_context: contextvars.ContextVar[AgentContext] = contextvars.ContextVar(
     "current_agent_context"
 )
 

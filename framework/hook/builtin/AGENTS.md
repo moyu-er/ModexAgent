@@ -25,7 +25,7 @@ Framework-provided hooks — ready-to-use lifecycle extensions. There are 10 bui
 ### Working In This Directory
 - New hooks added here are auto-discoverable via `__init__.py`
 - Each hook file should contain exactly one hook class
-- Hook state MUST use `ctx.metadata` or `self._state[session_id]` pattern (see `hook/AGENTS.md`)
+- Hook state MUST use `ctx.runtime.state` (typed `TurnStateBase`) or `self._state[session_id]` pattern (see `hook/AGENTS.md`)
 
 ### Common Patterns
 - `HookSpec(hook=MyHook(), on_error=HookErrorPolicy.LOG)` for non-critical hooks
@@ -40,6 +40,6 @@ Framework-provided hooks — ready-to-use lifecycle extensions. There are 10 bui
 - `framework.multi_agent.filtered_tool_manager` — `FilteredToolManager` (for `DynamicToolFilterHook`)
 ## Current Runtime Status
 
-Built-in hooks must remain pool-safe: per-turn state belongs in `ctx.metadata`.
+Built-in hooks must remain pool-safe: per-turn state belongs in `ctx.runtime.state`.
 Hooks should not wrap execution or implement control flow that belongs to
-interceptors/control services. See `docs/current-runtime.md`.
+interceptors/control services.

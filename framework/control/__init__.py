@@ -9,12 +9,6 @@
 """
 
 from framework.control.channel import ControlChannel, InMemoryControlChannel
-from framework.control.checkpoint import (
-    ApprovalDenialContext,
-    JsonFileRuntimeStateStore,
-    NoOpRuntimeStateStore,
-    RuntimeStateStore,
-)
 from framework.control.event_bus import (
     CallbackControlEventBus,
     ControlEventBus,
@@ -29,6 +23,7 @@ from framework.control.exceptions import (
     PolicyViolation,
     TerminationReason,
 )
+from framework.control.policy_registry import SupervisionPolicyRegistry, SupervisionPolicySpec
 from framework.control.preset import PresetControlRule, TokenBudgetControlRule
 from framework.control.task_supervision import (
     NoOpSupervisionPolicy,
@@ -38,7 +33,6 @@ from framework.control.task_supervision import (
     TaskSupervisor,
     TimeoutSupervisionPolicy,
 )
-from framework.control.policy_registry import SupervisionPolicyRegistry, SupervisionPolicySpec
 from framework.control.types import (
     ControlAction,
     ControlCommand,
@@ -48,6 +42,8 @@ from framework.control.types import (
     ControlEventType,
     ControlScope,
 )
+from framework.runtime.models import ApprovalDenialContext
+from framework.runtime.store import JsonFileTurnStateStore, NoOpTurnStateStore, TurnStateStore
 
 __all__ = [
     # 异常
@@ -72,9 +68,9 @@ __all__ = [
     "ControlEventBus",
     "ControlEventHandler",
     "InMemoryControlChannel",
-    "JsonFileRuntimeStateStore",
-    "NoOpRuntimeStateStore",
-    "RuntimeStateStore",
+    "JsonFileTurnStateStore",
+    "NoOpTurnStateStore",
+    "TurnStateStore",
     "Subscription",
     # 预设规则
     "PresetControlRule",

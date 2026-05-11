@@ -39,6 +39,7 @@ class TestAgentContextConstruction:
     """验证 AgentContext 构造和字段。"""
 
     def test_minimal_agent_context(self):
+        """Minimal AgentContext has correct defaults."""
         ctx = AgentContext(
             system_prompt="test",
             history=ListMessageHistory([]),
@@ -48,65 +49,65 @@ class TestAgentContextConstruction:
         assert ctx.session_id == "s1"
         assert ctx.system_prompt == "test"
         assert ctx.max_iterations == 10
-        assert ctx.extensions.get("injection_queue") is None
+        assert ctx.runtime is None
 
     def test_agent_context_with_runtime_context_manager(self):
-        from framework.core.context_extensions import ExtensionKey
+        """AgentContext with runtime passes RuntimeContextManager through services."""
         from framework.core.runtime_context import RuntimeContextManager
+        from framework.runtime.services import AgentRuntime, AgentRuntimeServices
+        from framework.runtime.models import TurnIdentity, TurnStateBase
+        from framework.runtime.enums import AgentKind, TurnPhase
         mgr = RuntimeContextManager()
+        identity = TurnIdentity(agent_id="test", session_id="s1", turn_id="t1")
+        state = TurnStateBase(identity=identity, agent_kind=AgentKind.REACT, phase=TurnPhase.CREATED)
+        services = AgentRuntimeServices(runtime_context_manager=mgr)
         ctx = AgentContext(
             system_prompt="test",
             history=ListMessageHistory([]),
             tool_manager=MagicMock(),
             session_id="s1",
-            extensions={ExtensionKey.RUNTIME_CTX_MGR: mgr},
+            runtime=AgentRuntime(services=services, state=state),
+            identity=identity,
         )
-        assert ctx.extensions.get(ExtensionKey.RUNTIME_CTX_MGR) is mgr
+        assert ctx.runtime is not None
+        assert ctx.runtime.services.runtime_context_manager is mgr
 
-    def test_agent_context_metadata(self):
-        ctx = AgentContext(
-            system_prompt="test",
-            history=ListMessageHistory([]),
-            tool_manager=MagicMock(),
-            metadata={"user_id": "u1", "chat_id": "c1"},
-        )
-        assert ctx.metadata["user_id"] == "u1"
-
-    def test_agent_context_with_safety_governance(self):
-        from framework.core.context_extensions import ExtensionKey
+    def test_agent_context_with_safety_policy(self):
+        """AgentContext passes safety policy through services."""
+        from framework.runtime.services import AgentRuntime, AgentRuntimeServices
+        from framework.runtime.models import TurnIdentity, TurnStateBase
+        from framework.runtime.enums import AgentKind, TurnPhase
         safety = MagicMock()
-        governance = MagicMock()
+        identity = TurnIdentity(agent_id="test", session_id="s1", turn_id="t1")
+        state = TurnStateBase(identity=identity, agent_kind=AgentKind.REACT, phase=TurnPhase.CREATED)
+        services = AgentRuntimeServices(safety=safety)
         ctx = AgentContext(
             system_prompt="test",
             history=ListMessageHistory([]),
             tool_manager=MagicMock(),
-            extensions={
-                ExtensionKey.SAFETY: safety,
-                ExtensionKey.GOVERNANCE: governance,
-            },
+            session_id="s1",
+            runtime=AgentRuntime(services=services, state=state),
+            identity=identity,
         )
-        assert ctx.extensions.get(ExtensionKey.SAFETY) is safety
-        assert ctx.extensions.get(ExtensionKey.GOVERNANCE) is governance
+        assert ctx.runtime.services.safety is safety
 
 
 class TestAgentContextIsolation:
     """验证不同 session 之间 AgentContext 的隔离性。"""
 
     def test_different_sessions_have_independent_contexts(self):
+        """Different sessions have independent state."""
         ctx1 = AgentContext(
             system_prompt="prompt1",
             history=ListMessageHistory([]),
             tool_manager=MagicMock(),
             session_id="s1",
-            metadata={"key": "val1"},
         )
         ctx2 = AgentContext(
             system_prompt="prompt2",
             history=ListMessageHistory([]),
             tool_manager=MagicMock(),
             session_id="s2",
-            metadata={"key": "val2"},
         )
         assert ctx1.session_id != ctx2.session_id
         assert ctx1.system_prompt != ctx2.system_prompt
-        assert ctx1.metadata["key"] != ctx2.metadata["key"]

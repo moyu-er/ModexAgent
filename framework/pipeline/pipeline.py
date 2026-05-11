@@ -1,4 +1,4 @@
-"""AgentPipeline - 端到端流程编排
+﻿"""AgentPipeline - 端到端流程编排
 
 提供 AgentPipeline 类，统一编排完整的输入→处理→输出流程。
 """
@@ -15,14 +15,14 @@ from framework.core.agent_runtime_config import BusyInputMode
 from framework.core.llm_error import RuntimeSafetyPolicy
 from framework.core.skills import SkillManager
 from framework.memory.core.message import ChatMessage
-from framework.memory.core.scope import MemoryContext
 
-from ..approval.response import parse_approval_action
+from ..agents.react.state import ReActSnapshotPolicy
+from ..approval.constants import ApprovalDecision
+from ..approval.response import parse_input_command
 from ..approval.types import ApprovalAction
 from ..control.ui.abc import ControlUserInterface
 from ..core.agent import Agent, AgentContext
 from ..core.context import ContextManager
-from ..core.context_extensions import ExtensionKey
 from ..core.emitter import AgentResult, StreamingAwareEmitter
 from ..core.graph.interrupt import GraphInterrupt
 from ..core.runtime_context import RuntimeContextManager
@@ -38,6 +38,9 @@ from ..multi_agent import (
     AgentMessageRouter,
     SubagentManager,
 )
+from ..runtime.enums import SnapshotReason, TurnPhase
+from ..runtime.models import StateQueryScope, TurnSnapshot
+from ..runtime.services import AgentRuntimeServices
 from ..session.agent_session import _dream_locks
 from ..utils.context_builder import MultiAgentContextBuilder
 from ..utils.deduplicator import MessageDeduplicator
@@ -148,12 +151,13 @@ class AgentPipeline:
         safety: RuntimeSafetyPolicy | None = None,
         hook_runner: Any | None = None,
         interceptor_chain: Any | None = None,
-        checkpoint_store: Any | None = None,
         control_channel: Any | None = None,
         busy_input_mode: BusyInputMode = BusyInputMode.QUEUE,
         approval_workspace: str = ".modex_approval",
         user_interface: ControlUserInterface | None = None,
-        prebuilt_runtime: Any | None = None,
+        turn_store: Any | None = None,
+        command_store: Any | None = None,
+        runtime_services: AgentRuntimeServices | None = None,
     ):
         """
         Args:
@@ -161,6 +165,9 @@ class AgentPipeline:
             safety: P0-a 运行时安全策略（timeout、retry 等），None 则使用默认
             approval_workspace: approval 状态持久化目录（默认 .modex_approval）
             user_interface: 审批通知 UI 接口（CLI/IM/Noop），None 则不通知
+            turn_store: TurnStateStore — typed turn snapshot persistence
+            command_store: RuntimeCommandStore — durable command queue
+            runtime_services: process-scope services copied into each turn runtime
         """
         if sanitizer is _UNSET:
             from framework.utils.sanitizer import ContentSanitizer
@@ -194,14 +201,14 @@ class AgentPipeline:
         self.safety = safety or RuntimeSafetyPolicy()
         self.hook_runner = hook_runner
         self.interceptor_chain = interceptor_chain
-        self.checkpoint_store = checkpoint_store
         self.control_channel = control_channel
         self.busy_input_mode = busy_input_mode
         self._approval_workspace = Path(approval_workspace)
-        self._prebuilt_runtime = prebuilt_runtime
+        self.turn_store = turn_store
+        self.command_store = command_store
+        self.runtime_services = runtime_services
         self._approval = ApprovalRenderer(
             approval_workspace=self._approval_workspace,
-            checkpoint_store=checkpoint_store,
             agent=agent,
             user_interface=user_interface,
             on_drain=self._process_message,
@@ -497,14 +504,7 @@ class AgentPipeline:
         context_state: Any,
         ctx_mgr: Any,
     ) -> tuple[AgentContext, Any]:
-        """Build AgentContext and emitter for the turn.
-
-        Only uses the active ExtensionKey set: RUNTIME_CTX_MGR, GOVERNANCE, SAFETY,
-        MAX_TOOLS_PER_TURN, ON_CHECKPOINT.
-
-        Returns:
-            (agent_context, emitter)
-        """
+        """Build AgentContext and emitter for the turn."""
         async def on_checkpoint(messages: list[ChatMessage | dict[str, Any]]) -> None:
             await ctx_mgr.save_checkpoint(session_id, messages)
 
@@ -513,29 +513,16 @@ class AgentPipeline:
             session_id, asyncio.Queue(maxsize=50)
         )
 
-        extensions: dict[Any, Any] = {
-            ExtensionKey.RUNTIME_CTX_MGR: self.runtime_context_manager,
-            ExtensionKey.ON_CHECKPOINT: on_checkpoint,
-            ExtensionKey.MAX_TOOLS_PER_TURN: None,
-        }
-        memory_system = getattr(ctx_mgr, "memory_system", None)
-        layers = getattr(memory_system, "layers", None)
-        pending = getattr(layers, "pending", None)
-        session = getattr(layers, "session", None)
-        memory_context = MemoryContext(
-            session_id=session_id,
-            user_id=getattr(ctx_mgr, "default_user_id", "default"),
-            agent_id=getattr(ctx_mgr, "default_agent_id", None),
-            agent_role=getattr(ctx_mgr, "default_agent_role", None),
-        )
-        if pending is not None:
-            from framework.memory.pending import DefaultPendingPrunedInputInjector
+        # ---- typed TurnIdentity (new) ----
+        from uuid import uuid4
 
-            extensions["pending_pruned_input_injector"] = DefaultPendingPrunedInputInjector(
-                pending,
-                session,
-            )
-            extensions["memory_context"] = memory_context
+        from framework.runtime.models import TurnIdentity
+        turn_identity = TurnIdentity(
+            agent_id=getattr(self.agent, "name", "agent"),
+            session_id=session_id,
+            turn_id=uuid4().hex,
+            conversation_id=session_id,
+        )
 
         agent_context = AgentContext(
             system_prompt=context_state.system_prompt,
@@ -543,24 +530,55 @@ class AgentPipeline:
             tool_manager=self.tool_manager,
             session_id=session_id,
             max_iterations=self.max_iterations,
-            metadata={"session_id": session_id},
-            extensions=extensions,
         )
+        agent_context.identity = turn_identity
 
-        # If a prebuilt runtime is provided, assign it directly to the agent context.
-        # This allows callers (e.g. bot_project BotService) to assemble the full
-        # ReActRuntime including approval, control, hooks, and interceptors before
-        # the pipeline starts.
-        if self._prebuilt_runtime is not None:
-            agent_context.runtime = self._prebuilt_runtime
-            agent_context.runtime.memory_context = memory_context
-            if pending is not None:
-                from framework.memory.pending import DefaultPendingPrunedInputInjector
-
-                agent_context.runtime.pending_injector = DefaultPendingPrunedInputInjector(
-                    pending,
-                    session,
-                )
+        # ---- typed AgentRuntime with ReActTurnState (new) ----
+        if self.turn_store is not None:
+            from framework.agents.react.state import ReActTurnState
+            from framework.runtime.enums import AgentKind, TurnCustomKey
+            from framework.runtime.enums import TurnPhase as RTurnPhase
+            from framework.runtime.services import AgentRuntime
+            react_state = ReActTurnState(
+                identity=turn_identity,
+                agent_kind=AgentKind.REACT,
+                phase=RTurnPhase.CREATED,
+            )
+            base_services = self.runtime_services
+            services = AgentRuntimeServices(
+                hooks=base_services.hooks if base_services is not None else self.hook_runner,
+                interceptors=(
+                    base_services.interceptors
+                    if base_services is not None
+                    else self.interceptor_chain
+                ),
+                control=base_services.control if base_services is not None else None,
+                approval=base_services.approval if base_services is not None else None,
+                governance=(
+                    base_services.governance
+                    if base_services is not None and base_services.governance is not None
+                    else self.governance
+                ),
+                turn_store=(
+                    base_services.turn_store
+                    if base_services is not None and base_services.turn_store is not None
+                    else self.turn_store
+                ),
+                command_store=(
+                    base_services.command_store
+                    if base_services is not None and base_services.command_store is not None
+                    else self.command_store
+                ),
+                pending_input_queue=self._injection_queues.get(session_id),
+                safety=base_services.safety if base_services is not None else self.safety,
+                runtime_context_manager=(
+                    base_services.runtime_context_manager
+                    if base_services is not None and base_services.runtime_context_manager is not None
+                    else self.runtime_context_manager
+                ),
+            )
+            agent_context.runtime = AgentRuntime(services=services, state=react_state)
+            agent_context.runtime.state.custom[TurnCustomKey.MAX_TOOLS_PER_TURN] = None
 
         # Emitter selection
         if self.emitter_factory:
@@ -611,7 +629,7 @@ class AgentPipeline:
             try:
                 result = await self.agent.run(agent_context, emitter)
             except GraphInterrupt as interrupt_exc:
-                # ToolNode suspended for approval — state already persisted by SuspendResumeStrategy
+                # ToolNode suspended for approval — snapshot persisted via TurnStateStore
                 # Send approval prompts to user via UI
                 if self._user_interface is not None:
                     requests = interrupt_exc.value
@@ -678,10 +696,91 @@ class AgentPipeline:
                 except Exception:
                     logger.exception("on_session_end failed for %s", session_id)
 
+    async def _handle_snapshot_approval(
+        self,
+        *,
+        action: ApprovalAction | None,
+        snapshot: TurnSnapshot,
+        agent_context: AgentContext,
+        emitter: Any,
+        session_id: str,
+        context_state: Any,
+        input_metadata: dict[str, Any],
+        ctx_mgr: Any,
+    ) -> AgentResult | None:
+        approval = ReActSnapshotPolicy.approval_from_snapshot(snapshot)
+        if approval is None:
+            return None
+
+        if action is not None:
+            decision = (
+                ApprovalDecision.ALLOWED
+                if action == ApprovalAction.ALLOW
+                else ApprovalDecision.DENIED
+            )
+            for req in approval.requests:
+                current = approval.decisions.get(req.tool_call_id, ApprovalDecision.PENDING)
+                if current == ApprovalDecision.PENDING:
+                    approval.apply_decision(req.tool_call_id, decision)
+                    break
+
+        snapshot = ReActSnapshotPolicy.replace_approval(snapshot, approval)
+        if self.turn_store is None:
+            logger.error("Approval resume requested but no TurnStateStore is configured")
+            return None
+
+        if not approval.every_tool_decided:
+            await self.turn_store.save_turn(snapshot)
+            if self._user_interface is not None:
+                for req in approval.requests:
+                    current = approval.decisions.get(req.tool_call_id, ApprovalDecision.PENDING)
+                    if current == ApprovalDecision.PENDING:
+                        await self._user_interface.render_message(
+                            session_id,
+                            format_approval_prompt(req),
+                        )
+                        break
+            return None
+
+        state = ReActSnapshotPolicy.state_from_snapshot(snapshot)
+        if agent_context.runtime is None:
+            return None
+        agent_context.identity = snapshot.identity
+        agent_context.runtime.state = state
+        result = await self._execute_turn(
+            agent_context,
+            emitter,
+            session_id,
+            context_state,
+            input_metadata,
+            ctx_mgr,
+        )
+        if result is not None:
+            await self.turn_store.delete_turn(snapshot.identity)
+            await self._approval.drain(session_id)
+        return result
+
+    async def _load_pending_approval_snapshot(self, session_id: str) -> TurnSnapshot | None:
+        if self.turn_store is None:
+            return None
+        agent_id = getattr(self.agent, "name", None)
+        snapshots = await self.turn_store.list_active_turns(
+            StateQueryScope(
+                agent_id=agent_id,
+                session_id=session_id,
+                phase=TurnPhase.SUSPENDED,
+                reason=SnapshotReason.TOOL_APPROVAL_REQUIRED,
+            )
+        )
+        if not snapshots:
+            return None
+        snapshots.sort(key=lambda snapshot: snapshot.created_at)
+        return snapshots[-1]
+
     async def _process_message_locked(
         self, input_msg: InputMessage, session_id: str, route_result: Any | None = None
     ) -> AgentResult | None:
-        """在 session 锁保护内处理单个消息"""
+        """Process one message while holding the session lock."""
         if self.on_session_start is not None:
             try:
                 await asyncio.wait_for(
@@ -699,50 +798,59 @@ class AgentPipeline:
         )
         input_metadata = getattr(input_msg, "metadata", None) or {}
 
-        # 1. Preprocess input
-        sanitized_content, media_blocks, _media_processor = await self._preprocess_input(
+        sanitized_content, media_blocks, media_processor = await self._preprocess_input(
             input_msg, session_id, input_metadata, route_result,
         )
         if sanitized_content is None:
-            return None  # Command interceptor consumed the message
+            return None
 
-        # 2. Detect approval command
+        parsed_command = parse_input_command(input_msg.content or "")
+        approval_action = (
+            parsed_command.approval_action
+            if parsed_command is not None
+            else None
+        )
+        pending_snapshot = await self._load_pending_approval_snapshot(session_id)
         is_approval_cmd, approval_state = await self._approval.detect(
-            input_msg, session_id, input_metadata,
-            prebuilt_runtime=self._prebuilt_runtime,
+            input_msg,
+            session_id,
+            input_metadata,
+            pending_snapshot=pending_snapshot,
+            approval_action=approval_action,
         )
 
-        # 3. Assemble context
         context_state = await self._assemble_context(
-            session_id, input_msg, input_metadata, sanitized_content,
-            media_blocks, _media_processor, ctx_mgr, route_result, is_approval_cmd,
+            session_id,
+            input_msg,
+            input_metadata,
+            sanitized_content,
+            media_blocks,
+            media_processor,
+            ctx_mgr,
+            route_result,
+            is_approval_cmd,
         )
-
-        # 4. Build runtime and context
         agent_context, emitter = self._build_runtime_and_context(
-            session_id, context_state, ctx_mgr,
+            session_id,
+            context_state,
+            ctx_mgr,
         )
 
-        # 5. Handle approval command if pending
         if approval_state is not None:
-            action = parse_approval_action(input_msg.content or "")
-            if action is not None or approval_state.every_tool_decided:
-                # Explicit command OR auto-deny resolved all tools → handle it
-                effective_action = action or ApprovalAction.DENY
-                strategy = None
-                if self._prebuilt_runtime and self._prebuilt_runtime.approval:
-                    strategy = getattr(self._prebuilt_runtime.approval, "suspend_strategy", None)
-                return await self._approval.handle(
-                    effective_action, approval_state, agent_context, emitter, session_id,
-                    context_state, input_metadata, strategy, ctx_mgr,
-                )
-            return None  # source_agent buffered
+            return await self._handle_snapshot_approval(
+                action=approval_action,
+                snapshot=approval_state,
+                agent_context=agent_context,
+                emitter=emitter,
+                session_id=session_id,
+                context_state=context_state,
+                input_metadata=input_metadata,
+                ctx_mgr=ctx_mgr,
+            )
 
-        # 6. Execute normal turn
         return await self._execute_turn(
             agent_context, emitter, session_id, context_state, input_metadata, ctx_mgr,
         )
-
     async def cleanup_session_resources(self, session_id: str) -> None:
         """清理 per-session 资源（长时间运行避免内存泄漏）。
 
@@ -770,5 +878,4 @@ class AgentPipeline:
         for sid in list(self._session_locks.keys()):
             await self.cleanup_session_resources(sid)
         logger.info("Pipeline stop requested, waiting for current message to complete...")
-
 

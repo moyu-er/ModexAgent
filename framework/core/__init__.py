@@ -12,9 +12,6 @@ from .constants import (
     ToolChoice,
     ToolSchemaConstants,
 )
-from .types import (
-    MessageRole,
-)
 from .context import (
     ContextManager,
     ContextState,
@@ -51,6 +48,7 @@ from .tool_manager import (
 )
 from .types import (
     InputMessage,
+    MessageRole,
     MessageType,
     OutputMessage,
     ToolCall,

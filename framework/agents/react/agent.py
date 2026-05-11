@@ -10,7 +10,7 @@ import logging
 from enum import Enum
 from typing import Any, Literal
 
-from framework.agents.react.constants import ReActMetaKey
+from framework.agents.react.state import get_react_state
 from framework.control.exceptions import AgentControlError
 from framework.control.runtime import ControlPhase
 from framework.hook import HookPayload, HookPoint
@@ -19,6 +19,7 @@ from framework.interceptor.abc import (
     LLMStreamContext,
     ToolCallContext,
 )
+from framework.runtime.enums import TurnCustomKey, TurnPhase
 
 from ...core.agent import Agent, AgentContext, current_agent_context
 from ...core.constants import DefaultValues
@@ -78,6 +79,16 @@ class ReActEvent(AgentEvent, Enum):
     ERROR = "error"
     MAX_ITERATIONS = "max_iterations"
     PROGRESS = "progress"
+
+
+def _get_turn_messages(ctx: AgentContext) -> list[dict[str, Any]]:
+    """Extract current-turn messages from typed state or metadata fallback."""
+    from framework.agents.react.state import get_react_state as _grs
+    state = _grs(ctx)
+    if state is not None:
+        return [md.message.to_dict() if hasattr(md.message, 'to_dict') else md.message
+                for md in state.message_delta]
+    return []
 
 
 class ReActAgent(Agent[ReActEvent]):
@@ -149,14 +160,20 @@ class ReActAgent(Agent[ReActEvent]):
         context.attachments = []
         context.emitter = emitter
 
-        # Use prebuilt runtime if already set on context; otherwise build from context.
+        # Use prebuilt runtime if already set on context; otherwise build clean runtime.
         if context.runtime is None:
-            from framework.agents.react.runtime import ReActRuntime
-
-            runtime = ReActRuntime.from_context(context, mode=self.mode)
-            context.runtime = runtime
-        else:
-            runtime = context.runtime
+            from framework.agents.react.state import ReActTurnState
+            from framework.runtime.enums import AgentKind
+            from framework.runtime.models import TurnIdentity
+            from framework.runtime.services import AgentRuntime, AgentRuntimeServices
+            state = ReActTurnState(
+                identity=context.identity
+                or TurnIdentity(agent_id="react", session_id=context.session_id, turn_id="default"),
+                agent_kind=AgentKind.REACT,
+                phase=TurnPhase.CREATED,
+            )
+            context.runtime = AgentRuntime(services=AgentRuntimeServices(), state=state)
+        runtime = context.runtime
         runtime.validate()
         ctx_token = current_agent_context.set(context)
 
@@ -191,25 +208,14 @@ class ReActAgent(Agent[ReActEvent]):
                 "ReActAgent control exit: %s",
                 e.termination.value if e.termination else "error",
             )
-            try:
-                all_new = context.metadata.get(ReActMetaKey.ITERATION_MSGS, [])
-                await asyncio.shield(self._save_checkpoint(all_new, context))
-            except Exception:
-                pass
             raise
         except asyncio.CancelledError:
             logger.warning("ReActAgent cancelled")
-            try:
-                all_new = context.metadata.get(ReActMetaKey.ITERATION_MSGS, [])
-                await asyncio.shield(self._save_checkpoint(all_new, context))
-            except Exception:
-                pass
             raise
         except Exception as e:
             logger.exception("Agent execution error")
             await emitter.emit(ReActEvent.ERROR, str(e))
-            all_new = context.metadata.get(ReActMetaKey.ITERATION_MSGS, [])
-            await self._save_checkpoint(all_new, context)
+            all_new = _get_turn_messages(context)
             result = AgentResult(
                 error=str(e), stop_reason="error",
                 messages=all_new, attachments=context.attachments,
@@ -217,69 +223,12 @@ class ReActAgent(Agent[ReActEvent]):
             await emitter.emit_complete(result)
             return result
         finally:
-            context.metadata.pop(ReActMetaKey.DENY_AS_CANCEL, None)
-            context.metadata.pop(ReActMetaKey.APPROVAL_DENIAL, None)
-            context.metadata.pop(ReActMetaKey.INJECTION_CYCLE, None)
-            context.metadata.pop(ReActMetaKey.RESUME_STATE, None)
-            context.metadata.pop(ReActMetaKey.TOOL_DECISIONS, None)
+            # Clean up typed state
+            state = get_react_state(context)
+            if state is not None:
+                state.phase = TurnPhase.COMPLETED if state.phase not in (TurnPhase.COMPLETED, TurnPhase.FAILED) else state.phase
             context.emitter = None
             current_agent_context.reset(ctx_token)
-            # Reset resume contextvar to prevent cross-turn approval state leaks
-            from framework.core.graph.interrupt import _current_resume
-            _current_resume.set(None)
-
-    async def _save_denial_checkpoint(
-        self,
-        all_messages: list[dict[str, Any]],
-        context: AgentContext,
-    ) -> None:
-        """保存被拒绝时的完整 checkpoint（含所有 tool 结果 + 拒绝上下文）。"""
-        denial: Any = context.metadata.get(ReActMetaKey.APPROVAL_DENIAL)
-        checkpoint_data: dict[str, Any] = {
-            "messages": list(all_messages),
-            "termination": "approval_denied",
-            "cancelled_tool_ids": list(
-                context.metadata.get("_cancelled_tool_records", {}).keys()
-            ),
-            "iteration": context.metadata.get("_iteration", 0),
-        }
-        if denial is not None:
-            checkpoint_data["denial_context"] = {
-                "tool_name": denial.tool_name,
-                "tool_call_id": denial.tool_call_id,
-                "arguments": dict(denial.arguments),
-                "tier": denial.tier,
-                "reason": denial.reason,
-                "iteration": denial.iteration,
-            }
-        checkpoint_store = context.runtime.checkpoint_store if context.runtime else None
-        if checkpoint_store is not None:
-            session_id = getattr(context, "session_id", "unknown")
-            checkpoint_id = f"{session_id}:denial"
-            await checkpoint_store.save(checkpoint_id, checkpoint_data)
-
-    async def _save_checkpoint(
-        self,
-        all_new_messages: list[dict[str, Any]],
-        context: AgentContext,
-    ) -> None:
-        """保存检查点到 checkpoint_store。无 store 则跳过。"""
-        checkpoint_store = context.runtime.checkpoint_store if context.runtime else None
-        if checkpoint_store is None:
-            return
-        data = {"messages": list(all_new_messages)}
-        session_id = getattr(context, "session_id", "unknown")
-        checkpoint_id = f"{session_id}:latest"
-        await checkpoint_store.save(checkpoint_id, data)
-
-    async def _clear_checkpoint(self, context: AgentContext) -> None:
-        """清空检查点。无 store 则跳过。"""
-        checkpoint_store = context.runtime.checkpoint_store if context.runtime else None
-        if checkpoint_store is None:
-            return
-        session_id = getattr(context, "session_id", "unknown")
-        checkpoint_id = f"{session_id}:latest"
-        await checkpoint_store.clear(checkpoint_id)
 
     def _resolve_hook_timeout(self, context: AgentContext) -> float:
         """从 runtime.safety 读取 hook_timeout，带 fallback。"""
@@ -479,7 +428,7 @@ class ReActAgent(Agent[ReActEvent]):
         if q is None:
             return []
 
-        cycle_count: int = context.metadata.get("_injection_cycle_count", 0)
+        cycle_count: int = context.runtime.state.custom.get(TurnCustomKey.INJECTION_CYCLE_COUNT, 0) if context.runtime else 0
         if cycle_count >= _MAX_INJECTION_CYCLES:
             while True:
                 try:
@@ -510,7 +459,8 @@ class ReActAgent(Agent[ReActEvent]):
             injected.append(msg)
 
         if injected:
-            context.metadata["_injection_cycle_count"] = cycle_count + 1
+            if context.runtime:
+                context.runtime.state.custom[TurnCustomKey.INJECTION_CYCLE_COUNT] = cycle_count + 1
 
         return injected
 

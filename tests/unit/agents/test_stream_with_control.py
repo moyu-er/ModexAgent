@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from framework.agents.react.agent import ReActEvent, ReActAgent
-from framework.core.context_extensions import ExtensionKey
 from framework.core.provider import StreamingLLMProvider
 from framework.core.types import LLMResponse, ToolCall
 from framework.interceptor.abc import InterceptorScope
@@ -58,38 +57,27 @@ class _FakeHistory:
         return iter(self.messages)
 
 
-class _FakeContext:
-    def __init__(self, *, interceptor_chain=None):
-        self.messages = [{"role": "user", "content": "run a tool"}]
-        self.history = _FakeHistory()
-        self.system_prompt = ""
-        self.max_iterations = 3
-        self.attachments: list = []
-        self.tool_manager = None
-        self.temperature = 0.7
-        self.max_tokens = None
-        self.metadata: dict = {}
-        self.session_id = "test-session-001"
-        self.runtime = None
-        self.extensions: dict[str, Any] = {
-            "hooks": [],
-            ExtensionKey.MAX_TOOLS_PER_TURN: None,
-            ExtensionKey.GOVERNANCE: None,
-            ExtensionKey.ON_CHECKPOINT: None,
-            ExtensionKey.SAFETY: None,
-            "hook_runner": None,
-            "interceptor_chain": interceptor_chain,
-            "checkpoint_store": None,
-            "injection_queue": None,
-            ExtensionKey.RUNTIME_CTX_MGR: None,
-            ExtensionKey.RUNTIME_CTX: None,
-        }
-
-    async def to_messages(self):
-        return list(self.messages)
-
-    def get_tool_descriptions(self):
-        return None
+def _make_fake_ctx(*, interceptor_chain=None):
+    from framework.core.agent import AgentContext
+    from framework.memory.history import ListMessageHistory
+    from framework.core.tool_manager import InMemoryToolManager
+    from framework.agents.react.state import ReActTurnState
+    from framework.runtime.services import AgentRuntime, AgentRuntimeServices
+    from framework.runtime.models import TurnIdentity
+    from framework.runtime.enums import AgentKind, TurnPhase
+    state = ReActTurnState(
+        identity=TurnIdentity(agent_id="test", session_id="test-session-001", turn_id="t1"),
+        agent_kind=AgentKind.REACT, phase=TurnPhase.CREATED,
+    )
+    runtime = AgentRuntime(services=AgentRuntimeServices(interceptors=interceptor_chain), state=state)
+    ctx = AgentContext(
+        system_prompt="", history=ListMessageHistory(),
+        tool_manager=InMemoryToolManager(), session_id="test-session-001",
+        max_iterations=3,
+        identity=state.identity, runtime=runtime,
+    )
+    ctx.messages = [{"role": "user", "content": "run a tool"}]
+    return ctx
 
 
 class TestStreamWithControlPreservesToolCalls:
@@ -143,7 +131,7 @@ class TestStreamWithControlPreservesToolCalls:
         provider = StreamingProvider()
         agent = ReActAgent(provider=provider)
         emitter = _StreamingEmitter()
-        ctx = _FakeContext(interceptor_chain=fake_chain)
+        ctx = _make_fake_ctx(interceptor_chain=fake_chain)
 
         # Act
         result = await agent.run(ctx, emitter)
@@ -206,7 +194,7 @@ class TestStreamWithControlPreservesToolCalls:
         provider = StreamingProviderNoTools()
         agent = ReActAgent(provider=provider)
         emitter = _StreamingEmitter()
-        ctx = _FakeContext(interceptor_chain=fake_chain)
+        ctx = _make_fake_ctx(interceptor_chain=fake_chain)
 
         result = await agent.run(ctx, emitter)
 

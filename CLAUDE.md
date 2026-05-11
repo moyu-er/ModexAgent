@@ -44,7 +44,7 @@ uv pip install -e ".[dev,llm,storage,gateway]"
 pytest tests/unit/ -v
 
 # Run a single test
-pytest tests/unit/memory/test_auto_compact.py::test_auto_compact_archives_before_prune -xvs
+pytest tests/unit/memory/compression/test_priority_planner.py::test_planner_keeps_latest_user_when_it_fits -xvs
 
 # Run tests for a specific module
 pytest tests/unit/memory/ -v
@@ -73,9 +73,10 @@ mypy framework/
 tests/
 ├── unit/               # Pure unit tests; no external deps; must run offline
 │   ├── core/           ├── agents/          ├── tools/
-│   ├── pipeline/       ├── session/         ├── tools/
-│   ├── memory/         ├── multi_agent/     ├── plugins/
-│   └── utils/
+│   ├── pipeline/       ├── session/         ├── plugins/
+│   ├── memory/         ├── multi_agent/     ├── messaging/
+│   ├── approval/       ├── control/         ├── providers/
+│   ├── bot_project/    ├── utils/           └── sandbox/ (planned)
 ├── integration/        # Requires config files, LLM APIs, etc.
 └── e2e/
 ```
@@ -89,31 +90,37 @@ tests/
 
 ```
 framework/
-├── core/                  # ABCs: Agent, ContextManager, Emitter, Tool, skills/, runtime_context, context_extensions
-├── agents/react/          # ReActAgent, ReActGraph, nodes/{start,llm,tool,end}, strategy, state
+├── core/                  # ABCs: Agent, ContextManager, Emitter, Tool, types, graph/, skills/, runtime_context
+├── agents/
+│   ├── react/             # ReActAgent, ReActGraph, nodes/{start,llm,tool,end}, strategy, state, approval, runtime
+│   └── summarizer/        # Summarizer agent variant
 ├── hook/                  # Hook system: HookRunner, HookPoint enum, builtin hooks (logging, runtime_context, peer_auto_send, ...)
 ├── interceptor/           # InterceptorChain AOP onion-chain: scoped wrappers, builtin interceptors (control_drain, tool_approval, turn_timeout, ...)
-├── control/               # Runtime control plane: ControlChannel, ControlCommand/Scope, RuntimeStateStore, task_supervision, exceptions
+├── control/               # Runtime control plane: ControlChannel, ControlEventBus, RuntimeStateStore, task_supervision, exceptions, ui/
 ├── approval/              # Tool approval: ApprovalState, ApprovalDecision, store, response parsing
-├── pipeline/              # AgentPipeline, InputAdapter, OutputAdapter
+├── pipeline/              # AgentPipeline, InputAdapter, OutputAdapter, approval_renderer, context_assembler
 ├── session/               # AgentSession (request/response mode)
 ├── tools/                 # ToolRegistry, executor, MCP integration, standard tools, FilteredToolManager
-├── memory/                # Three-layer memory system + redesign docs in design_doc/
+├── memory/                # Three-layer memory system (session/archive/knowledge)
 │   ├── core/              # ABCs: MemoryScope, MemoryStorage, ChatMessage, scope metadata
-│   ├── layers/            # Session, Archive, Knowledge layer managers
+│   ├── layers/            # Session, Archive, Knowledge, Pending layer managers + factory
 │   ├── compaction/        # MessageCompactionPolicy, BoundaryPolicy
-│   ├── consolidation/     # Online Consolidator + offline DreamEngine
-│   ├── stores/            # FileStorage (JSONL+KV), InMemoryStorage
-│   └── injection/         # MemoryInjectionPolicy → ContextState assembly
-├── multi_agent/           # Multi-agent orchestration
+│   ├── compression/       # Compression planner, policies, semantic_filter, tool_chain, importance
+│   ├── consolidation/     # DreamEngine offline background consolidation
+│   ├── retention/         # RetentionPolicy, RetentionConfig — message lifecycle
+│   ├── injection/         # MemoryInjectionPolicy → ContextState assembly (full/restricted)
+│   ├── stores/            # FileStorage (JSONL+KV), InMemoryStorage (plain + scoped variants)
+│   ├── registry/          # Memory provider registry (base, file, in_memory)
+│   └── archive/           # (stub — only __init__.py)
+├── multi_agent/           # Multi-agent orchestration: pool, coordinator, subagent_manager, hooks
 │   └── inbox/             # MQ system: LocalFileInboxServer, Producer, Consumer, InboxFlushHook
 ├── plugins/               # Plugin system: MemoryProvider ABC, PluginContext, PluginManager
 ├── messaging/             # MessageBroker, BrokerBridgeService
 ├── providers/             # LLM provider implementations (LiteLLM)
-├── sandbox/               # Sandboxed execution: LocalPython, E2B, Docker, Subprocess adapters
-├── adapters/              # Adapter base classes
-├── registry/              # Service registry
-├── security/              # SecurityPolicy, validators, approval handlers
+├── sandbox/               # Sandboxed execution: LocalPython, E2B, Docker, Subprocess + Landlock adapters
+│   └── adapters/          # Sandbox adapter implementations (base, docker, e2b, subprocess, landlock)
+├── adapters/              # InputAdapter / OutputAdapter base classes
+├── security/              # SecurityPolicy, validators, handlers, local_executor
 └── utils/                 # MediaProcessor, tokenizer, context_builder, deduplicator, sanitizer, helpers
 ```
 
@@ -124,11 +131,15 @@ framework/
 ```
 examples/bot_project/
 ├── bot_service.py         # BotService (pipeline/pool modes), SpawnSubagentTool
-├── qq_adapters.py         # QQ platform InputAdapter/OutputAdapter/Emitter
-├── plugin_integration.py  # PluginIntegration facade
-├── config/bot_config.yml  # All-in-one config (LLM, memory, tools, multi_agent, plugins)
+├── bot/
+│   ├── adapters/qq.py     # QQ platform InputAdapter/OutputAdapter/Emitter
+│   ├── plugins/integration.py  # PluginIntegration facade
+│   ├── tools/custom.py    # Custom tool definitions
+│   └── utils/             # Config loader, media utilities
+├── config/                # YAML configuration files
 ├── plugins/               # Project-local plugins (mem0_memory, tool_call_cleanup)
-└── skills/{main,peers,subagents}/  # SKILL.md-based skill directories
+├── skills/{main,peers,subagents}/  # SKILL.md-based skill directories
+└── tests/                 # Bot-specific integration tests
 ```
 
 Two runtime modes in `bot_service.py`:
@@ -167,8 +178,6 @@ Three-layer with scope isolation: `Session (short-term) → Archive (history) �
 - `ScopeRecord` + `.scope.json` — recoverable scope metadata for background tasks
 
 Compression is two-phase (trigger → plan → summary → commit), all tool-chain-aware. `DreamEngine` runs offline consolidation; `Consolidator` runs online LLM-based compression via `SummaryStrategy`.
-
-**Design documents:** `design_doc/` contains the latest memory system design docs; `docs/memory-system.md` describes the current architecture.
 
 ### 4. Runtime Context System
 
@@ -237,8 +246,6 @@ Four subsystems with distinct responsibilities, wired through `AgentContext.exte
 
 **Current focus:** making TURN and ITERATION interceptor scopes actually fire (they are defined but inert today), and extracting approval classification into a standalone `ApprovalClassifier`.
 
-Design doc: `docs/architecture-graph-approval.md`
-
 ## Type Structuring Best Practices
 
 1. **Enumerate constants**: All categories/states as `Enum` or `StrEnum`. No raw strings.
@@ -246,21 +253,3 @@ Design doc: `docs/architecture-graph-approval.md`
 3. **Dataclasses over dicts**: Use frozen dataclasses for config (e.g., `AgentDescriptor`, `MediaInfo`).
 4. **Abstract early**: Every cross-cutting concern needs an ABC (Storage, Compression, Adapters, Skills).
 5. **Config vs Runtime**: Config classes are pure data; Runtime classes hold state/connections.
-
-## Configuration
-
-### Optional Dependencies
-
-| Group | Dependencies | Use Case |
-|-------|--------------|----------|
-| `dev` | pytest, ruff, mypy | Development |
-| `llm` | litellm | LLM support |
-| `storage` | chromadb, faiss, sentence-transformers, aiosqlite | Vector memory |
-| `session` | sqlalchemy[asyncio] | SQLAlchemy sessions |
-| `sandbox` | docker, e2b-code-interpreter | Sandboxed execution |
-| `gateway` | fastapi, qq-botpy, rich | Gateway adapters |
-
-### Environment Variables
-
-- `OPENAI_API_KEY` / `OPENAI_URL` / `OPENAI_MODEL` — LLM API
-- `E2B_API_KEY` — E2B cloud sandbox

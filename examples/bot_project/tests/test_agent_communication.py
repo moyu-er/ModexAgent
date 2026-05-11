@@ -15,7 +15,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from framework.core.agent import AgentContext
-from framework.core.context_extensions import ExtensionKey
+from framework.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
+from framework.runtime.models import TurnIdentity, TurnStateBase
+from framework.runtime.services import AgentRuntime, AgentRuntimeServices
 from framework.core.emitter import AgentResult, BufferingEmitter, ContentEmitter
 from framework.core.provider import StreamingLLMProvider
 from framework.core.runtime_context import RuntimeContextManager
@@ -262,7 +264,7 @@ class TestInboxFlushHook:
 
         ctx = MagicMock()
         ctx.history = history
-        ctx.metadata = {"session_id": "conv-1:peer"}
+        ctx.session_id = "conv-1:peer"
 
         await hook.before_turn(ctx)
 
@@ -330,13 +332,13 @@ class TestPeerAutoSendHookBot:
             parent_name="main",
         )
 
-        ctx = MagicMock()
-        ctx.session_id = "conv-1:office-expert"
-        ctx.metadata = {"session_id": "conv-1:office-expert"}
-        ctx.extensions = {
-            ExtensionKey.RUNTIME_CTX: None,
-            ExtensionKey.RUNTIME_CTX_MGR: runtime_mgr,
-        }
+        session_id = "conv-1:office-expert"
+        identity = TurnIdentity(agent_id="office-expert", session_id=session_id, turn_id="t1")
+        state = TurnStateBase(identity=identity, agent_kind=AgentKind.REACT, phase=TurnPhase.RUNNING)
+        services = AgentRuntimeServices(runtime_context_manager=runtime_mgr)
+        ctx = MagicMock(spec=AgentContext)
+        ctx.session_id = session_id
+        ctx.runtime = AgentRuntime(services=services, state=state)
 
         result = AgentResult(content="Document created successfully", stop_reason="completed")
 
@@ -365,14 +367,16 @@ class TestPeerAutoSendHookBot:
         )
 
         session_id = "conv-2:office-expert"
-        metadata = {"session_id": session_id}
-        ctx = MagicMock()
+        identity = TurnIdentity(agent_id="office-expert", session_id=session_id, turn_id="t1")
+        state = TurnStateBase(identity=identity, agent_kind=AgentKind.REACT, phase=TurnPhase.RUNNING)
+        services = AgentRuntimeServices(runtime_context_manager=runtime_mgr)
+        ctx = MagicMock(spec=AgentContext)
         ctx.session_id = session_id
-        ctx.metadata = metadata
-        ctx.extensions = {
-            ExtensionKey.RUNTIME_CTX: None,
-            ExtensionKey.RUNTIME_CTX_MGR: runtime_mgr,
-        }
+        ctx.runtime = AgentRuntime(services=services, state=state)
+
+        # Record that send_message_async was already called
+        metadata = {"session_id": session_id}
+        rc = await runtime_mgr.get_context(session_id, metadata)
 
         # Record that send_message_async was already called
         rc = await runtime_mgr.get_context(session_id, metadata)

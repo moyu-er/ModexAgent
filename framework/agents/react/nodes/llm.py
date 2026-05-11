@@ -1,10 +1,11 @@
 """LLMNode — assembles messages, calls LLM, writes assistant message."""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from framework.agents.react.agent import ReActEvent
-from framework.agents.react.constants import ReActMetaKey, ReActNode, ReActReason
+from framework.agents.react.constants import ReActNode, ReActReason
+from framework.agents.react.state import get_react_state
 from framework.control.runtime import ControlPhase
 from framework.core.agent import AgentContext
 from framework.core.constants import FinishReason
@@ -13,6 +14,9 @@ from framework.core.provider import StreamingLLMProvider
 from framework.core.types import LLMResponse
 from framework.hook import HookPayload, HookPoint
 from framework.interceptor.abc import InterceptorScope, IterationContext
+from framework.memory.core.message import ChatMessage
+from framework.runtime.enums import MessageDeltaSource, OperationKind, TurnPhase
+from framework.runtime.models import MessageDelta
 
 if TYPE_CHECKING:
     from framework.agents.react.agent import ReActAgent
@@ -25,11 +29,16 @@ class LLMNode(Node):
         super().__init__(ReActNode.LLM)
         self._agent = agent
 
-    async def execute(self, ctx: AgentContext[Any]) -> NodeTransition:
-        iteration = ctx.metadata[ReActMetaKey.ITERATION] + 1
-        ctx.metadata[ReActMetaKey.ITERATION] = iteration
+    async def execute(self, ctx: AgentContext) -> NodeTransition:
+        state = get_react_state(ctx)
+        if state is None:
+            return NodeTransition(ReActNode.END, ReActReason.LLM_ERROR)
 
-        if iteration > ctx.max_iterations:
+        state.iteration += 1
+        state.current_node = ReActNode.LLM
+        state.phase = TurnPhase.RUNNING
+
+        if state.iteration > ctx.max_iterations:
             if ctx.emitter is not None:
                 await ctx.emitter.emit(ReActEvent.MAX_ITERATIONS)
             return NodeTransition(ReActNode.END, ReActReason.MAX_ITERATIONS)
@@ -39,7 +48,7 @@ class LLMNode(Node):
         async def actual_iteration():
             if ctx.emitter is not None:
                 await ctx.emitter.emit(
-                    ReActEvent.ITERATION_START, {"iteration": iteration},
+                    ReActEvent.ITERATION_START, {"iteration": state.iteration},
                 )
 
             if runtime and runtime.hooks:
@@ -57,18 +66,17 @@ class LLMNode(Node):
                 )
 
             if response.finish_reason == FinishReason.ERROR.value:
-                ctx.metadata[ReActMetaKey.LLM_RESPONSE] = response
+                state.llm_response = response
                 return
 
             assistant_msg = self._agent._build_assistant_message(
                 response.content or "", response.tool_calls,
             )
             await ctx.history.append(assistant_msg)
-            ctx.metadata[ReActMetaKey.LLM_RESPONSE] = response
-            msgs: list = ctx.metadata.setdefault(ReActMetaKey.ITERATION_MSGS, [])
-            msgs.append(assistant_msg)
-            if runtime and runtime.checkpoint_store:
-                await self._agent._save_checkpoint(msgs, ctx)
+            state.llm_response = response
+            state.add_operation(OperationKind.LLM_CALL, None)
+            cm = ChatMessage.from_dict(assistant_msg) if isinstance(assistant_msg, dict) else ChatMessage(role="assistant", content=response.content or "")
+            state.message_delta.append(MessageDelta(message=cm, source=MessageDeltaSource.ASSISTANT))
 
         if (
             runtime and runtime.interceptors
@@ -76,13 +84,13 @@ class LLMNode(Node):
         ):
             await runtime.interceptors.around_iteration(
                 ctx,
-                IterationContext(iteration=iteration, turn_id=ctx.session_id),
+                IterationContext(iteration=state.iteration, turn_id=ctx.session_id),
                 actual_iteration,
             )
         else:
             await actual_iteration()
 
-        response = ctx.metadata.get(ReActMetaKey.LLM_RESPONSE)
+        response = state.llm_response
         if response is not None and response.finish_reason == FinishReason.ERROR.value:
             return NodeTransition(ReActNode.END, ReActReason.LLM_ERROR)
 
@@ -91,12 +99,12 @@ class LLMNode(Node):
 
         if ctx.emitter is not None:
             await ctx.emitter.emit(ReActEvent.ITERATION_END, {
-                "iteration": iteration, "has_tool_calls": False,
+                "iteration": state.iteration, "has_tool_calls": False,
             })
         return NodeTransition(ReActNode.END, ReActReason.NO_TOOLS)
 
-    async def _build_messages(self, ctx: AgentContext) -> list[dict[str, Any]]:
-        messages: list[dict[str, Any]] = []
+    async def _build_messages(self, ctx: AgentContext) -> list[dict[str, object]]:
+        messages: list[dict[str, object]] = []
         if ctx.system_prompt:
             messages.append({"role": "system", "content": ctx.system_prompt})
         messages.extend(await ctx.to_messages())
@@ -104,15 +112,10 @@ class LLMNode(Node):
         governance = ctx.runtime.governance if ctx.runtime else None
         if governance is not None:
             messages = await governance.apply(messages)
-
-        pending_injector = ctx.runtime.pending_injector if ctx.runtime else None
-        memory_context = ctx.runtime.memory_context if ctx.runtime else None
-        if pending_injector is not None and memory_context is not None:
-            messages = await pending_injector.apply(messages, memory_context)
         return messages
 
     async def _call_llm(
-        self, messages: list[dict[str, Any]], ctx: AgentContext,
+        self, messages: list[dict[str, object]], ctx: AgentContext,
     ) -> LLMResponse:
         if ctx.runtime and ctx.runtime.control:
             await ctx.runtime.control.drain(ctx, phase=ControlPhase.BEFORE_LLM)
@@ -123,14 +126,12 @@ class LLMNode(Node):
             interceptor_chain = ctx.runtime.interceptors if ctx.runtime else None
             if interceptor_chain is not None:
                 if interceptor_chain.has_scope(InterceptorScope.LLM_STREAM):
-                    return await self._agent._stream_with_control(
-                        messages, ctx,
-                    )
+                    return await self._agent._stream_with_control(messages, ctx)
             return await self._stream_plain(messages, ctx)
         return await self._call_non_streaming(messages, ctx)
 
     async def _stream_plain(
-        self, messages: list[dict[str, Any]], ctx: AgentContext,
+        self, messages: list[dict[str, object]], ctx: AgentContext,
     ) -> LLMResponse:
         async def _on_content(delta: str) -> None:
             if delta and ctx.emitter is not None:
@@ -154,7 +155,7 @@ class LLMNode(Node):
         return response
 
     async def _call_non_streaming(
-        self, messages: list[dict[str, Any]], ctx: AgentContext,
+        self, messages: list[dict[str, object]], ctx: AgentContext,
     ) -> LLMResponse:
         response = await self._agent.provider.chat(
             messages=messages,

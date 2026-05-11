@@ -24,7 +24,7 @@ from framework import (
     ToolManagerConfig,
 )
 from framework.control.channel import InMemoryControlChannel
-from framework.control.checkpoint import JsonFileRuntimeStateStore
+from framework.runtime.store import JsonFileTurnStateStore, NoOpTurnStateStore
 from framework.control.ui.im import IMUserInterface
 from framework.core.emitter import ContentEmitter
 from framework.core.llm_error import (
@@ -164,8 +164,9 @@ class BotService(AgentBuilderMixin):
 
         # Approval components
         self._approval_workspace: Path | None = None
-        self._checkpoint_store: Any | None = None
         self._im_ui: IMUserInterface | None = None
+        self._turn_store: Any | None = None
+        self._command_store: Any | None = None
 
         # Runtime control
         self._shutdown_event = asyncio.Event()
@@ -347,14 +348,25 @@ class BotService(AgentBuilderMixin):
         self._approval_workspace = self._project_dir / approval_cfg.get(
             "workspace", "data/approval"
         )
-        self._checkpoint_store = JsonFileRuntimeStateStore(
-            self._approval_workspace / "checkpoints"
-        )
+        from framework.runtime.store import NoOpTurnStateStore
+        self._turn_store = NoOpTurnStateStore()
         self._im_ui = IMUserInterface(
             output_adapter=self.output_adapter,
             channel=self.control_channel,
         )
         print(f"[OK] Approval infrastructure initialized (workspace: {self._approval_workspace})")
+
+        # 7.6. Initialize typed runtime stores (TurnStateStore + RuntimeCommandStore)
+        from framework.runtime.codec import RuntimeStateCodecRegistry
+        from framework.runtime.enums import AgentKind
+        from framework.agents.react.state import ReActRuntimeStateCodec
+        from framework.runtime.store import JsonFileTurnStateStore, JsonFileRuntimeCommandStore
+
+        runtime_data_dir = self._project_dir / "data" / "runtime_state"
+        codec_registry = RuntimeStateCodecRegistry({AgentKind.REACT: ReActRuntimeStateCodec()})
+        self._turn_store = JsonFileTurnStateStore(runtime_data_dir / "turns", codec_registry)
+        self._command_store = JsonFileRuntimeCommandStore(runtime_data_dir / "commands")
+        print(f"[OK] Typed runtime stores initialized (data/runtime_state/)")
 
         # 8. Create ReActAgent (main agent in full mode with approval)
         self.agent = ReActAgent(provider=provider, mode="full")
@@ -433,7 +445,7 @@ class BotService(AgentBuilderMixin):
         pipeline_hooks = [inbox_flush_hook]
         pipeline_hooks.extend(self._collect_run_hooks())
 
-        # Build ReActRuntime via framework RuntimeAssembler
+        # Build AgentRuntime via framework RuntimeAssembler
         runtime = await self._assemble_runtime(hooks=self._build_hook_runner(pipeline_hooks))
 
         self.pipeline = AgentPipeline(
@@ -454,10 +466,11 @@ class BotService(AgentBuilderMixin):
             context_manager_factory=self._get_context_manager,
             governance=self._build_governance(),
             safety=self.safety_policy,
-            checkpoint_store=self._checkpoint_store,
             approval_workspace=str(self._approval_workspace),
             user_interface=self._im_ui,
-            prebuilt_runtime=runtime,
+            turn_store=self._turn_store,
+            command_store=self._command_store,
+            runtime_services=runtime.services,
         )
         print("[OK] AgentPipeline initialized")
         print(f"   Input: {self.input_adapter.name}")
@@ -534,20 +547,18 @@ class BotService(AgentBuilderMixin):
         await self.agent_pool.register_resident(main_descriptor)
         print(f"[OK] AgentPool initialized, main agent '{parent_agent_name}' registered as resident")
 
-        # Inject ReActRuntime into main agent's pool pipeline
+        # Wire AgentRuntime services into main agent's pool pipeline
         main_instance = self.agent_pool._agents.get(parent_agent_name)
         if main_instance is not None and main_instance.pipeline is not None:
-            # Build ReActRuntime via framework RuntimeAssembler
+            # Build AgentRuntime via framework RuntimeAssembler
             runtime = await self._assemble_runtime(hooks=main_instance.pipeline.hook_runner)
 
-            # Inject runtime into pipeline; AgentPipeline._build_runtime_and_context
-            # will assign it directly to agent_context.runtime when set.
-            main_instance.pipeline._prebuilt_runtime = runtime
             main_instance.pipeline.interceptor_chain = runtime.interceptors
-            main_instance.pipeline.checkpoint_store = self._checkpoint_store
+            main_instance.pipeline.runtime_services = runtime.services
+            main_instance.pipeline.turn_store = self._turn_store
             main_instance.pipeline._approval_workspace = self._approval_workspace
             main_instance.pipeline._user_interface = self._im_ui
-            print("[OK] Main agent pool pipeline injected with ReActRuntime")
+            print("[OK] Main agent pool pipeline wired with AgentRuntime services")
 
         # Register subagents as residents (pool mode requires all targets to be resident)
         subagent_memory_config = self.config.get("memory", {}).get("subagents", {})
@@ -771,17 +782,14 @@ class BotService(AgentBuilderMixin):
     # ------------------------------------------------------------------ #
 
     async def _assemble_runtime(self, hooks: Any = None) -> Any:
-        """Build ReActRuntime via framework RuntimeAssembler.
+        """Build AgentRuntime via framework RuntimeAssembler.
 
         The only difference between pipeline and pool mode is the hooks source.
         Everything else — classifier, strategy, control, governance — is identical.
         """
         from framework.agents.react.approval import TieredToolApprovalClassifier
         from framework.agents.react.assembler import RuntimeAssembler, RuntimeServicesConfig
-        from framework.agents.react.state import StateStoreTurnResumeStateStore
-        from framework.agents.react.strategy import SuspendResumeStrategy
         from framework.approval.config import AgentApprovalConfig, ToolApprovalConfig
-        from framework.approval.store import LocalFileApprovalStateStore
         from framework.control.store import InMemoryControlStore
         from framework.control.types import ControlCommandType
         from framework.interceptor.handler import DefaultCancelHandler
@@ -809,19 +817,15 @@ class BotService(AgentBuilderMixin):
                 config=approval_config,
                 argument_matcher=ArgumentMatcher(project_root=self._project_dir),
             ),
-            approval_strategy=SuspendResumeStrategy(
-                LocalFileApprovalStateStore(self._approval_workspace),
-                StateStoreTurnResumeStateStore(self._checkpoint_store),
-            ),
             control_channel=self.control_channel,
             control_store=InMemoryControlStore(),
             command_handlers=[(ControlCommandType.CANCEL_TURN, DefaultCancelHandler())],
-            checkpoint_store=self._checkpoint_store,
+            turn_store=self._turn_store,
             project_root=self._project_dir,
             governance=self._build_governance(),
             safety=self.safety_policy,
         ))
-        print(f"[OK] ReActRuntime built (approval enabled={enabled}, tools={list(tools_approval.keys())})")
+        print(f"[OK] AgentRuntime built (approval enabled={enabled}, tools={list(tools_approval.keys())})")
         return runtime
 
     # ------------------------------------------------------------------ #
@@ -961,8 +965,8 @@ class BotService(AgentBuilderMixin):
 
         from framework.agents.summarizer import SummarizerAgent, SummarizerStrategy
         from framework.memory.compaction.boundary import (
-            ToolChainBoundaryPolicy,
-            UserTurnToolChainBoundaryPolicy,
+            BoundaryPolicyName,
+            create_boundary_policy,
         )
         from framework.memory.compaction.policy import ConservativeCompactionPolicy
         from framework.memory.compression.policies import DefaultMemoryCompressionCoordinator
@@ -989,16 +993,19 @@ class BotService(AgentBuilderMixin):
 
         retention_policy = self._build_retention_policy(main_memory_config)
 
-        # Build boundary policy from config
-        boundary = None
-        boundary_name = compaction_config.get("boundary", "tool_chain")
-        if boundary_name == "user_turn_tool_chain":
-            boundary = UserTurnToolChainBoundaryPolicy()
-        elif boundary_name == "tool_chain":
-            boundary = ToolChainBoundaryPolicy()
+        boundary_name = BoundaryPolicyName(
+            compaction_config.get("boundary", BoundaryPolicyName.TOOL_CHAIN.value)
+        )
+        boundary = create_boundary_policy(boundary_name)
 
-        # Pass short-term numeric thresholds from bot_config.yml so the
-        # coordinator respects user configuration instead of hard-coded defaults.
+        # Persistent session cleanup/compression is append-triggered:
+        # DefaultMemoryLifecyclePolicy calls DefaultMemoryCompressionCoordinator,
+        # whose DefaultCompressionTriggerPolicy checks all stored messages
+        # against these short_term thresholds. The coordinator then runs
+        # DefaultSessionToolChainSanitizer, PriorityCompressionKeepPlanner,
+        # DefaultPendingPrunedInputExtractor, and DefaultCommitPolicy. An
+        # active final assistant(tool_calls) tail is protected by the planner,
+        # while older complete assistant/tool chains remain compressible.
         return DefaultMemoryCompressionCoordinator(
             summary=summary_strategy,
             compaction=compaction,

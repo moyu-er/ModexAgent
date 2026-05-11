@@ -13,6 +13,7 @@ from framework.interceptor.abc import (
     LLMStreamContext,
     LLMStreamNext,
 )
+from framework.runtime.enums import TurnCustomKey
 
 if TYPE_CHECKING:
     from framework.control.channel import ControlChannel
@@ -55,7 +56,9 @@ class LLMStreamWatchInterceptor:
                 for cmd in cmds:
                     if cmd.type in (ControlCommandType.CANCEL_TURN,
                                     ControlCommandType.CANCEL_RUN):
-                        ctx.metadata["_stream_cancelled"] = True
+                        state = ctx.runtime.state if ctx.runtime else None
+                        if state is not None:
+                            state.custom[TurnCustomKey.STREAM_CANCELLED] = True
                         yield LLMStreamChunk(
                             finish_reason="cancelled", control_action="cancel",
                         )

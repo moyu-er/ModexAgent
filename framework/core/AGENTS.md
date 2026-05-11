@@ -59,4 +59,4 @@ Abstract base classes and shared types forming the framework's type-safe foundat
 
 Core graph primitives support durable ReAct macro steps, but hook/interceptor/control
 should remain layered runtime services. Do not model low-latency control only as
-ordinary graph nodes. See `docs/current-runtime.md`.
+ordinary graph nodes.

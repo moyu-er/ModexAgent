@@ -8,17 +8,26 @@ from framework.core.tool_manager import ToolResult
 from framework.core.types import ToolCall
 from framework.core.agent import AgentContext
 from framework.memory.history import ListMessageHistory
+from framework.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
+from framework.runtime.models import TurnIdentity, TurnStateBase
+from framework.runtime.services import AgentRuntime, AgentRuntimeServices
 
 
 def _ctx(meta: dict | None = None) -> AgentContext:
-    ctx = AgentContext(
+    state = TurnStateBase(
+        identity=TurnIdentity(agent_id="test", session_id="s1", turn_id="t1"),
+        agent_kind=AgentKind.REACT, phase=TurnPhase.RUNNING,
+    )
+    if meta:
+        state.custom[TurnCustomKey.POLICY_DENIED_TOOLS] = meta.get("_policy_denied_tools")
+    runtime = AgentRuntime(services=AgentRuntimeServices(), state=state)
+    return AgentContext(
         system_prompt="test",
         history=ListMessageHistory([]),
         tool_manager=MagicMock(),
         session_id="s1",
-        metadata=meta or {},
+        runtime=runtime,
     )
-    return ctx
 
 
 def _call(name: str = "shell") -> ToolCallContext:

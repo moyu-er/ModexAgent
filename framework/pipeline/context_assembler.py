@@ -18,9 +18,9 @@ from ..memory.history import (
 )
 
 if TYPE_CHECKING:
-    from ..multi_agent import AgentDescriptor, MultiAgentContextBuilder
     from ..core.skills import SkillManager
     from ..core.tool_manager import ToolManager
+    from ..multi_agent import AgentDescriptor, MultiAgentContextBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +36,10 @@ async def assemble_context(
     route_result: Any | None,
     _is_approval_cmd: bool,
     *,
-    agent_descriptor: "AgentDescriptor | None" = None,
-    tool_manager: "ToolManager | None" = None,
-    skill_manager: "SkillManager | None" = None,
-    context_builder: "MultiAgentContextBuilder | None" = None,
+    agent_descriptor: AgentDescriptor | None = None,
+    tool_manager: ToolManager | None = None,
+    skill_manager: SkillManager | None = None,
+    context_builder: MultiAgentContextBuilder | None = None,
 ) -> Any:
     """Assemble context state: load context, recover checkpoints, write user message,
     build system prompt, and run multi-agent context builder.

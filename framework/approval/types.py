@@ -27,12 +27,12 @@ class ApprovalResolution(StrEnum):
 
 class DenyAction(StrEnum):
     TOOL_ERROR = "deny_as_tool_error"
-    CANCEL_TURN = "deny_as_cancel"
+    CANCEL_TURN = "cancel_turn"
 
 
 class TimeoutAction(StrEnum):
     TOOL_ERROR = "timeout_as_tool_error"
-    CANCEL_TURN = "timeout_as_cancel"
+    CANCEL_TURN = "cancel_turn"
 
 
 class ApprovalResultType(StrEnum):

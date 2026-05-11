@@ -1,66 +1,61 @@
-"""ApprovalRuntime — typed approval service for ReActAgent."""
+"""ApprovalRuntime — typed approval service for ReActAgent.
+
+Approval classification (``ApprovalClassifier``) is a policy service;
+``ApprovalTransaction`` inside ``ReActTurnState`` owns the state.
+``ApprovalDenyPolicy`` defines turn-cancel behaviour for denied approvals.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Protocol
 
 from framework.approval.config import AgentApprovalConfig
 from framework.approval.constants import ApprovalTier
+from framework.core.agent import AgentContext
+from framework.core.types import ToolCall
 from framework.interceptor.builtin.tool_approval import ArgumentMatcher
-
-if TYPE_CHECKING:
-    from framework.agents.react.strategy import SuspendStrategy
-    from framework.core.agent import AgentContext
-    from framework.core.types import ToolCall
+from framework.runtime.enums import ApprovalDenyPolicy
 
 
 class ApprovalClassifier(Protocol):
-    def classify(self, tool_call: ToolCall, ctx: AgentContext[Any]) -> str: ...
+    """Classify a tool call into an ``ApprovalTier`` value."""
+
+    def classify(self, tool_call: ToolCall, ctx: AgentContext) -> str: ...
 
 
 @dataclass
 class TieredToolApprovalClassifier:
     """Agent-level tool approval classifier driven by path rules.
 
-    Replaces the old name-based matching (hardline/dangerous/sensitive ToolNameMatcher)
-    with a configuration-driven approach:
     - approval.enabled=False  → all tools NORMAL
     - tool not in config      → NORMAL
     - path matches allowed    → NORMAL
     - path does not match     → DANGEROUS
     """
+
     config: AgentApprovalConfig
     argument_matcher: ArgumentMatcher | None = None
 
-    def classify(self, tool_call: ToolCall, ctx: AgentContext[Any]) -> str:
-        # 1. Approval disabled for this agent
+    def classify(self, tool_call: ToolCall, ctx: AgentContext) -> str:
         if not self.config.enabled:
             return ApprovalTier.NORMAL
 
-        # 2. Tool not configured for approval
         tool_config = self.config.tools.get(tool_call.tool_name)
         if tool_config is None:
             return ApprovalTier.NORMAL
 
-        # 3. Empty allowed_paths means ALL paths require approval
         if not tool_config.allowed_paths:
             return ApprovalTier.DANGEROUS
 
-        # 4. Explicit wildcard means NO paths require approval
         if "*" in tool_config.allowed_paths:
             return ApprovalTier.NORMAL
 
-        # 5. Check path arguments against allowed_paths
         if self.argument_matcher is not None:
             args = tool_call.arguments or {}
-            # If the tool has no path arguments, be conservative:
-            # we cannot verify safety, so require approval.
             if not self.argument_matcher._extract_paths(args):
                 return ApprovalTier.DANGEROUS
-            path_allowed = self.argument_matcher.matches(
-                args,
-                tool_config.allowed_paths,
-            )
+            path_allowed = self.argument_matcher.matches(args, tool_config.allowed_paths)
             if path_allowed:
                 return ApprovalTier.NORMAL
 
@@ -69,6 +64,14 @@ class TieredToolApprovalClassifier:
 
 @dataclass
 class ApprovalRuntime:
+    """Approval policy service — classification + deny behaviour.
+
+    ``ApprovalTransaction`` inside ``ReActTurnState`` owns state and persistence;
+    this service only classifies tools and defines denial behaviour.
+    """
+
     classifier: ApprovalClassifier
-    suspend_strategy: SuspendStrategy
-    deny_as_cancel: bool = True
+    # EXTENSION POINT: override per-agent to CANCEL_TURN if the ReAct loop
+    # should terminate after any denied tool (user /deny or unrelated input).
+    # Default TOOL_RESULT_ONLY keeps the loop running so the agent can respond.
+    default_deny_policy: ApprovalDenyPolicy = ApprovalDenyPolicy.TOOL_RESULT_ONLY

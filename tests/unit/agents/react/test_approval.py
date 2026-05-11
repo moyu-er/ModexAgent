@@ -83,12 +83,9 @@ class TestTieredToolApprovalClassifier:
 
 class TestApprovalRuntime:
     def test_construction(self):
-        from framework.agents.react.strategy import InlineWaitStrategy
-        from framework.control.channel import InMemoryControlChannel
         config = AgentApprovalConfig()
         classifier = TieredToolApprovalClassifier(config=config)
-        strategy = InlineWaitStrategy(InMemoryControlChannel())
-        ar = ApprovalRuntime(classifier=classifier, suspend_strategy=strategy)
+        ar = ApprovalRuntime(classifier=classifier)
         assert ar.classifier is classifier
-        assert ar.suspend_strategy is strategy
-        assert ar.deny_as_cancel is True
+        from framework.runtime.enums import ApprovalDenyPolicy
+        assert ar.default_deny_policy is ApprovalDenyPolicy.TOOL_RESULT_ONLY

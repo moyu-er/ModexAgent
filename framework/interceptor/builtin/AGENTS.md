@@ -1,21 +1,22 @@
-<!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-04-30 -->
+﻿<!-- Parent: ../AGENTS.md -->
+<!-- Updated: 2026-05-11 -->
 
 # builtin
 
 ## Purpose
-Framework-provided interceptors — ready-to-use AOP wrappers for common control scenarios. 9 interceptor types covering command consumption, timeout protection, tiered approval, tool cancellation monitoring, stealth injection, stream cancellation, and result limiting.
+Framework-provided interceptors — ready-to-use AOP wrappers for timeout, cancellation monitoring, stealth injection, stream cancellation, and result limiting. **Approval interceptors have been removed**; approval is handled through the pipeline layer (TurnSnapshot + ApprovalTransaction).
 
 ## Key Files
 | File | Description |
 |------|-------------|
-| `control_drain.py` | `ControlDrainInterceptor` — drains ControlChannel commands at turn/iteration boundaries |
+| `control_drain.py` | `ControlDrainInterceptor` — drains CANCEL_RUN/CANCEL_TURN/INJECT_USER_MESSAGE/SET_DYNAMIC_CONFIG at turn/iteration boundaries |
+| `tool_approval.py` | `ArgumentMatcher` — path-based tool argument classification for ApprovalRuntime (NOT an approval interceptor) |
 | `tool_timeout.py` | `ToolTimeoutInterceptor` — hard timeout per tool call, configurable via `ctx.safety` |
 | `turn_timeout.py` | `TurnTimeoutInterceptor` — hard timeout per turn, raises `AgentTimeout` |
-| `tool_approval.py` | `ToolApprovalInterceptor` (simple) + `TieredToolApprovalInterceptor` (hardline/dangerous/sensitive 3-tier) + `DenyAction`/`TimeoutAction`/`ToolNameMatcher` |
 | `tool_watch.py` | `ToolWatchInterceptor` — concurrent watcher monitors Cancel commands during tool execution, with `ToolCancelPolicy` |
+| `tool_policy_interceptor.py` | `ToolPolicyInterceptor` — policy-based tool filtering |
 | `llm_stream_watch.py` | `LLMStreamWatchInterceptor` — polls ControlChannel during LLM streaming, cancels on demand |
-| `steer_inject.py` | `SteerInjectInterceptor` — appends `INJECT_STEER` text to tool results (must be outside approval in onion order) |
+| `steer_inject.py` | `SteerInjectInterceptor` — appends `INJECT_STEER` text to tool results |
 | `result_limit.py` | `ToolResultLimitInterceptor` — truncates tool results to max chars |
 
 ## Onion Order (Recommended)
@@ -24,8 +25,8 @@ Framework-provided interceptors — ready-to-use AOP wrappers for common control
 2. TurnTimeoutInterceptor        ← whole-turn timeout
 3. ToolWatchInterceptor          ← cancel monitoring (outer)
 4. ToolTimeoutInterceptor        ← hard timeout
-5. SteerInjectInterceptor        ← steer text (before approval!)
-6. TieredToolApprovalInterceptor ← 3-tier approval (innermost wrapper)
+5. SteerInjectInterceptor        ← steer text
+6. ToolPolicyInterceptor         ← policy filtering
      actual tool execution
 7. ToolResultLimitInterceptor    ← result truncation
 ```
@@ -33,24 +34,20 @@ Framework-provided interceptors — ready-to-use AOP wrappers for common control
 ## For AI Agents
 
 ### Working In This Directory
-- `TieredToolApprovalInterceptor` is the recommended successor to `ToolApprovalInterceptor`
-- Deny policy: `_deny_as_cancel` flag set in `ctx.metadata` — ReActAgent detects and pads remaining tools
-- SteerInject MUST register before TieredToolApproval in the interceptor list
+- `ArgumentMatcher` is the ONLY surviving class from the old `tool_approval.py`. It is a pure classification helper used by `ApprovalRuntime.classifier`, NOT an approval interceptor.
+- `TieredToolApprovalInterceptor` and `ToolApprovalInterceptor` have been REMOVED. Approval is handled through `ToolNode` → `ApprovalTransaction` → `TurnSnapshot` → `ApprovalRenderer`.
+- `ControlDrainInterceptor` does NOT drain `APPROVAL_RESPONSE`. The drain set is for cancel/inject/config commands only.
 
 ### Key Types
-- `ApprovalTier`: `HARDLINE` (always deny), `DANGEROUS` (must approve), `SENSITIVE` (YOLO can skip)
-- `DenyAction`: `TOOL_ERROR` (return error, continue), `CANCEL_TURN` (set flag, pad batch)
-- `TimeoutAction`: `TOOL_ERROR`, `CANCEL_TURN`
 - `ToolCancelPolicy`: `WAIT_GRACEFUL` (5s grace), `DISCARD_RESULT` (immediate)
+- `TimeoutAction`: duration-based timeout config
 
 ## Dependencies
 
 ### Internal
-- `framework.control` — `ControlChannel`, `ControlEventBus`, `AgentCancelled`/`ApprovalDenied`, `ControlCommandType`, `ApprovalDenialContext`
+- `framework.control` — `ControlChannel`, `ControlEventBus`, `ControlCommandType`
 - `framework.interceptor.abc` — `InterceptorScope`, context types
+
 ## Current Runtime Status
 
-Built-in interceptors should keep scope ownership explicit. The current bot
-project default chain uses `ControlDrainInterceptor` and `ToolResultLimitInterceptor`
-only; turn/tool timeout interceptors are not default wiring. See
-`docs/current-runtime.md`.
+The bot project default chain uses `ControlDrainInterceptor` and `ToolResultLimitInterceptor` only. No approval interceptors are wired. `ArgumentMatcher` is used by `ApprovalRuntime.classifier` (not as an interceptor).

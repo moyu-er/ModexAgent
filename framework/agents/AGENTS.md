@@ -31,4 +31,4 @@ class MyAgent(Agent[MyEvent]):
 
 `framework.agents.react` is graph-based (`StartNode`, `LLMNode`, `ToolNode`,
 `EndNode`). Clean/full mode behavior and runtime service boundaries are
-documented in `docs/current-runtime.md`.
+layered runtime services.

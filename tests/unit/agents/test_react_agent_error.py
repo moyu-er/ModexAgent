@@ -7,18 +7,39 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from framework.agents.react.agent import ReActAgent
+from framework.agents.react.state import ReActTurnState
 from framework.core.constants import FinishReason
-from framework.core.context_extensions import ExtensionKey
+from framework.runtime.enums import TurnCustomKey
 from framework.core.emitter import AgentResult
 from framework.core.tool_manager import ToolResult
 from framework.core.types import LLMResponse, ToolCall
+from framework.runtime.enums import AgentKind, TurnPhase
+from framework.runtime.models import TurnIdentity
+from framework.runtime.services import AgentRuntime, AgentRuntimeServices
+
+
+def _make_ctx(**kw):
+    """Create a real AgentContext with typed runtime state."""
+    from framework.core.agent import AgentContext
+    from framework.memory.history import ListMessageHistory
+    from framework.core.tool_manager import InMemoryToolManager
+    state = ReActTurnState(
+        identity=TurnIdentity(agent_id="test", session_id="s1", turn_id="t1"),
+        agent_kind=AgentKind.REACT, phase=TurnPhase.CREATED,
+    )
+    runtime = AgentRuntime(services=AgentRuntimeServices(), state=state)
+    return AgentContext(
+        system_prompt="", history=ListMessageHistory(),
+        tool_manager=InMemoryToolManager(), session_id="error-test",
+        max_iterations=5,
+        identity=state.identity, runtime=runtime,
+        **kw,
+    )
 
 
 class _FakeEmitter:
-    """Minimal emitter capturing calls for assertions."""
-
     def __init__(self):
-        self.events: list = []
+        self.events: list[tuple] = []
         self.deltas: list[str] = []
         self.completed: AgentResult | None = None
         self._streaming = False
@@ -46,65 +67,7 @@ class _FakeEmitter:
         self.events.append(("error", error))
 
 
-class _FakeHistory:
-    """Minimal message history for tests."""
-
-    def __init__(self):
-        self.messages: list = []
-
-    async def append(self, message):
-        self.messages.append(message)
-
-    async def replace_all(self, messages):
-        self.messages = list(messages)
-
-    def __iter__(self):
-        return iter(self.messages)
-
-    def __bool__(self):
-        return bool(self.messages)
-
-
-class _FakeContext:
-    """Minimal AgentContext for unit tests."""
-
-    def __init__(self):
-        self.messages = [{"role": "user", "content": "hello"}]
-        self.history = _FakeHistory()
-        self.system_prompt = ""
-        self.max_iterations = 5
-        self.attachments: list = []
-        self.tool_manager = None
-        self.temperature = 0.7
-        self.max_tokens = None
-        self.checkpoint: list | None = None
-        self.metadata: dict = {}
-        self.session_id = "error-test"
-        self.runtime = None
-        self.extensions: dict[str, Any] = {
-            "hooks": [],
-            ExtensionKey.MAX_TOOLS_PER_TURN: None,
-            ExtensionKey.GOVERNANCE: None,
-            ExtensionKey.ON_CHECKPOINT: None,
-            ExtensionKey.SAFETY: None,
-            "hook_runner": None,
-            "interceptor_chain": None,
-            "checkpoint_store": None,
-            "injection_queue": None,
-            ExtensionKey.RUNTIME_CTX_MGR: None,
-            ExtensionKey.RUNTIME_CTX: None,
-        }
-
-    async def to_messages(self):
-        return list(self.messages)
-
-    def get_tool_descriptions(self):
-        return None
-
-
 class TestReActAgentErrorResponse:
-    """4.1: error response → fail turn instead of treating as normal content."""
-
     @pytest.mark.asyncio
     async def test_error_finish_reason_returns_agent_error(self):
         provider = MagicMock()
@@ -113,12 +76,12 @@ class TestReActAgentErrorResponse:
             finish_reason=FinishReason.ERROR.value,
             error="something went wrong",
         ))
+        provider.get_default_model = lambda: "mock"
         agent = ReActAgent(provider=provider)
         emitter = _FakeEmitter()
-        ctx = _FakeContext()
+        ctx = _make_ctx()
 
         result = await agent.run(ctx, emitter)
-
         assert result is not None
         assert result.stop_reason == "error"
         assert result.error is not None
@@ -131,102 +94,77 @@ class TestReActAgentErrorResponse:
             content="Hello, how can I help?",
             finish_reason=FinishReason.STOP.value,
         ))
+        provider.get_default_model = lambda: "mock"
         agent = ReActAgent(provider=provider)
         emitter = _FakeEmitter()
-        ctx = _FakeContext()
-
+        ctx = _make_ctx()
         result = await agent.run(ctx, emitter)
-
         assert result is not None
         assert result.stop_reason == "completed" or result.stop_reason == "stop"
         assert result.content == "Hello, how can I help?"
 
 
 class TestReActAgentCancelledError:
-    """4.2: CancelledError handling before generic Exception."""
-
     @pytest.mark.asyncio
     async def test_cancelled_error_preserves_checkpoint(self):
         provider = MagicMock()
-
         async def raise_cancelled(*args, **kwargs):
             raise asyncio.CancelledError()
-
         provider.chat = raise_cancelled
+        provider.get_default_model = lambda: "mock"
         agent = ReActAgent(provider=provider)
         emitter = _FakeEmitter()
-        ctx = _FakeContext()
-        saved_checkpoint: list | None = None
-
-        async def save_ckpt(messages):
-            nonlocal saved_checkpoint
-            saved_checkpoint = list(messages)
-
-        ctx.extensions[ExtensionKey.ON_CHECKPOINT] = save_ckpt
-
+        ctx = _make_ctx()
+        # CancelledError propagates to caller; crash recovery will use
+        # TurnSnapshot.message_delta saved by pipeline's snapshot policy.
         with pytest.raises(asyncio.CancelledError):
             await agent.run(ctx, emitter)
 
-        # Checkpoint should be preserved (shielded save during cancellation)
-        # Even if empty, the save was attempted
-
 
 class TestReActAgentToolTimeout:
-    """4.4: tool execution timeout."""
-
     @pytest.mark.asyncio
     async def test_tool_timeout_returns_error_result(self):
         provider = MagicMock()
         provider.chat = AsyncMock(return_value=LLMResponse(
-            content="",
-            finish_reason=FinishReason.TOOL_CALLS.value,
+            content="", finish_reason=FinishReason.TOOL_CALLS.value,
             tool_calls=[ToolCall(tool_name="slow_tool", arguments={}, call_id="c1")],
         ))
-
+        provider.get_default_model = lambda: "mock"
         class SlowTool:
             async def execute(self, tool_name, arguments):
-                await asyncio.sleep(999)  # effectively hangs
+                await asyncio.sleep(0.5)
                 return ToolResult(tool_name=tool_name, result="done")
-
         class FakeToolManager:
             def __init__(self, tool):
                 self._tool = tool
             async def execute(self, tool_name, arguments):
                 return await self._tool.execute(tool_name, arguments)
-
+            def get_tool_descriptions(self):
+                return []
         tool = SlowTool()
-        ctx = _FakeContext()
+        ctx = _make_ctx()
         ctx.tool_manager = FakeToolManager(tool)
         agent = ReActAgent(provider=provider, tool_timeout=0.01)
         emitter = _FakeEmitter()
-
         result = await agent.run(ctx, emitter)
-
-        # Tool should have timed out, agent continues to next iteration
-        # or finishes with error depending on tool chain
         assert result is not None
 
 
 class TestReActAgentHookTimeout:
-    """4.3: hook execution timeout."""
-
     @pytest.mark.asyncio
     async def test_hook_timeout_is_logged_not_raised(self):
         provider = MagicMock()
         provider.chat = AsyncMock(return_value=LLMResponse(
-            content="ok",
-            finish_reason=FinishReason.STOP.value,
+            content="ok", finish_reason=FinishReason.STOP.value,
         ))
-
+        provider.get_default_model = lambda: "mock"
         class SlowHook:
             async def before_turn(self, context):
-                await asyncio.sleep(999)
-
+                await asyncio.sleep(0.5)
         agent = ReActAgent(provider=provider, hook_timeout=0.01)
         emitter = _FakeEmitter()
-        ctx = _FakeContext()
-        ctx.extensions["hooks"] = [SlowHook()]
-
-        # Should not raise — hook timeout is caught and logged
+        ctx = _make_ctx()
+        from framework.hook import HookRunner
+        ctx.runtime.services.hooks = HookRunner([SlowHook()])
         result = await agent.run(ctx, emitter)
         assert result is not None

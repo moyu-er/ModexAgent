@@ -10,9 +10,6 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
-from framework.core.agent import ctx_ext
-from framework.core.context_extensions import ExtensionKey
-
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
     from framework.multi_agent.bus import AgentMessageBus
@@ -53,13 +50,17 @@ class PeerAutoSendHook:
         if not result or not getattr(result, "content", None):
             return
 
-        rc = ctx_ext(ctx, ExtensionKey.RUNTIME_CTX)
+        rt = ctx.runtime
+        if rt is None:
+            return
+        rc = rt._runtime_context
         if rc is None:
-            rt_mgr = ctx_ext(ctx, ExtensionKey.RUNTIME_CTX_MGR)
+            rt_mgr = rt.services.runtime_context_manager
             if rt_mgr is not None:
                 rc = await rt_mgr.get_context(
-                    ctx.session_id, ctx.metadata
+                    ctx.session_id, None
                 )
+                rt._runtime_context = rc
         if rc is not None:
             calls = await rc.get_tool_calls()
             sent_tools = {"send_message", "send_message_async"}
@@ -77,7 +78,7 @@ class PeerAutoSendHook:
             len(result.content),
         )
 
-        session_id = ctx.metadata.get("session_id", "")
+        session_id = ctx.session_id or ""
         from framework.multi_agent.address import AgentAddress
         from framework.multi_agent.envelope import AgentMessageEnvelope
         from framework.multi_agent.session_id import DefaultSessionIdStrategy

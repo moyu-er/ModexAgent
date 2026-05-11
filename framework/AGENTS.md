@@ -14,6 +14,7 @@ Core multi-agent framework package. Contains all abstractions, implementations, 
 |-----------|---------|
 | `core/` | Abstract base classes, AgentContext, events, emitter, provider, tool manager (see `core/AGENTS.md`) |
 | `agents/` | Agent reasoning pattern implementations — ReAct, Summarizer (see `agents/AGENTS.md`) |
+| `approval/` | Tiered tool-approval system — tiers, batch atomicity, state store (see `approval/AGENTS.md`) |
 | `pipeline/` | AgentPipeline end-to-end flow orchestration, I/O adapters |
 | `session/` | AgentSession (request/response mode) |
 | `control/` | Runtime control plane — ControlChannel, ControlEventBus, RuntimeStateStore, exceptions (see `control/AGENTS.md`) |
@@ -47,7 +48,7 @@ Core multi-agent framework package. Contains all abstractions, implementations, 
 ### Common Patterns
 - `Protocol` for contracts, dataclass `@dataclass` for plain data
 - `scopes: frozenset[InterceptorScope]` for declaring interceptor scopes
-- Hook state stored in `ctx.metadata` (session-scoped), not instance attributes
+- Hook state stored in `ctx.runtime.state` (typed per-turn state), not instance attributes
 - Control commands flow through `ControlChannel`; events flow through `ControlEventBus`
 
 ## Dependencies
@@ -63,5 +64,4 @@ Core multi-agent framework package. Contains all abstractions, implementations, 
 ## Current Runtime Status
 
 The current ReAct runtime is graph-based and integrates hooks, interceptors,
-control, approval, and runtime state through explicit runtime services. See
-`docs/current-runtime.md` before changing cross-cutting runtime behavior.
+control, approval, and runtime state through explicit runtime services.

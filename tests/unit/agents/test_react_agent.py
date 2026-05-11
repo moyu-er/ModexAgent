@@ -20,6 +20,18 @@ from framework.core.provider import StreamingLLMProvider
 from framework.core.tool_manager import ToolResult
 from framework.core.types import LLMResponse, ToolCall
 from framework.memory.history import ListMessageHistory
+from framework.runtime.enums import AgentKind, TurnPhase
+from framework.runtime.models import TurnIdentity
+from framework.runtime.services import AgentRuntime, AgentRuntimeServices
+from framework.agents.react.state import ReActTurnState
+
+
+def _make_runtime():
+    state = ReActTurnState(
+        identity=TurnIdentity(agent_id="test", session_id="s1", turn_id="t1"),
+        agent_kind=AgentKind.REACT, phase=TurnPhase.CREATED,
+    )
+    return AgentRuntime(services=AgentRuntimeServices(), state=state)
 
 
 class MockNonStreamingProvider:
@@ -86,11 +98,13 @@ class TestReActAgentUnifiedLoop:
 
     @pytest.fixture
     def context(self):
+        runtime = _make_runtime()
         return AgentContext(
             system_prompt="You are a helpful assistant.",
             history=ListMessageHistory([{"role": "user", "content": "Hello"}]),
             tool_manager=MagicMock(),
             max_iterations=3,
+            identity=runtime.state.identity, runtime=runtime,
         )
 
     @pytest.fixture
@@ -173,7 +187,10 @@ class TestReActAgentUnifiedLoop:
                 responses.append(response.content)
 
         streaming_provider._stream_content = ["Hello ", "World"]
-        context.extensions["hooks"] = [TrackingHook()]
+        from framework.hook import HookRunner, HookSpec, HookErrorPolicy
+        context.runtime.services.hooks = HookRunner([
+            HookSpec(hook=TrackingHook(), on_error=HookErrorPolicy.LOG)
+        ])
         agent = ReActAgent(provider=streaming_provider)
 
         await agent.run(context, streaming_emitter)
@@ -293,7 +310,10 @@ class TestReActAgentUnifiedLoop:
             return LLMResponse(content="Complete response")
 
         non_streaming_provider.chat = mock_chat
-        context.extensions["hooks"] = [TrackingHook()]
+        from framework.hook import HookRunner, HookSpec, HookErrorPolicy
+        context.runtime.services.hooks = HookRunner([
+            HookSpec(hook=TrackingHook(), on_error=HookErrorPolicy.LOG)
+        ])
         agent = ReActAgent(provider=non_streaming_provider)
 
         await agent.run(context, emitter)
@@ -409,11 +429,13 @@ class TestReActAgentRegression:
 
     @pytest.fixture
     def context(self):
+        runtime = _make_runtime()
         return AgentContext(
             system_prompt="You are a helpful assistant.",
             history=ListMessageHistory([{"role": "user", "content": "Hello"}]),
             tool_manager=MagicMock(),
             max_iterations=3,
+            identity=runtime.state.identity, runtime=runtime,
         )
 
     @pytest.mark.asyncio
@@ -537,7 +559,7 @@ class TestReActAgentRegression:
 
 
 class TestReActAgentCheckpoint:
-    """崩溃恢复检查点测试。"""
+    """Crash recovery checkpoint tests — now using TurnSnapshot.message_delta."""
 
     @pytest.fixture
     def streaming_provider(self):
@@ -549,11 +571,13 @@ class TestReActAgentCheckpoint:
 
     @pytest.fixture
     def context(self):
+        runtime = _make_runtime()
         return AgentContext(
             system_prompt="You are a helpful assistant.",
             history=ListMessageHistory([{"role": "user", "content": "Hello"}]),
             tool_manager=MagicMock(),
             max_iterations=3,
+            identity=runtime.state.identity, runtime=runtime,
         )
 
     @pytest.fixture
@@ -581,25 +605,18 @@ class TestReActAgentCheckpoint:
         streaming_provider.chat_stream = mock_chat_stream
         context.tool_manager.execute = AsyncMock(return_value=ToolResult(tool_name="weather", result="Sunny, 25C"))
 
-        saved: list[list[dict[str, Any]]] = []
-        cleared: list[str] = []
-
-        class _MockStore:
-            async def save(self, cid, data):
-                saved.append(list(data.get("messages", [])))
-            async def clear(self, cid):
-                cleared.append(cid)
-
-        context.extensions["checkpoint_store"] = _MockStore()
         agent = ReActAgent(provider=streaming_provider)
         streaming_emitter = StreamingEmitter()
 
         result = await agent.run(context, streaming_emitter)
 
-        # checkpoint 应在 assistant 后、每个 tool 后都同步保存
-        assert len(saved) >= 3
+        # message_delta tracks both assistant and tool messages
+        from framework.runtime.services import require_runtime_state
+        from framework.agents.react.state import ReActTurnState
+        state = require_runtime_state(context.runtime, ReActTurnState)
+        assert len(state.message_delta) >= 2, f"expected >= 2 message_delta entries, got {len(state.message_delta)}"
 
-        # 最终内容正确
+        # Final content is correct
         assert "Sunny in Beijing" in result.content
 
     @pytest.mark.asyncio
@@ -609,21 +626,15 @@ class TestReActAgentCheckpoint:
 
         non_streaming_provider.chat = mock_chat
 
-        cleared: list[str] = []
-
-        class _MockStore:
-            async def save(self, cid, data):
-                pass
-            async def clear(self, cid):
-                cleared.append(cid)
-
-        context.extensions["checkpoint_store"] = _MockStore()
         agent = ReActAgent(provider=non_streaming_provider)
-
         await agent.run(context, emitter)
 
-        # checkpoint 应在结束时清除
-        assert len(cleared) >= 1
+        # Turn completed successfully — phase is COMPLETED
+        from framework.runtime.enums import TurnPhase
+        assert context.runtime.state.phase == TurnPhase.COMPLETED
+
+        # message_delta records the assistant message
+        assert len(context.runtime.state.message_delta) >= 1
 
     @pytest.mark.asyncio
     async def test_checkpoint_saved_on_error(self, non_streaming_provider, context, emitter):
@@ -632,22 +643,13 @@ class TestReActAgentCheckpoint:
 
         non_streaming_provider.chat = mock_chat
 
-        saved: list[list[dict[str, Any]]] = []
-
-        class _MockStore:
-            async def save(self, cid, data):
-                saved.append(list(data.get("messages", [])))
-            async def clear(self, cid):
-                pass
-
-        context.extensions["checkpoint_store"] = _MockStore()
         agent = ReActAgent(provider=non_streaming_provider)
-
         result = await agent.run(context, emitter)
 
+        # Error result preserves messages for crash recovery
         assert result.stop_reason == "error"
-        # 错误路径中也会保存 checkpoint（保留当前进度）
-        assert len(saved) >= 1
+        assert result.error is not None
+        assert "LLM failure" in str(result.error)
 
     @pytest.mark.asyncio
     async def test_multiturn_tool_calls_synced_to_context_history(self, streaming_provider, context):
