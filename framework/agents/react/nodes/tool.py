@@ -172,6 +172,14 @@ class ToolNode(Node):
         ])
         self._apply_decisions_to_batch(batch, decisions)
 
+        pre_approved_ids = {
+            call.call_id
+            for call in batch.calls
+            if react_state.approval.decisions.get(call.call_id) == ApprovalDecision.ALLOWED
+        }
+        if pre_approved_ids and ctx.runtime and ctx.runtime.state:
+            ctx.runtime.state.custom[TurnCustomKey.PRE_APPROVED_TOOL_IDS] = pre_approved_ids
+
         react_state.phase = TurnPhase.RUNNING
         react_state.current_node = ReActNode.TOOL
         return await self._execute_batch(tool_calls, decisions, ctx)
@@ -256,10 +264,13 @@ class ToolNode(Node):
             if decision == ApprovalDecision.ALLOWED:
                 result = await self._agent._execute_tool(tc, ctx)
             else:
+                error_msg = f"Error: {decision}"
+                if state is not None and state.approval is not None and state.approval.deny_reason:
+                    error_msg = f"Error: {decision} ({state.approval.deny_reason})"
                 result = ToolResult(
                     tool_name=tc.tool_name,
                     result=None,
-                    error=f"Error: {decision}",
+                    error=error_msg,
                 )
 
             if ctx.emitter is not None:
@@ -307,7 +318,13 @@ class ToolNode(Node):
             )
 
         if denied_encountered:
-            deny_policy = ApprovalDenyPolicy.CANCEL_TURN
+            # EXTENSION POINT: whether denial cancels the ReAct turn is
+            # configurable per-agent or per-batch via ApprovalDenyPolicy.
+            # Default TOOL_RESULT_ONLY keeps the loop running so the agent
+            # can respond with denial context (e.g. "unrelated input: xxx").
+            # To cancel the turn on any denied tool, set
+            # ctx.runtime.approval.default_deny_policy to CANCEL_TURN.
+            deny_policy: ApprovalDenyPolicy = ApprovalDenyPolicy.TOOL_RESULT_ONLY
             if ctx.runtime and ctx.runtime.approval:
                 deny_policy = ctx.runtime.approval.default_deny_policy
             if deny_policy == ApprovalDenyPolicy.CANCEL_TURN:

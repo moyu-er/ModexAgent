@@ -71,4 +71,7 @@ class ApprovalRuntime:
     """
 
     classifier: ApprovalClassifier
-    default_deny_policy: ApprovalDenyPolicy = ApprovalDenyPolicy.CANCEL_TURN
+    # EXTENSION POINT: override per-agent to CANCEL_TURN if the ReAct loop
+    # should terminate after any denied tool (user /deny or unrelated input).
+    # Default TOOL_RESULT_ONLY keeps the loop running so the agent can respond.
+    default_deny_policy: ApprovalDenyPolicy = ApprovalDenyPolicy.TOOL_RESULT_ONLY
