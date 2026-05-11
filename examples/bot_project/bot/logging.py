@@ -13,7 +13,7 @@ from pathlib import Path
 
 def setup_logging() -> None:
     """Configure root logger with console + rotating file handlers."""
-    log_dir = Path(__file__).parent / "logs"
+    log_dir = Path(__file__).parent.parent / "logs"
     log_dir.mkdir(exist_ok=True)
 
     log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
