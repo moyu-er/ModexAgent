@@ -15,7 +15,7 @@ from framework.core.graph.interrupt import GraphInterrupt
 from framework.core.tool_manager import InMemoryToolManager, Tool
 from framework.core.types import LLMResponse, ToolCall
 from framework.memory.history import ListMessageHistory
-from framework.runtime.enums import AgentKind, SnapshotReason, TurnPhase
+from framework.runtime.enums import AgentKind, ApprovalDenyPolicy, SnapshotReason, TurnPhase
 from framework.runtime.models import StateQueryScope, TurnIdentity
 from framework.runtime.services import AgentRuntime, AgentRuntimeServices
 from framework.runtime.store import InMemoryTurnStateStore
@@ -73,7 +73,7 @@ class _Emitter(ContentEmitter):
     def wants_streaming(self) -> bool: return False
 
 
-def _context(store: InMemoryTurnStateStore, tool_calls: list[str]) -> AgentContext:
+def _context(store: InMemoryTurnStateStore, tool_calls: list[str], default_deny_policy=ApprovalDenyPolicy.TOOL_RESULT_ONLY) -> AgentContext:
     manager = InMemoryToolManager()
     manager.register(_RecordTool(tool_calls))
     identity = TurnIdentity(
@@ -97,7 +97,7 @@ def _context(store: InMemoryTurnStateStore, tool_calls: list[str]) -> AgentConte
     ctx.identity = identity
     ctx.runtime = AgentRuntime(
         services=AgentRuntimeServices(
-            approval=ApprovalRuntime(classifier=_DangerousClassifier()),
+            approval=ApprovalRuntime(classifier=_DangerousClassifier(), default_deny_policy=default_deny_policy),
             turn_store=store,
         ),
         state=state,
@@ -158,7 +158,7 @@ async def test_partial_approval_then_deny_preempts_whole_batch_on_start_resume()
     store = InMemoryTurnStateStore()
     executed: list[str] = []
     agent = ReActAgent(_Provider())
-    ctx = _context(store, executed)
+    ctx = _context(store, executed, default_deny_policy=ApprovalDenyPolicy.CANCEL_TURN)
 
     with pytest.raises(GraphInterrupt):
         await agent.run(ctx, _Emitter())
@@ -169,7 +169,7 @@ async def test_partial_approval_then_deny_preempts_whole_batch_on_start_resume()
     approval.apply_decision("c1", ApprovalDecision.ALLOWED)
     approval.apply_decision("c2", ApprovalDecision.DENIED)
 
-    resume_ctx = _context(store, executed)
+    resume_ctx = _context(store, executed, default_deny_policy=ApprovalDenyPolicy.CANCEL_TURN)
     resume_ctx.identity = snapshot.identity
     resume_ctx.runtime.state = ReActSnapshotPolicy.state_from_snapshot(
         ReActSnapshotPolicy.replace_approval(snapshot, approval)

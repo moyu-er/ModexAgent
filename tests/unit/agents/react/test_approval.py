@@ -88,4 +88,4 @@ class TestApprovalRuntime:
         ar = ApprovalRuntime(classifier=classifier)
         assert ar.classifier is classifier
         from framework.runtime.enums import ApprovalDenyPolicy
-        assert ar.default_deny_policy is ApprovalDenyPolicy.CANCEL_TURN
+        assert ar.default_deny_policy is ApprovalDenyPolicy.TOOL_RESULT_ONLY

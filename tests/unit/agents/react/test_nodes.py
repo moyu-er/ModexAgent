@@ -409,6 +409,12 @@ class TestToolNode:
         tc = ToolCall(tool_name="write_file", arguments={"path": "/tmp/x"}, call_id="c1")
         runtime = _make_runtime()
         runtime.state.iteration = 1
+        from framework.agents.react.approval import ApprovalRuntime
+        from framework.runtime.enums import ApprovalDenyPolicy
+        runtime.services.approval = ApprovalRuntime(
+            classifier=type("_Cls", (), {"classify": lambda s, tc, c: "normal"})(),
+            default_deny_policy=ApprovalDenyPolicy.CANCEL_TURN,
+        )
         ctx = AgentContext(
             system_prompt="test", history=_MockHistory(),
             tool_manager=InMemoryToolManager(),
