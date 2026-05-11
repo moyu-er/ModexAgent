@@ -48,3 +48,35 @@ See `examples/bot_project/docs/memory-system.md` for details.
 ## Testing
 
 Add focused regression tests under `tests/unit/` for framework changes, especially memory, governance, tools, multi-agent routing, and sandbox behavior. For behavior changes, write or update tests before production code when practical.
+
+## Approval Architecture Rules (CRITICAL)
+
+These rules were distilled from design docs and bug fixes. Violating any of them
+will re-introduce known bugs or create a second, conflicting approval path.
+
+1. **One approval path only.** Approval must be implemented through the pipeline
+   layer: `ToolNode` → `ApprovalTransaction` → `TurnSnapshot` → `ApprovalRenderer`.
+   Do NOT add approval logic to interceptors, hooks, or control channel consumers.
+
+2. **`ControlDrainInterceptor` must not drain `APPROVAL_RESPONSE`.**
+   The drain set is for cancel / inject / config commands only.
+
+3. **`ApprovalRuntime` is a policy service, not a state owner.** It owns
+   classifier + deny_policy. State lives in `ApprovalTransaction` inside
+   `ReActTurnState`.
+
+4. **Deny policy defaults to `TOOL_RESULT_ONLY`.** Rejection (both `/deny` and
+   unrelated input) returns tool errors with `deny_reason`, then continues the
+   ReAct loop. Turn cancellation (`CANCEL_TURN`) is a configurable override.
+
+5. **EXTENSION POINT comments required.** Any behaviour that is currently
+   hard-coded but intended to be configurable in the future must be marked with
+   an `EXTENSION POINT` comment explaining what, why, and how to configure it.
+
+6. **`deny_reason` lives on `ApprovalTransaction.deny_reason`.** Do not read it
+   from `ctx.metadata`, `ReActMetaKey`, or any other location.
+
+7. **State migration must preserve existing logic.** When migrating from old
+   state keys (e.g. `ReActMetaKey`) to typed state (`TurnCustomKey`), verify
+   that every old key's behaviour has a corresponding new path. The
+   `PRE_APPROVED_TOOL_IDS` loss during migration is the canonical example.
