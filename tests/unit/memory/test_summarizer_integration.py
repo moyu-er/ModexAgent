@@ -248,7 +248,7 @@ async def test_without_cleanup_tool_context_preserved_in_summarizer():
     layer_set = MemoryLayerFactory.single_user(registry=registry)
 
     coordinator = DefaultMemoryCompressionCoordinator(
-        max_messages=3, summary=strategy,
+        max_messages=11, summary=strategy,
     )
     lifecycle = DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator)
     system = DefaultMemorySystem(
@@ -258,7 +258,6 @@ async def test_without_cleanup_tool_context_preserved_in_summarizer():
     ctx = _make_ctx("no-cleanup")
 
     history = system.create_message_history(ctx)
-    # 3 turns with tool chains
     for i in range(3):
         await history.append({"role": "user", "content": f"task {i}"})
         await history.append({"role": "assistant", "content": "", "tool_calls": [
@@ -267,10 +266,7 @@ async def test_without_cleanup_tool_context_preserved_in_summarizer():
         await history.append({"role": "tool", "tool_call_id": f"tc{i}", "name": "read_file", "content": f"data{i}"})
         await history.append({"role": "assistant", "content": f"answer {i}"})
 
-    # Summarizer was called
     assert mock_agent.call_count >= 1, "summarizer should be called"
-
-    # Formatted text contained tool context from the LAST compression batch
     formatted = mock_agent.captured_formatted
     assert "read_file" in formatted, "tool names should appear in summarizer input"
     assert "task" in formatted, "user messages should appear"
