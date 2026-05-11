@@ -30,7 +30,7 @@ class ToolPolicyInterceptor:
     在 TOOL_CALL scope 中检查 ctx.metadata["_policy_denied_tools"]，
     匹配时返回伪 ToolResult(error=...) 而非执行实际工具。
 
-    必须注册在 ToolWatchInterceptor 和 TieredToolApprovalInterceptor 外层
+    必须注册在 ToolWatchInterceptor 外层
     （洋葱序上靠前），让策略否决短路其他拦截器。
     """
 
