@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-04-30 -->
+<!-- Updated: 2026-05-11 -->
 
 # security
 
@@ -12,8 +12,10 @@ Security policies, validators, and approval handlers. Protects agent from execut
 - Security policies define what tools/arguments are allowed
 - `SecurityPolicy`: base policy class
 - Validators: check tool calls against policies before execution
-- Approval handlers: integrate with `TieredToolApprovalInterceptor` for multi-level security
+- Approval handlers: integrate with `ApprovalRuntime` and `ToolNode` for multi-level security (not through interceptors)
 ## Current Runtime Status
 
 Security policy can participate in approval and tool execution policy, but
-approval suspend/resume is owned by the ReAct runtime.
+approval suspend/resume is owned by the ReAct runtime. Approval is NOT
+implemented through interceptors.
+

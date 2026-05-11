@@ -1,10 +1,10 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-04-30 -->
+<!-- Updated: 2026-05-11 -->
 
 # interceptor
 
 ## Purpose
-AOP (Aspect-Oriented Programming) call-boundary wrapping layer. Interceptors form an onion chain around tool calls, turns, iterations, and LLM streams. Each interceptor can approve, deny, timeout, transform, or cancel the wrapped call.
+AOP (Aspect-Oriented Programming) call-boundary wrapping layer. Interceptors form an onion chain around tool calls, turns, iterations, and LLM streams. Each interceptor can timeout, transform, or cancel the wrapped call. **Approval does NOT go through interceptors** — it is handled through the pipeline layer (TurnSnapshot + ApprovalTransaction).
 
 ## Key Files
 | File | Description |
@@ -17,16 +17,16 @@ AOP (Aspect-Oriented Programming) call-boundary wrapping layer. Interceptors for
 ## Subdirectories
 | Directory | Purpose |
 |-----------|---------|
-| `builtin/` | Framework-provided interceptors — tiered-approval, timeout, watch, steer-inject, stream-watch, result-limit, control-drain (see `builtin/AGENTS.md`) |
+| `builtin/` | Framework-provided interceptors — timeout, watch, steer-inject, stream-watch, result-limit, control-drain, tool-policy (see `builtin/AGENTS.md`) |
 
 ## For AI Agents
 
 ### Working In This Directory
 - New interceptors implement the `Interceptor` Protocol — a `scopes` frozenset + the matching `around_*` method
 - Onion model: index 0 is outermost (enters first, exits last)
-- Order matters: SteerInject MUST be before TieredToolApproval, ControlDrain at boundary level
+- ControlDrain at boundary level, ToolResultLimit innermost
 - `InterceptorChain.has_scope()` for checking if a scope has any registered interceptors
-- `around_tool_call` MUST return a legal `ToolResult` — never throw for denial (set flags instead)
+- `around_tool_call` MUST return a legal `ToolResult`
 
 ### Interceptor Scopes
 | Scope | Method | Purpose |
@@ -39,17 +39,21 @@ AOP (Aspect-Oriented Programming) call-boundary wrapping layer. Interceptors for
 | `LLM_CALL`, `PIPELINE_STEP`, `POOL_TASK`, `MEMORY_OPERATION` | (future) | Reserved |
 
 ### Testing Requirements
-- Tests in `tests/unit/test_interceptor_chain.py`, `tests/unit/test_tiered_tool_approval.py`, etc.
+- Tests in `tests/unit/test_interceptor_chain.py`, `tests/unit/test_control_drain_interceptor.py`, etc.
 - Test onion ordering
 - Test exception handling (AgentControlError propagates, generic exceptions converted to ToolResult)
+- Approval-related tests are in `tests/unit/approval/`, NOT in interceptor tests
 
 ## Dependencies
 
 ### Internal
-- `framework.control` — `ControlChannel`, `ControlEventBus`, `ControlCommandType`, `AgentCancelled`/`ApprovalDenied`
+- `framework.control` — `ControlChannel`, `ControlEventBus`, `ControlCommandType`
 - `framework.core.agent` — `AgentContext`
+
 ## Current Runtime Status
 
 Interceptors wrap execution scopes such as tool calls, LLM streams, turns, and
 iterations. The bot project default chain currently includes
 `ControlDrainInterceptor` and `ToolResultLimitInterceptor` only.
+Approval is handled through `ToolNode` → `ApprovalTransaction` → `TurnSnapshot` → `ApprovalRenderer`.
+

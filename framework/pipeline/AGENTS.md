@@ -24,7 +24,8 @@ End-to-end flow orchestration — `AgentPipeline` ties together input adapters, 
   - `STEER`: send `INJECT_STEER` control command
 - Session tasks tracked in `_session_tasks: dict[str, asyncio.Task]`
 - `cleanup_session()` called on ControlChannel at session end
-- Checkpoint recovery on pipeline restart (via `ctx_mgr.recover_checkpoint`)
+- Turn recovery via `TurnStateStore.list_active_turns()` (not via old checkpoint IDs)
+- Approval handled through `_handle_snapshot_approval()` + `ApprovalRenderer.detect()`
 
 ### Flow
 ```
@@ -33,13 +34,22 @@ InputAdapter.receive()
   → Deduplicator check
   → Busy check (INTERRUPT/QUEUE/STEER)
   → Session lock
-  → Context load + checkpoint recovery
+  → Context load + approval snapshot check
+      → If pending approval: ApprovalRenderer.detect() → _handle_snapshot_approval()
   → MultiAgentContextBuilder
   → AgentContext construction (with injection_queue)
   → Agent.run()
-  → Context save + flush + checkpoint clear
+      → GraphInterrupt (approval required) → save TurnSnapshot → return None
+      → AgentResult (normal) → save context
   → cleanup_session
 ```
+
+### Approval in Pipeline
+- `_load_pending_approval_snapshot()` queries `TurnStateStore` for SUSPENDED turns
+- `ApprovalRenderer.detect()` handles `/approve`, `/deny`, and unrelated input
+- `_handle_snapshot_approval()` applies decisions via `ApprovalTransaction.apply_decision()`
+- Partial approval: snapshot re-saved, wait for next input
+- Complete approval: `_execute_turn()` resumes from stored `current_node`
 
 ### Testing Requirements
 - Tests in `tests/unit/pipeline/`
