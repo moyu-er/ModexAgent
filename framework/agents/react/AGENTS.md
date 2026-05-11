@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-05-02 -->
+<!-- Updated: 2026-05-11 -->
 
 # react
 
@@ -15,47 +15,59 @@ the integration points for hooks, interceptors, and control.
 |------|-------------|
 | `agent.py` | `ReActAgent` entry point. Builds turn context and delegates execution to the graph. |
 | `graph.py` | `ReActGraph` composition for `start -> llm -> tool -> end`. |
-| `state.py` | Typed ReAct turn state, snapshot policy, and runtime state codec. |
+| `state.py` | `ReActTurnState`, `ReActSnapshotPolicy`, `ReActRuntimeStateCodec`. |
 | `constants.py` | ReAct node and transition reason enums. |
-| `nodes/start.py` | Start/resume node. Restores state and routes to the stored resume target. |
-| `nodes/llm.py` | Model node. Handles prompt/model execution and streaming integration. |
-| `nodes/tool.py` | Tool node. Handles tool execution, approval suspend/resume, and cancellation metadata. |
+| `approval.py` | `ApprovalRuntime` (classifier + deny_policy service) + `TieredToolApprovalClassifier`. |
+| `assembler.py` | `RuntimeAssembler` — single entry point for `AgentRuntime` construction. |
+| `nodes/start.py` | Start/resume node. Routes to stored `current_node` when `phase=SUSPENDED`. |
+| `nodes/llm.py` | Model node. Prompt/model execution and streaming integration. |
+| `nodes/tool.py` | Tool node. Classify → suspend for approval → batch execute. |
 | `nodes/end.py` | End node. Builds `AgentResult`, including `turn_cancelled` results. |
 
 ## Runtime Modes
 
-- `clean`: should execute as a plain ReAct graph. Hooks, approval, interceptors,
+- `clean`: executes as a plain ReAct graph. Hooks, approval, interceptors,
   control services, runtime state store, and injection queues should be absent
-  from the turn runtime. Do not add repeated clean-mode conditionals in every node.
+  from the turn runtime.
 - `full`: wires hook, interceptor, control, approval, and runtime state services
   through `AgentRuntimeServices`.
 
-## Hook / Interceptor / Control Rules
+## Approval Flow (THE one and only path)
 
-- Hooks observe or transform lifecycle payloads. Store per-turn hook state in
-  `ctx.runtime.state`, never in shared hook instance attributes.
-- Interceptors wrap execution boundaries such as turn, iteration, LLM stream, and
-  tool call. Tool call wrapping is active; turn/iteration wrapping should only be
-  enabled when `ReActAgent` owns those scopes explicitly.
-- Control is the runtime command plane. Current handling is safe-boundary based;
-  future live intervention should target operation IDs for LLM streams and tool
-  calls.
+```
+LLM generates tool_calls
+  → ToolNode._classify_all() → ApprovalRuntime.classifier.classify()
+  → If PENDING: _suspend_for_approval() → ApprovalTransaction → TurnSnapshot → interrupt
+  → Pipeline: ApprovalRenderer.detect() → _handle_snapshot_approval()
+  → If every_tool_decided: _execute_turn()
+  → StartNode → TOOL → _resume_suspended_batch()
+  → Sets PRE_APPROVED_TOOL_IDS on ALLOWED tools
+  → _execute_batch(): ALLOWED=tool executes, DENIED/PREEMPTED=error result
+  → Continue to LLM (default TOOL_RESULT_ONLY) or cancel turn (configurable CANCEL_TURN)
+```
+
+## Deny Policy
+
+- **Default**: `TOOL_RESULT_ONLY` — denied tools return errors with `deny_reason`, ReAct loop continues.
+- **Cancel override**: set `ApprovalRuntime.default_deny_policy=CANCEL_TURN` to terminate the turn on any denial.
+- **EXTENSION POINT**: `_execute_batch` has a comment block explaining how to configure per-agent/per-batch deny policy.
 
 ## Resume And Cancellation
 
-Suspended ReAct turns are represented by `TurnSnapshot` plus
-`ReActTurnState.current_node`. Approval resume re-enters through `StartNode`,
-which routes to the stored current node.
+- Suspended turns: `TurnSnapshot` + `ReActTurnState.current_node`. Resume enters through `StartNode` → routes to stored node.
+- `ToolNode._resume_suspended_batch` sets `PRE_APPROVED_TOOL_IDS` in `state.custom` to prevent re-approval.
+- `deny_reason` is read from `state.approval.deny_reason` (NOT from `ctx.metadata`).
+- `EndNode` maps cancelled turns to `AgentResult(stop_reason="turn_cancelled")`.
 
-Tool cancellation paths should set typed turn phase/cancellation state.
-`EndNode` maps cancelled turns to `AgentResult(stop_reason="turn_cancelled")`.
+## Hook / Interceptor / Control Rules
+
+- Hooks: store per-turn state in `ctx.runtime.state`, never in shared instance attributes.
+- Interceptors: wrap execution boundaries. Approval does NOT go through interceptors.
+- Control: runtime command plane. `ControlDrainInterceptor` drains cancel/inject/config only (no APPROVAL_RESPONSE).
 
 ## Testing Requirements
 
-- Unit tests live under `tests/unit/agents/react/`.
-- Mock `LLMProvider`, tools, and emitters directly; avoid broad integration
-  setup for node-level behavior.
-- Cover START-based resume routing, approval transactions, cancellation result
-  mapping, and clean/full mode boundaries when those paths change.
-
-
+- Unit tests under `tests/unit/agents/react/`.
+- Mock `LLMProvider`, tools, and emitters directly.
+- Cover START-based resume routing, approval transactions, PRE_APPROVED_TOOL_IDS, deny policy defaults.
+- When testing CANCEL_TURN behavior, explicitly set `default_deny_policy=ApprovalDenyPolicy.CANCEL_TURN`.
