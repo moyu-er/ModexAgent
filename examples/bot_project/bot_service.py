@@ -42,6 +42,10 @@ class QQBotService(BotService):
     def __init__(self, config_dir: Path, mode: Literal["pipeline", "pool"] = "pipeline") -> None:
         yaml_path = config_dir / "bot_config.yml"
 
+        # Load .env BEFORE AppConfig.from_yaml() so ${LLM_API_KEY} resolves
+        from dotenv import load_dotenv
+        load_dotenv(config_dir.parent / ".env")
+
         # IOC config — primary config source
         app_cfg = AppConfig.from_yaml(yaml_path)
         print(f"[IOC] Loaded: {len(app_cfg.agents)} agents, "
