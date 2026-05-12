@@ -4,23 +4,23 @@ from framework.ioc.configs.llm import LLMConfig
 class TestLLMConfig:
     def test_defaults(self) -> None:
         cfg = LLMConfig()
-        assert cfg.provider == "openai"
         assert cfg.temperature == 0.7
+        assert cfg.model == "gpt-4"
 
     def test_partial_override(self) -> None:
         cfg = LLMConfig(model="claude-opus-4-5", api_key="sk-xxx")
         assert cfg.model == "claude-opus-4-5"
         assert cfg.api_key == "sk-xxx"
-        assert cfg.provider == "openai"
+        assert cfg.base_url == ""
 
     def test_full_override(self) -> None:
         cfg = LLMConfig(
-            provider="anthropic",
-            model="claude-opus-4-5",
+            model="openai/MiniMax-M2.5",
             api_key="sk-xxx",
-            api_base="https://api.anthropic.com",
-            temperature=0.3,
-            max_tokens=32000,
+            base_url="https://api.minimaxi.com/v1",
+            temperature=0.7,
+            max_tokens=80000,
         )
-        assert cfg.provider == "anthropic"
-        assert cfg.max_tokens == 32000
+        assert cfg.model == "openai/MiniMax-M2.5"
+        assert cfg.base_url == "https://api.minimaxi.com/v1"
+        assert cfg.max_tokens == 80000

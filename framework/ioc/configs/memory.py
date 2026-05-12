@@ -15,7 +15,8 @@ class ShortTermConfig(BaseModel):
 
     max_messages: int = 100
     max_tokens: int = 100000
-    keep_ratio: float = 0.4
+    keep_ratio_for_messages: float = 0.4
+    keep_ratio_for_token: float = 0.4
     auto_llm_compression: bool = True
 
 
@@ -65,6 +66,8 @@ class LossyConfig(BaseModel):
 
     tool_result_head_chars: int = 1200
     assistant_head_chars: int = 1200
+    agent_head_chars: int = 2000
+    user_head_chars: int = 4000
 
 
 class GovernanceConfig(BaseModel):

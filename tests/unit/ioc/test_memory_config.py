@@ -37,4 +37,4 @@ class TestMemoryConfig:
         """Unset sub-fields keep defaults."""
         cfg = MemoryConfig(short_term=ShortTermConfig(max_messages=30))
         assert cfg.short_term.max_messages == 30
-        assert cfg.short_term.keep_ratio == 0.4
+        assert cfg.short_term.keep_ratio_for_messages == 0.4
