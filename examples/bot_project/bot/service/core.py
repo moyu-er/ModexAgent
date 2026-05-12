@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from bot.plugins.integration import PluginIntegration
-from bot.utils.config_loader import ConfigLoader
+from bot.utils.config_loader import ConfigLoader, validate_config
 from framework import (
     AgentPipeline,
     InMemoryToolManager,
@@ -110,9 +110,9 @@ class BotService(AgentBuilderMixin):
         output_adapter: OutputAdapter,
         emitter_factory: Callable[[str], ContentEmitter],
         mode: Literal["pipeline", "pool"] = "pipeline",
-        config: dict[str, Any] | None = None,
         *,
         app_config: AppConfig | None = None,
+        legacy_raw: dict[str, Any] | None = None,
     ):
         self.config_dir = config_dir
         self.config_loader = ConfigLoader(config_dir)
@@ -121,12 +121,11 @@ class BotService(AgentBuilderMixin):
         self.emitter_factory = emitter_factory
         self.mode = mode
         self._app_config = app_config
+        self._legacy_raw = legacy_raw or {}
 
-        # Legacy compat: build IOC config from dict if not provided
-        if self._app_config is None and config is not None:
-            self._app_config = self._load_app_config()
-
-        self.config: dict[str, Any] = config or {}
+        # Build minimal legacy dict for remaining unconverted code paths
+        # (MCP config, tools config). These will be removed in follow-up PRs.
+        self.config: dict[str, Any] = self._build_legacy_config()
 
         # Components
         self.pipeline: AgentPipeline | None = None
@@ -622,12 +621,75 @@ class BotService(AgentBuilderMixin):
         print(f"   Input bridge: {self.input_adapter.name} -> {main_address}")
         print(f"   Output route: agent:{parent_agent_name}:out -> {self.output_adapter.name}")
 
-    def _load_config(self) -> dict[str, Any]:
-        """Load all configuration files."""
-        config = self.config_loader.load_yaml("bot_config.yml")
-        mcp_config = self.config_loader.load_mcp_config(config.get("mcp", {}))
-        config["mcp"] = mcp_config
-        return config
+    def _build_legacy_config(self) -> dict[str, Any]:
+        """Build minimal dict for remaining legacy code paths from IOC config."""
+        if self._app_config is None:
+            return {}
+
+        _cfg = self._app_config
+        _main = _cfg.agents[0] if _cfg.agents else None
+        _mem = _main.memory if _main else None
+
+        return {
+            "llm": _cfg.llm.model_dump(),
+            "agent": {
+                "system_prompt": _main.system_prompt if _main else "",
+                "max_iterations": _main.max_steps if _main else 20,
+                "approval": (
+                    _main.approval.model_dump() if _main and _main.approval
+                    else {"enabled": False, "tools": {}}
+                ),
+            },
+            "multi_agent": {
+                "enabled": len(_cfg.agents) > 1,
+                "parent_agent_name": _main.name if _main else "main",
+                "peers": [
+                    {"name": a.name, "system_prompt": a.system_prompt}
+                    for a in _cfg.agents[1:]
+                ],
+            },
+            "memory": {
+                "main": {
+                    "short_term": {
+                        "max_messages": _mem.short_term.max_messages if _mem else 100,
+                        "max_tokens": _mem.short_term.max_tokens if _mem else 100000,
+                        "keep_ratio_for_messages": _mem.short_term.keep_ratio if _mem else 0.4,
+                        "keep_ratio_for_token": _mem.short_term.keep_ratio if _mem else 0.4,
+                        "auto_llm_compression": _mem.short_term.auto_llm_compression if _mem else True,
+                    },
+                    "long_term": {"enabled": _mem is not None and _mem.long_term is not None and _mem.long_term.enabled},
+                    "dream_engine": {"enabled": _mem is not None and _mem.dream_engine is not None and _mem.dream_engine.enabled},
+                    "governance": self._governance_to_dict(_mem.governance if _mem else None),
+                },
+                "peers": {"short_term": {"max_messages": 50}},
+                "subagents": {"short_term": {"max_messages": 50}},
+            },
+            "mcp": self._legacy_raw.get("mcp", {}),
+            "tools": {"file_tools": {"enabled": True}, "shell_tools": {"enabled": True}, "search_tools": {"enabled": True}},
+            "paths": _cfg.paths.model_dump(),
+        }
+
+    @staticmethod
+    def _governance_to_dict(g: object | None) -> dict[str, object]:
+        if g is None:
+            return {"enabled": False}
+        from framework.ioc.configs.memory import GovernanceConfig
+        if not isinstance(g, GovernanceConfig):
+            return {"enabled": False}
+        return {
+            "enabled": True,
+            "tool_chain_repair": g.tool_chain_repair,
+            "token_budget": (
+                {"enabled": True, "budget_ratio": g.token_budget.budget_ratio,
+                 "safety_buffer": g.token_budget.safety_buffer}
+                if g.token_budget else {"enabled": False}
+            ),
+            "lossy_compaction": (
+                {"enabled": True, "tool_result_head_chars": g.lossy_compaction.tool_result_head_chars,
+                 "assistant_head_chars": g.lossy_compaction.assistant_head_chars}
+                if g.lossy_compaction else {"enabled": False}
+            ),
+        }
 
     @property
     def safety_policy(self) -> RuntimeSafetyPolicy:
