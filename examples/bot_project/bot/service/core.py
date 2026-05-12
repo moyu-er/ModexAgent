@@ -95,6 +95,32 @@ from .builders import AgentBuilderMixin
 logger = logging.getLogger(__name__)
 
 
+def _mem_to_dict(m: object | None) -> dict[str, object]:
+    """Convert IOC ShortTermConfig to legacy short_term dict."""
+    if m is None:
+        return {"max_messages": 100, "max_tokens": 100000}
+    from framework.ioc.configs.memory import MemoryConfig
+    if not isinstance(m, MemoryConfig):
+        return {"max_messages": 100, "max_tokens": 100000}
+    return {
+        "max_messages": m.short_term.max_messages,
+        "max_tokens": m.short_term.max_tokens,
+        "keep_ratio_for_messages": m.short_term.keep_ratio_for_messages,
+        "keep_ratio_for_token": m.short_term.keep_ratio_for_token,
+        "auto_llm_compression": m.short_term.auto_llm_compression,
+    }
+
+
+def _mem_to_peer_dict(m: object | None) -> dict[str, object]:
+    """Convert IOC MemoryConfig to minimal peer memory dict."""
+    if m is None:
+        return {"enabled": False}
+    from framework.ioc.configs.memory import MemoryConfig
+    if not isinstance(m, MemoryConfig):
+        return {"enabled": False}
+    return {"enabled": True}
+
+
 class BotService(AgentBuilderMixin):
     """Generic bot service supporting arbitrary InputAdapter/OutputAdapter pairs.
 
@@ -128,9 +154,34 @@ class BotService(AgentBuilderMixin):
         self._app_config = app_config
         self._legacy_raw = legacy_raw or {}
 
-        # Build minimal legacy dict for remaining unconverted code paths
-        # (MCP config, tools config). These will be removed in follow-up PRs.
-        self.config: dict[str, Any] = self._build_legacy_config()
+    @property
+    def config(self) -> dict[str, Any]:
+        """Compatibility dict for remaining legacy code paths. Built from IOC AppConfig on demand."""
+        if self._app_config is None:
+            return {}
+        _cfg = self._app_config
+        _main = _cfg.agents[0] if _cfg.agents else None
+        _mem = _main.memory if _main else None
+        _peers = _cfg.agents[1:] if _cfg.agents else []
+        return {
+            "llm": _cfg.llm.model_dump(),
+            "agent": {
+                "system_prompt": _main.system_prompt if _main else "",
+                "max_iterations": _main.max_steps if _main else 20,
+            },
+            "multi_agent": {
+                "enabled": len(_cfg.agents) > 1,
+                "parent_agent_name": _main.name if _main else "main",
+                "subagent_sync": {
+                    "enabled": True, "name": "helper-sync", "max_iterations": 10,
+                    "denied_tools": ["spawn_subagent_sync", "send_message", "send_message_async"],
+                    "tools": {"file_tools": {"enabled": True}, "shell_tools": {"enabled": True, "timeout": 60}, "search_tools": {"enabled": True}},
+                },
+                "peers": [_peer_dict(a) for a in _peers],
+            },
+            "mcp": self._legacy_raw.get("mcp", {}),
+            "paths": _cfg.paths.model_dump(),
+        }
 
         # Components
         self.pipeline: AgentPipeline | None = None
@@ -626,160 +677,47 @@ class BotService(AgentBuilderMixin):
         print(f"   Input bridge: {self.input_adapter.name} -> {main_address}")
         print(f"   Output route: agent:{parent_agent_name}:out -> {self.output_adapter.name}")
 
-    def _build_legacy_config(self) -> dict[str, Any]:
-        """Build legacy dict for remaining code paths from IOC config.
+    @property
+    def config(self) -> dict[str, Any]:
+        """On-demand dict for code paths still being converted to direct IOC access.
 
-        Includes per-agent tool/MCP/skill configs matching main branch defaults.
+        No tool enablement config. Tools are code objects registered via builders.py.
         """
         if self._app_config is None:
             return {}
-
         _cfg = self._app_config
         _main = _cfg.agents[0] if _cfg.agents else None
         _mem = _main.memory if _main else None
-
-        # Agent name → tools dict (matching main branch)
-        _peer_configs = self._build_peer_legacy_configs(_cfg)
-
         return {
             "llm": _cfg.llm.model_dump(),
-            "agent": {
-                "system_prompt": _main.system_prompt if _main else "",
-                "max_iterations": _main.max_steps if _main else 20,
-                "approval": (
-                    _main.approval.model_dump() if _main and _main.approval
-                    else {"enabled": False, "tools": {}}
-                ),
-            },
+            "agent": _main.model_dump(exclude={"tools"}) if _main else {},
             "multi_agent": {
                 "enabled": len(_cfg.agents) > 1,
                 "parent_agent_name": _main.name if _main else "main",
                 "subagent_sync": {
-                    "enabled": True,
-                    "name": "helper-sync",
+                    "enabled": True, "name": "helper-sync",
                     "max_iterations": 10,
                     "denied_tools": ["spawn_subagent_sync", "send_message", "send_message_async"],
-                    "tools": {
-                        "file_tools": {"enabled": True},
-                        "shell_tools": {"enabled": True, "timeout": 60, "enable_safety_guard": True},
-                        "search_tools": {"enabled": True},
-                    },
                 },
-                "peers": _peer_configs,
+                "peers": [
+                    {"name": a.name, "system_prompt": a.system_prompt,
+                     "max_iterations": a.max_steps,
+                     "skill_dirs": a.skills.roots if a.skills else [],
+                     "subagent": {"enabled": a.name != "query-12306"},
+                     "max_tools_per_turn": 5 if a.name == "query-12306" else 10,
+                     "memory": _mem_to_peer_dict(a.memory) if a.memory else {}}
+                    for a in (_cfg.agents[1:] if _cfg.agents else [])
+                ],
             },
             "memory": {
-                "main": {
-                    "short_term": {
-                        "max_messages": _mem.short_term.max_messages if _mem else 100,
-                        "max_tokens": _mem.short_term.max_tokens if _mem else 100000,
-                        "keep_ratio_for_messages": _mem.short_term.keep_ratio_for_messages if _mem else 0.4,
-                        "keep_ratio_for_token": _mem.short_term.keep_ratio_for_token if _mem else 0.4,
-                        "auto_llm_compression": _mem.short_term.auto_llm_compression if _mem else True,
-                    },
-                    "retention": {
-                        "anchors": {
-                            "min_recent_user_turns": _mem.retention.min_recent_user_turns if _mem else 2,
-                            "min_recent_agent_turns": _mem.retention.min_recent_agent_turns if _mem else 1,
-                        },
-                    },
-                    "long_term": {"enabled": _mem is not None and _mem.long_term is not None and _mem.long_term.enabled},
-                    "dream_engine": {"enabled": _mem is not None and _mem.dream_engine is not None and _mem.dream_engine.enabled},
-                    "governance": self._governance_to_dict(_mem.governance if _mem else None),
-                },
+                "main": {"short_term": _mem_to_dict(_mem) if _mem else {},
+                         "long_term": {"enabled": _mem.long_term.enabled if _mem and _mem.long_term else False},
+                         "dream_engine": {"enabled": _mem.dream_engine.enabled if _mem and _mem.dream_engine else False}},
                 "peers": {"short_term": {"max_messages": 50, "max_tokens": 50000}},
                 "subagents": {"short_term": {"max_messages": 50, "max_tokens": 50000}},
             },
             "mcp": self._legacy_raw.get("mcp", {}),
-            "tools": {
-                "file_tools": {"enabled": True},
-                "shell_tools": {"enabled": True, "timeout": 60, "enable_safety_guard": True},
-                "search_tools": {"enabled": True},
-                "mcp_tools": {
-                    "enabled": True,
-                    "tool_timeout": 60,
-                    "server_filter": ["fetch", "mcp-deepwiki", "MiniMax", "playwright"],
-                    "tool_filter": {},
-                },
-            },
             "paths": _cfg.paths.model_dump(),
-        }
-
-    def _build_peer_legacy_configs(self, _cfg: AppConfig) -> list[dict[str, Any]]:
-        """Build peer agent configs from IOC AppConfig agents list.
-
-        Matches main branch per-agent tool/MCP/skill configurations.
-        """
-        _PEER_TOOL_DEFS: dict[str, dict[str, object]] = {
-            "office-expert": {
-                "file_tools": {"enabled": True},
-                "shell_tools": {"enabled": True, "timeout": 60, "enable_safety_guard": True},
-                "search_tools": {"enabled": True},
-            },
-            "query-12306": {
-                "file_tools": {"enabled": False},
-                "shell_tools": {"enabled": False},
-                "search_tools": {"enabled": False},
-                "mcp_tools": {
-                    "enabled": True,
-                    "tool_timeout": 60,
-                    "server_filter": ["12306-mcp"],
-                    "tool_filter": {},
-                },
-            },
-        }
-        _PEER_EXTRA: dict[str, dict[str, object]] = {
-            "office-expert": {
-                "max_iterations": 30,
-                "subagent": {"enabled": True},
-            },
-            "query-12306": {
-                "max_iterations": 20,
-                "max_tools_per_turn": 5,
-                "subagent": {"enabled": False},
-            },
-        }
-
-        peers: list[dict[str, Any]] = []
-        for a in _cfg.agents[1:]:
-            tools = _PEER_TOOL_DEFS.get(a.name, {
-                "file_tools": {"enabled": True},
-                "shell_tools": {"enabled": True, "timeout": 60},
-                "search_tools": {"enabled": True},
-            })
-            extra = _PEER_EXTRA.get(a.name, {})
-            peer: dict[str, Any] = {
-                "name": a.name,
-                "system_prompt": a.system_prompt,
-                "max_iterations": extra.get("max_iterations", a.max_steps),
-                "max_tools_per_turn": extra.get("max_tools_per_turn", 10),
-                "tools": tools,
-                "subagent": extra.get("subagent", {"enabled": False}),
-            }
-            if a.skills and a.skills.roots:
-                peer["skill_dirs"] = a.skills.roots
-            peers.append(peer)
-        return peers
-
-    @staticmethod
-    def _governance_to_dict(g: object | None) -> dict[str, object]:
-        if g is None:
-            return {"enabled": False}
-        from framework.ioc.configs.memory import GovernanceConfig
-        if not isinstance(g, GovernanceConfig):
-            return {"enabled": False}
-        return {
-            "enabled": True,
-            "tool_chain_repair": g.tool_chain_repair,
-            "token_budget": (
-                {"enabled": True, "budget_ratio": g.token_budget.budget_ratio,
-                 "safety_buffer": g.token_budget.safety_buffer}
-                if g.token_budget else {"enabled": False}
-            ),
-            "lossy_compaction": (
-                {"enabled": True, "tool_result_head_chars": g.lossy_compaction.tool_result_head_chars,
-                 "assistant_head_chars": g.lossy_compaction.assistant_head_chars}
-                if g.lossy_compaction else {"enabled": False}
-            ),
         }
 
     @property
