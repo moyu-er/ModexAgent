@@ -59,6 +59,11 @@ from framework.memory.context_governance import (
 )
 from framework.memory.core.scope import MemoryContext
 from framework.memory.injection import FullInjectionPolicy
+from framework.memory.layers.config import (
+    MemoryLayerConfigSet,
+    PendingPrunedInputMemoryConfig,
+    SessionMemoryConfig,
+)
 from framework.memory.retention import DefaultMessageRetentionPolicy
 from framework.memory.system import (
     MemorySystemContextManager,
@@ -653,16 +658,22 @@ class BotService(AgentBuilderMixin):
                     "short_term": {
                         "max_messages": _mem.short_term.max_messages if _mem else 100,
                         "max_tokens": _mem.short_term.max_tokens if _mem else 100000,
-                        "keep_ratio_for_messages": _mem.short_term.keep_ratio if _mem else 0.4,
-                        "keep_ratio_for_token": _mem.short_term.keep_ratio if _mem else 0.4,
+                        "keep_ratio_for_messages": _mem.short_term.keep_ratio_for_messages if _mem else 0.4,
+                        "keep_ratio_for_token": _mem.short_term.keep_ratio_for_token if _mem else 0.4,
                         "auto_llm_compression": _mem.short_term.auto_llm_compression if _mem else True,
+                    },
+                    "retention": {
+                        "anchors": {
+                            "min_recent_user_turns": _mem.retention.min_recent_user_turns if _mem else 2,
+                            "min_recent_agent_turns": _mem.retention.min_recent_agent_turns if _mem else 1,
+                        },
                     },
                     "long_term": {"enabled": _mem is not None and _mem.long_term is not None and _mem.long_term.enabled},
                     "dream_engine": {"enabled": _mem is not None and _mem.dream_engine is not None and _mem.dream_engine.enabled},
                     "governance": self._governance_to_dict(_mem.governance if _mem else None),
                 },
-                "peers": {"short_term": {"max_messages": 50}},
-                "subagents": {"short_term": {"max_messages": 50}},
+                "peers": {"short_term": {"max_messages": 50, "max_tokens": 50000}},
+                "subagents": {"short_term": {"max_messages": 50, "max_tokens": 50000}},
             },
             "mcp": self._legacy_raw.get("mcp", {}),
             "tools": {"file_tools": {"enabled": True}, "shell_tools": {"enabled": True}, "search_tools": {"enabled": True}},
@@ -930,74 +941,104 @@ class BotService(AgentBuilderMixin):
     # Memory helpers
     # ------------------------------------------------------------------ #
 
-    def _build_retention_policy(self, main_memory_config: dict[str, Any]) -> DefaultMessageRetentionPolicy:
-        return DefaultMessageRetentionPolicy.from_config(main_memory_config.get("retention", {}))
-
     def _build_memory_layer_config(self, main_memory_config: dict[str, Any]) -> MemoryLayerConfigSet:
-        short_term = main_memory_config.get("short_term", {})
-        pending_raw = main_memory_config.get("pending_pruned_inputs", {})
-        pending_config = (
-            None
-            if pending_raw.get("enabled") is False
-            else PendingPrunedInputMemoryConfig(
-                enabled=True,
-                max_entries=pending_raw.get("max_entries", 8),
-                max_chars=pending_raw.get("max_chars", 12000),
-            )
-        )
+        """Build MemoryLayerConfigSet from legacy dict (prefer IOC if available)."""
+        _mem = self._main_memory_cfg
         return MemoryLayerConfigSet(
             session=SessionMemoryConfig(
-                max_messages=short_term.get("max_messages", 100),
+                max_messages=(
+                    _mem.short_term.max_messages if _mem
+                    else main_memory_config.get("short_term", {}).get("max_messages", 100)
+                ),
             ),
-            pending=pending_config,
+            pending=(
+                PendingPrunedInputMemoryConfig(
+                    enabled=_mem.pending.enabled,
+                    max_entries=_mem.pending.max_entries,
+                    max_chars=_mem.pending.max_chars,
+                )
+                if _mem
+                else PendingPrunedInputMemoryConfig(
+                    enabled=True,
+                    max_entries=main_memory_config.get("pending_pruned_inputs", {}).get("max_entries", 8),
+                    max_chars=main_memory_config.get("pending_pruned_inputs", {}).get("max_chars", 12000),
+                )
+            ),
         )
 
     def _build_governance(self) -> Any | None:
-        """Build ContextGovernance chain from config."""
-        memory_config = self.config.get("memory", {})
-        main_memory = memory_config.get("main", {})
-        gov_config = main_memory.get("governance", {})
-        retention_config = main_memory.get("retention", {})
-        anchor_config = retention_config.get("anchors", {})
-        if not gov_config.get("enabled", True):
+        """Build ContextGovernance chain (IOC preferred)."""
+        _mem = self._main_memory_cfg
+        _gov = _mem.governance if _mem else None
+
+        # Fallback to dict
+        if _gov is None:
+            memory_config = self.config.get("memory", {})
+            main_memory = memory_config.get("main", {})
+            gov_config = main_memory.get("governance", {})
+            if not gov_config.get("enabled", True):
+                return None
+        elif not _gov.tool_chain_repair:
             return None
 
         strategies: list[Any] = []
-        if gov_config.get("tool_chain_repair", True):
-            strategies.append(ToolChainRepairGovernance())
+        strategies.append(ToolChainRepairGovernance())
 
-        retention_policy = self._build_retention_policy(main_memory)
-
-        token_budget = gov_config.get("token_budget", {})
-        if token_budget.get("enabled", True):
-            llm_max_tokens = self.config.get("llm", {}).get("max_tokens", 80000)
-            budget_ratio = token_budget.get("budget_ratio", 0.5)
-            max_tokens = min(int(llm_max_tokens * budget_ratio), 128000)
+        # Token budget
+        if _gov is not None and _gov.token_budget is not None:
+            tb = _gov.token_budget
+            retention_policy = DefaultMessageRetentionPolicy.from_config({})
             strategies.append(
                 PriorityBudgetGovernance(
-                    max_tokens=max_tokens,
-                    safety_buffer=token_budget.get("safety_buffer", 1024),
+                    max_tokens=min(int(80000 * tb.budget_ratio), 128000),
+                    safety_buffer=tb.safety_buffer,
                     retention_policy=retention_policy,
-                    min_recent_user_turns=anchor_config.get("min_recent_user_turns", 1),
-                    min_recent_agent_turns=anchor_config.get("min_recent_agent_turns", 1),
                 )
             )
+        elif _gov is None:
+            # Legacy fallback
+            memory_config = self.config.get("memory", {})
+            main_memory = memory_config.get("main", {})
+            gov_config = main_memory.get("governance", {})
+            if gov_config.get("token_budget", {}).get("enabled", True):
+                llm_max_tokens = self.config.get("llm", {}).get("max_tokens", 80000)
+                tb_cfg = gov_config.get("token_budget", {})
+                budget_ratio = tb_cfg.get("budget_ratio", 0.5)
+                max_tokens = min(int(llm_max_tokens * budget_ratio), 128000)
+                strategies.append(
+                    PriorityBudgetGovernance(
+                        max_tokens=max_tokens,
+                        safety_buffer=tb_cfg.get("safety_buffer", 1024),
+                        retention_policy=DefaultMessageRetentionPolicy.from_config({}),
+                        min_recent_user_turns=1,
+                        min_recent_agent_turns=1,
+                    )
+                )
 
-        lossy_config = gov_config.get("lossy_compaction", {})
-        if lossy_config.get("enabled", True):
+        # Lossy compaction
+        if _gov is not None and _gov.lossy_compaction is not None:
+            lc = _gov.lossy_compaction
             strategies.append(
                 LossyContentCompactionGovernance(
-                    tool_result_head_chars=lossy_config.get("tool_result_head_chars", 1200),
-                    assistant_head_chars=lossy_config.get("assistant_head_chars", 1200),
-                    agent_head_chars=lossy_config.get("agent_head_chars", 2000),
-                    user_head_chars=lossy_config.get("user_head_chars", 4000),
+                    tool_result_head_chars=lc.tool_result_head_chars,
+                    assistant_head_chars=lc.assistant_head_chars,
                 )
             )
+        elif _gov is None:
+            # Legacy fallback
+            memory_config = self.config.get("memory", {})
+            main_memory = memory_config.get("main", {})
+            gov_config = main_memory.get("governance", {})
+            lossy_cfg = gov_config.get("lossy_compaction", {})
+            if lossy_cfg.get("enabled", True):
+                strategies.append(
+                    LossyContentCompactionGovernance(
+                        tool_result_head_chars=lossy_cfg.get("tool_result_head_chars", 1200),
+                        assistant_head_chars=lossy_cfg.get("assistant_head_chars", 1200),
+                    )
+                )
 
         strategies.append(FinalContextLegalityGovernance())
-
-        if not strategies:
-            return None
         return CompositeGovernance(strategies)
 
     async def _init_long_term_defaults(
@@ -1056,9 +1097,25 @@ class BotService(AgentBuilderMixin):
         print("   [OK] Long-term memory defaults ensured")
 
     def _build_compression_coordinator(self, main_memory_config: dict[str, Any]) -> Any | None:
+        """Build compression coordinator (IOC preferred).
+
+        max_tokens for compression trigger: uses IOC ShortTermConfig.max_tokens
+        (default 100000) or legacy dict fallback.
+        """
+        _mem = self._main_memory_cfg
         short_term = main_memory_config.get("short_term", {})
+
+        st_max_messages = _mem.short_term.max_messages if _mem else short_term.get("max_messages", 100)
+        st_max_tokens = _mem.short_term.max_tokens if _mem else short_term.get("max_tokens", 100000)
+        st_keep_ratio_msg = _mem.short_term.keep_ratio_for_messages if _mem else short_term.get("keep_ratio_for_messages", 0.4)
+        st_keep_ratio_token = _mem.short_term.keep_ratio_for_token if _mem else short_term.get("keep_ratio_for_token", 0.4)
+        auto_compression = (
+            _mem.short_term.auto_llm_compression if _mem
+            else short_term.get("auto_llm_compression", True)
+        )
+
         auto_compact = main_memory_config.get("auto_compact", {})
-        if not short_term.get("auto_llm_compression", True) and not auto_compact.get("enabled", True):
+        if not auto_compression and not auto_compact.get("enabled", True):
             return None
 
         from framework.agents.summarizer import SummarizerAgent, SummarizerStrategy
@@ -1069,50 +1126,32 @@ class BotService(AgentBuilderMixin):
         from framework.memory.compaction.policy import ConservativeCompactionPolicy
         from framework.memory.compression.policies import DefaultMemoryCompressionCoordinator
 
-        # Shared SummarizerAgent for compression + consolidation + DreamEngine
         self._summarizer_agent = SummarizerAgent(self.provider)
         summary_strategy = SummarizerStrategy(self._summarizer_agent)
 
-        # Build compaction policy from config
         compaction_config = main_memory_config.get("compaction", {})
-        compaction_policy_name = compaction_config.get("policy", "conservative")
-        high_value_tools = set(compaction_config.get("high_value_tools", []))
+        compaction = ConservativeCompactionPolicy(
+            high_value_tools=set(compaction_config.get("high_value_tools", []))
+        )
 
-        if compaction_policy_name == "conservative":
-            compaction = ConservativeCompactionPolicy(high_value_tools=high_value_tools)
-        elif compaction_policy_name == "keep_all":
-            from framework.memory.compaction.policy import KeepAllCompactionPolicy
-            compaction = KeepAllCompactionPolicy()
-        elif compaction_policy_name == "semantic":
-            from framework.memory.compaction.policy import SemanticToolCompactionPolicy
-            compaction = SemanticToolCompactionPolicy(high_value_tools=high_value_tools)
-        else:
-            compaction = ConservativeCompactionPolicy(high_value_tools=high_value_tools)
-
-        retention_policy = self._build_retention_policy(main_memory_config)
+        retention_policy = DefaultMessageRetentionPolicy.from_config(
+            main_memory_config.get("retention", {})
+        )
 
         boundary_name = BoundaryPolicyName(
             compaction_config.get("boundary", BoundaryPolicyName.TOOL_CHAIN.value)
         )
         boundary = create_boundary_policy(boundary_name)
 
-        # Persistent session cleanup/compression is append-triggered:
-        # DefaultMemoryLifecyclePolicy calls DefaultMemoryCompressionCoordinator,
-        # whose DefaultCompressionTriggerPolicy checks all stored messages
-        # against these short_term thresholds. The coordinator then runs
-        # DefaultSessionToolChainSanitizer, PriorityCompressionKeepPlanner,
-        # DefaultPendingPrunedInputExtractor, and DefaultCommitPolicy. An
-        # active final assistant(tool_calls) tail is protected by the planner,
-        # while older complete assistant/tool chains remain compressible.
         return DefaultMemoryCompressionCoordinator(
             summary=summary_strategy,
             compaction=compaction,
             boundary=boundary,
             retention=retention_policy,
-            max_messages=short_term.get("max_messages", 100),
-            max_tokens=short_term.get("max_tokens", 8000),
-            keep_ratio_for_messages=short_term.get("keep_ratio_for_messages", 0.5),
-            keep_ratio_for_token=short_term.get("keep_ratio_for_token", 0.5),
+            max_messages=st_max_messages,
+            max_tokens=st_max_tokens,
+            keep_ratio_for_messages=st_keep_ratio_msg,
+            keep_ratio_for_token=st_keep_ratio_token,
         )
 
     async def _init_auto_compact(
