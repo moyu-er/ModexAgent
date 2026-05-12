@@ -17,6 +17,7 @@ from typing import Any, Literal
 
 from bot.plugins.integration import PluginIntegration
 from bot.utils.config_loader import ConfigLoader, validate_config
+
 from framework import (
     AgentPipeline,
     InMemoryToolManager,
@@ -44,12 +45,10 @@ from framework.interceptor.builtin import (
 )
 from framework.interceptor.builtin.tool_approval import ArgumentMatcher
 from framework.interceptor.chain import InterceptorChain
-from framework.ioc.configs.app import AppConfig
 from framework.ioc.configs.agent import AgentConfig as IOCAgentConfig
+from framework.ioc.configs.app import AppConfig
 from framework.ioc.configs.memory import MemoryConfig as IOCMemoryConfig
 from framework.ioc.factories.llm import create_llm_provider
-from framework.ioc.factories.memory import create_memory as ioc_create_memory
-from framework.ioc.factories.tools import connect_mcp, register_mcp_tools, create_tool_manager
 from framework.memory.context_governance import (
     CompositeGovernance,
     FinalContextLegalityGovernance,
@@ -89,7 +88,6 @@ from framework.multi_agent.inbox.producer import InboxProducer
 from framework.multi_agent.inbox.server_local import LocalFileInboxServer
 from framework.pipeline.adapters import InputAdapter, OutputAdapter
 from framework.providers.litellm_provider import LiteLLMProvider
-
 from .builders import AgentBuilderMixin
 
 logger = logging.getLogger(__name__)
@@ -153,35 +151,6 @@ class BotService(AgentBuilderMixin):
         self.mode = mode
         self._app_config = app_config
         self._legacy_raw = legacy_raw or {}
-
-    @property
-    def config(self) -> dict[str, Any]:
-        """Compatibility dict for remaining legacy code paths. Built from IOC AppConfig on demand."""
-        if self._app_config is None:
-            return {}
-        _cfg = self._app_config
-        _main = _cfg.agents[0] if _cfg.agents else None
-        _mem = _main.memory if _main else None
-        _peers = _cfg.agents[1:] if _cfg.agents else []
-        return {
-            "llm": _cfg.llm.model_dump(),
-            "agent": {
-                "system_prompt": _main.system_prompt if _main else "",
-                "max_iterations": _main.max_steps if _main else 20,
-            },
-            "multi_agent": {
-                "enabled": len(_cfg.agents) > 1,
-                "parent_agent_name": _main.name if _main else "main",
-                "subagent_sync": {
-                    "enabled": True, "name": "helper-sync", "max_iterations": 10,
-                    "denied_tools": ["spawn_subagent_sync", "send_message", "send_message_async"],
-                    "tools": {"file_tools": {"enabled": True}, "shell_tools": {"enabled": True, "timeout": 60}, "search_tools": {"enabled": True}},
-                },
-                "peers": [_peer_dict(a) for a in _peers],
-            },
-            "mcp": self._legacy_raw.get("mcp", {}),
-            "paths": _cfg.paths.model_dump(),
-        }
 
         # Components
         self.pipeline: AgentPipeline | None = None
