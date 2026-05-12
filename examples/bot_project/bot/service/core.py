@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from bot.plugins.integration import PluginIntegration
-from bot.utils.config_loader import ConfigLoader, validate_config
+from bot.utils.config_loader import ConfigLoader
 from framework import (
     AgentPipeline,
     InMemoryToolManager,
@@ -24,7 +24,6 @@ from framework import (
     ToolManagerConfig,
 )
 from framework.control.channel import InMemoryControlChannel
-from framework.runtime.store import JsonFileTurnStateStore, NoOpTurnStateStore
 from framework.control.ui.im import IMUserInterface
 from framework.core.emitter import ContentEmitter
 from framework.core.llm_error import (
@@ -45,6 +44,12 @@ from framework.interceptor.builtin import (
 )
 from framework.interceptor.builtin.tool_approval import ArgumentMatcher
 from framework.interceptor.chain import InterceptorChain
+from framework.ioc.configs.app import AppConfig
+from framework.ioc.configs.agent import AgentConfig as IOCAgentConfig
+from framework.ioc.configs.memory import MemoryConfig as IOCMemoryConfig
+from framework.ioc.factories.llm import create_llm_provider
+from framework.ioc.factories.memory import create_memory as ioc_create_memory
+from framework.ioc.factories.tools import connect_mcp, register_mcp_tools, create_tool_manager
 from framework.memory.context_governance import (
     CompositeGovernance,
     FinalContextLegalityGovernance,
@@ -54,11 +59,6 @@ from framework.memory.context_governance import (
 )
 from framework.memory.core.scope import MemoryContext
 from framework.memory.injection import FullInjectionPolicy
-from framework.memory.layers.config import (
-    MemoryLayerConfigSet,
-    PendingPrunedInputMemoryConfig,
-    SessionMemoryConfig,
-)
 from framework.memory.retention import DefaultMessageRetentionPolicy
 from framework.memory.system import (
     MemorySystemContextManager,
@@ -99,6 +99,8 @@ class BotService(AgentBuilderMixin):
     Modes:
     - pipeline: single AgentPipeline (default). SubagentManager spawns asyncio.Task.
     - pool: resident AgentPool with MessageBroker routing.
+
+    Accepts either a legacy config dict or an IOC AppConfig object.
     """
 
     def __init__(
@@ -109,6 +111,8 @@ class BotService(AgentBuilderMixin):
         emitter_factory: Callable[[str], ContentEmitter],
         mode: Literal["pipeline", "pool"] = "pipeline",
         config: dict[str, Any] | None = None,
+        *,
+        app_config: AppConfig | None = None,
     ):
         self.config_dir = config_dir
         self.config_loader = ConfigLoader(config_dir)
@@ -116,6 +120,12 @@ class BotService(AgentBuilderMixin):
         self.output_adapter = output_adapter
         self.emitter_factory = emitter_factory
         self.mode = mode
+        self._app_config = app_config
+
+        # Legacy compat: build IOC config from dict if not provided
+        if self._app_config is None and config is not None:
+            self._app_config = self._load_app_config()
+
         self.config: dict[str, Any] = config or {}
 
         # Components
@@ -125,7 +135,6 @@ class BotService(AgentBuilderMixin):
         self.agent_bus: Any | None = None
         self.tool_manager: InMemoryToolManager | None = None
         self.mcp_manager: Any | None = None
-        # TODO: Restore proper types after memory system migration
         self.memory_system: Any | None = None
         self.context_manager: Any | None = None
         self.auto_compact_service: Any | None = None
@@ -137,32 +146,25 @@ class BotService(AgentBuilderMixin):
         self.inbox_producer: InboxProducer | None = None
         self.inbox_consumer: InboxConsumer | None = None
 
-        # Runtime components (initialized during initialize())
+        # Runtime components
         self.provider: Any | None = None
         self.plugin_integration: Any | None = None
         self.dream_engine: Any | None = None
 
-        # Subagent skill-manager cache
+        # Subagent/peer caches
         self._subagent_skill_managers: dict[str, SkillManager] = {}
-
-        # Subagent memory-system cache (lazy-loaded)
         self._subagent_memory_systems: dict[str, Any] = {}
-
-        # Peer memory-system cache (lazy-loaded)
         self._peer_memory_systems: dict[str, Any] = {}
 
-        # Auto-compact background task
+        # Auto-compact
         self._auto_compact_task: asyncio.Task | None = None
 
-        # Control plane components
+        # Control plane
         self.control_channel: InMemoryControlChannel | None = None
         self.interceptor_chain: InterceptorChain | None = None
-
-        # RuntimeSafetyPolicy cache
         self._safety_policy_cache: RuntimeSafetyPolicy | None = None
-        self._safety_policy_cache_key: int | None = None
 
-        # Approval components
+        # Approval
         self._approval_workspace: Path | None = None
         self._im_ui: IMUserInterface | None = None
         self._turn_store: Any | None = None
@@ -171,6 +173,38 @@ class BotService(AgentBuilderMixin):
         # Runtime control
         self._shutdown_event = asyncio.Event()
         self._tasks: list[asyncio.Task] = []
+
+    @property
+    def _main_agent_cfg(self) -> IOCAgentConfig | None:
+        """First agent in AppConfig agents list, if any."""
+        if self._app_config and self._app_config.agents:
+            return self._app_config.agents[0]
+        return None
+
+    @property
+    def _main_memory_cfg(self) -> IOCMemoryConfig | None:
+        """Memory config for the first agent."""
+        if self._main_agent_cfg is None:
+            return None
+        return self._main_agent_cfg.memory
+
+    def _load_app_config(self) -> AppConfig:
+        """Load IOC AppConfig from bot_config.yml."""
+        import os
+        path = os.path.join(self.config_dir, "bot_config.yml")
+        return AppConfig.from_yaml(path)
+
+    def _get_llm_config(self) -> Any:
+        """Get LLM config from IOC or fall back to dict."""
+        if self._app_config is not None:
+            return self._app_config.llm
+        return self.config.get("llm", {})
+
+    def _get_safety_config(self) -> Any:
+        """Get safety config from IOC or fall back to dict."""
+        if self._app_config is not None and self._app_config.safety is not None:
+            return self._app_config.safety
+        return self.config.get("runtime_safety", {})
 
     # ------------------------------------------------------------------ #
     # Path helpers
@@ -200,17 +234,12 @@ class BotService(AgentBuilderMixin):
         print(f"   mode={self.mode}")
         print("=" * 60)
 
-        # 1. Load config
+        # 1. Load config (via IOC if available)
+        if self._app_config is None:
+            self._app_config = self._load_app_config()
         if not self.config:
             self.config = self._load_config()
-        validation_warnings = validate_config(self.config)
-        if validation_warnings:
-            for w in validation_warnings:
-                logger.error("Config validation: %s", w)
-            raise RuntimeError(
-                f"Config validation failed: {len(validation_warnings)} errors"
-            )
-        print("[OK] Config loaded")
+        print(f"[OK] Config loaded ({len(self._app_config.agents)} agents via IOC)")
 
         # 2. Create Broker
         self.broker = InMemoryMessageBroker()
@@ -602,45 +631,52 @@ class BotService(AgentBuilderMixin):
 
     @property
     def safety_policy(self) -> RuntimeSafetyPolicy:
-        """Cached RuntimeSafetyPolicy built from bot_config.yml.
-
-        Cache is invalidated if the config dict itself changes (e.g. hot reload).
-        """
-        cache_key = id(self.config)
-        if self._safety_policy_cache is not None and self._safety_policy_cache_key == cache_key:
+        """Safety policy from IOC config or fallback."""
+        if self._safety_policy_cache is not None:
             return self._safety_policy_cache
-        policy = self._build_safety_policy()
+        if self._app_config is not None and self._app_config.safety is not None:
+            s = self._app_config.safety
+            policy = RuntimeSafetyPolicy(
+                llm=LLMTimeoutPolicy(
+                    request_timeout_seconds=s.llm.request_timeout,
+                    stream_idle_timeout_seconds=s.llm.stream_idle_timeout,
+                    framework_max_retries=s.llm.max_retries,
+                    retry_backoff_seconds=tuple(s.llm.retry_backoff),
+                ),
+                turn=TurnTimeoutPolicy(
+                    agent_run_timeout_seconds=s.turn.agent_run_timeout,
+                    hook_timeout_seconds=s.turn.hook_timeout,
+                    tool_timeout_seconds=s.turn.tool_timeout,
+                ),
+            )
+        else:
+            rs = self.config.get("runtime_safety", {})
+            lc = rs.get("llm", {})
+            tc = rs.get("turn", {})
+            backoff = lc.get("retry_backoff_seconds", [2.0, 8.0])
+            if isinstance(backoff, list):
+                backoff = tuple(backoff)
+            policy = RuntimeSafetyPolicy(
+                llm=LLMTimeoutPolicy(
+                    request_timeout_seconds=lc.get("request_timeout_seconds", 45.0),
+                    stream_idle_timeout_seconds=lc.get("stream_idle_timeout_seconds", 90.0),
+                    framework_max_retries=lc.get("framework_max_retries", 1),
+                    retry_backoff_seconds=backoff,
+                ),
+                turn=TurnTimeoutPolicy(
+                    agent_run_timeout_seconds=tc.get("agent_run_timeout_seconds", 180.0),
+                    hook_timeout_seconds=tc.get("hook_timeout_seconds", 10.0),
+                    tool_timeout_seconds=tc.get("tool_timeout_seconds", 60.0),
+                ),
+            )
         self._safety_policy_cache = policy
-        self._safety_policy_cache_key = cache_key
         return policy
 
-    def _build_safety_policy(self) -> RuntimeSafetyPolicy:
-        """Build RuntimeSafetyPolicy from bot_config.yml runtime_safety section."""
-        rs_config = self.config.get("runtime_safety", {})
-        llm_config = rs_config.get("llm", {})
-        turn_config = rs_config.get("turn", {})
-        backoff = llm_config.get("retry_backoff_seconds", [2.0, 8.0])
-        if isinstance(backoff, list):
-            backoff = tuple(backoff)
-        return RuntimeSafetyPolicy(
-            llm=LLMTimeoutPolicy(
-                request_timeout_seconds=llm_config.get("request_timeout_seconds", 45.0),
-                stream_idle_timeout_seconds=llm_config.get("stream_idle_timeout_seconds", 90.0),
-                framework_max_retries=llm_config.get("framework_max_retries", 1),
-                retry_backoff_seconds=backoff,
-            ),
-            turn=TurnTimeoutPolicy(
-                agent_run_timeout_seconds=turn_config.get("agent_run_timeout_seconds", 180.0),
-                dispatch_timeout_seconds=turn_config.get("dispatch_timeout_seconds", 300.0),
-                output_send_timeout_seconds=turn_config.get("output_send_timeout_seconds", 20.0),
-                memory_flush_timeout_seconds=turn_config.get("memory_flush_timeout_seconds", 30.0),
-                hook_timeout_seconds=turn_config.get("hook_timeout_seconds", 10.0),
-                tool_timeout_seconds=turn_config.get("tool_timeout_seconds", 60.0),
-            ),
-        )
-
     def _create_provider(self) -> LiteLLMProvider:
-        """Create LLM Provider."""
+        """Create LLM Provider from IOC config."""
+        if self._app_config is not None:
+            return create_llm_provider(self._app_config.llm, self._app_config.safety)
+
         llm_config = self.config["llm"]
         return LiteLLMProvider(
             model=llm_config["model"],
