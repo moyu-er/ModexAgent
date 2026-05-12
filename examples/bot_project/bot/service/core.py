@@ -627,13 +627,19 @@ class BotService(AgentBuilderMixin):
         print(f"   Output route: agent:{parent_agent_name}:out -> {self.output_adapter.name}")
 
     def _build_legacy_config(self) -> dict[str, Any]:
-        """Build minimal dict for remaining legacy code paths from IOC config."""
+        """Build legacy dict for remaining code paths from IOC config.
+
+        Includes per-agent tool/MCP/skill configs matching main branch defaults.
+        """
         if self._app_config is None:
             return {}
 
         _cfg = self._app_config
         _main = _cfg.agents[0] if _cfg.agents else None
         _mem = _main.memory if _main else None
+
+        # Agent name → tools dict (matching main branch)
+        _peer_configs = self._build_peer_legacy_configs(_cfg)
 
         return {
             "llm": _cfg.llm.model_dump(),
@@ -648,10 +654,18 @@ class BotService(AgentBuilderMixin):
             "multi_agent": {
                 "enabled": len(_cfg.agents) > 1,
                 "parent_agent_name": _main.name if _main else "main",
-                "peers": [
-                    {"name": a.name, "system_prompt": a.system_prompt}
-                    for a in _cfg.agents[1:]
-                ],
+                "subagent_sync": {
+                    "enabled": True,
+                    "name": "helper-sync",
+                    "max_iterations": 10,
+                    "denied_tools": ["spawn_subagent_sync", "send_message", "send_message_async"],
+                    "tools": {
+                        "file_tools": {"enabled": True},
+                        "shell_tools": {"enabled": True, "timeout": 60, "enable_safety_guard": True},
+                        "search_tools": {"enabled": True},
+                    },
+                },
+                "peers": _peer_configs,
             },
             "memory": {
                 "main": {
@@ -676,9 +690,75 @@ class BotService(AgentBuilderMixin):
                 "subagents": {"short_term": {"max_messages": 50, "max_tokens": 50000}},
             },
             "mcp": self._legacy_raw.get("mcp", {}),
-            "tools": {"file_tools": {"enabled": True}, "shell_tools": {"enabled": True}, "search_tools": {"enabled": True}},
+            "tools": {
+                "file_tools": {"enabled": True},
+                "shell_tools": {"enabled": True, "timeout": 60, "enable_safety_guard": True},
+                "search_tools": {"enabled": True},
+                "mcp_tools": {
+                    "enabled": True,
+                    "tool_timeout": 60,
+                    "server_filter": ["fetch", "mcp-deepwiki", "MiniMax", "playwright"],
+                    "tool_filter": {},
+                },
+            },
             "paths": _cfg.paths.model_dump(),
         }
+
+    def _build_peer_legacy_configs(self, _cfg: AppConfig) -> list[dict[str, Any]]:
+        """Build peer agent configs from IOC AppConfig agents list.
+
+        Matches main branch per-agent tool/MCP/skill configurations.
+        """
+        _PEER_TOOL_DEFS: dict[str, dict[str, object]] = {
+            "office-expert": {
+                "file_tools": {"enabled": True},
+                "shell_tools": {"enabled": True, "timeout": 60, "enable_safety_guard": True},
+                "search_tools": {"enabled": True},
+            },
+            "query-12306": {
+                "file_tools": {"enabled": False},
+                "shell_tools": {"enabled": False},
+                "search_tools": {"enabled": False},
+                "mcp_tools": {
+                    "enabled": True,
+                    "tool_timeout": 60,
+                    "server_filter": ["12306-mcp"],
+                    "tool_filter": {},
+                },
+            },
+        }
+        _PEER_EXTRA: dict[str, dict[str, object]] = {
+            "office-expert": {
+                "max_iterations": 30,
+                "subagent": {"enabled": True},
+            },
+            "query-12306": {
+                "max_iterations": 20,
+                "max_tools_per_turn": 5,
+                "subagent": {"enabled": False},
+            },
+        }
+
+        peers: list[dict[str, Any]] = []
+        for a in _cfg.agents[1:]:
+            tools = _PEER_TOOL_DEFS.get(a.name, {
+                "file_tools": {"enabled": True},
+                "shell_tools": {"enabled": True, "timeout": 60},
+                "search_tools": {"enabled": True},
+            })
+            extra = _PEER_EXTRA.get(a.name, {})
+            peer: dict[str, Any] = {
+                "name": a.name,
+                "system_prompt": a.system_prompt,
+                "max_iterations": extra.get("max_iterations", a.max_steps),
+                "max_tools_per_turn": extra.get("max_tools_per_turn", 10),
+                "tools": tools,
+                "subagent": extra.get("subagent", {"enabled": False}),
+            }
+            if a.skills and a.skills.roots:
+                peer["skill_dirs"] = a.skills.roots
+            peers.append(peer)
+        return peers
 
     @staticmethod
     def _governance_to_dict(g: object | None) -> dict[str, object]:
