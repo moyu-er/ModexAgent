@@ -42,7 +42,7 @@ def create_llm_provider(
     return LiteLLMProvider(
         model=config.model,
         api_key=config.api_key or None,
-        base_url=config.api_base or None,
+        base_url=config.base_url or None,
         temperature=config.temperature,
         max_tokens=config.max_tokens,
         safety=safety_policy,

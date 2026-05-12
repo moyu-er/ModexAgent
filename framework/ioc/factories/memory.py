@@ -74,8 +74,8 @@ def create_memory(
         compression_coordinator = DefaultMemoryCompressionCoordinator(
             max_messages=cfg.short_term.max_messages,
             max_tokens=cfg.short_term.max_tokens,
-            keep_ratio_for_messages=cfg.short_term.keep_ratio,
-            keep_ratio_for_token=cfg.short_term.keep_ratio,
+            keep_ratio_for_messages=cfg.short_term.keep_ratio_for_messages,
+            keep_ratio_for_token=cfg.short_term.keep_ratio_for_token,
         )
 
     lifecycle = (
