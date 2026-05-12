@@ -1,0 +1,57 @@
+# Self-Improve User Configuration
+# =================================
+# Copy this file and fill in your values.
+# This file is read by setup.mjs to configure paths.
+
+# ─── Storage Locations ───
+# Where should self-improve store its data?
+
+storage:
+  # Main installation directory
+  # Default: Same directory as this config file
+  root: ""
+
+  # Where extracted knowledge/methodologies go
+  # This is for long-term storage of learned content
+  knowledge_root: ""
+
+  # OpenClaw workspace root (contains agent workspaces)
+  # Used to scan agent memory logs
+  # Example: C:\Users\YourName\.openclaw or ~/.openclaw
+  workspace_root: ""
+
+# ─── Owner Information ───
+# Used for notifications and personalization
+
+owner:
+  # Your name (how agents should refer to you)
+  name: ""
+
+  # Your timezone (for cron scheduling)
+  timezone: "Asia/Shanghai"
+
+  # (Optional) Notification channel
+  # Example: telegram, discord, slack
+  notification:
+    channel: ""
+    to: ""  # Channel ID or user ID
+
+# ─── Agent Configuration ───
+# Which agent should run the cron task?
+
+agent:
+  # Your main agent ID (usually "main")
+  main_agent: "main"
+
+  # Model for cron execution (cheaper models recommended)
+  cron_model: "bailian/qwen3.5-plus"
+
+# ─── Schedule ───
+# How often should self-improve run?
+
+schedule:
+  # Cron expression (default: every 3 days at 4 AM)
+  cron: "0 4 */3 * *"
+
+  # Timezone for cron
+  timezone: "Asia/Shanghai"
