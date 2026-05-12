@@ -59,7 +59,11 @@ class AppConfig(BaseModel):
 
     llm is the only required field — agents can inherit it.
     All other sections are optional (None = disabled).
+    Extra fields (business-layer config like qq, bot tokens)
+    are silently ignored by the framework IOC layer.
     """
+
+    model_config = {"extra": "ignore"}
 
     llm: LLMConfig
     agents: list[AgentConfig] = Field(default_factory=list)
