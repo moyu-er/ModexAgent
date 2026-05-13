@@ -10,6 +10,7 @@ from typing import Any
 
 from bot.tools.custom import SpawnSubagentTool
 from framework import InMemoryToolManager, ToolManagerConfig
+from framework.ioc.factories.governance import create_peer_governance
 from framework.core.context import ContextManager
 from framework.core.skills import (
     CompositeSkillSource,
@@ -25,6 +26,7 @@ from framework.memory.layers.config import (
     PendingPrunedInputMemoryConfig,
     SessionMemoryConfig,
 )
+from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
 from framework.memory.system import MemorySystemContextManager, create_memory_system
 from framework.multi_agent import AgentAddress, AgentDescriptor
 from framework.multi_agent.descriptor import AgentLLMConfig
@@ -68,7 +70,7 @@ async def _mcp_tools_for_agent(
     from framework.tools.mcp_adapter import MCPToolAdapter
     from framework.tools.registry import ToolRegistry
 
-    adapter = MCPToolAdapter(mcp_manager=mcp_manager, default_prefix=True)
+    adapter = MCPToolAdapter(mcp_manager=mcp_manager, default_prefix=True, tool_timeout=60)
     registry = ToolRegistry()
     await adapter.register_tools(registry=registry, server_filter=server_filter)
     return [registry.get(name) for name in registry.list_tools() if registry.get(name) is not None]
@@ -98,23 +100,31 @@ class AgentBuilderMixin:
         try:
             from framework.tools.mcp import MCPClientManager
 
-            mcp_config = self.config.get("mcp", {})
-            servers = mcp_config.get("servers", {})
-            if not servers:
+            mcp_cfg = self._app_config.mcp
+            if mcp_cfg is None or not mcp_cfg.servers:
                 return
 
-            logger.info("Connecting to %d MCP servers...", len(servers))
-            self.mcp_manager = MCPClientManager(config=servers)
+            logger.info("Connecting to %d MCP servers...", len(mcp_cfg.servers))
+            servers_dict = {
+                name: entry.model_dump(exclude_none=True)
+                for name, entry in mcp_cfg.servers.items()
+            }
+            self.mcp_manager = MCPClientManager(config=servers_dict)
             await self.mcp_manager.initialize()
 
-            # Main agent MCP server filter
-            main_mcp_filter = mcp_config.get("server_filter", ["fetch", "mcp-deepwiki", "MiniMax", "playwright"])
-            mcp_tools = await _mcp_tools_for_agent(self.mcp_manager, main_mcp_filter)
-            count = 0
-            for tool in mcp_tools:
-                self.tool_manager.register(tool)
-                count += 1
-            logger.info("Registered %d MCP tools for main", count)
+            # Main agent MCP server filter (config-driven)
+            main_cfg = next(
+                (a for a in self._app_config.agents if a.role == "main"),
+                self._app_config.agents[0] if self._app_config.agents else None,
+            )
+            main_mcp_filter = main_cfg.mcp_filter if main_cfg else None
+            if main_mcp_filter:
+                mcp_tools = await _mcp_tools_for_agent(self.mcp_manager, main_mcp_filter)
+                count = 0
+                for tool in mcp_tools:
+                    self.tool_manager.register(tool)
+                    count += 1
+                logger.info("Registered %d MCP tools for main", count)
 
         except ImportError as e:
             logger.warning("MCP adapter not available: %s", e)
@@ -125,14 +135,14 @@ class AgentBuilderMixin:
         if self.tool_manager is None or self.subagent_manager is None or self.broker is None:
             return
 
-        multi_agent_config = self.config.get("multi_agent", {})
-        if not multi_agent_config.get("enabled", True):
+        agents = self._app_config.agents
+        if len(agents) <= 1:
             return
 
-        parent_name = multi_agent_config.get("parent_agent_name", "main")
+        main_cfg = next((a for a in agents if a.role == "main"), agents[0] if agents else None)
+        parent_name = main_cfg.name if main_cfg else "main"
         parent_address = AgentAddress(name=parent_name)
-        peers_config = multi_agent_config.get("peers", [])
-        peer_names = [p.get("name", "") for p in peers_config if p.get("name")]
+        peer_names = [a.name for a in agents if a.role == "peer"]
 
         strategy = DefaultSessionIdStrategy(main_agent_name=parent_name)
         self.tool_manager.register(SendMessageTool(
@@ -150,16 +160,21 @@ class AgentBuilderMixin:
             ))
             print("   [OK] send_message_async registered")
 
-        sub_sync = multi_agent_config.get("subagent_sync", {})
-        if sub_sync.get("enabled", True):
-            descriptor, tool_manager, skill_manager = await self._build_subagent_descriptor(sub_sync)
+        subagent_cfg = next((a for a in agents if a.role == "subagent"), None)
+        if subagent_cfg is not None:
+            from framework.ioc.factories.descriptors import build_subagent_descriptor
+            memory_dir = self._resolve_path("memory_dir", "data/memory")
+            descriptor, sub_tm, sub_sm, _memory_ctx = await build_subagent_descriptor(
+                subagent_cfg, self._app_config, self._project_dir,
+                memory_dir, self.safety_policy, self.provider,
+            )
             self.tool_manager.register(SpawnSubagentTool(
                 manager=self.subagent_manager, default_parent_address=parent_address,
-                descriptor=descriptor, tool_manager=tool_manager,
-                skill_manager=skill_manager, broker=self.broker,
+                descriptor=descriptor, tool_manager=sub_tm,
+                skill_manager=sub_sm, broker=self.broker,
                 agent_bus=self.agent_bus, registry=self.agent_pool,
             ))
-            print(f"   [OK] spawn_subagent_sync registered")
+            print("   [OK] spawn_subagent_sync registered")
 
     # ── Peer / Subagent Tool Manager (code-driven) ──
 
@@ -224,67 +239,27 @@ class AgentBuilderMixin:
 
     # ── Memory Creation ──
 
-    def _session_only_memory_config(self, section: dict[str, Any]) -> MemoryLayerConfigSet:
-        short_term = section.get("short_term", {})
+    def _session_only_memory_config(self, cfg: Any) -> MemoryLayerConfigSet:
+        max_messages = 50
+        if cfg is not None and hasattr(cfg, "short_term"):
+            max_messages = cfg.short_term.max_messages
         return MemoryLayerConfigSet(
-            session=SessionMemoryConfig(max_messages=short_term.get("max_messages", 50)),
+            session=SessionMemoryConfig(max_messages=max_messages),
             archive=None, knowledge=None,
             pending=PendingPrunedInputMemoryConfig(enabled=True),
         )
 
-    def _merge_peer_memory_config(self, peer_config: dict[str, Any]) -> dict[str, Any]:
-        memory_config = peer_config.get("memory", {})
-        global_peer_memory = self.config.get("memory", {}).get("peers", {})
-        merged = {**global_peer_memory, **{k: v for k, v in memory_config.items() if k != "enabled"}}
-        for section_name in ("short_term", "governance"):
-            if section_name in global_peer_memory or section_name in memory_config:
-                merged[section_name] = {
-                    **global_peer_memory.get(section_name, {}),
-                    **memory_config.get(section_name, {}),
-                }
-        return merged
-
-    def _build_peer_compression_coordinator(self, memory_section: dict[str, Any]) -> Any:
-        from framework.memory.compression.policies import DefaultMemoryCompressionCoordinator
-        short_term = memory_section.get("short_term", {})
-        return DefaultMemoryCompressionCoordinator(
-            max_messages=short_term.get("max_messages", 50),
-            max_tokens=short_term.get("max_tokens", 8000),
-            keep_ratio_for_messages=short_term.get("keep_ratio_for_messages", 0.5),
-            keep_ratio_for_token=short_term.get("keep_ratio_for_token", 0.5),
-        )
-
-    def _build_peer_governance(self, memory_section: dict[str, Any] | None = None) -> Any | None:
-        from framework.memory.context_governance import (
-            CompositeGovernance, FinalContextLegalityGovernance,
-            PriorityBudgetGovernance, ToolChainRepairGovernance,
-        )
-        from framework.memory.retention import DefaultMessageRetentionPolicy
-
-        gov_config = (memory_section or {}).get("governance", {})
-        if not gov_config.get("enabled", True):
-            return None
-
-        strategies: list[Any] = [ToolChainRepairGovernance()]
-        token_budget = gov_config.get("token_budget", {})
-        if token_budget.get("enabled", True):
-            llm_max_tokens = self.config.get("llm", {}).get("max_tokens", 80000)
-            max_tokens = min(int(llm_max_tokens * token_budget.get("budget_ratio", 0.3)), 64000)
-            strategies.append(PriorityBudgetGovernance(
-                max_tokens=max_tokens, safety_buffer=token_budget.get("safety_buffer", 512),
-                retention_policy=DefaultMessageRetentionPolicy(),
-            ))
-        strategies.append(FinalContextLegalityGovernance())
-        return CompositeGovernance(strategies)
-
     async def _create_subagent_memory(self, sub_name: str, base_system_prompt: str = "") -> ContextManager:
-        from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
-        memory_config = self.config.get("memory", {}).get("subagents", {})
+        from framework.ioc.factories.compression import create_peer_compression_coordinator
+        from framework.memory.core.scope import MemoryAgentRole
+
+        subagent_cfg = self._find_subagent_cfg()
+        sub_memory_cfg = subagent_cfg.memory if subagent_cfg else None
         sub_dir = self._resolve_path("memory_dir", "data/memory") / "subagents" / sub_name
         sub_dir.mkdir(parents=True, exist_ok=True)
-        coordinator = self._build_peer_compression_coordinator(memory_config)
+        coordinator = create_peer_compression_coordinator(sub_memory_cfg)
         memory_system = create_memory_system(
-            workspace=sub_dir, config=self._session_only_memory_config(memory_config),
+            workspace=sub_dir, config=self._session_only_memory_config(sub_memory_cfg),
             session_only=True,
             lifecycle_policy=DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator),
         )
@@ -299,20 +274,22 @@ class AgentBuilderMixin:
             injection_policy=RestrictedInjectionPolicy(max_session_messages=20),
         )
 
-    async def _create_peer_memory(self, peer_name: str, peer_config: dict[str, Any]) -> ContextManager:
-        system_prompt = peer_config.get("system_prompt", "")
-        if not peer_config.get("memory", {}).get("enabled", True):
+    async def _create_peer_memory(self, peer_name: str, peer_cfg: Any) -> ContextManager:
+        from framework.ioc.factories.compression import create_peer_compression_coordinator
+        from framework.memory.core.scope import MemoryAgentRole
+
+        system_prompt = peer_cfg.system_prompt if peer_cfg else ""
+        peer_memory_cfg = peer_cfg.memory if peer_cfg else None
+        if peer_memory_cfg is None:
             from framework.core.context import InMemoryContextManager
             return InMemoryContextManager(base_system_prompt=system_prompt)
 
-        merged = self._merge_peer_memory_config(peer_config)
         peer_dir = self._resolve_path("memory_dir", "data/memory") / "peers" / peer_name
         peer_dir.mkdir(parents=True, exist_ok=True)
-        from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
 
-        coordinator = self._build_peer_compression_coordinator(merged)
+        coordinator = create_peer_compression_coordinator(peer_memory_cfg)
         memory_system = create_memory_system(
-            workspace=peer_dir, config=self._session_only_memory_config(merged),
+            workspace=peer_dir, config=self._session_only_memory_config(peer_memory_cfg),
             session_only=True,
             lifecycle_policy=DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator),
         )
@@ -320,105 +297,14 @@ class AgentBuilderMixin:
         if self.plugin_integration:
             self.plugin_integration.inject_memory_system_modifiers(memory_system)
         self._peer_memory_systems[peer_name] = memory_system
+        max_messages = 50
+        if peer_memory_cfg is not None and hasattr(peer_memory_cfg, "short_term"):
+            max_messages = peer_memory_cfg.short_term.max_messages
         return MemorySystemContextManager(
             memory_system=memory_system, default_agent_id=peer_name,
             default_agent_role=MemoryAgentRole.PEER, base_system_prompt=system_prompt,
-            injection_policy=RestrictedInjectionPolicy(
-                max_session_messages=merged.get("short_term", {}).get("max_messages", 50),
-            ),
+            injection_policy=RestrictedInjectionPolicy(max_session_messages=max_messages),
         )
-
-    # ── Descriptor Building ──
-
-    async def _build_subagent_descriptor(
-        self, sub_config: dict[str, Any], skill_manager: SkillManager | None = None,
-    ) -> tuple[AgentDescriptor, Any | None, Any | None]:
-        llm = self.config.get("llm", {})
-        agent = self.config.get("agent", {})
-        sub_name = sub_config.get("name", "helper")
-
-        # Subagent gets standard tools (no MCP)
-        sub_tools = list(_make_standard_tools())
-        tool_manager = await self._build_peer_tool_manager(sub_tools, mcp_server_filter=None)
-
-        skill_dirs = sub_config.get("skill_dirs", [])
-        if skill_manager is None and (sub_config.get("allowed_skills") is not None or skill_dirs):
-            project_dir = Path(__file__).parent.parent.parent
-            extra_dirs = [project_dir / d for d in skill_dirs] if skill_dirs else None
-            skill_manager = self._get_subagent_skill_manager(name=sub_name, extra_dirs=extra_dirs)
-
-        context_manager = await self._create_subagent_memory(
-            sub_name, base_system_prompt=sub_config.get("system_prompt", agent.get("system_prompt", "")))
-
-        allowed_skills: list[str] | None = sub_config.get("allowed_skills")
-        if allowed_skills is None and not skill_dirs:
-            allowed_skills = []
-
-        safety = getattr(self, "safety_policy", None)
-        descriptor = AgentDescriptor(
-            address=AgentAddress(name=sub_name, role=sub_config.get("role"),
-                                  capabilities=sub_config.get("capabilities", [])),
-            llm_config=AgentLLMConfig(model=llm.get("model"),
-                temperature=llm.get("temperature", 0.7), max_tokens=llm.get("max_tokens", 2000)),
-            system_prompt_template=sub_config.get("system_prompt", agent.get("system_prompt", "")),
-            allowed_tools=sub_config.get("allowed_tools"),
-            denied_tools=sub_config.get("denied_tools"),
-            allowed_skills=allowed_skills,
-            max_iterations=sub_config.get("max_iterations", 15),
-            max_tools_per_turn=sub_config.get("max_tools_per_turn", 10),
-            execution_strategy="react", context_manager=context_manager,
-            context_strategy=sub_config.get("context_strategy", "ephemeral"),
-            streaming_to_user=False, internal_streaming=False, safety_policy=safety,
-        )
-        return descriptor, tool_manager, skill_manager
-
-    async def _build_peer_descriptor(
-        self, peer_config: dict[str, Any],
-    ) -> tuple[AgentDescriptor, InMemoryToolManager, SkillManager | None]:
-        llm = self.config.get("llm", {})
-        agent = self.config.get("agent", {})
-        peer_name = peer_config.get("name", "unnamed")
-
-        # Peer tools: determined by code, not config
-        if peer_name == "query-12306":
-            # query-12306: MCP-only, no standard tools
-            peer_tools: list[Tool] = []
-            mcp_filter: list[str] | None = ["12306-mcp"]
-        elif peer_name == "office-expert":
-            peer_tools = [*_make_file_tools(), _make_shell_tool(), *[]]  # file + shell, no search
-            mcp_filter = None
-        else:
-            peer_tools = list(_make_standard_tools())
-            mcp_filter = None
-
-        tool_manager = await self._build_peer_tool_manager(peer_tools, mcp_server_filter=mcp_filter)
-
-        skill_dirs = peer_config.get("skill_dirs", [])
-        allowed_skills = peer_config.get("allowed_skills")
-        if allowed_skills is not None or skill_dirs:
-            project_dir = Path(__file__).parent.parent.parent
-            extra_dirs = [project_dir / d for d in skill_dirs] if skill_dirs else None
-            skill_manager = self._get_subagent_skill_manager(name=peer_name, extra_dirs=extra_dirs)
-        else:
-            skill_manager = None
-
-        safety = getattr(self, "safety_policy", None)
-        descriptor = AgentDescriptor(
-            address=AgentAddress(name=peer_name, role=peer_config.get("role"),
-                                  capabilities=peer_config.get("capabilities", [])),
-            llm_config=AgentLLMConfig(model=llm.get("model"),
-                temperature=llm.get("temperature", 0.7), max_tokens=llm.get("max_tokens", 2000)),
-            system_prompt_template=peer_config.get("system_prompt", agent.get("system_prompt", "")),
-            allowed_tools=peer_config.get("allowed_tools"),
-            denied_tools=peer_config.get("denied_tools"),
-            allowed_skills=peer_config.get("allowed_skills"),
-            max_iterations=peer_config.get("max_iterations", 15),
-            max_tools_per_turn=peer_config.get("max_tools_per_turn", 10),
-            execution_strategy="react",
-            context_strategy=peer_config.get("context_strategy", "persistent"),
-            safety_policy=safety,
-        )
-        return descriptor, tool_manager, skill_manager
 
     # ── Context Routing ──
 
@@ -431,7 +317,8 @@ class AgentBuilderMixin:
 
     async def _cleanup_subagent_memory(self, session_id: str) -> None:
         from framework.multi_agent.session_id import DefaultSessionIdStrategy
-        parent_name = self.config.get("multi_agent", {}).get("parent_agent_name", "main")
+        main_cfg = self._main_agent_cfg
+        parent_name = main_cfg.name if main_cfg else "main"
         strategy = DefaultSessionIdStrategy(main_agent_name=parent_name)
         _, sub_name = strategy.parse(session_id)
         if sub_name is None:
@@ -450,30 +337,44 @@ class AgentBuilderMixin:
     # ── Peer Agent Initialization ──
 
     async def _initialize_peer_agents(self) -> None:
+        from framework.ioc.factories.descriptors import build_peer_descriptor
+        from framework.hook import HookErrorPolicy, HookSpec
+        from framework.hook.builtin import PeerAutoSendHook
+
         if self.agent_pool is None or self.broker is None or self.subagent_manager is None:
             return
 
-        multi_agent_config = self.config.get("multi_agent", {})
-        peers_config = multi_agent_config.get("peers", [])
-        parent_name = multi_agent_config.get("parent_agent_name", "main")
+        peer_cfgs = self._find_peer_cfgs()
+        main_cfg = self._main_agent_cfg
+        parent_name = main_cfg.name if main_cfg else "main"
 
-        if not peers_config:
+        if not peer_cfgs:
             return
         if self.mode != "pool":
-            print(f"   [WARN] {len(peers_config)} peer agents require pool mode")
+            print(f"   [WARN] {len(peer_cfgs)} peer agents require pool mode")
             return
 
-        print(f"\n[INIT] Initializing {len(peers_config)} peer agents...")
-        for peer_config in peers_config:
-            peer_name = peer_config.get("name", "unnamed")
+        print(f"\n[INIT] Initializing {len(peer_cfgs)} peer agents...")
+        memory_dir = self._resolve_path("memory_dir", "data/memory")
+        for peer_cfg in peer_cfgs:
+            peer_name = peer_cfg.name
             print(f"[INIT] Initializing peer agent: {peer_name}")
 
-            descriptor, tool_manager, skill_manager = await self._build_peer_descriptor(peer_config)
+            descriptor, tool_manager, skill_manager, memory_ctx = await build_peer_descriptor(
+                peer_cfg, self._app_config, self._project_dir,
+                memory_dir, self.safety_policy, self.provider,
+            )
+
+            # Per-agent MCP tool injection (config-driven, no name checks)
+            if peer_cfg.mcp_filter and self.mcp_manager:
+                mcp_tools = await _mcp_tools_for_agent(self.mcp_manager, peer_cfg.mcp_filter)
+                for tool in mcp_tools:
+                    tool_manager.register(tool)
 
             from framework.multi_agent.peer_validator import PeerAgentValidator
             PeerAgentValidator.validate(descriptor, parent_name)
 
-            context_manager = await self._create_peer_memory(peer_name, peer_config)
+            context_manager = memory_ctx
 
             # register send_message_async (star topology)
             peer_address = AgentAddress(name=peer_name)
@@ -485,17 +386,20 @@ class AgentBuilderMixin:
             ))
 
             # register subagent tool for this peer
-            if peer_config.get("subagent", {}).get("enabled", False):
-                sub_sync = multi_agent_config.get("subagent_sync", {})
-                if sub_sync.get("enabled", True):
-                    sub_descriptor, sub_tm, sub_sm = await self._build_subagent_descriptor(sub_sync)
-                    tool_manager.register(SpawnSubagentTool(
-                        manager=self.subagent_manager,
-                        default_parent_address=peer_address,
-                        descriptor=sub_descriptor, tool_manager=sub_tm,
-                        skill_manager=sub_sm, broker=self.broker,
-                        agent_bus=self.agent_bus, registry=self.agent_pool,
-                    ))
+            subagent_cfg = self._find_subagent_cfg()
+            if subagent_cfg is not None and peer_cfg.standard_tools:
+                from framework.ioc.factories.descriptors import build_subagent_descriptor
+                sub_descriptor, sub_tm, sub_sm, _sub_mem = await build_subagent_descriptor(
+                    subagent_cfg, self._app_config, self._project_dir,
+                    memory_dir, self.safety_policy, self.provider,
+                )
+                tool_manager.register(SpawnSubagentTool(
+                    manager=self.subagent_manager,
+                    default_parent_address=peer_address,
+                    descriptor=sub_descriptor, tool_manager=sub_tm,
+                    skill_manager=sub_sm, broker=self.broker,
+                    agent_bus=self.agent_bus, registry=self.agent_pool,
+                ))
 
             await self.agent_pool.register_resident(
                 descriptor, context_manager=context_manager, tool_manager=tool_manager,
@@ -504,14 +408,12 @@ class AgentBuilderMixin:
 
             instance = self.agent_pool.get(peer_name)
             if instance and instance.pipeline:
-                merged = self._merge_peer_memory_config(peer_config)
-                instance.pipeline.governance = self._build_peer_governance(merged)
+                instance.pipeline.governance = create_peer_governance(
+                    peer_cfg.memory, self._app_config.llm.max_tokens,
+                )
                 instance.pipeline.context_manager_factory = None
 
             if self.agent_bus is not None and instance and instance.pipeline:
-                from framework.hook import HookErrorPolicy, HookSpec
-                from framework.hook.builtin import PeerAutoSendHook
-
                 hook = PeerAutoSendHook(agent_bus=self.agent_bus, self_name=peer_name, parent_name=parent_name)
                 if instance.pipeline.hook_runner is not None:
                     instance.pipeline.hook_runner.add(HookSpec(hook=hook, on_error=HookErrorPolicy.LOG))
@@ -519,4 +421,4 @@ class AgentBuilderMixin:
                     instance.pipeline.hooks.append(hook)
 
             print(f"[OK] Peer agent '{peer_name}' registered as resident")
-        print(f"[OK] {len(peers_config)} peer agents initialized\n")
+        print(f"[OK] {len(peer_cfgs)} peer agents initialized\n")

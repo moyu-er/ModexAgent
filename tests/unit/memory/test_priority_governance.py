@@ -39,6 +39,8 @@ async def test_lossy_compaction_reduces_tool_before_agent() -> None:
         assistant_head_chars=20,
         agent_head_chars=80,
         user_head_chars=120,
+        keep_range_count=0,
+        keep_range_ratio=0.0,
     )
 
     result = await gov.apply(messages)
@@ -54,7 +56,7 @@ async def test_lossy_compaction_reduces_tool_before_agent() -> None:
 async def test_lossy_governance_does_not_mutate_input_messages() -> None:
     messages = [{"role": MessageRole.TOOL, "tool_call_id": "t1", "name": "search", "content": "t" * 500}]
     original_content = messages[0]["content"]
-    gov = LossyContentCompactionGovernance(tool_result_head_chars=20)
+    gov = LossyContentCompactionGovernance(tool_result_head_chars=20, keep_range_count=0, keep_range_ratio=0.0)
 
     result = await gov.apply(messages)
 

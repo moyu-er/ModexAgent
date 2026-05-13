@@ -8,6 +8,8 @@ just Agents with different tools and configs passed in code.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from framework.core.tool_manager import Tool
@@ -50,10 +52,13 @@ class AgentConfig(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
 
     name: str
+    role: Literal["main", "peer", "subagent"] = "peer"
     llm: LLMConfig | None = None
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
     max_steps: int = 20
-    tools: list[Tool] = Field(default_factory=list)
+    tools: list[Tool] = Field(default_factory=list)  # code-passed only
+    standard_tools: bool = True  # register read/write/edit/list/shell/search
+    mcp_filter: list[str] | None = None  # which MCP servers to use (names from mcp.json)
     memory: MemoryConfig | None = None
     skills: SkillsConfig | None = None
     approval: ApprovalConfig | None = None

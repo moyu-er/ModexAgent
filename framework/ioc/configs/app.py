@@ -77,8 +77,26 @@ class AppConfig(BaseModel):
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> AppConfig:
-        """Load from YAML file, resolving ${ENV} references."""
-        with open(path, encoding="utf-8") as f:
-            data = yaml.safe_load(f)
+        """Load from YAML file, resolving ${ENV} references.
+
+        If `mcp` is not defined in the YAML, looks for a sibling `mcp.json`
+        (Claude-style `{"mcpServers": {...}}` schema). This keeps the main
+        YAML lean — MCP servers belong in their own file.
+        """
+        yaml_path = Path(path)
+        with open(yaml_path, encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
         data = _resolve_env_in(data)
+
+        # Auto-load sibling mcp.json when YAML doesn't define mcp servers.
+        if "mcp" not in data:
+            mcp_json = yaml_path.parent / "mcp.json"
+            if mcp_json.exists():
+                import json
+                with open(mcp_json, encoding="utf-8") as fj:
+                    mcp_data = _resolve_env_in(json.load(fj))
+                servers = mcp_data.get("mcpServers") or mcp_data.get("servers") or {}
+                if servers:
+                    data["mcp"] = {"servers": servers}
+
         return cls.model_validate(data)

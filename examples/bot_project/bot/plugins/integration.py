@@ -38,22 +38,27 @@ class PluginIntegration:
     # ---- discovery ----
 
     async def discover_and_load(self) -> bool:
-        """加载插件并注入工具到 ToolManager。
+        """Load plugins and inject tools into ToolManager.
+
+        Plugins are disabled by default. To enable, add `plugins.enabled: true`
+        in bot_config.yml. Each plugin still respects its own
+        `configurations[<name>].enabled` setting.
 
         Returns:
             True if any plugins were loaded.
         """
-        plugin_configs = dict(self.config.get("plugins", {}).get("configurations") or {})
-        enabled_plugins = self.config.get("plugins", {}).get("enabled", None)
-        # enabled can be: bool (True/False → on/off), list (whitelist), or None
-        if enabled_plugins is False:
-            plugin_configs["_enabled"] = []          # whitelist: nothing
-        elif isinstance(enabled_plugins, list):
-            plugin_configs["_enabled"] = list(enabled_plugins)  # whitelist: listed names
-        # True or None → no _enabled key → load all plugins
+        plugins_section = self.config.get("plugins") or {}
+        # Top-level kill switch — missing or False blocks all plugin loading.
+        top_enabled = plugins_section.get("enabled", False)
+        if not top_enabled:
+            return False
 
-        # 额外扫描项目本地插件目录（必须在 discover_and_load 之前，
-        # 因为 discover_and_load 会打印统计日志）
+        plugin_configs = dict(plugins_section.get("configurations") or {})
+        # `enabled` at the top level can also be a list = whitelist
+        if isinstance(top_enabled, list):
+            plugin_configs["_enabled"] = list(top_enabled)
+
+        # Scan extra local plugin directories before discover_and_load
         for extra_dir in self._extra_plugin_dirs:
             if extra_dir.exists():
                 self.plugin_manager.scan_directory(extra_dir, plugin_configs)

@@ -7,13 +7,22 @@ injects them into ToolRegistry for agent selection in code.
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class MCPServerEntry(BaseModel):
-    """Configuration for a single MCP server connection."""
+    """Configuration for a single MCP server connection.
 
-    type: Literal["stdio", "sse", "streamableHttp"] | None = None
+    `transport` accepts the legacy alias `type` on input (matching the
+    Claude `mcp.json` convention `{"type": "sse", ...}`), and serializes
+    as `transport` to match the runtime `MCPClientManager` API.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    transport: Literal["stdio", "sse", "streamableHttp"] | None = Field(
+        default=None, alias="type"
+    )
     command: str = ""
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)

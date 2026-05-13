@@ -73,10 +73,10 @@ class QQBotService(BotService):
                 config=QQEmitterConfig.minimal(),
             )
 
-        # Pass app_config= only — no legacy dict bridge
+        # Pass app_config only — MCP servers come from sibling mcp.json
         super().__init__(
             config_dir, input_adapter, output_adapter, emitter_factory,
-            mode=mode, app_config=app_cfg, legacy_raw=raw_config,
+            mode=mode, app_config=app_cfg,
         )
 
 

@@ -23,11 +23,22 @@ class TestMCPConfig:
         cfg = MCPConfig(
             servers={
                 "fetch": MCPServerEntry(
-                    type="sse",
+                    transport="sse",
                     url="https://mcp.example.com/sse",
                     headers={"Authorization": "Bearer token"},
                 )
             }
         )
-        assert cfg.servers["fetch"].type == "sse"
+        assert cfg.servers["fetch"].transport == "sse"
         assert cfg.servers["fetch"].headers["Authorization"] == "Bearer token"
+
+    def test_sse_server_via_type_alias(self) -> None:
+        """`type` is accepted as input alias for `transport` (mcp.json convention)."""
+        cfg = MCPConfig.model_validate(
+            {"servers": {"fetch": {"type": "sse", "url": "https://x/sse"}}}
+        )
+        assert cfg.servers["fetch"].transport == "sse"
+        # Serialization uses `transport`, not `type`.
+        dumped = cfg.servers["fetch"].model_dump(exclude_none=True)
+        assert dumped["transport"] == "sse"
+        assert "type" not in dumped
