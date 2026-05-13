@@ -1,4 +1,9 @@
-"""LLM provider factory — creates provider from config."""
+"""LLM provider factory — creates provider from config.
+
+Supports provider routing via model name prefix:
+- ``openai/`` prefix → OpenAIProvider (prefix stripped from model name)
+- no prefix (default) → LiteLLMProvider
+"""
 
 from __future__ import annotations
 
@@ -7,12 +12,18 @@ from framework.core.provider import LLMProvider
 from framework.ioc.configs.llm import LLMConfig
 from framework.ioc.configs.safety import SafetyConfig
 
+_OPENAI_PREFIX = "openai/"
+
 
 def create_llm_provider(
     config: LLMConfig,
     safety: SafetyConfig | None = None,
 ) -> LLMProvider:
     """Create an LLMProvider from config.
+
+    Provider routing:
+    - Model name with ``openai/`` prefix → OpenAIProvider (prefix stripped)
+    - Otherwise → LiteLLMProvider
 
     Args:
         config: LLM configuration.
@@ -21,8 +32,6 @@ def create_llm_provider(
     Returns:
         Configured LLMProvider instance.
     """
-    from framework.providers.litellm_provider import LiteLLMProvider
-
     safety_policy: RuntimeSafetyPolicy | None = None
     if safety is not None:
         safety_policy = RuntimeSafetyPolicy(
@@ -38,6 +47,20 @@ def create_llm_provider(
                 tool_timeout_seconds=safety.turn.tool_timeout,
             ),
         )
+
+    if config.model.startswith(_OPENAI_PREFIX):
+        from framework.providers.openai_provider import OpenAIProvider
+
+        return OpenAIProvider(
+            model=config.model[len(_OPENAI_PREFIX):],
+            api_key=config.api_key or None,
+            base_url=config.base_url or None,
+            temperature=config.temperature,
+            max_tokens=config.max_tokens,
+            safety=safety_policy,
+        )
+
+    from framework.providers.litellm_provider import LiteLLMProvider
 
     return LiteLLMProvider(
         model=config.model,
