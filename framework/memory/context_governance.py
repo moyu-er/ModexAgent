@@ -186,8 +186,10 @@ class LossyContentCompactionGovernance(ContextGovernance):
         self,
         tool_result_head_chars: int = 1200,
         assistant_head_chars: int = 1200,
-        agent_head_chars: int = 2000,
-        user_head_chars: int = 4000,
+        agent_head_chars: int = -1,
+        user_head_chars: int = -1,
+        keep_range_count: int = 20,
+        keep_range_ratio: float = 0.5
     ) -> None:
         self._limits = {
             str(MessageRole.TOOL): tool_result_head_chars,
@@ -195,11 +197,20 @@ class LossyContentCompactionGovernance(ContextGovernance):
             str(MessageRole.AGENT): agent_head_chars,
             str(MessageRole.USER): user_head_chars,
         }
+        self.keep_range_count = keep_range_count
+        self.keep_range_ratio = max(0.0, min(1.0, keep_range_ratio))
 
     async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []
-        for msg in messages:
+        length = len(messages)
+        max_range = max(0, min(length - self.keep_range_count, int (length * (1.0 - self.keep_range_ratio))))
+        if max_range <= 0:
+            return messages
+        for i, msg in enumerate(messages):
             updated = dict(msg)
+            if i >= max_range:
+                result.append(updated)
+                continue
             role = str(updated.get("role", ""))
             limit = self._limits.get(role)
             content = updated.get("content")

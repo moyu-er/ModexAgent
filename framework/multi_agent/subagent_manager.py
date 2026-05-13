@@ -270,8 +270,7 @@ class SubagentManager:
         """执行子 Agent。
 
         使用 ``request.exec_id`` 作为 ``session_id``，确保每次调用都有唯一标识。
-        记忆清理通过注入的 SubagentMemoryCleanupHook 完成，由 Agent.run 的
-        finally 块触发，确保无论成功或失败都会执行。
+        记忆清理在 finally 块中直接调用，确保无论成功或失败都会执行。
         """
         session_id = request.exec_id
         descriptor = request.descriptor
@@ -292,20 +291,6 @@ class SubagentManager:
                 base_system_prompt=descriptor.system_prompt_template or ""
             )
 
-        from framework.hook.builtin import SubagentMemoryCleanupHook
-
-        hooks: list[Any] = [
-            SubagentMemoryCleanupHook(
-                cleanup_fn=lambda sid: self._cleanup_subagent_session(
-                    sid,
-                    descriptor.context_strategy,
-                    context_manager,
-                    self._on_task_complete,
-                ),
-                session_id=session_id,
-            ),
-        ]
-
         try:
             instance = await self._agent_factory.create_agent(
                 descriptor,
@@ -317,7 +302,6 @@ class SubagentManager:
                 sanitizer=self._sanitizer,
                 command_interceptor=self._command_interceptor,
                 subagent_manager=self,
-                hooks=hooks,
             )
 
             from framework.core.events import EmitterConfig
@@ -345,6 +329,13 @@ class SubagentManager:
                 content=f"Subagent execution failed: {e}",
                 stop_reason="error",
                 error=str(e),
+            )
+        finally:
+            await self._cleanup_subagent_session(
+                session_id,
+                descriptor.context_strategy,
+                context_manager,
+                self._on_task_complete,
             )
 
         return result

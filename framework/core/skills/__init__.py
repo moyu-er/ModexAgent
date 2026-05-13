@@ -4,6 +4,10 @@ from .builder import (
     ProgressiveBuilder,
     SkillPromptBuilder,
 )
+from .cache import (
+    DirectorySkillCache,
+    SkillCache,
+)
 from .filter import (
     AllowListFilter,
     AlwaysFilter,
@@ -46,4 +50,6 @@ __all__ = [
     "InlineBuilder",
     "HybridBuilder",
     "SkillManager",
+    "SkillCache",
+    "DirectorySkillCache",
 ]
