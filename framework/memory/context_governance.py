@@ -214,7 +214,7 @@ class LossyContentCompactionGovernance(ContextGovernance):
             role = str(updated.get("role", ""))
             limit = self._limits.get(role)
             content = updated.get("content")
-            if limit is not None and isinstance(content, str) and len(content) > limit:
+            if limit is not None and limit > 0 and isinstance(content, str) and len(content) > limit:
                 updated["content"] = self._truncate_content(
                     content,
                     limit,
