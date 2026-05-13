@@ -21,7 +21,7 @@ pytestmark = pytest.mark.integration
 
 def _load_env():
     """Load .env from bot_project. Skips test if vars missing."""
-    env_path = Path(__file__).parent.parent.parent / "examples" / "bot_project" / ".env"
+    env_path = Path(__file__).parent / ".env"
     if env_path.exists():
         with open(env_path, encoding="utf-8") as f:
             for line in f:

@@ -380,8 +380,8 @@ class OpenAIProvider(StreamingLLMProvider):
             params["tools"] = tools
             params["tool_choice"] = "auto"
 
-        if stream:
-            params["stream_options"] = {"include_usage": True}
+        # stream_options not set by default — third-party endpoints
+        # (MiniMax, DeepSeek, etc.) may reject it. Pass via **kwargs if needed.
 
         if self._extra_headers:
             params["extra_headers"] = self._extra_headers
