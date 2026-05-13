@@ -92,8 +92,43 @@ class FileSkillSource(SkillSource):
         self._contents: dict[str, str] = {}
 
     @property
+    def directories(self) -> list[Path]:
+        return list(self._directories)
+
+    @property
+    def layout(self) -> str:
+        return self._layout
+
+    @property
     def name(self) -> str:
         return f"file:{':'.join(str(d) for d in self._directories)}"
+
+    def list_skill_names(self, directory: Path) -> set[str]:
+        """Return the set of skill names in *directory* without parsing file contents.
+
+        ``"directory"`` layout: returns subdirectory names that contain ``SKILL.md``.
+        ``"flat"`` layout: returns ``.md`` file stems, excluding ``exclude_names``.
+        Returns an empty set if the directory does not exist.
+        """
+        resolved = directory.expanduser().resolve()
+        if not resolved.exists() or not resolved.is_dir():
+            return set()
+        names: set[str] = set()
+        if self._layout == "directory":
+            for subdir in sorted(resolved.iterdir()):
+                if subdir.is_dir() and (subdir / self._skill_filename).exists():
+                    names.add(subdir.name)
+        else:
+            for path in sorted(resolved.glob("*.md")):
+                if path.name.lower() not in self._exclude_names:
+                    names.add(path.stem)
+        return names
+
+    def invalidate_cache(self) -> None:
+        """Clear internal caches so the next ``list_skills`` / ``load_skill`` re-reads from disk."""
+        self._listing = None
+        self._summary_map.clear()
+        self._contents.clear()
 
     def _iter_skill_paths(self, directory: Path):
         """Yield candidate skill markdown paths based on layout."""

@@ -33,6 +33,7 @@ from framework.core.llm_error import (
     TurnTimeoutPolicy,
 )
 from framework.core.skills import (
+    DirectorySkillCache,
     FileSkillSource,
     ProgressiveBuilder,
     ResolutionContext,
@@ -307,9 +308,13 @@ class BotService(AgentBuilderMixin):
                 layout="directory",
                 skill_filename="SKILL.md",
             )
+            cache = DirectorySkillCache(
+                directories=[main_skills_dir],
+                layout="directory",
+            )
             builder = ProgressiveBuilder(base_path=self._project_dir)
             main_skill_manager = SkillManager(
-                source=source, builder=builder
+                source=source, builder=builder, cache=cache,
             )
             available_skills = await main_skill_manager.list_skills(
                 ResolutionContext.from_runtime(tool_manager=self.tool_manager)

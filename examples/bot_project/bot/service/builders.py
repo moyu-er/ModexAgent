@@ -14,6 +14,7 @@ from framework.ioc.factories.governance import create_peer_governance
 from framework.core.context import ContextManager
 from framework.core.skills import (
     CompositeSkillSource,
+    DirectorySkillCache,
     FileSkillSource,
     ProgressiveBuilder,
     SkillManager,
@@ -233,7 +234,16 @@ class AgentBuilderMixin:
         source = (CompositeSkillSource(sources=sources, merge_strategy="last_wins")
                   if len(sources) > 1 else sources[0])
         builder = ProgressiveBuilder(base_path=project_dir)
-        mgr = SkillManager(source=source, builder=builder)
+
+        all_dirs: list[Path] = []
+        for s in sources:
+            all_dirs.extend(s.directories)
+        cache = DirectorySkillCache(
+            directories=all_dirs,
+            layout="directory",
+        ) if sources else None
+
+        mgr = SkillManager(source=source, builder=builder, cache=cache)
         self._subagent_skill_managers[cache_key] = mgr
         return mgr
 
