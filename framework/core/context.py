@@ -3,6 +3,8 @@
 提供上下文管理功能，支持多种存储后端。
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import time
@@ -10,11 +12,14 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from framework.core.skills import ResolutionContext, SkillManager
 from framework.memory.core.message import ChatMessage
 from framework.memory.history import ListMessageHistory, MessageHistory
+
+if TYPE_CHECKING:
+    from framework.memory.context_governance import ContextGovernance
 
 from .emitter import AgentResult
 from .message_utils import AGENT_COMMUNICATION_SYSTEM_NOTE, normalize_agent_messages_for_llm
@@ -137,6 +142,13 @@ class ContextManager(ABC):
     async def flush(self, session_id: str) -> None:
         """Flush working memory to short-term. No-op by default."""
         pass
+
+    def wrap_governance(
+        self,
+        governance: ContextGovernance | None,
+        session_id: str,
+    ) -> ContextGovernance | None:
+        return governance
 
 
 class InMemoryContextManager(ContextManager):

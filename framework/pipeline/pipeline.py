@@ -545,6 +545,12 @@ class AgentPipeline:
                 phase=RTurnPhase.CREATED,
             )
             base_services = self.runtime_services
+            governance = (
+                base_services.governance
+                if base_services is not None and base_services.governance is not None
+                else self.governance
+            )
+            governance = ctx_mgr.wrap_governance(governance, session_id)
             services = AgentRuntimeServices(
                 hooks=base_services.hooks if base_services is not None else self.hook_runner,
                 interceptors=(
@@ -554,11 +560,7 @@ class AgentPipeline:
                 ),
                 control=base_services.control if base_services is not None else None,
                 approval=base_services.approval if base_services is not None else None,
-                governance=(
-                    base_services.governance
-                    if base_services is not None and base_services.governance is not None
-                    else self.governance
-                ),
+                governance=governance,
                 turn_store=(
                     base_services.turn_store
                     if base_services is not None and base_services.turn_store is not None
