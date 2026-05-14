@@ -119,7 +119,15 @@ class MemorySystemContextManager(ContextManager):
         )
         pending_governance = PendingInjectionGovernance(
             injector=injector,
-            context_factory=lambda: MemoryContext(session_id=session_id),
+            context_factory=lambda: (
+                self._context_cache.get(session_id)
+                or MemoryContext(
+                    session_id=session_id,
+                    user_id=self.default_user_id,
+                    agent_id=self.default_agent_id,
+                    agent_role=self.default_agent_role,
+                )
+            ),
         )
         if governance is not None:
             return CompositeGovernance([governance, pending_governance])
