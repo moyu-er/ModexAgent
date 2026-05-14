@@ -533,6 +533,11 @@ class AgentPipeline:
         )
         agent_context.identity = turn_identity
 
+        # ---- governance (pending injection, etc.) — unconditional ----
+        base_services = self.runtime_services
+        base_gov = base_services.governance if base_services is not None else None
+        governance = ctx_mgr.wrap_governance(base_gov or self.governance, session_id)
+
         # ---- typed AgentRuntime with ReActTurnState (new) ----
         if self.turn_store is not None:
             from framework.agents.react.state import ReActTurnState
@@ -544,13 +549,6 @@ class AgentPipeline:
                 agent_kind=AgentKind.REACT,
                 phase=RTurnPhase.CREATED,
             )
-            base_services = self.runtime_services
-            governance = (
-                base_services.governance
-                if base_services is not None and base_services.governance is not None
-                else self.governance
-            )
-            governance = ctx_mgr.wrap_governance(governance, session_id)
             services = AgentRuntimeServices(
                 hooks=base_services.hooks if base_services is not None else self.hook_runner,
                 interceptors=(
@@ -581,6 +579,19 @@ class AgentPipeline:
             )
             agent_context.runtime = AgentRuntime(services=services, state=react_state)
             agent_context.runtime.state.custom[TurnCustomKey.MAX_TOOLS_PER_TURN] = None
+        elif governance is not None:
+            # Lightweight runtime for governance-only mode (no turn_store)
+            from framework.agents.react.state import ReActTurnState
+            from framework.runtime.enums import AgentKind, TurnPhase as RTurnPhase
+            from framework.runtime.services import AgentRuntime
+            agent_context.runtime = AgentRuntime(
+                services=AgentRuntimeServices(governance=governance),
+                state=ReActTurnState(
+                    identity=turn_identity,
+                    agent_kind=AgentKind.REACT,
+                    phase=RTurnPhase.CREATED,
+                ),
+            )
 
         # Emitter selection
         if self.emitter_factory:
