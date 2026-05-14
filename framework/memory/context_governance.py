@@ -11,13 +11,16 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from enum import StrEnum
+from collections.abc import Callable
 from typing import Any
 
 from framework.core.types import MessageRole
+from framework.memory.core.scope import MemoryContext
 from framework.memory.compression.tool_chain_sanitizer import (
     DefaultSessionToolChainSanitizer,
     ToolChainSanitizationMode,
 )
+from framework.memory.pending import PendingPrunedInputInjector
 from framework.memory.retention import DefaultMessageRetentionPolicy, MessageRetentionPolicy
 from framework.memory.retention.types import MessageRetentionDecision, RetentionPriority
 from framework.memory.utils import estimate_token_count
@@ -273,6 +276,28 @@ class FinalContextLegalityGovernance(ContextGovernance):
 
     async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return messages
+
+
+class PendingInjectionGovernance(ContextGovernance):
+    def __init__(
+        self,
+        injector: PendingPrunedInputInjector,
+        context_factory: Callable[[], MemoryContext] | None = None,
+    ) -> None:
+        self._injector = injector
+        self._context_factory = context_factory
+
+    async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if self._injector is None:
+            return messages
+        context = (
+            self._context_factory()
+            if self._context_factory is not None
+            else None
+        )
+        if context is None:
+            return messages
+        return await self._injector.apply(list(messages), context)
 
 
 class MicrocompactGovernance(ContextGovernance):

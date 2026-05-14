@@ -19,8 +19,10 @@ from framework.memory.core.system import (
 )
 from framework.memory.default_system import DefaultMemorySystem
 from framework.memory.layers.config import MemoryLayerConfigSet
+from framework.memory.context_governance import ContextGovernance
 from framework.memory.layers.factory import MemoryLayerFactory
 from framework.memory.lifecycle import MemoryLifecyclePolicy
+from framework.memory.pending import DefaultPendingPrunedInputInjector
 from framework.memory.registry.file import DefaultMemoryStoreRegistry
 
 logger = logging.getLogger(__name__)
@@ -95,6 +97,33 @@ class MemorySystemContextManager(ContextManager):
         self._last_session_id: str | None = None
         self._context_cache: dict[str, MemoryContext] = {}
         self._max_context_cache_size = 1000
+
+    def wrap_governance(
+        self,
+        governance: ContextGovernance | None,
+        session_id: str,
+    ) -> ContextGovernance | None:
+        if not isinstance(self.memory_system, DefaultMemorySystem):
+            return governance
+        pending_manager = self.memory_system.layers.pending
+        if pending_manager is None:
+            return governance
+        session_manager = self.memory_system.layers.session
+        injector = DefaultPendingPrunedInputInjector(
+            manager=pending_manager,
+            session=session_manager,
+        )
+        from framework.memory.context_governance import (
+            CompositeGovernance,
+            PendingInjectionGovernance,
+        )
+        pending_governance = PendingInjectionGovernance(
+            injector=injector,
+            context_factory=lambda: MemoryContext(session_id=session_id),
+        )
+        if governance is not None:
+            return CompositeGovernance([governance, pending_governance])
+        return pending_governance
 
     # -- ContextManager interface -----------------------------------------
 
