@@ -59,6 +59,7 @@ class _SessionManager(SessionMemoryManager):
         messages: Any,
         expected_revision: Any,
         state_updates: Any = None,
+        idle_threshold_seconds: Any = None,
     ) -> Any:
         pass
 

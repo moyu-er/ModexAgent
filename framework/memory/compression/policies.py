@@ -132,23 +132,6 @@ class SummaryStrategy(ABC):
     ) -> str: ...
 
 
-class HeuristicSummaryStrategy(SummaryStrategy):
-    """Lightweight heuristic summary (no LLM, for tests)."""
-
-    async def summarize(
-        self,
-        messages: Sequence[dict[str, Any]],
-        context: MemoryContext,
-        reason: CompressionReason,
-    ) -> str:
-        _ = context, reason
-        parts = [m.get("content", "") for m in messages if m.get("role") == "user" and m.get("content")]
-        if parts:
-            return " | ".join(parts[:5])
-        parts = [m.get("content", "") for m in messages if m.get("role") == "assistant" and m.get("content")]
-        if parts:
-            return " | ".join(parts[:3])
-        return ""
 
 
 # ── Error ────────────────────────────────────────────────────────────────────
@@ -302,6 +285,7 @@ class DefaultCommitPolicy(CommitPolicy):
             plan.keep_messages,
             plan.expected_revision,
             extra_state,
+            idle_threshold_seconds=plan.idle_threshold_seconds,
         )
         if revision is None:
             if pending is not None and pending_snapshot is not None:
@@ -340,6 +324,7 @@ class MemoryCompressionCoordinator(ABC):
         archive: ArchiveMemoryManager | None,
         pending: PendingPrunedInputMemoryManager | None = None,
         context: MemoryContext,
+        idle_threshold_seconds: float | None = None,
     ) -> CompressionResult: ...
 
 
@@ -374,7 +359,7 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
             max_messages=max_messages, max_tokens=max_tokens,
         )
         self._boundary = boundary or ToolChainBoundaryPolicy()
-        self._summary = summary or HeuristicSummaryStrategy()
+        self._summary = summary
         self._commit = commit or DefaultCommitPolicy()
         self._error = error_policy or DefaultCompressionErrorPolicy()
         self._compaction = compaction or ConservativeCompactionPolicy()
@@ -392,6 +377,7 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
         archive: ArchiveMemoryManager | None,
         pending: PendingPrunedInputMemoryManager | None = None,
         context: MemoryContext,
+        idle_threshold_seconds: float | None = None,
     ) -> CompressionResult:
         # Phase 1: Trigger check
         trigger = await self._trigger.should_compress(session=session, context=context)
@@ -438,6 +424,7 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
                 drop_without_archive_messages=sanitization.removed_messages,
                 sanitization_issues=sanitization.issues,
                 has_open_tail=sanitization.has_open_tail,
+                idle_threshold_seconds=idle_threshold_seconds,
             )
             return await self._commit.commit(
                 plan=plan,
@@ -533,6 +520,7 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
             drop_without_archive_messages=sanitization.removed_messages,
             sanitization_issues=sanitization.issues,
             has_open_tail=sanitization.has_open_tail,
+            idle_threshold_seconds=idle_threshold_seconds,
         )
 
         # Phase 5: Commit (caller ensures lock is held)
@@ -582,6 +570,8 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
         context: MemoryContext,
         reason: CompressionReason,
     ) -> str:
+        if self._summary is None:
+            return ""
         try:
             return await self._summary.summarize(messages, context, reason)
         except Exception as exc:

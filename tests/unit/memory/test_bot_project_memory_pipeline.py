@@ -17,7 +17,6 @@ from framework.core.types import MessageRole
 from framework.memory.compaction.policy import ConservativeCompactionPolicy
 from framework.memory.compression.policies import (
     DefaultMemoryCompressionCoordinator,
-    HeuristicSummaryStrategy,
     SummaryStrategy,
 )
 from framework.memory.core.models import ArchiveEntry, CompressionReason
@@ -47,6 +46,7 @@ def _bot_project_coordinator(**kw: Any) -> DefaultMemoryCompressionCoordinator:
     defaults: dict[str, Any] = {
         "max_messages": 50,
         "compaction": ConservativeCompactionPolicy(),
+        "summary": MockSummarizerStrategy(),
     }
     defaults.update(kw)
     return DefaultMemoryCompressionCoordinator(**defaults)

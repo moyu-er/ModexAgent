@@ -199,10 +199,15 @@ class ScopedSessionMemoryManager(SessionMemoryManager):
         messages: Sequence[ChatMessage | dict[str, object]],
         expected_revision: StorageRevision,
         state_updates: Mapping[str, Any] | None = None,
+        idle_threshold_seconds: float | None = None,
     ) -> StorageRevision | None:
         storage = await self._storage_factory(context)
         chat_messages = self._to_chat_messages(messages)
         async with storage.get_lock().write():
+            if idle_threshold_seconds is not None:
+                last = await storage.get(".last_activity")
+                if isinstance(last, int | float) and time.time() - last <= idle_threshold_seconds:
+                    return None
             current = await storage.get_revision()
             if current.version != expected_revision.version:
                 return None

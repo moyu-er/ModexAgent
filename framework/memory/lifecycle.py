@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from framework.core.types import MessageRole
+from framework.memory.compression.policies import MemoryCompressionCoordinator
 from framework.memory.core.layers import MemoryLayerSet
 from framework.memory.core.scope import (
     MemoryAgentRole,
@@ -41,6 +42,11 @@ def _normalize_role(role: str | MemoryAgentRole | None) -> MemoryAgentRole:
 class MemoryLifecyclePolicy(ABC):
     """Turn and session lifecycle hooks called during normal request flow."""
 
+    @property
+    def compression_coordinator(self) -> MemoryCompressionCoordinator | None:
+        """Return the embedded compression coordinator, if any."""
+        return None
+
     @abstractmethod
     async def on_turn_start(self, context: MemoryContext, layers: MemoryLayerSet) -> None: ...
 
@@ -61,9 +67,13 @@ class DefaultMemoryLifecyclePolicy(MemoryLifecyclePolicy):
 
     def __init__(
         self,
-        compression_coordinator: Any | None = None,
+        compression_coordinator: MemoryCompressionCoordinator | None = None,
     ) -> None:
         self._coordinator = compression_coordinator
+
+    @property
+    def compression_coordinator(self) -> MemoryCompressionCoordinator | None:
+        return self._coordinator
 
     async def on_turn_start(self, context: MemoryContext, layers: MemoryLayerSet) -> None:
         pass
@@ -167,7 +177,7 @@ class DefaultMemoryMaintenancePolicy(MemoryMaintenancePolicy):
         self,
         idle_threshold_seconds: float = 1800.0,
         keep_recent_messages: int = 8,
-        compression_coordinator: Any | None = None,
+        compression_coordinator: MemoryCompressionCoordinator | None = None,
         archive_retention_policy: ArchiveRetentionPolicy | None = None,
         knowledge_retention_policy: KnowledgeRetentionPolicy | None = None,
     ) -> None:
@@ -176,6 +186,10 @@ class DefaultMemoryMaintenancePolicy(MemoryMaintenancePolicy):
         self._coordinator = compression_coordinator
         self._archive_retention = archive_retention_policy
         self._knowledge_retention = knowledge_retention_policy
+
+    @property
+    def compression_coordinator(self) -> MemoryCompressionCoordinator | None:
+        return self._coordinator
 
     async def scan_once(
         self,
@@ -222,6 +236,7 @@ class DefaultMemoryMaintenancePolicy(MemoryMaintenancePolicy):
                         archive=layers.archive,
                         pending=layers.pending,
                         context=ctx,
+                        idle_threshold_seconds=self._idle_threshold,
                     )
                     await storage.set(".last_activity", time.time())
                     results.append(MaintenanceResult(

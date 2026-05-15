@@ -38,6 +38,7 @@ class CompressionResultReason(StrEnum):
     REVISION_CHANGED = "revision_changed"
     ARCHIVE_FAILED = "archive_failed"
     PENDING_FAILED = "pending_failed"
+    IDLE_EXPIRED = "idle_expired"
     NOTHING_TO_ARCHIVE = "nothing_to_archive"
 
 
@@ -62,6 +63,7 @@ class CompressionPlan:
     drop_without_archive_messages: list[dict[str, Any]] = field(default_factory=list)
     sanitization_issues: list[ToolChainSanitizationIssue] = field(default_factory=list)
     has_open_tail: bool = False
+    idle_threshold_seconds: float | None = None
 
 
 @dataclass(frozen=True)

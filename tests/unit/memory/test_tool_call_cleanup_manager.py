@@ -77,8 +77,9 @@ class DummySessionManager(SessionMemoryManager):
         messages: list[ChatMessage | dict[str, Any]],
         expected_revision: StorageRevision,
         state_updates: Mapping[str, Any] | None = None,
+        idle_threshold_seconds: float | None = None,
     ) -> StorageRevision | None:
-        _ = state_updates
+        _ = state_updates, idle_threshold_seconds
         if expected_revision.version != self.revision.version:
             return None
         return await self.replace_messages(context, messages)

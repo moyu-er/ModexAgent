@@ -49,7 +49,6 @@ from framework.interceptor.chain import InterceptorChain
 from framework.ioc.configs.agent import AgentConfig as IOCAgentConfig
 from framework.ioc.configs.app import AppConfig
 from framework.ioc.configs.memory import MemoryConfig as IOCMemoryConfig
-from framework.ioc.factories.compression import create_compression_coordinator
 from framework.ioc.factories.governance import create_governance, create_peer_governance
 from framework.ioc.factories.llm import create_llm_provider
 from framework.ioc.factories.memory import create_memory
@@ -267,10 +266,8 @@ class BotService(AgentBuilderMixin):
         if main_memory_cfg is not None:
             self.memory_system = create_memory(main_memory_cfg, self.provider, memory_dir)
             await self.memory_system.initialize()
-            compression_coordinator = create_compression_coordinator(main_memory_cfg, self.provider)
         else:
             self.memory_system = None
-            compression_coordinator = None
 
         self.context_manager = MemorySystemContextManager(
             memory_system=self.memory_system,
@@ -295,7 +292,7 @@ class BotService(AgentBuilderMixin):
 
         # 5.5 Initialize long-term defaults, auto-compact, and dream engine
         await self._init_long_term_defaults(data_dir, main_memory_cfg)
-        await self._init_auto_compact(main_memory_cfg, compression_coordinator)
+        await self._init_auto_compact(main_memory_cfg)
         self._init_dream()
 
         # 6. Create SkillManager (main agent has its own)
@@ -884,11 +881,13 @@ class BotService(AgentBuilderMixin):
     async def _init_auto_compact(
         self,
         main_memory_cfg: IOCMemoryConfig | None,
-        compression_coordinator: Any | None,
     ) -> None:
         """Initialize and start background auto-compact via DefaultMemoryMaintenancePolicy."""
-        # Auto-compact is not yet modeled in IOC MemoryConfig; skip for now.
-        if self.memory_system is None or compression_coordinator is None:
+        if self.memory_system is None:
+            return
+
+        compression_coordinator = self.memory_system.compression_coordinator
+        if compression_coordinator is None:
             return
 
         from framework.memory.lifecycle import DefaultMemoryMaintenancePolicy

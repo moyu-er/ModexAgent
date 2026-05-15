@@ -53,3 +53,7 @@ references
 uv.lock
 
 openspec
+design_doc/
+agent_doc/
+design_docs/
+agent_docs/
