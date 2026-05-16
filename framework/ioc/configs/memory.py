@@ -54,13 +54,6 @@ class DreamEngineConfig(BaseModel):
     interval: int = 600
 
 
-class TokenBudgetConfig(BaseModel):
-    """Context token budget for injection."""
-
-    budget_ratio: float = 0.5
-    safety_buffer: int = 1024
-
-
 class LossyConfig(BaseModel):
     """Lossy content truncation for oversized messages."""
 
@@ -68,6 +61,7 @@ class LossyConfig(BaseModel):
     assistant_head_chars: int = 1200
     agent_head_chars: int = 2000
     user_head_chars: int = 4000
+    tool_args_head_chars: int = 2048
 
 
 class GovernanceConfig(BaseModel):
@@ -77,7 +71,6 @@ class GovernanceConfig(BaseModel):
     """
 
     tool_chain_repair: bool = True
-    token_budget: TokenBudgetConfig | None = None
     lossy_compaction: LossyConfig | None = None
 
 
@@ -89,7 +82,7 @@ class MemoryConfig(BaseModel):
       - session layer: on (100 messages / 100k tokens)
       - pending layer: on (internal, transparent)
       - archive/knowledge: off
-      - governance/token_budget/lossy: off
+      - governance/lossy: off
     """
 
     short_term: ShortTermConfig = Field(default_factory=ShortTermConfig)

@@ -9,10 +9,8 @@ from typing import Any
 import pytest
 
 from framework.memory.context_governance import (
-    CompositeGovernance,
     ContextGovernance,
     PendingInjectionGovernance,
-    PriorityBudgetGovernance,
     ToolChainRepairGovernance,
 )
 from framework.memory.core.models import MemoryContextBundle
@@ -23,7 +21,6 @@ from framework.memory.layers.pending import PendingPrunedInputEntry
 from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
 from framework.memory.pending import DefaultPendingPrunedInputInjector
 from framework.memory.registry.in_memory import InMemoryStoreRegistry
-from framework.memory.retention import DefaultMessageRetentionPolicy
 from framework.memory.system import MemorySystemContextManager, create_memory_system
 
 
@@ -157,10 +154,12 @@ async def test_pending_survives_tool_chain_repair_governance() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pending_survives_priority_budget_governance() -> None:
-    governance = PriorityBudgetGovernance(
-        max_tokens=1000,
-        retention_policy=DefaultMessageRetentionPolicy(),
+async def test_pending_survives_lossy_compaction() -> None:
+    from framework.memory.context_governance import LossyContentCompactionGovernance
+
+    governance = LossyContentCompactionGovernance(
+        assistant_head_chars=50,
+        keep_range_ratio=1.0,
     )
 
     messages = [
@@ -172,6 +171,7 @@ async def test_pending_survives_priority_budget_governance() -> None:
 
     result = await governance.apply(messages)
 
+    # Pending messages survive lossy compaction unchanged
     assert len(_pending_msgs(result)) == 1
     assert _pending_msgs(result)[0]["content"] == "pending_content"
 

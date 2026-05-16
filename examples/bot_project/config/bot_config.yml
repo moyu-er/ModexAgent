@@ -94,7 +94,6 @@ agents:
       long_term: {enabled: true}
       dream_engine: {enabled: true, interval: 600}
       governance:
-        token_budget: {budget_ratio: 0.5, safety_buffer: 1024}
         lossy_compaction: {tool_result_head_chars: 1200, assistant_head_chars: 1200, agent_head_chars: 2000, user_head_chars: 4000}
     skills:
       roots: ["skills/main"]
@@ -138,7 +137,7 @@ agents:
     max_steps: 30
     memory:
       short_term: {max_messages: 50, max_tokens: 50000, keep_ratio_for_messages: 0.5, keep_ratio_for_token: 0.5}
-      governance: {token_budget: {budget_ratio: 0.3, safety_buffer: 512}}
+      governance: {}
     skills:
       roots: ["skills/peers/docx", "skills/peers/pdf", "skills/peers/pptx", "skills/peers/xlsx"]
 
@@ -178,7 +177,7 @@ agents:
     mcp_filter: ["12306-mcp"]
     memory:
       short_term: {max_messages: 30, max_tokens: 50000, keep_ratio_for_messages: 0.5, keep_ratio_for_token: 0.5}
-      governance: {token_budget: {budget_ratio: 0.3, safety_buffer: 512}}
+      governance: {}
 
   - name: helper-sync
     role: subagent
@@ -198,7 +197,7 @@ agents:
     max_steps: 10
     memory:
       short_term: {max_messages: 30, max_tokens: 50000, keep_ratio_for_messages: 0.5, keep_ratio_for_token: 0.5}
-      governance: {token_budget: {budget_ratio: 0.3, safety_buffer: 512}}
+      governance: {}
 
 # ---- Plugins (OFF by default) ----
 # To enable: set `enabled: true` and add per-plugin config under `configurations`.
