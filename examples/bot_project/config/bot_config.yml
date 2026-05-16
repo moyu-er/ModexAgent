@@ -93,6 +93,16 @@ agents:
         auto_llm_compression: true
       long_term: {enabled: true}
       dream_engine: {enabled: true, interval: 600}
+      # ---- Governance (per-injection context pipeline) ----
+      # Chain: lossy_compaction → tool_chain_repair → final_legality
+      #
+      # lossy_compaction: truncates oversized content and tool-call arguments
+      #   so large payloads (e.g. write_file with 71 KB content) don't blow
+      #   through the token budget. Keeps messages structurally intact.
+      #
+      # tool_chain_repair (enabled by default): removes orphan tool results
+      #   and incomplete assistant/tool-call groups before sending to the LLM,
+      #   preventing "tool result's tool id X not found" API errors.
       governance:
         lossy_compaction: {tool_result_head_chars: 1200, assistant_head_chars: 1200, agent_head_chars: 2000, user_head_chars: 4000}
     skills:
@@ -137,6 +147,9 @@ agents:
     max_steps: 30
     memory:
       short_term: {max_messages: 50, max_tokens: 50000, keep_ratio_for_messages: 0.5, keep_ratio_for_token: 0.5}
+      # Governance: tool_chain_repair only (no lossy compaction for peers).
+      # ToolChainRepair ensures orphan tool results are cleaned up before
+      # each LLM call, preventing API 400 errors.
       governance: {}
     skills:
       roots: ["skills/peers/docx", "skills/peers/pdf", "skills/peers/pptx", "skills/peers/xlsx"]
