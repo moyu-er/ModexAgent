@@ -1,26 +1,29 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-04-30 -->
 
 # sandbox
 
-## Purpose
-Sandboxed code execution — isolates tool execution from the agent runtime. Multiple adapter backends.
+Sandboxed code execution — isolates tool execution from the agent runtime via multiple adapter backends.
+
+## Key Files
+
+| File | Description |
+|------|-------------|
+| `factory.py` | `SandboxFactory` — creates sandbox instances by config |
+| `config.py` | `SandboxConfig` — adapter selection, resource limits |
+| `types.py` | Sandbox result and execution types |
+| `enums.py` | `SandboxBackend`, status enums |
+| `exceptions.py` | `SandboxError`, `SandboxTimeoutError`, etc. |
+| `isolation.py` | Isolation manager for execution boundaries |
+| `platform.py` | Platform detection (OS, capabilities) |
+| `validation.py` | Input/output validation before execution |
+| `docker_utils.py` | Docker image and container utilities |
 
 ## Subdirectories
-| Directory | Purpose |
-|-----------|---------|
-| `adapters/` | Sandbox adapters — `LocalPython`, `E2B`, `Docker`, `Subprocess` |
 
-## For AI Agents
+| Directory | Description |
+|-----------|-------------|
+| `adapters/` | Backend implementations: `base.py` (ABC), `docker.py`, `e2b.py`, `subprocess.py`, `landlock.py` |
 
-### Working In This Directory
-- All sandbox adapters implement a common sandbox interface
-- `LocalPython`: in-process sandbox
-- `E2B`: cloud-based sandbox (requires `E2B_API_KEY`)
-- `Docker`: container-based isolation
-- `Subprocess`: process-level isolation
-## Current Runtime Status
-
-Sandbox tool execution is invoked from the ReAct tool node path. Tool timeout is
-owned by ReAct tool execution/runtime safety policy, not by the default bot
-interceptor chain.
+## Notes
+- Sandbox timeout is owned by ReAct tool execution, not the bot interceptor chain.
+- `E2B` adapter requires `E2B_API_KEY`; `Docker` requires a running Docker daemon.

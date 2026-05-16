@@ -1,27 +1,33 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-04-30 -->
+<!-- Generated: 2026-05-16 | Updated: 2026-05-16 -->
 
 # unit
 
-## Purpose
 Pure unit tests — no external deps, must run offline. Mirror the framework package structure.
 
 ## Subdirectories
+
 | Directory | Purpose |
 |-----------|---------|
 | `agents/` | ReActAgent tests — error handling, tool execution, streaming |
-| `core/` | Core abstractions — AgentContext, AgentResult, error handling, emitter, tool manager |
+| `approval/` | Approval system tests |
+| `bot_project/` | Bot project integration tests |
+| `control/` | ControlChannel, EventBus, store, task supervision tests |
+| `core/` | Core abstractions — AgentContext, AgentResult, emitter, tool manager |
+| `core/graph/` | Graph engine tests |
 | `core/skills/` | Skill system tests |
-| `pipeline/` | Pipeline tests — emitter, adapters, timeout, skills |
-| `session/` | AgentSession tests |
-| `multi_agent/` | Multi-agent tests — factory, pool, inbox, hooks |
-| `multi_agent/inbox/` | Inbox subsystem tests |
-| `memory/` | Memory system tests — core, stores, compaction, compression, consolidation |
+| `interceptor/` | Interceptor chain tests |
+| `ioc/` | IOC config and factory tests |
+| `memory/` | Memory system — core, stores, compression, consolidation, retention, injection |
 | `messaging/` | Broker and bridge tests |
+| `multi_agent/` | Multi-agent — factory, pool, inbox, hooks, skills |
+| `pipeline/` | Pipeline tests — emitter, adapters, timeout, skills |
 | `plugins/` | Plugin system tests |
-| `tools/` | Standard tools tests |
+| `providers/` | LLM provider tests |
+| `runtime/` | Runtime services, store, codec tests |
+| `session/` | AgentSession tests |
+| `tools/` | Tool registry, executor, MCP tests |
 | `utils/` | Utility tests |
-| `extensions/llm/` | LiteLLM provider tests |
 
 ## For AI Agents
 
@@ -35,15 +41,7 @@ Pure unit tests — no external deps, must run offline. Mirror the framework pac
 ```python
 @pytest.mark.asyncio
 async def test_something():
-    # Arrange
     ctx = AgentContext(...)
-    # Act
     result = await agent.run(ctx, emitter)
-    # Assert
     assert result.content == "expected"
 ```
-## Current Runtime Status
-
-Unit tests for ReAct runtime should live under `tests/unit/agents/react/` and
-mock providers/tools directly. Include regressions for clean/full boundaries,
-runtime state aliases, and cancellation metadata when those areas change.

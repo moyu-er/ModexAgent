@@ -1,255 +1,131 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## Project Overview
 
-**ModexAgent** (**Mod**ular + **Nex**us + **Agent**) — a lightweight, modular multi-agent framework in Python with a **generic type-safe architecture**. Every component (Memory, Tool, Agent, Emitter, Adapter) is an independent, pluggable module.
-
-1. **Generic Type Safety**: `Agent[E]`, `ContentEmitter[E]`, `EmitterConfig[E]` bind event enums at compile time.
-2. **Clean Separation**: Agent (reasoning), Emitter (output), ToolManager (tools), ContextManager (history) are independent.
-3. **I/O Agnostic**: `InputAdapter` / `OutputAdapter` decouple I/O from agent logic.
-4. **Streaming vs Non-Streaming**: Determined by the `Emitter` implementation, not the `Agent`.
-5. **Plugin Extensibility**: Convention-based plugin system for tools, memory providers, hooks, and skills.
-
-## Document Maintenance
-
-This file is the framework's **single source of truth** and must stay in sync with the code. Update this document when:
-
-- **Adding modules or sub-packages** (e.g., new `tools/mcp/`, `security/`, `core/skills/` directories)
-- **Changing core interfaces** (e.g., `Agent[E]` signature, `Tool.execute()` return type)
-- **Changing architectural patterns** (e.g., new messaging mechanism, memory layer restructuring)
-- **Adding transports or integrations** (e.g., new MCP transport type, new LLM provider)
-- **Restructuring directories** (e.g., file splits, merges, renames)
-
-Every commit involving the above changes should include a CLAUDE.md review.
+**ModexAgent** — a modular multi-agent framework in Python with generic type-safe architecture. Components (Memory, Tool, Agent, Emitter, Adapter) are independent, pluggable modules.
 
 ## Evolving the Framework
 
-This framework is in its **early stage** with few consumers. When making significant changes:
+Early stage, few consumers. **Do NOT maintain backward compatibility.** Remove dead code aggressively. Rename freely. Prefer clean breaking changes over accumulating cruft.
 
-- **Do NOT maintain backward compatibility** — clean up old, incorrect code and usage patterns directly.
-- **Remove dead code aggressively** — unused abstractions, deprecated wrappers, and stale re-exports should be deleted, not kept behind compat shims.
-- **Rename freely** — if a name is confusing or inconsistent, rename it. Update all callers.
-- **Prefer breaking changes over accumulating cruft** — a clean breaking change now is cheaper than carrying wrong abstractions forward.
-
-## Development Commands
+## Development
 
 ```bash
-# Setup (uv is preferred; pip works too)
-uv pip install -e ".[dev,llm,storage,gateway]"
-# or: pip install -e ".[dev,llm,storage,gateway]"
-
-# Run all unit tests
-pytest tests/unit/ -v
-
-# Run a single test
-pytest tests/unit/memory/compression/test_priority_planner.py::test_planner_keeps_latest_user_when_it_fits -xvs
-
-# Run tests for a specific module
-pytest tests/unit/memory/ -v
-pytest tests/unit/agents/ -v
-
-# Run integration tests
-pytest tests/integration/ -v -m integration
-
-# Run e2e tests
-pytest tests/e2e/ -v
-
-# Lint
-ruff check framework/
-ruff check --fix framework/
-
-# Format
-ruff format framework/
-
-# Type check
-mypy framework/
+uv pip install -e ".[dev,llm,storage,gateway]"  # install
+pytest tests/unit/ -v                             # unit tests
+pytest tests/integration/ -v -m integration       # integration tests
+ruff check framework/                             # lint
+ruff format framework/                            # format
+mypy framework/                                   # type check
 ```
 
-## Testing Standards
+## Testing
 
-```
-tests/
-├── unit/               # Pure unit tests; no external deps; must run offline
-│   ├── core/           ├── agents/          ├── tools/
-│   ├── pipeline/       ├── session/         ├── plugins/
-│   ├── memory/         ├── multi_agent/     ├── messaging/
-│   ├── approval/       ├── control/         ├── providers/
-│   ├── bot_project/    ├── utils/           └── sandbox/ (planned)
-├── integration/        # Requires config files, LLM APIs, etc.
-└── e2e/
-```
-
-**Rules:**
-1. Mirror package structure under `tests/unit/`.
-2. Use absolute imports (`from framework.xxx`) inside tests.
-3. Tag integration tests with `@pytest.mark.integration`.
+- Mirror package structure under `tests/unit/`
+- Absolute imports (`from framework.xxx`) in tests
+- Tag integration tests with `@pytest.mark.integration`
 
 ## Directory Structure
 
 ```
 framework/
-├── core/                  # ABCs: Agent, ContextManager, Emitter, Tool, types, graph/, skills/, runtime_context
+├── core/           # ABCs: Agent[E], Emitter, Tool, ContextManager, graph engine, skills, types
 ├── agents/
-│   ├── react/             # ReActAgent, ReActGraph, nodes/{start,llm,tool,end}, strategy, state, approval, runtime
-│   └── summarizer/        # Summarizer agent variant
-├── hook/                  # Hook system: HookRunner, HookPoint enum, builtin hooks (logging, runtime_context, peer_auto_send, ...)
-├── interceptor/           # InterceptorChain AOP onion-chain: scoped wrappers, builtin interceptors (control_drain, tool_approval, turn_timeout, ...)
-├── control/               # Runtime control plane: ControlChannel, ControlEventBus, RuntimeStateStore, task_supervision, exceptions, ui/
-├── approval/              # Tool approval: ApprovalState, ApprovalDecision, store, response parsing
-├── pipeline/              # AgentPipeline, InputAdapter, OutputAdapter, approval_renderer, context_assembler
-├── session/               # AgentSession (request/response mode)
-├── tools/                 # ToolRegistry, executor, MCP integration, standard tools, FilteredToolManager
-├── memory/                # Three-layer memory system (session/archive/knowledge)
-│   ├── core/              # ABCs: MemoryScope, MemoryStorage, ChatMessage, scope metadata
-│   ├── layers/            # Session, Archive, Knowledge, Pending layer managers + factory
-│   ├── compaction/        # MessageCompactionPolicy, BoundaryPolicy
-│   ├── compression/       # Compression planner, policies, semantic_filter, tool_chain, importance
-│   ├── consolidation/     # DreamEngine offline background consolidation
-│   ├── retention/         # RetentionPolicy, RetentionConfig — message lifecycle
-│   ├── injection/         # MemoryInjectionPolicy → ContextState assembly (full/restricted)
-│   ├── stores/            # FileStorage (JSONL+KV), InMemoryStorage (plain + scoped variants)
-│   ├── registry/          # Memory provider registry (base, file, in_memory)
-│   └── archive/           # (stub — only __init__.py)
-├── multi_agent/           # Multi-agent orchestration: pool, coordinator, subagent_manager, hooks
-│   └── inbox/             # MQ system: LocalFileInboxServer, Producer, Consumer, InboxFlushHook
-├── plugins/               # Plugin system: MemoryProvider ABC, PluginContext, PluginManager
-├── messaging/             # MessageBroker, BrokerBridgeService
-├── providers/             # LLM provider implementations (LiteLLM)
-├── sandbox/               # Sandboxed execution: LocalPython, E2B, Docker, Subprocess + Landlock adapters
-│   └── adapters/          # Sandbox adapter implementations (base, docker, e2b, subprocess, landlock)
-├── adapters/              # InputAdapter / OutputAdapter base classes
-├── security/              # SecurityPolicy, validators, handlers, local_executor
-└── utils/                 # MediaProcessor, tokenizer, context_builder, deduplicator, sanitizer, helpers
+│   ├── react/      # ReActAgent (4-node graph: START→LLM→TOOL→END), state, approval, assembler
+│   └── summarizer/ # Single-turn summarization agent
+├── hook/           # HookRunner, HookPoint enum, 10 builtin hooks
+├── interceptor/    # InterceptorChain AOP, 4 scopes: TURN/ITERATION/LLM_STREAM/TOOL_CALL
+├── control/        # ControlChannel, ControlEventBus, TurnStateStore, task_supervision, ui/
+├── approval/       # TieredToolApprovalClassifier, ApprovalTransaction, deny policy
+├── pipeline/       # AgentPipeline, InputAdapter, OutputAdapter, approval_renderer
+├── session/        # AgentSession (request/response mode)
+├── tools/          # ToolManager, ToolRegistry, MCP integration, standard tools
+├── memory/         # Three-layer: Session→Archive→Knowledge, compaction, consolidation, injection
+├── multi_agent/    # AgentPool, SubagentManager, inbox, star-topology coordination
+├── plugins/        # PluginManager, PluginContext, MemoryProvider ABC
+├── messaging/      # MessageBroker, BrokerBridgeService
+├── providers/      # LiteLLM, OpenAI provider implementations
+├── ioc/            # AppConfig, typed configs, factory layer
+├── runtime/        # AgentRuntime, TurnStateStore, RuntimeCommandStore, codec, snapshot
+├── sandbox/        # Subprocess, Docker, E2B, Landlock sandbox adapters
+├── security/       # SecurityPolicy, validators, handlers
+├── adapters/       # PlatformAdapter ABC, AdapterRegistry
+├── registry/       # Shared registry utilities
+└── utils/          # tokenizer, context_builder, deduplicator, sanitizer, helpers
 ```
 
-## Example Project
+`examples/bot_project/` — QQ Bot demonstrating all subsystems. Pipeline mode (single agent) or Pool mode (multi-agent star topology).
 
-`examples/bot_project/` is the primary end-to-end reference — a QQ Bot demonstrating all framework subsystems.
+## Architecture
+
+### Core Data Flow
 
 ```
-examples/bot_project/
-├── bot_service.py         # BotService (pipeline/pool modes), SpawnSubagentTool
-├── bot/
-│   ├── adapters/qq.py     # QQ platform InputAdapter/OutputAdapter/Emitter
-│   ├── plugins/integration.py  # PluginIntegration facade
-│   ├── tools/custom.py    # Custom tool definitions
-│   └── utils/             # Config loader, media utilities
-├── config/                # YAML configuration files
-├── plugins/               # Project-local plugins (mem0_memory, tool_call_cleanup)
-├── skills/{main,peers,subagents}/  # SKILL.md-based skill directories
-└── tests/                 # Bot-specific integration tests
+InputAdapter → Pipeline → ContextAssembler → ReActAgent.run()
+  → GraphEngine: START → LLMNode → ToolNode → ... → END
+  → HookRunner: lifecycle events (BEFORE/AFTER_TURN, ITERATION, TOOL_EXECUTION)
+  → InterceptorChain: AOP wrapping (timeout, control drain, tool policy)
+  → ControlChannel: runtime commands (cancel, steer, inject)
+  → ApprovalRuntime: tool classification → suspend/resume via GraphInterrupt
+→ OutputAdapter → MemorySystem.flush()
 ```
 
-Two runtime modes in `bot_service.py`:
-- **Pipeline** (`mode="pipeline"`): Single `AgentPipeline`, SubagentManager creates direct `asyncio.Task`.
-- **Pool** (`mode="pool"`): `AgentPool` manages resident agents via `BrokerBridgeService`, star-topology communication.
-
-## Core Architectural Patterns
-
-### 1. Generic Type-Safe Events
-
-```python
-class ReActEvent(AgentEvent, Enum):
-    MODEL_OUTPUT = "model_output"
-    TOOL_CALL_START = "tool_call_start"
-    FINAL_OUTPUT = "final_output"
-    ERROR = "error"
-
-class ReActAgent(Agent[ReActEvent]):
-    event_enum = ReActEvent
-```
-
-### 2. Two Usage Modes
-
-- **AgentPipeline** — long-running services (QQ Bot, CLI). `await pipeline.run()` loops forever.
-- **AgentSession** — HTTP API style (request/response). `await session.process_message(...)`.
-
-### 3. Memory System
-
-Three-layer with scope isolation: `Session (short-term) → Archive (history) → Knowledge (long-term, SOUL/USER/MEMORY.md)`. Scopes: Session/User/Tenant/Agent/Channel/Chat/PeerPair/Composite/Global.
-
-**Key abstractions (new redesign):**
-- `MemoryCompactionPipeline` — unified entry for token-pressure and idle AutoCompact
-- `MessageCompactionPolicy` — per-message decisions (KEEP_RAW/SUMMARIZE/DROP/ARCHIVE_RAW)
-- `BoundaryPolicy` — tool-call chain safe truncation
-- `SummaryStrategy` — LLM or heuristic summary generation
-- `ScopeRecord` + `.scope.json` — recoverable scope metadata for background tasks
-
-Compression is two-phase (trigger → plan → summary → commit), all tool-chain-aware. `DreamEngine` runs offline consolidation; `Consolidator` runs online LLM-based compression via `SummaryStrategy`.
-
-### 4. Runtime Context System
-
-Per-turn, per-session isolated state container for tracking tool calls and arbitrary runtime state.
-
-```python
-# Generic key-value state + tool-call tracking
-class RuntimeContext(ABC):
-    async def set(self, key: str, value: Any) -> None: ...
-    async def get(self, key: str, default: Any = None) -> Any: ...
-    async def record_tool_call(self, tool_name, arguments, result) -> None: ...
-    async def get_tool_calls(self) -> list[ToolCallRecord]: ...
-
-# Central manager using MemoryScope for session isolation (default SessionScope)
-class RuntimeContextManager:
-    async def get_context(self, session_id: str, metadata: dict | None = None) -> RuntimeContext: ...
-```
-
-- `ReActAgent` clears context at `before_turn`, records each tool call after execution
-- `PeerAutoSendHook` queries context to detect whether a communication tool (`send_message` / `send_message_async`) was already called, avoiding duplicate auto-forward
-- Layering: generic infrastructure in `core/runtime_context.py`, multi-agent logic in `multi_agent/hooks.py`
-
-### 5. MCP Integration
-
-`MCPClientManager` → `MCPToolAdapter` → `ToolRegistry`. Three transports: stdio, SSE, streamable_http. Auto-registers tools/resources/prompts as `Tool` objects with reconnection.
-
-### 6. Multi-Agent: Star Topology
-
-Peers communicate only through main agent (`PeerAgentValidator` enforces). `MessageBroker` for pub/sub, `AgentMessageEnvelope` for typed messages, `InboxServer` for async results. `PeerAutoSendHook` auto-forwards if LLM forgets `send_message_async`. `SubagentManager` supports spawn/spawn_and_wait/cancel.
-
-### 7. Plugin System
-
-Three discovery sources: bundled > user (`~/.af/plugins/`) > PyPI. Contract:
-
-```python
-def register(ctx: PluginContext) -> None:
-    ctx.register_tool(...) / ctx.register_memory_provider(...) / ctx.register_hook(...)
-```
-
-Extension points: `MemoryProvider` (add/search/prefetch), Tools, Hooks, SkillSources, MemorySystem modifiers.
-
-### 8. Skill System
-
-`FileSkillSource` discovers `SKILL.md` from directories → `ProgressiveBuilder` resolves dependencies → `SkillWhitelistFilter` wraps with per-agent white/deny list.
-
-### 9. Layered Runtime Model (Hook / Interceptor / Control / Approval)
-
-Four subsystems with distinct responsibilities, wired through `AgentContext.extensions`:
+### Four-Layer Runtime Model
 
 | Layer | Role | Key Types |
 |-------|------|-----------|
-| **Hook** | Lifecycle observer, lightweight content transform | `HookRunner`, `HookPoint` enum, `HookSpec` |
-| **Interceptor** | AOP onion-chain around execution boundaries | `InterceptorChain`, scopes: TURN/ITERATION/LLM_STREAM/TOOL_CALL |
-| **Control** | Runtime command plane (cancel, inject, steer) | `ControlChannel`, `ControlCommand`, `ControlDrainInterceptor` |
-| **Approval** | Tool classification + suspend/resume | `ApprovalRuntime`, `SuspendResumeStrategy`, `GraphInterrupt` |
+| Hook | Lifecycle observer, content transform | `HookRunner`, `HookPoint` |
+| Interceptor | AOP onion-chain around execution boundaries | `InterceptorChain`, 4 scopes |
+| Control | Runtime command plane (cancel/inject/steer) | `ControlChannel`, `ControlRuntime` |
+| Approval | Tool classification + suspend/resume | `ApprovalRuntime`, `GraphInterrupt` |
 
-**Design rules:**
-- Hooks do NOT control flow (no approval, no cancellation, no timeout).
-- Interceptors wrap calls at explicit boundaries (turn, iteration, LLM, tool).
-- Control is a first-class side channel — commands are drained at safe boundaries: before turn, iteration, LLM, and tool batch.
-- Approval is explicit: `ToolNode._classify_all()` → `SuspendResumeStrategy.solicit_approval()` → `GraphInterrupt` → Pipeline renders prompt → resume.
+Design rules:
+- Hooks do NOT control flow. Interceptors wrap explicit boundaries. Control is a first-class side channel. Approval suspends via GraphInterrupt.
 
-**Two runtime modes:**
-- `clean`: no hooks, no interceptors, no approval, no control, no checkpoint. Context is sanitized once at `ReActAgent.run()` entry.
-- `full`: all services enabled. Nodes query `runtime = react_runtime(ctx)` — absent services are no-ops.
+### Agent Execution
 
-**Current focus:** making TURN and ITERATION interceptor scopes actually fire (they are defined but inert today), and extracting approval classification into a standalone `ApprovalClassifier`.
+`ReActAgent` runs a 4-node graph via `GraphEngine`:
+- **StartNode**: entry, detects resume from suspended approval
+- **LLMNode**: LLM call (streaming/non-streaming), governance chain, hook dispatch
+- **ToolNode**: classify tools (NORMAL/DANGEROUS/HARDLINE) → approval if PENDING → batch execute → route to LLM or END
+- **EndNode**: assemble `AgentResult`
 
-## Type Structuring Best Practices
+`AgentRuntime` composes process-scope services (hooks, interceptors, control, approval, governance, safety) with turn-scope state (`ReActTurnState`). Two modes: `clean` (no services) and `full` (all enabled).
 
-1. **Enumerate constants**: All categories/states as `Enum` or `StrEnum`. No raw strings.
-2. **Generic bindings**: `Agent[E]`, `ContentEmitter[E]` with `TypeVar("E", bound=AgentEvent)`.
-3. **Dataclasses over dicts**: Use frozen dataclasses for config (e.g., `AgentDescriptor`, `MediaInfo`).
-4. **Abstract early**: Every cross-cutting concern needs an ABC (Storage, Compression, Adapters, Skills).
-5. **Config vs Runtime**: Config classes are pure data; Runtime classes hold state/connections.
+### Memory System
+
+Three layers with scope isolation (Session/User/Tenant/Agent/Channel/Chat/PeerPair/Composite/Global):
+- **Session**: short-term conversation window
+- **Archive**: persistent history
+- **Knowledge**: long-term (SOUL/USER/MEMORY.md)
+
+Two-phase compaction: trigger → plan → summary → commit (tool-chain-aware). `DreamEngine` offline consolidation. `MemoryInjectionPolicy` (full/restricted).
+
+### Multi-Agent
+
+Star topology: peers communicate only through main agent. `PeerAutoSendHook` safety net. Per-agent isolated Memory/ToolManager/SkillManager. `SubagentManager` supports spawn/spawn_and_wait/cancel.
+
+### IOC Configuration
+
+`AppConfig.from_yaml()` single source with `${VAR}` interpolation. Per-agent config: LLM, memory, tools, skills, approval, governance.
+
+### Skill System
+
+`FileSkillSource` discovers `SKILL.md` → `ProgressiveBuilder` (compact table + on-demand load) → `DirectorySkillCache`.
+
+## Coding Rules
+
+1. **Python 3.12+**, `from __future__ import annotations` in all framework modules.
+2. **Enums over strings**: all categories/states/roles as `Enum`/`StrEnum`. No raw strings.
+3. **Typed structures over dicts**: use `ChatMessage`, `ToolCall`, `LLMResponse`, `InputMessage`, `OutputMessage`.
+4. **Type annotations required**: avoid bare `Any`, `list`, `dict`, `object` in framework APIs.
+5. **Abstract before concrete**: ABCs/Protocols for cross-cutting concerns and extension points.
+6. **Framework vs examples**: no example-specific config or business assumptions in `framework/`.
+7. **No dynamic access**: avoid `getattr`/`hasattr` unless at a real extension boundary.
+8. **Generic bindings**: `Agent[E]`, `ContentEmitter[E]` with `TypeVar("E", bound=AgentEvent)`.
+9. **Frozen dataclasses for config**: config = pure data, runtime = state/connections.
+10. **Per-turn state in `runtime.state`**: typed turn state, not instance attributes or `ctx.metadata`.
+
+## Document Maintenance
+
+Update this file when: adding modules, changing core interfaces, restructuring directories, adding transports/integrations.

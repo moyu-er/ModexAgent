@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-04-30 -->
+<!-- Generated: 2026-05-16 -->
 
 # messaging
 
@@ -9,16 +9,11 @@ Message broker and bridge service for agent communication. Supports pub/sub patt
 ## Key Files
 | File | Description |
 |------|-------------|
-| `broker.py` | Message broker implementation |
-| `broker_memory.py` | In-memory broker |
+| `broker.py` | `MessageBroker` ABC — pub/sub messaging backbone |
+| `broker_memory.py` | `InMemoryMessageBroker` — lightweight `asyncio.Queue` implementation |
+| `broker_bridge.py` | `BrokerBridgeService` — adapter-to-broker bridge for pool mode |
 
 ## For AI Agents
-
-### Working In This Directory
-- `MessageBroker`: pub/sub messaging backbone
-- `BrokerBridgeService`: connects agents via broker in pool mode
-- `InMemoryMessageBroker`: lightweight implementation for testing and single-process use
-## Current Runtime Status
-
-Messaging and broker code should pass runtime control messages into the control
-plane instead of embedding ReAct-specific handling.
+- `MessageBroker` ABC defines the pub/sub contract; `InMemoryMessageBroker` is the default implementation
+- `BrokerBridgeService` connects agents via broker in pool mode
+- Runtime control messages should pass through the control plane, not embedded here

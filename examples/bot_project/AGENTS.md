@@ -1,58 +1,56 @@
 <!-- Parent: ../../AGENTS.md -->
-<!-- Generated: 2026-04-30 -->
+<!-- Generated: 2026-05-16 | Updated: 2026-05-16 -->
 
 # bot_project
 
-## Purpose
-Primary end-to-end reference example — a QQ Bot demonstrating all ModexAgent framework subsystems. Shows how to wire Hook, Interceptor, Control, multi-agent, memory, plugin, and skill systems together in a real application.
+Primary end-to-end reference — a QQ Bot demonstrating all ModexAgent framework subsystems.
 
 ## Key Files
+
 | File | Description |
 |------|-------------|
 | `bot_service.py` | Entry point — `BotService` with pipeline/pool mode selection, full runtime assembly |
-| `README.md` | Setup and run instructions |
-| `.env.example` | Environment variable template |
+| `bot/service/core.py` | `BotService` — orchestration lifecycle, initialization sequence, stop sequence |
+| `bot/service/builders.py` | `AgentBuilderMixin` — tool registration, memory creation, peer construction |
+| `bot/adapters/qq.py` | QQ platform adapters (`QQInputAdapter`, `QQOutputAdapter`, `QQBotEmitter`) |
+| `bot/plugins/integration.py` | `PluginIntegration` facade |
+| `bot/tools/custom.py` | `SpawnSubagentTool`, `SendFileToUserTool` |
+| `bot/utils/config_loader.py` | YAML/JSON config with `${VAR}` interpolation |
 
 ## Subdirectories
+
 | Directory | Purpose |
 |-----------|---------|
-| `bot/` | Bot implementation — service, adapters, plugins, tools, logging, config (see `bot/AGENTS.md`) |
-| `config/` | YAML configuration files |
+| `bot/` | Bot implementation — service, adapters, plugins, tools, logging |
+| `config/` | YAML configuration files (`bot_config.yml`) |
 | `plugins/` | Project-local plugins (`mem0_memory`, `tool_call_cleanup`) |
 | `skills/` | SKILL.md-based skill directories — `main/`, `peers/`, `subagents/` |
-| `tests/` | Bot-specific integration tests |
+| `tests/` | Bot-specific tests |
 
 ## For AI Agents
 
 ### Working In This Directory
-- Do NOT modify `bot_service.py` imports — it has path setup and logging bootstrap that must run first
 - Two runtime modes: `mode="pipeline"` (single `AgentPipeline`) and `mode="pool"` (`AgentPool` + `BrokerBridgeService`)
-- Configuration in `config/bot_config.yml` — LLM, memory, tools, multi_agent, plugins all in one file
-- Bot uses QQ platform adapters (`QQInputAdapter`, `QQOutputAdapter`, `QQBotEmitter`)
+- Configuration in `config/bot_config.yml` — IOC `AppConfig.from_yaml()` as single source
+- Each peer/subagent gets isolated Memory/ToolManager/SkillManager/ContextManager
+- Default interceptor chain: `ControlDrainInterceptor` + `ToolResultLimitInterceptor`
+- Governance chain: `lossy_compaction` → `tool_chain_repair` → `token_budget`
 
-### Runtime Architecture (Pipeline mode)
+### Runtime Architecture (Pool mode)
 ```
-QQ Gateway → QQInputAdapter → AgentPipeline
-  → Routing → Dedup → Busy Check → Context Load
+QQ Gateway → QQInputAdapter → BrokerBridgeService → AgentPool
   → Agent.run() → QQOutputAdapter → QQ Gateway
 ```
 
-### Testing Requirements
+### Testing
 - Run: `PYTHONPATH=. python -m pytest examples/bot_project/tests/ -v`
-- Tests cover agent communication, inbox flush, session routing, peer auto-send
+- Tests cover: agent communication, inbox flush, session routing, peer auto-send, memory construction, compression config, runtime defaults
 
 ## Dependencies
 
 ### Internal
 - `framework` — all core components
-- `framework.extensions.llm` — `LiteLLMProvider`
 
 ### External
 - `qq-botpy` — QQ Bot SDK
 - `litellm` — LLM provider
-- `fastapi` — HTTP gateway
-## Current Runtime Status
-
-The bot project is the primary full-mode reference. Its default interceptor chain
-currently wires `ControlDrainInterceptor` and `ToolResultLimitInterceptor` only,
-and runtime persistence should use `JsonFileRuntimeStateStore`.

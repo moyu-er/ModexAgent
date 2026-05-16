@@ -1,41 +1,33 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-05-11 -->
 
 # approval
 
 ## Purpose
-Tiered tool approval policies and command parsing. Approval persistence is NOT
-owned by this package; runtime approval state lives in
-`framework.runtime.models.ApprovalTransaction` inside a `TurnSnapshot`.
-Approval is the ONE and only mechanism — no interceptor/hook/control layers
-create separate approval paths.
+Tiered tool approval policies and command parsing. Approval persistence is NOT owned here; runtime approval state lives in `TurnSnapshot` via `ApprovalTransaction`.
 
 ## Key Files
 | File | Description |
 |------|-------------|
-| `types.py` | `ApprovalAction` (ALLOW/DENY), approval resolutions, result enums |
-| `constants.py` | `ApprovalDecision`, `ApprovalStatus`, `ApprovalTier` state values |
-| `config.py` | `ToolApprovalConfig`, `AgentApprovalConfig` per-tool and per-agent config |
-| `response.py` | `parse_input_command()` — command-first parsing for `/approve`, `/deny` etc. |
+| `config.py` | `ToolApprovalConfig` (allowed_paths per tool), `AgentApprovalConfig` (enabled flag + tools map) |
+| `constants.py` | `ApprovalDecision` (ALLOWED/DENIED/PENDING/PREEMPTED), `ApprovalTier` (NORMAL/SENSITIVE/DANGEROUS/HARDLINE), `ApprovalStatus` (PENDING/APPROVED/DENIED/PARTIAL) |
+| `types.py` | `ApprovalAction` (ALLOW/DENY), `ApprovalResolution` (ALLOWED/DENIED/TIMED_OUT/IGNORED/PREEMPTED), `DenyAction`, `TimeoutAction`, `ApprovalResultType`, `ApprovalDenyPolicy` |
+| `response.py` | `parse_input_command()` -- command-first parsing returning `ParsedInputCommand` or None; `parse_approval_action()` convenience wrapper. Recognizes /approve, /deny, /allow, /reject, /yes, /no, /ok, /cancel with and without slash prefix |
+| `__init__.py` | Re-exports: AgentApprovalConfig, ToolApprovalConfig, ApprovalDecision, ApprovalStatus, ApprovalTier |
 
 ## Approval Flow
-
 ```
-User input → parse_input_command() → ApprovalAction.ALLOW | DENY | None
-Pipeline: ApprovalRenderer.detect() → apply_decision() → TurnSnapshot saved
-ToolNode: _resume_suspended_batch() → PRE_APPROVED_TOOL_IDS → _execute_batch()
-  → ALLOWED tools execute, DENIED/PREEMPTED return errors with deny_reason
-  → Default: continue to LLM (TOOL_RESULT_ONLY)
+User input -> parse_input_command() -> ParsedInputCommand(approval_action=ALLOW|DENY) | None
+Pipeline: ApprovalRenderer.detect() -> apply_decision() -> TurnSnapshot saved
+ToolNode: _resume_suspended_batch() -> PRE_APPROVED_TOOL_IDS -> _execute_batch()
+  ALLOWED tools execute; DENIED/PREEMPTED return errors with deny_reason
 ```
 
-## For AI Agents
-- Approval tiers: `HARDLINE` > `DANGEROUS` > `SENSITIVE` > `NORMAL`.
-- Batch atomicity: one DENY cascades to PREEMPT all unresolved requests.
-- Unrelated input during pending approval: `ApprovalRenderer.detect()` applies DENIED with `reason=f'unrelated input: "{truncated}"'` → cascades to all pending.
-- `deny_reason` lives on `ApprovalTransaction.deny_reason`. Read from there, not `ctx.metadata`.
-- Do NOT add approval-specific stores. Use `TurnStateStore` from `framework.runtime.store`.
-- Per-tool `allowed_paths`: `["*"]` = never require approval; `[]` = always require approval.
+## Design Rules
+- Tiers: HARDLINE > DANGEROUS > SENSITIVE > NORMAL
+- Batch atomicity: one DENY cascades to PREEMPT all unresolved requests
+- Unrelated input during pending approval: DENIED with reason, cascades to all
+- Per-tool `allowed_paths`: `["*"]` = never require approval; `[]` = always require
+- Do NOT add approval-specific stores; use `TurnStateStore` from `framework.runtime`
 
-## Testing Requirements
-- Tests in `tests/unit/approval/` should cover command parsing, approval transaction decisions, batch atomicity, unrelated input handling, and ReAct resume behavior.
-- Store behavior belongs under `tests/unit/runtime/`.
+## Dependencies
+- None internal (pure data types and parsing; no agent/runtime imports)

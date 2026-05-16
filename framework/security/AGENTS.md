@@ -1,21 +1,20 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-05-11 -->
 
 # security
 
-## Purpose
 Security policies, validators, and approval handlers. Protects agent from executing dangerous operations.
 
-## For AI Agents
+## Key Files
 
-### Working In This Directory
-- Security policies define what tools/arguments are allowed
-- `SecurityPolicy`: base policy class
-- Validators: check tool calls against policies before execution
-- Approval handlers: integrate with `ApprovalRuntime` and `ToolNode` for multi-level security (not through interceptors)
-## Current Runtime Status
+| File | Description |
+|------|-------------|
+| `policy.py` | `SecurityPolicy`, per-tool config and rule definitions |
+| `validators.py` | `CommandValidator`, `FilePathValidator`, `CompositeValidator`, `ParameterValidator` |
+| `handlers.py` | Approval handlers — console, config-file, API, composite |
+| `exceptions.py` | `SecurityViolationError` and related exceptions |
+| `local_executor.py` | Local execution with security policy enforcement |
 
-Security policy can participate in approval and tool execution policy, but
-approval suspend/resume is owned by the ReAct runtime. Approval is NOT
-implemented through interceptors.
-
+## Notes
+- Security policy participates in approval and tool execution policy.
+- Approval suspend/resume is owned by the ReAct runtime, NOT implemented through interceptors.
+- Validators check tool calls against policies before execution.
