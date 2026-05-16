@@ -206,6 +206,38 @@ async def test_composite_runs_strategies_in_order():
 
 
 @pytest.mark.asyncio
+async def test_tool_chain_repair_cleans_up_after_budget() -> None:
+    """When PriorityBudgetGovernance skips a large assistant but keeps a small
+    paired tool result, ToolChainRepairGovernance (placed last) removes the orphan."""
+    from framework.memory.context_governance import (
+        CompositeGovernance, PriorityBudgetGovernance, ToolChainRepairGovernance,
+    )
+    from framework.memory.retention import DefaultMessageRetentionPolicy
+
+    # Simulate: assistant with huge tool_calls is skipped by budget,
+    # but small tool result fits → orphan
+    huge_args = "x" * 5000  # will cause assistant to exceed tight budget
+    messages: list[dict] = [
+        {"role": "user", "content": "do something"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"id": "call_big", "function": {"name": "write_file", "arguments": huge_args}}],
+        },
+        {"role": "tool", "tool_call_id": "call_big", "content": "done"},
+    ]
+
+    # PriorityBudget alone would create an orphan (assistant too big, tool result small).
+    # With ToolChainRepair after budget, the orphan is cleaned up.
+    chain = CompositeGovernance([
+        PriorityBudgetGovernance(max_tokens=8, safety_buffer=0, retention_policy=DefaultMessageRetentionPolicy()),
+        ToolChainRepairGovernance(),
+    ])
+    result = await chain.apply(messages)
+    assert result == [{"role": "user", "content": "do something"}]
+
+
+@pytest.mark.asyncio
 async def test_tool_chain_repair_removes_last_incomplete_assistant_for_model_visible_context() -> None:
     messages = [
         {"role": str(MessageRole.USER), "content": "start"},

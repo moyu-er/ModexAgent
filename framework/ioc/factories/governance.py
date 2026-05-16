@@ -39,7 +39,7 @@ def create_governance(
     )
     from framework.memory.retention import DefaultMessageRetentionPolicy
 
-    strategies: list[Any] = [ToolChainRepairGovernance()]
+    strategies: list[Any] = []
 
     # Token budget
     if _gov.token_budget is not None:
@@ -63,6 +63,11 @@ def create_governance(
             )
         )
 
+    # Tool chain repair runs last (after budget/compaction) so it can
+    # clean up orphans introduced by upstream stages. Pre- and post-repair
+    # both run in MODEL_VISIBLE_CONTEXT mode and are idempotent, so
+    # running repair only at the end is sufficient.
+    strategies.append(ToolChainRepairGovernance())
     strategies.append(FinalContextLegalityGovernance())
     return CompositeGovernance(strategies)
 
@@ -95,7 +100,7 @@ def create_peer_governance(
     if not _gov.tool_chain_repair:
         return None
 
-    strategies: list[Any] = [ToolChainRepairGovernance()]
+    strategies: list[Any] = []
 
     if _gov.token_budget is not None:
         tb = _gov.token_budget
@@ -108,5 +113,8 @@ def create_peer_governance(
             )
         )
 
+    # Tool chain repair runs last (after budget) so it can clean up
+    # orphans introduced by upstream stages.
+    strategies.append(ToolChainRepairGovernance())
     strategies.append(FinalContextLegalityGovernance())
     return CompositeGovernance(strategies)
