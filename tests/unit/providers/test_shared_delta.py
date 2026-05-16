@@ -198,3 +198,154 @@ class TestParsedResponseFromOpenai:
 
         result = ParsedResponse.from_openai(response)
         assert result.usage == {}
+
+    # ── malformed tool call argument handling ──
+
+    def test_malformed_tool_args_single_quotes(self):
+        """Tool call arguments with single quotes (Python-style) → degrade to {}."""
+        func = MagicMock()
+        func.name = "search"
+        func.arguments = "{'key': 'value'}"
+
+        tc = MagicMock()
+        tc.id = "call_m1"
+        tc.function = func
+
+        msg = MagicMock()
+        msg.content = None
+        msg.tool_calls = [tc]
+        msg.model_extra = None
+
+        choice = MagicMock()
+        choice.message = msg
+        choice.finish_reason = "tool_calls"
+
+        response = MagicMock()
+        response.choices = [choice]
+        response.usage = None
+
+        result = ParsedResponse.from_openai(response)
+        # Tool call is preserved, but with empty args instead of crashing
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].tool_name == "search"
+        assert result.tool_calls[0].arguments == {}
+        assert result.tool_calls[0].call_id == "call_m1"
+
+    def test_malformed_tool_args_missing_quotes(self):
+        """Tool call arguments with unquoted keys → degrade to {}."""
+        func = MagicMock()
+        func.name = "run_shell"
+        func.arguments = "{cmd: ls}"
+
+        tc = MagicMock()
+        tc.id = "call_m2"
+        tc.function = func
+
+        msg = MagicMock()
+        msg.content = None
+        msg.tool_calls = [tc]
+        msg.model_extra = None
+
+        choice = MagicMock()
+        choice.message = msg
+        choice.finish_reason = "tool_calls"
+
+        response = MagicMock()
+        response.choices = [choice]
+        response.usage = None
+
+        result = ParsedResponse.from_openai(response)
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].tool_name == "run_shell"
+        assert result.tool_calls[0].arguments == {}
+
+    def test_malformed_tool_args_truncated_json(self):
+        """Tool call arguments with truncated/incomplete JSON → degrade to {}."""
+        func = MagicMock()
+        func.name = "read_file"
+        func.arguments = '{"path": "/tmp'
+
+        tc = MagicMock()
+        tc.id = "call_m3"
+        tc.function = func
+
+        msg = MagicMock()
+        msg.content = None
+        msg.tool_calls = [tc]
+        msg.model_extra = None
+
+        choice = MagicMock()
+        choice.message = msg
+        choice.finish_reason = "tool_calls"
+
+        response = MagicMock()
+        response.choices = [choice]
+        response.usage = None
+
+        result = ParsedResponse.from_openai(response)
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].tool_name == "read_file"
+        assert result.tool_calls[0].arguments == {}
+
+    def test_malformed_tool_args_among_valid_ones(self):
+        """Only the malformed tool call is degraded; valid ones are unaffected."""
+        valid_func = MagicMock()
+        valid_func.name = "search"
+        valid_func.arguments = '{"query": "ok"}'
+
+        bad_func = MagicMock()
+        bad_func.name = "run_shell"
+        bad_func.arguments = "{invalid}"
+
+        tc1 = MagicMock()
+        tc1.id = "call_ok"
+        tc1.function = valid_func
+
+        tc2 = MagicMock()
+        tc2.id = "call_bad"
+        tc2.function = bad_func
+
+        msg = MagicMock()
+        msg.content = None
+        msg.tool_calls = [tc1, tc2]
+        msg.model_extra = None
+
+        choice = MagicMock()
+        choice.message = msg
+        choice.finish_reason = "tool_calls"
+
+        response = MagicMock()
+        response.choices = [choice]
+        response.usage = None
+
+        result = ParsedResponse.from_openai(response)
+        assert len(result.tool_calls) == 2
+        assert result.tool_calls[0].arguments == {"query": "ok"}
+        assert result.tool_calls[1].arguments == {}
+
+    def test_malformed_tool_args_empty_string(self):
+        """Empty arguments string → degrade to {}."""
+        func = MagicMock()
+        func.name = "list_dir"
+        func.arguments = ""
+
+        tc = MagicMock()
+        tc.id = "call_m4"
+        tc.function = func
+
+        msg = MagicMock()
+        msg.content = None
+        msg.tool_calls = [tc]
+        msg.model_extra = None
+
+        choice = MagicMock()
+        choice.message = msg
+        choice.finish_reason = "tool_calls"
+
+        response = MagicMock()
+        response.choices = [choice]
+        response.usage = None
+
+        result = ParsedResponse.from_openai(response)
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].arguments == {}

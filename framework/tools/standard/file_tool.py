@@ -17,7 +17,7 @@ def _resolve_path(path: str) -> Path:
 class ReadFileTool(Tool):
     """读取文件内容的工具."""
 
-    DEFAULT_MAX_LINES = 500
+    DEFAULT_MAX_LINES = 200
 
     def __init__(self):
         super().__init__()

@@ -159,7 +159,19 @@ class OpenAIProvider(StreamingLLMProvider):
                 error_info=error_info,
             )
 
-        parsed = ParsedResponse.from_openai(response)
+        try:
+            parsed = ParsedResponse.from_openai(response)
+        except Exception as exc:
+            elapsed_ms = (time.monotonic() - t0) * 1000
+            logger.warning(
+                "OpenAI response parse failed: model=%s elapsed=%.0fms error=%s",
+                params["model"], elapsed_ms, exc,
+            )
+            return LLMResponse(
+                content=f"Error parsing LLM response: {exc}",
+                finish_reason=FinishReason.ERROR.value,
+                error=str(exc),
+            )
 
         # ThinkTag fallback for non-streaming response
         content = parsed.content or ""

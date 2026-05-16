@@ -7,11 +7,14 @@ extract_reasoning — reasoning_content extraction from Pydantic model_extra.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from framework.core.tool_call_accumulator import ToolCallChunk
 from framework.core.types import ToolCall
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -101,9 +104,17 @@ class ParsedResponse:
         tool_calls: list[ToolCall] = []
         if msg.tool_calls:
             for tc in msg.tool_calls:
+                try:
+                    args = json.loads(tc.function.arguments)
+                except json.JSONDecodeError:
+                    logger.warning(
+                        "Malformed tool call arguments for %s (call_id=%s): %.200s",
+                        tc.function.name, tc.id, tc.function.arguments or "",
+                    )
+                    args = {}
                 tool_calls.append(ToolCall(
                     tool_name=tc.function.name,
-                    arguments=json.loads(tc.function.arguments),
+                    arguments=args,
                     call_id=tc.id,
                 ))
 

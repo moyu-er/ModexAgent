@@ -297,9 +297,18 @@ class LiteLLMProvider(StreamingLLMProvider):
         raw_tool_calls = self._get_attr_or_extra(msg, "tool_calls")
         if raw_tool_calls:
             for tc in raw_tool_calls:
+                raw_args = tc.get("function", {}).get("arguments", "{}")
+                try:
+                    args = json.loads(raw_args)
+                except json.JSONDecodeError:
+                    logger.warning(
+                        "Malformed tool call arguments for %s (call_id=%s): %.200s",
+                        tc.get("function", {}).get("name", ""), tc.get("id"), raw_args or "",
+                    )
+                    args = {}
                 tool_calls.append(ToolCall(
                     tool_name=tc.get("function", {}).get("name", ""),
-                    arguments=json.loads(tc.get("function", {}).get("arguments", "{}")),
+                    arguments=args,
                     call_id=tc.get("id"),
                 ))
 
