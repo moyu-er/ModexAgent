@@ -16,7 +16,11 @@ from framework.memory.compression.semantic_filter import SemanticMessageFilter
 from framework.memory.compression.strategy import MessageFilterStrategy
 from framework.memory.core.models import CompressionReason
 from framework.memory.core.scope import MemoryContext
-from framework.memory.utils import EMPTY_MEMORY_SUMMARY_MARKERS, strip_runtime_prefixes
+from framework.memory.utils import (
+    EMPTY_MEMORY_SUMMARY_MARKERS,
+    _is_meaningless_summary,
+    strip_runtime_prefixes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +80,9 @@ class SummarizerStrategy(SummaryStrategy):
             return self._fallback_summary(sanitized)
 
         if len(summary) < 100 and summary.strip() in EMPTY_MEMORY_SUMMARY_MARKERS:
+            return ""
+
+        if _is_meaningless_summary(summary):
             return ""
 
         return summary

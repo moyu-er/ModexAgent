@@ -47,6 +47,8 @@ class ChatMessage(BaseModel):
         对 tool_calls 中的非 dict 对象（如 pydantic model、dataclass）
         自动调用 model_dump / asdict / __dict__ 转换为 dict，确保兼容性。
         """
+        data = dict(data)
+
         # 预处理 tool_calls：将非 dict 对象转换为 dict
         if "tool_calls" in data and data["tool_calls"] is not None:
             tool_calls = data["tool_calls"]
@@ -79,12 +81,14 @@ class ChatMessage(BaseModel):
         """转换为 dict（包含未知字段，排除 None 值）。
 
         对无法 JSON 序列化的嵌套对象，递归转换为 dict 以确保兼容性。
+        自动排除 reasoning_content 字段，防止思维链内容泄漏到存储层。
         """
         try:
-            return self.model_dump(mode="json", exclude_none=True)
+            result = self.model_dump(mode="json", exclude_none=True)
         except Exception:
-            # Fallback: 手动处理无法序列化的嵌套对象
-            return self._to_dict_fallback()
+            result = self._to_dict_fallback()
+        result.pop("reasoning_content", None)
+        return result
 
     def _to_dict_fallback(self) -> dict[str, Any]:
         """手动序列化，递归处理嵌套对象。"""

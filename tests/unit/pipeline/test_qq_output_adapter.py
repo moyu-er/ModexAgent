@@ -119,14 +119,11 @@ class TestQQOutputAdapter:
 
     @pytest.mark.asyncio
     async def test_send_with_content_cleaning(self, adapter):
-        """Test that send cleans content."""
-        message = OutputMessage(content="<think>Thinking...</think>Hello")
+        """Test that send applies content filters (whitespace cleanup)."""
+        message = OutputMessage(content="  Hello  ")
         await adapter.send(message, "session_1")
 
-        # Think tags should be removed
         call_args = adapter._qq_input._client.api.post_c2c_message.call_args
-        assert "<think>" not in call_args.kwargs['content']
-        assert "Thinking..." not in call_args.kwargs['content']
         assert "Hello" in call_args.kwargs['content']
 
     @pytest.mark.asyncio

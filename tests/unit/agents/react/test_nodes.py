@@ -196,7 +196,7 @@ class TestLLMNode:
 
         agent = type("_MockAgent", (), {
             "provider": type("_MockProvider", (), {})(),
-            "_build_assistant_message": lambda self, content, tool_calls: {"role": "assistant"},
+            "_build_assistant_message": lambda self, content, tool_calls, reasoning_content=None: {"role": "assistant"},
             "_call_hooks": lambda self, *a, **kw: None,
             "_drain_injections": lambda self, ctx, max_per_phase=3: [],
             "_save_checkpoint": AsyncMock(return_value=None),
@@ -226,7 +226,7 @@ class TestLLMNode:
 
         agent = type("_MockAgent", (), {
             "provider": type("_MockProvider", (), {})(),
-            "_build_assistant_message": lambda self, content, tool_calls: {"role": "assistant", "content": "Hello!"},
+            "_build_assistant_message": lambda self, content, tool_calls, reasoning_content=None: {"role": "assistant", "content": "Hello!"},
             "_call_hooks": lambda self, *a, **kw: None,
             "_drain_injections": lambda self, ctx, max_per_phase=3: [],
             "_save_checkpoint": AsyncMock(return_value=None),
@@ -278,7 +278,7 @@ class TestLLMNode:
 
         agent = type("_MockAgent", (), {
             "provider": type("_MockProvider", (), {})(),
-            "_build_assistant_message": lambda self, content, tool_calls: {"role": "assistant"},
+            "_build_assistant_message": lambda self, content, tool_calls, reasoning_content=None: {"role": "assistant"},
             "_call_hooks": lambda self, *a, **kw: None,
             "_drain_injections": lambda self, ctx, max_per_phase=3: [],
         })()

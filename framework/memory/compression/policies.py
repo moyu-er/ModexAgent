@@ -576,4 +576,5 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
             return await self._summary.summarize(messages, context, reason)
         except Exception as exc:
             fallback = await self._error.on_summary_failure(exc, messages, context)
-            return fallback or ""
+            normalized = normalize_memory_summary(fallback)
+            return normalized or ""

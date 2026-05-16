@@ -56,7 +56,9 @@ class ScopedSessionMemoryManager(SessionMemoryManager):
 
         async with storage.get_lock().write():
             existing = await storage.load_messages()
-            existing.extend(self._to_dicts(chat_messages))
+            dicts = self._to_dicts(chat_messages)
+            # reasoning_content is already excluded by ChatMessage.to_dict()
+            existing.extend(dicts)
             await storage.set(".last_activity", time.time())
             if write_ids:
                 await storage.set(".last_write_id", next(iter(write_ids)))

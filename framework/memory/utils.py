@@ -14,7 +14,53 @@ EMPTY_MEMORY_SUMMARY_MARKERS = frozenset({
     "(no summary)",
     "(nothing)",
     "(no semantic content)",
+    "nothing to summarize",
+    "no relevant content",
+    "no meaningful information",
+    "no content",
+    "no information",
+    "no data",
+    "no context",
+    "no conversation",
+    "empty conversation",
+    "the conversation is empty",
+    "the conversation was brief",
+    "this conversation",
+    "n/a",
+    "none",
+    "empty",
+    "brief exchange",
+    "short conversation",
 })
+
+
+def _is_meaningless_summary(summary: str) -> bool:
+    """Heuristic: detect obviously meaningless summaries beyond exact markers.
+
+    Rejects summaries that are too short, too generic, or contain only
+    meta-references without actual content.
+    """
+    text = summary.strip().lower()
+
+    # Too short to be meaningful (< 5 chars is definitely not a summary)
+    if len(text) < 5:
+        return True
+
+    # Mostly whitespace or punctuation
+    if not re.search(r"[a-z一-鿿]", text):
+        return True
+
+    # Only generic meta-references, no concrete nouns/verbs
+    generic_phrases = (
+        "the user", "the assistant", "this conversation",
+        "a conversation", "the conversation", "some messages",
+    )
+    # If the entire summary is just one generic phrase, reject it
+    for phrase in generic_phrases:
+        if text == phrase or text == phrase + ".":
+            return True
+
+    return False
 
 
 def safe_atomic_replace(tmp_path: Path, target_path: Path) -> None:
@@ -78,6 +124,8 @@ def normalize_memory_summary(summary: str | None) -> str | None:
     if not normalized:
         return None
     if normalized.lower() in EMPTY_MEMORY_SUMMARY_MARKERS:
+        return None
+    if _is_meaningless_summary(normalized):
         return None
     return normalized
 

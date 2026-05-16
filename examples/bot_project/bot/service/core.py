@@ -27,7 +27,7 @@ from framework import (
 from framework.control.channel import InMemoryControlChannel
 from framework.control.ui.im import IMUserInterface
 from framework.core.emitter import ContentEmitter
-from framework.core.llm_error import (
+from framework.core.llm_struct import (
     LLMTimeoutPolicy,
     RuntimeSafetyPolicy,
     TurnTimeoutPolicy,

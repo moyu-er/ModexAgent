@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from framework.core.agent import Agent
     from framework.core.context import ContextManager
     from framework.core.emitter import EmitterConfig
-    from framework.core.llm_error import RuntimeSafetyPolicy
+    from framework.core.llm_struct import RuntimeSafetyPolicy
     from framework.core.tool_manager import ToolManager
     from framework.multi_agent.address import AgentAddress
     from framework.pipeline.pipeline import AgentPipeline

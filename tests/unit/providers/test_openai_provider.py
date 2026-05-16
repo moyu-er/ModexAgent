@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from framework.core.constants import FinishReason
-from framework.core.llm_error import (
+from framework.core.llm_struct import (
     LLMErrorInfo,
     LLMErrorKind,
     LLMTimeoutPolicy,

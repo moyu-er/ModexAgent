@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from framework.core.llm_error import LLMErrorInfo, LLMErrorKind
+from framework.core.llm_struct import LLMErrorInfo, LLMErrorKind
 
 
 def _make_classify():

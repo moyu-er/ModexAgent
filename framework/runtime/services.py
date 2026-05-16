@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from framework.core.llm_error import RuntimeSafetyPolicy
+from framework.core.llm_struct import RuntimeSafetyPolicy
 
 from .models import TurnStateBase
 

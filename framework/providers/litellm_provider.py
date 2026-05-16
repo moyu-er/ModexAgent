@@ -13,7 +13,7 @@ from collections.abc import Callable
 from typing import Any
 
 from framework.core.constants import DefaultValues, FinishReason, ToolChoice
-from framework.core.llm_error import (
+from framework.core.llm_struct import (
     LLMErrorInfo,
     LLMErrorKind,
     RuntimeSafetyPolicy,
@@ -65,7 +65,7 @@ class LiteLLMProvider(StreamingLLMProvider):
         max_tokens: int | None = None,
         timeout: float = DefaultValues.TIMEOUT_SECONDS,
         stream_idle_timeout: float = 90.0,
-        parse_think_tags: bool = False,
+        parse_think_tags: bool = True,
         reasoning_effort: str | None = None,
         safety: RuntimeSafetyPolicy | None = None,
         **kwargs,
@@ -77,7 +77,7 @@ class LiteLLMProvider(StreamingLLMProvider):
         self._max_tokens = max_tokens
         self._extra_kwargs = kwargs
         self._acompletion = acompletion
-        self._think_extractor = ThinkTagExtractor() if parse_think_tags else None
+        self._parse_think_tags = parse_think_tags
         self._reasoning_effort = reasoning_effort
 
         # Apply safety policy overrides if provided
@@ -283,18 +283,15 @@ class LiteLLMProvider(StreamingLLMProvider):
                 error_info=error_info,
             )
 
-        raw_content = self._get_attr_or_extra(msg, "content") or ""
+        content = self._get_attr_or_extra(msg, "content") or ""
         reasoning = self._get_attr_or_extra(msg, "reasoning_content")
         if reasoning is None:
             reasoning = self._get_attr_or_extra(msg, "reasoning")
 
         # parse_think_tags fallback for non-streaming response
-        if self._think_extractor and reasoning is None:
-            clean_content, extracted_reasoning = ThinkTagExtractor.extract(raw_content)
-            raw_content = clean_content
+        if self._parse_think_tags and reasoning is None:
+            content, extracted_reasoning = ThinkTagExtractor.extract(content)
             reasoning = extracted_reasoning
-        else:
-            clean_content = raw_content
 
         tool_calls = []
         raw_tool_calls = self._get_attr_or_extra(msg, "tool_calls")
@@ -319,7 +316,7 @@ class LiteLLMProvider(StreamingLLMProvider):
         )
 
         return LLMResponse(
-            content=clean_content,
+            content=content,
             tool_calls=tool_calls,
             reasoning_content=reasoning,
             finish_reason=finish_reason or "stop",
@@ -417,6 +414,8 @@ class LiteLLMProvider(StreamingLLMProvider):
         reasoning_parts: list[str] = []
         finish_reason: str | None = None
         usage: dict = {}
+        think_extractor = ThinkTagExtractor() if self._parse_think_tags else None
+        has_native_reasoning = False
 
         def _add_tool_call(tool_call: ToolCall) -> None:
             tool_key = f"{tool_call.tool_name}:{json.dumps(tool_call.arguments, sort_keys=True)}"
@@ -461,17 +460,17 @@ class LiteLLMProvider(StreamingLLMProvider):
                     for tool_call in completed_tool_calls:
                         _add_tool_call(tool_call)
 
-            # 原生 reasoning_content 优先级最高
-            has_native_reasoning = "reasoning_content" in delta and delta["reasoning_content"]
-            if has_native_reasoning:
+            # 原生 reasoning_content 优先级最高；一旦出现即持久，不再回落 think 提取
+            if "reasoning_content" in delta and delta["reasoning_content"]:
+                has_native_reasoning = True
                 reasoning_delta = delta["reasoning_content"]
                 reasoning_parts.append(reasoning_delta)
                 await self._invoke_callback(on_reasoning_delta, reasoning_delta)
 
             # 处理普通 content；若开启 parse_think_tags 且无原生 reasoning，则做 tag 剥离
             if "content" in delta and delta["content"]:
-                if self._think_extractor and not has_native_reasoning:
-                    content_delta, reasoning_delta = self._think_extractor.feed(delta["content"])
+                if think_extractor and not has_native_reasoning:
+                    content_delta, reasoning_delta = think_extractor.feed(delta["content"])
                     if reasoning_delta:
                         reasoning_parts.append(reasoning_delta)
                         await self._invoke_callback(on_reasoning_delta, reasoning_delta)
@@ -488,6 +487,12 @@ class LiteLLMProvider(StreamingLLMProvider):
         pending_tools = accumulator.flush_pending()
         for tool_call in pending_tools:
             _add_tool_call(tool_call)
+
+        # Flush any remaining buffered content from think extractor
+        if think_extractor:
+            flush_content, _ = think_extractor.flush()
+            if flush_content:
+                content_parts.append(flush_content)
 
         elapsed_ms = (time.monotonic() - t0) * 1000
         logger.debug(

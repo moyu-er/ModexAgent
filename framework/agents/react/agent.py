@@ -5,7 +5,6 @@
 
 import asyncio
 import contextlib
-import json
 import logging
 from enum import Enum
 from typing import Any, Literal
@@ -464,59 +463,6 @@ class ReActAgent(Agent[ReActEvent]):
 
         return injected
 
-    def _build_assistant_message(
-        self,
-        content: str,
-        tool_calls: list[ToolCall],
-    ) -> dict[str, Any]:
-        """构建 assistant 消息
-
-        注意：当只有 tool_calls 没有 content 时，OpenAI API 要求 content 为 null 而非空字符串
-        """
-        message_content = None if not content and tool_calls else content or ""
-
-        message: dict[str, Any] = {"role": "assistant", "content": message_content}
-        if tool_calls:
-            message["tool_calls"] = [
-                {
-                    "id": tc.call_id or f"call_{i}",
-                    "type": "function",
-                    "function": {
-                        "name": tc.tool_name,
-                        "arguments": json.dumps(tc.arguments) if tc.arguments else "{}",
-                    },
-                }
-                for i, tc in enumerate(tool_calls)
-            ]
-        return message
-
-    _MAX_TOOL_RESULT_CHARS = 20000  # 约 5000 tokens
-
-    def _build_tool_message(self, result: ToolResult, call_id: str | None = None) -> dict[str, Any]:
-        """构建 tool 消息
-
-        注意：tool content 不能为空，至少要有空格或错误信息
-        """
-        if result.error:
-            content = f"Error: {result.error}"
-        elif result.result is not None:
-            content = str(result.result)
-        else:
-            content = " "
-
-        if not content.strip():
-            content = " "
-
-        if len(content) > self._MAX_TOOL_RESULT_CHARS:
-            content = content[:self._MAX_TOOL_RESULT_CHARS] + (
-                f"\n... (truncated, {len(content)} chars total)"
-            )
-
-        tool_call_id = call_id or result.tool_name
-
-        return {
-            "role": "tool",
-            "tool_call_id": tool_call_id,
-            "name": result.tool_name,
-            "content": content,
-        }
+    # Message construction helpers moved to framework.utils.message_builder
+    # (build_assistant_message, build_tool_message) to keep ReActAgent focused
+    # on orchestration rather than data-formatting details.

@@ -276,18 +276,13 @@ class ToolNode(Node):
             if ctx.emitter is not None:
                 await ctx.emitter.emit(ReActEvent.TOOL_CALL_END, (tc, result))
 
-            tool_msg = self._agent._build_tool_message(result, tc.call_id)
+            from framework.utils.message_builder import build_tool_message
+
+            tool_msg = build_tool_message(result, tc.call_id)
             await ctx.history.append(tool_msg)
             if state is not None:
-                from framework.memory.core.message import ChatMessage
-
-                cm = (
-                    ChatMessage.from_dict(tool_msg)
-                    if isinstance(tool_msg, dict)
-                    else ChatMessage(role="tool", content=str(result.result or result.error or ""))
-                )
                 state.message_delta.append(
-                    MessageDelta(message=cm, source=MessageDeltaSource.TOOL)
+                    MessageDelta(message=tool_msg, source=MessageDeltaSource.TOOL)
                 )
 
             if batch is not None:

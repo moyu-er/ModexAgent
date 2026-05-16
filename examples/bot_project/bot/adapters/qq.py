@@ -33,7 +33,7 @@ from framework.pipeline.adapters import (
     OutputAdapter,
     OutputMessage,
 )
-from framework.pipeline.filters import ChainedContentFilter, ThinkTagFilter, WhitespaceFilter
+from framework.pipeline.filters import ChainedContentFilter, WhitespaceFilter
 
 # QQ rich media file_type: 1=image, 4=file
 QQ_FILE_TYPE_IMAGE = 1
@@ -302,7 +302,6 @@ class QQOutputAdapter(OutputAdapter):
         self._qq_input = qq_input_adapter
         self._delta_buffers: dict[str, list[str]] = {}  # 用于流式输出的缓冲
         self.content_filter = ChainedContentFilter([
-            ThinkTagFilter(),
             WhitespaceFilter(),
         ])
         self._msg_seq: int = 1  # 用于避免 QQ API 去重
