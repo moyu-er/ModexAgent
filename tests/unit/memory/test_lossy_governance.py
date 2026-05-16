@@ -46,15 +46,18 @@ async def test_lossy_does_not_mutate_input() -> None:
     assert result[0]["content"] != original_content
 
 
-async def test_lossy_truncates_tool_args() -> None:
-    """Oversized tool_calls function.arguments are truncated."""
-    huge_args = "x" * 5000
+async def test_lossy_truncates_tool_args_json_aware() -> None:
+    """Oversized tool_calls JSON arguments: long values shortened, metadata fields added."""
+    import json
+
+    huge_value = "x" * 5000
+    args = json.dumps({"content": huge_value, "path": "/tmp/out.md"})
     messages: list[dict] = [
         {
             "role": MessageRole.ASSISTANT,
             "content": "let me write",
             "tool_calls": [
-                {"id": "call_1", "type": "function", "function": {"name": "write_file", "arguments": huge_args}},
+                {"id": "call_1", "type": "function", "function": {"name": "write_file", "arguments": args}},
             ],
         },
     ]
@@ -67,13 +70,37 @@ async def test_lossy_truncates_tool_args() -> None:
     result = await gov.apply(messages)
 
     truncated_args = result[0]["tool_calls"][0]["function"]["arguments"]
-    assert len(truncated_args) < len(huge_args)
-    assert "x" * 80 in truncated_args  # head content preserved
-    assert "truncated" in truncated_args  # suffix present
+    assert len(truncated_args) < len(args)
+    parsed = json.loads(truncated_args)
+    assert isinstance(parsed, dict)
+    assert parsed["path"] == "/tmp/out.md"  # short value untouched
+    assert parsed["_gv_truncated"] is True
+    assert "truncated" in parsed["_gv_truncation_info"]
+    assert len(parsed["content"]) < len(huge_value)  # content shortened
     assert META_CONTEXT_LOSSY in result[0]
 
 
-async def test_lossy_skips_valid_tool_args() -> None:
+async def test_lossy_skips_invalid_json_tool_args() -> None:
+    """Non-JSON tool call arguments are left untouched (don't make them worse)."""
+    bad_args = "{not valid json at all"
+    messages: list[dict] = [
+        {
+            "role": MessageRole.ASSISTANT,
+            "content": "",
+            "tool_calls": [
+                {"id": "call_1", "type": "function", "function": {"name": "bad_tool", "arguments": bad_args}},
+            ],
+        },
+    ]
+    gov = LossyContentCompactionGovernance(tool_args_head_chars=10, keep_range_count=0, keep_range_ratio=0.0)
+
+    result = await gov.apply(messages)
+
+    assert result[0]["tool_calls"][0]["function"]["arguments"] == bad_args
+    assert META_CONTEXT_LOSSY not in result[0]
+
+
+async def test_lossy_skips_small_tool_args() -> None:
     """Small tool_calls arguments below the limit are left untouched."""
     messages: list[dict] = [
         {
@@ -88,6 +115,5 @@ async def test_lossy_skips_valid_tool_args() -> None:
 
     result = await gov.apply(messages)
 
-    # Arguments unchanged
     assert result[0]["tool_calls"][0]["function"]["arguments"] == '{"query": "ok"}'
     assert META_CONTEXT_LOSSY not in result[0]

@@ -156,13 +156,23 @@ class LossyContentCompactionGovernance(ContextGovernance):
                 updated[META_CONTEXT_REDUCTION] = self._reduction_name(role)
             # Truncate oversized tool_calls arguments (e.g. write_file with 71 KB content)
             if self._tool_args_head_chars > 0:
-                updated = self._truncate_tool_args(updated, role)
+                updated = self._truncate_tool_args(updated)
             result.append(updated)
         return result
 
-    def _truncate_tool_args(
-        self, msg: dict[str, Any], role: str,
-    ) -> dict[str, Any]:
+    def _truncate_tool_args(self, msg: dict[str, Any]) -> dict[str, Any]:
+        """Truncate oversized tool call arguments with JSON-aware replacement.
+
+        Long string values are shortened to a head prefix.  Instead of
+        embedding a truncation note inside the value (which would produce
+        invalid JSON), this method adds ``_gv_truncated`` and
+        ``_gv_truncation_info`` metadata fields to the arguments object
+        so the whole payload stays valid JSON.
+
+        If the arguments string is not valid JSON it is left untouched.
+        """
+        import json
+
         tool_calls = msg.get("tool_calls")
         if not isinstance(tool_calls, list):
             return msg
@@ -180,13 +190,25 @@ class LossyContentCompactionGovernance(ContextGovernance):
             if not isinstance(args, str) or len(args) <= self._tool_args_head_chars:
                 new_tool_calls.append(tc)
                 continue
+
+            try:
+                obj = json.loads(args)
+            except json.JSONDecodeError:
+                new_tool_calls.append(tc)
+                continue
+
+            if not isinstance(obj, dict):
+                new_tool_calls.append(tc)
+                continue
+
+            replaced = self._replace_long_values(obj, len(args), self._tool_args_head_chars)
+            if replaced is None:
+                new_tool_calls.append(tc)
+                continue
+
             truncated = True
             new_fn = dict(fn)
-            new_fn["arguments"] = self._truncate_content(
-                args,
-                self._tool_args_head_chars,
-                role,
-            )
+            new_fn["arguments"] = json.dumps(replaced, ensure_ascii=False)
             new_tc = dict(tc)
             new_tc["function"] = new_fn
             new_tool_calls.append(new_tc)
@@ -196,6 +218,56 @@ class LossyContentCompactionGovernance(ContextGovernance):
             msg[META_CONTEXT_LOSSY] = True
             msg[META_CONTEXT_REDUCTION] = ContextReductionType.CONTENT_TRUNCATED
         return msg
+
+    @staticmethod
+    def _replace_long_values(
+        obj: dict[str, Any],
+        original_chars: int,
+        max_chars: int,
+    ) -> dict[str, Any] | None:
+        """Replace the longest string value in *obj* with a shortened
+        head copy and add ``_gv_truncated`` / ``_gv_truncation_info``
+        metadata fields.
+
+        Returns a new dict, or None when no string value needs truncation.
+        """
+        import json
+        longest_key: str | None = None
+        longest_val: str = ""
+        longest_len = 0
+        for k, v in obj.items():
+            if isinstance(v, str) and len(v) > longest_len:
+                longest_key = k
+                longest_val = v
+                longest_len = len(v)
+
+        if longest_key is None or longest_len == 0:
+            return None
+
+        excess = original_chars - max_chars
+        if excess <= 0:
+            return None
+
+        # Compute how much of the longest value to keep.
+        # The replacement dict adds _gv_truncated + _gv_truncation_info
+        # fields which consume some of the saved budget.
+        info = (
+            f"Field '{longest_key}' truncated: "
+            f"{longest_len:,} → ~{max(0, longest_len - excess):,} chars"
+        )
+        metadata_overhead = len(
+            json.dumps({"_gv_truncated": True, "_gv_truncation_info": info},
+                       ensure_ascii=False)
+        ) + 40  # safety margin for JSON escaping
+
+        new_val_len = longest_len - excess - metadata_overhead
+        new_val_len = max(200, min(new_val_len, longest_len))
+
+        result = dict(obj)
+        result[longest_key] = longest_val[:new_val_len]
+        result["_gv_truncated"] = True
+        result["_gv_truncation_info"] = info
+        return result
 
     @staticmethod
     def _truncate_content(
