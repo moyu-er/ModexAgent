@@ -67,11 +67,25 @@ def create_memory(
 
     compression_coordinator = None
     if cfg.short_term.auto_llm_compression:
+        from framework.agents.summarizer import SummarizerAgent, SummarizerStrategy
+        from framework.memory.compaction.boundary import (
+            BoundaryPolicyName,
+            create_boundary_policy,
+        )
+        from framework.memory.compaction.policy import ConservativeCompactionPolicy
         from framework.memory.compression.policies import (
             DefaultMemoryCompressionCoordinator,
         )
+        from framework.memory.retention import DefaultMessageRetentionPolicy
+
+        summarizer = SummarizerAgent(llm_provider)
+        summary_strategy = SummarizerStrategy(summarizer)
 
         compression_coordinator = DefaultMemoryCompressionCoordinator(
+            summary=summary_strategy,
+            compaction=ConservativeCompactionPolicy(),
+            retention=DefaultMessageRetentionPolicy.from_config({}),
+            boundary=create_boundary_policy(BoundaryPolicyName.TOOL_CHAIN),
             max_messages=cfg.short_term.max_messages,
             max_tokens=cfg.short_term.max_tokens,
             keep_ratio_for_messages=cfg.short_term.keep_ratio_for_messages,

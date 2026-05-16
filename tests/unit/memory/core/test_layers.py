@@ -59,6 +59,7 @@ class _SessionManager(SessionMemoryManager):
         messages: Any,
         expected_revision: Any,
         state_updates: Any = None,
+        idle_threshold_seconds: Any = None,
     ) -> Any:
         pass
 
@@ -101,6 +102,62 @@ class _KnowledgeManager(KnowledgeMemoryManager):
 
     async def apply_update(self, context: Any, update: Any) -> str:
         return ""
+
+    async def clear(self, context: Any) -> None:
+        pass
+
+    async def ensure_defaults(self, context: Any, defaults: Any = None) -> None:
+        pass
+
+
+class TestChatMessageReasoningContent:
+    """ChatMessage 是纯粹的数据结构，思维链清理在业务层（ReActAgent）处理。
+
+    from_dict() 保留原始字段（包括 reasoning_content 和 think 标签）；
+    to_dict() 负责序列化安全，排除 reasoning_content。
+    """
+
+    def test_from_dict_preserves_reasoning_content(self):
+        from framework.memory.core.message import ChatMessage
+
+        msg = ChatMessage.from_dict({
+            "role": "assistant",
+            "content": "hello",
+            "reasoning_content": "thinking process",
+        })
+        # from_dict 保留 reasoning_content（清理在业务层做）
+        assert msg.get("reasoning_content") == "thinking process"
+        assert msg.content == "hello"
+
+    def test_from_dict_preserves_think_tags_in_content(self):
+        from framework.memory.core.message import ChatMessage
+
+        msg = ChatMessage.from_dict({
+            "role": "assistant",
+            "content": "<think>reasoning</think>actual content",
+        })
+        # from_dict 保留 content 中的 think 标签（清理在业务层做）
+        assert msg.content == "<think>reasoning</think>actual content"
+
+    def test_to_dict_excludes_reasoning_content(self):
+        from framework.memory.core.message import ChatMessage
+
+        msg = ChatMessage(role="assistant", content="hello")
+        # Simulate extra field via model_extra
+        msg.__pydantic_extra__ = {"reasoning_content": "secret"}
+        d = msg.to_dict()
+        assert "reasoning_content" not in d
+        assert d["content"] == "hello"
+
+    def test_coerce_dict_preserves_raw_content(self):
+        from framework.memory.core.message import ChatMessage
+
+        msg = ChatMessage.coerce({
+            "role": "assistant",
+            "content": "<thinking>deep thought</thinking>result",
+        })
+        # coerce 保留原始 content（清理在业务层做）
+        assert msg.content == "<thinking>deep thought</thinking>result"
 
     async def ensure_defaults(self, context: Any, defaults: Any = None) -> None:
         pass

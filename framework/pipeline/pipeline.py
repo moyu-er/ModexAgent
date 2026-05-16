@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from framework.core.agent_runtime_config import BusyInputMode
-from framework.core.llm_error import RuntimeSafetyPolicy
+from framework.core.llm_struct import RuntimeSafetyPolicy
 from framework.core.skills import SkillManager
 from framework.memory.core.message import ChatMessage
 

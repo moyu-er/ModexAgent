@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from framework.core.llm_error import RuntimeSafetyPolicy, TurnTimeoutPolicy
+from framework.core.llm_struct import RuntimeSafetyPolicy, TurnTimeoutPolicy
 from framework.multi_agent.pool import AgentPool
 from framework.multi_agent.state import AgentState
 

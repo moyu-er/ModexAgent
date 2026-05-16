@@ -47,7 +47,7 @@ class EmitterConfig:
     content_filter: Callable[[str], str] | None = None
 
     # 工具结果最大长度（超出截断）
-    max_tool_result_length: int = 2000
+    max_tool_result_length: int = 10000
 
     def is_enabled(self, event_name: str) -> bool:
         """检查事件是否启用

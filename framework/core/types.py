@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 from .constants import DefaultValues
 
 if TYPE_CHECKING:
-    from .llm_error import LLMErrorInfo
+    from .llm_struct import LLMErrorInfo
 
 
 class MessageType(Enum):

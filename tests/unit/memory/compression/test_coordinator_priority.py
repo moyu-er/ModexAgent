@@ -27,6 +27,7 @@ class _Session:
         messages: list[dict[str, Any]],
         expected: StorageRevision,
         extra_state: dict[str, Any] | None = None,
+        idle_threshold_seconds: float | None = None,
     ) -> StorageRevision | None:
         assert expected == self.revision
         self.messages = [ChatMessage.from_dict(m) for m in messages]

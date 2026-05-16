@@ -53,6 +53,9 @@ class _StubContextManager:
     async def build_system_prompt(self, **kwargs):
         return "test system prompt"
 
+    def wrap_governance(self, governance, session_id):
+        return governance
+
 
 class _StubToolManager:
     async def startup(self):

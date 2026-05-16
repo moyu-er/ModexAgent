@@ -1,91 +1,190 @@
 """Think-tag extractor for streaming and non-streaming LLM responses.
 
-Strips ``...`` reasoning blocks from model output, supporting
-incomplete tags that span chunk boundaries during streaming.
-Extracted from litellm_provider.py for reuse by other providers.
+Uses ``ThinkFormat`` from ``framework.utils.helpers`` so that
+streaming and non-streaming paths share the same format definitions.
 """
+
+from enum import Enum, auto
+
+from framework.utils.helpers import (
+    ThinkExtractionResult,
+    ThinkFormat,
+    BUILTIN_THINK_FORMATS,
+    extract_think_prefix,
+    looks_like_prefix,
+)
+
+
+class _ThinkState(Enum):
+    IDLE = auto()
+    IN_THINK = auto()
+    DONE = auto()
 
 
 class ThinkTagExtractor:
-    """Stateful streaming think-tag extractor.
+    """Lightweight streaming think-tag state machine.
 
-    Splits incoming text chunks into visible content and hidden reasoning.
-    Supports incomplete tags spanning chunk boundaries.
+    Only ambiguous fragments (partial open/close tags that could affect
+    state transitions) are buffered.  All other content is returned
+    immediately as content or reasoning deltas for typewriter-style output.
     """
 
-    _OPEN_TAG = "<think>"
-    _CLOSE_TAG = "</think>"
+    _MAX_IDLE_BUFFER: int = 20
 
-    def __init__(self):
-        self._in_think = False
-        self._pending = ""
+    def __init__(self, formats: tuple[ThinkFormat, ...] | None = None) -> None:
+        self._formats = formats if formats is not None else BUILTIN_THINK_FORMATS
+        self._state = _ThinkState.IDLE
+        self._buffer: str = ""
+        self._current_fmt: ThinkFormat | None = None
+        self._pending: str = ""
 
-    def feed(self, text: str) -> tuple[str | None, str | None]:
-        """Process a new chunk and return (content_delta, reasoning_delta)."""
-        data = self._pending + text
-        self._pending = ""
-        content_parts: list[str] = []
-        reasoning_parts: list[str] = []
-        i = 0
-        n = len(data)
+    def feed(self, text: str) -> ThinkExtractionResult:
+        if self._state == _ThinkState.DONE:
+            return ThinkExtractionResult(text, None)
+        if self._state == _ThinkState.IDLE:
+            return self._feed_idle(text)
+        return self._feed_in_think(text)
 
-        while i < n:
-            if self._in_think:
-                close_idx = data.find(self._CLOSE_TAG, i)
-                if close_idx != -1:
-                    reasoning_parts.append(data[i:close_idx])
-                    self._in_think = False
-                    i = close_idx + len(self._CLOSE_TAG)
-                    continue
+    # ------------------------------------------------------------------
+    # IDLE
+    # ------------------------------------------------------------------
 
-                remaining = data[i:]
-                max_prefix = min(len(remaining), len(self._CLOSE_TAG) - 1)
-                prefix_len = 0
-                for k in range(max_prefix, 0, -1):
-                    if remaining.endswith(self._CLOSE_TAG[:k]):
-                        prefix_len = k
-                        break
-                if prefix_len:
-                    keep_len = len(remaining) - prefix_len
-                    if keep_len > 0:
-                        reasoning_parts.append(remaining[:keep_len])
-                    self._pending = remaining[keep_len:]
-                    i = n
-                else:
-                    reasoning_parts.append(remaining)
-                    i = n
+    def _feed_idle(self, text: str) -> ThinkExtractionResult:
+        combined = self._buffer + text
+        stripped = combined.lstrip()
+
+        if not stripped:
+            self._buffer = combined
+            return ThinkExtractionResult(None, None)
+
+        if not self._starts_like_any_format(stripped):
+            self._state = _ThinkState.DONE
+            self._buffer = ""
+            return ThinkExtractionResult(combined, None)
+
+        if len(combined) > self._MAX_IDLE_BUFFER:
+            result = self._try_match_format(stripped)
+            if result is not None:
+                return result
+            self._state = _ThinkState.DONE
+            self._buffer = ""
+            return ThinkExtractionResult(combined, None)
+
+        result = self._try_match_format(stripped)
+        if result is not None:
+            return result
+
+        if looks_like_prefix(stripped, self._formats):
+            self._buffer = combined
+            return ThinkExtractionResult(None, None)
+
+        self._state = _ThinkState.DONE
+        self._buffer = ""
+        return ThinkExtractionResult(combined, None)
+
+    def _starts_like_any_format(self, text: str) -> bool:
+        ch = text[0]
+        for fmt in self._formats:
+            if fmt.open_literal[0] == ch:
+                return True
+        return False
+
+    def _try_match_format(self, text: str) -> ThinkExtractionResult | None:
+        lower = text.lower()
+
+        for fmt in self._formats:
+            open_lower = fmt.open_literal.lower()
+            if not lower.startswith(open_lower):
+                continue
+
+            start = len(fmt.open_literal)
+            end_pos = lower.find(fmt.end_marker.lower(), start)
+            if end_pos != -1:
+                reasoning = text[start:end_pos]
+                after = text[end_pos + len(fmt.end_marker):]
+                after = self._trim_nl(after)
+                self._state = _ThinkState.DONE
+                self._buffer = ""
+                return ThinkExtractionResult(after, reasoning)
+
+            # Open matched, close not found → IN_THINK
+            after_open = text[start:]
+            suffix = _close_tag_suffix(after_open, fmt.end_marker)
+            if suffix:
+                delta = after_open[:-len(suffix)] if len(after_open) > len(suffix) else None
+                self._pending = suffix
             else:
-                open_idx = data.find(self._OPEN_TAG, i)
-                if open_idx != -1:
-                    content_parts.append(data[i:open_idx])
-                    self._in_think = True
-                    i = open_idx + len(self._OPEN_TAG)
-                    continue
+                delta = after_open
+                self._pending = ""
 
-                remaining = data[i:]
-                max_prefix = min(len(remaining), len(self._OPEN_TAG) - 1)
-                prefix_len = 0
-                for k in range(max_prefix, 0, -1):
-                    if remaining.endswith(self._OPEN_TAG[:k]):
-                        prefix_len = k
-                        break
-                if prefix_len:
-                    keep_len = len(remaining) - prefix_len
-                    if keep_len > 0:
-                        content_parts.append(remaining[:keep_len])
-                    self._pending = remaining[keep_len:]
-                    i = n
-                else:
-                    content_parts.append(remaining)
-                    i = n
+            self._state = _ThinkState.IN_THINK
+            self._current_fmt = fmt
+            self._buffer = ""
+            return ThinkExtractionResult(None, delta)
 
-        content = "".join(content_parts) if content_parts else None
-        reasoning = "".join(reasoning_parts) if reasoning_parts else None
-        return content, reasoning
+        return None
+
+    # ------------------------------------------------------------------
+    # IN_THINK
+    # ------------------------------------------------------------------
+
+    def _feed_in_think(self, text: str) -> ThinkExtractionResult:
+        assert self._current_fmt is not None
+        end_marker = self._current_fmt.end_marker
+
+        combined = self._pending + text
+        end_pos = combined.lower().find(end_marker.lower())
+
+        if end_pos != -1:
+            before_close = combined[:end_pos]
+            after = combined[end_pos + len(end_marker):]
+            after = self._trim_nl(after)
+            self._state = _ThinkState.DONE
+            self._pending = ""
+            return ThinkExtractionResult(after or None, before_close)
+
+        suffix = _close_tag_suffix(combined, end_marker)
+        if suffix:
+            safe = combined[:-len(suffix)] if len(combined) > len(suffix) else ""
+            self._pending = suffix
+            return ThinkExtractionResult(None, safe or None)
+
+        self._pending = ""
+        return ThinkExtractionResult(None, text)
+
+    @staticmethod
+    def _trim_nl(text: str) -> str:
+        if text.startswith("\r\n"):
+            return text[2:]
+        if text.startswith("\n") or text.startswith("\r"):
+            return text[1:]
+        return text
+
+    def flush(self) -> ThinkExtractionResult:
+        if self._buffer:
+            buf = self._buffer
+            self._buffer = ""
+            if self._state == _ThinkState.IDLE:
+                self._state = _ThinkState.DONE
+                return ThinkExtractionResult(buf, None)
+        return ThinkExtractionResult(None, None)
+
+    # ------------------------------------------------------------------
+    # Non-streaming
+    # ------------------------------------------------------------------
 
     @classmethod
-    def extract(cls, text: str) -> tuple[str, str | None]:
-        """One-shot extraction for complete non-streaming text."""
-        extractor = cls()
-        content, reasoning = extractor.feed(text)
-        return content or "", reasoning
+    def extract(cls, text: str) -> ThinkExtractionResult:
+        return extract_think_prefix(text)
+
+
+def _close_tag_suffix(text: str, end_marker: str) -> str:
+    """Return the longest suffix of *text* that is a prefix of *end_marker*."""
+    end_lower = end_marker.lower()
+    text_lower = text.lower()
+    max_check = min(len(text), len(end_marker) - 1)
+    for i in range(max_check, 0, -1):
+        suffix = text[-i:]
+        if end_lower.startswith(suffix.lower()):
+            return suffix
+    return ""

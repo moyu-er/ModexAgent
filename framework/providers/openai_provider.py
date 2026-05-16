@@ -17,7 +17,7 @@ from openai import AsyncOpenAI
 import httpx
 
 from framework.core.constants import FinishReason
-from framework.core.llm_error import (
+from framework.core.llm_struct import (
     RuntimeSafetyPolicy,
     build_timeout_response,
 )
@@ -54,7 +54,7 @@ class OpenAIProvider(StreamingLLMProvider):
         max_tokens: int | None = None,
         timeout: float = 45.0,
         stream_idle_timeout: float = 90.0,
-        parse_think_tags: bool = False,
+        parse_think_tags: bool = True,
         reasoning_effort: str | None = None,
         extra_headers: dict[str, str] | None = None,
         safety: RuntimeSafetyPolicy | None = None,
@@ -64,7 +64,7 @@ class OpenAIProvider(StreamingLLMProvider):
         self._max_tokens = max_tokens
         self._reasoning_effort = reasoning_effort
         self._extra_headers = extra_headers
-        self._think_extractor = ThinkTagExtractor() if parse_think_tags else None
+        self._parse_think_tags = parse_think_tags
 
         if safety is not None:
             self._timeout = safety.llm.request_timeout_seconds
@@ -159,12 +159,24 @@ class OpenAIProvider(StreamingLLMProvider):
                 error_info=error_info,
             )
 
-        parsed = ParsedResponse.from_openai(response)
+        try:
+            parsed = ParsedResponse.from_openai(response)
+        except Exception as exc:
+            elapsed_ms = (time.monotonic() - t0) * 1000
+            logger.warning(
+                "OpenAI response parse failed: model=%s elapsed=%.0fms error=%s",
+                params["model"], elapsed_ms, exc,
+            )
+            return LLMResponse(
+                content=f"Error parsing LLM response: {exc}",
+                finish_reason=FinishReason.ERROR.value,
+                error=str(exc),
+            )
 
         # ThinkTag fallback for non-streaming response
         content = parsed.content or ""
         reasoning = parsed.reasoning_content
-        if self._think_extractor and reasoning is None:
+        if self._parse_think_tags and reasoning is None:
             clean_content, extracted_reasoning = ThinkTagExtractor.extract(content)
             content = clean_content
             reasoning = extracted_reasoning
@@ -268,6 +280,7 @@ class OpenAIProvider(StreamingLLMProvider):
         finish_reason: str | None = None
         usage: dict[str, int] = {}
         has_native_reasoning = False
+        think_extractor = ThinkTagExtractor() if self._parse_think_tags else None
 
         iterator = stream.__aiter__()
         while True:
@@ -307,8 +320,8 @@ class OpenAIProvider(StreamingLLMProvider):
                 await self._invoke_callback(on_reasoning_delta, delta.reasoning_content)
 
             if delta.content:
-                if self._think_extractor and not has_native_reasoning:
-                    clean_delta, extracted_reasoning = self._think_extractor.feed(delta.content)
+                if think_extractor and not has_native_reasoning:
+                    clean_delta, extracted_reasoning = think_extractor.feed(delta.content)
                     if extracted_reasoning:
                         reasoning_parts.append(extracted_reasoning)
                         await self._invoke_callback(on_reasoning_delta, extracted_reasoning)
@@ -332,6 +345,12 @@ class OpenAIProvider(StreamingLLMProvider):
 
         pending_tools = accumulator.flush_pending()
         all_tool_calls = accumulator.get_completed() + pending_tools
+
+        # Flush any remaining buffered content from think extractor
+        if think_extractor:
+            flush_content, _ = think_extractor.flush()
+            if flush_content:
+                content_parts.append(flush_content)
 
         elapsed_ms = (time.monotonic() - t0) * 1000
         logger.debug(

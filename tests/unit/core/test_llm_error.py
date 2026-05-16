@@ -2,7 +2,7 @@
 
 import pytest
 
-from framework.core.llm_error import (
+from framework.core.llm_struct import (
     LLMErrorInfo,
     LLMErrorKind,
     LLMTimeoutPolicy,

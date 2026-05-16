@@ -10,7 +10,7 @@ from typing import Any
 from framework.core.context import ContextManager
 from framework.core.emitter import AgentResult
 from framework.core.graph.interrupt import GraphInterrupt
-from framework.core.llm_error import RuntimeSafetyPolicy
+from framework.core.llm_struct import RuntimeSafetyPolicy
 from framework.core.tool_manager import InMemoryToolManager
 from framework.core.types import InputMessage
 from framework.messaging.broker import BrokerMessage, MessageBroker

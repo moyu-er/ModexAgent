@@ -399,47 +399,43 @@ class TestIsTransient:
 
 
 class TestBuildToolMessage:
-    """验证 _build_tool_message 对大结果的截断。"""
-
-    def _make_agent(self):
-        from framework.agents.react.agent import ReActAgent
-
-        return object.__new__(ReActAgent)
+    """验证 build_tool_message 对大结果的截断。"""
 
     def test_short_result_not_truncated(self):
         from framework.core.tool_manager import ToolResult
+        from framework.utils.message_builder import build_tool_message
 
-        agent = self._make_agent()
         result = ToolResult(tool_name="test", result="short output")
-        msg = agent._build_tool_message(result)
-        assert msg["content"] == "short output"
+        msg = build_tool_message(result)
+        assert msg.content == "short output"
 
     def test_long_result_truncated(self):
         from framework.core.tool_manager import ToolResult
+        from framework.utils.message_builder import build_tool_message
 
-        agent = self._make_agent()
         long_content = "x" * 30000
         result = ToolResult(tool_name="test", result=long_content)
-        msg = agent._build_tool_message(result)
-        assert len(msg["content"]) < 30000
-        assert "truncated" in msg["content"]
-        assert "30000 chars total" in msg["content"]
+        msg = build_tool_message(result)
+        assert msg.content is not None
+        assert len(msg.content) < 30000
+        assert "truncated" in msg.content
+        assert "30000 chars total" in msg.content
 
     def test_error_not_truncated(self):
         from framework.core.tool_manager import ToolResult
+        from framework.utils.message_builder import build_tool_message
 
-        agent = self._make_agent()
         result = ToolResult(tool_name="test", error="something failed")
-        msg = agent._build_tool_message(result)
-        assert msg["content"] == "Error: something failed"
+        msg = build_tool_message(result)
+        assert msg.content == "Error: something failed"
 
     def test_empty_result_gets_space(self):
         from framework.core.tool_manager import ToolResult
+        from framework.utils.message_builder import build_tool_message
 
-        agent = self._make_agent()
         result = ToolResult(tool_name="test", result=None)
-        msg = agent._build_tool_message(result)
-        assert msg["content"] == " "
+        msg = build_tool_message(result)
+        assert msg.content == " "
 
 
 # ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 """Context governance — in-turn token budget management for LLM context.
 
 Governance chain:
-  tool_chain_repair → priority_budget → lossy_compaction → final_legality
+  lossy_compaction → tool_chain_repair → final_legality
 
 All governance operates on a *copy* of messages; the persisted history
 is never modified.
@@ -21,8 +21,6 @@ from framework.memory.compression.tool_chain_sanitizer import (
     ToolChainSanitizationMode,
 )
 from framework.memory.pending import PendingPrunedInputInjector
-from framework.memory.retention import DefaultMessageRetentionPolicy, MessageRetentionPolicy
-from framework.memory.retention.types import MessageRetentionDecision, RetentionPriority
 from framework.memory.utils import estimate_token_count
 
 TOOL_RESULT_UNAVAILABLE_CONTENT = (
@@ -103,87 +101,14 @@ class ToolChainRepairGovernance(ContextGovernance):
         )
         return result.messages
 
-class PriorityBudgetGovernance(ContextGovernance):
-    """Select model-visible messages using retention priorities."""
-
-    def __init__(
-        self,
-        max_tokens: int,
-        retention_policy: MessageRetentionPolicy | None = None,
-        safety_buffer: int = 1024,
-        min_recent_user_turns: int | None = None,
-        min_recent_agent_turns: int | None = None,
-    ) -> None:
-        self._max_tokens = max_tokens
-        self._safety_buffer = safety_buffer
-        self._retention = retention_policy or DefaultMessageRetentionPolicy()
-        self._min_recent_user_turns = (
-            min_recent_user_turns
-            if min_recent_user_turns is not None
-            else int(getattr(self._retention, "min_recent_user_turns", 1))
-        )
-        self._min_recent_agent_turns = (
-            min_recent_agent_turns
-            if min_recent_agent_turns is not None
-            else int(getattr(self._retention, "min_recent_agent_turns", 1))
-        )
-
-    async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        if not messages:
-            return []
-        budget = max(128, self._max_tokens - self._safety_buffer)
-        selected: list[dict[str, Any]] = []
-        selected_tokens = 0
-        decisions = [
-            self._retention.decide(msg, index=idx, messages=messages)
-            for idx, msg in enumerate(messages)
-        ]
-        protected_indices = self._recent_anchor_indices(
-            decisions,
-            RetentionPriority.USER_INPUT,
-            self._min_recent_user_turns,
-        )
-        protected_indices.update(
-            self._recent_anchor_indices(
-                decisions,
-                RetentionPriority.AGENT_INPUT,
-                self._min_recent_agent_turns,
-            )
-        )
-        ranked_indices = sorted(range(len(messages)), key=lambda idx: (decisions[idx].rank, -idx))
-        kept_indices: set[int] = set()
-        for idx in sorted(protected_indices):
-            msg = dict(messages[idx])
-            kept_indices.add(idx)
-            selected_tokens += estimate_token_count([msg])
-        for idx in ranked_indices:
-            if idx in kept_indices:
-                continue
-            msg = dict(messages[idx])
-            token_count = estimate_token_count([msg])
-            if kept_indices and selected_tokens + token_count > budget:
-                continue
-            kept_indices.add(idx)
-            selected_tokens += token_count
-        for idx, msg in enumerate(messages):
-            if idx in kept_indices:
-                selected.append(dict(msg))
-        return selected
-
-    @staticmethod
-    def _recent_anchor_indices(
-        decisions: list[MessageRetentionDecision],
-        priority: RetentionPriority,
-        limit: int,
-    ) -> set[int]:
-        if limit <= 0:
-            return set()
-        matches = [idx for idx, decision in enumerate(decisions) if decision.priority == priority]
-        return set(matches[-limit:])
-
-
 class LossyContentCompactionGovernance(ContextGovernance):
-    """Apply deterministic lossy reductions to LLM context copies only."""
+    """Apply deterministic lossy reductions to LLM context copies only.
+
+    Truncates oversized ``content`` fields by role and, for assistant
+    messages with tool_calls, truncates oversized ``function.arguments``
+    strings so that huge tool-call payloads (e.g. 71 KB write_file
+    content) do not blow through the token budget.
+    """
 
     def __init__(
         self,
@@ -191,22 +116,24 @@ class LossyContentCompactionGovernance(ContextGovernance):
         assistant_head_chars: int = 1200,
         agent_head_chars: int = -1,
         user_head_chars: int = -1,
+        tool_args_head_chars: int = 2048,
         keep_range_count: int = 20,
-        keep_range_ratio: float = 0.5
+        keep_range_ratio: float = 0.5,
     ) -> None:
         self._limits = {
-            str(MessageRole.TOOL): tool_result_head_chars,
-            str(MessageRole.ASSISTANT): assistant_head_chars,
-            str(MessageRole.AGENT): agent_head_chars,
-            str(MessageRole.USER): user_head_chars,
+            str(MessageRole.TOOL): tool_result_head_chars if isinstance(tool_result_head_chars, int) else None,
+            str(MessageRole.ASSISTANT): assistant_head_chars if isinstance(assistant_head_chars, int) else None,
+            str(MessageRole.AGENT): agent_head_chars if isinstance(agent_head_chars, int) else None,
+            str(MessageRole.USER): user_head_chars if isinstance(user_head_chars, int) else None,
         }
+        self._tool_args_head_chars = tool_args_head_chars
         self.keep_range_count = keep_range_count
         self.keep_range_ratio = max(0.0, min(1.0, keep_range_ratio))
 
     async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []
         length = len(messages)
-        max_range = max(0, min(length - self.keep_range_count, int (length * (1.0 - self.keep_range_ratio))))
+        max_range = max(0, min(length - self.keep_range_count, int(length * (1.0 - self.keep_range_ratio))))
         if max_range <= 0:
             return messages
         for i, msg in enumerate(messages):
@@ -227,7 +154,119 @@ class LossyContentCompactionGovernance(ContextGovernance):
                 updated[META_CONTEXT_LOSSY] = True
                 updated[META_ORIGINAL_CHARS] = len(content)
                 updated[META_CONTEXT_REDUCTION] = self._reduction_name(role)
+            # Truncate oversized tool_calls arguments (e.g. write_file with 71 KB content)
+            if self._tool_args_head_chars > 0:
+                updated = self._truncate_tool_args(updated)
             result.append(updated)
+        return result
+
+    def _truncate_tool_args(self, msg: dict[str, Any]) -> dict[str, Any]:
+        """Truncate oversized tool call arguments with JSON-aware replacement.
+
+        Long string values are shortened to a head prefix.  Instead of
+        embedding a truncation note inside the value (which would produce
+        invalid JSON), this method adds ``_gv_truncated`` and
+        ``_gv_truncation_info`` metadata fields to the arguments object
+        so the whole payload stays valid JSON.
+
+        If the arguments string is not valid JSON it is left untouched.
+        """
+        import json
+
+        tool_calls = msg.get("tool_calls")
+        if not isinstance(tool_calls, list):
+            return msg
+        truncated = False
+        new_tool_calls: list[dict[str, Any]] = []
+        for tc in tool_calls:
+            if not isinstance(tc, dict):
+                new_tool_calls.append(tc)
+                continue
+            fn = tc.get("function")
+            if not isinstance(fn, dict):
+                new_tool_calls.append(tc)
+                continue
+            args = fn.get("arguments")
+            if not isinstance(args, str) or len(args) <= self._tool_args_head_chars:
+                new_tool_calls.append(tc)
+                continue
+
+            try:
+                obj = json.loads(args)
+            except json.JSONDecodeError:
+                new_tool_calls.append(tc)
+                continue
+
+            if not isinstance(obj, dict):
+                new_tool_calls.append(tc)
+                continue
+
+            replaced = self._replace_long_values(obj, len(args), self._tool_args_head_chars)
+            if replaced is None:
+                new_tool_calls.append(tc)
+                continue
+
+            truncated = True
+            new_fn = dict(fn)
+            new_fn["arguments"] = json.dumps(replaced, ensure_ascii=False)
+            new_tc = dict(tc)
+            new_tc["function"] = new_fn
+            new_tool_calls.append(new_tc)
+        if truncated:
+            msg = dict(msg)
+            msg["tool_calls"] = new_tool_calls
+            msg[META_CONTEXT_LOSSY] = True
+            msg[META_CONTEXT_REDUCTION] = ContextReductionType.CONTENT_TRUNCATED
+        return msg
+
+    @staticmethod
+    def _replace_long_values(
+        obj: dict[str, Any],
+        original_chars: int,
+        max_chars: int,
+    ) -> dict[str, Any] | None:
+        """Replace the longest string value in *obj* with a shortened
+        head copy and add ``_gv_truncated`` / ``_gv_truncation_info``
+        metadata fields.
+
+        Returns a new dict, or None when no string value needs truncation.
+        """
+        import json
+        longest_key: str | None = None
+        longest_val: str = ""
+        longest_len = 0
+        for k, v in obj.items():
+            if isinstance(v, str) and len(v) > longest_len:
+                longest_key = k
+                longest_val = v
+                longest_len = len(v)
+
+        if longest_key is None or longest_len == 0:
+            return None
+
+        excess = original_chars - max_chars
+        if excess <= 0:
+            return None
+
+        # Compute how much of the longest value to keep.
+        # The replacement dict adds _gv_truncated + _gv_truncation_info
+        # fields which consume some of the saved budget.
+        info = (
+            f"Field '{longest_key}' truncated: "
+            f"{longest_len:,} → ~{max(0, longest_len - excess):,} chars"
+        )
+        metadata_overhead = len(
+            json.dumps({"_gv_truncated": True, "_gv_truncation_info": info},
+                       ensure_ascii=False)
+        ) + 40  # safety margin for JSON escaping
+
+        new_val_len = longest_len - excess - metadata_overhead
+        new_val_len = max(200, min(new_val_len, longest_len))
+
+        result = dict(obj)
+        result[longest_key] = longest_val[:new_val_len]
+        result["_gv_truncated"] = True
+        result["_gv_truncation_info"] = info
         return result
 
     @staticmethod

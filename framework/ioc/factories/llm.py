@@ -7,7 +7,7 @@ Supports provider routing via model name prefix:
 
 from __future__ import annotations
 
-from framework.core.llm_error import LLMTimeoutPolicy, RuntimeSafetyPolicy, TurnTimeoutPolicy
+from framework.core.llm_struct import LLMTimeoutPolicy, RuntimeSafetyPolicy, TurnTimeoutPolicy
 from framework.core.provider import LLMProvider
 from framework.ioc.configs.llm import LLMConfig
 from framework.ioc.configs.safety import SafetyConfig

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 
-from framework.core.llm_error import LLMErrorInfo, LLMErrorKind
+from framework.core.llm_struct import LLMErrorInfo, LLMErrorKind
 
 logger = logging.getLogger(__name__)
 

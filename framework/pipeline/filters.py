@@ -10,11 +10,6 @@ from abc import ABC, abstractmethod
 from ..core.types import OutputMessage
 
 
-def _get_think_tag_extractor():
-    from ..providers.litellm_provider import ThinkTagExtractor
-    return ThinkTagExtractor
-
-
 class ContentFilter(ABC):
     """Abstract base class for content filters."""
 
@@ -36,33 +31,11 @@ class ChainedContentFilter(ContentFilter):
         return message
 
 
-class ThinkTagFilter(ContentFilter):
-    """Remove <think>...</think> tags from content.
-
-    Optionally extracts the hidden reasoning and stores it in
-    ``message.reasoning``.
-    """
-
-    def __init__(self, extract_reasoning: bool = True):
-        self.extract_reasoning = extract_reasoning
-
-    async def apply(self, message: OutputMessage) -> OutputMessage:
-        if not message.content:
-            return message
-        clean_content, reasoning = _get_think_tag_extractor().extract(message.content)
-        message.content = clean_content
-        if self.extract_reasoning and reasoning:
-            existing = message.reasoning or ""
-            message.reasoning = existing + reasoning
-        return message
-
-
 class ReasoningContentFilter(ContentFilter):
     """Control visibility of reasoning content.
 
     Modes:
         - ``strip``:  remove reasoning entirely
-        - ``append``: prepend reasoning to content (as <think> tags) and clear reasoning
         - ``keep``:   do nothing
     """
 
@@ -71,10 +44,6 @@ class ReasoningContentFilter(ContentFilter):
 
     async def apply(self, message: OutputMessage) -> OutputMessage:
         if self.mode == "strip":
-            message.reasoning = None
-        elif self.mode == "append" and message.reasoning:
-            think_block = f"<think>{message.reasoning}</think>\n\n"
-            message.content = think_block + (message.content or "")
             message.reasoning = None
         # "keep" mode: no-op
         return message

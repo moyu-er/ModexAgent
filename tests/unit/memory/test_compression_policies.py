@@ -20,7 +20,6 @@ from framework.memory.compression.policies import (
     DefaultCompressionErrorPolicy,
     DefaultCompressionTriggerPolicy,
     DefaultMemoryCompressionCoordinator,
-    HeuristicSummaryStrategy,
     MemoryCompressionCoordinator,
     SummaryStrategy,
 )
@@ -37,6 +36,14 @@ from framework.memory.core.scope import MemoryContext
 from framework.memory.layers.factory import MemoryLayerFactory
 from framework.memory.layers.pending import PendingPrunedInputEntry
 from framework.memory.registry.in_memory import InMemoryStoreRegistry
+
+
+class _SimpleSummary(SummaryStrategy):
+    """Deterministic summary for tests that need archive writes."""
+
+    async def summarize(self, messages, context, reason):
+        parts = [m.get("content", "") for m in messages if m.get("content")]
+        return " | ".join(parts[:10]) if parts else ""
 
 
 @pytest.fixture
@@ -74,18 +81,6 @@ async def test_trigger_compress_when_over_limit(registry):
     result = await trigger.should_compress(session=session, context=ctx)
     assert result is not None
     assert result.reason == CompressionReason.MESSAGE_COUNT
-
-
-async def test_heuristic_summary():
-    strategy = HeuristicSummaryStrategy()
-    msgs = [
-        {"role": "user", "content": "what is python"},
-        {"role": "assistant", "content": "Python is a programming language"},
-        {"role": "user", "content": "thanks"},
-    ]
-    summary = await strategy.summarize(msgs, MemoryContext(session_id="x"), CompressionReason.MANUAL)
-    assert "what is python" in summary
-    assert "thanks" in summary
 
 
 async def test_error_policy_summary_fallback(registry):
@@ -137,7 +132,7 @@ async def test_compression_abc_registration():
             return CompressionResult(committed=True)
 
     class MyCoordinator(MemoryCompressionCoordinator):
-        async def maybe_compress(self, *, session, archive, pending=None, context):
+        async def maybe_compress(self, *, session, archive, pending=None, context, idle_threshold_seconds=None):
             return CompressionResult(committed=True, reason=CompressionResultReason.NOT_NEEDED)
 
     assert isinstance(MyTrigger(), CompressionTriggerPolicy)
@@ -271,8 +266,8 @@ async def test_commit_restores_pending_snapshot_when_session_revision_conflicts(
             _ = context
             return expected_revision
 
-        async def replace_messages_if_revision(self, context, messages, revision, state_updates=None):
-            _ = context, messages, revision, state_updates
+        async def replace_messages_if_revision(self, context, messages, revision, state_updates=None, idle_threshold_seconds=None):
+            _ = context, messages, revision, state_updates, idle_threshold_seconds
             return None
 
     plan = CompressionPlan(
@@ -320,7 +315,9 @@ async def test_coordinator_commit_replaces_session_and_persists_summary(registry
 
     # keep_ratio=0.9 (clamp max): max_keep=4 from 6 msgs.
     # Planner uses budget_suffix because latest_user (index 5) >= min_start (2).
-    coordinator = DefaultMemoryCompressionCoordinator(max_messages=5, keep_ratio_for_messages=0.9)
+    coordinator = DefaultMemoryCompressionCoordinator(
+        max_messages=5, keep_ratio_for_messages=0.9, summary=_SimpleSummary(),
+    )
     result = await coordinator.maybe_compress(session=session, archive=archive, context=ctx)
 
     assert result.committed
@@ -817,7 +814,7 @@ async def test_coordinator_compresses_tool_chains_atomically(registry):
 
     assert len(await session.get_all_messages(ctx)) == 30
 
-    coordinator = DefaultMemoryCompressionCoordinator(max_messages=8)
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=8, summary=_SimpleSummary())
     result = await coordinator.maybe_compress(session=session, archive=archive, context=ctx)
     assert result.committed, f"expected committed, got {result}"
 
@@ -864,7 +861,7 @@ async def test_coordinator_compresses_when_total_exceeds_visible_cap(registry):
     assert stored == 96
     assert visible == 50
 
-    coordinator = DefaultMemoryCompressionCoordinator(max_messages=50)
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=50, summary=_SimpleSummary())
     result = await coordinator.maybe_compress(session=session, archive=archive, context=ctx)
     assert result.committed, f"stored=96 > max=50 should trigger, got {result}"
 
@@ -893,7 +890,9 @@ async def test_coordinator_creates_headroom_no_recompress_on_small_growth(regist
         {"role": "user", "content": f"msg{i}"} for i in range(96)
     ])
 
-    coordinator = DefaultMemoryCompressionCoordinator(max_messages=50, keep_ratio_for_messages=0.5)
+    coordinator = DefaultMemoryCompressionCoordinator(
+        max_messages=50, keep_ratio_for_messages=0.5, summary=_SimpleSummary(),
+    )
     result = await coordinator.maybe_compress(session=session, archive=archive, context=ctx)
     assert result.committed
 

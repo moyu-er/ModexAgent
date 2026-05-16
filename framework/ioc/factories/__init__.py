@@ -6,10 +6,7 @@ No framework code should import from bot_project.
 
 from framework.ioc.factories.agent import create_agent
 from framework.ioc.factories.app import App, create_app
-from framework.ioc.factories.compression import (
-    create_compression_coordinator,
-    create_peer_compression_coordinator,
-)
+from framework.ioc.factories.compression import create_peer_compression_coordinator
 from framework.ioc.factories.descriptors import (
     build_peer_descriptor,
     build_subagent_descriptor,
@@ -30,7 +27,6 @@ __all__ = [
     "connect_mcp",
     "create_agent",
     "create_app",
-    "create_compression_coordinator",
     "create_governance",
     "create_llm_provider",
     "create_memory",

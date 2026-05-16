@@ -14,7 +14,6 @@ from framework.core.provider import StreamingLLMProvider
 from framework.core.types import LLMResponse
 from framework.hook import HookPayload, HookPoint
 from framework.interceptor.abc import InterceptorScope, IterationContext
-from framework.memory.core.message import ChatMessage
 from framework.runtime.enums import MessageDeltaSource, OperationKind, TurnPhase
 from framework.runtime.models import MessageDelta
 
@@ -69,14 +68,24 @@ class LLMNode(Node):
                 state.llm_response = response
                 return
 
-            assistant_msg = self._agent._build_assistant_message(
-                response.content or "", response.tool_calls,
+            from framework.utils.helpers import strip_think
+            from framework.utils.message_builder import build_assistant_message
+
+            # If the provider did NOT separate reasoning_content (non-standard API),
+            # sanitize possible <think> tags embedded in content.
+            content = response.content or ""
+            if response.reasoning_content is None:
+                content = strip_think(content) or ""
+
+            assistant_msg = build_assistant_message(
+                content, response.tool_calls, response.reasoning_content,
             )
             await ctx.history.append(assistant_msg)
             state.llm_response = response
             state.add_operation(OperationKind.LLM_CALL, None)
-            cm = ChatMessage.from_dict(assistant_msg) if isinstance(assistant_msg, dict) else ChatMessage(role="assistant", content=response.content or "")
-            state.message_delta.append(MessageDelta(message=cm, source=MessageDeltaSource.ASSISTANT))
+            state.message_delta.append(
+                MessageDelta(message=assistant_msg, source=MessageDeltaSource.ASSISTANT)
+            )
 
         if (
             runtime and runtime.interceptors

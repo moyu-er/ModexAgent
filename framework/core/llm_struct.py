@@ -135,7 +135,7 @@ class LLMProviderConfig:
     max_tokens: int | None = None
     timeout: float = DefaultValues.TIMEOUT_SECONDS
     stream_idle_timeout: float = 90.0
-    parse_think_tags: bool = False
+    parse_think_tags: bool = True
     reasoning_effort: str | None = None
     extra_headers: dict[str, str] | None = None
 

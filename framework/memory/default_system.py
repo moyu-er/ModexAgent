@@ -7,6 +7,7 @@ import logging
 from collections.abc import Iterator, Sequence
 from typing import Any
 
+from framework.memory.compression.policies import MemoryCompressionCoordinator
 from framework.memory.core.layers import MemoryLayerSet
 from framework.memory.core.message import ChatMessage
 from framework.memory.core.models import LongTermMemory
@@ -135,6 +136,13 @@ class DefaultMemorySystem(MemorySystem):
         if providers is not None:
             for provider in providers.all():
                 self._recorder.add_provider(provider)
+
+    @property
+    def compression_coordinator(self) -> MemoryCompressionCoordinator | None:
+        """Expose the embedded compression coordinator for shared use (e.g. background auto-compact)."""
+        if self._lifecycle is not None:
+            return self._lifecycle.compression_coordinator
+        return None
 
     # -- MemorySystem ABC ------------------------------------------------
 

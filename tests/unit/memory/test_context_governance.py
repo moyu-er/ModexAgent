@@ -206,6 +206,26 @@ async def test_composite_runs_strategies_in_order():
 
 
 @pytest.mark.asyncio
+async def test_tool_chain_repair_cleans_up_orphans_in_model_context() -> None:
+    """ToolChainRepairGovernance removes orphan tool results when no matching
+    assistant tool_call declaration exists in the message list."""
+    messages: list[dict] = [
+        {"role": "user", "content": "do something"},
+        {"role": "tool", "tool_call_id": "call_orphan", "content": "orphan result"},
+        {"role": "user", "content": "next"},
+    ]
+
+    result = await ToolChainRepairGovernance().apply(messages)
+
+    # Orphan removed; both user messages preserved
+    assert len(result) == 2
+    assert result[0]["role"] == "user"
+    assert result[0]["content"] == "do something"
+    assert result[1]["role"] == "user"
+    assert result[1]["content"] == "next"
+
+
+@pytest.mark.asyncio
 async def test_tool_chain_repair_removes_last_incomplete_assistant_for_model_visible_context() -> None:
     messages = [
         {"role": str(MessageRole.USER), "content": "start"},

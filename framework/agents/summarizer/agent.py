@@ -274,6 +274,9 @@ Rules:
                     (response.error or "")[:200],
                 )
                 return ""
+            # Provider already extracted reasoning — skip strip_think
+            if response.reasoning_content is not None:
+                return response.content or ""
             raw = response.content or ""
         elif isinstance(response, str):
             raw = response.strip()
