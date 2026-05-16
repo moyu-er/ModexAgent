@@ -8,6 +8,17 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
+from framework.memory.archive_models import (
+    ARCHIVE_SCHEMA,
+    DEFAULT_RETAINED_CONSUMED_ARCHIVE_PAIRS,
+    ArchiveBundleResult,
+    ArchiveChannel,
+    ArchiveGenerationInputs,
+    ArchiveGenerationResult,
+    ArchiveInputStats,
+    ArchiveState,
+    ArchiveWrite,
+)
 from framework.memory.compression.tool_chain_sanitizer import ToolChainSanitizationIssue
 from framework.memory.core.message import ChatMessage
 
@@ -145,7 +156,16 @@ from framework.memory.core.consolidation import (  # noqa: E402
 )
 
 __all__ = [
+    "ARCHIVE_SCHEMA",
+    "DEFAULT_RETAINED_CONSUMED_ARCHIVE_PAIRS",
+    "ArchiveBundleResult",
+    "ArchiveChannel",
     "ArchiveEntry",
+    "ArchiveGenerationInputs",
+    "ArchiveGenerationResult",
+    "ArchiveInputStats",
+    "ArchiveState",
+    "ArchiveWrite",
     "CompressionResult",
     "CompressionResultReason",
     "CompressionPlan",
