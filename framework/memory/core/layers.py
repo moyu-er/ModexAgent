@@ -7,6 +7,11 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
+from framework.memory.archive_models import (
+    ArchiveBundleResult,
+    ArchiveChannel,
+    ArchiveWrite,
+)
 from framework.memory.core.consolidation import MemoryUpdate
 from framework.memory.core.message import ChatMessage
 from framework.memory.core.models import (
@@ -148,8 +153,21 @@ class ArchiveMemoryManager(ABC):
     async def append(self, context: MemoryContext, entry: ArchiveEntry) -> ArchiveEntry:
         pass
 
+    async def append_bundle(
+        self,
+        context: MemoryContext,
+        writes: Sequence[ArchiveWrite],
+    ) -> ArchiveBundleResult:
+        raise NotImplementedError
+
     @abstractmethod
-    async def get_recent(self, context: MemoryContext, limit: int = 5) -> list[ArchiveEntry]:
+    async def get_recent(
+        self,
+        context: MemoryContext,
+        limit: int = 5,
+        *,
+        channel: ArchiveChannel = ArchiveChannel.CONTEXT,
+    ) -> list[ArchiveEntry]:
         pass
 
     @abstractmethod
@@ -158,6 +176,8 @@ class ArchiveMemoryManager(ABC):
         context: MemoryContext,
         query: str,
         limit: int = 5,
+        *,
+        channel: ArchiveChannel = ArchiveChannel.CONTEXT,
     ) -> list[ArchiveEntry]:
         pass
 
@@ -167,6 +187,8 @@ class ArchiveMemoryManager(ABC):
         context: MemoryContext,
         cursor_name: str,
         limit: int = 100,
+        *,
+        channel: ArchiveChannel = ArchiveChannel.KNOWLEDGE,
     ) -> UnprocessedResult:
         pass
 
@@ -176,8 +198,14 @@ class ArchiveMemoryManager(ABC):
         context: MemoryContext,
         cursor_name: str,
         cursor: int,
+        *,
+        channel: ArchiveChannel = ArchiveChannel.KNOWLEDGE,
     ) -> None:
         pass
+
+    async def prune_consumed_pairs(self, context: MemoryContext) -> None:
+        _ = context
+        return None
 
     @abstractmethod
     async def clear(self, context: MemoryContext) -> None:
