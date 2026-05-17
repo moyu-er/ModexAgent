@@ -215,17 +215,17 @@ class DefaultScopedStorage(MemoryStorage):
     async def append_channel_log(self, channel: str, entry: dict[str, Any]) -> dict[str, Any]:
         async with self.get_lock().write():
             path = self._channel_log_path(channel)
-            cursor = self._get_last_cursor_unsafe(f"{channel}_archive") + 1
+            archive_id = int(entry.get("archive_id", 0) or 0)
             stored = {
                 **entry,
-                "cursor": cursor,
-                "entry_id": entry.get("entry_id") or entry.get("archive_id") or cursor,
+                "cursor": archive_id,
+                "entry_id": entry.get("entry_id") or archive_id,
                 "created_at": entry.get("created_at") or datetime.now(UTC).isoformat(),
             }
             self.directory.mkdir(parents=True, exist_ok=True)
             with path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(stored, ensure_ascii=False) + "\n")
-            self._set_last_cursor_unsafe(f"{channel}_archive", cursor)
+            self._set_last_cursor_unsafe("archive", archive_id)
             self._touch()
             return stored
 

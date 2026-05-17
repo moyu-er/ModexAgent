@@ -23,7 +23,6 @@ class InMemoryScopedStorage(MemoryStorage):
         self._updated_at = datetime.now(UTC)
         self._archive_state: dict[str, Any] | None = None
         self._channel_logs: dict[str, list[dict[str, Any]]] = {}
-        self._archive_cursors: dict[str, int] = {}
 
     async def initialize(self) -> None:
         pass
@@ -132,12 +131,11 @@ class InMemoryScopedStorage(MemoryStorage):
         self, channel: str, entry: dict[str, Any]
     ) -> dict[str, Any]:
         async with self.get_lock().write():
-            cursor = self._archive_cursors.get(channel, 0) + 1
-            self._archive_cursors[channel] = cursor
+            archive_id = int(entry.get("archive_id", 0) or 0)
             stored = {
                 **entry,
-                "cursor": cursor,
-                "entry_id": entry.get("entry_id") or entry.get("archive_id") or cursor,
+                "cursor": archive_id,
+                "entry_id": entry.get("entry_id") or archive_id,
                 "created_at": entry.get("created_at") or datetime.now(UTC).isoformat(),
             }
             self._channel_logs.setdefault(channel, []).append(stored)
@@ -164,8 +162,4 @@ class InMemoryScopedStorage(MemoryStorage):
     ) -> None:
         async with self.get_lock().write():
             self._channel_logs[channel] = list(entries)
-            if entries:
-                self._archive_cursors[channel] = max(
-                    int(entry.get("cursor", 0)) for entry in entries
-                )
             self._touch()

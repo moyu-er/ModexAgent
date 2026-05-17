@@ -26,3 +26,35 @@ async def test_file_registry_writes_context_and_knowledge_archive_files(tmp_path
     assert (archive_root / ".archive_state.json").exists()
     assert "context" in (archive_root / "context_archive.jsonl").read_text(encoding="utf-8")
     assert "knowledge" in (archive_root / "knowledge_archive.jsonl").read_text(encoding="utf-8")
+
+    # V2: no per-channel cursor files — archive_state.json is the single coordinate
+    assert not (archive_root / ".cursor_context_archive").exists()
+    assert not (archive_root / ".cursor_knowledge_archive").exists()
+
+
+async def test_append_channel_log_uses_archive_id_as_cursor() -> None:
+    """Storage-level: cursor must equal archive_id from entry payload.
+
+    Per-channel sequential counters (1,2,3...) are a V1 holdover.  With V2,
+    the archive_id is the single global coordinate — two entries written to
+    the same channel with archive_ids 7 and 3 MUST have cursors 7 and 3,
+    NOT per-channel counters 1 and 2.
+    """
+    from framework.memory.stores.scoped_in_memory import InMemoryScopedStorage
+
+    storage = InMemoryScopedStorage()
+    await storage.initialize()
+
+    r1 = await storage.append_channel_log(
+        "context", {"archive_id": 7, "summary": "first", "entry_id": 7},
+    )
+    assert r1["cursor"] == 7, (
+        f"Expected cursor=7 (archive_id), got {r1['cursor']} (per-channel counter)"
+    )
+
+    r2 = await storage.append_channel_log(
+        "context", {"archive_id": 3, "summary": "second", "entry_id": 3},
+    )
+    assert r2["cursor"] == 3, (
+        f"Expected cursor=3 (archive_id), got {r2['cursor']} (per-channel counter)"
+    )
