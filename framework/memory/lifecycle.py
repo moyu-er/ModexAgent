@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from framework.core.types import MessageRole
+from framework.memory.archive_models import ArchiveChannel, ArchiveChannelStorage
 from framework.memory.compression.policies import MemoryCompressionCoordinator
 from framework.memory.core.layers import MemoryLayerSet
 from framework.memory.core.scope import (
@@ -266,7 +267,12 @@ class DefaultMemoryMaintenancePolicy(MemoryMaintenancePolicy):
                         scope=layers.archive.get_scope(),
                         context=ctx,
                     )
-                    entries = await archive_storage.read_logs(since_cursor=0)
+                    if isinstance(archive_storage, ArchiveChannelStorage):
+                        entries = await archive_storage.read_channel_logs(
+                            ArchiveChannel.CONTEXT.value, since_archive_id=0, limit=1_000_000,
+                        )
+                    else:
+                        entries = await archive_storage.read_logs(since_cursor=0)
                     if not entries:
                         continue
 
@@ -275,8 +281,22 @@ class DefaultMemoryMaintenancePolicy(MemoryMaintenancePolicy):
                     pruned = False
 
                     if max_entries is not None and len(entries) > max_entries:
-                        await archive_storage.save_logs(entries[-max_entries:])
-                        entries = entries[-max_entries:]
+                        kept = entries[-max_entries:]
+                        kept_ids = {int(e.get("archive_id", e.get("cursor", 0)) or 0) for e in kept}
+                        if isinstance(archive_storage, ArchiveChannelStorage):
+                            await archive_storage.save_channel_logs(ArchiveChannel.CONTEXT.value, kept)
+                            # Also prune KNOWLEDGE channel to match retained CONTEXT entries
+                            knowledge_entries = await archive_storage.read_channel_logs(
+                                ArchiveChannel.KNOWLEDGE.value, since_archive_id=0, limit=1_000_000,
+                            )
+                            knowledge_kept = [e for e in knowledge_entries
+                                              if int(e.get("archive_id", 0) or 0) in kept_ids]
+                            await archive_storage.save_channel_logs(
+                                ArchiveChannel.KNOWLEDGE.value, knowledge_kept,
+                            )
+                        else:
+                            await archive_storage.save_logs(kept)
+                        entries = kept
                         pruned = True
 
                     if max_age_days is not None:
@@ -295,7 +315,19 @@ class DefaultMemoryMaintenancePolicy(MemoryMaintenancePolicy):
                                 continue
                             kept.append(entry)
                         if pruned and len(kept) != len(entries):
-                            await archive_storage.save_logs(kept)
+                            kept_ids = {int(e.get("archive_id", e.get("cursor", 0)) or 0) for e in kept}
+                            if isinstance(archive_storage, ArchiveChannelStorage):
+                                await archive_storage.save_channel_logs(ArchiveChannel.CONTEXT.value, kept)
+                                knowledge_entries = await archive_storage.read_channel_logs(
+                                    ArchiveChannel.KNOWLEDGE.value, since_archive_id=0, limit=1_000_000,
+                                )
+                                knowledge_kept = [e for e in knowledge_entries
+                                                  if int(e.get("archive_id", 0) or 0) in kept_ids]
+                                await archive_storage.save_channel_logs(
+                                    ArchiveChannel.KNOWLEDGE.value, knowledge_kept,
+                                )
+                            else:
+                                await archive_storage.save_logs(kept)
 
                     if pruned:
                         results.append(MaintenanceResult(

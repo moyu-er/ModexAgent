@@ -164,3 +164,9 @@ class ContextManagedMemorySystem(
     Protocol,
 ):
     """Full memory capability expected by MemorySystemContextManager."""
+
+    async def set_pending_user_turn(
+        self, context: MemoryContext, message_id: str, created_at: float
+    ) -> None: ...
+
+    async def clear_pending_user_turn(self, context: MemoryContext) -> None: ...

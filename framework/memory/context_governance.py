@@ -10,16 +10,16 @@ is never modified.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from enum import StrEnum
 from collections.abc import Callable
+from enum import StrEnum
 from typing import Any
 
 from framework.core.types import MessageRole
-from framework.memory.core.scope import MemoryContext
 from framework.memory.compression.tool_chain_sanitizer import (
     DefaultSessionToolChainSanitizer,
     ToolChainSanitizationMode,
 )
+from framework.memory.core.scope import MemoryContext
 from framework.memory.pending import PendingPrunedInputInjector
 from framework.memory.utils import estimate_token_count
 

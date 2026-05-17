@@ -36,7 +36,7 @@ class DefaultScopedStorage(MemoryStorage):
       ``.checkpoint``, etc.). It is intentionally separate from
       ``messages.jsonl`` so growing tool-call content does **not** bloat
       the context or require full-file rewrites of conversation state.
-    - ``archive.jsonl`` / ``changelog.jsonl`` – layer-specific logs.
+    - ``context_archive.jsonl`` / ``knowledge_archive.jsonl`` – archive channel logs.\n    - ``changelog.jsonl`` – layer-specific changelog.
     - ``.cursor_*`` – cursor tracking files.
     """
 
@@ -299,7 +299,10 @@ class DefaultScopedStorage(MemoryStorage):
             if not self._archive_state_path.exists():
                 return None
             try:
-                return json.loads(self._archive_state_path.read_text(encoding="utf-8"))
+                data: dict[str, Any] = json.loads(
+                    self._archive_state_path.read_text(encoding="utf-8")
+                )
+                return data
             except json.JSONDecodeError:
                 return None
 

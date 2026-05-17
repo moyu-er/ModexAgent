@@ -44,8 +44,8 @@
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │  短期记忆 (Session)          中期记忆 (Archive)      长期记忆 (Knowledge) │
-│  messages.jsonl              history.jsonl           SOUL.md         │
-│  全部会话消息 → 触发压缩 → LLM 摘要 → ArchiveEntry → DreamEngine → USER.md │
+│  messages.jsonl        context_archive.jsonl   SOUL.md              │
+│  全部会话消息 → 触发压缩 → LLM 双通道摘要 → ArchiveBundle → DreamEngine → USER.md │
 │  旧前缀替换为摘要              条目追加写入              事实提取写入 MEMORY.md │
 │  近后缀保留 (~50条)                                                      │
 └──────────────────────────────────────────────────────────────────┘
@@ -68,11 +68,10 @@
 | Knowledge 层 | `KnowledgeMemoryManager` | `ScopedKnowledgeMemoryManager` | 同上 |
 | 压缩协调器 | `MemoryCompressionCoordinator` | `DefaultMemoryCompressionCoordinator` | `lifecycle_policy` 参数 |
 | 压缩触发 | `CompressionTriggerPolicy` | `DefaultCompressionTriggerPolicy` | `trigger=` 参数 |
-| 摘要策略 | `SummaryStrategy` | **`SummarizerStrategy`** (LLM) | `summary=` 参数 |
+| 归档生成 | `ArchiveGenerationStrategy` | **`DualLLMArchiveGenerationStrategy`** (LLM) | `archive_generation=` 参数 |
 | 消息分类 | `MessageCompactionPolicy` | `ConservativeCompactionPolicy` | `compaction=` 参数 |
 | 边界策略 | `BoundaryPolicy` | `ToolChainBoundaryPolicy` | `boundary=` 参数 |
 | 提交策略 | `CommitPolicy` | `DefaultCommitPolicy` | `commit=` 参数 |
-| 归档策略 | `ArchiveStrategy` | **未接入压缩路径**（独立 API） | 直接调用 |
 | 知识整合 | `ConsolidationEngine` | `DreamEngine` | 整个 engine 替换 |
 | 注入策略 | `MemoryInjectionPolicy` | Main:`FullInjectionPolicy` Peer/Sub:`RestrictedInjectionPolicy` | `injection_policy=` |
 | 注入过滤 | `InjectionFilterStrategy` | `ToolMessageFilterStrategy` | `filter_strategy=` |
@@ -119,10 +118,10 @@ maybe_compress():
   4. ToolChainBoundaryPolicy.find_prune_boundary()
      → 三层保护: KEEP_RAW 不裁剪 + tool 链不切割 + min_tail_keep
      → boundary 可能因保护而小于 prune_count (保留更多)
-  5. prefix = all_msgs[:boundary] → SummarizerStrategy → LLM 摘要
+  5. prefix = all_msgs[:boundary] → DualLLMArchiveGenerationStrategy.generate() → LLM 双通道摘要
   6. suffix = all_msgs[boundary:] → 保留在 session
   7. DefaultCommitPolicy.commit():
-     a. 非空摘要 → archive.append(ArchiveEntry) 写入 history.jsonl
+     a. 完整 pair → archive.append_bundle() 写入 context_archive.jsonl + knowledge_archive.jsonl
      b. 空摘要/"(nothing)"/"(no semantic content)" → 跳过 archive 写入
      c. 始终调用 replace_messages_if_revision(suffix) → **物理替换全量**
         → messages.jsonl 变为 ~50 条 (suffix)
@@ -154,10 +153,10 @@ ToolChainBoundaryPolicy 第 80-95 行:
 ```
 压缩过程中:
   DefaultCommitPolicy.commit():
-    summary 非空 → ArchiveEntry(summary, metadata={reason, source})
-                   → ScopedArchiveMemoryManager.append()
-                     → history.jsonl (追加一行 JSON)
-    summary 为空 → 跳过写入 (不产生垃圾 Archive 条目)
+    generation 返回完整 pair → ArchiveWrite(CONTEXT) + ArchiveWrite(KNOWLEDGE)
+                          → ScopedArchiveMemoryManager.append_bundle()
+                            → context_archive.jsonl + knowledge_archive.jsonl
+    generation 返回空 writes → 跳过写入 (不产生垃圾 Archive 条目)
 ```
 
 ### 4.2 检索
@@ -171,7 +170,7 @@ FullInjectionPolicy._inject_archive():
   → PromptSection("历史对话摘要", priority=70)
 ```
 
-**注意**：`ArchiveStrategy` ABC 存在 (`SemanticArchiveStrategy` 等)，但 `DefaultCommitPolicy` 未使用它——Commit 直接调用 `archive.append()`。`ArchiveStrategy` 是独立 API。
+**注意**：旧的 `ArchiveStrategy` / `SummaryStrategy` ABC 已移除。压缩路径现在使用 `ArchiveGenerationStrategy` 协议，默认实现为 `DualLLMArchiveGenerationStrategy`。
 
 ### 4.3 老化清理
 
@@ -311,7 +310,7 @@ the final LLM API boundary.
 |------|---------|-------------|------------|
 | 旧消息处理 | cursor 跳过，保留在 session | 替换为摘要 | 物理替换 (replace_messages_if_revision) |
 | 工具入摘要 | 格式化全部消息给 LLM | Phase1 压缩后 Phase3 LLM 总结 | SUMMARIZE + _format_messages 压缩 |
-| Archive 生成 | Consolidator LLM → history.jsonl | 结构化 summary 替换中间消息 | SummarizerStrategy LLM → history.jsonl |
+| Archive 生成 | Consolidator LLM → archive | 结构化 summary 替换中间消息 | DualLLMArchiveGenerationStrategy LLM → context_archive.jsonl + knowledge_archive.jsonl |
 | 上下文注入 | 系统 prompt + 近期 history | 系统 prompt + compressed list | Priority 排序 + 预算裁剪 |
 | 长期记忆 | Dream Phase1/2 → SOUL/USER/MEMORY | MemoryManager + Provider | DreamEngine Phase1/2 → SOUL/USER/MEMORY |
 
@@ -322,7 +321,7 @@ memory:
   main:
     short_term:
       max_messages: 50           # 超过此值触发压缩
-      auto_llm_compression: true # SummarizerStrategy (LLM) 生成 Archive 摘要
+      auto_llm_compression: true # DualLLMArchiveGenerationStrategy (LLM) 生成 Archive 摘要
     retention:
       priority_order:
         - system_critical

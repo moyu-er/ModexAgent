@@ -13,13 +13,13 @@ from collections import Counter
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
+from framework.memory.archive_models import ArchiveChannel
 from framework.memory.compaction.boundary import BoundaryPolicy, ToolChainBoundaryPolicy
 from framework.memory.compaction.policy import (
     ConservativeCompactionPolicy,
     MessageCompactionDecision,
     MessageCompactionPolicy,
 )
-from framework.memory.archive_models import ArchiveChannel
 from framework.memory.compression.planner import (
     CompressionBudget,
     CompressionKeepPlanner,
@@ -36,7 +36,6 @@ from framework.memory.core.layers import (
     SessionMemoryManager,
 )
 from framework.memory.core.models import (
-    ArchiveEntry,
     CompressionPlan,
     CompressionReason,
     CompressionResult,
@@ -88,6 +87,10 @@ class DefaultCompressionTriggerPolicy(CompressionTriggerPolicy):
     ) -> None:
         self._max_messages = max_messages
         self._max_tokens = max_tokens
+
+    @property
+    def max_messages(self) -> int | None:
+        return self._max_messages
 
     async def should_compress(
         self,
@@ -464,7 +467,7 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
                 max_keep_tokens=max_keep_tokens,
             )
         else:
-            trigger_max_messages = getattr(self._trigger, "_max_messages", self._max_messages)
+            trigger_max_messages = getattr(self._trigger, "max_messages", self._max_messages)
             max_keep_messages = max(
                 1,
                 int((trigger_max_messages or len(all_msgs)) * self._keep_ratio_for_messages),

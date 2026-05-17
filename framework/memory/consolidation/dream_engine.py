@@ -275,10 +275,13 @@ class DreamEngine(ConsolidationEngine):
 
     @staticmethod
     def _archive_entry_to_dict(entry: ArchiveEntry) -> dict[str, Any]:
+        metadata = dict(entry.metadata)
         return {
             "entry_id": entry.entry_id,
+            "archive_id": entry.entry_id,
+            "source_session_id": metadata.get("source_session_id"),
             "summary": entry.summary,
-            "metadata": dict(entry.metadata),
+            "metadata": metadata,
             "created_at": entry.created_at.isoformat() if entry.created_at else None,
             "raw_refs": list(entry.raw_refs),
         }

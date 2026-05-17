@@ -9,6 +9,7 @@ from typing import Any
 from framework.memory.archive_models import (
     ArchiveBundleResult,
     ArchiveChannel,
+    ArchiveChannelStorage,
     ArchiveState,
     ArchiveWrite,
 )
@@ -91,9 +92,8 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
         return ArchiveBundleResult(archive_id=archive_id, written_channels=tuple(written))
 
     async def _load_state(self, storage: MemoryStorage) -> ArchiveState:
-        read_archive_state = getattr(storage, "read_archive_state", None)
-        if read_archive_state is not None:
-            raw = await read_archive_state()
+        if isinstance(storage, ArchiveChannelStorage):
+            raw = await storage.read_archive_state()
         else:
             raw = await storage.get(".archive_state")
         if isinstance(raw, Mapping):
@@ -108,9 +108,8 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
             "next_archive_id": state.next_archive_id,
             "knowledge_consumed_archive_id": state.knowledge_consumed_archive_id,
         }
-        write_archive_state = getattr(storage, "write_archive_state", None)
-        if write_archive_state is not None:
-            await write_archive_state(payload)
+        if isinstance(storage, ArchiveChannelStorage):
+            await storage.write_archive_state(payload)
             return
         await storage.set(".archive_state", payload)
 
@@ -120,9 +119,8 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
         channel: ArchiveChannel,
         payload: dict[str, object],
     ) -> dict[str, Any]:
-        append_channel_log = getattr(storage, "append_channel_log", None)
-        if append_channel_log is not None:
-            return await append_channel_log(channel.value, payload)
+        if isinstance(storage, ArchiveChannelStorage):
+            return await storage.append_channel_log(channel.value, payload)
         return await storage.append_log(payload)
 
     async def _read_channel_logs(
@@ -133,9 +131,8 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
         since_archive_id: int = 0,
         limit: int = 1_000_000,
     ) -> list[dict[str, object]]:
-        read_channel_logs = getattr(storage, "read_channel_logs", None)
-        if read_channel_logs is not None:
-            return await read_channel_logs(channel.value, since_archive_id, limit)
+        if isinstance(storage, ArchiveChannelStorage):
+            return await storage.read_channel_logs(channel.value, since_archive_id, limit)
         entries = await storage.read_logs(since_cursor=0, limit=limit)
         return [
             entry for entry in self._filter_channel(entries, channel)
@@ -148,9 +145,8 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
         channel: ArchiveChannel,
         entries: list[dict[str, object]],
     ) -> None:
-        save_channel_logs = getattr(storage, "save_channel_logs", None)
-        if save_channel_logs is not None:
-            await save_channel_logs(channel.value, entries)
+        if isinstance(storage, ArchiveChannelStorage):
+            await storage.save_channel_logs(channel.value, entries)
             return
         all_entries = await storage.read_logs(since_cursor=0, limit=1_000_000)
         other_entries = [

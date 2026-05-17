@@ -41,7 +41,7 @@ def test_tool_chain_is_grouped_with_assistant_tool_calls() -> None:
     assert "command=pytest tests/unit -q" in result.context_transcript
     assert "unused" not in result.context_transcript
     assert "truncated" in result.context_transcript
-    assert "short summary tail" not in result.context_transcript
+    assert "short summary tail" in result.context_transcript
     assert "source: shell" in result.knowledge_transcript
 
 

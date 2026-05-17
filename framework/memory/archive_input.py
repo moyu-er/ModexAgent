@@ -44,8 +44,18 @@ class ToolResultSummary:
     knowledge_claim: str
 
 
+def _string(value: object) -> str:
+    return value if isinstance(value, str) else "" if value is None else str(value)
+
+
 class DefaultToolResultSummarizer:
     max_tool_result_chars = 1200
+    head_chars = 800
+    tail_chars = 400
+
+    # Override in subclasses to add domain-specific tools.
+    status_tool_names: frozenset[str] = frozenset({"shell", "pytest", "ruff", "mypy"})
+    result_tool_names: frozenset[str] = frozenset({"read_file", "web_search", "search", "rg"})
 
     def summarize(self, tool_name: str, content: str) -> ToolResultSummary:
         lowered = content.lower()
@@ -56,27 +66,26 @@ class DefaultToolResultSummarizer:
 
     def _context_summary(self, text: str) -> str:
         stripped = text.strip()
-        first_line = stripped.splitlines()[0][:240] if stripped else ""
-        line_count = len(stripped.splitlines()) if stripped else 0
-        truncated = len(text) > self.max_tool_result_chars
-        parts = [
-            f"chars={len(text)}",
-            f"lines={line_count}",
-            f"truncated={str(truncated).lower()}",
-        ]
-        if first_line:
-            parts.append(f"first_line={first_line}")
-        return " ".join(parts)
+        if not stripped:
+            return ""
+        if len(text) <= self.max_tool_result_chars:
+            return stripped
+        head = text[: self.head_chars]
+        tail = text[-self.tail_chars :]
+        return (
+            f"{head}\n"
+            f"... (truncated, {len(text)} chars total) ...\n"
+            f"{tail}"
+        )
 
-    @staticmethod
-    def _knowledge_claim(tool_name: str, content: str, status: str) -> str:
+    def _knowledge_claim(self, tool_name: str, content: str, status: str) -> str:
         stripped = content.strip()
         if not stripped:
             return ""
         first_line = stripped.splitlines()[0]
-        if tool_name in {"shell", "pytest", "ruff", "mypy"}:
+        if tool_name in self.status_tool_names:
             return f"{tool_name} completed with status {status}: {first_line[:240]}"
-        if tool_name in {"read_file", "web_search", "search", "rg"}:
+        if tool_name in self.result_tool_names:
             return first_line[:240]
         return ""
 
@@ -95,7 +104,7 @@ class DefaultToolChainFormatter:
         result_messages: Sequence[MessageMapping],
     ) -> tuple[str, str]:
         calls = self._tool_calls(assistant_message)
-        assistant_text = self._string(assistant_message.get("content"))
+        assistant_text = _string(assistant_message.get("content"))
         if len(assistant_text) > self.max_assistant_content_chars:
             assistant_text = assistant_text[: self.max_assistant_content_chars] + "..."
 
@@ -107,28 +116,28 @@ class DefaultToolChainFormatter:
         knowledge_blocks: list[str] = []
 
         results_by_id = {
-            self._string(result.get("tool_call_id")): result for result in result_messages
+            _string(result.get("tool_call_id")): result for result in result_messages
         }
         for call in calls:
-            call_id = self._string(call.get("id"))
+            call_id = _string(call.get("id"))
             function_map = self._mapping(call.get("function"))
-            name = self._string(function_map.get("name")) or self._string(call.get("name")) or "unknown"
+            name = _string(function_map.get("name")) or _string(call.get("name")) or "unknown"
             args = self._format_args(function_map.get("arguments"))
             short_id = call_id[:8] if call_id else "missing"
             context_lines.append(f"- id={short_id} name={name} args={args}")
 
         context_lines.append("results:")
         for call in calls:
-            call_id = self._string(call.get("id"))
+            call_id = _string(call.get("id"))
             function_map = self._mapping(call.get("function"))
-            name = self._string(function_map.get("name")) or self._string(call.get("name")) or "unknown"
+            name = _string(function_map.get("name")) or _string(call.get("name")) or "unknown"
             short_id = call_id[:8] if call_id else "missing"
             result = results_by_id.get(call_id)
             if result is None:
                 context_lines.append(f"- id={short_id} name={name} status=missing")
                 context_lines.append("  summary: missing tool result")
                 continue
-            content = self._string(result.get("content"))
+            content = _string(result.get("content"))
             summary = self._result_summarizer.summarize(name, content)
             context_lines.append(f"- id={short_id} name={name} status={summary.status}")
             context_lines.append(f"  summary: {summary.context_text}")
@@ -166,7 +175,7 @@ class DefaultToolChainFormatter:
         for key, value in parsed.items():
             if not isinstance(key, str) or key not in _ARG_ALLOW_LIST:
                 continue
-            text = self._string(value)
+            text = _string(value)
             if len(text) > self.max_arg_value_chars:
                 text = text[: self.max_arg_value_chars] + "..."
             parts.append(f"{key}={text}")
@@ -176,11 +185,6 @@ class DefaultToolChainFormatter:
     @staticmethod
     def _mapping(value: JsonValue | None) -> MessageMapping:
         return value if isinstance(value, Mapping) else {}
-
-    @staticmethod
-    def _string(value: JsonValue | None) -> str:
-        return value if isinstance(value, str) else "" if value is None else str(value)
-
 
 class DefaultArchiveInputPolicy:
     def __init__(self, tool_formatter: DefaultToolChainFormatter | None = None) -> None:
@@ -200,7 +204,7 @@ class DefaultArchiveInputPolicy:
         index = 0
         while index < len(messages):
             message = messages[index]
-            role = self._string(message.get("role"))
+            role = _string(message.get("role"))
             if role in _EXCLUDED_ROLES:
                 dropped += 1
                 index += 1
@@ -218,7 +222,7 @@ class DefaultArchiveInputPolicy:
                 result_index = index + 1
                 while (
                     result_index < len(messages)
-                    and self._string(messages[result_index].get("role")) == MessageRole.TOOL.value
+                    and _string(messages[result_index].get("role")) == MessageRole.TOOL.value
                 ):
                     result_messages.append(messages[result_index])
                     result_index += 1
@@ -233,7 +237,7 @@ class DefaultArchiveInputPolicy:
                 index = result_index
                 continue
 
-            content = self._string(message.get("content")).strip()
+            content = _string(message.get("content")).strip()
             if not content:
                 dropped += 1
                 index += 1
@@ -254,6 +258,3 @@ class DefaultArchiveInputPolicy:
             ),
         )
 
-    @staticmethod
-    def _string(value: JsonValue | None) -> str:
-        return value if isinstance(value, str) else "" if value is None else str(value)

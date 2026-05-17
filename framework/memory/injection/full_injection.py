@@ -139,7 +139,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                 if blocks:
                     sections.append(PromptSection(
                         key="archive:recent",
-                        content="## Historical Conversation Summaries\n\n" + "\n\n".join(blocks),
+                        content="## Historical Context Summaries\n\n" + "\n\n".join(blocks),
                         priority=70, source="system",
                     ))
         except Exception:

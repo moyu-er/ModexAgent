@@ -359,6 +359,7 @@ class DefaultMemorySystem(MemorySystem):
             {
                 "summary": e.summary,
                 "metadata": dict(e.metadata),
+                "archive_id": e.entry_id,
                 "cursor": e.entry_id,
                 "created_at": e.created_at.isoformat() if e.created_at is not None else None,
             }
@@ -467,7 +468,7 @@ class DefaultMemorySystem(MemorySystem):
                             time_str = f" {e.created_at.strftime('%Y-%m-%d %H:%M')}"
                         blocks.append(f"--- [Historical Record {idx}]{time_str} ---\n{e.summary}")
                     if blocks:
-                        sections.append("## Historical Conversation Summaries\n\n" + "\n\n".join(blocks))
+                        sections.append("## Historical Context Summaries\n\n" + "\n\n".join(blocks))
 
         return "\n\n---\n\n".join(sections) if sections else ""
 
