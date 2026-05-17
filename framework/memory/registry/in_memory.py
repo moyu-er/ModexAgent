@@ -5,6 +5,11 @@ from __future__ import annotations
 import time
 from collections.abc import Collection
 
+from framework.memory.archive_models import (
+    CONTEXT_ARCHIVE_FILE_KEY,
+    KNOWLEDGE_ARCHIVE_FILE_KEY,
+    ArchiveChannel,
+)
 from framework.memory.core.scope import (
     MemoryAgentRole,
     MemoryContext,
@@ -80,7 +85,22 @@ class InMemoryStoreRegistry(MemoryStoreRegistry):
                 storage = self._stores.get((MemoryLayerName(record.layer), record.scope_key))
                 if storage is None:
                     continue
-                if has_file == "messages" and await storage.load_messages() or has_file in {"history", "archive", "logs"} and await storage.read_logs() or has_file == "kv" and await storage.list_keys():
+                logs = await storage.read_logs()
+                has_context_archive = any(
+                    entry.get("channel") == ArchiveChannel.CONTEXT.value
+                    for entry in logs
+                )
+                has_knowledge_archive = any(
+                    entry.get("channel") == ArchiveChannel.KNOWLEDGE.value
+                    for entry in logs
+                )
+                if (
+                    has_file == "messages" and await storage.load_messages()
+                    or has_file in {"history", "archive", "logs"} and logs
+                    or has_file == CONTEXT_ARCHIVE_FILE_KEY and has_context_archive
+                    or has_file == KNOWLEDGE_ARCHIVE_FILE_KEY and has_knowledge_archive
+                    or has_file == "kv" and await storage.list_keys()
+                ):
                     filtered.append(record)
             records = filtered
         return records

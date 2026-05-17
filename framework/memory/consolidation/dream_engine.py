@@ -13,6 +13,10 @@ from typing import Any
 
 from framework.agents.summarizer.agent import SummarizerAgent
 from framework.core.provider import LLMProvider
+from framework.memory.archive_models import (
+    KNOWLEDGE_ARCHIVE_FILE_KEY,
+    ArchiveChannel,
+)
 from framework.memory.core.consolidation import (
     ConsolidationEngine,
     ConsolidationResult,
@@ -78,7 +82,9 @@ class DreamEngine(ConsolidationEngine):
             如果实际处理了条目则返回 True，否则返回 False
         """
         unprocessed = await self.history_manager.get_unprocessed(
-            context, cursor_name="dream"
+            context,
+            cursor_name="dream",
+            channel=ArchiveChannel.KNOWLEDGE,
         )
         entries = unprocessed.entries
         if not entries:
@@ -98,7 +104,7 @@ class DreamEngine(ConsolidationEngine):
 
         if not meaningful:
             logger.debug("DreamEngine: all entries were empty/meaningless — advancing cursor")
-            await self.history_manager.commit_cursor(context, "dream", final_cursor)
+            await self._commit_knowledge_cursor(context, final_cursor)
             return False
 
         # Gather existing memories for context
@@ -126,10 +132,23 @@ class DreamEngine(ConsolidationEngine):
                 logger.debug("DreamEngine applied %s updates", applied)
 
         # Always advance cursor to prevent re-processing (even on failure)
-        await self.history_manager.commit_cursor(context, "dream", final_cursor)
+        await self._commit_knowledge_cursor(context, final_cursor)
         logger.debug("DreamEngine cursor advanced to %s", final_cursor)
 
         return result.success
+
+    async def _commit_knowledge_cursor(
+        self,
+        context: MemoryContext,
+        cursor: int,
+    ) -> None:
+        await self.history_manager.commit_cursor(
+            context,
+            "dream",
+            cursor,
+            channel=ArchiveChannel.KNOWLEDGE,
+        )
+        await self.history_manager.prune_consumed_pairs(context)
 
     async def scan_all(self) -> list[MemoryContext]:
         """扫描 history 层 scope records，返回处理过的 MemoryContext 列表。
@@ -144,7 +163,7 @@ class DreamEngine(ConsolidationEngine):
 
         records = await self.registry.list_records(
             layer=MemoryLayerName.ARCHIVE,
-            has_file="history",
+            has_file=KNOWLEDGE_ARCHIVE_FILE_KEY,
             agent_roles={MemoryAgentRole.MAIN},
         )
         for record in records:

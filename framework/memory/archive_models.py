@@ -9,6 +9,10 @@ from enum import StrEnum
 from framework.runtime.models import JsonValue
 
 ARCHIVE_SCHEMA = "archive"
+CONTEXT_ARCHIVE_FILE_KEY = "context_archive"
+CONTEXT_ARCHIVE_FILENAME = "context_archive.jsonl"
+KNOWLEDGE_ARCHIVE_FILE_KEY = "knowledge_archive"
+KNOWLEDGE_ARCHIVE_FILENAME = "knowledge_archive.jsonl"
 DEFAULT_RETAINED_CONSUMED_ARCHIVE_PAIRS = 3
 
 
@@ -69,7 +73,11 @@ class ArchiveGenerationResult:
 
 __all__ = [
     "ARCHIVE_SCHEMA",
+    "CONTEXT_ARCHIVE_FILE_KEY",
+    "CONTEXT_ARCHIVE_FILENAME",
     "DEFAULT_RETAINED_CONSUMED_ARCHIVE_PAIRS",
+    "KNOWLEDGE_ARCHIVE_FILE_KEY",
+    "KNOWLEDGE_ARCHIVE_FILENAME",
     "ArchiveBundleResult",
     "ArchiveChannel",
     "ArchiveGenerationInputs",
