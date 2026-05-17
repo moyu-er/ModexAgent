@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from datetime import datetime
+from typing import Any
 
 from framework.memory.archive_models import (
     ArchiveBundleResult,
@@ -74,7 +75,7 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
             archive_id = state.next_archive_id
             for write in writes:
                 payload = self._payload_for_write(context, write, archive_id)
-                await storage.append_log(payload)
+                await self._append_channel_log(storage, write.channel, payload)
                 written.append(write.channel)
             await self._save_state(
                 storage,
@@ -87,7 +88,11 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
         return ArchiveBundleResult(archive_id=archive_id, written_channels=tuple(written))
 
     async def _load_state(self, storage: MemoryStorage) -> ArchiveState:
-        raw = await storage.get(".archive_state")
+        read_archive_state = getattr(storage, "read_archive_state", None)
+        if read_archive_state is not None:
+            raw = await read_archive_state()
+        else:
+            raw = await storage.get(".archive_state")
         if isinstance(raw, Mapping):
             return ArchiveState(
                 next_archive_id=int(raw.get("next_archive_id", 1)),
@@ -96,10 +101,60 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
         return ArchiveState()
 
     async def _save_state(self, storage: MemoryStorage, state: ArchiveState) -> None:
-        await storage.set(".archive_state", {
+        payload = {
             "next_archive_id": state.next_archive_id,
             "knowledge_consumed_archive_id": state.knowledge_consumed_archive_id,
-        })
+        }
+        write_archive_state = getattr(storage, "write_archive_state", None)
+        if write_archive_state is not None:
+            await write_archive_state(payload)
+            return
+        await storage.set(".archive_state", payload)
+
+    async def _append_channel_log(
+        self,
+        storage: MemoryStorage,
+        channel: ArchiveChannel,
+        payload: dict[str, object],
+    ) -> dict[str, Any]:
+        append_channel_log = getattr(storage, "append_channel_log", None)
+        if append_channel_log is not None:
+            return await append_channel_log(channel.value, payload)
+        return await storage.append_log(payload)
+
+    async def _read_channel_logs(
+        self,
+        storage: MemoryStorage,
+        channel: ArchiveChannel,
+        *,
+        since_archive_id: int = 0,
+        limit: int = 1_000_000,
+    ) -> list[dict[str, object]]:
+        read_channel_logs = getattr(storage, "read_channel_logs", None)
+        if read_channel_logs is not None:
+            return await read_channel_logs(channel.value, since_archive_id, limit)
+        entries = await storage.read_logs(since_cursor=0, limit=limit)
+        return [
+            entry for entry in self._filter_channel(entries, channel)
+            if self._archive_id(entry) > since_archive_id
+        ]
+
+    async def _save_channel_logs(
+        self,
+        storage: MemoryStorage,
+        channel: ArchiveChannel,
+        entries: list[dict[str, object]],
+    ) -> None:
+        save_channel_logs = getattr(storage, "save_channel_logs", None)
+        if save_channel_logs is not None:
+            await save_channel_logs(channel.value, entries)
+            return
+        all_entries = await storage.read_logs(since_cursor=0, limit=1_000_000)
+        other_entries = [
+            entry for entry in all_entries
+            if entry.get("channel") != channel.value
+        ]
+        await storage.save_logs(other_entries + entries)
 
     def _payload_for_write(
         self,
@@ -173,8 +228,7 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
         channel: ArchiveChannel = ArchiveChannel.CONTEXT,
     ) -> list[ArchiveEntry]:
         storage = await self._storage_factory(context)
-        entries = await storage.read_logs(since_cursor=0)
-        channel_entries = self._filter_channel(entries, channel)
+        channel_entries = await self._read_channel_logs(storage, channel)
         selected = channel_entries[-limit:] if limit else channel_entries
         return [self._entry_from_dict(entry) for entry in selected]
 
@@ -187,8 +241,8 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
         channel: ArchiveChannel = ArchiveChannel.CONTEXT,
     ) -> list[ArchiveEntry]:
         storage = await self._storage_factory(context)
-        entries = await storage.read_logs(since_cursor=0)
-        results = await self._search_strategy.search(self._filter_channel(entries, channel), query, limit)
+        entries = await self._read_channel_logs(storage, channel)
+        results = await self._search_strategy.search(entries, query, limit)
         return [self._entry_from_dict(entry) for entry in results]
 
     async def get_unprocessed(
@@ -205,11 +259,11 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
             since = state.knowledge_consumed_archive_id
         else:
             since = await storage.get_last_cursor(cursor_name)
-        entries = await storage.read_logs(since_cursor=0, limit=1_000_000)
-        channel_entries = [
-            entry for entry in self._filter_channel(entries, channel)
-            if self._archive_id(entry) > since
-        ]
+        channel_entries = await self._read_channel_logs(
+            storage,
+            channel,
+            since_archive_id=since,
+        )
         selected = channel_entries[:limit] if limit else channel_entries
         cursor = max((self._archive_id(entry) for entry in selected), default=since)
         return UnprocessedResult(
@@ -247,14 +301,16 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
         )
         if safe_delete <= 0:
             return
-        entries = await storage.read_logs(since_cursor=0, limit=1_000_000)
-        kept = [entry for entry in entries if self._archive_id(entry) > safe_delete]
-        if len(kept) != len(entries):
-            await storage.save_logs(kept)
+        for channel in (ArchiveChannel.CONTEXT, ArchiveChannel.KNOWLEDGE):
+            entries = await self._read_channel_logs(storage, channel)
+            kept = [entry for entry in entries if self._archive_id(entry) > safe_delete]
+            if len(kept) != len(entries):
+                await self._save_channel_logs(storage, channel, kept)
 
     async def clear(self, context: MemoryContext) -> None:
         storage = await self._storage_factory(context)
-        await storage.save_logs([])
+        await self._save_channel_logs(storage, ArchiveChannel.CONTEXT, [])
+        await self._save_channel_logs(storage, ArchiveChannel.KNOWLEDGE, [])
 
     def _entry_from_dict(self, entry: dict[str, object]) -> ArchiveEntry:
         created_at = entry.get("created_at")
