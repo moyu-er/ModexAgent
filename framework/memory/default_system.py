@@ -7,6 +7,7 @@ import logging
 from collections.abc import Iterator, Sequence
 from typing import Any
 
+from framework.memory.archive_models import ArchiveChannel
 from framework.memory.compression.policies import MemoryCompressionCoordinator
 from framework.memory.core.layers import MemoryLayerSet
 from framework.memory.core.message import ChatMessage
@@ -338,17 +339,22 @@ class DefaultMemorySystem(MemorySystem):
     # -- Archive convenience --------------------------------------------
 
     async def get_history_entries(
-        self, context: MemoryContext, limit: int = 5, query: str = ""
+        self,
+        context: MemoryContext,
+        limit: int = 5,
+        query: str = "",
+        *,
+        channel: ArchiveChannel = ArchiveChannel.CONTEXT,
     ) -> list[dict[str, Any]]:
         archive = self._layers.archive
         if archive is None:
             return []
         if query:
-            entries = await archive.search(context, query=query, limit=limit)
+            entries = await archive.search(context, query=query, limit=limit, channel=channel)
             if not entries:
-                entries = await archive.get_recent(context, limit=limit)
+                entries = await archive.get_recent(context, limit=limit, channel=channel)
         else:
-            entries = await archive.get_recent(context, limit=limit)
+            entries = await archive.get_recent(context, limit=limit, channel=channel)
         return [
             {
                 "summary": e.summary,

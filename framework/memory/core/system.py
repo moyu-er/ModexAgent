@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import Any, Protocol, runtime_checkable
 
+from framework.memory.archive_models import ArchiveChannel
 from framework.memory.core.message import ChatMessage
 from framework.memory.core.models import LongTermMemory
 from framework.memory.core.scope import MemoryContext
@@ -90,7 +91,12 @@ class InjectableMemorySystem(Protocol):
     ) -> LongTermMemory: ...
 
     async def get_history_entries(
-        self, context: MemoryContext, limit: int = 5, query: str = ""
+        self,
+        context: MemoryContext,
+        limit: int = 5,
+        query: str = "",
+        *,
+        channel: ArchiveChannel = ArchiveChannel.CONTEXT,
     ) -> list[dict[str, Any]]: ...
 
     def get_providers(self) -> list[Any]: ...

@@ -443,6 +443,39 @@ async def test_archive_injection_prefers_query_search(registry):
 # ── Regression: empty summary commit ──────────────────────────────────────
 
 
+async def test_archive_injection_uses_context_channel_only(registry):
+    from framework.memory.default_system import DefaultMemorySystem
+    from framework.memory.injection import FullInjectionPolicy
+
+    layer_set = MemoryLayerFactory.single_user(registry=registry)
+    system = DefaultMemorySystem(layer_set=layer_set, store_registry=registry)
+    ctx = MemoryContext(session_id="archive-inject-context-channel")
+    await system.initialize()
+    await layer_set.archive.append_bundle(
+        ctx,
+        (
+            ArchiveWrite(
+                channel=ArchiveChannel.CONTEXT,
+                summary="context archive for direct dialogue continuity",
+            ),
+            ArchiveWrite(
+                channel=ArchiveChannel.KNOWLEDGE,
+                summary="knowledge archive for dream consolidation only",
+            ),
+        ),
+    )
+
+    bundle = await FullInjectionPolicy(max_history_entries=5).assemble(
+        context=ctx,
+        memory_system=system,
+        query="archive",
+    )
+
+    content = "\n".join(section.content for section in bundle.system_sections)
+    assert "context archive for direct dialogue continuity" in content
+    assert "knowledge archive for dream consolidation only" not in content
+
+
 async def test_commit_skips_empty_summary_and_reports_no_op(registry):
     """Empty summary → committed=False, reason=nothing_to_archive, no writes."""
     layer_set = MemoryLayerFactory.single_user(registry=registry)
