@@ -347,11 +347,8 @@ class BotService(AgentBuilderMixin):
             from framework.tools.overflow.cleaner import OverflowCleaner
             for interceptor in self.interceptor_chain.interceptors:
                 if isinstance(interceptor, ToolResultLimitInterceptor):
-                    handler = getattr(interceptor, '_handler', None)
-                    if handler is not None:
-                        self._overflow_cleaner = handler._cleaner
-                        await self._overflow_cleaner.start()
-                        print("   [OK] OverflowCleaner started")
+                    if interceptor.handler is not None:
+                        self._overflow_cleaner = interceptor.handler._cleaner
                         break
 
         self.agent_factory = DefaultAgentFactory(
@@ -736,8 +733,6 @@ class BotService(AgentBuilderMixin):
             cleaner=overflow_cleaner,
             max_chars=max_chars,
         )
-        # Ensure store uses the same chunk size as handler
-        overflow_store._max_chunk_size = overflow_handler.max_chunk_size
         chain.add(ToolResultLimitInterceptor(
             overflow_handler=overflow_handler,
             max_chars=10000,

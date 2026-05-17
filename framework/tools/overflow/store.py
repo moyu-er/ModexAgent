@@ -57,7 +57,7 @@ class ToolOverflowStore(ABC):
             summary: If True, return the summary version; otherwise the full version.
 
         Returns:
-            The chunk content including prefix, or None if not found.
+            The raw chunk content, or None if not found.
         """
         pass
 
@@ -111,6 +111,9 @@ class ToolOverflowStore(ABC):
     async def clean(self, request: CleanRequest) -> int:
         """Remove overflow entries not in *kept_call_ids*.
 
+        Also enforces *max_tool_call_ids* on the surviving set: the oldest
+        kept entries are trimmed first.
+
         Args:
             request: CleanRequest describing what to keep.
 
@@ -118,18 +121,18 @@ class ToolOverflowStore(ABC):
             Number of entries deleted.
         """
         all_ids = await self.list_tool_call_ids(request.session_id)
+
+        # 1. Delete entries whose call_id is no longer in session history.
         to_delete = [
-            tcid
-            for tcid in all_ids
-            if tcid not in request.kept_call_ids
+            tcid for tcid in all_ids if tcid not in request.kept_call_ids
         ]
-        # If there are too many entries, also delete oldest beyond max_tool_call_ids
-        if len(all_ids) > request.max_tool_call_ids:
-            overflow_count = len(all_ids) - request.max_tool_call_ids
-            # Oldest are at the start (sorted by created_at ascending)
-            for tcid in all_ids[:overflow_count]:
-                if tcid not in to_delete:
-                    to_delete.append(tcid)
+
+        # 2. Enforce max count on the surviving (kept) entries.
+        kept = [tcid for tcid in all_ids if tcid not in to_delete]
+        if len(kept) > request.max_tool_call_ids:
+            overflow = len(kept) - request.max_tool_call_ids
+            to_delete.extend(kept[:overflow])
+
         count = 0
         for tcid in to_delete:
             if await self.delete(request.session_id, tcid):

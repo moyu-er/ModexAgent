@@ -6,6 +6,8 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
+from pathvalidate import sanitize_filename
+
 from framework.memory.core.lock import AioRWLock
 from framework.tools.overflow.models import OverflowMetadata, OverflowRef
 from framework.tools.overflow.store import ToolOverflowStore
@@ -18,12 +20,9 @@ class LocalFileToolOverflowStore(ToolOverflowStore):
 
         {workspace}/tool_overflow/{session_id}/{tool_call_id}/
         ├── .meta.json
-        ├── 1.full.txt
-        ├── 1.summary.txt
+        ├── 1.full.txt       ← raw content, no header
+        ├── 1.summary.txt    ← first 200 chars, no header
         └── ...
-
-    Each chunk file starts with a prefix line describing the overflow
-    location and chunk numbering.
     """
 
     def __init__(
@@ -37,24 +36,18 @@ class LocalFileToolOverflowStore(ToolOverflowStore):
         self._summary_chars = summary_chars
         self._lock = AioRWLock()
 
-    def _sanitize_id(self, value: str) -> str:
-        # Strip any path components and reject path traversal
+    @staticmethod
+    def _sanitize_id(value: str) -> str:
         safe = Path(value).name
-        if not safe or safe != value or ".." in safe:
+        if not safe or ".." in safe:
             raise ValueError(f"Invalid identifier: {value!r}")
-        return safe
+        return sanitize_filename(safe, replacement_text="_")
 
     def _session_dir(self, session_id: str) -> Path:
         return self._workspace / "tool_overflow" / self._sanitize_id(session_id)
 
     def _entry_dir(self, session_id: str, tool_call_id: str) -> Path:
         return self._session_dir(session_id) / self._sanitize_id(tool_call_id)
-
-    def _prefix(self, absolute_dir: Path, chunk: int, total: int) -> str:
-        return (
-            f"[TOOL_RESULT_OVERFLOW] dir={absolute_dir} | chunk={chunk}/{total} | "
-            f"*.full.txt=完整版 *.summary.txt=摘要版(≤{self._summary_chars}字符)"
-        )
 
     async def initialize(self) -> None:
         await asyncio.to_thread(
@@ -106,19 +99,14 @@ class LocalFileToolOverflowStore(ToolOverflowStore):
             }
             await asyncio.to_thread(meta_path.write_text, json.dumps(meta_dict, ensure_ascii=False), encoding="utf-8")
 
-            # Write chunks
+            # Write chunks — raw content, no prefix header
             for idx, chunk in enumerate(chunks if chunks else [""], start=1):
-                prefix = self._prefix(absolute_dir, idx, total_chunks)
                 full_path = entry_dir / f"{idx}.full.txt"
-                await asyncio.to_thread(
-                    full_path.write_text, f"{prefix}\n{chunk}", encoding="utf-8"
-                )
+                await asyncio.to_thread(full_path.write_text, chunk, encoding="utf-8")
 
                 summary = chunk[: self._summary_chars]
                 summary_path = entry_dir / f"{idx}.summary.txt"
-                await asyncio.to_thread(
-                    summary_path.write_text, f"{prefix}\n{summary}", encoding="utf-8"
-                )
+                await asyncio.to_thread(summary_path.write_text, summary, encoding="utf-8")
 
         return OverflowRef(
             dir_path=str(absolute_dir),

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from framework.core.tool_manager import ToolResult
 from framework.interceptor.abc import (
@@ -21,12 +22,12 @@ _DEFAULT_MAX_CHARS = 10000
 
 
 class ToolResultLimitInterceptor:
-    """工具结果溢出拦截器。
+    """Tool result overflow interceptor.
 
-    超限结果写入 ToolOverflowStore，模型收到第 1 块完整内容 +
-    [TOOL_RESULT_OVERFLOW] 前缀（含路径和序号信息）。
-
-    当 overflow_handler 为 None 时回退到旧截断行为。
+    When a tool result exceeds *max_chars*, the full content is persisted
+    to disk and the model receives a short ``[TOOL_RESULT_TRUNCATED]``
+    notice telling it where to find the complete chunks.  Falls back to
+    truncation when *overflow_handler* is None.
     """
 
     scopes = frozenset([InterceptorScope.TOOL_CALL])
@@ -40,6 +41,10 @@ class ToolResultLimitInterceptor:
         self._handler = overflow_handler
         self._max_chars = max_chars
         self._get_session_id = session_id_provider or self._default_session_id
+
+    @property
+    def handler(self) -> ToolResultOverflowHandler | None:
+        return self._handler
 
     async def around_tool_call(
         self,
@@ -72,25 +77,41 @@ class ToolResultLimitInterceptor:
                 overflow_processed=False,
             )
 
-        # 4. Overflow path
+        # 4. Overflow path — write to disk synchronously, then return.
+        #    Cleanup is fire-and-forget; must not block the agent turn.
         session_id = self._get_session_id(ctx)
-        tool_call_id = call.tool_call.id if hasattr(call.tool_call, "id") else call.tool_name
+        tool_call_id = call.tool_call.call_id or f"{call.tool_name}-{uuid4().hex[:12]}"
 
-        chunk_1_content, _ref = await self._handler.store_overflow(
-            session_id=session_id,
-            tool_call_id=tool_call_id,
-            tool_name=call.tool_name,
-            content=result_str,
-        )
+        try:
+            chunk_1_content, _ref = await self._handler.store_overflow(
+                session_id=session_id,
+                tool_call_id=tool_call_id,
+                tool_name=call.tool_name,
+                content=result_str,
+            )
+        except Exception:
+            logger.exception("Overflow store failed for %s/%s", session_id, tool_call_id)
+            return ToolResult(
+                tool_name=result.tool_name,
+                result=result_str[:self._max_chars],
+                call_id=result.call_id,
+                overflow_processed=False,
+            )
 
-        # 5. Trigger async cleanup
-        kept_call_ids = self._gather_kept_call_ids(ctx)
+        # 5. Schedule async cleanup — after the tool result has been
+        #    written to session history by the caller (ReAct agent).
+        try:
+            kept_call_ids = await self._gather_kept_call_ids(ctx)
+        except Exception:
+            logger.debug("Failed to gather kept call_ids, keeping current only", exc_info=True)
+            kept_call_ids = set()
+        kept_call_ids.add(tool_call_id)
         self._handler.schedule_cleanup(session_id, kept_call_ids)
 
         return ToolResult(
             tool_name=result.tool_name,
             result=chunk_1_content,
-            call_id=getattr(result, "call_id", None),
+            call_id=result.call_id,
             overflow_processed=True,
         )
 
@@ -99,17 +120,15 @@ class ToolResultLimitInterceptor:
         return ctx.session_id or "default"
 
     @staticmethod
-    def _gather_kept_call_ids(ctx: AgentContext) -> set[str]:
+    async def _gather_kept_call_ids(ctx: AgentContext) -> set[str]:
         call_ids: set[str] = set()
         try:
-            messages: Any = getattr(ctx.history, "messages", [])
+            messages = await ctx.history.to_list()
             for msg in messages:
-                role = msg.get("role", "") if isinstance(msg, dict) else getattr(msg, "role", "")
-                if role != "tool":
+                if msg.role != "tool":
                     continue
-                tc_id = msg.get("tool_call_id", "") if isinstance(msg, dict) else getattr(msg, "tool_call_id", "")
-                if tc_id:
-                    call_ids.add(str(tc_id))
+                if msg.tool_call_id:
+                    call_ids.add(msg.tool_call_id)
         except Exception:
             logger.warning("Failed to gather kept call_ids from history", exc_info=True)
         return call_ids

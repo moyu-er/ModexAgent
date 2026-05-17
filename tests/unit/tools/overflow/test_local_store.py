@@ -44,7 +44,7 @@ class TestStoreCreatesFiles:
 
 class TestReadChunk:
     @pytest.mark.asyncio
-    async def test_read_chunk_returns_content_with_prefix(self, tmp_path: Path) -> None:
+    async def test_read_chunk_returns_raw_content(self, tmp_path: Path) -> None:
         store = LocalFileToolOverflowStore(workspace=tmp_path, max_chunk_size=50, summary_chars=20)
         await store.initialize()
 
@@ -57,9 +57,7 @@ class TestReadChunk:
 
         chunk = await store.read_chunk("sess_1", "call_1", 1)
         assert chunk is not None
-        lines = chunk.splitlines()
-        assert lines[0].startswith("[TOOL_RESULT_OVERFLOW]")
-        assert lines[1] == "x" * 50
+        assert chunk == "x" * 50
 
     @pytest.mark.asyncio
     async def test_read_chunk_summary(self, tmp_path: Path) -> None:
@@ -75,9 +73,7 @@ class TestReadChunk:
 
         chunk = await store.read_chunk("sess_1", "call_1", 1, summary=True)
         assert chunk is not None
-        lines = chunk.splitlines()
-        assert lines[0].startswith("[TOOL_RESULT_OVERFLOW]")
-        assert lines[1] == "y" * 20
+        assert chunk == "y" * 20
 
     @pytest.mark.asyncio
     async def test_read_chunk_not_found(self, tmp_path: Path) -> None:
@@ -187,25 +183,6 @@ class TestListToolCallIds:
         assert ids == []
 
 
-class TestPrefix:
-    @pytest.mark.asyncio
-    async def test_prefix_in_every_file(self, tmp_path: Path) -> None:
-        store = LocalFileToolOverflowStore(workspace=tmp_path, max_chunk_size=30, summary_chars=10)
-        await store.initialize()
-
-        await store.store(
-            session_id="sess_1",
-            tool_call_id="call_1",
-            tool_name="read_file",
-            content="m" * 75,
-        )
-
-        entry_dir = tmp_path / "tool_overflow" / "sess_1" / "call_1"
-        for file_name in ["1.full.txt", "1.summary.txt", "2.full.txt", "2.summary.txt", "3.full.txt", "3.summary.txt"]:
-            content = (entry_dir / file_name).read_text(encoding="utf-8")
-            assert content.startswith("[TOOL_RESULT_OVERFLOW]")
-
-
 class TestFullFileUnderChunkSize:
     @pytest.mark.asyncio
     async def test_full_file_content_within_chunk_size(self, tmp_path: Path) -> None:
@@ -222,9 +199,7 @@ class TestFullFileUnderChunkSize:
         entry_dir = tmp_path / "tool_overflow" / "sess_1" / "call_1"
         for file_name in ["1.full.txt", "2.full.txt", "3.full.txt"]:
             content = (entry_dir / file_name).read_text(encoding="utf-8")
-            lines = content.splitlines()
-            # First line is prefix, second line is content
-            assert len(lines[1]) <= 100, f"{file_name} content exceeds max_chunk_size"
+            assert len(content) <= 100, f"{file_name} content exceeds max_chunk_size"
 
 
 class TestSummaryCharsBound:
@@ -242,6 +217,4 @@ class TestSummaryCharsBound:
 
         entry_dir = tmp_path / "tool_overflow" / "sess_1" / "call_1"
         summary = (entry_dir / "1.summary.txt").read_text(encoding="utf-8")
-        lines = summary.splitlines()
-        # First line is prefix, second line is summary content
-        assert len(lines[1]) <= 200
+        assert len(summary) <= 200
