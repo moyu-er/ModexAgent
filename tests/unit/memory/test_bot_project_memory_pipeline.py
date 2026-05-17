@@ -15,10 +15,15 @@ import pytest
 
 from framework.core.types import MessageRole
 from framework.memory.compaction.policy import ConservativeCompactionPolicy
-from framework.memory.compression.policies import (
-    DefaultMemoryCompressionCoordinator,
-    SummaryStrategy,
+from framework.memory.archive_generation import ArchiveGenerationStrategy
+from framework.memory.archive_models import (
+    ArchiveChannel,
+    ArchiveGenerationInputs,
+    ArchiveGenerationResult,
+    ArchiveInputStats,
+    ArchiveWrite,
 )
+from framework.memory.compression.policies import DefaultMemoryCompressionCoordinator
 from framework.memory.core.models import ArchiveEntry, CompressionReason
 from framework.memory.core.scope import MemoryContext
 from framework.memory.default_system import DefaultMemorySystem
@@ -29,16 +34,63 @@ from framework.memory.registry.in_memory import InMemoryStoreRegistry
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 
-class MockSummarizerStrategy(SummaryStrategy):
-    """Returns a predictable string so the archive content is deterministic."""
+class MockArchiveGenerationStrategy(ArchiveGenerationStrategy):
+    """Returns a deterministic archive bundle (context + knowledge)."""
 
-    def __init__(self, canned: str = "[MOCK] compressed conversation summary") -> None:
-        self.canned = canned
+    def __init__(
+        self,
+        canned_context: str = "[MOCK] compressed conversation context",
+        canned_knowledge: str = "[MOCK] compressed conversation knowledge",
+    ) -> None:
+        self.canned_context = canned_context
+        self.canned_knowledge = canned_knowledge
         self.calls: list[list[dict[str, Any]]] = []
 
-    async def summarize(self, messages, context, reason):
+    async def generate(self, messages, context, reason):
         self.calls.append(list(messages))
-        return self.canned
+        return ArchiveGenerationResult(
+            writes=(
+                ArchiveWrite(
+                    channel=ArchiveChannel.CONTEXT,
+                    summary=self.canned_context,
+                ),
+                ArchiveWrite(
+                    channel=ArchiveChannel.KNOWLEDGE,
+                    summary=self.canned_knowledge,
+                ),
+            ),
+            inputs=ArchiveGenerationInputs(
+                context_transcript=self.canned_context,
+                knowledge_transcript=self.canned_knowledge,
+                stats=ArchiveInputStats(
+                    input_messages=len(messages),
+                    context_messages=len(messages),
+                    knowledge_messages=len(messages),
+                    tool_chains=0,
+                    dropped_messages=0,
+                ),
+            ),
+        )
+
+
+class EmptyArchiveGenerationStrategy(ArchiveGenerationStrategy):
+    """Returns an empty archive bundle (used to test all-or-nothing skip)."""
+
+    async def generate(self, messages, context, reason):
+        return ArchiveGenerationResult(
+            writes=(),
+            inputs=ArchiveGenerationInputs(
+                context_transcript="",
+                knowledge_transcript="",
+                stats=ArchiveInputStats(
+                    input_messages=len(messages),
+                    context_messages=0,
+                    knowledge_messages=0,
+                    tool_chains=0,
+                    dropped_messages=0,
+                ),
+            ),
+        )
 
 
 def _bot_project_coordinator(**kw: Any) -> DefaultMemoryCompressionCoordinator:
@@ -46,7 +98,7 @@ def _bot_project_coordinator(**kw: Any) -> DefaultMemoryCompressionCoordinator:
     defaults: dict[str, Any] = {
         "max_messages": 50,
         "compaction": ConservativeCompactionPolicy(),
-        "summary": MockSummarizerStrategy(),
+        "archive_generation": MockArchiveGenerationStrategy(),
     }
     defaults.update(kw)
     return DefaultMemoryCompressionCoordinator(**defaults)
@@ -200,8 +252,11 @@ async def test_tool_chains_intact_after_cascade():
 async def test_archive_uses_mock_summarizer_output():
     """When SummarizerStrategy is wired, archive content matches mock output."""
     registry = InMemoryStoreRegistry()
-    mock = MockSummarizerStrategy("[MOCK] compressed to archive")
-    coordinator = _bot_project_coordinator(max_messages=5, summary=mock)
+    mock = MockArchiveGenerationStrategy(
+        canned_context="[MOCK] compressed to archive",
+        canned_knowledge="[MOCK] compressed to archive",
+    )
+    coordinator = _bot_project_coordinator(max_messages=5, archive_generation=mock)
     system = _bot_project_system(registry, coordinator)
     await system.initialize()
     ctx = _make_ctx("mock-summary")
@@ -211,11 +266,11 @@ async def test_archive_uses_mock_summarizer_output():
         await history.append({"role": "user", "content": f"q{i}"})
         await history.append({"role": "assistant", "content": f"a{i}"})
 
-    # The summarizer should have been called
-    assert len(mock.calls) > 0, "mock summarizer should have been called"
+    # The archive generation should have been called
+    assert len(mock.calls) > 0, "mock archive generation should have been called"
 
     entries = await system.get_history_entries(ctx, limit=10)
-    assert len(entries) > 0, "archive should have entries from mock summarizer"
+    assert len(entries) > 0, "archive should have entries from mock generation"
     assert any("[MOCK]" in (e.get("summary") or "") for e in entries), \
         "archive should contain mock summary text"
 
@@ -224,8 +279,8 @@ async def test_archive_uses_mock_summarizer_output():
 async def test_archive_skips_nothing_sentinel_from_summarizer():
     """Summarizer returning '(nothing)' should not produce archive entries."""
     registry = InMemoryStoreRegistry()
-    mock = MockSummarizerStrategy("(nothing)")
-    coordinator = _bot_project_coordinator(max_messages=5, summary=mock)
+    mock = EmptyArchiveGenerationStrategy()
+    coordinator = _bot_project_coordinator(max_messages=5, archive_generation=mock)
     system = _bot_project_system(registry, coordinator)
     await system.initialize()
     ctx = _make_ctx("nothing-sentinel")
@@ -235,11 +290,12 @@ async def test_archive_skips_nothing_sentinel_from_summarizer():
         await history.append({"role": "user", "content": f"q{i}"})
         await history.append({"role": "assistant", "content": f"a{i}"})
 
-    # Archive should be empty — all summaries were "(nothing)"
+    # Archive should be empty — empty generation means all-or-nothing: no commit
     entries = await system.get_history_entries(ctx, limit=10)
-    # Session should still be compressed (messages truncated), just no archive
+    assert len(entries) == 0, "empty archive generation should produce no entries"
+    # Session should NOT be compressed when archive is configured but generation is empty
     remaining = len(await system.get_history(ctx, max_messages=None))
-    assert remaining <= 10, "session should still be compressed"
+    assert remaining == 24, "session should not be truncated without complete archive pair"
 
 
 # ── Context injection — knowledge + archive + session ─────────────────────
@@ -374,8 +430,11 @@ async def test_knowledge_replace_text_updates_in_place():
 async def test_archive_merges_multiple_compression_rounds():
     """Multiple compression rounds produce cumulative archive entries."""
     registry = InMemoryStoreRegistry()
-    mock = MockSummarizerStrategy("[MOCK] round summary")
-    coordinator = _bot_project_coordinator(max_messages=10, summary=mock)
+    mock = MockArchiveGenerationStrategy(
+        canned_context="[MOCK] round context",
+        canned_knowledge="[MOCK] round knowledge",
+    )
+    coordinator = _bot_project_coordinator(max_messages=10, archive_generation=mock)
     system = _bot_project_system(registry, coordinator)
     await system.initialize()
     ctx = _make_ctx("multi-compress")
@@ -769,8 +828,11 @@ async def test_three_tier_memory_cascade_preserves_tool_context():
     from framework.memory.registry.in_memory import InMemoryStoreRegistry
 
     registry = InMemoryStoreRegistry()
-    mock = MockSummarizerStrategy("[ARCHIVE] user asked about weather, used shell+web_search, got sunny 28°C")
-    coordinator = _bot_project_coordinator(max_messages=5, summary=mock)
+    mock = MockArchiveGenerationStrategy(
+        canned_context="[ARCHIVE] user asked about weather, used shell+web_search, got sunny 28°C",
+        canned_knowledge="[ARCHIVE] user asked about weather, used shell+web_search, got sunny 28°C",
+    )
+    coordinator = _bot_project_coordinator(max_messages=5, archive_generation=mock)
     system = _bot_project_system(registry, coordinator)
     await system.initialize()
     ctx = _make_ctx("three-tier")
@@ -819,11 +881,13 @@ async def test_archive_entries_are_meaningful_for_dream_engine():
     from framework.memory.consolidation.dream_engine import DreamEngine
 
     registry = InMemoryStoreRegistry()
-    mock = MockSummarizerStrategy(
-        "[ARCHIVE] user: fix login bug | tools: read_file(auth.py), shell(git log) | "
-        "decision: use JWT instead of session | state: branch fix/auth, tests fail"
+    mock = MockArchiveGenerationStrategy(
+        canned_context="[ARCHIVE] user: fix login bug | tools: read_file(auth.py), shell(git log) | "
+                     "decision: use JWT instead of session | state: branch fix/auth, tests fail",
+        canned_knowledge="[ARCHIVE] user: fix login bug | tools: read_file(auth.py), shell(git log) | "
+                        "decision: use JWT instead of session | state: branch fix/auth, tests fail",
     )
-    coordinator = _bot_project_coordinator(max_messages=3, summary=mock)
+    coordinator = _bot_project_coordinator(max_messages=3, archive_generation=mock)
     system = _bot_project_system(registry, coordinator)
     await system.initialize()
     ctx = _make_ctx("dream-input")

@@ -41,7 +41,7 @@ def test_tool_chain_is_grouped_with_assistant_tool_calls() -> None:
     assert "command=pytest tests/unit -q" in result.context_transcript
     assert "unused" not in result.context_transcript
     assert "truncated" in result.context_transcript
-    assert "short summary tail" in result.context_transcript
+    assert "short summary tail" not in result.context_transcript
     assert "source: shell" in result.knowledge_transcript
 
 
@@ -74,3 +74,19 @@ def test_system_and_developer_messages_are_excluded() -> None:
     assert "developer rule" not in result.context_transcript
     assert "[user]" in result.context_transcript
     assert "real request" in result.knowledge_transcript
+
+
+def test_unknown_roles_are_dropped() -> None:
+    policy = DefaultArchiveInputPolicy()
+    result = policy.build_inputs(
+        [
+            {"role": "critic", "content": "should not leak"},
+            {"role": "user", "content": "real request"},
+        ],
+        MemoryContext(session_id="s1"),
+        CompressionReason.MANUAL,
+    )
+
+    assert "should not leak" not in result.context_transcript
+    assert "real request" in result.context_transcript
+    assert result.stats.dropped_messages == 1

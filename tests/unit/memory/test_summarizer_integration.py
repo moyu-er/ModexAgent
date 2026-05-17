@@ -200,15 +200,17 @@ async def test_coordinator_with_mock_summarizer_archive_has_llm_output():
     from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
     from framework.memory.registry.in_memory import InMemoryStoreRegistry
 
+    from framework.memory.archive_generation import DualLLMArchiveGenerationStrategy
+
     mock_agent = MockSummarizerAgent("[LLM-ARCHIVE] compressed 3 turns of conversation")
-    strategy = SummarizerStrategy(mock_agent)
+    archive_gen = DualLLMArchiveGenerationStrategy(summarizer=mock_agent)
 
     registry = InMemoryStoreRegistry()
     from framework.memory.layers.factory import MemoryLayerFactory
     layer_set = MemoryLayerFactory.single_user(registry=registry)
 
     coordinator = DefaultMemoryCompressionCoordinator(
-        max_messages=5, summary=strategy,
+        max_messages=5, archive_generation=archive_gen,
     )
     lifecycle = DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator)
     system = DefaultMemorySystem(
@@ -240,15 +242,17 @@ async def test_without_cleanup_tool_context_preserved_in_summarizer():
     from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
     from framework.memory.registry.in_memory import InMemoryStoreRegistry
 
+    from framework.memory.archive_generation import DualLLMArchiveGenerationStrategy
+
     mock_agent = MockSummarizerAgent("[LLM] summary with tools")
-    strategy = SummarizerStrategy(mock_agent)
+    archive_gen = DualLLMArchiveGenerationStrategy(summarizer=mock_agent)
 
     registry = InMemoryStoreRegistry()
     from framework.memory.layers.factory import MemoryLayerFactory
     layer_set = MemoryLayerFactory.single_user(registry=registry)
 
     coordinator = DefaultMemoryCompressionCoordinator(
-        max_messages=11, summary=strategy,
+        max_messages=11, archive_generation=archive_gen,
     )
     lifecycle = DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator)
     system = DefaultMemorySystem(
@@ -370,15 +374,17 @@ async def test_coordinator_filters_nothing_sentinel_from_archive():
     from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
     from framework.memory.registry.in_memory import InMemoryStoreRegistry
 
+    from framework.memory.archive_generation import DualLLMArchiveGenerationStrategy
+
     mock_agent = MockSummarizerAgent("(nothing)")
-    strategy = SummarizerStrategy(mock_agent)
+    archive_gen = DualLLMArchiveGenerationStrategy(summarizer=mock_agent)
 
     registry = InMemoryStoreRegistry()
     from framework.memory.layers.factory import MemoryLayerFactory
     layer_set = MemoryLayerFactory.single_user(registry=registry)
 
     coordinator = DefaultMemoryCompressionCoordinator(
-        max_messages=5, summary=strategy,
+        max_messages=5, archive_generation=archive_gen,
     )
     lifecycle = DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator)
     system = DefaultMemorySystem(
@@ -392,9 +398,9 @@ async def test_coordinator_filters_nothing_sentinel_from_archive():
         await history.append({"role": "user", "content": f"q{i}"})
         await history.append({"role": "assistant", "content": f"a{i}"})
 
-    # Session is still compressed (truncated), but no archive entries
+    # All-or-nothing: empty archive generation → no commit, session NOT truncated
     remaining = len(await system.get_history(ctx, max_messages=None))
-    assert remaining <= 8, "session should be compressed"
+    assert remaining == 24, "session should not be truncated without complete archive pair"
 
     entries = await system.get_history_entries(ctx, limit=10)
     assert len(entries) == 0, "(nothing) should not create archive entries"

@@ -19,6 +19,7 @@ from framework.memory.compaction.policy import (
     MessageCompactionDecision,
     MessageCompactionPolicy,
 )
+from framework.memory.archive_models import ArchiveChannel
 from framework.memory.compression.planner import (
     CompressionBudget,
     CompressionKeepPlanner,
@@ -51,6 +52,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from framework.memory.archive_generation import ArchiveGenerationStrategy
+    from framework.memory.archive_models import ArchiveGenerationResult
 
 # ── Trigger ──────────────────────────────────────────────────────────────────
 
@@ -249,10 +251,16 @@ class DefaultCommitPolicy(CommitPolicy):
             return CompressionResult(committed=False, retryable=False, reason=CompressionResultReason.REVISION_CHANGED)
 
         # Archive first — skip empty or placeholder summaries
-        normalized_summary = normalize_memory_summary(plan.summary) if archive is not None else None
         wrote_archive = False
-        if archive is not None and plan.archive_generation_result is not None:
+        if archive is not None:
+            if not self._has_complete_archive_pair(plan.archive_generation_result):
+                return CompressionResult(
+                    committed=False,
+                    retryable=False,
+                    reason=CompressionResultReason.NOTHING_TO_ARCHIVE,
+                )
             try:
+                assert plan.archive_generation_result is not None
                 result = await archive.append_bundle(context, plan.archive_generation_result.writes)
                 wrote_archive = bool(result.written_channels)
             except Exception as exc:
@@ -260,21 +268,6 @@ class DefaultCommitPolicy(CommitPolicy):
                 if not proceed:
                     return CompressionResult(committed=False, retryable=True, reason=CompressionResultReason.ARCHIVE_FAILED)
                 # Fall through to still mutate session (error policy said proceed)
-        elif normalized_summary is not None:
-            assert archive is not None
-            try:
-                entry = ArchiveEntry(
-                    summary=normalized_summary,
-                    metadata={"reason": str(plan.trigger.reason), "source": "compression"},
-                )
-                await archive.append(context, entry)
-                wrote_archive = True
-            except Exception as exc:
-                proceed = await error_policy.on_archive_failure(exc, plan, context)
-                if not proceed:
-                    return CompressionResult(committed=False, retryable=True, reason=CompressionResultReason.ARCHIVE_FAILED)
-                # Fall through to still mutate session (error policy said proceed)
-
         pending_snapshot: list[Any] | None = None
         if pending is not None and plan.pending_pruned_input_entries:
             try:
@@ -288,15 +281,11 @@ class DefaultCommitPolicy(CommitPolicy):
                     reason=CompressionResultReason.PENDING_FAILED,
                 )
 
-        extra_state: dict[str, Any] = {}
-        if wrote_archive and normalized_summary is not None:
-            extra_state[".compression_summary"] = normalized_summary
-
         revision = await session.replace_messages_if_revision(
             context,
             plan.keep_messages,
             plan.expected_revision,
-            extra_state,
+            {},
             idle_threshold_seconds=plan.idle_threshold_seconds,
         )
         if revision is None:
@@ -315,6 +304,13 @@ class DefaultCommitPolicy(CommitPolicy):
             return CompressionResult(committed=True, reason=CompressionResultReason.NOTHING_TO_ARCHIVE)
 
         return CompressionResult(committed=True)
+
+    @staticmethod
+    def _has_complete_archive_pair(result: ArchiveGenerationResult | None) -> bool:
+        if result is None:
+            return False
+        channels = {write.channel for write in result.writes}
+        return channels == {ArchiveChannel.CONTEXT, ArchiveChannel.KNOWLEDGE}
 
 
 # ── Coordinator ──────────────────────────────────────────────────────────────
@@ -520,7 +516,7 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
                 context,
                 trigger.reason,
             )
-        elif archive is not None and summarized:
+        elif archive is None and summarized:
             summary = await self._summarize_with_fallback(summarized, context, trigger.reason)
 
         # Phase 4: Build plan

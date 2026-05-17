@@ -67,3 +67,29 @@ async def test_dual_strategy_skips_nothing_outputs() -> None:
     )
 
     assert result.writes == ()
+
+
+async def test_dual_strategy_requires_complete_archive_pair() -> None:
+    class PartialSummarizer(FakeSummarizer):
+        async def summarize(
+            self,
+            text: str,
+            *,
+            prompt: str | None = None,
+            max_tokens: int = 500,
+            temperature: float = 0.3,
+        ) -> str:
+            _ = text, max_tokens, temperature
+            if "Context Archive" in (prompt or ""):
+                return "## Situation\n- context summary"
+            return "(nothing)"
+
+    strategy = DualLLMArchiveGenerationStrategy(summarizer=PartialSummarizer())
+
+    result = await strategy.generate(
+        [{"role": "user", "content": "remember this"}],
+        MemoryContext(session_id="s1"),
+        CompressionReason.MESSAGE_COUNT,
+    )
+
+    assert result.writes == ()

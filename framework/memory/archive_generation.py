@@ -57,8 +57,6 @@ class DualLLMArchiveGenerationStrategy:
         reason: CompressionReason,
     ) -> ArchiveGenerationResult:
         inputs = self._input_policy.build_inputs(messages, context, reason)
-        writes: list[ArchiveWrite] = []
-
         from framework.agents.summarizer.agent import SummarizerAgent
 
         context_summary = await self._summarizer.summarize(
@@ -67,18 +65,6 @@ class DualLLMArchiveGenerationStrategy:
             max_tokens=self._context_max_tokens,
         )
         normalized_context = normalize_memory_summary(context_summary)
-        if normalized_context is not None:
-            writes.append(ArchiveWrite(
-                channel=ArchiveChannel.CONTEXT,
-                summary=normalized_context,
-                metadata={
-                    "reason": reason.value,
-                    "source": "compression",
-                    "generation_strategy": "dual_llm",
-                    "prompt": "context_archive",
-                },
-            ))
-
         knowledge_summary = await self._summarizer.summarize(
             self._prompt_input(inputs.knowledge_transcript, reason),
             prompt=SummarizerAgent.PROMPT_KNOWLEDGE_ARCHIVE,
@@ -86,8 +72,23 @@ class DualLLMArchiveGenerationStrategy:
             temperature=0.2,
         )
         normalized_knowledge = normalize_memory_summary(knowledge_summary)
-        if normalized_knowledge is not None:
-            writes.append(ArchiveWrite(
+
+        if normalized_context is None or normalized_knowledge is None:
+            return ArchiveGenerationResult(writes=(), inputs=inputs)
+
+        return ArchiveGenerationResult(
+            writes=(
+                ArchiveWrite(
+                    channel=ArchiveChannel.CONTEXT,
+                    summary=normalized_context,
+                    metadata={
+                        "reason": reason.value,
+                        "source": "compression",
+                        "generation_strategy": "dual_llm",
+                        "prompt": "context_archive",
+                    },
+                ),
+                ArchiveWrite(
                 channel=ArchiveChannel.KNOWLEDGE,
                 summary=normalized_knowledge,
                 metadata={
@@ -96,9 +97,10 @@ class DualLLMArchiveGenerationStrategy:
                     "generation_strategy": "dual_llm",
                     "prompt": "knowledge_archive",
                 },
-            ))
-
-        return ArchiveGenerationResult(writes=tuple(writes), inputs=inputs)
+                ),
+            ),
+            inputs=inputs,
+        )
 
     @staticmethod
     def _prompt_input(transcript: str, reason: CompressionReason) -> str:

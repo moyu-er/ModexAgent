@@ -12,7 +12,13 @@ from framework.runtime.models import JsonValue
 
 MessageMapping = Mapping[str, JsonValue]
 
-_EXCLUDED_ROLES = frozenset({"system", "developer"})
+_DEVELOPER_ROLE = "developer"
+_EXCLUDED_ROLES = frozenset({MessageRole.SYSTEM.value, _DEVELOPER_ROLE})
+_TEXT_ARCHIVE_ROLES = frozenset({
+    MessageRole.USER.value,
+    MessageRole.ASSISTANT.value,
+    MessageRole.AGENT.value,
+})
 _ARG_ALLOW_LIST = frozenset({
     "path",
     "file_path",
@@ -40,24 +46,27 @@ class ToolResultSummary:
 
 class DefaultToolResultSummarizer:
     max_tool_result_chars = 1200
-    head_chars = 800
-    tail_chars = 400
 
     def summarize(self, tool_name: str, content: str) -> ToolResultSummary:
         lowered = content.lower()
         status = "error" if "failed" in lowered or "error" in lowered else "success"
-        context = self._head_tail(content)
+        context = self._context_summary(content)
         claim = self._knowledge_claim(tool_name, content, status)
         return ToolResultSummary(status=status, context_text=context, knowledge_claim=claim)
 
-    def _head_tail(self, text: str) -> str:
-        if len(text) <= self.max_tool_result_chars:
-            return text
-        return (
-            text[: self.head_chars]
-            + f"\n... (truncated, {len(text)} chars total) ...\n"
-            + text[-self.tail_chars :]
-        )
+    def _context_summary(self, text: str) -> str:
+        stripped = text.strip()
+        first_line = stripped.splitlines()[0][:240] if stripped else ""
+        line_count = len(stripped.splitlines()) if stripped else 0
+        truncated = len(text) > self.max_tool_result_chars
+        parts = [
+            f"chars={len(text)}",
+            f"lines={line_count}",
+            f"truncated={str(truncated).lower()}",
+        ]
+        if first_line:
+            parts.append(f"first_line={first_line}")
+        return " ".join(parts)
 
     @staticmethod
     def _knowledge_claim(tool_name: str, content: str, status: str) -> str:
@@ -196,16 +205,20 @@ class DefaultArchiveInputPolicy:
                 dropped += 1
                 index += 1
                 continue
-            if role == MessageRole.TOOL:
+            if role == MessageRole.TOOL.value:
                 dropped += 1
                 index += 1
                 continue
-            if role == MessageRole.ASSISTANT and message.get("tool_calls"):
+            if role not in _TEXT_ARCHIVE_ROLES:
+                dropped += 1
+                index += 1
+                continue
+            if role == MessageRole.ASSISTANT.value and message.get("tool_calls"):
                 result_messages: list[MessageMapping] = []
                 result_index = index + 1
                 while (
                     result_index < len(messages)
-                    and self._string(messages[result_index].get("role")) == MessageRole.TOOL
+                    and self._string(messages[result_index].get("role")) == MessageRole.TOOL.value
                 ):
                     result_messages.append(messages[result_index])
                     result_index += 1
@@ -226,8 +239,7 @@ class DefaultArchiveInputPolicy:
                 index += 1
                 continue
             context_blocks.append(f"[{role}]\n{content}")
-            if role in {MessageRole.USER, MessageRole.ASSISTANT, MessageRole.AGENT}:
-                knowledge_blocks.append(f"[{role}]\n{content}")
+            knowledge_blocks.append(f"[{role}]\n{content}")
             index += 1
 
         return ArchiveGenerationInputs(
