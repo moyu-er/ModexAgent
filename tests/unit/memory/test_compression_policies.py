@@ -2,11 +2,21 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Sequence
 from typing import Any
 
 import pytest
 
 from framework.core.types import MessageRole
+from framework.memory.archive_generation import ArchiveGenerationStrategy
+from framework.memory.archive_input import MessageMapping
+from framework.memory.archive_models import (
+    ArchiveChannel,
+    ArchiveGenerationInputs,
+    ArchiveGenerationResult,
+    ArchiveInputStats,
+    ArchiveWrite,
+)
 from framework.memory.compaction.boundary import BoundaryPolicy
 from framework.memory.compaction.policy import (
     MessageCompactionDecision,
@@ -44,6 +54,45 @@ class _SimpleSummary(SummaryStrategy):
     async def summarize(self, messages, context, reason):
         parts = [m.get("content", "") for m in messages if m.get("content")]
         return " | ".join(parts[:10]) if parts else ""
+
+
+class _SimpleArchiveGeneration(ArchiveGenerationStrategy):
+    """Deterministic archive generation for compression integration tests."""
+
+    async def generate(
+        self,
+        messages: Sequence[MessageMapping],
+        context: MemoryContext,
+        reason: CompressionReason,
+    ) -> ArchiveGenerationResult:
+        _ = context
+        joined = " | ".join(str(message.get("content", "")) for message in messages)
+        inputs = ArchiveGenerationInputs(
+            context_transcript=joined,
+            knowledge_transcript=joined,
+            stats=ArchiveInputStats(
+                input_messages=len(messages),
+                context_messages=len(messages),
+                knowledge_messages=len(messages),
+                tool_chains=0,
+                dropped_messages=0,
+            ),
+        )
+        return ArchiveGenerationResult(
+            writes=(
+                ArchiveWrite(
+                    channel=ArchiveChannel.CONTEXT,
+                    summary=f"context: {joined}",
+                    metadata={"reason": reason.value},
+                ),
+                ArchiveWrite(
+                    channel=ArchiveChannel.KNOWLEDGE,
+                    summary=f"knowledge: {joined}",
+                    metadata={"reason": reason.value},
+                ),
+            ),
+            inputs=inputs,
+        )
 
 
 @pytest.fixture
@@ -335,6 +384,38 @@ async def test_coordinator_commit_replaces_session_and_persists_summary(registry
     summary = await storage.get(".compression_summary")
     assert summary is not None
     assert "message 0" in summary
+
+
+async def test_coordinator_writes_archive_bundle(registry):
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    config = SessionMemoryConfig(max_messages=None)
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(storage_factory=factory, config=config)
+    archive = MemoryLayerFactory.single_user(registry=registry).archive
+    ctx = MemoryContext(session_id="coord-archive-bundle")
+    await session.add_messages(ctx, [
+        {"role": "user", "content": f"message {index}"}
+        for index in range(6)
+    ])
+
+    coordinator = DefaultMemoryCompressionCoordinator(
+        max_messages=5,
+        keep_ratio_for_messages=0.9,
+        archive_generation=_SimpleArchiveGeneration(),
+    )
+    result = await coordinator.maybe_compress(session=session, archive=archive, context=ctx)
+
+    assert result.committed
+    context_entries = await archive.get_recent(ctx, limit=10, channel=ArchiveChannel.CONTEXT)
+    knowledge_entries = await archive.get_recent(ctx, limit=10, channel=ArchiveChannel.KNOWLEDGE)
+    assert len(context_entries) == 1
+    assert len(knowledge_entries) == 1
+    assert context_entries[0].summary.startswith("context: message 0")
+    assert knowledge_entries[0].summary.startswith("knowledge: message 0")
+    assert context_entries[0].entry_id == knowledge_entries[0].entry_id
 
 
 async def test_archive_injection_prefers_query_search(registry):

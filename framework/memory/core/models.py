@@ -70,6 +70,7 @@ class CompressionPlan:
     archive_raw_messages: list[dict[str, Any]]
     drop_messages: list[dict[str, Any]]
     summary: str | None = None
+    archive_generation_result: ArchiveGenerationResult | None = None
     pending_pruned_input_entries: list[Any] = field(default_factory=list)
     drop_without_archive_messages: list[dict[str, Any]] = field(default_factory=list)
     sanitization_issues: list[ToolChainSanitizationIssue] = field(default_factory=list)

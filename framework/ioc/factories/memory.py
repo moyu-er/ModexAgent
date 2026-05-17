@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from framework.core.provider import LLMProvider
 from framework.ioc.configs.memory import MemoryConfig
 
+if TYPE_CHECKING:
+    from framework.memory.layers.config import MemoryLayerConfigSet
 
-def _build_memory_layer_config(cfg: MemoryConfig) -> object:
+
+def _build_memory_layer_config(cfg: MemoryConfig) -> MemoryLayerConfigSet:
     """Convert MemoryConfig to framework MemoryLayerConfigSet."""
     from framework.memory.layers.config import (
         MemoryLayerConfigSet,
@@ -68,6 +72,7 @@ def create_memory(
     compression_coordinator = None
     if cfg.short_term.auto_llm_compression:
         from framework.agents.summarizer import SummarizerAgent, SummarizerStrategy
+        from framework.memory.archive_generation import DualLLMArchiveGenerationStrategy
         from framework.memory.compaction.boundary import (
             BoundaryPolicyName,
             create_boundary_policy,
@@ -80,9 +85,11 @@ def create_memory(
 
         summarizer = SummarizerAgent(llm_provider)
         summary_strategy = SummarizerStrategy(summarizer)
+        archive_generation = DualLLMArchiveGenerationStrategy(summarizer=summarizer)
 
         compression_coordinator = DefaultMemoryCompressionCoordinator(
             summary=summary_strategy,
+            archive_generation=archive_generation,
             compaction=ConservativeCompactionPolicy(),
             retention=DefaultMessageRetentionPolicy.from_config({}),
             boundary=create_boundary_policy(BoundaryPolicyName.TOOL_CHAIN),

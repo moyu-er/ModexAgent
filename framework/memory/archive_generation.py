@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol
 
-from framework.agents.summarizer.agent import SummarizerAgent
 from framework.memory.archive_input import DefaultArchiveInputPolicy, MessageMapping
 from framework.memory.archive_models import (
     ArchiveChannel,
@@ -59,6 +58,8 @@ class DualLLMArchiveGenerationStrategy:
     ) -> ArchiveGenerationResult:
         inputs = self._input_policy.build_inputs(messages, context, reason)
         writes: list[ArchiveWrite] = []
+
+        from framework.agents.summarizer.agent import SummarizerAgent
 
         context_summary = await self._summarizer.summarize(
             self._prompt_input(inputs.context_transcript, reason),

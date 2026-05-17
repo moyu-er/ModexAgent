@@ -11,7 +11,7 @@ import logging
 from abc import ABC, abstractmethod
 from collections import Counter
 from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from framework.memory.compaction.boundary import BoundaryPolicy, ToolChainBoundaryPolicy
 from framework.memory.compaction.policy import (
@@ -48,6 +48,9 @@ from framework.memory.retention import DefaultMessageRetentionPolicy, MessageRet
 from framework.memory.utils import normalize_memory_summary
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from framework.memory.archive_generation import ArchiveGenerationStrategy
 
 # ── Trigger ──────────────────────────────────────────────────────────────────
 
@@ -248,7 +251,16 @@ class DefaultCommitPolicy(CommitPolicy):
         # Archive first — skip empty or placeholder summaries
         normalized_summary = normalize_memory_summary(plan.summary) if archive is not None else None
         wrote_archive = False
-        if normalized_summary is not None:
+        if archive is not None and plan.archive_generation_result is not None:
+            try:
+                result = await archive.append_bundle(context, plan.archive_generation_result.writes)
+                wrote_archive = bool(result.written_channels)
+            except Exception as exc:
+                proceed = await error_policy.on_archive_failure(exc, plan, context)
+                if not proceed:
+                    return CompressionResult(committed=False, retryable=True, reason=CompressionResultReason.ARCHIVE_FAILED)
+                # Fall through to still mutate session (error policy said proceed)
+        elif normalized_summary is not None:
             assert archive is not None
             try:
                 entry = ArchiveEntry(
@@ -353,6 +365,7 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
         keep_planner: CompressionKeepPlanner | None = None,
         pending_extractor: PendingPrunedInputExtractor | None = None,
         tool_chain_sanitizer: SessionToolChainSanitizer | None = None,
+        archive_generation: ArchiveGenerationStrategy | None = None,
     ) -> None:
         self._max_messages = max_messages
         self._trigger = trigger or DefaultCompressionTriggerPolicy(
@@ -369,6 +382,7 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
         self._keep_planner = keep_planner or PriorityCompressionKeepPlanner()
         self._pending_extractor = pending_extractor or DefaultPendingPrunedInputExtractor()
         self._tool_chain_sanitizer = tool_chain_sanitizer or DefaultSessionToolChainSanitizer()
+        self._archive_generation = archive_generation
 
     async def maybe_compress(
         self,
@@ -499,7 +513,14 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
         ]
 
         summary = ""
-        if archive is not None and summarized:
+        archive_generation_result = None
+        if archive is not None and summarized and self._archive_generation is not None:
+            archive_generation_result = await self._archive_generation.generate(
+                summarized,
+                context,
+                trigger.reason,
+            )
+        elif archive is not None and summarized:
             summary = await self._summarize_with_fallback(summarized, context, trigger.reason)
 
         # Phase 4: Build plan
@@ -513,6 +534,7 @@ class DefaultMemoryCompressionCoordinator(MemoryCompressionCoordinator):
             archive_raw_messages=archive_raw,
             drop_messages=dropped,
             summary=summary,
+            archive_generation_result=archive_generation_result,
             pending_pruned_input_entries=self._pending_extractor.extract(
                 all_msgs,
                 pruned_indices_set,

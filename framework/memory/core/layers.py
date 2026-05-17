@@ -87,6 +87,7 @@ class SessionMemoryManager(ABC):
         messages: Sequence[ChatMessage | dict[str, Any]],
         expected_revision: StorageRevision,
         state_updates: Mapping[str, Any] | None = None,
+        idle_threshold_seconds: float | None = None,
     ) -> StorageRevision | None:
         pass
 
