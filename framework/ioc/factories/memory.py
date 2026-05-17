@@ -71,7 +71,7 @@ def create_memory(
 
     compression_coordinator = None
     if cfg.short_term.auto_llm_compression:
-        from framework.agents.summarizer import SummarizerAgent, SummarizerStrategy
+        from framework.agents.summarizer import SummarizerAgent
         from framework.memory.archive_generation import DualLLMArchiveGenerationStrategy
         from framework.memory.compaction.boundary import (
             BoundaryPolicyName,
@@ -84,11 +84,9 @@ def create_memory(
         from framework.memory.retention import DefaultMessageRetentionPolicy
 
         summarizer = SummarizerAgent(llm_provider)
-        summary_strategy = SummarizerStrategy(summarizer)
         archive_generation = DualLLMArchiveGenerationStrategy(summarizer=summarizer)
 
         compression_coordinator = DefaultMemoryCompressionCoordinator(
-            summary=summary_strategy,
             archive_generation=archive_generation,
             compaction=ConservativeCompactionPolicy(),
             retention=DefaultMessageRetentionPolicy.from_config({}),

@@ -10,14 +10,13 @@ Key abstractions:
 - MemoryContext: scope dimensions (session, user, tenant, etc.)
 - MemoryScope: isolation strategy per layer
 - MemoryCompressionCoordinator: unified session-to-archive compaction
-- ArchiveStrategy: how pruned messages are archived
+- ArchiveGenerationStrategy: how pruned messages become archive channel records
 - MemoryInjectionPolicy: maps memory layers to LLM ContextState
 """
 
-from framework.memory.archive import (
-    ArchiveStrategy,
-    PreserveSummaryArchiveStrategy,
-    RawDumpArchiveStrategy,
+from framework.memory.archive_generation import (
+    ArchiveGenerationStrategy,
+    DualLLMArchiveGenerationStrategy,
 )
 from framework.memory.compaction.boundary import (
     BoundaryPolicy,
@@ -204,9 +203,8 @@ __all__ = [
     "MemoryUpdate",
     "MemoryUpdateMode",
     # Archiving
-    "ArchiveStrategy",
-    "PreserveSummaryArchiveStrategy",
-    "RawDumpArchiveStrategy",
+    "ArchiveGenerationStrategy",
+    "DualLLMArchiveGenerationStrategy",
     # Injection
     "MemoryInjectionPolicy",
     "FullInjectionPolicy",

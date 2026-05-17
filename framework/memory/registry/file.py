@@ -167,9 +167,9 @@ class DefaultMemoryStoreRegistry(MemoryStoreRegistry):
             CONTEXT_ARCHIVE_FILE_KEY: CONTEXT_ARCHIVE_FILENAME,
             KNOWLEDGE_ARCHIVE_FILE_KEY: KNOWLEDGE_ARCHIVE_FILENAME,
             "messages": "messages.jsonl",
-            "history": "archive.jsonl",
-            "archive": "archive.jsonl",
-            "logs": "archive.jsonl",
+            "history": CONTEXT_ARCHIVE_FILENAME,
+            "archive": CONTEXT_ARCHIVE_FILENAME,
+            "logs": CONTEXT_ARCHIVE_FILENAME,
             "kv": "kv.json",
         }
         return (scope_dir / file_map.get(has_file, has_file)).exists()

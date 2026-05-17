@@ -8,6 +8,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from framework.memory.archive_models import (
+    CONTEXT_ARCHIVE_FILENAME,
+    KNOWLEDGE_ARCHIVE_FILENAME,
+    ArchiveChannel,
+)
 from framework.memory.core.lock import AioRWLock, StorageLock
 from framework.memory.core.models import StorageRevision
 from framework.memory.core.scope import MemoryLayerName
@@ -16,9 +21,6 @@ from framework.memory.utils import safe_atomic_replace
 
 _KV_FILE = "kv.json"
 _MESSAGES_FILE = "messages.jsonl"
-_ARCHIVE_FILE = "archive.jsonl"
-_CONTEXT_ARCHIVE_FILE = "context_archive.jsonl"
-_KNOWLEDGE_ARCHIVE_FILE = "knowledge_archive.jsonl"
 _ARCHIVE_STATE_FILE = ".archive_state.json"
 _CHANGELOG_FILE = "changelog.jsonl"
 
@@ -76,13 +78,15 @@ class DefaultScopedStorage(MemoryStorage):
     def _log_path(self) -> Path:
         if self.layer == MemoryLayerName.KNOWLEDGE:
             return self.directory / _CHANGELOG_FILE
-        return self.directory / _ARCHIVE_FILE
+        if self.layer == MemoryLayerName.ARCHIVE:
+            return self.directory / CONTEXT_ARCHIVE_FILENAME
+        return self.directory / _CHANGELOG_FILE
 
     def _channel_log_path(self, channel: str) -> Path:
-        if channel == "context":
-            return self.directory / _CONTEXT_ARCHIVE_FILE
-        if channel == "knowledge":
-            return self.directory / _KNOWLEDGE_ARCHIVE_FILE
+        if channel == ArchiveChannel.CONTEXT.value:
+            return self.directory / CONTEXT_ARCHIVE_FILENAME
+        if channel == ArchiveChannel.KNOWLEDGE.value:
+            return self.directory / KNOWLEDGE_ARCHIVE_FILENAME
         return self._log_path
 
     @property

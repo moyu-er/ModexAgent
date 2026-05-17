@@ -40,13 +40,16 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
         return self._config.scope
 
     async def append(self, context: MemoryContext, entry: ArchiveEntry) -> ArchiveEntry:
+        metadata = dict(entry.metadata)
+        if entry.created_at is not None:
+            metadata["created_at"] = entry.created_at.isoformat()
         result = await self.append_bundle(
             context,
             (
                 ArchiveWrite(
                     channel=ArchiveChannel.CONTEXT,
                     summary=entry.summary,
-                    metadata=dict(entry.metadata),
+                    metadata=metadata,
                     raw_refs=tuple(entry.raw_refs),
                 ),
             ),
@@ -169,6 +172,7 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
             "source_agent_id": context.agent_id,
             "source_agent_role": str(context.agent_role) if context.agent_role is not None else None,
         }
+        created_at = metadata.get("created_at")
         return {
             "archive_id": archive_id,
             "entry_id": archive_id,
@@ -177,6 +181,7 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
             "metadata": metadata,
             "raw_refs": list(write.raw_refs),
             "session_id": context.session_id,
+            "created_at": created_at if isinstance(created_at, str) else None,
         }
 
     @staticmethod

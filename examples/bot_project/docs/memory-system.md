@@ -2,6 +2,17 @@
 
 ## Current bot_project memory behavior
 
+- Default archive compression now writes paired archive records with one shared
+  `archive_id`: `context_archive.jsonl` for prompt injection and
+  `knowledge_archive.jsonl` for Dream consolidation.
+- `ArchiveStrategy` and single-summary `archive.jsonl` are no longer part of
+  the default implementation. Existing `archive.jsonl` files are not read,
+  migrated, or injected.
+- `FullInjectionPolicy` reads only the context archive channel. `DreamEngine`
+  reads only the knowledge archive channel, commits the shared archive cursor,
+  and then runs paired cleanup while retaining the configured recent consumed
+  pairs.
+
 - Main memory uses full session/archive/knowledge layers. Peer and subagent
   memory use session-only storage by configuring `archive=None` and
   `knowledge=None`.
