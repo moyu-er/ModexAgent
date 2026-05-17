@@ -11,6 +11,7 @@ from typing import Any
 from framework.core.context import ContextManager, ContextState
 from framework.core.emitter import AgentResult
 from framework.core.skills import ResolutionContext, SkillManager
+from framework.memory.context_governance import ContextGovernance
 from framework.memory.core.message import ChatMessage
 from framework.memory.core.scope import MemoryAgentRole, MemoryContext
 from framework.memory.core.system import (
@@ -19,7 +20,6 @@ from framework.memory.core.system import (
 )
 from framework.memory.default_system import DefaultMemorySystem
 from framework.memory.layers.config import MemoryLayerConfigSet
-from framework.memory.context_governance import ContextGovernance
 from framework.memory.layers.factory import MemoryLayerFactory
 from framework.memory.lifecycle import MemoryLifecyclePolicy
 from framework.memory.pending import DefaultPendingPrunedInputInjector

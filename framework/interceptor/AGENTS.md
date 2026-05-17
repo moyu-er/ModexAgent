@@ -1,59 +1,40 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-05-11 -->
 
 # interceptor
 
 ## Purpose
-AOP (Aspect-Oriented Programming) call-boundary wrapping layer. Interceptors form an onion chain around tool calls, turns, iterations, and LLM streams. Each interceptor can timeout, transform, or cancel the wrapped call. **Approval does NOT go through interceptors** — it is handled through the pipeline layer (TurnSnapshot + ApprovalTransaction).
+AOP onion-chain layer wrapping call boundaries. Interceptors form recursive closures around tool calls, turns, iterations, and LLM streams. Each can timeout, transform, or cancel the wrapped call. Approval does NOT go through interceptors -- handled via pipeline layer (TurnSnapshot + ApprovalTransaction).
 
 ## Key Files
 | File | Description |
 |------|-------------|
-| `abc.py` | `Interceptor` Protocol, `InterceptorScope` (9 scopes), context types (`ToolCallContext`, `LLMStreamContext`, etc.), next-call types |
-| `chain.py` | `InterceptorChain` — onion chain executor with `around_tool_call/around_turn/around_iteration/around_llm_stream` + `has_scope()` |
-| `handler.py` | `CommandHandlerRegistry`, `DefaultCancelHandler` — command handler registration for `ControlDrainInterceptor` |
+| `abc.py` | `Interceptor` Protocol, `InterceptorScope` (9 defined, 4 active: TOOL_CALL/TURN/ITERATION/LLM_STREAM), context types (ToolCallContext, TurnContext, IterationContext, LLMStreamContext, LLMStreamChunk), next-call signatures |
+| `chain.py` | `InterceptorChain[R]` -- recursive closure builder per scope, `has_scope()` check, exception handling (AgentControlError propagates, generic -> ToolResult) |
+| `handler.py` | `CommandHandlerRegistry`, `DefaultCancelHandler` -- command handler registration for ControlDrainInterceptor |
 | `__init__.py` | Public API exports |
 
 ## Subdirectories
 | Directory | Purpose |
 |-----------|---------|
-| `builtin/` | Framework-provided interceptors — timeout, watch, steer-inject, stream-watch, result-limit, control-drain, tool-policy (see `builtin/AGENTS.md`) |
+| `builtin/` | 8 interceptors + 1 classification helper -- timeout, watch, drain, steer-inject, result-limit, policy |
 
-## For AI Agents
+## Active Scopes
+| Scope | Method | Chain method | Purpose |
+|-------|--------|-------------|---------|
+| `TOOL_CALL` | `around_tool_call` | `around_tool_call()` | Wrap individual tool execution |
+| `TURN` | `around_turn` | `around_turn()` | Wrap entire turn |
+| `ITERATION` | `around_iteration` | `around_iteration()` | Wrap single ReAct iteration |
+| `LLM_STREAM` | `around_llm_stream` | `around_llm_stream()` | Wrap LLM streaming response |
 
-### Working In This Directory
-- New interceptors implement the `Interceptor` Protocol — a `scopes` frozenset + the matching `around_*` method
-- Onion model: index 0 is outermost (enters first, exits last)
-- ControlDrain at boundary level, ToolResultLimit innermost
-- `InterceptorChain.has_scope()` for checking if a scope has any registered interceptors
+Reserved (defined but not wired): AGENT_RUN, LLM_CALL, PIPELINE_STEP, POOL_TASK, MEMORY_OPERATION.
+
+## Design Rules
+- Index 0 is outermost (enters first, exits last)
 - `around_tool_call` MUST return a legal `ToolResult`
-
-### Interceptor Scopes
-| Scope | Method | Purpose |
-|-------|--------|---------|
-| `TOOL_CALL` | `around_tool_call` | Wrap individual tool execution |
-| `TURN` | `around_turn` | Wrap entire turn |
-| `ITERATION` | `around_iteration` | Wrap single ReAct iteration |
-| `LLM_STREAM` | `around_llm_stream` | Wrap LLM streaming response |
-| `AGENT_RUN` | (future) | Wrap full agent run |
-| `LLM_CALL`, `PIPELINE_STEP`, `POOL_TASK`, `MEMORY_OPERATION` | (future) | Reserved |
-
-### Testing Requirements
-- Tests in `tests/unit/test_interceptor_chain.py`, `tests/unit/test_control_drain_interceptor.py`, etc.
-- Test onion ordering
-- Test exception handling (AgentControlError propagates, generic exceptions converted to ToolResult)
-- Approval-related tests are in `tests/unit/approval/`, NOT in interceptor tests
+- Generic exceptions in tool scope are caught and converted to `ToolResult(error=...)`
+- `AgentControlError` and `CancelledError` always propagate
+- Use `has_scope()` to check if a scope has any registered interceptors
 
 ## Dependencies
-
-### Internal
-- `framework.control` — `ControlChannel`, `ControlEventBus`, `ControlCommandType`
-- `framework.core.agent` — `AgentContext`
-
-## Current Runtime Status
-
-Interceptors wrap execution scopes such as tool calls, LLM streams, turns, and
-iterations. The bot project default chain currently includes
-`ControlDrainInterceptor` and `ToolResultLimitInterceptor` only.
-Approval is handled through `ToolNode` → `ApprovalTransaction` → `TurnSnapshot` → `ApprovalRenderer`.
-
+- `framework.control` -- ControlChannel, ControlEventBus, ControlCommandType
+- `framework.core.agent` -- AgentContext

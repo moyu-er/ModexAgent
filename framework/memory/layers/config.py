@@ -35,6 +35,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
+from framework.memory.archive_models import DEFAULT_RETAINED_CONSUMED_ARCHIVE_PAIRS
 from framework.memory.core.scope import MemoryContext, MemoryScope, SessionScope, UserScope
 from framework.memory.core.storage import MemoryStorage
 
@@ -54,6 +55,7 @@ class ArchiveMemoryConfig:
     max_entries: int | None = 1000
     cursor_name: str = "default"
     scope: MemoryScope = field(default_factory=UserScope)
+    retained_consumed_archive_pairs: int = DEFAULT_RETAINED_CONSUMED_ARCHIVE_PAIRS
 
 
 @dataclass(frozen=True)

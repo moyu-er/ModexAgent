@@ -1,63 +1,54 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-04-30 -->
 
 # pipeline
 
 ## Purpose
-End-to-end flow orchestration — `AgentPipeline` ties together input adapters, context management, agent execution, emitter output, and output adapters. Supports both streaming and non-streaming modes, multi-agent routing, deduplication, and busy-input-mode handling.
+
+End-to-end flow orchestration. `AgentPipeline` ties together input adapters, context
+assembly, agent execution, emitter output, and output adapters. Handles deduplication,
+busy-input-mode routing, approval snapshot recovery, and session lifecycle.
 
 ## Key Files
+
 | File | Description |
 |------|-------------|
-| `pipeline.py` | `AgentPipeline` — main orchestration class with `_process_message`, busy-input-mode, session-task tracking, injection queues |
-| `adapters.py` | `InputAdapter` / `OutputAdapter` ABCs and helpers |
-| `filters.py` | Content filtering middleware |
-| `__init__.py` | Public API exports |
+| `pipeline.py` | `AgentPipeline` -- main orchestrator: receive loop, dedup, busy handling, `_process_message`, `_execute_turn`. |
+| `adapters.py` | `InputAdapter` / `OutputAdapter` ABCs. OutputAdapter supports `send()` (complete) + `send_delta()` (streaming). |
+| `approval_renderer.py` | `ApprovalRenderer` -- detects approval state, parses `/approve` `/deny`, handles peer message buffering. |
+| `context_assembler.py` | `assemble_context()` -- loads history, writes user message, builds system prompt, runs multi-agent context builder. |
+| `filters.py` | `ContentFilter` chain: `ChainedContentFilter`, `ReasoningContentFilter` (strip/keep). |
 
-## For AI Agents
+## Flow
 
-### Working In This Directory
-- `AgentPipeline._process_message()` handles routing, dedup, busy check, lock acquisition
-- Busy state modes (from `BusyInputMode`):
-  - `INTERRUPT`: cancel current task, start new turn
-  - `QUEUE`: push to `injection_queue` (per-session)
-  - `STEER`: send `INJECT_STEER` control command
-- Session tasks tracked in `_session_tasks: dict[str, asyncio.Task]`
-- `cleanup_session()` called on ControlChannel at session end
-- Turn recovery via `TurnStateStore.list_active_turns()` (not via old checkpoint IDs)
-- Approval handled through `_handle_snapshot_approval()` + `ApprovalRenderer.detect()`
-
-### Flow
 ```
 InputAdapter.receive()
-  → Router.route()
-  → Deduplicator check
-  → Busy check (INTERRUPT/QUEUE/STEER)
-  → Session lock
-  → Context load + approval snapshot check
-      → If pending approval: ApprovalRenderer.detect() → _handle_snapshot_approval()
-  → MultiAgentContextBuilder
-  → AgentContext construction (with injection_queue)
-  → Agent.run()
-      → GraphInterrupt (approval required) → save TurnSnapshot → return None
-      → AgentResult (normal) → save context
-  → cleanup_session
+  -> dedup check
+  -> busy check (INTERRUPT / QUEUE / STEER)
+  -> session lock
+  -> assemble_context() -- load history, build prompt, recover checkpoint
+  -> check pending approval snapshot
+     -> if approval: ApprovalRenderer.detect() -> _handle_snapshot_approval()
+  -> build AgentContext + runtime via RuntimeAssembler
+  -> ReActAgent.run()
+     -> GraphInterrupt (approval) -> save TurnSnapshot -> return None
+     -> AgentResult (normal) -> save context, flush memory
+  -> cleanup_session
 ```
 
-### Approval in Pipeline
-- `_load_pending_approval_snapshot()` queries `TurnStateStore` for SUSPENDED turns
-- `ApprovalRenderer.detect()` handles `/approve`, `/deny`, and unrelated input
-- `_handle_snapshot_approval()` applies decisions via `ApprovalTransaction.apply_decision()`
-- Partial approval: snapshot re-saved, wait for next input
-- Complete approval: `_execute_turn()` resumes from stored `current_node`
+## Busy Input Modes
 
-### Testing Requirements
-- Tests in `tests/unit/pipeline/`
-- Mock InputAdapter/OutputAdapter
-- Test busy mode handling
-- Test session isolation under concurrent messages
-## Current Runtime Status
+- **INTERRUPT**: cancel current task, start new turn.
+- **QUEUE**: push to per-session `injection_queue`.
+- **STEER**: send `INJECT_STEER` control command.
 
-Pipeline should assemble runtime services and handle platform I/O; ReAct owns
-turn, LLM, tool, approval, and resume boundaries. Keep hook/interceptor/control
-policy out of pipeline glue where possible.
+## Approval in Pipeline
+
+- `_load_pending_approval_snapshot()` queries `TurnStateStore` for SUSPENDED turns.
+- `ApprovalRenderer.detect()` handles `/approve`, `/deny`, and unrelated input.
+- Partial approval: snapshot re-saved, waits for next input.
+- Complete approval: `_execute_turn()` resumes from stored `current_node`.
+
+## Key Invariant
+
+Pipeline assembles runtime services and handles platform I/O; ReAct owns the turn loop,
+LLM calls, tool execution, approval state, and resume boundaries.

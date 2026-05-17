@@ -1,47 +1,31 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-04-30 -->
+<!-- Generated: 2026-05-16 -->
 
 # tools
 
 ## Purpose
-Tool subsystem — registry, executor, MCP integration, standard tools. All tools implement the `Tool` ABC and are discovered/registered via `ToolRegistry`.
+Tool subsystem — registry, executor, MCP integration, standard tools, filtering, and metadata. All tools implement the `Tool` ABC and are discovered/registered via `ToolRegistry`.
 
 ## Key Files
 | File | Description |
 |------|-------------|
-| `registry.py` | `ToolRegistry` — tool registration and discovery |
+| `registry.py` | `ToolRegistry` — tool registration and lookup |
 | `executor.py` | Tool execution engine |
 | `types.py` | Tool-related type definitions |
-| `toolkit.py` | Toolkit management |
-| `mcp_adapter.py` | MCP protocol adapter |
-| `metadata_parser.py` | Tool metadata parsing |
+| `toolkit.py` | Toolkit with AOP hooks |
+| `filter.py` | `FilteredToolManager` — per-agent tool visibility |
+| `mcp_adapter.py` | `MCPToolAdapter`, `MCPToolRegistry` — bridges MCP to framework `Tool` |
+| `metadata_parser.py` | Rich docstring parser (Google/NumPy/Sphinx styles) |
 | `secure_wrapper.py` | Security wrapping for tool execution |
 
 ## Subdirectories
 | Directory | Purpose |
 |-----------|---------|
-| `mcp/` | MCP integration — `MCPClientManager`, `MCPToolAdapter`, three transports (stdio, SSE, streamable_http) |
-| `standard/` | Standard built-in tools — `shell_tool.py`, `file_tool.py` |
+| `mcp/` | MCP integration — `MCPClientManager` (`client.py`), connection management (`manager.py`), tool wrapper (`tool.py`); three transports: stdio, SSE, streamable_http |
+| `standard/` | Built-in tools — `file_tool.py`, `search_tool.py`, `shell_tool.py` |
 
 ## For AI Agents
-
-### Working In This Directory
 - New tools: subclass `Tool` ABC with `name`, `description`, `parameters`, `execute()` method
-- `MCPClientManager` auto-registers tools/resources/prompts from MCP servers
-- Three MCP transports: `stdio`, `sse`, `streamable_http`
-- Auto-reconnection for MCP server disconnects
-
-### Common Patterns
-```python
-class MyTool(Tool):
-    name = "my_tool"
-    description = "Does something useful"
-    parameters = {...}  # JSON Schema
-
-    async def execute(self, **kwargs) -> ToolResult:
-        ...
-```
-## Current Runtime Status
-
-Tools execute through the ReAct `ToolNode`. Approval, cancellation metadata, and
-runtime control boundaries should be handled by the runtime services.
+- `MCPClientManager` auto-registers tools/resources/prompts from MCP servers with reconnection
+- `FilteredToolManager` enforces per-agent tool visibility rules
+- `metadata_parser.py` extracts parameter schemas from docstrings for automatic tool definition

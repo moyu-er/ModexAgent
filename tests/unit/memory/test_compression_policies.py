@@ -2,11 +2,21 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Sequence
 from typing import Any
 
 import pytest
 
 from framework.core.types import MessageRole
+from framework.memory.archive_generation import ArchiveGenerationStrategy
+from framework.memory.archive_input import MessageMapping
+from framework.memory.archive_models import (
+    ArchiveChannel,
+    ArchiveGenerationInputs,
+    ArchiveGenerationResult,
+    ArchiveInputStats,
+    ArchiveWrite,
+)
 from framework.memory.compaction.boundary import BoundaryPolicy
 from framework.memory.compaction.policy import (
     MessageCompactionDecision,
@@ -44,6 +54,107 @@ class _SimpleSummary(SummaryStrategy):
     async def summarize(self, messages, context, reason):
         parts = [m.get("content", "") for m in messages if m.get("content")]
         return " | ".join(parts[:10]) if parts else ""
+
+
+class _SimpleArchiveGeneration(ArchiveGenerationStrategy):
+    """Deterministic archive generation for compression integration tests."""
+
+    async def generate(
+        self,
+        messages: Sequence[MessageMapping],
+        context: MemoryContext,
+        reason: CompressionReason,
+    ) -> ArchiveGenerationResult:
+        _ = context
+        joined = " | ".join(str(message.get("content", "")) for message in messages)
+        inputs = ArchiveGenerationInputs(
+            context_transcript=joined,
+            knowledge_transcript=joined,
+            stats=ArchiveInputStats(
+                input_messages=len(messages),
+                context_messages=len(messages),
+                knowledge_messages=len(messages),
+                tool_chains=0,
+                dropped_messages=0,
+            ),
+        )
+        return ArchiveGenerationResult(
+            writes=(
+                ArchiveWrite(
+                    channel=ArchiveChannel.CONTEXT,
+                    summary=f"context: {joined}",
+                    metadata={"reason": reason.value},
+                ),
+                ArchiveWrite(
+                    channel=ArchiveChannel.KNOWLEDGE,
+                    summary=f"knowledge: {joined}",
+                    metadata={"reason": reason.value},
+                ),
+            ),
+            inputs=inputs,
+        )
+
+
+class _CapturingArchiveGeneration(_SimpleArchiveGeneration):
+    def __init__(self) -> None:
+        self.messages: list[MessageMapping] = []
+
+    async def generate(
+        self,
+        messages: Sequence[MessageMapping],
+        context: MemoryContext,
+        reason: CompressionReason,
+    ) -> ArchiveGenerationResult:
+        self.messages = list(messages)
+        return await super().generate(messages, context, reason)
+
+
+class _EmptyArchiveGeneration(ArchiveGenerationStrategy):
+    async def generate(
+        self,
+        messages: Sequence[MessageMapping],
+        context: MemoryContext,
+        reason: CompressionReason,
+    ) -> ArchiveGenerationResult:
+        _ = context, reason
+        return ArchiveGenerationResult(
+            writes=(),
+            inputs=ArchiveGenerationInputs(
+                context_transcript="",
+                knowledge_transcript="",
+                stats=ArchiveInputStats(
+                    input_messages=len(messages),
+                    context_messages=0,
+                    knowledge_messages=0,
+                    tool_chains=0,
+                    dropped_messages=0,
+                ),
+            ),
+        )
+
+
+def _archive_generation_result(
+    *,
+    context_summary: str = "context summary",
+    knowledge_summary: str = "knowledge summary",
+) -> ArchiveGenerationResult:
+    return ArchiveGenerationResult(
+        writes=(
+            ArchiveWrite(channel=ArchiveChannel.CONTEXT, summary=context_summary),
+            ArchiveWrite(channel=ArchiveChannel.KNOWLEDGE, summary=knowledge_summary),
+        ),
+        inputs=ArchiveGenerationInputs(
+            context_transcript=context_summary,
+            knowledge_transcript=knowledge_summary,
+            stats=ArchiveInputStats(
+                input_messages=1,
+                context_messages=1,
+                knowledge_messages=1,
+                tool_chains=0,
+                dropped_messages=0,
+            ),
+        ),
+    )
 
 
 @pytest.fixture
@@ -208,8 +319,8 @@ async def test_commit_does_not_persist_pending_when_archive_write_fails(registry
     ])
 
     class FailingArchive:
-        async def append(self, context, entry):
-            _ = context, entry
+        async def append_bundle(self, context, writes):
+            _ = context, writes
             raise RuntimeError("archive down")
 
     revision = await session.get_revision(ctx)
@@ -221,7 +332,11 @@ async def test_commit_does_not_persist_pending_when_archive_write_fails(registry
         summarize_messages=[{"role": "user", "content": "unfinished"}],
         archive_raw_messages=[],
         drop_messages=[],
-        summary="unfinished",
+        summary="",
+        archive_generation_result=_archive_generation_result(
+            context_summary="context: unfinished",
+            knowledge_summary="knowledge: unfinished",
+        ),
         pending_pruned_input_entries=[
             PendingPrunedInputEntry.from_message(
                 {"role": "user", "content": "unfinished"},
@@ -316,7 +431,9 @@ async def test_coordinator_commit_replaces_session_and_persists_summary(registry
     # keep_ratio=0.9 (clamp max): max_keep=4 from 6 msgs.
     # Planner uses budget_suffix because latest_user (index 5) >= min_start (2).
     coordinator = DefaultMemoryCompressionCoordinator(
-        max_messages=5, keep_ratio_for_messages=0.9, summary=_SimpleSummary(),
+        max_messages=5,
+        keep_ratio_for_messages=0.9,
+        archive_generation=_SimpleArchiveGeneration(),
     )
     result = await coordinator.maybe_compress(session=session, archive=archive, context=ctx)
 
@@ -327,14 +444,102 @@ async def test_coordinator_commit_replaces_session_and_persists_summary(registry
         "message 2", "message 3", "message 4", "message 5",
     ]
 
-    storage = await registry.resolve(
-        layer=MemoryLayerName.SESSION,
-        scope=SessionScope(),
-        context=ctx,
+    entries = await archive.get_recent(ctx, limit=10, channel=ArchiveChannel.CONTEXT)
+    assert entries
+    assert "message 0" in entries[-1].summary
+
+
+async def test_coordinator_writes_archive_bundle(registry):
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    config = SessionMemoryConfig(max_messages=None)
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(storage_factory=factory, config=config)
+    archive = MemoryLayerFactory.single_user(registry=registry).archive
+    ctx = MemoryContext(session_id="coord-archive-bundle")
+    await session.add_messages(ctx, [
+        {"role": "user", "content": f"message {index}"}
+        for index in range(6)
+    ])
+
+    coordinator = DefaultMemoryCompressionCoordinator(
+        max_messages=5,
+        keep_ratio_for_messages=0.9,
+        archive_generation=_SimpleArchiveGeneration(),
     )
-    summary = await storage.get(".compression_summary")
-    assert summary is not None
-    assert "message 0" in summary
+    result = await coordinator.maybe_compress(session=session, archive=archive, context=ctx)
+
+    assert result.committed
+    context_entries = await archive.get_recent(ctx, limit=10, channel=ArchiveChannel.CONTEXT)
+    knowledge_entries = await archive.get_recent(ctx, limit=10, channel=ArchiveChannel.KNOWLEDGE)
+    assert len(context_entries) == 1
+    assert len(knowledge_entries) == 1
+    assert context_entries[0].summary.startswith("context: message 0")
+    assert knowledge_entries[0].summary.startswith("knowledge: message 0")
+    assert context_entries[0].entry_id == knowledge_entries[0].entry_id
+
+
+async def test_coordinator_does_not_mutate_session_when_archive_generation_is_empty(registry):
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    config = SessionMemoryConfig(max_messages=None)
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(storage_factory=factory, config=config)
+    archive = MemoryLayerFactory.single_user(registry=registry).archive
+    ctx = MemoryContext(session_id="coord-empty-archive-generation")
+    await session.add_messages(ctx, [
+        {"role": "user", "content": f"message {index}"}
+        for index in range(6)
+    ])
+
+    coordinator = DefaultMemoryCompressionCoordinator(
+        max_messages=5,
+        keep_ratio_for_messages=0.9,
+        archive_generation=_EmptyArchiveGeneration(),
+    )
+    result = await coordinator.maybe_compress(session=session, archive=archive, context=ctx)
+
+    assert not result.committed
+    assert result.reason == CompressionResultReason.NOTHING_TO_ARCHIVE
+    assert [message.content for message in await session.get_all_messages(ctx)] == [
+        f"message {index}" for index in range(6)
+    ]
+    assert await archive.get_recent(ctx, limit=10, channel=ArchiveChannel.CONTEXT) == []
+    assert await archive.get_recent(ctx, limit=10, channel=ArchiveChannel.KNOWLEDGE) == []
+
+
+async def test_coordinator_requires_archive_generation_when_archive_is_configured(registry):
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    config = SessionMemoryConfig(max_messages=None)
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(storage_factory=factory, config=config)
+    archive = MemoryLayerFactory.single_user(registry=registry).archive
+    ctx = MemoryContext(session_id="coord-requires-archive-generation")
+    await session.add_messages(ctx, [
+        {"role": "user", "content": f"message {index}"}
+        for index in range(6)
+    ])
+
+    coordinator = DefaultMemoryCompressionCoordinator(
+        max_messages=5,
+        keep_ratio_for_messages=0.9,
+        summary=_SimpleSummary(),
+    )
+    result = await coordinator.maybe_compress(session=session, archive=archive, context=ctx)
+
+    assert not result.committed
+    assert result.reason == CompressionResultReason.NOTHING_TO_ARCHIVE
+    assert [message.content for message in await session.get_all_messages(ctx)] == [
+        f"message {index}" for index in range(6)
+    ]
+    assert await archive.get_recent(ctx, limit=10, channel=ArchiveChannel.CONTEXT) == []
 
 
 async def test_archive_injection_prefers_query_search(registry):
@@ -360,6 +565,39 @@ async def test_archive_injection_prefers_query_search(registry):
 
 
 # ── Regression: empty summary commit ──────────────────────────────────────
+
+
+async def test_archive_injection_uses_context_channel_only(registry):
+    from framework.memory.default_system import DefaultMemorySystem
+    from framework.memory.injection import FullInjectionPolicy
+
+    layer_set = MemoryLayerFactory.single_user(registry=registry)
+    system = DefaultMemorySystem(layer_set=layer_set, store_registry=registry)
+    ctx = MemoryContext(session_id="archive-inject-context-channel")
+    await system.initialize()
+    await layer_set.archive.append_bundle(
+        ctx,
+        (
+            ArchiveWrite(
+                channel=ArchiveChannel.CONTEXT,
+                summary="context archive for direct dialogue continuity",
+            ),
+            ArchiveWrite(
+                channel=ArchiveChannel.KNOWLEDGE,
+                summary="knowledge archive for dream consolidation only",
+            ),
+        ),
+    )
+
+    bundle = await FullInjectionPolicy(max_history_entries=5).assemble(
+        context=ctx,
+        memory_system=system,
+        query="archive",
+    )
+
+    content = "\n".join(section.content for section in bundle.system_sections)
+    assert "context archive for direct dialogue continuity" in content
+    assert "knowledge archive for dream consolidation only" not in content
 
 
 async def test_commit_skips_empty_summary_and_reports_no_op(registry):
@@ -391,7 +629,7 @@ async def test_commit_skips_empty_summary_and_reports_no_op(registry):
         error_policy=error_policy,
     )
 
-    assert result.committed is True  # session truncated, just no archive
+    assert result.committed is False
     assert result.reason == CompressionResultReason.NOTHING_TO_ARCHIVE
 
 
@@ -422,7 +660,7 @@ async def test_commit_skips_placeholder_summaries(registry):
             context=ctx,
             error_policy=DefaultCompressionErrorPolicy(),
         )
-        assert result.committed is True, f"placeholder '{placeholder}' — session truncated, no archive"
+        assert result.committed is False, f"placeholder '{placeholder}' — no archive pair, no commit"
         assert result.reason == CompressionResultReason.NOTHING_TO_ARCHIVE, f"placeholder '{placeholder}'"
 
 
@@ -456,7 +694,7 @@ async def test_commit_skips_long_whitespace_summary(registry):
         error_policy=DefaultCompressionErrorPolicy(),
     )
 
-    assert result.committed is True  # session still truncated
+    assert result.committed is False
     assert result.reason == CompressionResultReason.NOTHING_TO_ARCHIVE
     assert await archive.get_recent(ctx, limit=10) == []  # no archive entries written
 
@@ -522,14 +760,7 @@ async def test_coordinator_excludes_dropped_messages_from_summary_input(registry
                 return MessageCompactionDecision.DROP_FROM_SUMMARY
             return MessageCompactionDecision.SUMMARIZE
 
-    class CapturingSummary(SummaryStrategy):
-        def __init__(self):
-            self.messages = []
-
-        async def summarize(self, messages, context, reason):
-            _ = context, reason
-            self.messages = list(messages)
-            return "summarized user content"
+    archive_gen = _CapturingArchiveGeneration()
 
     config = SessionMemoryConfig(max_messages=None)
     factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
@@ -544,19 +775,18 @@ async def test_coordinator_excludes_dropped_messages_from_summary_input(registry
         {"role": "user", "content": "new question"},
     ])
 
-    summary = CapturingSummary()
     coordinator = DefaultMemoryCompressionCoordinator(
         max_messages=1,
         boundary=FixedBoundary(),
-        summary=summary,
+        archive_generation=archive_gen,
         compaction=ToolDroppingPolicy(),
     )
 
     result = await coordinator.maybe_compress(session=session, archive=archive, context=ctx)
 
     assert result.committed
-    assert [message["role"] for message in summary.messages] == ["user", "assistant"]
-    assert all(not message.get("tool_calls") for message in summary.messages)
+    assert [message["role"] for message in archive_gen.messages] == ["user", "assistant"]
+    assert all(not message.get("tool_calls") for message in archive_gen.messages)
 
 
 async def test_conservative_policy_excludes_tool_from_summary(registry):
@@ -571,14 +801,7 @@ async def test_conservative_policy_excludes_tool_from_summary(registry):
             _ = messages, decisions, target_prune_count
             return 4  # prune first 4 messages (user, tc, tool, answer)
 
-    class CapturingSummary(SummaryStrategy):
-        def __init__(self):
-            self.messages: list[dict[str, Any]] = []
-
-        async def summarize(self, messages, context, reason):
-            _ = context, reason
-            self.messages = list(messages)
-            return "captured"
+    archive_gen = _CapturingArchiveGeneration()
 
     config = SessionMemoryConfig(max_messages=None)
     factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
@@ -596,11 +819,10 @@ async def test_conservative_policy_excludes_tool_from_summary(registry):
         {"role": "user", "content": "new question"},
     ])
 
-    summary = CapturingSummary()
     coordinator = DefaultMemoryCompressionCoordinator(
         max_messages=1,
         boundary=FixedBoundary(),
-        summary=summary,
+        archive_generation=archive_gen,
         compaction=ConservativeCompactionPolicy(),  # bot_project's actual policy
     )
 
@@ -608,11 +830,11 @@ async def test_conservative_policy_excludes_tool_from_summary(registry):
     assert result.committed
 
     # With SUMMARIZE for all messages (including tool): user + tc assistant + tool + answer
-    roles = [m.get("role") for m in summary.messages]
+    roles = [m.get("role") for m in archive_gen.messages]
     assert len(roles) >= 3, f"tool context should be in summary, got {len(roles)} roles"
     assert "user" in roles
     # assistant tool_calls message should be in summary input
-    assert any(m.get("tool_calls") for m in summary.messages), \
+    assert any(m.get("tool_calls") for m in archive_gen.messages), \
         "assistant tool_calls should be in summary for tool context preservation"
 
 
@@ -628,14 +850,7 @@ async def test_high_value_tool_results_included_in_summary(registry):
             _ = messages, decisions, target_prune_count
             return 3
 
-    class CapturingSummary(SummaryStrategy):
-        def __init__(self):
-            self.messages: list[dict[str, Any]] = []
-
-        async def summarize(self, messages, context, reason):
-            _ = context, reason
-            self.messages = list(messages)
-            return "captured"
+    archive_gen = _CapturingArchiveGeneration()
 
     config = SessionMemoryConfig(max_messages=None)
     factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
@@ -652,11 +867,10 @@ async def test_high_value_tool_results_included_in_summary(registry):
         {"role": "assistant", "content": "here is the answer"},
     ])
 
-    summary = CapturingSummary()
     coordinator = DefaultMemoryCompressionCoordinator(
         max_messages=1,
         boundary=FixedBoundary(),
-        summary=summary,
+        archive_generation=archive_gen,
         # web_search is whitelisted as high-value
         compaction=ConservativeCompactionPolicy(high_value_tools={"web_search"}),
     )
@@ -664,7 +878,7 @@ async def test_high_value_tool_results_included_in_summary(registry):
     result = await coordinator.maybe_compress(session=session, archive=archive, context=ctx)
     assert result.committed
 
-    roles = [m.get("role") for m in summary.messages]
+    roles = [m.get("role") for m in archive_gen.messages]
     # High-value process evidence is summarized, while the recent user input is
     # kept raw by priority retention under the hard keep budget.
     assert "tool" in roles, "high-value tool result should be in summary"
@@ -814,7 +1028,7 @@ async def test_coordinator_compresses_tool_chains_atomically(registry):
 
     assert len(await session.get_all_messages(ctx)) == 30
 
-    coordinator = DefaultMemoryCompressionCoordinator(max_messages=8, summary=_SimpleSummary())
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=8, archive_generation=_SimpleArchiveGeneration())
     result = await coordinator.maybe_compress(session=session, archive=archive, context=ctx)
     assert result.committed, f"expected committed, got {result}"
 
@@ -861,7 +1075,7 @@ async def test_coordinator_compresses_when_total_exceeds_visible_cap(registry):
     assert stored == 96
     assert visible == 50
 
-    coordinator = DefaultMemoryCompressionCoordinator(max_messages=50, summary=_SimpleSummary())
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=50, archive_generation=_SimpleArchiveGeneration())
     result = await coordinator.maybe_compress(session=session, archive=archive, context=ctx)
     assert result.committed, f"stored=96 > max=50 should trigger, got {result}"
 
@@ -891,7 +1105,7 @@ async def test_coordinator_creates_headroom_no_recompress_on_small_growth(regist
     ])
 
     coordinator = DefaultMemoryCompressionCoordinator(
-        max_messages=50, keep_ratio_for_messages=0.5, summary=_SimpleSummary(),
+        max_messages=50, keep_ratio_for_messages=0.5, archive_generation=_SimpleArchiveGeneration(),
     )
     result = await coordinator.maybe_compress(session=session, archive=archive, context=ctx)
     assert result.committed

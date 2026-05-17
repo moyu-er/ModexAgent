@@ -118,7 +118,9 @@ framework/
   plugins/           插件系统
   sandbox/           沙箱适配器
   security/          安全策略
-  extensions/        可选扩展，例如 LiteLLM、Chroma、FAISS、SQLAlchemy
+  providers/         LLM 提供者实现（LiteLLM、OpenAI）
+  ioc/               类型化配置和工厂层
+  runtime/           运行时状态存储、快照、编解码
 
 examples/
   bot_project/       功能较完整的 Bot 示例项目

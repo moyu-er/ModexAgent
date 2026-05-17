@@ -61,7 +61,7 @@ async def test_compression_keeps_latest_user_within_hard_message_ratio() -> None
 
     result = await coordinator.maybe_compress(
         session=session,
-        archive=archive,
+        archive=None,
         context=MemoryContext(session_id="s1", user_id="u1"),
     )
 
@@ -78,7 +78,6 @@ async def test_compression_user_beats_agent_when_budget_allows_one() -> None:
         {"role": MessageRole.USER, "content": "human"},
     ]
     session = _Session(messages)
-    archive = _Archive()
     coordinator = DefaultMemoryCompressionCoordinator(
         max_messages=1,
         max_tokens=None,
@@ -87,7 +86,7 @@ async def test_compression_user_beats_agent_when_budget_allows_one() -> None:
 
     await coordinator.maybe_compress(
         session=session,
-        archive=archive,
+        archive=None,
         context=MemoryContext(session_id="s1", user_id="u1"),
     )
 
@@ -102,7 +101,6 @@ async def test_compression_does_not_persist_lossy_content() -> None:
         {"role": MessageRole.USER, "content": "new"},
     ]
     session = _Session(messages)
-    archive = _Archive()
     coordinator = DefaultMemoryCompressionCoordinator(
         max_messages=2,
         max_tokens=None,
@@ -111,7 +109,7 @@ async def test_compression_does_not_persist_lossy_content() -> None:
 
     await coordinator.maybe_compress(
         session=session,
-        archive=archive,
+        archive=None,
         context=MemoryContext(session_id="s1", user_id="u1"),
     )
 

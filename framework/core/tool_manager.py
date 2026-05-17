@@ -219,12 +219,16 @@ class ToolResult:
         error: str | None = None,
         execution_time: float = 0.0,
         call_id: str | None = None,
+        overflow_processed: bool = False,
     ):
         self.tool_name = tool_name
         self.result = result
         self.error = error
         self.execution_time = execution_time
         self.call_id = call_id
+        # Internal flag — prevents double-processing by overflow interceptors.
+        # Not included in to_dict() / to_message() as it is ephemeral.
+        self.overflow_processed = overflow_processed
 
     @property
     def success(self) -> bool:

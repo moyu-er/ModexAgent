@@ -87,7 +87,7 @@ agents:
     memory:
       short_term:
         max_messages: 100
-        max_tokens: 100000
+        max_tokens: 60000
         keep_ratio_for_messages: 0.4
         keep_ratio_for_token: 0.4
         auto_llm_compression: true
@@ -146,7 +146,7 @@ agents:
       - **完成后通过 send_message_async 向 main 发送结果**
     max_steps: 30
     memory:
-      short_term: {max_messages: 50, max_tokens: 50000, keep_ratio_for_messages: 0.5, keep_ratio_for_token: 0.5}
+      short_term: {max_messages: 50, max_tokens: 30000, keep_ratio_for_messages: 0.5, keep_ratio_for_token: 0.5}
       # Governance: tool_chain_repair only (no lossy compaction for peers).
       # ToolChainRepair ensures orphan tool results are cleaned up before
       # each LLM call, preventing API 400 errors.
@@ -189,7 +189,7 @@ agents:
     standard_tools: false
     mcp_filter: ["12306-mcp"]
     memory:
-      short_term: {max_messages: 30, max_tokens: 50000, keep_ratio_for_messages: 0.5, keep_ratio_for_token: 0.5}
+      short_term: {max_messages: 30, max_tokens: 20000, keep_ratio_for_messages: 0.5, keep_ratio_for_token: 0.5}
       governance: {}
 
   - name: helper-sync
@@ -209,7 +209,7 @@ agents:
       - 遇到障碍时尝试替代方案，如实记录尝试过程
     max_steps: 10
     memory:
-      short_term: {max_messages: 30, max_tokens: 50000, keep_ratio_for_messages: 0.5, keep_ratio_for_token: 0.5}
+      short_term: {max_messages: 30, max_tokens: 20000, keep_ratio_for_messages: 0.5, keep_ratio_for_token: 0.5}
       governance: {}
 
 # ---- Plugins (OFF by default) ----

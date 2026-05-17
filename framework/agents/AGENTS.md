@@ -1,23 +1,23 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-04-30 -->
+<!-- Generated: 2026-05-16 | Updated: 2026-05-16 -->
 
 # agents
 
-## Purpose
-Agent reasoning pattern implementations. Each sub-package implements a specific reasoning strategy (ReAct, Summarizer) following the `Agent[E]` generic contract.
+Agent reasoning pattern implementations. Each sub-package implements a specific strategy following the `Agent[E]` generic contract.
 
 ## Subdirectories
+
 | Directory | Purpose |
 |-----------|---------|
-| `react/` | `ReActAgent` — Thought → Action → Observation loop with `ReActEvent` events (see `react/AGENTS.md`) |
-| `summarizer/` | Summarizer agent — content summarization variant |
+| `react/` | `ReActAgent` — Thought→Action→Observation loop with `ReActEvent` events (see `react/AGENTS.md`) |
+| `summarizer/` | `SummarizerAgent` — single-turn tool-free summarization with predefined prompts |
 
 ## For AI Agents
 
 ### Working In This Directory
 - New agent strategies go in new subdirectories
 - Each agent must inherit `Agent[E]` and define `event_enum`
-- Builder pattern: each agent subdirectory should have a `builder.py` with `build_agent()` and `build_emitter_factory()`
+- `SummarizerAgent` uses predefined prompt types: PROMPT_COMPRESSION, PROMPT_FACT_EXTRACTION, PROMPT_MEMORY_UPDATE, PROMPT_KNOWLEDGE_CONSOLIDATION
 
 ### Common Patterns
 ```python
@@ -27,8 +27,3 @@ class MyAgent(Agent[MyEvent]):
     async def run(self, context: AgentContext, emitter: ContentEmitter[MyEvent]) -> AgentResult:
         ...
 ```
-## Current Runtime Status
-
-`framework.agents.react` is graph-based (`StartNode`, `LLMNode`, `ToolNode`,
-`EndNode`). Clean/full mode behavior and runtime service boundaries are
-layered runtime services.

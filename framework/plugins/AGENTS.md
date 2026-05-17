@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-04-30 -->
+<!-- Generated: 2026-05-16 -->
 
 # plugins
 
@@ -9,17 +9,13 @@ Plugin system — convention-based extensibility. Three discovery sources: bundl
 ## Key Files
 | File | Description |
 |------|-------------|
-| `__init__.py` | Plugin system exports |
-| `context.py` | `PluginContext` — registration facade for tools, memory providers, hooks |
+| `abc.py` | `MemoryProvider` ABC — `add()`, `search()`, `prefetch()`, `on_pre_compress()`, `system_prompt_block()` |
+| `context.py` | `PluginContext` — registration facade: `register_tool()`, `register_memory_provider()`, `register_hook()`, `register_skill_source()`, `add_memory_system_modifier()` |
+| `loader.py` | `PluginLoader` — injection bridge between plugin modules and framework |
+| `manager.py` | `PluginManager` — three-source discovery and lifecycle (bundled > user > PyPI) |
 
 ## For AI Agents
-
-### Working In This Directory
 - Plugin contract: `def register(ctx: PluginContext) -> None:`
-- `ctx.register_tool(...)`, `ctx.register_memory_provider(...)`, `ctx.register_hook(...)`
-- `MemoryProvider` ABC: `add()`, `search()`, `prefetch()` methods
-## Current Runtime Status
-
-Plugins may contribute hooks, tools, or policies, but ReAct clean mode should run
-without plugin-provided runtime services unless explicitly re-enabled by full
-mode assembly.
+- `PluginContext` is the sole registration surface; plugins never import framework internals directly
+- `MemoryProvider` ABC provides the memory extension point with search and prefetch semantics
+- ReAct clean mode runs without plugin-provided runtime services unless full mode re-enables them

@@ -667,20 +667,44 @@ async def test_full_add_messages_compression_archive_cascade():
     Adding 96 messages should trigger compression, truncate session, and
     write archive entries — all through the normal add_messages path.
     """
-    from framework.memory.compression.policies import DefaultMemoryCompressionCoordinator, SummaryStrategy
+    from framework.memory.archive_generation import ArchiveGenerationStrategy
+    from framework.memory.archive_models import (
+        ArchiveChannel,
+        ArchiveGenerationInputs,
+        ArchiveGenerationResult,
+        ArchiveInputStats,
+        ArchiveWrite,
+    )
+    from framework.memory.compression.policies import DefaultMemoryCompressionCoordinator
     from framework.memory.default_system import DefaultMemorySystem
     from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
     from framework.memory.registry.in_memory import InMemoryStoreRegistry
 
-    class _Summary(SummaryStrategy):
-        async def summarize(self, messages, context, reason):
-            return "compressed summary"
+    class _ArchiveGeneration(ArchiveGenerationStrategy):
+        async def generate(self, messages, context, reason):
+            return ArchiveGenerationResult(
+                writes=(
+                    ArchiveWrite(channel=ArchiveChannel.CONTEXT, summary="compressed context"),
+                    ArchiveWrite(channel=ArchiveChannel.KNOWLEDGE, summary="compressed knowledge"),
+                ),
+                inputs=ArchiveGenerationInputs(
+                    context_transcript="",
+                    knowledge_transcript="",
+                    stats=ArchiveInputStats(
+                        input_messages=len(messages),
+                        context_messages=len(messages),
+                        knowledge_messages=len(messages),
+                        tool_chains=0,
+                        dropped_messages=0,
+                    ),
+                ),
+            )
 
     registry = InMemoryStoreRegistry()
     layer_set = MemoryLayerFactory.single_user(registry=registry)
     ctx = MemoryContext(session_id="e2e-cascade")
 
-    coordinator = DefaultMemoryCompressionCoordinator(max_messages=50, summary=_Summary())
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=50, archive_generation=_ArchiveGeneration())
     lifecycle = DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator)
     system = DefaultMemorySystem(layer_set=layer_set, store_registry=registry, lifecycle_policy=lifecycle)
     await system.initialize()
@@ -699,30 +723,51 @@ async def test_full_add_messages_compression_archive_cascade():
     assert len(entries) > 0, \
         f"archive should have compression entries, got {len(entries)}"
 
-    # Compression summary should be stored in session state
-    storage = await registry.resolve(
-        layer=MemoryLayerName.SESSION, scope=SessionScope(), context=ctx,
-    )
-    summary = await storage.get(".compression_summary")
-    assert summary is not None, "compression summary should be persisted"
+    # Archive entries should exist from compression
+    entries = await layer_set.archive.get_recent(ctx, limit=20)
+    assert len(entries) > 0, "archive should have compression entries"
 
 
 async def test_cascaded_compression_retains_tool_chain_integrity():
     """After compression via add_messages, tool chains in the suffix are intact."""
-    from framework.memory.compression.policies import DefaultMemoryCompressionCoordinator, SummaryStrategy
+    from framework.memory.archive_generation import ArchiveGenerationStrategy
+    from framework.memory.archive_models import (
+        ArchiveChannel,
+        ArchiveGenerationInputs,
+        ArchiveGenerationResult,
+        ArchiveInputStats,
+        ArchiveWrite,
+    )
+    from framework.memory.compression.policies import DefaultMemoryCompressionCoordinator
     from framework.memory.default_system import DefaultMemorySystem
     from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
     from framework.memory.registry.in_memory import InMemoryStoreRegistry
 
-    class _Summary(SummaryStrategy):
-        async def summarize(self, messages, context, reason):
-            return "compressed summary"
+    class _ArchiveGeneration(ArchiveGenerationStrategy):
+        async def generate(self, messages, context, reason):
+            return ArchiveGenerationResult(
+                writes=(
+                    ArchiveWrite(channel=ArchiveChannel.CONTEXT, summary="compressed context"),
+                    ArchiveWrite(channel=ArchiveChannel.KNOWLEDGE, summary="compressed knowledge"),
+                ),
+                inputs=ArchiveGenerationInputs(
+                    context_transcript="",
+                    knowledge_transcript="",
+                    stats=ArchiveInputStats(
+                        input_messages=len(messages),
+                        context_messages=len(messages),
+                        knowledge_messages=len(messages),
+                        tool_chains=0,
+                        dropped_messages=0,
+                    ),
+                ),
+            )
 
     registry = InMemoryStoreRegistry()
     layer_set = MemoryLayerFactory.single_user(registry=registry)
     ctx = MemoryContext(session_id="e2e-toolchain")
 
-    coordinator = DefaultMemoryCompressionCoordinator(max_messages=8, summary=_Summary())
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=8, archive_generation=_ArchiveGeneration())
     lifecycle = DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator)
     system = DefaultMemorySystem(layer_set=layer_set, store_registry=registry, lifecycle_policy=lifecycle)
     await system.initialize()
@@ -763,20 +808,44 @@ async def test_cascaded_compression_retains_tool_chain_integrity():
 
 async def test_archive_retrieval_after_compression():
     """Compressed archive entries are retrievable via get_history_entries."""
-    from framework.memory.compression.policies import DefaultMemoryCompressionCoordinator, SummaryStrategy
+    from framework.memory.archive_generation import ArchiveGenerationStrategy
+    from framework.memory.archive_models import (
+        ArchiveChannel,
+        ArchiveGenerationInputs,
+        ArchiveGenerationResult,
+        ArchiveInputStats,
+        ArchiveWrite,
+    )
+    from framework.memory.compression.policies import DefaultMemoryCompressionCoordinator
     from framework.memory.default_system import DefaultMemorySystem
     from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
     from framework.memory.registry.in_memory import InMemoryStoreRegistry
 
-    class _Summary(SummaryStrategy):
-        async def summarize(self, messages, context, reason):
-            return "compressed summary"
+    class _ArchiveGeneration(ArchiveGenerationStrategy):
+        async def generate(self, messages, context, reason):
+            return ArchiveGenerationResult(
+                writes=(
+                    ArchiveWrite(channel=ArchiveChannel.CONTEXT, summary="compressed context"),
+                    ArchiveWrite(channel=ArchiveChannel.KNOWLEDGE, summary="compressed knowledge"),
+                ),
+                inputs=ArchiveGenerationInputs(
+                    context_transcript="",
+                    knowledge_transcript="",
+                    stats=ArchiveInputStats(
+                        input_messages=len(messages),
+                        context_messages=len(messages),
+                        knowledge_messages=len(messages),
+                        tool_chains=0,
+                        dropped_messages=0,
+                    ),
+                ),
+            )
 
     registry = InMemoryStoreRegistry()
     layer_set = MemoryLayerFactory.single_user(registry=registry)
     ctx = MemoryContext(session_id="e2e-retrieval")
 
-    coordinator = DefaultMemoryCompressionCoordinator(max_messages=5, summary=_Summary())
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=5, archive_generation=_ArchiveGeneration())
     lifecycle = DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator)
     system = DefaultMemorySystem(layer_set=layer_set, store_registry=registry, lifecycle_policy=lifecycle)
     await system.initialize()
@@ -801,20 +870,44 @@ async def test_scoped_message_history_triggers_compression():
     Since it calls session.add_messages() directly, not
     DefaultMemorySystem.add_messages(), the lifecycle hook is skipped.
     """
-    from framework.memory.compression.policies import DefaultMemoryCompressionCoordinator, SummaryStrategy
+    from framework.memory.archive_generation import ArchiveGenerationStrategy
+    from framework.memory.archive_models import (
+        ArchiveChannel,
+        ArchiveGenerationInputs,
+        ArchiveGenerationResult,
+        ArchiveInputStats,
+        ArchiveWrite,
+    )
+    from framework.memory.compression.policies import DefaultMemoryCompressionCoordinator
     from framework.memory.default_system import DefaultMemorySystem
     from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
     from framework.memory.registry.in_memory import InMemoryStoreRegistry
 
-    class _Summary(SummaryStrategy):
-        async def summarize(self, messages, context, reason):
-            return "compressed summary"
+    class _ArchiveGeneration(ArchiveGenerationStrategy):
+        async def generate(self, messages, context, reason):
+            return ArchiveGenerationResult(
+                writes=(
+                    ArchiveWrite(channel=ArchiveChannel.CONTEXT, summary="compressed context"),
+                    ArchiveWrite(channel=ArchiveChannel.KNOWLEDGE, summary="compressed knowledge"),
+                ),
+                inputs=ArchiveGenerationInputs(
+                    context_transcript="",
+                    knowledge_transcript="",
+                    stats=ArchiveInputStats(
+                        input_messages=len(messages),
+                        context_messages=len(messages),
+                        knowledge_messages=len(messages),
+                        tool_chains=0,
+                        dropped_messages=0,
+                    ),
+                ),
+            )
 
     registry = InMemoryStoreRegistry()
     layer_set = MemoryLayerFactory.single_user(registry=registry)
     ctx = MemoryContext(session_id="e2e-history")
 
-    coordinator = DefaultMemoryCompressionCoordinator(max_messages=10, summary=_Summary())
+    coordinator = DefaultMemoryCompressionCoordinator(max_messages=10, archive_generation=_ArchiveGeneration())
     lifecycle = DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator)
     system = DefaultMemorySystem(
         layer_set=layer_set, store_registry=registry, lifecycle_policy=lifecycle,
@@ -846,14 +939,38 @@ async def test_scoped_message_history_compresses_during_long_tool_loop():
     threshold must still be enforced after matched tool results, while the
     coordinator keeps assistant/tool pairs structurally legal.
     """
-    from framework.memory.compression.policies import DefaultMemoryCompressionCoordinator, SummaryStrategy
+    from framework.memory.archive_generation import ArchiveGenerationStrategy
+    from framework.memory.archive_models import (
+        ArchiveChannel,
+        ArchiveGenerationInputs,
+        ArchiveGenerationResult,
+        ArchiveInputStats,
+        ArchiveWrite,
+    )
+    from framework.memory.compression.policies import DefaultMemoryCompressionCoordinator
     from framework.memory.default_system import DefaultMemorySystem
     from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
     from framework.memory.registry.in_memory import InMemoryStoreRegistry
 
-    class _Summary(SummaryStrategy):
-        async def summarize(self, messages, context, reason):
-            return "compressed summary"
+    class _ArchiveGeneration(ArchiveGenerationStrategy):
+        async def generate(self, messages, context, reason):
+            return ArchiveGenerationResult(
+                writes=(
+                    ArchiveWrite(channel=ArchiveChannel.CONTEXT, summary="compressed context"),
+                    ArchiveWrite(channel=ArchiveChannel.KNOWLEDGE, summary="compressed knowledge"),
+                ),
+                inputs=ArchiveGenerationInputs(
+                    context_transcript="",
+                    knowledge_transcript="",
+                    stats=ArchiveInputStats(
+                        input_messages=len(messages),
+                        context_messages=len(messages),
+                        knowledge_messages=len(messages),
+                        tool_chains=0,
+                        dropped_messages=0,
+                    ),
+                ),
+            )
 
     registry = InMemoryStoreRegistry()
     layer_set = MemoryLayerFactory.single_user(registry=registry)
@@ -862,7 +979,7 @@ async def test_scoped_message_history_compresses_during_long_tool_loop():
     coordinator = DefaultMemoryCompressionCoordinator(
         max_messages=10,
         keep_ratio_for_messages=0.4,
-        summary=_Summary(),
+        archive_generation=_ArchiveGeneration(),
     )
     lifecycle = DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator)
     system = DefaultMemorySystem(

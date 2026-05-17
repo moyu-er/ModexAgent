@@ -1,69 +1,43 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-04-30 -->
 
 # hook
 
 ## Purpose
-Lifecycle extension points — lightweight observation, context injection, policy veto. Hooks execute at 9 defined `HookPoint`s and must be fast (default 10s timeout). Unlike Interceptors, hooks do NOT wrap execution — they observe and optionally modify context.
+Lifecycle extension points -- lightweight observation, context injection, policy veto.
+Hooks execute at 9 defined `HookPoint`s and must be fast (default 10s timeout).
+Unlike Interceptors, hooks do NOT wrap execution -- they observe and optionally modify context.
 
 ## Key Files
 | File | Description |
 |------|-------------|
-| `abc.py` | `HookPoint` enum (9 points), `Hook` Protocol, `HookSpec`, `HookPayload`, `HookResult`, `HookErrorPolicy` |
-| `runner.py` | `HookRunner` — sequential dispatch with per-hook timeout, error policy (IGNORE/LOG/ABORT), veto aggregation |
-| `__init__.py` | Public API exports |
+| `abc.py` | `HookPoint` enum (9 points), `Hook` Protocol (all methods optional), `HookSpec[R]`, `HookPayload`, `HookResult`, `HookErrorPolicy` |
+| `runner.py` | `HookRunner[R]` -- sequential dispatch with per-hook timeout, error policy (IGNORE/LOG/ABORT), veto aggregation, `dispatch_finalize` for sync chain |
+| `__init__.py` | Public API: Hook, HookRunner, HookPoint, HookSpec, HookResult, HookErrorPolicy, HookPayload |
 
 ## Subdirectories
 | Directory | Purpose |
 |-----------|---------|
-| `builtin/` | Framework-provided hooks — logging, runtime-context, inbox-flush, peer-auto-send, subagent-cleanup, dynamic-tool-filter, tool-policy-guard, llm-output-guard, tool-result-transform, progress-report (see `builtin/AGENTS.md`) |
+| `builtin/` | 10 framework hooks -- logging, runtime_context, inbox_flush, peer_auto_send, subagent_cleanup, dynamic_tool_filter, llm_output_guard, tool_result_transform, progress_report |
 
-## For AI Agents
+## HookPoint Dispatch
+| HookPoint | Method | When | Common Use |
+|-----------|--------|------|------------|
+| `BEFORE_TURN` | `before_turn` | Agent.run() entry, once | Reset state, flush inbox |
+| `AFTER_TURN` | `after_turn` | Agent.run() exit (all paths), once | Logging, cleanup |
+| `BEFORE_ITERATION` | `before_iteration` | Each ReAct loop iteration | Dynamic tool filtering |
+| `AFTER_ITERATION` | `after_iteration` | After each iteration | Restore state |
+| `BEFORE_TOOL_EXECUTION` | `before_tool_execution` | Before tool batch | Policy guard |
+| `AFTER_TOOL_EXECUTION` | `after_tool_execution` | After tool batch | Result transform |
+| `AFTER_LLM_RESPONSE` | `after_llm_response` | After LLM response | Output guard |
+| `ON_CONTROL_COMMAND` | `on_control_command` | Control command arrives | Veto commands |
+| `FINALIZE_CONTENT` | `finalize_content` | Before final output (sync) | Content formatting |
 
-### Working In This Directory
-- New hooks implement the `Hook` Protocol — all methods are optional
-- Hook method names must match `HookPoint` values (e.g., `before_turn`, `after_llm_response`)
-- Per-turn state MUST be stored in `ctx.runtime.state` (typed `TurnStateBase`), NOT instance attributes (pool mode safety)
-- Instance-level state (if unavoidable) must be keyed by `session_id` (e.g., `self._state[sid]`)
-- Hooks can return `HookResult(veto=True)` to veto an operation (lightweight denial)
-
-### Hook Points
-| HookPoint | When Called | Common Use |
-|-----------|------------|------------|
-| `before_turn` | Agent.run() entry | Reset state, flush inbox |
-| `after_turn` | Agent.run() exit (all paths) | Logging, cleanup |
-| `before_iteration` | Each ReAct loop iteration | Dynamic tool filtering, drain injections |
-| `after_iteration` | After each iteration | Restore tool_manager |
-| `before_tool_execution` | Before tool batch executes | Policy guard, filter tool list |
-| `after_tool_execution` | After tool batch completes | Result transform, progress report |
-| `after_llm_response` | After LLM response received | Output guard, content sanitize |
-| `on_control_command` | When control command arrives | Veto control commands |
-| `finalize_content` | Before sending final content | Content formatting (sync) |
-
-### Testing Requirements
-- Tests in `tests/unit/test_hooks.py`, `tests/unit/test_hook_error_policy.py`
-- Test error policies: IGNORE, LOG, ABORT
-- Test timeout behavior (hook exceeding `hook_timeout`)
-
-### Common Patterns
-```python
-class MyHook:
-    async def before_iteration(self, ctx: AgentContext) -> None:
-        ctx.runtime.state.custom[TurnCustomKey.STREAM_CANCELLED] = value
-
-    async def after_iteration(self, ctx: AgentContext) -> None:
-        ctx.runtime.state.custom.pop(TurnCustomKey.STREAM_CANCELLED, None)
-```
+## Design Rules
+- Hook method names must match HookPoint values (e.g. `before_turn`)
+- Per-turn state MUST go in `ctx.runtime.state`, NOT instance attributes (pool mode safety)
+- Instance-level state keyed by `session_id` if unavoidable
+- `HookResult(veto=True)` for lightweight denial; does NOT exit the agent
+- ReAct clean mode runs without hook services
 
 ## Dependencies
-
-### Internal
-- `framework.core.agent` — `AgentContext`
-
-### External
-- None
-## Current Runtime Status
-
-Hooks observe or transform lifecycle payloads; they do not wrap execution.
-Per-turn state belongs in `ctx.runtime.state`, especially in pool mode. ReAct clean
-mode should run without hook services.
+- `framework.core.agent` -- AgentContext

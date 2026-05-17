@@ -1,23 +1,23 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-04-30 -->
 
 # utils
 
-## Purpose
-General-purpose utilities — media processing, tokenization, helpers. No domain-specific logic.
+General-purpose utilities — no domain-specific logic. Stateless helpers free of framework dependencies.
 
 ## Key Files
+
 | File | Description |
 |------|-------------|
-| `media_utils.py` | `MediaProcessor` — handles image/audio/video attachments, multi-modal content building |
-| Other files | Token counting, string helpers, etc. |
+| `tokenizer.py` | Token estimation for context budgeting |
+| `context_builder.py` | Context assembly from multiple sources |
+| `deduplicator.py` | Message deduplication logic |
+| `sanitizer.py` | Content sanitization and cleaning |
+| `helpers.py` | General-purpose helper functions |
+| `log_fmt.py` | Log formatting utilities |
+| `media_utils.py` | `MediaProcessor` — image/audio/video attachments, multi-modal content |
+| `message_builder.py` | Message construction helpers |
+| `think_tag.py` | Think-tag extraction (streaming + non-streaming) |
 
-## For AI Agents
-
-### Working In This Directory
-- `MediaProcessor`: processes file attachments, extracts document text, builds OpenAI-compatible multi-modal content
-- Keep utilities stateless and free of framework dependencies
-## Current Runtime Status
-
-Utility code should stay runtime-agnostic unless it is explicitly part of the
-hook/interceptor/control integration.
+## Notes
+- Keep utilities stateless and runtime-agnostic unless explicitly part of hook/interceptor/control integration.
+- `MediaProcessor` builds OpenAI-compatible multi-modal content blocks.

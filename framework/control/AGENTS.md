@@ -1,52 +1,55 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-04-30 -->
 
 # control
 
 ## Purpose
-Runtime control plane — the command input and event output layer. Provides `ControlChannel` (command queue with session routing), `ControlEventBus` (pub/sub event output), `RuntimeStateStore` (state persistence), and the unified exception model (`AgentControlError` hierarchy).
+
+Runtime control plane -- bidirectional command/event layer. Provides `ControlChannel`
+(inbound commands), `ControlEventBus` (outbound events), `ControlStore` (durable
+persistence), `ControlRuntime` (safe-boundary drain), task supervision, policy
+registry, and the unified `AgentControlError` exception hierarchy.
 
 ## Key Files
+
 | File | Description |
 |------|-------------|
-| `types.py` | `ControlCommand`, `ControlEvent`, `ControlScope`, `ControlCommandType`, `ControlEventType` enums |
-| `channel.py` | `ControlChannel` Protocol + `InMemoryControlChannel` — session×command_type routed deques with `asyncio.Lock` |
-| `event_bus.py` | `ControlEventBus` Protocol + `CallbackControlEventBus` — session-routed pub/sub with async handler support |
-| `checkpoint.py` | `RuntimeStateStore` Protocol, `JsonFileRuntimeStateStore`, `NoOpRuntimeStateStore`, `ApprovalDenialContext` |
-| `exceptions.py` | `AgentControlError`, `AgentCancelled`, `AgentTimeout`, `ApprovalDenied`, `PolicyViolation`, `TerminationReason` |
-| `preset.py` | `PresetControlRule`, `TokenBudgetControlRule` — pre-configured control policies |
-| `__init__.py` | Public API barrel exports |
+| `types.py` | `ControlCommand`, `ControlEvent`, `ControlScope`, `ControlCommandType` (13 types), `ControlEventType` (12 types). |
+| `channel.py` | `ControlChannel` Protocol + `InMemoryControlChannel` -- session-routed deques with TTL. |
+| `event_bus.py` | `ControlEventBus` Protocol + `CallbackControlEventBus` -- session-scoped pub/sub. |
+| `runtime.py` | `ControlRuntime` + `ControlPhase` enum (5 drain phases). Wires channel -> store -> handlers. |
+| `store.py` | `ControlStore` Protocol + `InMemoryControlStore` -- durable command queue with claim semantics. |
+| `exceptions.py` | `AgentControlError` hierarchy: `AgentCancelled`, `AgentTimeout`, `ApprovalDenied`, `PolicyViolation`. `TerminationReason` enum. |
+| `task_supervision.py` | `TaskSupervisor` + `TaskSupervisionPolicy` -- timeout monitoring, heartbeat, policy-based cancellation. |
+| `preset.py` | `PresetControlRule` Protocol + `TokenBudgetControlRule` -- policy objects that produce `ControlCommand`. |
+| `policy_registry.py` | `SupervisionPolicyRegistry` -- named lookup for supervision policy classes. |
+| `ui/abc.py` | `ControlUserInterface` ABC -- `render_message`, `render_question`, `update_message`. |
+| `ui/cli.py` | `CLIUserInterface` -- terminal print + input (sync blocking). |
+| `ui/im.py` | `IMUserInterface` -- OutputAdapter for sending + ControlChannel polling for responses. |
+| `ui/noop.py` | `NoopUserInterface` -- headless/cron, all no-op. |
 
-## For AI Agents
+## Architecture
 
-### Working In This Directory
-- All new command types go in `ControlCommandType` enum
-- All new event types go in `ControlEventType` enum
-- `InMemoryControlChannel` stores commands per `session_id → ControlCommandType → deque` — consumers filter by `command_types` set
-- `drain()` is destructive (consumes commands); `peek()` is read-only
-- Per-command TTL overrides global TTL; expired commands cleaned on access
+Bidirectional: inbound via `ControlChannel` (drain at safe boundaries), outbound via
+`ControlEventBus`. `ControlRuntime` is the drain orchestrator:
 
-### Testing Requirements
-- Tests in `tests/unit/test_control_channel*.py`, `tests/unit/test_event_bus*.py`, `tests/unit/test_checkpoint*.py`
-- Test session isolation: commands from different sessions must not leak
-- Test `command_types` filtering: drain with type filter must not affect other types
-- Test `drain` limit truncation: unconsumed commands must remain in queue
+```
+channel.drain() or store.claim_commands()
+  -> CommandHandlerRegistry dispatches each command
+  -> executed at ControlPhase boundaries
+```
 
-### Common Patterns
-- Protocol for contracts, concrete class for implementation
-- `asyncio.Lock` for thread-safety in `InMemoryControlChannel`
-- All control commands flow through `ControlChannel.send()` → drain by consumers
-- All events flow through `ControlEventBus.emit()` → subscribe by handlers
+## Drain Phases
 
-## Dependencies
+`BEFORE_TURN`, `BEFORE_ITERATION`, `BEFORE_LLM`, `BEFORE_TOOL_BATCH`, `BEFORE_TOOL_CALL`.
 
-### Internal
-- `framework.core` — `AgentContext` (type-checking only)
+## Exception Model
 
-### External
-- None
-## Current Runtime Status
+`AgentControlError` is the base. Subclasses carry `TerminationReason`. `asyncio.CancelledError`
+and `KeyboardInterrupt` are never caught by control code.
 
-Control is the runtime command plane, not just a graph node. Current code supports
-safe-boundary command/event/checkpoint handling; future live intervention should
-target active LLM/tool operation IDs.
+## Key Invariants
+
+- `drain()` is destructive (consumes); `peek()` is read-only.
+- Per-command TTL overrides global TTL; expired commands cleaned on access.
+- All commands flow through `ControlChannel.send()`; all events through `ControlEventBus.emit()`.
+- Protocol for contracts, concrete class for implementation.

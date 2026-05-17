@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime
+from typing import Any
 
+from framework.memory.archive_models import (
+    ArchiveBundleResult,
+    ArchiveChannel,
+    ArchiveChannelStorage,
+    ArchiveState,
+    ArchiveWrite,
+)
 from framework.memory.core.layers import ArchiveMemoryManager
 from framework.memory.core.models import ArchiveEntry, UnprocessedResult
 from framework.memory.core.scope import MemoryContext, MemoryScope
+from framework.memory.core.storage import MemoryStorage
 from framework.memory.history_search import (
     HistorySearchStrategy,
     RecentFirstHistorySearch,
@@ -16,7 +25,32 @@ from framework.memory.layers.config import ArchiveMemoryConfig, StorageFactory
 
 
 class ScopedArchiveMemoryManager(ArchiveMemoryManager):
-    """Archive layer manager that resolves storage through a StorageFactory."""
+    """Archive layer manager that resolves storage through a StorageFactory.
+
+    Coordinate model
+    ---------------
+    ``archive_id`` is the **single** monotonic coordinate shared by both
+    CONTEXT and KNOWLEDGE channels.  Entry ``cursor`` is set equal to
+    ``archive_id`` at write time.  ``.archive_state.json`` is the sole
+    source of truth::
+
+        {"next_archive_id": N, "knowledge_consumed_archive_id": K}
+
+    CONTEXT injection reads ALL entries unconditionally
+    (``since_archive_id=0``) — it does **not** depend on
+    ``knowledge_consumed_archive_id``.
+
+    KNOWLEDGE is consumed by DreamEngine via
+    ``get_unprocessed(channel=KNOWLEDGE)`` which reads only entries with
+    ``archive_id > knowledge_consumed_archive_id``.  After Dream commits
+    the cursor, ``prune_consumed_pairs()`` removes entries from **both**
+    channels whose ``archive_id ≤ knowledge_consumed_archive_id −
+    retained_consumed_archive_pairs`` (default retention: 3 consumed pairs).
+
+    This means consumed KNOWLEDGE entries do NOT immediately remove the
+    corresponding CONTEXT entries from injection — they persist until the
+    retention window advances past them.
+    """
 
     def __init__(
         self,
@@ -31,17 +65,182 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
     def get_scope(self) -> MemoryScope:
         return self._config.scope
 
+    async def _do_prune(self, storage: MemoryStorage) -> None:
+        state = await self._load_state(storage)
+        safe_delete = (
+            state.knowledge_consumed_archive_id
+            - self._config.retained_consumed_archive_pairs
+        )
+        if safe_delete <= 0:
+            return
+        for channel in (ArchiveChannel.CONTEXT, ArchiveChannel.KNOWLEDGE):
+            entries = await self._read_channel_logs(storage, channel)
+            kept = [entry for entry in entries if self._archive_id(entry) > safe_delete]
+            if len(kept) != len(entries):
+                await self._save_channel_logs(storage, channel, kept)
+
     async def append(self, context: MemoryContext, entry: ArchiveEntry) -> ArchiveEntry:
+        metadata = dict(entry.metadata)
+        if entry.created_at is not None:
+            metadata["created_at"] = entry.created_at.isoformat()
+        result = await self.append_bundle(
+            context,
+            (
+                ArchiveWrite(
+                    channel=ArchiveChannel.CONTEXT,
+                    summary=entry.summary,
+                    metadata=metadata,
+                    raw_refs=tuple(entry.raw_refs),
+                ),
+            ),
+        )
+        entries = await self.get_recent(context, limit=1, channel=ArchiveChannel.CONTEXT)
+        stored_entry = entries[-1]
+        return ArchiveEntry(
+            summary=stored_entry.summary,
+            metadata=stored_entry.metadata,
+            entry_id=result.archive_id,
+            created_at=stored_entry.created_at,
+            raw_refs=stored_entry.raw_refs,
+        )
+
+    async def append_bundle(
+        self,
+        context: MemoryContext,
+        writes: Sequence[ArchiveWrite],
+    ) -> ArchiveBundleResult:
+        if not writes:
+            return ArchiveBundleResult(archive_id=0, written_channels=())
         storage = await self._storage_factory(context)
+        written: list[ArchiveChannel] = []
+        async with storage.get_lock().write():
+            state = await self._load_state(storage)
+            archive_id = state.next_archive_id
+            for write in writes:
+                payload = self._payload_for_write(context, write, archive_id)
+                await self._append_channel_log(storage, write.channel, payload)
+                written.append(write.channel)
+            await self._save_state(
+                storage,
+                ArchiveState(
+                    next_archive_id=archive_id + 1,
+                    knowledge_consumed_archive_id=state.knowledge_consumed_archive_id,
+                ),
+            )
+            await self._do_prune(storage)
+        return ArchiveBundleResult(archive_id=archive_id, written_channels=tuple(written))
+
+    async def _load_state(self, storage: MemoryStorage) -> ArchiveState:
+        if isinstance(storage, ArchiveChannelStorage):
+            raw = await storage.read_archive_state()
+        else:
+            raw = await storage.get(".archive_state")
+        if isinstance(raw, Mapping):
+            return ArchiveState(
+                next_archive_id=int(raw.get("next_archive_id", 1)),
+                knowledge_consumed_archive_id=int(raw.get("knowledge_consumed_archive_id", 0)),
+            )
+        return ArchiveState()
+
+    async def _save_state(self, storage: MemoryStorage, state: ArchiveState) -> None:
         payload = {
+            "next_archive_id": state.next_archive_id,
+            "knowledge_consumed_archive_id": state.knowledge_consumed_archive_id,
+        }
+        if isinstance(storage, ArchiveChannelStorage):
+            await storage.write_archive_state(payload)
+            return
+        await storage.set(".archive_state", payload)
+
+    async def _append_channel_log(
+        self,
+        storage: MemoryStorage,
+        channel: ArchiveChannel,
+        payload: dict[str, object],
+    ) -> dict[str, Any]:
+        if isinstance(storage, ArchiveChannelStorage):
+            return await storage.append_channel_log(channel.value, payload)
+        return await storage.append_log(payload)
+
+    async def _read_channel_logs(
+        self,
+        storage: MemoryStorage,
+        channel: ArchiveChannel,
+        *,
+        since_archive_id: int = 0,
+        limit: int = 1_000_000,
+    ) -> list[dict[str, object]]:
+        if isinstance(storage, ArchiveChannelStorage):
+            return await storage.read_channel_logs(channel.value, since_archive_id, limit)
+        entries = await storage.read_logs(since_cursor=0, limit=limit)
+        return [
+            entry for entry in self._filter_channel(entries, channel)
+            if self._archive_id(entry) > since_archive_id
+        ]
+
+    async def _save_channel_logs(
+        self,
+        storage: MemoryStorage,
+        channel: ArchiveChannel,
+        entries: list[dict[str, object]],
+    ) -> None:
+        if isinstance(storage, ArchiveChannelStorage):
+            await storage.save_channel_logs(channel.value, entries)
+            return
+        all_entries = await storage.read_logs(since_cursor=0, limit=1_000_000)
+        other_entries = [
+            entry for entry in all_entries
+            if entry.get("channel") != channel.value
+        ]
+        await storage.save_logs(other_entries + entries)
+
+    def _payload_for_write(
+        self,
+        context: MemoryContext,
+        write: ArchiveWrite,
+        archive_id: int,
+    ) -> dict[str, object]:
+        metadata = {
+            **dict(write.metadata),
+            "archive_id": archive_id,
+            "source_session_id": context.session_id,
+            "source_agent_id": context.agent_id,
+            "source_agent_role": str(context.agent_role) if context.agent_role is not None else None,
+        }
+        created_at = metadata.get("created_at")
+        return {
+            "archive_id": archive_id,
+            "entry_id": archive_id,
+            "channel": write.channel.value,
+            "summary": write.summary,
+            "metadata": metadata,
+            "raw_refs": list(write.raw_refs),
+            "session_id": context.session_id,
+            "created_at": created_at if isinstance(created_at, str) else None,
+        }
+
+    @staticmethod
+    def _filter_channel(
+        entries: list[dict[str, object]],
+        channel: ArchiveChannel,
+    ) -> list[dict[str, object]]:
+        return [entry for entry in entries if entry.get("channel") == channel.value]
+
+    @staticmethod
+    def _archive_id(entry: Mapping[str, object]) -> int:
+        raw = entry.get("archive_id", 0)
+        return int(raw) if isinstance(raw, int | str) else 0
+
+    async def _append_raw(self, context: MemoryContext, entry: ArchiveEntry) -> ArchiveEntry:
+        storage = await self._storage_factory(context)
+        stored = await storage.append_log({
             "summary": entry.summary,
             "metadata": dict(entry.metadata),
             "raw_refs": list(entry.raw_refs),
             "session_id": context.session_id,
-        }
-        if entry.created_at is not None:
-            payload["created_at"] = entry.created_at.isoformat()
-        stored = await storage.append_log(payload)
+            "channel": ArchiveChannel.CONTEXT.value,
+            "created_at": entry.created_at.isoformat() if entry.created_at else None,
+        })
         await self._maybe_prune(context)
         created_at = stored.get("created_at")
         return ArchiveEntry(
@@ -61,19 +260,28 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
             return
         await storage.save_logs(entries[-self._config.max_entries :])
 
-    async def get_recent(self, context: MemoryContext, limit: int = 5) -> list[ArchiveEntry]:
+    async def get_recent(
+        self,
+        context: MemoryContext,
+        limit: int = 5,
+        *,
+        channel: ArchiveChannel = ArchiveChannel.CONTEXT,
+    ) -> list[ArchiveEntry]:
         storage = await self._storage_factory(context)
-        entries = await storage.read_logs(since_cursor=0)
-        return [self._entry_from_dict(entry) for entry in (entries[-limit:] if limit else entries)]
+        channel_entries = await self._read_channel_logs(storage, channel)
+        selected = channel_entries[-limit:] if limit else channel_entries
+        return [self._entry_from_dict(entry) for entry in selected]
 
     async def search(
         self,
         context: MemoryContext,
         query: str,
         limit: int = 5,
+        *,
+        channel: ArchiveChannel = ArchiveChannel.CONTEXT,
     ) -> list[ArchiveEntry]:
         storage = await self._storage_factory(context)
-        entries = await storage.read_logs(since_cursor=0)
+        entries = await self._read_channel_logs(storage, channel)
         results = await self._search_strategy.search(entries, query, limit)
         return [self._entry_from_dict(entry) for entry in results]
 
@@ -82,14 +290,22 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
         context: MemoryContext,
         cursor_name: str,
         limit: int = 100,
+        *,
+        channel: ArchiveChannel = ArchiveChannel.KNOWLEDGE,
     ) -> UnprocessedResult:
         storage = await self._storage_factory(context)
-        since = await storage.get_last_cursor(cursor_name)
-        entries = await storage.read_logs(since_cursor=since, limit=limit)
-        cursor = max((entry.get("cursor", 0) for entry in entries), default=since)
+        state = await self._load_state(storage)
+        since = state.knowledge_consumed_archive_id
+        channel_entries = await self._read_channel_logs(
+            storage,
+            channel,
+            since_archive_id=since,
+        )
+        selected = channel_entries[:limit] if limit else channel_entries
+        cursor = max((self._archive_id(entry) for entry in selected), default=since)
         return UnprocessedResult(
             cursor=cursor,
-            entries=[self._entry_from_dict(entry) for entry in entries],
+            entries=[self._entry_from_dict(entry) for entry in selected],
         )
 
     async def commit_cursor(
@@ -97,13 +313,28 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
         context: MemoryContext,
         cursor_name: str,
         cursor: int,
+        *,
+        channel: ArchiveChannel = ArchiveChannel.KNOWLEDGE,
     ) -> None:
         storage = await self._storage_factory(context)
-        await storage.set_last_cursor(cursor_name, cursor)
+        state = await self._load_state(storage)
+        await self._save_state(
+            storage,
+            ArchiveState(
+                next_archive_id=state.next_archive_id,
+                knowledge_consumed_archive_id=cursor,
+            ),
+        )
+
+    async def prune_consumed_pairs(self, context: MemoryContext) -> None:
+        storage = await self._storage_factory(context)
+        async with storage.get_lock().write():
+            await self._do_prune(storage)
 
     async def clear(self, context: MemoryContext) -> None:
         storage = await self._storage_factory(context)
-        await storage.save_logs([])
+        await self._save_channel_logs(storage, ArchiveChannel.CONTEXT, [])
+        await self._save_channel_logs(storage, ArchiveChannel.KNOWLEDGE, [])
 
     def _entry_from_dict(self, entry: dict[str, object]) -> ArchiveEntry:
         created_at = entry.get("created_at")
@@ -113,11 +344,14 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
             parsed_created_at = None
         metadata = entry.get("metadata")
         raw_refs = entry.get("raw_refs")
-        raw_entry_id = entry.get("entry_id")
+        raw_entry_id = entry.get("archive_id", entry.get("entry_id"))
         entry_id = int(raw_entry_id) if isinstance(raw_entry_id, int | str) else None
+        metadata_dict = dict(metadata) if isinstance(metadata, Mapping) else {}
+        if "archive_id" not in metadata_dict and entry_id is not None:
+            metadata_dict["archive_id"] = entry_id
         return ArchiveEntry(
             summary=str(entry.get("summary") or ""),
-            metadata=metadata if isinstance(metadata, Mapping) else {},
+            metadata=metadata_dict,
             entry_id=entry_id,
             created_at=parsed_created_at,
             raw_refs=list(raw_refs) if isinstance(raw_refs, list) else [],

@@ -28,7 +28,7 @@ async def test_default_registry_uses_layer_first_file_layout(tmp_path: Path) -> 
     stored_entry = await archive_storage.append_log({"summary": "compressed"})
 
     assert (tmp_path / "session" / "s1" / "messages.jsonl").exists()
-    assert (tmp_path / "archive" / "u1" / "archive.jsonl").exists()
+    assert (tmp_path / "archive" / "u1" / "context_archive.jsonl").exists()
     assert stored_entry["cursor"] == 1
     assert stored_entry["entry_id"] == 1
 

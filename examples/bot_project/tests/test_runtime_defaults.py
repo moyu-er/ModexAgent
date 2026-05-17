@@ -13,8 +13,8 @@ from framework.core.types import InputMessage
 from framework.interceptor.builtin import (
     ToolResultLimitInterceptor,
     ToolTimeoutInterceptor,
-    TurnTimeoutInterceptor,
 )
+from framework.interceptor.builtin.turn_timeout import TurnTimeoutInterceptor
 from framework.pipeline.adapters import InputAdapter, NullOutputAdapter
 
 
@@ -48,4 +48,5 @@ def test_default_interceptor_chain_keeps_only_effective_defaults() -> None:
 
     assert any(isinstance(item, ToolResultLimitInterceptor) for item in interceptors)
     assert not any(isinstance(item, TurnTimeoutInterceptor) for item in interceptors)
+    # TurnTimeoutInterceptor 已从默认导出中移除——Agent 通过 max_iterations 自然结束
     assert not any(isinstance(item, ToolTimeoutInterceptor) for item in interceptors)

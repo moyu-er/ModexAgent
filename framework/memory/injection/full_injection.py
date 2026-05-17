@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from framework.core.context import ContextState
+from framework.memory.archive_models import ArchiveChannel
 from framework.memory.core.models import (
     MemoryBudget,
     MemoryContextBundle,
@@ -113,7 +114,10 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
     ) -> None:
         try:
             entries = await memory_system.get_history_entries(
-                context, limit=self._max_history, query=query
+                context,
+                limit=self._max_history,
+                query=query,
+                channel=ArchiveChannel.CONTEXT,
             )
             if entries:
                 blocks: list[str] = []
@@ -135,7 +139,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                 if blocks:
                     sections.append(PromptSection(
                         key="archive:recent",
-                        content="## Historical Conversation Summaries\n\n" + "\n\n".join(blocks),
+                        content="## Historical Context Summaries\n\n" + "\n\n".join(blocks),
                         priority=70, source="system",
                     ))
         except Exception:

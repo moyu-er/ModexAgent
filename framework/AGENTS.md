@@ -1,67 +1,49 @@
-<!-- Generated: 2026-04-30 -->
+<!-- Generated: 2026-05-16 | Updated: 2026-05-16 -->
 
 # framework
 
-## Purpose
-Core multi-agent framework package. Contains all abstractions, implementations, and the three-layer control system (Hook / Interceptor / Control).
-
-## Key Files
-| File | Description |
-|------|-------------|
+Core multi-agent framework package. All abstractions, implementations, and the four-layer runtime model (Hook / Interceptor / Control / Approval).
 
 ## Subdirectories
+
 | Directory | Purpose |
 |-----------|---------|
-| `core/` | Abstract base classes, AgentContext, events, emitter, provider, tool manager (see `core/AGENTS.md`) |
-| `agents/` | Agent reasoning pattern implementations — ReAct, Summarizer (see `agents/AGENTS.md`) |
-| `approval/` | Tiered tool-approval system — tiers, batch atomicity, state store (see `approval/AGENTS.md`) |
-| `pipeline/` | AgentPipeline end-to-end flow orchestration, I/O adapters |
-| `session/` | AgentSession (request/response mode) |
-| `control/` | Runtime control plane — ControlChannel, ControlEventBus, RuntimeStateStore, exceptions (see `control/AGENTS.md`) |
-| `hook/` | Lifecycle extension points — HookPoint, HookRunner, builtin hooks (see `hook/AGENTS.md`) |
-| `interceptor/` | AOP interceptor system — InterceptorChain, builtin interceptors (see `interceptor/AGENTS.md`) |
-| `memory/` | Three-layer memory system — core ABCs, managers, compaction, consolidation, stores, injection (see `memory/AGENTS.md`) |
-| `multi_agent/` | Multi-agent orchestration — factory, pool, inbox, subagent_manager, skills |
-| `tools/` | Tool subsystem — registry, executor, MCP integration, standard tools |
-| `plugins/` | Plugin system — PluginManager, PluginContext, MemoryProvider ABC |
-| `messaging/` | MessageBroker, BrokerBridgeService (star-topology communication) |
-| `sandbox/` | Sandboxed execution — LocalPython, E2B, Docker, Subprocess adapters |
-| `security/` | SecurityPolicy, validators, approval handlers |
-| `extensions/` | Optional integrations — LiteLLM provider, ChromaDB/FAISS stores, SQLAlchemy sessions |
-| `utils/` | MediaProcessor, tokenizer, helpers |
-| `adapters/` | InputAdapter / OutputAdapter base classes |
+| `core/` | ABCs, AgentContext, events, emitter, provider, tool manager, graph engine, skills (see `core/AGENTS.md`) |
+| `agents/` | ReActAgent (graph-based), SummarizerAgent (see `agents/AGENTS.md`) |
+| `approval/` | Tiered tool approval — tiers, decisions, response parsing (see `approval/AGENTS.md`) |
+| `pipeline/` | AgentPipeline orchestration, I/O adapters, approval renderer (see `pipeline/AGENTS.md`) |
+| `session/` | AgentSession — request/response mode |
+| `control/` | Runtime control plane — ControlChannel, EventBus, TurnStateStore, ui/ (see `control/AGENTS.md`) |
+| `hook/` | Lifecycle hooks — HookRunner, HookPoint, 10 builtin hooks (see `hook/AGENTS.md`) |
+| `interceptor/` | AOP interceptor chain — InterceptorChain, 8 builtin interceptors (see `interceptor/AGENTS.md`) |
+| `memory/` | Three-layer memory — session/archive/knowledge, compaction, consolidation, injection (see `memory/AGENTS.md`) |
+| `multi_agent/` | Star-topology orchestration — pool, subagent_manager, inbox, factory (see `multi_agent/AGENTS.md`) |
+| `tools/` | Tool subsystem — registry, executor, MCP, standard tools (see `tools/AGENTS.md`) |
+| `plugins/` | Plugin system — PluginManager, PluginContext, MemoryProvider (see `plugins/AGENTS.md`) |
+| `messaging/` | MessageBroker, BrokerBridgeService (see `messaging/AGENTS.md`) |
+| `providers/` | LLM providers — LiteLLM, OpenAI implementations |
+| `ioc/` | AppConfig, typed configs, factory layer (agent, LLM, memory, tools, governance) |
+| `runtime/` | AgentRuntime, TurnStateStore, RuntimeCommandStore, codec, snapshot policy (see `runtime/AGENTS.md`) |
+| `sandbox/` | Sandboxed execution — Subprocess, Docker, E2B, Landlock (see `sandbox/AGENTS.md`) |
+| `security/` | SecurityPolicy, validators, handlers (see `security/AGENTS.md`) |
+| `adapters/` | PlatformAdapter ABC, AdapterRegistry, StreamingMode |
+| `registry/` | Shared registry utilities |
+| `utils/` | tokenizer, context_builder, deduplicator, sanitizer, helpers (see `utils/AGENTS.md`) |
 
 ## For AI Agents
 
 ### Working In This Directory
-- All components use `from __future__ import annotations` for PEP 563
-- Generic type bindings via `TypeVar("E", bound=AgentEvent)` — `Agent[E]`, `ContentEmitter[E]`
-- Dataclasses over dicts for config types
-- Enums/constants over raw strings for all categories/states
+- `from __future__ import annotations` in all modules
+- Generic type bindings: `Agent[E]`, `ContentEmitter[E]` via `TypeVar("E", bound=AgentEvent)`
+- Enums/constants over raw strings, dataclasses over dicts for config
 - Every cross-cutting concern needs an ABC
 
-### Testing Requirements
-- Run `pytest tests/unit/ -v` before committing framework changes
-- Use absolute imports (`from framework.xxx`) in tests
-- Tag integration tests with `@pytest.mark.integration`
+### Testing
+- `pytest tests/unit/ -v` before committing
+- Absolute imports (`from framework.xxx`) in tests
 
 ### Common Patterns
-- `Protocol` for contracts, dataclass `@dataclass` for plain data
-- `scopes: frozenset[InterceptorScope]` for declaring interceptor scopes
-- Hook state stored in `ctx.runtime.state` (typed per-turn state), not instance attributes
-- Control commands flow through `ControlChannel`; events flow through `ControlEventBus`
-
-## Dependencies
-
-### Internal
-- All sub-packages reference `framework.core` for base types
-
-### External
-- `litellm` — LLM provider support
-- `fastapi` — Gateway adapters
-- `chromadb`, `faiss`, `sentence-transformers` — Vector memory
-- `sqlalchemy[asyncio]` — SQLAlchemy sessions
-## Current Runtime Status
-
-The current ReAct runtime is graph-based and integrates hooks, interceptors,
-control, approval, and runtime state through explicit runtime services.
+- `Protocol` for contracts, `@dataclass` for data, `ABC` + `@abstractmethod` for abstract classes
+- `scopes: frozenset[InterceptorScope]` for declaring interceptor scope
+- Per-turn state in `runtime.state` (typed), not instance attributes
+- Control commands: `ControlChannel` inbound; events: `ControlEventBus` outbound

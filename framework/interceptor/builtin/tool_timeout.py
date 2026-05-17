@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_TOOL_TIMEOUT = 60.0
+_DEFAULT_TOOL_TIMEOUT = 180.0
 
 
 class ToolTimeoutInterceptor:

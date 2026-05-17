@@ -8,6 +8,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from framework.memory.archive_models import (
+    CONTEXT_ARCHIVE_FILENAME,
+    KNOWLEDGE_ARCHIVE_FILENAME,
+    ArchiveChannel,
+)
 from framework.memory.core.lock import AioRWLock, StorageLock
 from framework.memory.core.models import StorageRevision
 from framework.memory.core.scope import MemoryLayerName
@@ -16,7 +21,7 @@ from framework.memory.utils import safe_atomic_replace
 
 _KV_FILE = "kv.json"
 _MESSAGES_FILE = "messages.jsonl"
-_ARCHIVE_FILE = "archive.jsonl"
+_ARCHIVE_STATE_FILE = ".archive_state.json"
 _CHANGELOG_FILE = "changelog.jsonl"
 
 
@@ -31,7 +36,7 @@ class DefaultScopedStorage(MemoryStorage):
       ``.checkpoint``, etc.). It is intentionally separate from
       ``messages.jsonl`` so growing tool-call content does **not** bloat
       the context or require full-file rewrites of conversation state.
-    - ``archive.jsonl`` / ``changelog.jsonl`` – layer-specific logs.
+    - ``context_archive.jsonl`` / ``knowledge_archive.jsonl`` – archive channel logs.\n    - ``changelog.jsonl`` – layer-specific changelog.
     - ``.cursor_*`` – cursor tracking files.
     """
 
@@ -73,7 +78,20 @@ class DefaultScopedStorage(MemoryStorage):
     def _log_path(self) -> Path:
         if self.layer == MemoryLayerName.KNOWLEDGE:
             return self.directory / _CHANGELOG_FILE
-        return self.directory / _ARCHIVE_FILE
+        if self.layer == MemoryLayerName.ARCHIVE:
+            return self.directory / CONTEXT_ARCHIVE_FILENAME
+        return self.directory / _CHANGELOG_FILE
+
+    def _channel_log_path(self, channel: str) -> Path:
+        if channel == ArchiveChannel.CONTEXT.value:
+            return self.directory / CONTEXT_ARCHIVE_FILENAME
+        if channel == ArchiveChannel.KNOWLEDGE.value:
+            return self.directory / KNOWLEDGE_ARCHIVE_FILENAME
+        return self._log_path
+
+    @property
+    def _archive_state_path(self) -> Path:
+        return self.directory / _ARCHIVE_STATE_FILE
 
     def _cursor_path(self, cursor_name: str) -> Path:
         return self.directory / f".cursor_{cursor_name}"
@@ -194,6 +212,23 @@ class DefaultScopedStorage(MemoryStorage):
             self._touch()
             return stored
 
+    async def append_channel_log(self, channel: str, entry: dict[str, Any]) -> dict[str, Any]:
+        async with self.get_lock().write():
+            path = self._channel_log_path(channel)
+            archive_id = int(entry.get("archive_id", 0) or 0)
+            stored = {
+                **entry,
+                "cursor": archive_id,
+                "entry_id": entry.get("entry_id") or archive_id,
+                "created_at": entry.get("created_at") or datetime.now(UTC).isoformat(),
+            }
+            self.directory.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(stored, ensure_ascii=False) + "\n")
+            self._set_last_cursor_unsafe("archive", archive_id)
+            self._touch()
+            return stored
+
     async def read_logs(self, since_cursor: int = 0, limit: int = 1000) -> list[dict[str, Any]]:
         async with self.get_lock().read():
             if not self._log_path.exists():
@@ -211,6 +246,29 @@ class DefaultScopedStorage(MemoryStorage):
                             break
             return entries
 
+    async def read_channel_logs(
+        self,
+        channel: str,
+        since_archive_id: int = 0,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        async with self.get_lock().read():
+            path = self._channel_log_path(channel)
+            if not path.exists():
+                return []
+            entries: list[dict[str, Any]] = []
+            with path.open(encoding="utf-8") as handle:
+                for line in handle:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    entry = json.loads(line)
+                    if int(entry.get("archive_id", 0) or 0) > since_archive_id:
+                        entries.append(entry)
+                        if limit and len(entries) >= limit:
+                            break
+            return entries
+
     async def save_logs(self, entries: list[dict[str, Any]]) -> None:
         async with self.get_lock().write():
             self.directory.mkdir(parents=True, exist_ok=True)
@@ -223,6 +281,34 @@ class DefaultScopedStorage(MemoryStorage):
                 self._set_last_cursor_unsafe(
                     "default", max(int(entry.get("cursor", 0)) for entry in entries)
                 )
+            self._touch()
+
+    async def save_channel_logs(self, channel: str, entries: list[dict[str, Any]]) -> None:
+        async with self.get_lock().write():
+            self.directory.mkdir(parents=True, exist_ok=True)
+            path = self._channel_log_path(channel)
+            tmp_path = path.with_suffix(path.suffix + ".tmp")
+            with tmp_path.open("w", encoding="utf-8") as handle:
+                for entry in entries:
+                    handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            safe_atomic_replace(tmp_path, path)
+            self._touch()
+
+    async def read_archive_state(self) -> dict[str, Any] | None:
+        async with self.get_lock().read():
+            if not self._archive_state_path.exists():
+                return None
+            try:
+                data: dict[str, Any] = json.loads(
+                    self._archive_state_path.read_text(encoding="utf-8")
+                )
+                return data
+            except json.JSONDecodeError:
+                return None
+
+    async def write_archive_state(self, state: dict[str, Any]) -> None:
+        async with self.get_lock().write():
+            self._atomic_json_write(self._archive_state_path, state)
             self._touch()
 
     async def get_last_cursor(self, cursor_name: str = "default") -> int:

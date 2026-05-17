@@ -9,6 +9,12 @@ import time
 from collections.abc import Collection
 from pathlib import Path
 
+from framework.memory.archive_models import (
+    CONTEXT_ARCHIVE_FILE_KEY,
+    CONTEXT_ARCHIVE_FILENAME,
+    KNOWLEDGE_ARCHIVE_FILE_KEY,
+    KNOWLEDGE_ARCHIVE_FILENAME,
+)
 from framework.memory.core.scope import (
     MemoryAgentRole,
     MemoryContext,
@@ -158,10 +164,12 @@ class DefaultMemoryStoreRegistry(MemoryStoreRegistry):
 
     def _has_file(self, scope_dir: Path, has_file: str) -> bool:
         file_map = {
+            CONTEXT_ARCHIVE_FILE_KEY: CONTEXT_ARCHIVE_FILENAME,
+            KNOWLEDGE_ARCHIVE_FILE_KEY: KNOWLEDGE_ARCHIVE_FILENAME,
             "messages": "messages.jsonl",
-            "history": "archive.jsonl",
-            "archive": "archive.jsonl",
-            "logs": "archive.jsonl",
+            "history": CONTEXT_ARCHIVE_FILENAME,
+            "archive": CONTEXT_ARCHIVE_FILENAME,
+            "logs": CONTEXT_ARCHIVE_FILENAME,
             "kv": "kv.json",
         }
         return (scope_dir / file_map.get(has_file, has_file)).exists()

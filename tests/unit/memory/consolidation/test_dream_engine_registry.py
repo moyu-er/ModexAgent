@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from framework.memory.archive_models import KNOWLEDGE_ARCHIVE_FILE_KEY, ArchiveChannel
 from framework.memory.consolidation.dream_engine import DreamEngine
 from framework.memory.core.models import ArchiveEntry, LongTermMemory, UnprocessedResult
 from framework.memory.core.scope import MemoryAgentRole, MemoryContext, MemoryLayerName, ScopeRecord
@@ -14,16 +15,22 @@ class DummyArchiveManager:
     def __init__(self):
         self.seen_contexts = []
         self.committed = []
+        self.pruned_contexts = []
+        self.unprocessed_channels = []
 
-    async def get_unprocessed(self, context, cursor_name, limit=100):
+    async def get_unprocessed(self, context, cursor_name, limit=100, *, channel=ArchiveChannel.KNOWLEDGE):
         self.seen_contexts.append(context)
+        self.unprocessed_channels.append(channel)
         return UnprocessedResult(
             cursor=1,
             entries=[ArchiveEntry(summary="summary", entry_id=1)],
         )
 
-    async def commit_cursor(self, context, cursor_name, cursor):
-        self.committed.append((context, cursor_name, cursor))
+    async def commit_cursor(self, context, cursor_name, cursor, *, channel=ArchiveChannel.KNOWLEDGE):
+        self.committed.append((context, cursor_name, cursor, channel))
+
+    async def prune_consumed_pairs(self, context):
+        self.pruned_contexts.append(context)
 
 
 class DummyKnowledgeManager:
@@ -71,8 +78,10 @@ async def test_dream_engine_scan_all_uses_registry_records() -> None:
     assert registry.calls == [
         {
             "layer": MemoryLayerName.ARCHIVE,
-            "has_file": "history",
+            "has_file": KNOWLEDGE_ARCHIVE_FILE_KEY,
             "agent_roles": {MemoryAgentRole.MAIN},
         }
     ]
-    assert archive.committed == [(context, "dream", 1)]
+    assert archive.unprocessed_channels == [ArchiveChannel.KNOWLEDGE]
+    assert archive.committed == [(context, "dream", 1, ArchiveChannel.KNOWLEDGE)]
+    assert archive.pruned_contexts == [context]
