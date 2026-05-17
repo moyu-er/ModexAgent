@@ -27,10 +27,11 @@ class TimeoutAction(str, Enum):
 
 
 class TurnTimeoutInterceptor:
-    """Turn 超时拦截器。
+    """Turn 超时拦截器（可选，非默认）。
 
     包裹整个 turn，超时时按配置取消或通知。
-    读取 ctx.runtime.safety.turn.agent_run_timeout_seconds 作为默认值。
+    默认不使用——Agent 通过 max_iterations 自然结束。
+    如需整 turn 超时，显式加入 interceptor chain。
     """
 
     scopes = frozenset([InterceptorScope.TURN])

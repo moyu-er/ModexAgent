@@ -75,6 +75,7 @@ from framework.multi_agent.inbox.consumer import InboxConsumer
 from framework.multi_agent.inbox.producer import InboxProducer
 from framework.multi_agent.inbox.server_local import LocalFileInboxServer
 from framework.pipeline.adapters import InputAdapter, OutputAdapter
+from framework.tools.overflow.cleaner import OverflowCleaner
 from .builders import AgentBuilderMixin
 
 logger = logging.getLogger(__name__)
@@ -141,6 +142,9 @@ class BotService(AgentBuilderMixin):
 
         # Auto-compact
         self._auto_compact_task: asyncio.Task | None = None
+
+        # Overflow cleaner
+        self._overflow_cleaner: OverflowCleaner | None = None
 
         # Control plane
         self.control_channel: InMemoryControlChannel | None = None
@@ -336,6 +340,20 @@ class BotService(AgentBuilderMixin):
         # 7. Create AgentFactory (with runtime components)
         hook_runner = self._build_hook_runner(runtime_hooks)
         interceptor_chain = self._build_interceptor_chain()
+
+        # Start overflow cleaner
+        if self.interceptor_chain is not None:
+            from framework.interceptor.builtin.result_limit import ToolResultLimitInterceptor
+            from framework.tools.overflow.cleaner import OverflowCleaner
+            for interceptor in self.interceptor_chain.interceptors:
+                if isinstance(interceptor, ToolResultLimitInterceptor):
+                    handler = getattr(interceptor, '_handler', None)
+                    if handler is not None:
+                        self._overflow_cleaner = handler._cleaner
+                        await self._overflow_cleaner.start()
+                        print("   [OK] OverflowCleaner started")
+                        break
+
         self.agent_factory = DefaultAgentFactory(
             default_llm_provider=self.provider,
             default_tool_manager=self.tool_manager,
@@ -704,8 +722,26 @@ class BotService(AgentBuilderMixin):
         # 1. Control drain – highest priority, processes cancel commands
         chain.add(ControlDrainInterceptor(channel=channel, max_commands=3))
 
-        # 2. Tool result limit – prevents excessively long context
-        chain.add(ToolResultLimitInterceptor(max_chars=8000))
+        # 2. Tool result overflow
+        from framework.tools.overflow.local import LocalFileToolOverflowStore
+        from framework.tools.overflow.cleaner import OverflowCleaner
+        from framework.tools.overflow.handler import ToolResultOverflowHandler
+
+        overflow_dir = self._project_dir / "data"
+        max_chars = 10000
+        overflow_store = LocalFileToolOverflowStore(workspace=overflow_dir)
+        overflow_cleaner = OverflowCleaner(overflow_store)
+        overflow_handler = ToolResultOverflowHandler(
+            store=overflow_store,
+            cleaner=overflow_cleaner,
+            max_chars=max_chars,
+        )
+        # Ensure store uses the same chunk size as handler
+        overflow_store._max_chunk_size = overflow_handler.max_chunk_size
+        chain.add(ToolResultLimitInterceptor(
+            overflow_handler=overflow_handler,
+            max_chars=10000,
+        ))
 
         self.interceptor_chain = chain
         return chain
@@ -1056,6 +1092,14 @@ class BotService(AgentBuilderMixin):
                 print(f"   [OK] Peer memory system '{peer_name}' closed")
             except Exception as e:
                 print(f"   [WARN] Peer memory system '{peer_name}' close error: {e}")
+
+        if self._overflow_cleaner is not None:
+            try:
+                print("   Stopping OverflowCleaner...")
+                await self._overflow_cleaner.stop()
+                print("   [OK] OverflowCleaner stopped")
+            except Exception as e:
+                print(f"   [WARN] OverflowCleaner stop error: {e}")
 
         if self.memory_system:
             try:
