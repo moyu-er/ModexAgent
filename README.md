@@ -15,17 +15,17 @@ ModexAgent 是一个用于搭建 AI Agent 应用的 Python 框架。它把模型
 
 ## 核心概念
 
-| 概念 | 作用 |
-|------|------|
-| `Agent` | 负责推理和决策，例如 ReAct Agent。 |
-| `Tool` / `ToolManager` | 注册和执行工具。 |
-| `Memory` | 管理会话、历史、长期记忆和上下文压缩。 |
-| `InputAdapter` / `OutputAdapter` | 把外部平台接入框架，例如命令行、HTTP、QQ。 |
-| `AgentPipeline` | 串起输入、上下文、Agent、输出的完整流程。 |
-| `Hook` | 在生命周期节点观察或调整上下文。 |
-| `Interceptor` | 包裹工具、模型流、回合等执行边界。 |
-| `Control` | 运行时控制通道，用于取消、审批、注入指令等流程控制。 |
-| `Plugin` | 以插件形式扩展工具、记忆、hook 或其他能力。 |
+| 概念                             | 作用                                                 |
+| -------------------------------- | ---------------------------------------------------- |
+| `Agent`                          | 负责推理和决策，例如 ReAct Agent。                   |
+| `Tool` / `ToolManager`           | 注册和执行工具。                                     |
+| `Memory`                         | 管理会话、历史、长期记忆和上下文压缩。               |
+| `InputAdapter` / `OutputAdapter` | 把外部平台接入框架，例如命令行、HTTP、QQ。           |
+| `AgentPipeline`                  | 串起输入、上下文、Agent、输出的完整流程。            |
+| `Hook`                           | 在生命周期节点观察或调整上下文。                     |
+| `Interceptor`                    | 包裹工具、模型流、回合等执行边界。                   |
+| `Control`                        | 运行时控制通道，用于取消、审批、注入指令等流程控制。 |
+| `Plugin`                         | 以插件形式扩展工具、记忆、hook 或其他能力。          |
 
 ## 效果预览
 
@@ -52,36 +52,62 @@ Agent 调用敏感工具时，框架暂停执行并渲染审批提示，用户�
 
 ### 安装
 
+#### 方式 1：uv（推荐）
+
 ```bash
 git clone git@github.com:moyu-er/ModexAgent.git
 cd ModexAgent
 
-# Create a Python 3.12 virtual environment
+# 创建 Python 3.12 虚拟环境并激活
 uv venv --python 3.12
-```
 
-Activate it:
-
-```powershell
 # Windows PowerShell
 .venv\Scripts\Activate.ps1
-```
 
-```bash
 # macOS / Linux
 source .venv/bin/activate
+
+# 安装完整依赖（包含 bot_project 所有能力）
+uv pip install -e ".[all,dev]"
 ```
 
-Install the full example/runtime dependency set:
+#### 方式 2：pip
 
 ```bash
-uv pip install -e ".[all]"
+git clone git@github.com:moyu-er/ModexAgent.git
+cd ModexAgent
+
+python -m venv .venv
+
+# Windows PowerShell
+.venv\Scripts\Activate.ps1
+
+# macOS / Linux
+source .venv/bin/activate
+
+# 安装完整依赖
+pip install -r requirements.txt
 ```
 
-For framework development and tests only:
+#### 按需安装 extras
+
+| Extra     | 包含内容                                                                                                     | 适用场景            |
+| --------- | ------------------------------------------------------------------------------------------------------------ | ------------------- |
+| `llm`     | `litellm`, `openai`                                                                                          | LLM Provider        |
+| `storage` | `faiss-cpu`, `chromadb`, `sentence-transformers`, `aiosqlite`, `mem0ai`                                      | 向量存储与语义记忆  |
+| `session` | `sqlalchemy[asyncio]`                                                                                        | 会话持久化          |
+| `sandbox` | `docker`, `e2b-code-interpreter`                                                                             | 沙箱执行            |
+| `gateway` | `qq-botpy`, `python-dotenv`, `aiohttp`                                                                       | QQ Bot 适配器与网关 |
+| `skills`  | `pypdf`, `python-docx`, `openpyxl`, `python-pptx`, `Pillow`, `defusedxml`, `lxml`, `pdf2image`, `pdfplumber` | 文档处理技能        |
+| `dev`     | `pytest`, `pytest-asyncio`, `pytest-cov`, `ruff`, `mypy`                                                     | 开发测试            |
+| `all`     | 以上全部（除 `dev`）                                                                                         | 一键完整安装        |
 
 ```bash
-uv pip install -e ".[dev]"
+# 示例：仅安装框架核心 + LLM 支持
+uv pip install -e ".[llm]"
+
+# 示例：完整开发环境
+uv pip install -e ".[all,dev]"
 ```
 
 ## 示例项目：bot_project
@@ -132,16 +158,16 @@ tests/               单元、集成和端到端测试
 
 ## 文档入口
 
-| 文档 | 内容 |
-|------|------|
-| [docs/architecture.md](docs/architecture.md) | 框架整体架构。 |
-| [docs/core-modules.md](docs/core-modules.md) | 核心模块说明。 |
-| [docs/memory-system.md](docs/memory-system.md) | 记忆系统说明。 |
-| [docs/multi-agent-guide.md](docs/multi-agent-guide.md) | 多 Agent 协作说明。 |
-| [docs/extension-guide.md](docs/extension-guide.md) | 扩展和插件开发说明。 |
-| [docs/bot-guide.md](docs/bot-guide.md) | Bot 示例使用说明。 |
-| [docs/current-runtime.md](docs/current-runtime.md) | 当前 ReAct、hook、interceptor、control 的运行时设计说明。 |
-| [docs/architecture-graph-approval.md](docs/architecture-graph-approval.md) | 图架构、Hook、Interceptor、Control、Approval 详细设计。 |
+| 文档                                                                       | 内容                                                      |
+| -------------------------------------------------------------------------- | --------------------------------------------------------- |
+| [docs/architecture.md](docs/architecture.md)                               | 框架整体架构。                                            |
+| [docs/core-modules.md](docs/core-modules.md)                               | 核心模块说明。                                            |
+| [docs/memory-system.md](docs/memory-system.md)                             | 记忆系统说明。                                            |
+| [docs/multi-agent-guide.md](docs/multi-agent-guide.md)                     | 多 Agent 协作说明。                                       |
+| [docs/extension-guide.md](docs/extension-guide.md)                         | 扩展和插件开发说明。                                      |
+| [docs/bot-guide.md](docs/bot-guide.md)                                     | Bot 示例使用说明。                                        |
+| [docs/current-runtime.md](docs/current-runtime.md)                         | 当前 ReAct、hook、interceptor、control 的运行时设计说明。 |
+| [docs/architecture-graph-approval.md](docs/architecture-graph-approval.md) | 图架构、Hook、Interceptor、Control、Approval 详细设计。   |
 
 ## 开发命令
 

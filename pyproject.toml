@@ -12,61 +12,57 @@ description = "DIY Agent Framework - A flexible multi-agent system framework"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
-authors = [
-    { name = "GYT", email = "gyt8193@qq.com" },
-]
+authors = [{ name = "GYT", email = "gyt8193@qq.com" }]
 keywords = ["agent", "ai", "multi-agent", "framework"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.12",
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
 ]
 
 dependencies = [
-    "pydantic>=2.0.0",
-    "aiorwlock>=1.3.0",
-    "filelock>=3.12.0",
-    "httpx>=0.24.0",
-    "pyyaml>=6.0.0",
-    "mcp>=1.0.0",
-    "pathvalidate>=3.0.0",
-    "typing-extensions>=4.8.0",
+  "pydantic>=2.0.0,<3",
+  "filelock>=3.12.0",
+  "httpx>=0.24.0",
+  "pyyaml>=6.0.0",
+  "mcp>=1.0.0,<2",
+  "pathvalidate>=3.0.0",
+  "typing-extensions>=4.8.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.0.0",
-    "pytest-asyncio>=0.21.0",
-    "pytest-cov>=4.0.0",
-    "ruff>=0.1.0",
-    "mypy>=1.0.0",
+  "pytest>=7.0.0",
+  "pytest-asyncio>=0.21.0",
+  "pytest-cov>=4.0.0",
+  "ruff>=0.1.0",
+  "mypy>=1.0.0",
 ]
-llm = [
-    "litellm>=1.0.0",
-]
+llm = ["litellm>=1.0.0", "openai>=1.0.0,<2"]
 storage = [
-    "faiss-cpu>=1.7.0",
-    "sentence-transformers>=2.2.0",
-    "chromadb>=0.4.0",
-    "aiosqlite>=0.19.0",
+  "faiss-cpu>=1.7.0",
+  "sentence-transformers>=2.2.0",
+  "chromadb>=0.4.0",
+  "aiosqlite>=0.19.0",
+  "mem0ai>=0.1.0",
 ]
-session = [
-    "sqlalchemy[asyncio]>=2.0.0",
+session = ["sqlalchemy[asyncio]>=2.0.0"]
+sandbox = ["docker>=6.0.0", "e2b-code-interpreter>=0.1.0"]
+gateway = ["qq-botpy>=1.2.0", "python-dotenv>=1.0.0", "aiohttp>=3.8.0"]
+skills = [
+  "pypdf>=4.0.0",
+  "python-docx>=1.1.0",
+  "openpyxl>=3.1.0",
+  "python-pptx>=0.6.23",
+  "Pillow>=10.0.0",
+  "defusedxml>=0.7.0",
+  "lxml>=4.9.0",
+  "pdf2image>=1.16.0",
+  "pdfplumber>=0.10.0",
 ]
-sandbox = [
-    "docker>=6.0.0",
-    "e2b-code-interpreter>=0.1.0",
-]
-gateway = [
-    "rich>=13.0.0",
-    "fastapi>=0.100.0",
-    "qq-botpy>=1.2.0",
-]
-all = [
-    "ModexAgent[llm,storage,session,sandbox,gateway]",
-]
+all = ["ModexAgent[llm,storage,session,sandbox,gateway,skills]"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["framework"]
@@ -79,7 +75,7 @@ python_functions = ["test_*"]
 asyncio_mode = "auto"
 addopts = "-v --tb=short"
 markers = [
-    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+  "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
 ]
 
 [tool.ruff]

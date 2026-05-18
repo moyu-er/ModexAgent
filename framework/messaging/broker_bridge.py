@@ -48,10 +48,17 @@ class BrokerInputAdapter(InputAdapter):
                     break
                 msg = _broker_msg_to_input_message(broker_msg)
                 # 去重检查
-                message_id = broker_msg.headers.get("message_id") or broker_msg.payload.get("message_id")
-                if message_id and self._deduplicator is not None and self._deduplicator.is_duplicate(message_id):
+                message_id = broker_msg.headers.get("message_id") or broker_msg.payload.get(
+                    "message_id"
+                )
+                if (
+                    message_id
+                    and self._deduplicator is not None
+                    and self._deduplicator.is_duplicate(message_id)
+                ):
                     continue
                 yield msg
+
         return _gen()
 
 
@@ -82,7 +89,9 @@ def _broker_msg_to_input_message(msg: BrokerMessage) -> InputMessage:
         content=payload.get("content", ""),
         session_id=session_id,
         source=str(sender),
-        sender_id=sender.name if sender.kind == "user" else payload.get("sender_id", DefaultValues.SENDER_ID),
+        sender_id=sender.name
+        if sender.kind == "user"
+        else payload.get("sender_id", DefaultValues.SENDER_ID),
         channel=msg.headers.get("channel", DefaultValues.CHANNEL),
         chat_id=msg.headers.get("chat_id", DefaultValues.CHAT_ID),
         metadata=metadata,
@@ -152,8 +161,8 @@ class OutputRoute:
     """动态输出路由规则。"""
 
     adapter: OutputAdapter
-    match_kind: str | None = None      # 例如 "user"，匹配所有该 kind 的 Address
-    match_topic: str | None = None     # 例如 "agent:outgoing"，订阅 topic 并路由
+    match_kind: str | None = None  # 例如 "user"，匹配所有该 kind 的 Address
+    match_topic: str | None = None  # 例如 "agent:outgoing"，订阅 topic 并路由
 
 
 class BrokerBridgeService:
@@ -195,11 +204,18 @@ class BrokerBridgeService:
         exc = task.exception()
         if exc is not None:
             logger.error("Bridge task %s exited with error", name, exc_info=exc)
-            if self._restart_on_failure:
-                self._schedule_restart(name)
+        else:
+            logger.warning("Bridge task %s exited normally (unexpected for infinite loop)", name)
+        if self._restart_on_failure:
+            self._schedule_restart(name)
 
     def _schedule_restart(self, name: str) -> None:
-        now = asyncio.get_event_loop().time()
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning("No running event loop, cannot schedule restart for %s", name)
+            return
+        now = loop.time()
         first_fail = self._restart_first_fail_time.get(name)
         if first_fail is None or (now - first_fail) > self._restart_max_window_seconds:
             self._restart_first_fail_time[name] = now
@@ -222,7 +238,7 @@ class BrokerBridgeService:
             self._restart_counts[name],
             self._restart_max_retries,
         )
-        asyncio.create_task(self._restart_bridge_after_delay(name, delay))
+        loop.create_task(self._restart_bridge_after_delay(name, delay))
 
     async def _restart_bridge_after_delay(self, name: str, delay: float) -> None:
         await asyncio.sleep(delay)
@@ -242,18 +258,14 @@ class BrokerBridgeService:
             bridge_name = f"input:{getattr(adapter, 'name', addr)}"
             self._bridge_specs[bridge_name] = lambda a=adapter, ad=addr: self._bridge_input(a, ad)
             task = asyncio.create_task(self._bridge_specs[bridge_name]())
-            task.add_done_callback(
-                lambda t, n=bridge_name: self._bridge_done_callback(t, n)
-            )
+            task.add_done_callback(lambda t, n=bridge_name: self._bridge_done_callback(t, n))
             self._tasks.append(task)
         for route in self.output_routes:
             if route.match_topic:
                 bridge_name = f"output:{route.match_topic}"
                 self._bridge_specs[bridge_name] = lambda r=route: self._bridge_output_topic(r)
                 task = asyncio.create_task(self._bridge_specs[bridge_name]())
-                task.add_done_callback(
-                    lambda t, n=bridge_name: self._bridge_done_callback(t, n)
-                )
+                task.add_done_callback(lambda t, n=bridge_name: self._bridge_done_callback(t, n))
                 self._tasks.append(task)
             elif route.match_kind:
                 raise NotImplementedError(
@@ -272,28 +284,36 @@ class BrokerBridgeService:
         await self.broker.stop()
 
     async def _bridge_input(self, adapter: InputAdapter, addr: Address) -> None:
-        try:
-            async for msg in adapter.receive():
-                broker_msg = BrokerMessage(
-                    payload={
-                        "content": msg.content,
-                        "session_id": msg.session_id,
-                        "metadata": msg.metadata,
-                        "sender_id": msg.sender_id,
-                        "chat_id": msg.chat_id,
-                        "conversation_id": msg.session_id,
-                    },
-                    sender=Address(kind="channel", name=msg.source or "unknown"),
-                    recipient=addr,
-                    headers={
-                        "channel": msg.channel,
-                        "chat_id": msg.chat_id,
-                        "conversation_id": msg.session_id,
-                    },
+        while True:
+            try:
+                async for msg in adapter.receive():
+                    broker_msg = BrokerMessage(
+                        payload={
+                            "content": msg.content,
+                            "session_id": msg.session_id,
+                            "metadata": msg.metadata,
+                            "sender_id": msg.sender_id,
+                            "chat_id": msg.chat_id,
+                            "conversation_id": msg.session_id,
+                        },
+                        sender=Address(kind="channel", name=msg.source or "unknown"),
+                        recipient=addr,
+                        headers={
+                            "channel": msg.channel,
+                            "chat_id": msg.chat_id,
+                            "conversation_id": msg.session_id,
+                        },
+                    )
+                    await self.broker.send_to(addr, broker_msg)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception(
+                    "Bridge input error for adapter=%s addr=%s",
+                    getattr(adapter, "name", adapter),
+                    addr,
                 )
-                await self.broker.send_to(addr, broker_msg)
-        except asyncio.CancelledError:
-            pass
+                await asyncio.sleep(1)
 
     async def _bridge_output_topic(self, route: OutputRoute) -> None:
         if not route.match_topic:
@@ -314,12 +334,15 @@ class BrokerBridgeService:
                     except TimeoutError:
                         logger.error(
                             "Bridge output send timeout after %.1fs topic=%s session=%s",
-                            self._send_timeout, route.match_topic, session_id,
+                            self._send_timeout,
+                            route.match_topic,
+                            session_id,
                         )
                     except Exception:
                         logger.exception(
                             "Bridge output send failed topic=%s session=%s",
-                            route.match_topic, session_id,
+                            route.match_topic,
+                            session_id,
                         )
                 else:
                     await route.adapter.send(out_msg, session_id)
