@@ -4,7 +4,7 @@ import asyncio
 import logging
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from typing import Any
 
 from framework.core.context import ContextManager
@@ -88,12 +88,18 @@ class AgentPool(AgentRegistry):
         if new_state not in valid:
             logger.warning(
                 "Invalid state transition: %s -> %s for %s (reason=%s)",
-                current.value, new_state.value, name, reason or "unspecified",
+                current.value,
+                new_state.value,
+                name,
+                reason or "unspecified",
             )
         if current != new_state:
             logger.info(
                 "Agent state transition: %s %s -> %s reason=%s",
-                name, current.value, new_state.value, reason or "unspecified",
+                name,
+                current.value,
+                new_state.value,
+                reason or "unspecified",
             )
         self._status[name] = new_state
 
@@ -136,7 +142,9 @@ class AgentPool(AgentRegistry):
         )
         self._agents[name] = instance
         self._transition(name, AgentState.IDLE, reason="register_resident_complete")
-        self._consumers[name] = asyncio.create_task(self._consume_messages(instance, descriptor))
+        consumer_task = asyncio.create_task(self._consume_messages(instance, descriptor))
+        consumer_task.add_done_callback(lambda t, n=name: self._on_consumer_done(t, n))
+        self._consumers[name] = consumer_task
         return instance
 
     def _track_agent_task(self, agent_name: str, task: asyncio.Task) -> None:
@@ -150,6 +158,31 @@ class AgentPool(AgentRegistry):
         tasks = self._agent_tasks.get(agent_name, [])
         if task in tasks:
             tasks.remove(task)
+
+    def _on_consumer_done(self, task: asyncio.Task[Any], agent_name: str) -> None:
+        """Consumer task 完成回调：记录异常并尝试恢复。"""
+        if task.cancelled():
+            logger.info("Consumer task for %s was cancelled", agent_name)
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error(
+                "Consumer task for %s exited with error",
+                agent_name,
+                exc_info=exc,
+            )
+        else:
+            logger.warning(
+                "Consumer task for %s exited normally (unexpected for infinite loop)",
+                agent_name,
+            )
+        # Attempt to recover by transitioning back to IDLE so the agent
+        # can be restarted or polled again.
+        if self._status.get(agent_name) not in (
+            AgentState.SHUTTING_DOWN,
+            AgentState.SHUTDOWN,
+        ):
+            self._transition(agent_name, AgentState.IDLE, reason="consumer_done_recover")
 
     # Watchdog: warn when dispatch exceeds this threshold (P0-a, seconds)
     _DISPATCH_WARN_SECONDS: float = 300.0
@@ -170,7 +203,8 @@ class AgentPool(AgentRegistry):
         if error_count >= self._max_error_retries:
             logger.error(
                 "Agent %s exceeded max error retries (%d), stopping consumer",
-                agent_name, self._max_error_retries,
+                agent_name,
+                self._max_error_retries,
             )
             self._transition(agent_name, AgentState.ERROR, reason="max_errors_exceeded")
             consumer_task = self._consumers.get(agent_name)
@@ -180,25 +214,30 @@ class AgentPool(AgentRegistry):
             sleep_seconds = min(self._max_backoff_seconds, 2**error_count)
             logger.debug(
                 "Agent %s backing off for %.1fs (error_count=%d)",
-                agent_name, sleep_seconds, error_count,
+                agent_name,
+                sleep_seconds,
+                error_count,
             )
             await asyncio.sleep(sleep_seconds)
 
-    async def _run_dispatch(self, agent_name: str, coro) -> None:
+    async def _run_dispatch(self, agent_name: str, coro: Coroutine[Any, Any, None]) -> None:
         """包装 dispatch 协程，维护活跃计数和状态转换。
 
         consumer 循环快速 create_task，实际处理在后台执行，
         通过 per-session lock 保证同 session 串行，但不同 session 可以并发。
         """
         async with self._get_dispatch_lock(agent_name):
-            self._active_session_counts[agent_name] = self._active_session_counts.get(agent_name, 0) + 1
+            self._active_session_counts[agent_name] = (
+                self._active_session_counts.get(agent_name, 0) + 1
+            )
             active_count = self._active_session_counts[agent_name]
         start_time = time.monotonic()
         if self._status.get(agent_name) != AgentState.WORKING:
             self._transition(agent_name, AgentState.WORKING, reason="dispatch_start")
         logger.debug(
             "Dispatch start: agent=%s active=%d",
-            agent_name, active_count,
+            agent_name,
+            active_count,
         )
         dispatch_timeout = self._safety.turn.dispatch_timeout_seconds
         try:
@@ -211,7 +250,9 @@ class AgentPool(AgentRegistry):
             elapsed = time.monotonic() - start_time
             logger.error(
                 "Dispatch timeout for %s after %.1fs (threshold=%.0fs)",
-                agent_name, elapsed, dispatch_timeout,
+                agent_name,
+                elapsed,
+                dispatch_timeout,
             )
             self._transition(agent_name, AgentState.ERROR, reason="dispatch_timeout")
             error_count = self._bump_error_count(agent_name)
@@ -224,7 +265,9 @@ class AgentPool(AgentRegistry):
             elapsed = time.monotonic() - start_time
             logger.exception(
                 "Error dispatching message for %s (elapsed=%.1fs active=%d)",
-                agent_name, elapsed, active_count,
+                agent_name,
+                elapsed,
+                active_count,
             )
             self._transition(agent_name, AgentState.ERROR, reason="dispatch_error")
             error_count = self._bump_error_count(agent_name)
@@ -238,7 +281,10 @@ class AgentPool(AgentRegistry):
                 if elapsed > self._DISPATCH_WARN_SECONDS:
                     logger.warning(
                         "Dispatch watchdog: agent=%s elapsed=%.1fs active=%d threshold=%.0fs",
-                        agent_name, elapsed, remaining, self._DISPATCH_WARN_SECONDS,
+                        agent_name,
+                        elapsed,
+                        remaining,
+                        self._DISPATCH_WARN_SECONDS,
                     )
                 if remaining == 0 and self._status.get(agent_name) not in (
                     AgentState.SHUTTING_DOWN,
@@ -337,7 +383,8 @@ class AgentPool(AgentRegistry):
                 if error_count >= self._max_error_retries:
                     logger.error(
                         "Agent %s exceeded max error retries (%d), stopping consumer",
-                        address.name, self._max_error_retries,
+                        address.name,
+                        self._max_error_retries,
                     )
                     break
                 sleep_seconds = min(self._max_backoff_seconds, 2**error_count)
@@ -468,9 +515,11 @@ class AgentPool(AgentRegistry):
     ) -> None:
         """将 AgentResult 包装为 subagent_result 回传给父 Agent。"""
         parent_address = envelope.source
-        parent_session_id = self._session_strategy.agent_session(
-            conversation_id, parent_address.name
-        ) if parent_address else conversation_id
+        parent_session_id = (
+            self._session_strategy.agent_session(conversation_id, parent_address.name)
+            if parent_address
+            else conversation_id
+        )
 
         result_envelope = AgentMessageEnvelope(
             payload={
