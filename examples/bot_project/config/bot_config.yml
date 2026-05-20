@@ -91,11 +91,11 @@ agents:
     mcp_filter: ["fetch", "mcp-deepwiki", "MiniMax", "playwright"]
     memory:
       short_term:
-        max_messages: 100
-        max_tokens: 60000
+        max_messages: 200
+        max_tokens: 100000
         keep_ratio_for_messages: 0.4
         keep_ratio_for_token: 0.4
-        auto_llm_compression: true
+        auto_llm_compression: false
       long_term: {enabled: true}
       dream_engine: {enabled: true, interval: 600}
       # ---- Governance (per-injection context pipeline) ----
