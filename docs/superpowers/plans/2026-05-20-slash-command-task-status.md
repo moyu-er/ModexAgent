@@ -44,8 +44,9 @@ considered complete until this file records it.
   - Note: Added `TurnRequest`, optional `command_processor`, and pipeline routing for continue and transformed skill inputs.
   - Verification: `python -m pytest tests/unit/pipeline/test_slash_commands.py -v` passed with 4 tests.
 
-- [ ] Task 7: Migrate Approval Parsing to Slash Commands
-  - Note: Not started.
+- [x] Task 7: Migrate Approval Parsing to Slash Commands
+  - Note: Replaced approval command parsing with slash-only parser delegation and updated approval tests.
+  - Verification: `python -m pytest tests/unit/approval/test_detect_approval_command.py tests/unit/pipeline/test_approval_renderer_edge.py -v` passed with 15 tests.
 
 - [ ] Task 8: Add Pre-Lock Dispatch Policy Hook Point
   - Note: Not started.

@@ -82,6 +82,18 @@ def test_approve_detected_against_pending_snapshot() -> None:
     assert state is snapshot
 
 
+def test_non_slash_approval_aliases_are_not_commands() -> None:
+    assert parse_input_command("approve") is None
+    assert parse_input_command("yes") is None
+    assert parse_input_command("ok") is None
+
+
+def test_approval_command_ignores_extra_args() -> None:
+    parsed = parse_input_command("/approve extra text")
+    assert parsed is not None
+    assert parsed.approval_action == ApprovalAction.ALLOW
+
+
 def test_unrelated_input_denies_first_and_preempts_rest() -> None:
     renderer = ApprovalRenderer(approval_workspace=Path("/tmp/ar"))
     snapshot = _snapshot_with_requests(count=3)
