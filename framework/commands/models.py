@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Protocol
 
 from framework.approval.types import ApprovalAction
 from framework.commands.constants import (
@@ -56,4 +56,23 @@ class CommandHandlingResult:
     approval_action: ApprovalAction | None = None
     control_command: ControlCommand | None = None
     invocation: SlashCommandInvocation | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, JsonValue] = field(default_factory=dict)
+
+
+class CommandProcessor(Protocol):
+    def parse(self, text: str) -> CommandParseResult:
+        ...
+
+    def dispatch_policy(
+        self,
+        invocation: SlashCommandInvocation,
+        context: CommandContext,
+    ) -> CommandDispatchPolicy:
+        ...
+
+    async def handle(
+        self,
+        text: str,
+        context: CommandContext,
+    ) -> CommandHandlingResult:
+        ...

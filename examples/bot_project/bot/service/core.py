@@ -13,11 +13,13 @@ import logging
 import signal
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from framework.commands.processor import SlashCommandProcessor
 
 from bot.plugins.integration import PluginIntegration
-from bot.utils.config_loader import ConfigLoader, validate_config
-
+from bot.utils.config_loader import ConfigLoader
 from framework import (
     AgentPipeline,
     InMemoryToolManager,
@@ -52,7 +54,6 @@ from framework.ioc.configs.memory import MemoryConfig as IOCMemoryConfig
 from framework.ioc.factories.governance import create_governance, create_peer_governance
 from framework.ioc.factories.llm import create_llm_provider
 from framework.ioc.factories.memory import create_memory
-from framework.ioc.factories.tools import connect_mcp, register_mcp_tools
 from framework.memory.core.scope import MemoryContext
 from framework.memory.injection import FullInjectionPolicy
 from framework.memory.system import MemorySystemContextManager
@@ -76,6 +77,7 @@ from framework.multi_agent.inbox.producer import InboxProducer
 from framework.multi_agent.inbox.server_local import LocalFileInboxServer
 from framework.pipeline.adapters import InputAdapter, OutputAdapter
 from framework.tools.overflow.cleaner import OverflowCleaner
+
 from .builders import AgentBuilderMixin
 
 logger = logging.getLogger(__name__)
@@ -344,7 +346,6 @@ class BotService(AgentBuilderMixin):
         # Start overflow cleaner
         if self.interceptor_chain is not None:
             from framework.interceptor.builtin.result_limit import ToolResultLimitInterceptor
-            from framework.tools.overflow.cleaner import OverflowCleaner
             for interceptor in self.interceptor_chain.interceptors:
                 if isinstance(interceptor, ToolResultLimitInterceptor):
                     if interceptor.handler is not None:
@@ -370,16 +371,16 @@ class BotService(AgentBuilderMixin):
         print(f"[OK] Approval infrastructure initialized (workspace: {self._approval_workspace})")
 
         # 7.6 Initialize typed runtime stores (TurnStateStore + RuntimeCommandStore)
+        from framework.agents.react.state import ReActRuntimeStateCodec
         from framework.runtime.codec import RuntimeStateCodecRegistry
         from framework.runtime.enums import AgentKind
-        from framework.agents.react.state import ReActRuntimeStateCodec
-        from framework.runtime.store import JsonFileTurnStateStore, JsonFileRuntimeCommandStore
+        from framework.runtime.store import JsonFileRuntimeCommandStore, JsonFileTurnStateStore
 
         runtime_data_dir = self._project_dir / "data" / "runtime_state"
         codec_registry = RuntimeStateCodecRegistry({AgentKind.REACT: ReActRuntimeStateCodec()})
         self._turn_store = JsonFileTurnStateStore(runtime_data_dir / "turns", codec_registry)
         self._command_store = JsonFileRuntimeCommandStore(runtime_data_dir / "commands")
-        print(f"[OK] Typed runtime stores initialized (data/runtime_state/)")
+        print("[OK] Typed runtime stores initialized (data/runtime_state/)")
 
         # 8. Create ReActAgent (main agent in full mode with approval)
         self.agent = ReActAgent(provider=self.provider, mode="full")
@@ -489,7 +490,9 @@ class BotService(AgentBuilderMixin):
 
     async def _initialize_pool(self, _main_skill_manager: SkillManager | None) -> None:
         """Initialize pool-mode runtime."""
-        from framework.ioc.factories.descriptors import build_peer_descriptor, build_subagent_descriptor
+        from framework.ioc.factories.descriptors import (
+            build_subagent_descriptor,
+        )
         from framework.multi_agent.bus import LocalAgentMessageBus
 
         if self.broker is None:
@@ -725,9 +728,9 @@ class BotService(AgentBuilderMixin):
         chain.add(ControlDrainInterceptor(channel=channel, max_commands=3))
 
         # 2. Tool result overflow
-        from framework.tools.overflow.local import LocalFileToolOverflowStore
         from framework.tools.overflow.cleaner import OverflowCleaner
         from framework.tools.overflow.handler import ToolResultOverflowHandler
+        from framework.tools.overflow.local import LocalFileToolOverflowStore
 
         overflow_dir = self._project_dir / "data"
         max_chars = 10000
@@ -746,7 +749,10 @@ class BotService(AgentBuilderMixin):
         self.interceptor_chain = chain
         return chain
 
-    def _build_main_command_processor(self, skill_manager: SkillManager | None) -> Any:
+    def _build_main_command_processor(
+        self,
+        skill_manager: SkillManager | None,
+    ) -> SlashCommandProcessor:
         from framework.commands.processor import SlashCommandProcessor
 
         _ = skill_manager

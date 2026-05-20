@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
 
-from framework.core.emitter import AgentResult
 from framework.commands.constants import CommandAction, CommandDispatchPolicy
-from framework.commands.models import CommandContext, CommandHandlingResult
+from framework.commands.models import (
+    CommandContext,
+    CommandHandlingResult,
+    CommandParseResult,
+    SlashCommandInvocation,
+)
 from framework.core.agent import Agent, AgentContext
-from framework.core.emitter import ContentEmitter
+from framework.core.emitter import AgentResult, ContentEmitter
 from framework.core.types import InputMessage, MessageRole
 from framework.memory.history import ListMessageHistory
 from framework.pipeline.adapters import InputAdapter, NullOutputAdapter
@@ -101,12 +106,16 @@ class FakeCommandProcessor:
         self.result = result
         self.contexts: list[CommandContext] = []
 
-    def parse(self, text: str):
+    def parse(self, text: str) -> CommandParseResult:
         from framework.commands.parser import SlashCommandParser
 
         return SlashCommandParser().parse(text)
 
-    def dispatch_policy(self, invocation, context: CommandContext):
+    def dispatch_policy(
+        self,
+        invocation: SlashCommandInvocation,
+        context: CommandContext,
+    ) -> CommandDispatchPolicy:
         return self.result.dispatch_policy
 
     async def handle(self, text: str, context: CommandContext) -> CommandHandlingResult:
@@ -115,7 +124,7 @@ class FakeCommandProcessor:
 
 
 class FakeAgent(Agent):
-    event_enum = None
+    event_enum = None  # type: ignore[assignment]
 
     def __init__(self) -> None:
         self.runs = 0
@@ -125,7 +134,11 @@ class FakeAgent(Agent):
     def name(self) -> str:
         return "fake"
 
-    async def run(self, context: AgentContext, emitter: ContentEmitter):
+    async def run(
+        self,
+        context: AgentContext,
+        emitter: ContentEmitter,
+    ) -> AgentResult:
         self.runs += 1
         self.last_messages = await context.to_messages()
         return AgentResult(content="ok", stop_reason="stop")
@@ -142,7 +155,7 @@ class TestInputAdapter(InputAdapter):
     async def stop(self) -> None:
         return None
 
-    async def receive(self):
+    async def receive(self) -> AsyncIterator[InputMessage]:  # type: ignore[override]
         if False:
             yield InputMessage(content="", session_id="unused")
 

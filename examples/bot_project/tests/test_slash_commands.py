@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from bot.service.core import BotService
+
 from framework.commands.processor import SlashCommandProcessor
 
 

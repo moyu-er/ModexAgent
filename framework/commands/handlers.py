@@ -6,13 +6,13 @@ from typing import Protocol
 
 from framework.approval.types import ApprovalAction
 from framework.commands.constants import (
-    BuiltinCommand,
-    CommandAction,
-    CommandDispatchPolicy,
     NOTICE_APPROVAL_BLOCKS_CONTINUE,
     NOTICE_INVALID_COMMAND,
     NOTICE_NO_PENDING_APPROVAL,
     NOTICE_UNKNOWN_COMMAND,
+    BuiltinCommand,
+    CommandAction,
+    CommandDispatchPolicy,
 )
 from framework.commands.models import (
     CommandContext,

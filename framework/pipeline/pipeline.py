@@ -12,6 +12,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from framework.commands.models import (
+    CommandContext,
+    CommandHandlingResult,
+    CommandProcessor,
+)
 from framework.core.agent_runtime_config import BusyInputMode
 from framework.core.llm_struct import RuntimeSafetyPolicy
 from framework.core.skills import SkillManager
@@ -64,7 +69,7 @@ class TurnRequest:
     append_user_message: bool
     trigger_agent: bool
     approval_action: ApprovalAction | None = None
-    command_result: Any | None = None
+    command_result: CommandHandlingResult | None = None
 
 
 async def _safe_flush(ctx_mgr: Any, session_id: str, *, timeout: float) -> None:
@@ -170,7 +175,7 @@ class AgentPipeline:
         turn_store: Any | None = None,
         command_store: Any | None = None,
         runtime_services: AgentRuntimeServices | None = None,
-        command_processor: Any | None = None,
+        command_processor: CommandProcessor | None = None,
     ):
         """
         Args:
@@ -357,8 +362,6 @@ class AgentPipeline:
             prelock_parse_result = self.command_processor.parse(input_msg.content or "")
             if prelock_parse_result.invocation is not None:
                 from framework.commands.constants import CommandDispatchPolicy
-                from framework.commands.models import CommandContext
-
                 prelock_dispatch_policy = self.command_processor.dispatch_policy(
                     prelock_parse_result.invocation,
                     CommandContext(
@@ -445,11 +448,10 @@ class AgentPipeline:
         input_metadata: dict[str, Any],
         route_result: Any | None,
     ) -> tuple[str | None, list[Any], Any | None]:
-        """Preprocess input: sanitize, handle attachments, apply route modifier, intercept commands.
+        """Preprocess input: sanitize, handle attachments, apply route modifier.
 
         Returns:
             (sanitized_content, media_blocks, media_processor).
-            If command_interceptor consumed the message, sanitized_content is None.
         """
         sanitized_content = input_msg.content
         if self.sanitizer is not None:
@@ -481,36 +483,6 @@ class AgentPipeline:
         source_agent = input_metadata.get("source_agent")
         if not source_agent and route_result and route_result.prompt_modifier:
             sanitized_content = route_result.prompt_modifier + sanitized_content
-
-        # 命令拦截（优先尝试异步版本）
-        if self.command_interceptor is not None:
-            try:
-                handle_async = getattr(self.command_interceptor, "handle_async", None)
-                if handle_async is not None:
-                    intercept_result = await handle_async(
-                        InputMessage(
-                            content=sanitized_content,
-                            session_id=session_id,
-                            metadata=input_metadata,
-                        )
-                    )
-                else:
-                    intercept_result = self.command_interceptor.handle(
-                        InputMessage(
-                            content=sanitized_content,
-                            session_id=session_id,
-                            metadata=input_metadata,
-                        )
-                    )
-            except Exception:
-                logger.exception("CommandInterceptor failed for session %s", session_id)
-                intercept_result = None
-            if intercept_result is not None:
-                await self.output_adapter.send(
-                    OutputMessage(content=intercept_result, message_type="command_response"),
-                    session_id,
-                )
-                return None, [], None
 
         return sanitized_content, media_blocks, _media_processor
 
@@ -622,7 +594,8 @@ class AgentPipeline:
         elif governance is not None:
             # Lightweight runtime for governance-only mode (no turn_store)
             from framework.agents.react.state import ReActTurnState
-            from framework.runtime.enums import AgentKind, TurnPhase as RTurnPhase
+            from framework.runtime.enums import AgentKind
+            from framework.runtime.enums import TurnPhase as RTurnPhase
             from framework.runtime.services import AgentRuntime
             agent_context.runtime = AgentRuntime(
                 services=AgentRuntimeServices(governance=governance),
@@ -854,8 +827,6 @@ class AgentPipeline:
             )
 
         from framework.commands.constants import CommandAction, CommandParseStatus
-        from framework.commands.models import CommandContext
-
         parse_result = self.command_processor.parse(input_msg.content or "")
         if parse_result.status == CommandParseStatus.PLAIN_INPUT:
             return TurnRequest(
@@ -873,7 +844,6 @@ class AgentPipeline:
             skill_manager=self.skill_manager,
             turn_store=self.turn_store,
             pending_approval=pending_snapshot,
-            runtime_info={"input_metadata": input_metadata},
         )
         result = await self.command_processor.handle(input_msg.content or "", command_context)
         if result.notice:
