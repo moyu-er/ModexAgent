@@ -317,14 +317,15 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
         channel: ArchiveChannel = ArchiveChannel.KNOWLEDGE,
     ) -> None:
         storage = await self._storage_factory(context)
-        state = await self._load_state(storage)
-        await self._save_state(
-            storage,
-            ArchiveState(
-                next_archive_id=state.next_archive_id,
-                knowledge_consumed_archive_id=cursor,
-            ),
-        )
+        async with storage.get_lock().write():
+            state = await self._load_state(storage)
+            await self._save_state(
+                storage,
+                ArchiveState(
+                    next_archive_id=state.next_archive_id,
+                    knowledge_consumed_archive_id=cursor,
+                ),
+            )
 
     async def prune_consumed_pairs(self, context: MemoryContext) -> None:
         storage = await self._storage_factory(context)

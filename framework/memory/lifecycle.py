@@ -91,12 +91,19 @@ class DefaultMemoryLifecyclePolicy(MemoryLifecyclePolicy):
                 # and keep planner own tool-chain legality: an active
                 # assistant(tool_calls) tail is protected as a suffix while
                 # older complete assistant/tool history can still be pruned.
-                await self._coordinator.maybe_compress(
+                result = await self._coordinator.maybe_compress(
                     session=layers.session,
                     archive=layers.archive,
                     pending=layers.pending,
                     context=context,
                 )
+                if not result.committed:
+                    logger.warning(
+                        "Compression returned committed=False for session=%s reason=%s — "
+                        "messages may exceed budget; next add will re-trigger",
+                        context.session_id,
+                        result.reason.value if result.reason else "unknown",
+                    )
             except Exception:
                 logger.warning("Post-append compression check failed", exc_info=True)
 

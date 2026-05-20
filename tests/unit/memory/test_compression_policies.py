@@ -1545,3 +1545,248 @@ async def test_sanitizer_removed_messages_are_not_archived(registry):
     )
 
     assert archive.entries == []
+
+
+# ── Bug reproduction: compression not triggering when exceeding limits ─────
+
+
+@pytest.mark.asyncio
+async def test_compression_with_large_open_tail_exceeds_keep_budget(registry):
+    """When active open tail is larger than keep budget, compression must still succeed.
+
+    Bug: If _active_open_tail_indices returns more messages than max_keep_messages,
+    _reduce_suffix_after_anchor returns None, and coordinator returns NO_SAFE_BOUNDARY.
+    This causes messages to accumulate without compression.
+
+    Scenario:
+      - max_messages=10, keep_ratio=0.4 → max_keep=4
+      - Active open tail: assistant(tool_calls) + 3 tool results = 4 messages
+      - Total messages: 15
+      - The open tail alone equals max_keep, so no room for older messages
+      - Should still compress by keeping the tail and dropping everything else
+    """
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(factory, SessionMemoryConfig(max_messages=None))
+    ctx = MemoryContext(session_id="large-tail")
+
+    # Build history: 16 messages total (> max_messages=10)
+    messages: list[dict[str, Any]] = [
+        {"role": str(MessageRole.USER), "content": "start"},
+    ]
+    # Add several complete tool chains (user + assistant pairs)
+    for i in range(6):
+        messages.extend([
+            {"role": str(MessageRole.ASSISTANT), "content": f"answer {i}"},
+            {"role": str(MessageRole.USER), "content": f"question {i}"},
+        ])
+    # Active open tail: assistant with 3 tool_calls + 1 tool result (incomplete)
+    messages.extend([
+        {
+            "role": str(MessageRole.ASSISTANT),
+            "content": "",
+            "tool_calls": [
+                {"id": f"tail-{j}", "function": {"name": f"tool_{j}"}}
+                for j in range(3)
+            ],
+        },
+        {"role": str(MessageRole.TOOL), "tool_call_id": "tail-0", "content": "result0"},
+    ])
+
+    await session.add_messages(ctx, messages)
+    assert len(await session.get_all_messages(ctx)) == 15
+
+    # max_messages=10, keep_ratio=0.4 → max_keep=4
+    # Open tail = 2 messages (assistant + 1 tool), should fit in budget
+    coordinator = DefaultMemoryCompressionCoordinator(
+        max_messages=10,
+        keep_ratio_for_messages=0.4,
+    )
+    result = await coordinator.maybe_compress(session=session, archive=None, context=ctx)
+    assert result.committed, (
+        f"Compression should succeed even with large open tail, got: {result}"
+    )
+    remaining = len(await session.get_all_messages(ctx))
+    assert remaining <= 10, f"Messages should be compressed to <=10, got {remaining}"
+
+
+@pytest.mark.asyncio
+async def test_compression_with_open_tail_larger_than_keep_budget(registry):
+    """When open tail alone exceeds max_keep_messages, compression must still work.
+
+    Bug: _reduce_suffix_after_anchor returns None when active_tail alone > budget,
+    causing NO_SAFE_BOUNDARY and skipped compression.
+
+    Scenario:
+      - max_messages=10, keep_ratio=0.3 → max_keep=3
+      - Active open tail: assistant + 3 tool results = 4 messages > 3
+      - Total: 20 messages
+      - Must compress, keeping the tail even if it exceeds nominal budget.
+    """
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(factory, SessionMemoryConfig(max_messages=None))
+    ctx = MemoryContext(session_id="tail-exceeds-budget")
+
+    messages: list[dict[str, Any]] = []
+    for i in range(10):
+        messages.extend([
+            {"role": str(MessageRole.USER), "content": f"q{i}"},
+            {"role": str(MessageRole.ASSISTANT), "content": f"a{i}"},
+        ])
+    # Active open tail with 4 messages (assistant + 3 tool results)
+    messages.extend([
+        {
+            "role": str(MessageRole.ASSISTANT),
+            "content": "",
+            "tool_calls": [
+                {"id": f"t{j}", "function": {"name": f"tool{j}"}}
+                for j in range(3)
+            ],
+        },
+        {"role": str(MessageRole.TOOL), "tool_call_id": "t0", "content": "r0"},
+        {"role": str(MessageRole.TOOL), "tool_call_id": "t1", "content": "r1"},
+        {"role": str(MessageRole.TOOL), "tool_call_id": "t2", "content": "r2"},
+    ])
+
+    await session.add_messages(ctx, messages)
+    total = len(await session.get_all_messages(ctx))
+    assert total == 24
+
+    # max_messages=10, keep_ratio=0.3 → max_keep=3
+    # But open tail alone = 4 messages
+    coordinator = DefaultMemoryCompressionCoordinator(
+        max_messages=10,
+        keep_ratio_for_messages=0.3,
+    )
+    result = await coordinator.maybe_compress(session=session, archive=None, context=ctx)
+    assert result.committed, (
+        f"Compression must succeed even when open tail exceeds keep budget, got: {result}"
+    )
+    remaining = len(await session.get_all_messages(ctx))
+    assert remaining < total, f"Messages should be reduced, got {remaining} from {total}"
+
+
+@pytest.mark.asyncio
+async def test_compression_triggers_on_subsequent_adds_after_already_over_limit(registry):
+    """After messages exceed max_messages, every subsequent add must trigger compression.
+
+    Bug: If compression fails (e.g., NO_SAFE_BOUNDARY), subsequent adds should still
+    retry compression. The trigger should fire every time until compression succeeds.
+
+    Scenario:
+      - Add 15 messages (max_messages=10)
+      - First compression succeeds, reducing to ~4
+      - Add 20 more messages
+      - Compression should trigger again and reduce
+    """
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(factory, SessionMemoryConfig(max_messages=None))
+    archive = MemoryLayerFactory.single_user(registry=registry).archive
+    ctx = MemoryContext(session_id="subsequent-adds")
+
+    coordinator = DefaultMemoryCompressionCoordinator(
+        max_messages=10,
+        keep_ratio_for_messages=0.4,
+        archive_generation=_SimpleArchiveGeneration(),
+    )
+
+    # First batch: 15 messages
+    await session.add_messages(ctx, [
+        {"role": str(MessageRole.USER), "content": f"batch1-{i}"}
+        for i in range(15)
+    ])
+    result1 = await coordinator.maybe_compress(session=session, archive=archive, context=ctx)
+    assert result1.committed, f"First compression should succeed, got {result1}"
+    after_first = len(await session.get_all_messages(ctx))
+    assert after_first <= 10, f"After first compression: {after_first}"
+
+    # Second batch: add 20 more messages
+    await session.add_messages(ctx, [
+        {"role": str(MessageRole.USER), "content": f"batch2-{i}"}
+        for i in range(20)
+    ])
+    trigger = DefaultCompressionTriggerPolicy(max_messages=10)
+    trigger_result = await trigger.should_compress(session=session, context=ctx)
+    assert trigger_result is not None, (
+        "Trigger must fire when messages exceed max_messages after subsequent adds"
+    )
+
+    result2 = await coordinator.maybe_compress(session=session, archive=archive, context=ctx)
+    assert result2.committed, f"Second compression should succeed, got {result2}"
+    after_second = len(await session.get_all_messages(ctx))
+    assert after_second <= 10, f"After second compression: {after_second}"
+
+
+@pytest.mark.asyncio
+async def test_commit_accepts_single_channel_archive(registry):
+    """Commit should accept archive generation with only one channel.
+
+    Bug: _has_complete_archive_pair requires BOTH CONTEXT and KNOWLEDGE channels.
+    If archive generation only produces one channel (e.g., CONTEXT only),
+    commit aborts with NOTHING_TO_ARCHIVE even though we have valid content.
+
+    This is overly conservative — a single valid channel should be sufficient.
+    """
+    from framework.memory.core.scope import MemoryLayerName
+    from framework.memory.layers.config import SessionMemoryConfig
+    from framework.memory.layers.session import ScopedSessionMemoryManager
+
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.SESSION)
+    session = ScopedSessionMemoryManager(factory, SessionMemoryConfig(max_messages=None))
+    archive = MemoryLayerFactory.single_user(registry=registry).archive
+    ctx = MemoryContext(session_id="single-channel")
+
+    await session.add_messages(ctx, [
+        {"role": str(MessageRole.USER), "content": f"msg{i}"}
+        for i in range(15)
+    ])
+
+    class SingleChannelArchiveGeneration:
+        async def generate(self, messages, context, reason):
+            _ = context, reason
+            joined = " | ".join(str(m.get("content", "")) for m in messages)
+            return ArchiveGenerationResult(
+                writes=(
+                    ArchiveWrite(
+                        channel=ArchiveChannel.CONTEXT,
+                        summary=f"context: {joined}",
+                    ),
+                    # NOTE: No KNOWLEDGE channel — only CONTEXT
+                ),
+                inputs=ArchiveGenerationInputs(
+                    context_transcript=joined,
+                    knowledge_transcript="",
+                    stats=ArchiveInputStats(
+                        input_messages=len(messages),
+                        context_messages=len(messages),
+                        knowledge_messages=0,
+                        tool_chains=0,
+                        dropped_messages=0,
+                    ),
+                ),
+            )
+
+    coordinator = DefaultMemoryCompressionCoordinator(
+        max_messages=10,
+        archive_generation=SingleChannelArchiveGeneration(),
+    )
+    result = await coordinator.maybe_compress(session=session, archive=archive, context=ctx)
+    assert result.committed, (
+        f"Commit should accept single-channel archive, got: {result}"
+    )
+    remaining = len(await session.get_all_messages(ctx))
+    assert remaining <= 10, f"Should compress to <=10, got {remaining}"
+    # Verify archive was written
+    entries = await archive.get_recent(ctx, limit=10, channel=ArchiveChannel.CONTEXT)
+    assert len(entries) > 0, "Archive should have entries"

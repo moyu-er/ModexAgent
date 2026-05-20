@@ -256,7 +256,7 @@ class DefaultCommitPolicy(CommitPolicy):
         # Archive first — skip empty or placeholder summaries
         wrote_archive = False
         if archive is not None:
-            if not self._has_complete_archive_pair(plan.archive_generation_result):
+            if not self._has_valid_archive_writes(plan.archive_generation_result):
                 return CompressionResult(
                     committed=False,
                     retryable=False,
@@ -309,11 +309,16 @@ class DefaultCommitPolicy(CommitPolicy):
         return CompressionResult(committed=True)
 
     @staticmethod
-    def _has_complete_archive_pair(result: ArchiveGenerationResult | None) -> bool:
+    def _has_valid_archive_writes(result: ArchiveGenerationResult | None) -> bool:
+        """Check whether archive generation produced at least one valid write.
+
+        Previously required BOTH CONTEXT and KNOWLEDGE channels, which was
+        overly conservative — a single valid channel is sufficient to create
+        an archive entry.  Empty writes or None result still aborts.
+        """
         if result is None:
             return False
-        channels = {write.channel for write in result.writes}
-        return channels == {ArchiveChannel.CONTEXT, ArchiveChannel.KNOWLEDGE}
+        return len(result.writes) > 0
 
 
 # ── Coordinator ──────────────────────────────────────────────────────────────
