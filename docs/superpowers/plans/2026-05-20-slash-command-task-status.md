@@ -32,8 +32,9 @@ considered complete until this file records it.
   - Note: Added approval, continue, unknown, and invalid command handlers with typed handling results.
   - Verification: `python -m pytest tests/unit/commands/test_handlers.py -v` passed with 6 tests.
 
-- [ ] Task 4: Add Skill Handler and Processor
-  - Note: Not started.
+- [x] Task 4: Add Skill Handler and Processor
+  - Note: Added dynamic skill command handling and `SlashCommandProcessor` with built-in command priority.
+  - Verification: `python -m pytest tests/unit/commands/ -v` passed with 26 tests.
 
 - [ ] Task 5: Make Context Assembly Accept Turn Requests Without User Input
   - Note: Not started.

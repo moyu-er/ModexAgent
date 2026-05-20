@@ -11,6 +11,7 @@ from .handlers import (
     CommandHandler,
     ContinueCommandHandler,
     InvalidCommandHandler,
+    SkillCommandHandler,
     UnknownCommandHandler,
     build_default_builtin_handlers,
 )
@@ -21,6 +22,7 @@ from .models import (
     SlashCommandInvocation,
 )
 from .parser import SlashCommandParser
+from .processor import SlashCommandProcessor
 
 __all__ = [
     "ApprovalCommandHandler",
@@ -34,8 +36,10 @@ __all__ = [
     "CommandParseStatus",
     "ContinueCommandHandler",
     "InvalidCommandHandler",
+    "SkillCommandHandler",
     "SlashCommandInvocation",
     "SlashCommandParser",
+    "SlashCommandProcessor",
     "UnknownCommandHandler",
     "build_default_builtin_handlers",
 ]

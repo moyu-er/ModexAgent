@@ -158,3 +158,62 @@ class InvalidCommandHandler:
 
 def build_default_builtin_handlers() -> Sequence[CommandHandler]:
     return (ApprovalCommandHandler(), ContinueCommandHandler())
+
+
+class SkillCommandHandler:
+    @property
+    def names(self) -> Collection[str]:
+        return ()
+
+    def dispatch_policy(
+        self,
+        invocation: SlashCommandInvocation,
+        context: CommandContext,
+    ) -> CommandDispatchPolicy:
+        return CommandDispatchPolicy.NORMAL_QUEUE
+
+    async def can_handle(
+        self,
+        invocation: SlashCommandInvocation,
+        context: CommandContext,
+    ) -> bool:
+        if context.skill_manager is None:
+            return False
+        return await context.skill_manager.get_skill(invocation.command) is not None
+
+    async def handle(
+        self,
+        invocation: SlashCommandInvocation,
+        context: CommandContext,
+    ) -> CommandHandlingResult:
+        if context.skill_manager is None:
+            return CommandHandlingResult(
+                action=CommandAction.NOTICE,
+                dispatch_policy=CommandDispatchPolicy.NORMAL_QUEUE,
+                notice=NOTICE_UNKNOWN_COMMAND.format(command=invocation.command),
+                invocation=invocation,
+            )
+        skill = await context.skill_manager.get_skill(invocation.command)
+        if skill is None:
+            return CommandHandlingResult(
+                action=CommandAction.NOTICE,
+                dispatch_policy=CommandDispatchPolicy.NORMAL_QUEUE,
+                notice=NOTICE_UNKNOWN_COMMAND.format(command=invocation.command),
+                invocation=invocation,
+            )
+        content = (
+            f'<command_context type="skill" name="{skill.name}">\n'
+            f"<skill>\n{skill.content}\n</skill>\n"
+            f"</command_context>\n\n"
+            f"<user_input>\n{invocation.args}\n</user_input>"
+        )
+        logger.info("Resolved slash skill command: /%s", invocation.command)
+        return CommandHandlingResult(
+            action=CommandAction.TRANSFORM_TO_USER_INPUT,
+            dispatch_policy=CommandDispatchPolicy.NORMAL_QUEUE,
+            user_content=content,
+            append_user_message=True,
+            trigger_agent=True,
+            invocation=invocation,
+            metadata={"skill_name": skill.name, "skill_location": skill.location or ""},
+        )
