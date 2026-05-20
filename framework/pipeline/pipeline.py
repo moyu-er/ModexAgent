@@ -8,9 +8,15 @@ import contextlib
 import logging
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from framework.commands.models import (
+    CommandContext,
+    CommandHandlingResult,
+    CommandProcessor,
+)
 from framework.core.agent_runtime_config import BusyInputMode
 from framework.core.llm_struct import RuntimeSafetyPolicy
 from framework.core.skills import SkillManager
@@ -53,6 +59,17 @@ logger = logging.getLogger(__name__)
 _UNSET = object()
 
 _ERROR_PLACEHOLDER = "[Assistant reply unavailable due to model or runtime error.]"
+
+
+@dataclass(frozen=True)
+class TurnRequest:
+    session_id: str
+    input_msg: InputMessage
+    user_content: str | None
+    append_user_message: bool
+    trigger_agent: bool
+    approval_action: ApprovalAction | None = None
+    command_result: CommandHandlingResult | None = None
 
 
 async def _safe_flush(ctx_mgr: Any, session_id: str, *, timeout: float) -> None:
@@ -158,6 +175,7 @@ class AgentPipeline:
         turn_store: Any | None = None,
         command_store: Any | None = None,
         runtime_services: AgentRuntimeServices | None = None,
+        command_processor: CommandProcessor | None = None,
     ):
         """
         Args:
@@ -188,6 +206,11 @@ class AgentPipeline:
         self.hooks = list(hooks) if hooks else []
         self.subagent_manager = subagent_manager
         self.command_interceptor = command_interceptor
+        if command_interceptor is not None:
+            logger.warning(
+                "command_interceptor is deprecated and no longer used by AgentPipeline. "
+                "Use command_processor instead."
+            )
         self.router = router
         self.deduplicator = deduplicator
         self.context_builder = context_builder
@@ -207,6 +230,7 @@ class AgentPipeline:
         self.turn_store = turn_store
         self.command_store = command_store
         self.runtime_services = runtime_services
+        self.command_processor = command_processor
         self._approval = ApprovalRenderer(
             approval_workspace=self._approval_workspace,
             agent=agent,
@@ -338,6 +362,33 @@ class AgentPipeline:
             session_id = input_msg.session_id
         logger.info(f"Processing message: session_id={session_id}")
 
+        prelock_dispatch_policy = None
+        if self.command_processor is not None:
+            prelock_parse_result = self.command_processor.parse(input_msg.content or "")
+            if prelock_parse_result.invocation is not None:
+                from framework.commands.constants import CommandDispatchPolicy
+                prelock_pending = await self._load_pending_approval_snapshot(session_id)
+                prelock_dispatch_policy = self.command_processor.dispatch_policy(
+                    prelock_parse_result.invocation,
+                    CommandContext(
+                        session_id=session_id,
+                        input_msg=input_msg,
+                        agent_name=getattr(self.agent, "name", "agent"),
+                        skill_manager=self.skill_manager,
+                        turn_store=self.turn_store,
+                        pending_approval=prelock_pending,
+                        runtime_info={"input_metadata": input_msg.metadata or {}},
+                    ),
+                )
+                if prelock_dispatch_policy == CommandDispatchPolicy.BYPASS_QUEUE:
+                    logger.info(
+                        "Bypass slash-command received but no bypass handler is configured"
+                    )
+                    return None
+                if prelock_dispatch_policy == CommandDispatchPolicy.DROP_IF_BUSY:
+                    logger.info("Drop-if-busy slash-command received; dropping")
+                    return None
+
         # 去重检查
         if self.deduplicator is not None:
             message_id = input_msg.metadata.get("message_id") if input_msg.metadata else None
@@ -363,6 +414,25 @@ class AgentPipeline:
                 await asyncio.sleep(0)
                 # 任务已结束，fall through 到正常流程
             elif self.busy_input_mode == BusyInputMode.QUEUE:
+                # Never queue slash commands as raw text — they would bypass the
+                # command processor and lose their semantics when injected.
+                if self.command_processor is not None:
+                    prelock_parse = self.command_processor.parse(input_msg.content or "")
+                    if prelock_parse.invocation is not None:
+                        logger.info(
+                            "Slash command %s dropped while agent is busy (session=%s)",
+                            prelock_parse.invocation.command,
+                            session_id,
+                        )
+                        await self.output_adapter.send(
+                            OutputMessage(
+                                content="Agent is currently processing. Please wait for the current turn to complete.",
+                                session_id=session_id,
+                                message_type="busy_notice",
+                            ),
+                            session_id,
+                        )
+                        return None
                 queue = self._injection_queues.get(session_id)
                 if queue:
                     await queue.put(input_msg.content or "")
@@ -407,11 +477,10 @@ class AgentPipeline:
         input_metadata: dict[str, Any],
         route_result: Any | None,
     ) -> tuple[str | None, list[Any], Any | None]:
-        """Preprocess input: sanitize, handle attachments, apply route modifier, intercept commands.
+        """Preprocess input: sanitize, handle attachments, apply route modifier.
 
         Returns:
             (sanitized_content, media_blocks, media_processor).
-            If command_interceptor consumed the message, sanitized_content is None.
         """
         sanitized_content = input_msg.content
         if self.sanitizer is not None:
@@ -444,36 +513,6 @@ class AgentPipeline:
         if not source_agent and route_result and route_result.prompt_modifier:
             sanitized_content = route_result.prompt_modifier + sanitized_content
 
-        # 命令拦截（优先尝试异步版本）
-        if self.command_interceptor is not None:
-            try:
-                handle_async = getattr(self.command_interceptor, "handle_async", None)
-                if handle_async is not None:
-                    intercept_result = await handle_async(
-                        InputMessage(
-                            content=sanitized_content,
-                            session_id=session_id,
-                            metadata=input_metadata,
-                        )
-                    )
-                else:
-                    intercept_result = self.command_interceptor.handle(
-                        InputMessage(
-                            content=sanitized_content,
-                            session_id=session_id,
-                            metadata=input_metadata,
-                        )
-                    )
-            except Exception:
-                logger.exception("CommandInterceptor failed for session %s", session_id)
-                intercept_result = None
-            if intercept_result is not None:
-                await self.output_adapter.send(
-                    OutputMessage(content=intercept_result, message_type="command_response"),
-                    session_id,
-                )
-                return None, [], None
-
         return sanitized_content, media_blocks, _media_processor
 
     async def _assemble_context(
@@ -487,6 +526,7 @@ class AgentPipeline:
         ctx_mgr: Any,
         route_result: Any | None,
         _is_approval_cmd: bool,
+        append_user_message: bool = True,
     ) -> Any:
         """Assemble context state via context_assembler module."""
         return await assemble_context(
@@ -496,6 +536,7 @@ class AgentPipeline:
             tool_manager=self.tool_manager,
             skill_manager=self.skill_manager,
             context_builder=self.context_builder,
+            append_user_message=append_user_message,
         )
 
     def _build_runtime_and_context(
@@ -582,7 +623,8 @@ class AgentPipeline:
         elif governance is not None:
             # Lightweight runtime for governance-only mode (no turn_store)
             from framework.agents.react.state import ReActTurnState
-            from framework.runtime.enums import AgentKind, TurnPhase as RTurnPhase
+            from framework.runtime.enums import AgentKind
+            from framework.runtime.enums import TurnPhase as RTurnPhase
             from framework.runtime.services import AgentRuntime
             agent_context.runtime = AgentRuntime(
                 services=AgentRuntimeServices(governance=governance),
@@ -790,6 +832,84 @@ class AgentPipeline:
         snapshots.sort(key=lambda snapshot: snapshot.created_at)
         return snapshots[-1]
 
+    async def _build_turn_request(
+        self,
+        input_msg: InputMessage,
+        session_id: str,
+        input_metadata: dict[str, Any],
+        pending_snapshot: TurnSnapshot | None,
+    ) -> TurnRequest | None:
+        if self.command_processor is None:
+            parsed_command = parse_input_command(input_msg.content or "")
+            approval_action = (
+                parsed_command.approval_action
+                if parsed_command is not None
+                else None
+            )
+            return TurnRequest(
+                session_id=session_id,
+                input_msg=input_msg,
+                user_content=input_msg.content,
+                append_user_message=True,
+                trigger_agent=True,
+                approval_action=approval_action,
+            )
+
+        from framework.commands.constants import CommandAction, CommandParseStatus
+        parse_result = self.command_processor.parse(input_msg.content or "")
+        if parse_result.status == CommandParseStatus.PLAIN_INPUT:
+            return TurnRequest(
+                session_id=session_id,
+                input_msg=input_msg,
+                user_content=input_msg.content,
+                append_user_message=True,
+                trigger_agent=True,
+            )
+
+        command_context = CommandContext(
+            session_id=session_id,
+            input_msg=input_msg,
+            agent_name=getattr(self.agent, "name", "agent"),
+            skill_manager=self.skill_manager,
+            turn_store=self.turn_store,
+            pending_approval=pending_snapshot,
+        )
+        result = await self.command_processor.handle(input_msg.content or "", command_context)
+        if result.notice:
+            await self.output_adapter.send(
+                OutputMessage(
+                    content=result.notice,
+                    session_id=session_id,
+                    message_type="command_response",
+                ),
+                session_id,
+            )
+        if result.action == CommandAction.NOTICE:
+            return None
+        if result.action == CommandAction.APPROVAL_DECISION:
+            return TurnRequest(
+                session_id=session_id,
+                input_msg=input_msg,
+                user_content=None,
+                append_user_message=False,
+                trigger_agent=False,
+                approval_action=result.approval_action,
+                command_result=result,
+            )
+        if result.action in (
+            CommandAction.CONTINUE_AGENT,
+            CommandAction.TRANSFORM_TO_USER_INPUT,
+        ):
+            return TurnRequest(
+                session_id=session_id,
+                input_msg=input_msg,
+                user_content=result.user_content,
+                append_user_message=result.append_user_message,
+                trigger_agent=result.trigger_agent,
+                command_result=result,
+            )
+        return None
+
     async def _process_message_locked(
         self, input_msg: InputMessage, session_id: str, route_result: Any | None = None
     ) -> AgentResult | None:
@@ -811,19 +931,28 @@ class AgentPipeline:
         )
         input_metadata = getattr(input_msg, "metadata", None) or {}
 
+        pending_snapshot = await self._load_pending_approval_snapshot(session_id)
+        turn_request = await self._build_turn_request(
+            input_msg,
+            session_id,
+            input_metadata,
+            pending_snapshot,
+        )
+        if turn_request is None:
+            return None
+
         sanitized_content, media_blocks, media_processor = await self._preprocess_input(
             input_msg, session_id, input_metadata, route_result,
         )
         if sanitized_content is None:
             return None
 
-        parsed_command = parse_input_command(input_msg.content or "")
-        approval_action = (
-            parsed_command.approval_action
-            if parsed_command is not None
-            else None
-        )
-        pending_snapshot = await self._load_pending_approval_snapshot(session_id)
+        if turn_request.user_content is not None:
+            sanitized_content = turn_request.user_content
+        elif not turn_request.append_user_message:
+            sanitized_content = None
+
+        approval_action = turn_request.approval_action
         is_approval_cmd, approval_state = await self._approval.detect(
             input_msg,
             session_id,
@@ -842,6 +971,7 @@ class AgentPipeline:
             ctx_mgr,
             route_result,
             is_approval_cmd,
+            append_user_message=turn_request.append_user_message,
         )
         agent_context, emitter = self._build_runtime_and_context(
             session_id,
@@ -860,6 +990,9 @@ class AgentPipeline:
                 input_metadata=input_metadata,
                 ctx_mgr=ctx_mgr,
             )
+
+        if not turn_request.trigger_agent:
+            return None
 
         return await self._execute_turn(
             agent_context, emitter, session_id, context_state, input_metadata, ctx_mgr,

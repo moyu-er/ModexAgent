@@ -121,7 +121,10 @@ class BrokerOutputAdapter(OutputAdapter):
 
     @property
     def streaming_mode(self) -> StreamingMode:
-        return StreamingMode.NONE
+        # TODO(STREAMING_DEBUG): changed from NONE to PSEUDO so pool-mode
+        # agents use streaming LLM API while still buffering deltas.
+        # After confirming it works, make this permanent.
+        return StreamingMode.PSEUDO
 
     async def send(self, message: OutputMessage, session_id: str) -> None:
         metadata = dict(message.metadata) if message.metadata else {}

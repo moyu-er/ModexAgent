@@ -217,7 +217,10 @@ class StreamingAwareEmitter(ContentEmitter[E]):
         self._reasoning_buffer = ""
 
     def wants_streaming(self) -> bool:
-        return self.output_adapter.streaming_mode == StreamingMode.NATIVE
+        return self.output_adapter.streaming_mode in (
+            StreamingMode.NATIVE,
+            StreamingMode.PSEUDO,
+        )
 
     @property
     def is_true_streaming(self) -> bool:
