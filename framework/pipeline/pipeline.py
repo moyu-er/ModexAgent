@@ -352,6 +352,30 @@ class AgentPipeline:
             session_id = input_msg.session_id
         logger.info(f"Processing message: session_id={session_id}")
 
+        prelock_dispatch_policy = None
+        if self.command_processor is not None:
+            prelock_parse_result = self.command_processor.parse(input_msg.content or "")
+            if prelock_parse_result.invocation is not None:
+                from framework.commands.constants import CommandDispatchPolicy
+                from framework.commands.models import CommandContext
+
+                prelock_dispatch_policy = self.command_processor.dispatch_policy(
+                    prelock_parse_result.invocation,
+                    CommandContext(
+                        session_id=session_id,
+                        input_msg=input_msg,
+                        agent_name=getattr(self.agent, "name", "agent"),
+                        skill_manager=self.skill_manager,
+                        turn_store=self.turn_store,
+                        runtime_info={"input_metadata": input_msg.metadata or {}},
+                    ),
+                )
+                if prelock_dispatch_policy == CommandDispatchPolicy.BYPASS_QUEUE:
+                    logger.info(
+                        "Bypass slash-command received but no bypass handler is configured"
+                    )
+                    return None
+
         # 去重检查
         if self.deduplicator is not None:
             message_id = input_msg.metadata.get("message_id") if input_msg.metadata else None

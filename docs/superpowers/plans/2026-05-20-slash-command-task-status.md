@@ -48,8 +48,9 @@ considered complete until this file records it.
   - Note: Replaced approval command parsing with slash-only parser delegation and updated approval tests.
   - Verification: `python -m pytest tests/unit/approval/test_detect_approval_command.py tests/unit/pipeline/test_approval_renderer_edge.py -v` passed with 15 tests.
 
-- [ ] Task 8: Add Pre-Lock Dispatch Policy Hook Point
-  - Note: Not started.
+- [x] Task 8: Add Pre-Lock Dispatch Policy Hook Point
+  - Note: Added pre-lock dispatch policy lookup in `AgentPipeline` and reserved a no-op bypass path for future immediate commands.
+  - Verification: `python -m pytest tests/unit/pipeline/test_slash_commands.py -v` passed with 5 tests.
 
 - [ ] Task 9: Wire bot_project Main Pipeline
   - Note: Not started.

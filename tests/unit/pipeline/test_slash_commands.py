@@ -205,3 +205,21 @@ async def test_pipeline_skill_uses_transformed_user_content() -> None:
         msg.get("content") == "<command_context>skill</command_context>"
         for msg in agent.last_messages
     )
+
+
+def test_command_processor_exposes_dispatch_policy_before_lock() -> None:
+    from framework.commands.models import CommandContext
+    from framework.commands.processor import SlashCommandProcessor
+
+    processor = SlashCommandProcessor.default()
+    parse_result = processor.parse("/approve")
+    assert parse_result.invocation is not None
+    policy = processor.dispatch_policy(
+        parse_result.invocation,
+        CommandContext(
+            session_id="s1",
+            input_msg=InputMessage(content="/approve", session_id="s1"),
+            agent_name="main",
+        ),
+    )
+    assert policy == CommandDispatchPolicy.APPROVAL_RESPONSE
