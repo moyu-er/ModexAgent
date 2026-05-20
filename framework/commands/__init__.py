@@ -12,6 +12,7 @@ from .models import (
     CommandParseResult,
     SlashCommandInvocation,
 )
+from .parser import SlashCommandParser
 
 __all__ = [
     "BuiltinCommand",
@@ -22,4 +23,5 @@ __all__ = [
     "CommandParseResult",
     "CommandParseStatus",
     "SlashCommandInvocation",
+    "SlashCommandParser",
 ]

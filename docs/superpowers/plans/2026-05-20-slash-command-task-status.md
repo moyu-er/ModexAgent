@@ -24,8 +24,9 @@ considered complete until this file records it.
   - Note: Added `framework.commands` constants, dataclasses, and public exports.
   - Verification: `python -c "from framework.commands import CommandAction, CommandContext, SlashCommandInvocation; print(CommandAction.NOTICE.value)"` passed and printed `notice`.
 
-- [ ] Task 2: Implement Strict Slash Parser
-  - Note: Not started.
+- [x] Task 2: Implement Strict Slash Parser
+  - Note: Added pure slash-command parser and parser unit tests for plain, valid, and invalid input.
+  - Verification: `python -m pytest tests/unit/commands/test_parser.py -v` passed with 14 tests.
 
 - [ ] Task 3: Implement Default Command Handlers
   - Note: Not started.
