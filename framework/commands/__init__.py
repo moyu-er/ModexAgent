@@ -6,6 +6,14 @@ from .constants import (
     CommandDispatchPolicy,
     CommandParseStatus,
 )
+from .handlers import (
+    ApprovalCommandHandler,
+    CommandHandler,
+    ContinueCommandHandler,
+    InvalidCommandHandler,
+    UnknownCommandHandler,
+    build_default_builtin_handlers,
+)
 from .models import (
     CommandContext,
     CommandHandlingResult,
@@ -15,13 +23,19 @@ from .models import (
 from .parser import SlashCommandParser
 
 __all__ = [
+    "ApprovalCommandHandler",
     "BuiltinCommand",
     "CommandAction",
     "CommandContext",
     "CommandDispatchPolicy",
+    "CommandHandler",
     "CommandHandlingResult",
     "CommandParseResult",
     "CommandParseStatus",
+    "ContinueCommandHandler",
+    "InvalidCommandHandler",
     "SlashCommandInvocation",
     "SlashCommandParser",
+    "UnknownCommandHandler",
+    "build_default_builtin_handlers",
 ]

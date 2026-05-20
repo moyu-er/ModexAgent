@@ -28,8 +28,9 @@ considered complete until this file records it.
   - Note: Added pure slash-command parser and parser unit tests for plain, valid, and invalid input.
   - Verification: `python -m pytest tests/unit/commands/test_parser.py -v` passed with 14 tests.
 
-- [ ] Task 3: Implement Default Command Handlers
-  - Note: Not started.
+- [x] Task 3: Implement Default Command Handlers
+  - Note: Added approval, continue, unknown, and invalid command handlers with typed handling results.
+  - Verification: `python -m pytest tests/unit/commands/test_handlers.py -v` passed with 6 tests.
 
 - [ ] Task 4: Add Skill Handler and Processor
   - Note: Not started.
