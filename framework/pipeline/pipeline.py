@@ -367,6 +367,7 @@ class AgentPipeline:
             prelock_parse_result = self.command_processor.parse(input_msg.content or "")
             if prelock_parse_result.invocation is not None:
                 from framework.commands.constants import CommandDispatchPolicy
+                prelock_pending = await self._load_pending_approval_snapshot(session_id)
                 prelock_dispatch_policy = self.command_processor.dispatch_policy(
                     prelock_parse_result.invocation,
                     CommandContext(
@@ -375,6 +376,7 @@ class AgentPipeline:
                         agent_name=getattr(self.agent, "name", "agent"),
                         skill_manager=self.skill_manager,
                         turn_store=self.turn_store,
+                        pending_approval=prelock_pending,
                         runtime_info={"input_metadata": input_msg.metadata or {}},
                     ),
                 )
@@ -412,6 +414,25 @@ class AgentPipeline:
                 await asyncio.sleep(0)
                 # 任务已结束，fall through 到正常流程
             elif self.busy_input_mode == BusyInputMode.QUEUE:
+                # Never queue slash commands as raw text — they would bypass the
+                # command processor and lose their semantics when injected.
+                if self.command_processor is not None:
+                    prelock_parse = self.command_processor.parse(input_msg.content or "")
+                    if prelock_parse.invocation is not None:
+                        logger.info(
+                            "Slash command %s dropped while agent is busy (session=%s)",
+                            prelock_parse.invocation.command,
+                            session_id,
+                        )
+                        await self.output_adapter.send(
+                            OutputMessage(
+                                content="Agent is currently processing. Please wait for the current turn to complete.",
+                                session_id=session_id,
+                                message_type="busy_notice",
+                            ),
+                            session_id,
+                        )
+                        return None
                 queue = self._injection_queues.get(session_id)
                 if queue:
                     await queue.put(input_msg.content or "")

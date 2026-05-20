@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -16,7 +18,8 @@ from framework.core.agent import Agent, AgentContext
 from framework.core.emitter import AgentResult, ContentEmitter
 from framework.core.types import InputMessage, MessageRole
 from framework.memory.history import ListMessageHistory
-from framework.pipeline.adapters import InputAdapter, NullOutputAdapter
+from framework.pipeline.adapters import InputAdapter, NullOutputAdapter, OutputAdapter
+from framework.pipeline.adapters import OutputMessage
 from framework.pipeline.context_assembler import assemble_context
 
 
@@ -160,6 +163,24 @@ class TestInputAdapter(InputAdapter):
             yield InputMessage(content="", session_id="unused")
 
 
+class CapturingOutputAdapter(OutputAdapter):
+    @property
+    def name(self) -> str:
+        return "capturing_output"
+
+    def __init__(self) -> None:
+        self.sent: list[OutputMessage] = []
+
+    async def start(self) -> None:
+        return None
+
+    async def stop(self) -> None:
+        return None
+
+    async def send(self, message: OutputMessage, session_id: str) -> None:
+        self.sent.append(message)
+
+
 @pytest.mark.asyncio
 async def test_pipeline_continue_runs_agent_without_appending_command() -> None:
     from framework.core.context import InMemoryContextManager
@@ -218,6 +239,59 @@ async def test_pipeline_continue_during_pending_approval_returns_notice() -> Non
     )
     assert result is None
     assert agent.runs == 0
+
+
+@pytest.mark.asyncio
+async def test_pipeline_drops_slash_command_when_busy_in_queue_mode() -> None:
+    """Slash commands must not be queued as raw text when agent is busy."""
+    import asyncio
+
+    from framework.core.agent_runtime_config import BusyInputMode
+    from framework.core.context import InMemoryContextManager
+    from framework.core.tool_manager import InMemoryToolManager
+    from framework.pipeline.pipeline import AgentPipeline
+
+    agent = FakeAgent()
+    processor = FakeCommandProcessor(
+        CommandHandlingResult(
+            action=CommandAction.CONTINUE_AGENT,
+            dispatch_policy=CommandDispatchPolicy.NORMAL_QUEUE,
+            trigger_agent=True,
+            append_user_message=False,
+        )
+    )
+    output_adapter = CapturingOutputAdapter()
+    pipeline = AgentPipeline(
+        agent=agent,
+        context_manager=InMemoryContextManager(base_system_prompt="system"),
+        tool_manager=InMemoryToolManager(),
+        input_adapter=TestInputAdapter(),
+        output_adapter=output_adapter,
+        command_processor=processor,
+        busy_input_mode=BusyInputMode.QUEUE,
+    )
+
+    # Simulate a running task
+    async def long_running() -> None:
+        await asyncio.sleep(10)
+
+    fake_task = asyncio.create_task(long_running())
+    pipeline._session_tasks["s1"] = fake_task
+
+    try:
+        result = await pipeline.process_message(
+            InputMessage(content="/continue", session_id="s1")
+        )
+        assert result is None
+        assert agent.runs == 0
+        # Should send busy notice instead of queuing
+        assert any(
+            msg.message_type == "busy_notice" for msg in output_adapter.sent
+        )
+    finally:
+        fake_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await fake_task
 
 
 @pytest.mark.asyncio
