@@ -52,8 +52,9 @@ considered complete until this file records it.
   - Note: Added pre-lock dispatch policy lookup in `AgentPipeline` and reserved a no-op bypass path for future immediate commands.
   - Verification: `python -m pytest tests/unit/pipeline/test_slash_commands.py -v` passed with 5 tests.
 
-- [ ] Task 9: Wire bot_project Main Pipeline
-  - Note: Not started.
+- [x] Task 9: Wire bot_project Main Pipeline
+  - Note: Added bot_project main command processor builder and injected it into main pipeline and main pool pipeline only.
+  - Verification: `python -m pytest examples/bot_project/tests/test_slash_commands.py -v` passed with 1 test.
 
 - [ ] Task 10: Full Verification and Documentation Cleanup
   - Note: Not started.

@@ -456,6 +456,7 @@ class BotService(AgentBuilderMixin):
 
         # Build AgentRuntime via framework RuntimeAssembler
         runtime = await self._assemble_runtime(hooks=self._build_hook_runner(pipeline_hooks))
+        command_processor = self._build_main_command_processor(main_skill_manager)
 
         self.pipeline = AgentPipeline(
             agent=self.agent,
@@ -480,6 +481,7 @@ class BotService(AgentBuilderMixin):
             turn_store=self._turn_store,
             command_store=self._command_store,
             runtime_services=runtime.services,
+            command_processor=command_processor,
         )
         print("[OK] AgentPipeline initialized")
         print(f"   Input: {self.input_adapter.name}")
@@ -567,6 +569,9 @@ class BotService(AgentBuilderMixin):
             main_instance.pipeline.turn_store = self._turn_store
             main_instance.pipeline._approval_workspace = self._approval_workspace
             main_instance.pipeline._user_interface = self._im_ui
+            main_instance.pipeline.command_processor = self._build_main_command_processor(
+                main_instance.pipeline.skill_manager
+            )
             print("[OK] Main agent pool pipeline wired with AgentRuntime services")
 
         # Register subagents as residents (pool mode requires all targets to be resident)
@@ -740,6 +745,12 @@ class BotService(AgentBuilderMixin):
 
         self.interceptor_chain = chain
         return chain
+
+    def _build_main_command_processor(self, skill_manager: SkillManager | None) -> Any:
+        from framework.commands.processor import SlashCommandProcessor
+
+        _ = skill_manager
+        return SlashCommandProcessor.default()
 
     # ------------------------------------------------------------------ #
     # Start / Stop
