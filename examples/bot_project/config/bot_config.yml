@@ -44,6 +44,11 @@ qq:
     - "*"
 
 # ---- LLM ----
+# Streaming control: the framework uses the LLM streaming API when the
+# output adapter's streaming_mode is NATIVE or PSEUDO.  QQ bots use
+# PSEUDO by default (deltas are buffered and sent in one message).
+# NATIVE sends each delta immediately (for CLI/WebSocket adapters).
+# NONE forces the non-streaming API.
 llm:
   model: "${LLM_MODEL:-openai/MiniMax-M2.5}"
   api_key: "${LLM_API_KEY}"

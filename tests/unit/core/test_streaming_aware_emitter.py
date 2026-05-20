@@ -79,6 +79,32 @@ class TestStreamingAwareEmitter:
         )
         assert emitter.is_true_streaming is False
 
+    def test_wants_streaming_native_returns_true(self, mock_adapter):
+        """PSEUDO and NATIVE modes both use streaming LLM API."""
+        emitter = StreamingAwareEmitter(
+            output_adapter=mock_adapter,
+            session_id="test",
+        )
+        assert emitter.wants_streaming() is True
+
+    def test_wants_streaming_pseudo_returns_true(self, mock_adapter_no_streaming):
+        """PSEUDO mode should use streaming LLM API (buffers deltas, flushes at end)."""
+        emitter = StreamingAwareEmitter(
+            output_adapter=mock_adapter_no_streaming,
+            session_id="test",
+        )
+        assert emitter.wants_streaming() is True
+
+    def test_wants_streaming_none_returns_false(self):
+        """NONE mode should use non-streaming LLM API."""
+        adapter = MockOutputAdapter(supports_streaming=False)
+        adapter.streaming_mode = StreamingMode.NONE
+        emitter = StreamingAwareEmitter(
+            output_adapter=adapter,
+            session_id="test",
+        )
+        assert emitter.wants_streaming() is False
+
     @pytest.mark.asyncio
     async def test_emit_delta_true_streaming(self, mock_adapter, emitter):
         """Test emit_delta in true streaming mode."""
