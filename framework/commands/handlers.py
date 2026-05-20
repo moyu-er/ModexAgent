@@ -9,6 +9,7 @@ from framework.commands.constants import (
     NOTICE_APPROVAL_BLOCKS_CONTINUE,
     NOTICE_INVALID_COMMAND,
     NOTICE_NO_PENDING_APPROVAL,
+    NOTICE_SKILL_NOT_FOUND,
     NOTICE_UNKNOWN_COMMAND,
     BuiltinCommand,
     CommandAction,
@@ -53,7 +54,9 @@ class ApprovalCommandHandler:
         invocation: SlashCommandInvocation,
         context: CommandContext,
     ) -> CommandDispatchPolicy:
-        return CommandDispatchPolicy.APPROVAL_RESPONSE
+        if context.pending_approval is not None:
+            return CommandDispatchPolicy.APPROVAL_RESPONSE
+        return CommandDispatchPolicy.NORMAL_QUEUE
 
     async def handle(
         self,
@@ -177,6 +180,8 @@ class SkillCommandHandler:
         invocation: SlashCommandInvocation,
         context: CommandContext,
     ) -> bool:
+        if invocation.command in {c.value for c in BuiltinCommand}:
+            return False
         if context.skill_manager is None:
             return False
         return await context.skill_manager.get_skill(invocation.command) is not None
@@ -198,7 +203,7 @@ class SkillCommandHandler:
             return CommandHandlingResult(
                 action=CommandAction.NOTICE,
                 dispatch_policy=CommandDispatchPolicy.NORMAL_QUEUE,
-                notice=NOTICE_UNKNOWN_COMMAND.format(command=invocation.command),
+                notice=NOTICE_SKILL_NOT_FOUND.format(command=invocation.command),
                 invocation=invocation,
             )
         content = (

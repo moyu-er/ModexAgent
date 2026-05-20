@@ -206,6 +206,11 @@ class AgentPipeline:
         self.hooks = list(hooks) if hooks else []
         self.subagent_manager = subagent_manager
         self.command_interceptor = command_interceptor
+        if command_interceptor is not None:
+            logger.warning(
+                "command_interceptor is deprecated and no longer used by AgentPipeline. "
+                "Use command_processor instead."
+            )
         self.router = router
         self.deduplicator = deduplicator
         self.context_builder = context_builder
@@ -377,6 +382,9 @@ class AgentPipeline:
                     logger.info(
                         "Bypass slash-command received but no bypass handler is configured"
                     )
+                    return None
+                if prelock_dispatch_policy == CommandDispatchPolicy.DROP_IF_BUSY:
+                    logger.info("Drop-if-busy slash-command received; dropping")
                     return None
 
         # 去重检查

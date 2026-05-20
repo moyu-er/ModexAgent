@@ -189,6 +189,38 @@ async def test_pipeline_continue_runs_agent_without_appending_command() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pipeline_continue_during_pending_approval_returns_notice() -> None:
+    """/continue during pending approval returns notice and does not auto-deny."""
+    from framework.core.context import InMemoryContextManager
+    from framework.core.tool_manager import InMemoryToolManager
+    from framework.pipeline.pipeline import AgentPipeline
+
+    agent = FakeAgent()
+    processor = FakeCommandProcessor(
+        CommandHandlingResult(
+            action=CommandAction.NOTICE,
+            dispatch_policy=CommandDispatchPolicy.NORMAL_QUEUE,
+            trigger_agent=False,
+            append_user_message=False,
+            notice="Approval is pending; /continue is blocked.",
+        )
+    )
+    pipeline = AgentPipeline(
+        agent=agent,
+        context_manager=InMemoryContextManager(base_system_prompt="system"),
+        tool_manager=InMemoryToolManager(),
+        input_adapter=TestInputAdapter(),
+        output_adapter=NullOutputAdapter(),
+        command_processor=processor,
+    )
+    result = await pipeline.process_message(
+        InputMessage(content="/continue", session_id="s1")
+    )
+    assert result is None
+    assert agent.runs == 0
+
+
+@pytest.mark.asyncio
 async def test_pipeline_skill_uses_transformed_user_content() -> None:
     from framework.core.context import InMemoryContextManager
     from framework.core.tool_manager import InMemoryToolManager
@@ -223,11 +255,15 @@ async def test_pipeline_skill_uses_transformed_user_content() -> None:
 def test_command_processor_exposes_dispatch_policy_before_lock() -> None:
     from framework.commands.models import CommandContext
     from framework.commands.processor import SlashCommandProcessor
+    from framework.runtime.enums import AgentKind, SnapshotReason, TurnPhase
+    from framework.runtime.models import ResumePoint, TurnIdentity, TurnSnapshot
 
     processor = SlashCommandProcessor.default()
     parse_result = processor.parse("/approve")
     assert parse_result.invocation is not None
-    policy = processor.dispatch_policy(
+
+    # Without pending approval: returns NORMAL_QUEUE
+    policy_no_pending = processor.dispatch_policy(
         parse_result.invocation,
         CommandContext(
             session_id="s1",
@@ -235,4 +271,24 @@ def test_command_processor_exposes_dispatch_policy_before_lock() -> None:
             agent_name="main",
         ),
     )
-    assert policy == CommandDispatchPolicy.APPROVAL_RESPONSE
+    assert policy_no_pending == CommandDispatchPolicy.NORMAL_QUEUE
+
+    # With pending approval: returns APPROVAL_RESPONSE
+    policy_pending = processor.dispatch_policy(
+        parse_result.invocation,
+        CommandContext(
+            session_id="s1",
+            input_msg=InputMessage(content="/approve", session_id="s1"),
+            agent_name="main",
+            pending_approval=TurnSnapshot(
+                identity=TurnIdentity(agent_id="a1", session_id="s1", turn_id="t1"),
+                agent_kind=AgentKind.REACT,
+                phase=TurnPhase.SUSPENDED,
+                reason=SnapshotReason.TOOL_APPROVAL_REQUIRED,
+                resume_point=ResumePoint(agent_kind=AgentKind.REACT, phase=TurnPhase.SUSPENDED),
+                message_delta=[],
+                state_payload={},
+            ),
+        ),
+    )
+    assert policy_pending == CommandDispatchPolicy.APPROVAL_RESPONSE

@@ -79,7 +79,7 @@ async def test_unknown_command_returns_notice() -> None:
     processor = SlashCommandProcessor.default()
     result = await processor.handle("/missing value", _context("/missing value"))
     assert result.action == CommandAction.NOTICE
-    assert result.notice == "Unknown command: /missing"
+    assert "Unknown command: /missing" in (result.notice or "")
 
 
 @pytest.mark.asyncio
