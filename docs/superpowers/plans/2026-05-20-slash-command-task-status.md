@@ -20,8 +20,9 @@ considered complete until this file records it.
 
 ## Tasks
 
-- [ ] Task 1: Add Command Type Model
-  - Note: Not started.
+- [x] Task 1: Add Command Type Model
+  - Note: Added `framework.commands` constants, dataclasses, and public exports.
+  - Verification: `python -c "from framework.commands import CommandAction, CommandContext, SlashCommandInvocation; print(CommandAction.NOTICE.value)"` passed and printed `notice`.
 
 - [ ] Task 2: Implement Strict Slash Parser
   - Note: Not started.
