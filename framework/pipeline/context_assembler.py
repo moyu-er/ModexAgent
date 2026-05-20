@@ -40,6 +40,7 @@ async def assemble_context(
     tool_manager: ToolManager | None = None,
     skill_manager: SkillManager | None = None,
     context_builder: MultiAgentContextBuilder | None = None,
+    append_user_message: bool = True,
 ) -> Any:
     """Assemble context state: load context, recover checkpoints, write user message,
     build system prompt, and run multi-agent context builder.
@@ -102,7 +103,7 @@ async def assemble_context(
 
     context_state = await ctx_mgr.load(session_id)
 
-    if not _is_approval_cmd:
+    if append_user_message and not _is_approval_cmd:
         await context_state.history.append(user_message)
     await ctx_mgr.save(
         session_id=session_id,
@@ -165,7 +166,7 @@ async def assemble_context(
         if system_msgs:
             context_state.system_prompt = "\n\n".join(m.get("content", "") for m in system_msgs)
         non_system = [m for m in built_messages if m.get("role") != "system"]
-        if user_message.get("role") == MessageRole.USER and not any(
+        if append_user_message and user_message.get("role") == MessageRole.USER and not any(
             m.get("role") == MessageRole.USER for m in non_system
         ):
             non_system = list(non_system) + [user_message]

@@ -36,8 +36,9 @@ considered complete until this file records it.
   - Note: Added dynamic skill command handling and `SlashCommandProcessor` with built-in command priority.
   - Verification: `python -m pytest tests/unit/commands/ -v` passed with 26 tests.
 
-- [ ] Task 5: Make Context Assembly Accept Turn Requests Without User Input
-  - Note: Not started.
+- [x] Task 5: Make Context Assembly Accept Turn Requests Without User Input
+  - Note: Extended context assembly with `append_user_message` so `/continue` can trigger a turn without adding user text.
+  - Verification: `python -m pytest tests/unit/pipeline/test_slash_commands.py::test_assemble_context_can_skip_user_append_for_continue tests/unit/pipeline/test_slash_commands.py::test_assemble_context_appends_transformed_skill_content -v` passed with 2 tests.
 
 - [ ] Task 6: Integrate Command Processor Into AgentPipeline
   - Note: Not started.
