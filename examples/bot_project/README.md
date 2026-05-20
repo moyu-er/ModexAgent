@@ -752,6 +752,47 @@ MCP 工具通过 `MCPTool` 动态加载，支持：
 - ✅ 插件系统 (Plugin System)
 - ✅ 文件发送给用户 (`send_file_to_user`)
 - ✅ 后台 Agent 安全网 (PeerAutoSendHook)
+- ✅ Slash 指令系统 (`/approve`, `/deny`, `/continue`, 技能指令)
+
+## Slash 指令
+
+Bot 支持以 `/` 开头的特殊指令，用于控制对话流程、审批工具调用或触发技能。
+
+### 内置指令
+
+| 指令 | 说明 | 使用场景 |
+|------|------|----------|
+| `/approve` | 批准待审批的工具调用 | Agent 调用敏感工具后，系统暂停等待用户确认 |
+| `/deny` | 拒绝待审批的工具调用 | 不同意 Agent 调用某工具 |
+| `/continue` | 继续对话，不将指令本身加入上下文 | 让 Agent 继续生成，避免干扰 |
+
+### 技能指令 (Skill Commands)
+
+非内置指令会被解析为技能调用。框架自动在 `skills/main/` 目录下查找同名技能：
+
+```
+/weather 明天上海天气如何
+```
+
+如果找到 `skills/main/weather/SKILL.md`，技能内容会被包装为结构化上下文注入对话，帮助 Agent 理解如何调用天气相关工具。
+
+如果指令或技能不存在，Bot 会回复提示：
+```
+Unknown command: /xxx. No such command or skill is available.
+```
+
+### 指令与审批的正交性
+
+- `/approve` 和 `/deny` **仅在存在待审批请求时有效**。无待审批时发送 `/approve`，会收到提示："No pending approval request."
+- `/continue` **不会自动拒绝审批**。如果存在待审批请求时发送 `/continue`，会收到提示："A pending approval request exists. Use /approve or /deny first." —— 审批状态保持不变。
+- Agent 正在运行中（如 LLM 流式输出期间）发送 slash 指令，Bot 会回复忙提示，而非将指令当作文本注入对话。
+
+### 指令语法规则
+
+- 必须以 `/` 开头且 `/` 必须是第一个字符
+- 指令名只能包含小写字母、数字、`-`、`_`
+- 指令名与参数之间用空格分隔
+- 示例：`/skill-name arg1 arg2`
 
 ## 消息处理流程
 
