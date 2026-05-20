@@ -8,6 +8,7 @@ import contextlib
 import logging
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +54,17 @@ logger = logging.getLogger(__name__)
 _UNSET = object()
 
 _ERROR_PLACEHOLDER = "[Assistant reply unavailable due to model or runtime error.]"
+
+
+@dataclass(frozen=True)
+class TurnRequest:
+    session_id: str
+    input_msg: InputMessage
+    user_content: str | None
+    append_user_message: bool
+    trigger_agent: bool
+    approval_action: ApprovalAction | None = None
+    command_result: Any | None = None
 
 
 async def _safe_flush(ctx_mgr: Any, session_id: str, *, timeout: float) -> None:
@@ -158,6 +170,7 @@ class AgentPipeline:
         turn_store: Any | None = None,
         command_store: Any | None = None,
         runtime_services: AgentRuntimeServices | None = None,
+        command_processor: Any | None = None,
     ):
         """
         Args:
@@ -207,6 +220,7 @@ class AgentPipeline:
         self.turn_store = turn_store
         self.command_store = command_store
         self.runtime_services = runtime_services
+        self.command_processor = command_processor
         self._approval = ApprovalRenderer(
             approval_workspace=self._approval_workspace,
             agent=agent,
@@ -487,6 +501,7 @@ class AgentPipeline:
         ctx_mgr: Any,
         route_result: Any | None,
         _is_approval_cmd: bool,
+        append_user_message: bool = True,
     ) -> Any:
         """Assemble context state via context_assembler module."""
         return await assemble_context(
@@ -496,6 +511,7 @@ class AgentPipeline:
             tool_manager=self.tool_manager,
             skill_manager=self.skill_manager,
             context_builder=self.context_builder,
+            append_user_message=append_user_message,
         )
 
     def _build_runtime_and_context(
@@ -790,6 +806,87 @@ class AgentPipeline:
         snapshots.sort(key=lambda snapshot: snapshot.created_at)
         return snapshots[-1]
 
+    async def _build_turn_request(
+        self,
+        input_msg: InputMessage,
+        session_id: str,
+        input_metadata: dict[str, Any],
+        pending_snapshot: TurnSnapshot | None,
+    ) -> TurnRequest | None:
+        if self.command_processor is None:
+            parsed_command = parse_input_command(input_msg.content or "")
+            approval_action = (
+                parsed_command.approval_action
+                if parsed_command is not None
+                else None
+            )
+            return TurnRequest(
+                session_id=session_id,
+                input_msg=input_msg,
+                user_content=input_msg.content,
+                append_user_message=True,
+                trigger_agent=True,
+                approval_action=approval_action,
+            )
+
+        from framework.commands.constants import CommandAction, CommandParseStatus
+        from framework.commands.models import CommandContext
+
+        parse_result = self.command_processor.parse(input_msg.content or "")
+        if parse_result.status == CommandParseStatus.PLAIN_INPUT:
+            return TurnRequest(
+                session_id=session_id,
+                input_msg=input_msg,
+                user_content=input_msg.content,
+                append_user_message=True,
+                trigger_agent=True,
+            )
+
+        command_context = CommandContext(
+            session_id=session_id,
+            input_msg=input_msg,
+            agent_name=getattr(self.agent, "name", "agent"),
+            skill_manager=self.skill_manager,
+            turn_store=self.turn_store,
+            pending_approval=pending_snapshot,
+            runtime_info={"input_metadata": input_metadata},
+        )
+        result = await self.command_processor.handle(input_msg.content or "", command_context)
+        if result.notice:
+            await self.output_adapter.send(
+                OutputMessage(
+                    content=result.notice,
+                    session_id=session_id,
+                    message_type="command_response",
+                ),
+                session_id,
+            )
+        if result.action == CommandAction.NOTICE:
+            return None
+        if result.action == CommandAction.APPROVAL_DECISION:
+            return TurnRequest(
+                session_id=session_id,
+                input_msg=input_msg,
+                user_content=None,
+                append_user_message=False,
+                trigger_agent=False,
+                approval_action=result.approval_action,
+                command_result=result,
+            )
+        if result.action in (
+            CommandAction.CONTINUE_AGENT,
+            CommandAction.TRANSFORM_TO_USER_INPUT,
+        ):
+            return TurnRequest(
+                session_id=session_id,
+                input_msg=input_msg,
+                user_content=result.user_content,
+                append_user_message=result.append_user_message,
+                trigger_agent=result.trigger_agent,
+                command_result=result,
+            )
+        return None
+
     async def _process_message_locked(
         self, input_msg: InputMessage, session_id: str, route_result: Any | None = None
     ) -> AgentResult | None:
@@ -811,19 +908,28 @@ class AgentPipeline:
         )
         input_metadata = getattr(input_msg, "metadata", None) or {}
 
+        pending_snapshot = await self._load_pending_approval_snapshot(session_id)
+        turn_request = await self._build_turn_request(
+            input_msg,
+            session_id,
+            input_metadata,
+            pending_snapshot,
+        )
+        if turn_request is None:
+            return None
+
         sanitized_content, media_blocks, media_processor = await self._preprocess_input(
             input_msg, session_id, input_metadata, route_result,
         )
         if sanitized_content is None:
             return None
 
-        parsed_command = parse_input_command(input_msg.content or "")
-        approval_action = (
-            parsed_command.approval_action
-            if parsed_command is not None
-            else None
-        )
-        pending_snapshot = await self._load_pending_approval_snapshot(session_id)
+        if turn_request.user_content is not None:
+            sanitized_content = turn_request.user_content
+        elif not turn_request.append_user_message:
+            sanitized_content = None
+
+        approval_action = turn_request.approval_action
         is_approval_cmd, approval_state = await self._approval.detect(
             input_msg,
             session_id,
@@ -842,6 +948,7 @@ class AgentPipeline:
             ctx_mgr,
             route_result,
             is_approval_cmd,
+            append_user_message=turn_request.append_user_message,
         )
         agent_context, emitter = self._build_runtime_and_context(
             session_id,
@@ -860,6 +967,9 @@ class AgentPipeline:
                 input_metadata=input_metadata,
                 ctx_mgr=ctx_mgr,
             )
+
+        if not turn_request.trigger_agent:
+            return None
 
         return await self._execute_turn(
             agent_context, emitter, session_id, context_state, input_metadata, ctx_mgr,

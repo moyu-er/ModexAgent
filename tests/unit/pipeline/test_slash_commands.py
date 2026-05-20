@@ -5,8 +5,13 @@ from typing import Any
 import pytest
 
 from framework.core.emitter import AgentResult
+from framework.commands.constants import CommandAction, CommandDispatchPolicy
+from framework.commands.models import CommandContext, CommandHandlingResult
+from framework.core.agent import Agent, AgentContext
+from framework.core.emitter import ContentEmitter
 from framework.core.types import InputMessage, MessageRole
 from framework.memory.history import ListMessageHistory
+from framework.pipeline.adapters import InputAdapter, NullOutputAdapter
 from framework.pipeline.context_assembler import assemble_context
 
 
@@ -89,3 +94,114 @@ async def test_assemble_context_appends_transformed_skill_content() -> None:
     messages = await state.history.to_list()
     assert messages[-1]["role"] == MessageRole.USER
     assert messages[-1]["content"] == "<command_context>skill</command_context>"
+
+
+class FakeCommandProcessor:
+    def __init__(self, result: CommandHandlingResult) -> None:
+        self.result = result
+        self.contexts: list[CommandContext] = []
+
+    def parse(self, text: str):
+        from framework.commands.parser import SlashCommandParser
+
+        return SlashCommandParser().parse(text)
+
+    def dispatch_policy(self, invocation, context: CommandContext):
+        return self.result.dispatch_policy
+
+    async def handle(self, text: str, context: CommandContext) -> CommandHandlingResult:
+        self.contexts.append(context)
+        return self.result
+
+
+class FakeAgent(Agent):
+    event_enum = None
+
+    def __init__(self) -> None:
+        self.runs = 0
+        self.last_messages: list[dict[str, object]] = []
+
+    @property
+    def name(self) -> str:
+        return "fake"
+
+    async def run(self, context: AgentContext, emitter: ContentEmitter):
+        self.runs += 1
+        self.last_messages = await context.to_messages()
+        return AgentResult(content="ok", stop_reason="stop")
+
+
+class TestInputAdapter(InputAdapter):
+    @property
+    def name(self) -> str:
+        return "test_input"
+
+    async def start(self) -> None:
+        return None
+
+    async def stop(self) -> None:
+        return None
+
+    async def receive(self):
+        if False:
+            yield InputMessage(content="", session_id="unused")
+
+
+@pytest.mark.asyncio
+async def test_pipeline_continue_runs_agent_without_appending_command() -> None:
+    from framework.core.context import InMemoryContextManager
+    from framework.core.tool_manager import InMemoryToolManager
+    from framework.pipeline.pipeline import AgentPipeline
+
+    agent = FakeAgent()
+    processor = FakeCommandProcessor(
+        CommandHandlingResult(
+            action=CommandAction.CONTINUE_AGENT,
+            dispatch_policy=CommandDispatchPolicy.NORMAL_QUEUE,
+            trigger_agent=True,
+            append_user_message=False,
+        )
+    )
+    pipeline = AgentPipeline(
+        agent=agent,
+        context_manager=InMemoryContextManager(base_system_prompt="system"),
+        tool_manager=InMemoryToolManager(),
+        input_adapter=TestInputAdapter(),
+        output_adapter=NullOutputAdapter(),
+        command_processor=processor,
+    )
+    await pipeline.process_message(InputMessage(content="/continue", session_id="s1"))
+    assert agent.runs == 1
+    assert all(msg.get("content") != "/continue" for msg in agent.last_messages)
+
+
+@pytest.mark.asyncio
+async def test_pipeline_skill_uses_transformed_user_content() -> None:
+    from framework.core.context import InMemoryContextManager
+    from framework.core.tool_manager import InMemoryToolManager
+    from framework.pipeline.pipeline import AgentPipeline
+
+    agent = FakeAgent()
+    processor = FakeCommandProcessor(
+        CommandHandlingResult(
+            action=CommandAction.TRANSFORM_TO_USER_INPUT,
+            dispatch_policy=CommandDispatchPolicy.NORMAL_QUEUE,
+            user_content="<command_context>skill</command_context>",
+            trigger_agent=True,
+            append_user_message=True,
+        )
+    )
+    pipeline = AgentPipeline(
+        agent=agent,
+        context_manager=InMemoryContextManager(base_system_prompt="system"),
+        tool_manager=InMemoryToolManager(),
+        input_adapter=TestInputAdapter(),
+        output_adapter=NullOutputAdapter(),
+        command_processor=processor,
+    )
+    await pipeline.process_message(InputMessage(content="/weather", session_id="s1"))
+    assert agent.runs == 1
+    assert any(
+        msg.get("content") == "<command_context>skill</command_context>"
+        for msg in agent.last_messages
+    )

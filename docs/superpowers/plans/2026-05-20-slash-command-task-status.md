@@ -40,8 +40,9 @@ considered complete until this file records it.
   - Note: Extended context assembly with `append_user_message` so `/continue` can trigger a turn without adding user text.
   - Verification: `python -m pytest tests/unit/pipeline/test_slash_commands.py::test_assemble_context_can_skip_user_append_for_continue tests/unit/pipeline/test_slash_commands.py::test_assemble_context_appends_transformed_skill_content -v` passed with 2 tests.
 
-- [ ] Task 6: Integrate Command Processor Into AgentPipeline
-  - Note: Not started.
+- [x] Task 6: Integrate Command Processor Into AgentPipeline
+  - Note: Added `TurnRequest`, optional `command_processor`, and pipeline routing for continue and transformed skill inputs.
+  - Verification: `python -m pytest tests/unit/pipeline/test_slash_commands.py -v` passed with 4 tests.
 
 - [ ] Task 7: Migrate Approval Parsing to Slash Commands
   - Note: Not started.
