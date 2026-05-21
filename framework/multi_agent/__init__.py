@@ -30,7 +30,7 @@ from framework.multi_agent.event_bus import (
 from framework.multi_agent.factory import AgentFactory, DefaultAgentFactory
 from framework.multi_agent.hooks import TaskProgressHook
 from framework.multi_agent.peer_validator import SubagentAgentValidator
-from framework.multi_agent.pool import AgentPool
+from framework.multi_agent.pool import AgentPool, SessionMeta, SessionRetentionPolicy
 from framework.multi_agent.registry import AgentDirectory, AgentRegistry
 from framework.multi_agent.router import AgentMessageRouter, DefaultMeshRouter, RouteResult
 from framework.multi_agent.state import AgentState
@@ -76,6 +76,8 @@ __all__ = [
     "SubagentAgentValidator",
     "ReActStrategy",
     "RouteResult",
+    "SessionMeta",
+    "SessionRetentionPolicy",
     "SendMessageAsyncTool",
     "SendMessageTool",
     "SingleTurnStrategy",

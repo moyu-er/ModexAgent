@@ -36,7 +36,7 @@ from framework.multi_agent import (
     ReActStrategy,
     SingleTurnStrategy,
     SubagentManager,
-    TaskCoordinationConfig,
+    SessionRetentionPolicy,
     TaskCoordinator,
     TaskEvent,
     TaskEventBus,
@@ -447,7 +447,7 @@ async def test_subagent_manager_spawn_and_wait(any_broker):
     fake_instance.tool_manager = InMemoryToolManager()
     factory.create_agent = AsyncMock(return_value=fake_instance)
 
-    mgr = SubagentManager(broker=any_broker, agent_factory=factory, coordination_config=TaskCoordinationConfig(enable_for_subagent=False))
+    mgr = SubagentService(broker=any_broker, agent_factory=factory, coordination_config=SessionRetentionPolicy(enable_for_subagent=False))
     descriptor = AgentDescriptor(address=AgentAddress(name="sub1"))
     result = await mgr.spawn_and_wait(
         parent_address=AgentAddress(name="main"),
@@ -471,7 +471,7 @@ async def test_subagent_manager_uses_null_coordinator_when_disabled(any_broker):
         broker=any_broker,
         agent_factory=factory,
         task_coordinator=None,
-        coordination_config=TaskCoordinationConfig(enable_for_subagent=False),
+        coordination_config=SessionRetentionPolicy(enable_for_subagent=False),
     )
     assert isinstance(mgr._coordinator, NullTaskCoordinator)
     descriptor = AgentDescriptor(address=AgentAddress(name="sub3"))
@@ -613,7 +613,7 @@ async def test_subagent_manager_forwards_session_params(any_broker):
     mgr = SubagentManager(
         broker=any_broker,
         agent_factory=factory,
-        coordination_config=TaskCoordinationConfig(enable_for_subagent=False),
+        coordination_config=SessionRetentionPolicy(enable_for_subagent=False),
         sanitizer=sanitizer,
         command_interceptor=interceptor,
     )

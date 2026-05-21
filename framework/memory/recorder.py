@@ -98,7 +98,7 @@ class MemoryAppendRecorder:
             v = str(value).lower()
             if v == MemoryAgentRole.SUBAGENT.value or v.startswith(MemoryAgentRole.SUBAGENT.value):
                 return True
-            if v == MemoryAgentRole.SUBAGENT.value or v.startswith(MemoryAgentRole.SUBAGENT.value):
+            if v == "peer" or v.startswith("peer"):
                 return True
         return False
 

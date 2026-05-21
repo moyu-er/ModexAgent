@@ -54,7 +54,7 @@ class AgentFactory(ABC):
         skill_manager: SkillManager | None = None,
         sanitizer: Any | None = None,
         command_interceptor: Any | None = None,
-        subagent_manager: Any | None = None,
+        subagent_service: Any | None = None,
         hooks: list[Any] | None = None,
         output_adapter: Any | None = None,
         context_manager_factory: Callable[[str], ContextManager] | None = None,
@@ -73,7 +73,7 @@ class DefaultAgentFactory(AgentFactory):
         skill_manager: SkillManager | None = None,
         sanitizer: Any | None = None,
         command_interceptor: Any | None = None,
-        subagent_manager: Any | None = None,
+        subagent_service: Any | None = None,
         inbox_server: InboxServer | None = None,
         default_hooks: list[Any] | None = None,
         default_hook_runner: Any | None = None,
@@ -85,7 +85,7 @@ class DefaultAgentFactory(AgentFactory):
         self._skill_manager = skill_manager
         self._sanitizer = sanitizer
         self._command_interceptor = command_interceptor
-        self._subagent_manager = subagent_manager
+        self._subagent_service = subagent_service
         self._inbox_server = inbox_server
         self._default_hooks = list(default_hooks) if default_hooks else []
         self._default_hook_runner = default_hook_runner
@@ -158,7 +158,7 @@ class DefaultAgentFactory(AgentFactory):
         skill_manager: SkillManager | None = None,
         sanitizer: Any | None = None,
         command_interceptor: Any | None = None,
-        subagent_manager: Any | None = None,
+        subagent_service: Any | None = None,
         hooks: list[Any] | None = None,
         output_adapter: Any | None = None,
         context_manager_factory: Callable[[str], ContextManager] | None = None,
@@ -299,7 +299,7 @@ class DefaultAgentFactory(AgentFactory):
                 hooks=agent_hooks,
                 sanitizer=sanitizer or self._sanitizer,
                 command_interceptor=command_interceptor or self._command_interceptor,
-                subagent_manager=subagent_manager or self._subagent_manager,
+                subagent_service=subagent_service or self._subagent_service,
                 runtime_context_manager=self._runtime_context_manager,
                 hook_runner=hook_runner,
                 interceptor_chain=session_interceptor_chain,
