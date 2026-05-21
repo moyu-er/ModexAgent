@@ -508,16 +508,7 @@ class BotService(AgentBuilderMixin):
         )
         print("[OK] LocalAgentMessageBus initialized")
 
-        # SubagentService wraps AgentPool for subagent lifecycle management
-        self.subagent_service = SubagentService(
-            pool=self.agent_pool,
-            factory=self.agent_factory,
-            broker=self.broker,
-            agent_bus=self.agent_bus,
-        )
-        print("[OK] SubagentService initialized")
-
-        # Create AgentPool
+        # Create AgentPool BEFORE SubagentService (pool is required by SubagentService)
         from framework.multi_agent.session_id import DefaultSessionIdStrategy
 
         self.agent_pool = AgentPool(
@@ -532,6 +523,15 @@ class BotService(AgentBuilderMixin):
             session_strategy=DefaultSessionIdStrategy(main_agent_name=parent_agent_name),
             safety=self.safety_policy,
         )
+
+        # SubagentService wraps AgentPool for subagent lifecycle management
+        self.subagent_service = SubagentService(
+            pool=self.agent_pool,
+            factory=self.agent_factory,
+            broker=self.broker,
+            agent_bus=self.agent_bus,
+        )
+        print("[OK] SubagentService initialized")
 
         # Register main agent as resident
         main_descriptor = AgentDescriptor(
@@ -619,7 +619,7 @@ class BotService(AgentBuilderMixin):
         """Find all peer configs by role."""
         if not self._app_config or not self._app_config.agents:
             return []
-        return [a for a in self._app_config.agents if a.role == "peer"]
+        return [a for a in self._app_config.agents if a.role == "subagent"]
 
     @property
     def safety_policy(self) -> RuntimeSafetyPolicy:

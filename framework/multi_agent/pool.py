@@ -46,7 +46,7 @@ class SessionMeta:
 @dataclass
 class SessionRetentionPolicy:
     """Controls session cleanup for subagent task sessions."""
-    max_sessions_per_subagent: int = 50
+    max_sessions_per_subagent: int = 10
     max_sessions_global: int = 200
     ttl_seconds: float = 86400.0
     cleanup_interval_seconds: float = 1800.0
@@ -686,7 +686,12 @@ class AgentPool(AgentRegistry):
             meta.last_active = time.monotonic()
 
     async def _try_evict_if_stale(self, session_id: str) -> None:
-        """Evict a session only if stale AND no active task is using it.
+        """Evict a session if stale (TTL) OR if count exceeds per-subagent cap.
+
+        Two policies:
+        1. TTL: evict sessions inactive longer than ttl_seconds
+        2. LRU count cap: when a subagent has > max_sessions_per_subagent
+           sessions, evict the oldest (by created_at) first, regardless of TTL.
 
         Safety: acquires the session lock before making eviction decisions
         to eliminate the TOCTOU window between staleness check and eviction.
@@ -706,8 +711,28 @@ class AgentPool(AgentRegistry):
                 return
             if not meta.is_dynamic:
                 return
-            if time.monotonic() - meta.last_active < self._retention.ttl_seconds:
+
+            should_evict = False
+
+            # Policy 1: TTL staleness
+            if time.monotonic() - meta.last_active >= self._retention.ttl_seconds:
+                should_evict = True
+
+            # Policy 2: per-subagent count cap (LRU by created_at)
+            if not should_evict:
+                same_agent = [
+                    (sid, m) for sid, m in self._session_meta.items()
+                    if m.agent_name == meta.agent_name and m.is_dynamic
+                ]
+                if len(same_agent) > self._retention.max_sessions_per_subagent:
+                    same_agent.sort(key=lambda x: x[1].created_at)
+                    oldest_sid = same_agent[0][0]
+                    if oldest_sid == session_id:
+                        should_evict = True
+
+            if not should_evict:
                 return
+
             instance = self._agents.get(meta.agent_name)
             if instance and instance.context_manager:
                 await instance.context_manager.clear(session_id)

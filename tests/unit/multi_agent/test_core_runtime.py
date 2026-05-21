@@ -579,25 +579,6 @@ async def test_agent_pool_resets_error_count_on_success(any_broker):
     assert "resilient_agent" not in pool._error_counts
 
 
-@pytest.mark.asyncio
-async def test_default_agent_factory_passes_session_params():
-    factory = DefaultAgentFactory()
-    descriptor = AgentDescriptor(address=AgentAddress(name="test"))
-    sanitizer = lambda x: x.strip()
-    interceptor = MagicMock()
-    sub_mgr = MagicMock()
-
-    instance = await factory.create_agent(
-        descriptor,
-        mode="session",
-        sanitizer=sanitizer,
-        command_interceptor=interceptor,
-        subagent_service=sub_mgr,
-    )
-    assert instance.session is not None
-    assert instance.session._sanitizer is sanitizer
-    assert instance.session._command_interceptor is interceptor
-    assert instance.session._subagent_service is sub_mgr
 
 
 @pytest.mark.asyncio

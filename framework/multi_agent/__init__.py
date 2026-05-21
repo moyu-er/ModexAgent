@@ -36,6 +36,7 @@ from framework.multi_agent.router import AgentMessageRouter, DefaultMeshRouter, 
 from framework.multi_agent.state import AgentState
 from framework.multi_agent.subagent_service import SubagentService
 from framework.multi_agent.tools import (
+    DispatchTaskTool,
     SendMessageAsyncTool,
     SendMessageTool,
 )
@@ -66,6 +67,7 @@ __all__ = [
     "ContextGovernanceConfig",
     "DefaultAgentFactory",
     "DefaultMeshRouter",
+    "DispatchTaskTool",
     "ExecutionStrategy",
     "Hook",
     "HookRunner",

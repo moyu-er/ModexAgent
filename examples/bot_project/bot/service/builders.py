@@ -143,7 +143,7 @@ class AgentBuilderMixin:
         main_cfg = next((a for a in agents if a.role == "main"), agents[0] if agents else None)
         parent_name = main_cfg.name if main_cfg else "main"
         parent_address = AgentAddress(name=parent_name)
-        peer_names = [a.name for a in agents if a.role == "peer"]
+        peer_names = [a.name for a in agents if a.role == "subagent"]
 
         strategy = DefaultSessionIdStrategy(main_agent_name=parent_name)
         self.tool_manager.register(SendMessageTool(
@@ -319,7 +319,7 @@ class AgentBuilderMixin:
             max_messages = peer_memory_cfg.short_term.max_messages
         return MemorySystemContextManager(
             memory_system=memory_system, default_agent_id=peer_name,
-            default_agent_role=MemoryAgentRole.PEER, base_system_prompt=system_prompt,
+            default_agent_role=MemoryAgentRole.SUBAGENT, base_system_prompt=system_prompt,
             injection_policy=RestrictedInjectionPolicy(max_session_messages=max_messages),
         )
 
