@@ -1,4 +1,4 @@
-"""Integration tests for AgentMessageBus + AgentPool + SubagentManager(queued)."""
+"""Integration tests for AgentMessageBus + AgentPool + SubagentService(queued)."""
 
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ from framework.multi_agent import (
     AgentAddress,
     AgentDescriptor,
     DefaultAgentFactory,
-    SubagentManager,
-    TaskCoordinationConfig,
+    SubagentService,
+    SessionRetentionPolicy,
 )
 from framework.multi_agent.bus import LocalAgentMessageBus
 from framework.multi_agent.envelope import AgentMessageEnvelope
@@ -100,10 +100,10 @@ async def test_pool_mode_subagent_sync_still_works():
     fake_instance.descriptor.address = AgentAddress(kind="agent", name="helper")
     factory.create_agent = AsyncMock(return_value=fake_instance)
 
-    mgr = SubagentManager(
+    mgr = SubagentService(
         broker=broker,
         agent_factory=factory,
-        coordination_config=TaskCoordinationConfig(enable_for_subagent=False),
+        coordination_config=SessionRetentionPolicy(enable_for_subagent=False),
     )
 
     descriptor = AgentDescriptor(

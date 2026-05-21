@@ -35,7 +35,7 @@ from framework.multi_agent import (
     NullTaskCoordinator,
     ReActStrategy,
     SingleTurnStrategy,
-    SubagentManager,
+    SubagentService,
     SessionRetentionPolicy,
     TaskCoordinator,
     TaskEvent,
@@ -440,7 +440,7 @@ async def test_task_progress_hook_reports():
 # ── 13. Subagent Manager ──
 
 @pytest.mark.asyncio
-async def test_subagent_manager_spawn_and_wait(any_broker):
+async def test_subagent_service_spawn_and_wait(any_broker):
     factory = MagicMock(spec=AgentFactory)
     fake_instance = MagicMock()
     fake_instance.session.process_message = AsyncMock(return_value=AgentResult(content="result"))
@@ -460,7 +460,7 @@ async def test_subagent_manager_spawn_and_wait(any_broker):
 
 
 @pytest.mark.asyncio
-async def test_subagent_manager_uses_null_coordinator_when_disabled(any_broker):
+async def test_subagent_service_uses_null_coordinator_when_disabled(any_broker):
     factory = MagicMock(spec=AgentFactory)
     fake_instance = MagicMock()
     fake_instance.session.process_message = AsyncMock(return_value=AgentResult(content="ok"))
@@ -592,16 +592,16 @@ async def test_default_agent_factory_passes_session_params():
         mode="session",
         sanitizer=sanitizer,
         command_interceptor=interceptor,
-        subagent_manager=sub_mgr,
+        subagent_service=sub_mgr,
     )
     assert instance.session is not None
     assert instance.session._sanitizer is sanitizer
     assert instance.session._command_interceptor is interceptor
-    assert instance.session._subagent_manager is sub_mgr
+    assert instance.session._subagent_service is sub_mgr
 
 
 @pytest.mark.asyncio
-async def test_subagent_manager_forwards_session_params(any_broker):
+async def test_subagent_service_forwards_session_params(any_broker):
     factory = MagicMock(spec=AgentFactory)
     fake_instance = MagicMock()
     fake_instance.session.process_message = AsyncMock(return_value=AgentResult(content="ok"))
@@ -629,6 +629,6 @@ async def test_subagent_manager_forwards_session_params(any_broker):
     call_kwargs = factory.create_agent.await_args.kwargs
     assert call_kwargs.get("sanitizer") is sanitizer
     assert call_kwargs.get("command_interceptor") is interceptor
-    assert call_kwargs.get("subagent_manager") is mgr
+    assert call_kwargs.get("subagent_service") is mgr
 
 

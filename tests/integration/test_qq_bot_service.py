@@ -569,7 +569,7 @@ mcp:
 
     @pytest.mark.asyncio
     async def test_spawn_subagent_tool_delegates_to_manager(self):
-        """SpawnSubagentTool 应正确将参数传递给 SubagentManager.spawn_and_wait。"""
+        """SpawnSubagentTool 应正确将参数传递给 SubagentService.spawn_and_wait。"""
         import sys
         from pathlib import Path
 
@@ -578,10 +578,10 @@ mcp:
             sys.path.insert(0, str(qq_project))
 
         from bot_service import SpawnSubagentTool
-        from framework.multi_agent import SubagentManager, AgentDescriptor, AgentAddress
+        from framework.multi_agent import SubagentService, AgentDescriptor, AgentAddress
         from framework.core.emitter import AgentResult
 
-        manager = AsyncMock(spec=SubagentManager)
+        manager = AsyncMock(spec=SubagentService)
         manager.spawn_and_wait = AsyncMock(return_value=AgentResult(content="done"))
 
         descriptor = AgentDescriptor(address=AgentAddress(name="helper"))

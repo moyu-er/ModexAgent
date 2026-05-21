@@ -69,8 +69,8 @@ async def test_bot_service_has_spawn_subagent_tool():
         from framework.messaging.broker_memory import InMemoryMessageBroker
         from framework.multi_agent import (
             DefaultAgentFactory,
-            SubagentManager,
-            TaskCoordinationConfig,
+            SubagentService,
+            SessionRetentionPolicy,
         )
 
         service.broker = InMemoryMessageBroker()
@@ -78,10 +78,10 @@ async def test_bot_service_has_spawn_subagent_tool():
         service.tool_manager = InMemoryToolManager()
         service.agent_factory = DefaultAgentFactory()
         service.provider = MagicMock()  # mock LLM provider for subagent memory creation
-        service.subagent_manager = SubagentManager(
+        service.subagent_manager = SubagentService(
             broker=service.broker,
             agent_factory=service.agent_factory,
-            coordination_config=TaskCoordinationConfig(enable_for_subagent=False),
+            coordination_config=SessionRetentionPolicy(enable_for_subagent=False),
         )
 
         await service._register_multi_agent_tools()
@@ -108,8 +108,8 @@ async def test_spawn_subagent_tool_returns_result():
             AgentDescriptor,
             AgentLLMConfig,
             DefaultAgentFactory,
-            SubagentManager,
-            TaskCoordinationConfig,
+            SubagentService,
+            SessionRetentionPolicy,
         )
         from framework.multi_agent.descriptor import ContextGovernanceConfig
 
@@ -120,10 +120,10 @@ async def test_spawn_subagent_tool_returns_result():
         fake_instance.tool_manager = InMemoryToolManager()
         factory.create_agent = AsyncMock(return_value=fake_instance)
 
-        mgr = SubagentManager(
+        mgr = SubagentService(
             broker=broker,
             agent_factory=factory,
-            coordination_config=TaskCoordinationConfig(enable_for_subagent=False),
+            coordination_config=SessionRetentionPolicy(enable_for_subagent=False),
         )
 
         descriptor = AgentDescriptor(
