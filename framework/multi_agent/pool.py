@@ -745,8 +745,30 @@ class AgentPool(AgentRegistry):
         """Background task: TTL eviction with concurrency safety."""
         while True:
             await asyncio.sleep(self._retention.cleanup_interval_seconds)
+            # Per-agent session cap enforcement (LRU eviction)
+            agents_seen: set[str] = {m.agent_name for m in self._session_meta.values()}
+            for agent_name in agents_seen:
+                await self._enforce_session_cap(agent_name)
+            # TTL eviction
             for sid in list(self._session_meta.keys()):
                 await self._try_evict_if_stale(sid)
+
+    async def _enforce_session_cap(self, agent_name: str) -> None:
+        """Ensure per-agent session count does not exceed cap.
+
+        Evicts the least recently active dynamic sessions when the cap
+        is exceeded. Resident (non-dynamic) sessions are not evicted
+        by this mechanism.
+        """
+        cap = self._retention.max_sessions_per_subagent
+        dynamic_sessions = sorted(
+            ((sid, meta) for sid, meta in self._session_meta.items()
+             if meta.agent_name == agent_name and meta.is_dynamic),
+            key=lambda x: x[1].last_active,
+        )
+        excess = len(dynamic_sessions) - cap
+        for sid, _meta in dynamic_sessions[:excess]:
+            await self._try_evict_if_stale(sid)
 
     def list_agents(self) -> list[AgentDescriptor]:
         return [inst.descriptor for inst in self._agents.values()]
