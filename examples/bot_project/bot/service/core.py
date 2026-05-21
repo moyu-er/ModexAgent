@@ -1,7 +1,7 @@
 """BotService core — generic bot orchestration for any InputAdapter/OutputAdapter pair.
 
 Supports two runtime modes:
-- pipeline: single AgentPipeline, SubagentManager creates asyncio.Task directly.
+- pipeline: single AgentPipeline, SubagentService creates asyncio.Task directly.
 - pool: AgentPool with resident agents, BrokerBridgeService routes messages.
 """
 
@@ -68,8 +68,7 @@ from framework.multi_agent import (
     AgentFactory,
     AgentPool,
     DefaultAgentFactory,
-    SubagentManager,
-    TaskCoordinationConfig,
+    SubagentService,
 )
 from framework.multi_agent.descriptor import AgentLLMConfig
 from framework.multi_agent.inbox.consumer import InboxConsumer
@@ -90,7 +89,7 @@ class BotService(AgentBuilderMixin):
     Just provide the corresponding adapters and an Emitter factory.
 
     Modes:
-    - pipeline: single AgentPipeline (default). SubagentManager spawns asyncio.Task.
+    - pipeline: single AgentPipeline (default). SubagentService spawns asyncio.Task.
     - pool: resident AgentPool with MessageBroker routing.
 
     Accepts an IOC AppConfig object as the single source of truth.
@@ -126,7 +125,7 @@ class BotService(AgentBuilderMixin):
         self.auto_compact_service: Any | None = None
         self.agent: ReActAgent | None = None
         self.agent_factory: AgentFactory | None = None
-        self.subagent_manager: SubagentManager | None = None
+        self.subagent_manager: SubagentService | None = None
         self.broker: InMemoryMessageBroker | None = None
         self.inbox_server: LocalFileInboxServer | None = None
         self.inbox_producer: InboxProducer | None = None
@@ -412,7 +411,7 @@ class BotService(AgentBuilderMixin):
         print(f"   - ContextManager: {type(self.context_manager).__name__}")
         print(f"   - Agent: {self.agent.name}")
         print(f"   - AgentFactory: {type(self.agent_factory).__name__}")
-        print(f"   - SubagentManager: {type(self.subagent_manager).__name__}")
+        print(f"   - SubagentService: {type(self.subagent_manager).__name__}")
         print("   - InboxServer: LocalFileInboxServer")
         print(f"   - Mode: {self.mode}")
 
@@ -436,16 +435,16 @@ class BotService(AgentBuilderMixin):
             agent_name=parent_agent_name,
         )
 
-        self.subagent_manager = SubagentManager(
+        self.subagent_manager = SubagentService(
             broker=self.broker,
             agent_factory=self.agent_factory,
-            coordination_config=TaskCoordinationConfig(
+            retention=SessionRetentionPolicy(
                 enable_for_subagent=True,
                 default_timeout_seconds=180.0,
             ),
             on_task_complete=self._cleanup_subagent_memory,
         )
-        print("[OK] SubagentManager initialized")
+        print("[OK] SubagentService initialized")
 
         if self.agent is None:
             raise RuntimeError("Agent is not initialized")
@@ -516,17 +515,17 @@ class BotService(AgentBuilderMixin):
         )
         print("[OK] LocalAgentMessageBus initialized")
 
-        # SubagentManager
-        self.subagent_manager = SubagentManager(
+        # SubagentService
+        self.subagent_manager = SubagentService(
             broker=self.broker,
             agent_factory=self.agent_factory,
-            coordination_config=TaskCoordinationConfig(
+            retention=SessionRetentionPolicy(
                 enable_for_subagent=True,
                 default_timeout_seconds=180.0,
             ),
             on_task_complete=self._cleanup_subagent_memory,
         )
-        print("[OK] SubagentManager initialized")
+        print("[OK] SubagentService initialized")
 
         # Create AgentPool
         from framework.multi_agent.session_id import DefaultSessionIdStrategy
@@ -1055,11 +1054,11 @@ class BotService(AgentBuilderMixin):
 
         if self.subagent_manager:
             try:
-                print("   Stopping SubagentManager...")
+                print("   Stopping SubagentService...")
                 await self.subagent_manager.stop()
-                print("   [OK] SubagentManager stopped")
+                print("   [OK] SubagentService stopped")
             except Exception as e:
-                print(f"   [WARN] SubagentManager stop error: {e}")
+                print(f"   [WARN] SubagentService stop error: {e}")
 
         if self.agent_bus:
             try:

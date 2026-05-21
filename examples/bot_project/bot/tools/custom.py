@@ -18,7 +18,7 @@ from framework.core.tool_manager import (
 from framework.multi_agent import (
     AgentAddress,
     AgentDescriptor,
-    SubagentManager,
+    SubagentService,
 )
 from framework.multi_agent.subagent_manager import current_conversation_id
 from framework.pipeline.adapters import OutputAdapter
@@ -81,7 +81,7 @@ class SpawnSubagentTool(Tool):
 
     def __init__(
         self,
-        manager: SubagentManager,
+        manager: SubagentService,
         default_parent_address: AgentAddress,
         descriptor: AgentDescriptor,
         tool_manager: Any | None = None,
