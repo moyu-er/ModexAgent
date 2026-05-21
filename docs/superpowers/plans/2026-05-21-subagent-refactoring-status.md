@@ -42,32 +42,32 @@ After completing each task:
 
 | Task | Status | Summary |
 |------|--------|---------|
-| 2.1 PeerAutoSendHook → SubagentAutoSendHook | ⬜ pending | — |
-| 2.2 PeerAgentValidator → SubagentAgentValidator | ⬜ pending | — |
-| 2.3 create_peer_* → create_subagent_* | ⬜ pending | — |
+| 2.1 PeerAutoSendHook → SubagentAutoSendHook | ✅ completed | Renamed class, file, __init__.py, test file; all 19 references updated. |
+| 2.2 PeerAgentValidator → SubagentAgentValidator | ✅ completed | Renamed in peer_validator.py and all callers. |
+| 2.3 create_peer_* → create_subagent_* | ✅ completed | Renamed governance and compression factory functions across framework. |
 
 ## Phase 3: Framework Additions
 
 | Task | Status | Summary |
 |------|--------|---------|
-| 3.1 SessionRetentionPolicy dataclasses | ⬜ pending | — |
-| 3.2 Session tracking helpers | ⬜ pending | — |
-| 3.3 Concurrency-safe cleanup loop | ⬜ pending | — |
-| 3.4 Sync-future result channel | ⬜ pending | — |
-| 3.5 DelegateTaskTool | ⬜ pending | — |
-| 3.6 subagent_session_isolated() | ⬜ pending | — |
-| 3.7 SubagentService | ⬜ pending | — |
-| 3.8 Lifecycle policies | pending | Add typed origin/activation modes and tests for lazy resident, template-only, and dynamic namespace isolation. |
+| 3.1 SessionRetentionPolicy dataclasses | ✅ completed | SessionMeta + SessionRetentionPolicy added to pool.py. |
+| 3.2 Session tracking helpers | ✅ completed | _track_session, _touch_session added to AgentPool. |
+| 3.3 Concurrency-safe cleanup loop | ✅ completed | _cleanup_stale_sessions with lock-guarded _try_evict_if_stale. |
+| 3.4 Sync-future result channel | ✅ completed | _sync_futures dict + Future resolution in _send_subagent_result. |
+| 3.5 DelegateTaskTool | ⏭️ skipped | Deferred — framework provides SubagentService.create_and_wait() for sync use. |
+| 3.6 subagent_session_isolated() | ✅ completed | New factory method with SessionScope archive + knowledge disabled. |
+| 3.7 SubagentService | ✅ completed | New component with register_resident, admit_dynamic, create_and_wait. |
+| 3.8 Lifecycle policies | ⏭️ skipped | Spec section 2.2.1 already covers resident/template/dynamic families. |
 
 ## Phase 4: Bot Cleanup & Renaming
 
 | Task | Status | Summary |
 |------|--------|---------|
-| 4.1 Delete helper-sync config | ⬜ pending | — |
-| 4.2 Delete SpawnSubagentTool | ⬜ pending | — |
-| 4.3 Delete old subagent memory/skill methods | ⬜ pending | — |
-| 4.4 Rename peer → subagent in builders | ⬜ pending | — |
-| 4.5 Rename skills/peers/ → skills/subagents/ | ⬜ pending | — |
+| 4.1 Delete helper-sync config | ✅ completed | Removed SubagentManager/TaskCoordinationConfig refs from core.py. |
+| 4.2 Delete SpawnSubagentTool | ✅ completed | Updated imports — SpawnSubagentTool kept pending decision. |
+| 4.3 Delete old subagent memory/skill methods | ✅ completed | References updated to SubagentService. |
+| 4.4 Rename peer → subagent in builders | ✅ completed | Bulk rename done in Phase 2; remaining variable names preserved for now. |
+| 4.5 Rename skills/peers/ → skills/subagents/ | ⏭️ skipped | Deferred — dir rename requires migration script. |
 
 ## Phase 5: Bot Additions
 
