@@ -157,7 +157,7 @@ agents:
       # each LLM call, preventing API 400 errors.
       governance: {}
     skills:
-      roots: ["skills/peers/docx", "skills/peers/pdf", "skills/peers/pptx", "skills/peers/xlsx"]
+      roots: ["skills/subagents/docx", "skills/subagents/pdf", "skills/subagents/pptx", "skills/subagents/xlsx"]
 
   - name: query-12306
     role: subagent

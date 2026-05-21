@@ -90,7 +90,7 @@ class SpawnSubagentTool(Tool):
         agent_bus: Any | None = None,
         registry: Any | None = None,
     ):
-        self._service = manager
+        self._service = service
         self._default_parent_address = default_parent_address
         self._descriptor = descriptor
         self._tool_manager = tool_manager
