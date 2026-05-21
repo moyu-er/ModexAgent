@@ -42,7 +42,6 @@ from ..memory.history import (
 from ..multi_agent import (
     AgentDescriptor,
     AgentMessageRouter,
-    SubagentManager,
 )
 from ..runtime.enums import SnapshotReason, TurnPhase
 from ..runtime.models import StateQueryScope, TurnSnapshot
@@ -153,7 +152,7 @@ class AgentPipeline:
         incremental_flush: bool = True,
         skill_manager: SkillManager | None = None,
         hooks: list[Any] | None = None,
-        subagent_manager: SubagentManager | None = None,
+
         command_interceptor: Any | None = None,
         router: AgentMessageRouter | None = None,
         deduplicator: MessageDeduplicator | None = None,
@@ -204,7 +203,7 @@ class AgentPipeline:
         self.incremental_flush = incremental_flush
         self.skill_manager = skill_manager
         self.hooks = list(hooks) if hooks else []
-        self.subagent_manager = subagent_manager
+
         self.command_interceptor = command_interceptor
         if command_interceptor is not None:
             logger.warning(
