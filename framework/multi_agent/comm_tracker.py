@@ -11,10 +11,8 @@ context by explicitly tracking outstanding requests and expected replies.
 from __future__ import annotations
 
 import time
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
 
 
 class CommDirection(StrEnum):
@@ -34,6 +32,7 @@ class CommStatus(StrEnum):
 class CommRecord:
     """A single communication record tracking one message exchange."""
     record_id: str
+    owner_agent: str
     direction: CommDirection
     target_agent: str
     invocation_id: str | None
@@ -107,8 +106,19 @@ class CommunicationTracker:
         agent_name: str | None = None,
     ) -> CommRecord:
         """Record an outgoing communication. Creates a pending bracket."""
+        owner_agent = agent_name or target_agent
+        received = self.acknowledge_received(
+            invocation_id=invocation_id,
+            owner_agent=owner_agent,
+            reply_to=target_agent,
+            reply_summary=content_summary,
+        )
+        if received is not None:
+            return received
+
         record = CommRecord(
             record_id=self._next_id(),
+            owner_agent=owner_agent,
             direction=CommDirection.SENT,
             target_agent=target_agent,
             invocation_id=invocation_id,
@@ -116,7 +126,7 @@ class CommunicationTracker:
             content_summary=content_summary,
         )
         self._records[record.record_id] = record
-        digest = self._get_digest(agent_name or target_agent)
+        digest = self._get_digest(record.owner_agent)
         digest.pending_sent.append(record)
         digest.updated_at = time.monotonic()
         self._prune_if_needed()
@@ -132,6 +142,7 @@ class CommunicationTracker:
         """Record an incoming communication."""
         record = CommRecord(
             record_id=self._next_id(),
+            owner_agent=agent_name or source_agent,
             direction=CommDirection.RECEIVED,
             target_agent=source_agent,
             invocation_id=invocation_id,
@@ -139,7 +150,7 @@ class CommunicationTracker:
             content_summary=content_summary,
         )
         self._records[record.record_id] = record
-        digest = self._get_digest(agent_name or source_agent)
+        digest = self._get_digest(record.owner_agent)
         digest.pending_received.append(record)
         digest.updated_at = time.monotonic()
         self._prune_if_needed()
@@ -164,9 +175,30 @@ class CommunicationTracker:
             ):
                 record.acknowledge(reply_from, reply_summary)
                 # Move from pending to acknowledged in digest
-                digest = self._get_digest(reply_from)
+                digest = self._get_digest(record.owner_agent)
                 if record in digest.pending_sent:
                     digest.pending_sent.remove(record)
+                digest.acknowledged.append(record)
+                digest.updated_at = time.monotonic()
+                return record
+        return None
+
+    def acknowledge_received(
+        self,
+        invocation_id: str,
+        owner_agent: str,
+        reply_to: str,
+        reply_summary: str,
+    ) -> CommRecord | None:
+        """Acknowledge an incoming communication when this agent sends a reply."""
+        digest = self._digests.get(owner_agent)
+        if digest is None:
+            return None
+
+        for record in list(digest.pending_received):
+            if record.invocation_id == invocation_id and record.is_pending:
+                record.acknowledge(reply_to, reply_summary)
+                digest.pending_received.remove(record)
                 digest.acknowledged.append(record)
                 digest.updated_at = time.monotonic()
                 return record

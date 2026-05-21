@@ -13,9 +13,10 @@ from framework.core.tool_manager import InMemoryToolManager, Tool, ToolManagerCo
 from framework.ioc.configs.agent import AgentConfig
 from framework.ioc.configs.app import AppConfig
 from framework.ioc.configs.memory import MemoryConfig
-from framework.memory.core.scope import MemoryAgentRole
+from framework.memory.core.scope import MemoryAgentRole, SessionScope
 from framework.memory.injection import RestrictedInjectionPolicy
 from framework.memory.layers.config import (
+    ArchiveMemoryConfig,
     MemoryLayerConfigSet,
     PendingPrunedInputMemoryConfig,
     SessionMemoryConfig,
@@ -24,6 +25,7 @@ from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
 from framework.memory.system import MemorySystemContextManager, create_memory_system
 from framework.multi_agent import AgentAddress, AgentDescriptor
 from framework.multi_agent.descriptor import AgentLLMConfig
+
 # ── Standard tool builders (code objects, no config) ──
 
 def _make_file_tools() -> list[Tool]:
@@ -74,7 +76,7 @@ def _build_session_only_memory(
 
     layer_config = MemoryLayerConfigSet(
         session=SessionMemoryConfig(max_messages=max_messages),
-        archive=None,
+        archive=ArchiveMemoryConfig(scope=SessionScope()),
         knowledge=None,
         pending=PendingPrunedInputMemoryConfig(enabled=True),
     )
@@ -91,7 +93,7 @@ def _build_session_only_memory(
     memory_system = create_memory_system(
         workspace=workspace,
         config=layer_config,
-        session_only=True,
+        session_only=False,
         lifecycle_policy=lifecycle,
     )
 
@@ -215,7 +217,7 @@ async def build_subagent_descriptor(
             max_tokens=app_cfg.llm.max_tokens,
         ),
         system_prompt_template=system_prompt,
-        denied_tools=["spawn_subagent", "send_message", "send_message_async"],
+        denied_tools=["spawn_subagent", "send_message", "dispatch_task"],
         max_iterations=agent_cfg.max_steps,
         max_tools_per_turn=10,
         execution_strategy="react",

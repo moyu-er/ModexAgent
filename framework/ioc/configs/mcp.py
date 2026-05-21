@@ -7,7 +7,7 @@ injects them into ToolRegistry for agent selection in code.
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class MCPServerEntry(BaseModel):
@@ -29,6 +29,16 @@ class MCPServerEntry(BaseModel):
     url: str = ""
     headers: dict[str, str] = Field(default_factory=dict)
     timeout: int = 30
+
+    @field_validator("transport", mode="before")
+    @classmethod
+    def _normalize_transport(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        low = v.lower().replace("-", "_")
+        if low in ("streamable_http", "streamablehttp", "http"):
+            return "streamableHttp"
+        return v
 
 
 class MCPConfig(BaseModel):

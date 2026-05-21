@@ -18,6 +18,7 @@ from framework.messaging.broker import BrokerMessage, MessageBroker
 
 from .address import AgentAddress
 from .bus import AgentMessageBus
+from .comm_tracker import CommunicationTracker
 from .descriptor import AgentDescriptor, AgentInstance
 from .envelope import AgentMessageEnvelope
 from .factory import AgentFactory
@@ -69,6 +70,7 @@ class AgentPool(AgentRegistry):
         session_strategy: SessionIdStrategy | None = None,
         safety: RuntimeSafetyPolicy | None = None,
         retention: SessionRetentionPolicy | None = None,
+        comm_tracker: CommunicationTracker | None = None,
     ):
         self._agents: dict[str, AgentInstance] = {}
         self._status: dict[str, AgentState] = {}
@@ -86,6 +88,7 @@ class AgentPool(AgentRegistry):
         self._session_meta: dict[str, SessionMeta] = {}
         self._sync_futures: dict[str, asyncio.Future] = {}
         self._retention = retention or SessionRetentionPolicy()
+        self._comm_tracker = comm_tracker
         self._cleanup_task: asyncio.Task | None = None
         self._consumers: dict[str, asyncio.Task] = {}
         self._agent_tasks: dict[str, list[asyncio.Task]] = {}
@@ -507,16 +510,40 @@ class AgentPool(AgentRegistry):
             "conversation_id": conversation_id,
             "agent_session_id": session_id,
             "message_type": envelope.message_type,
+            "invocation_id": envelope.payload.get("invocation_id"),
             "source_agent": envelope.source.name if envelope.source else None,
             **envelope.metadata,
         }
+        invocation_id = envelope.payload.get("invocation_id") or envelope.correlation_id
+        if invocation_id and self._comm_tracker is not None:
+            self._comm_tracker.record_receive(
+                agent_name=descriptor.address.name,
+                source_agent=envelope.source.name if envelope.source else "unknown",
+                invocation_id=str(invocation_id),
+                content_summary=task_prompt[:500],
+            )
+        prompt_section = self._comm_tracker.build_prompt_section(
+            descriptor.address.name
+        ) if self._comm_tracker is not None else ""
+        injected_prompt = (
+            f"{prompt_section}\n\n{task_prompt}" if prompt_section else task_prompt
+        )
         result: AgentResult | None = None
         if instance.pipeline is not None:
             lock = self.get_lock(session_id)
             async with lock:
+                if session_id not in self._session_meta:
+                    self._track_session(
+                        session_id,
+                        descriptor.address.name,
+                        is_dynamic=True,
+                    )
+                else:
+                    self._touch_session(session_id)
                 result = await instance.pipeline.process_message(
-                    InputMessage(content=task_prompt, session_id=session_id, metadata=metadata)
+                    InputMessage(content=injected_prompt, session_id=session_id, metadata=metadata)
                 )
+            await self._enforce_session_cap(descriptor.address.name)
 
         # ephemeral agent: clear context after each turn
         if descriptor.context_strategy == "ephemeral" and instance.context_manager is not None:
@@ -552,6 +579,7 @@ class AgentPool(AgentRegistry):
                 "stop_reason": result.stop_reason,
                 "partial_content": getattr(result, "partial_content", None),
                 "error": getattr(result, "error", None),
+                "invocation_id": envelope.payload.get("invocation_id") or envelope.correlation_id,
             },
             source=descriptor.address,
             target=parent_address,
@@ -560,6 +588,13 @@ class AgentPool(AgentRegistry):
             agent_session_id=parent_session_id,
             correlation_id=envelope.correlation_id,
         )
+        result_invocation_id = envelope.payload.get("invocation_id") or envelope.correlation_id
+        if result_invocation_id and self._comm_tracker is not None:
+            self._comm_tracker.acknowledge(
+                invocation_id=str(result_invocation_id),
+                reply_from=descriptor.address.name,
+                reply_summary=(result.content or "")[:500],
+            )
 
         if self._agent_bus is not None:
             await self._agent_bus.send(parent_session_id, result_envelope)
@@ -605,17 +640,49 @@ class AgentPool(AgentRegistry):
             "conversation_id": conversation_id,
             "agent_session_id": session_id,
             "message_type": envelope.message_type,
+            "invocation_id": envelope.payload.get("invocation_id"),
             "source_agent": source_name,
             "sender_agent": source_name,
             "receiver_agent": target_name,
             **envelope.metadata,
         }
+        invocation_id = envelope.payload.get("invocation_id") or envelope.correlation_id
+        if invocation_id and self._comm_tracker is not None:
+            if envelope.message_type == "subagent_result":
+                self._comm_tracker.acknowledge(
+                    invocation_id=str(invocation_id),
+                    reply_from=source_name or "unknown",
+                    reply_summary=content[:500],
+                )
+            else:
+                self._comm_tracker.record_receive(
+                    agent_name=instance.descriptor.address.name,
+                    source_agent=source_name or "unknown",
+                    invocation_id=str(invocation_id),
+                    content_summary=content[:500],
+                )
+        prompt_section = self._comm_tracker.build_prompt_section(
+            instance.descriptor.address.name
+        ) if self._comm_tracker is not None else ""
+        injected_content = (
+            f"{prompt_section}\n\n{content}" if prompt_section else content
+        )
         if instance.pipeline is not None:
             lock = self.get_lock(session_id)
             async with lock:
+                if session_id not in self._session_meta:
+                    self._track_session(
+                        session_id,
+                        instance.descriptor.address.name,
+                        is_dynamic=bool(envelope.payload.get("invocation_id")),
+                    )
+                else:
+                    self._touch_session(session_id)
                 await instance.pipeline.process_message(
-                    InputMessage(content=content, session_id=session_id, metadata=metadata)
+                    InputMessage(content=injected_content, session_id=session_id, metadata=metadata)
                 )
+            if envelope.payload.get("invocation_id"):
+                await self._enforce_session_cap(instance.descriptor.address.name)
 
     async def _dispatch_raw_broker_message(
         self,

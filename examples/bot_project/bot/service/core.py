@@ -67,8 +67,10 @@ from framework.multi_agent import (
     AgentDescriptor,
     AgentFactory,
     AgentPool,
+    CommunicationTracker,
     DefaultAgentFactory,
-    SubagentService,
+    SessionRetentionPolicy,
+    SubagentService, SendMessageAsyncTool,
 )
 from framework.multi_agent.descriptor import AgentLLMConfig
 from framework.multi_agent.inbox.consumer import InboxConsumer
@@ -126,6 +128,7 @@ class BotService(AgentBuilderMixin):
         self.agent: ReActAgent | None = None
         self.agent_factory: AgentFactory | None = None
         self.subagent_service: SubagentService | None = None
+        self.communication_tracker: CommunicationTracker | None = None
         self.broker: InMemoryMessageBroker | None = None
         self.inbox_server: LocalFileInboxServer | None = None
         self.inbox_producer: InboxProducer | None = None
@@ -267,12 +270,13 @@ class BotService(AgentBuilderMixin):
         memory_dir = self._resolve_path("memory_dir", str(Path(data_dir) / "memory"))
         memory_dir.mkdir(parents=True, exist_ok=True)
         main_cfg = self._main_agent_cfg
-        main_memory_cfg = main_cfg.memory if main_cfg else None
-        if main_memory_cfg is not None:
-            self.memory_system = create_memory(main_memory_cfg, self.provider, memory_dir)
-            await self.memory_system.initialize()
-        else:
-            self.memory_system = None
+        main_memory_cfg = main_cfg.memory if main_cfg else self._app_config.memory
+        self.memory_system = create_memory(
+            main_memory_cfg or IOCMemoryConfig(),
+            self.provider,
+            memory_dir,
+        )
+        await self.memory_system.initialize()
 
         self.context_manager = MemorySystemContextManager(
             memory_system=self.memory_system,
@@ -465,7 +469,7 @@ class BotService(AgentBuilderMixin):
             hooks=pipeline_hooks,
             hook_runner=self._build_hook_runner(pipeline_hooks),
             interceptor_chain=self.interceptor_chain,
-            
+
             context_manager_factory=self._get_context_manager,
             governance=create_governance(self._main_memory_cfg, self._app_config.llm.max_tokens),
             safety=self.safety_policy,
@@ -511,6 +515,15 @@ class BotService(AgentBuilderMixin):
         # Create AgentPool BEFORE SubagentService (pool is required by SubagentService)
         from framework.multi_agent.session_id import DefaultSessionIdStrategy
 
+        retention_cfg = self._app_config.multi_agent.session_retention
+        retention = SessionRetentionPolicy(
+            max_sessions_per_subagent=retention_cfg.max_sessions_per_subagent,
+            max_sessions_global=retention_cfg.max_sessions_global,
+            ttl_seconds=retention_cfg.ttl_seconds,
+            cleanup_interval_seconds=retention_cfg.cleanup_interval_seconds,
+        )
+        self.communication_tracker = CommunicationTracker()
+
         self.agent_pool = AgentPool(
             broker=self.broker,
             agent_factory=self.agent_factory,
@@ -522,6 +535,8 @@ class BotService(AgentBuilderMixin):
             default_context_manager_factory=self._get_context_manager,
             session_strategy=DefaultSessionIdStrategy(main_agent_name=parent_agent_name),
             safety=self.safety_policy,
+            retention=retention,
+            comm_tracker=self.communication_tracker,
         )
 
         # SubagentService wraps AgentPool for subagent lifecycle management
@@ -586,6 +601,15 @@ class BotService(AgentBuilderMixin):
                     sub_instance.pipeline.governance = create_subagent_governance(
                         subagent_cfg.memory, self._app_config.llm.max_tokens,
                     )
+                    # Register send_message_async so subagent can reply to parent
+                    sub_address = AgentAddress(name=descriptor.address.name)
+                    strategy = DefaultSessionIdStrategy(main_agent_name=parent_agent_name)
+                    sub_tool_manager.register(SendMessageAsyncTool(
+                        broker=self.broker, self_address=sub_address,
+                        allowed_targets=[parent_agent_name], agent_bus=self.agent_bus,
+                        registry=self.agent_pool, session_strategy=strategy,
+                    ))
+
                 print(f"[OK] Subagent '{descriptor.address.name}' registered as resident")
 
         # Initialize peer agents
@@ -978,7 +1002,6 @@ class BotService(AgentBuilderMixin):
 
         from framework.memory.consolidation.dream_engine import DreamEngine
 
-        de_cfg = self._main_memory_cfg.dream_engine
         self.dream_engine = DreamEngine(
             llm_provider=self.provider,
             history_manager=self.memory_system.archive_manager,

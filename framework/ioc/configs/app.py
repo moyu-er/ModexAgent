@@ -54,6 +54,21 @@ class PathsConfig(BaseModel):
     inbox_dir: str = "data/inbox"
 
 
+class SessionRetentionConfig(BaseModel):
+    """Session retention settings for pool-managed subagent sessions."""
+
+    max_sessions_per_subagent: int = 10
+    max_sessions_global: int = 200
+    ttl_seconds: float = 86400.0
+    cleanup_interval_seconds: float = 1800.0
+
+
+class MultiAgentConfig(BaseModel):
+    """Multi-agent runtime settings."""
+
+    session_retention: SessionRetentionConfig = Field(default_factory=SessionRetentionConfig)
+
+
 class AppConfig(BaseModel):
     """Root configuration for a ModexAgent application.
 
@@ -74,6 +89,7 @@ class AppConfig(BaseModel):
     plugins: PluginConfig | None = None
     observability: ObservabilityConfig | None = None
     paths: PathsConfig = Field(default_factory=PathsConfig)
+    multi_agent: MultiAgentConfig = Field(default_factory=MultiAgentConfig)
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> AppConfig:

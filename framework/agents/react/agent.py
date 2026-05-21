@@ -171,6 +171,7 @@ class ReActAgent(Agent[ReActEvent]):
                 agent_kind=AgentKind.REACT,
                 phase=TurnPhase.CREATED,
             )
+            context.identity = state.identity
             context.runtime = AgentRuntime(services=AgentRuntimeServices(), state=state)
         runtime = context.runtime
         runtime.validate()

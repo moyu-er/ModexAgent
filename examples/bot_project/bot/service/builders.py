@@ -5,12 +5,11 @@ No tool configuration is read from YAML/config dicts.
 """
 
 import logging
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from bot.tools.custom import SpawnSubagentTool
 from framework import InMemoryToolManager, ToolManagerConfig
-from framework.ioc.factories.governance import create_subagent_governance
 from framework.core.context import ContextManager
 from framework.core.skills import (
     CompositeSkillSource,
@@ -20,17 +19,18 @@ from framework.core.skills import (
     SkillManager,
 )
 from framework.core.tool_manager import Tool
-from framework.memory.core.scope import MemoryAgentRole, MemoryContext
+from framework.ioc.factories.governance import create_subagent_governance
+from framework.memory.core.scope import MemoryAgentRole, MemoryContext, SessionScope
 from framework.memory.injection import RestrictedInjectionPolicy
 from framework.memory.layers.config import (
+    ArchiveMemoryConfig,
     MemoryLayerConfigSet,
     PendingPrunedInputMemoryConfig,
     SessionMemoryConfig,
 )
 from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
 from framework.memory.system import MemorySystemContextManager, create_memory_system
-from framework.multi_agent import AgentAddress, AgentDescriptor
-from framework.multi_agent.descriptor import AgentLLMConfig
+from framework.multi_agent import AgentAddress
 from framework.multi_agent.session_id import DefaultSessionIdStrategy
 from framework.multi_agent.tools import DispatchTaskTool, SendMessageAsyncTool, SendMessageTool
 from framework.pipeline.adapters import NullOutputAdapter
@@ -158,6 +158,7 @@ class AgentBuilderMixin:
                 broker=self.broker, self_address=parent_address,
                 allowed_targets=peer_names or None, agent_bus=self.agent_bus,
                 registry=self.agent_pool, session_strategy=strategy,
+                comm_tracker=self.communication_tracker,
             ))
             print("   [OK] send_message_async registered")
 
@@ -165,24 +166,9 @@ class AgentBuilderMixin:
                 broker=self.broker, self_address=parent_address,
                 allowed_targets=peer_names or None, agent_bus=self.agent_bus,
                 registry=self.agent_pool, session_strategy=strategy,
+                comm_tracker=self.communication_tracker,
             ))
             print("   [OK] dispatch_task registered")
-
-        subagent_cfg = next((a for a in agents if a.role == "subagent"), None)
-        if subagent_cfg is not None:
-            from framework.ioc.factories.descriptors import build_subagent_descriptor
-            memory_dir = self._resolve_path("memory_dir", "data/memory")
-            descriptor, sub_tm, sub_sm, _memory_ctx = await build_subagent_descriptor(
-                subagent_cfg, self._app_config, self._project_dir,
-                memory_dir, self.safety_policy, self.provider,
-            )
-            self.tool_manager.register(SpawnSubagentTool(
-                service=self.subagent_service, default_parent_address=parent_address,
-                descriptor=descriptor, tool_manager=sub_tm,
-                skill_manager=sub_sm, broker=self.broker,
-                agent_bus=self.agent_bus, registry=self.agent_pool,
-            ))
-            print("   [OK] spawn_subagent_sync registered")
 
     # ── Peer / Subagent Tool Manager (code-driven) ──
 
@@ -256,13 +242,29 @@ class AgentBuilderMixin:
 
     # ── Memory Creation ──
 
+    def _build_memory_layer_config(self, cfg: Any) -> MemoryLayerConfigSet:
+        from framework.ioc.configs.memory import MemoryConfig
+        from framework.ioc.factories.memory import _build_memory_layer_config
+
+        if isinstance(cfg, dict) and "pending_pruned_inputs" in cfg and "pending" not in cfg:
+            cfg = {**cfg, "pending": cfg["pending_pruned_inputs"]}
+        memory_cfg = cfg if isinstance(cfg, MemoryConfig) else MemoryConfig.model_validate(cfg)
+        layer_config = _build_memory_layer_config(memory_cfg)
+        if layer_config.pending is not None and not layer_config.pending.enabled:
+            layer_config = replace(layer_config, pending=None)
+        return layer_config
+
     def _session_only_memory_config(self, cfg: Any) -> MemoryLayerConfigSet:
         max_messages = 50
         if cfg is not None and hasattr(cfg, "short_term"):
             max_messages = cfg.short_term.max_messages
+        elif isinstance(cfg, dict):
+            short_term = cfg.get("short_term", {})
+            max_messages = int(short_term.get("max_messages", max_messages))
         return MemoryLayerConfigSet(
             session=SessionMemoryConfig(max_messages=max_messages),
-            archive=None, knowledge=None,
+            archive=ArchiveMemoryConfig(scope=SessionScope()),
+            knowledge=None,
             pending=PendingPrunedInputMemoryConfig(enabled=True),
         )
 
@@ -277,7 +279,7 @@ class AgentBuilderMixin:
         coordinator = create_subagent_compression_coordinator(sub_memory_cfg)
         memory_system = create_memory_system(
             workspace=sub_dir, config=self._session_only_memory_config(sub_memory_cfg),
-            session_only=True,
+            session_only=False,
             lifecycle_policy=DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator),
         )
         await memory_system.initialize()
@@ -307,7 +309,7 @@ class AgentBuilderMixin:
         coordinator = create_subagent_compression_coordinator(peer_memory_cfg)
         memory_system = create_memory_system(
             workspace=peer_dir, config=self._session_only_memory_config(peer_memory_cfg),
-            session_only=True,
+            session_only=False,
             lifecycle_policy=DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator),
         )
         await memory_system.initialize()
@@ -354,9 +356,9 @@ class AgentBuilderMixin:
     # ── Peer Agent Initialization ──
 
     async def _initialize_peer_agents(self) -> None:
-        from framework.ioc.factories.descriptors import build_peer_descriptor
         from framework.hook import HookErrorPolicy, HookSpec
         from framework.hook.builtin import SubagentAutoSendHook
+        from framework.ioc.factories.descriptors import build_peer_descriptor
 
         if self.agent_pool is None or self.broker is None or self.subagent_service is None:
             return
@@ -400,23 +402,8 @@ class AgentBuilderMixin:
                 broker=self.broker, self_address=peer_address, allowed_targets=[parent_name],
                 agent_bus=self.agent_bus, registry=self.agent_pool,
                 session_strategy=strategy,
+                comm_tracker=self.communication_tracker,
             ))
-
-            # register subagent tool for this peer
-            subagent_cfg = self._find_subagent_cfg()
-            if subagent_cfg is not None and peer_cfg.standard_tools:
-                from framework.ioc.factories.descriptors import build_subagent_descriptor
-                sub_descriptor, sub_tm, sub_sm, _sub_mem = await build_subagent_descriptor(
-                    subagent_cfg, self._app_config, self._project_dir,
-                    memory_dir, self.safety_policy, self.provider,
-                )
-                tool_manager.register(SpawnSubagentTool(
-                    service=self.subagent_service,
-                    default_parent_address=peer_address,
-                    descriptor=sub_descriptor, tool_manager=sub_tm,
-                    skill_manager=sub_sm, broker=self.broker,
-                    agent_bus=self.agent_bus, registry=self.agent_pool,
-                ))
 
             await self.agent_pool.register_resident(
                 descriptor, context_manager=context_manager, tool_manager=tool_manager,

@@ -197,6 +197,13 @@ agents:
       short_term: {max_messages: 30, max_tokens: 20000, keep_ratio_for_messages: 0.5, keep_ratio_for_token: 0.5}
       governance: {}
 
+multi_agent:
+  session_retention:
+    max_sessions_per_subagent: 10
+    max_sessions_global: 200
+    ttl_seconds: 86400
+    cleanup_interval_seconds: 1800
+
 # ---- Plugins (OFF by default) ----
 # To enable: set `enabled: true` and add per-plugin config under `configurations`.
 # plugins:

@@ -299,7 +299,6 @@ class DefaultAgentFactory(AgentFactory):
                 hooks=agent_hooks,
                 sanitizer=sanitizer or self._sanitizer,
                 command_interceptor=command_interceptor or self._command_interceptor,
-                subagent_service=subagent_service or self._subagent_service,
                 runtime_context_manager=self._runtime_context_manager,
                 hook_runner=hook_runner,
                 interceptor_chain=session_interceptor_chain,

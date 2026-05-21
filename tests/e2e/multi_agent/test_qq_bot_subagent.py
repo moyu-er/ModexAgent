@@ -1,146 +1,92 @@
-"""End-to-end test for QQ Bot spawning and receiving subagent results.
+"""End-to-end checks for QQ Bot subagent dispatch wiring."""
 
-验证:
-- QQ Bot 主服务初始化后具备 spawn_subagent 工具
-- spawn_subagent 工具被调用后能返回 Subagent 执行结果
-- 结果通过 Broker 正确回传到父 Agent
-"""
+from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "examples" / "bot_project"))
+sys.path.insert(
+    0,
+    str(Path(__file__).parent.parent.parent.parent / "examples" / "bot_project"),
+)
 
 
 @pytest.mark.asyncio
-async def test_bot_service_has_spawn_subagent_tool():
-    """QQ Bot 服务初始化后，tool_manager 应包含 spawn_subagent 和 send_message。"""
+async def test_bot_service_has_dispatch_task_tool() -> None:
+    """Pool-mode bot exposes async subagent dispatch tools, not legacy spawn."""
     try:
-        from qq_adapters import QQInputAdapter, QQOutputAdapter
         from bot_service import BotService
 
-        input_adapter = MagicMock(spec=QQInputAdapter)
-        input_adapter.name = "mock_qq"
-        output_adapter = MagicMock(spec=QQOutputAdapter)
-        output_adapter.name = "mock_qq"
-
-        def emitter_factory(sid):
-            return MagicMock()
-
-        # 使用 mock 配置避免真实 LLM 初始化
-        mock_config = {
-            "qq": {"app_id": "x", "secret": "x", "sandbox": True, "allow_from": ["*"]},
-            "llm": {"model": "mock", "api_key": "x", "temperature": 0.7, "max_tokens": 100},
-            "agent": {"system_prompt": "test", "max_iterations": 5},
-            "memory": {"short_term": {"strategy": "buffer", "max_messages": 10, "budget_ratio": 0.5}},
-            "mcp": {"servers": {}},
-            "multi_agent": {
-                "enabled": True,
-                "parent_agent_name": "main",
-                "subagent": {
-                    "enabled": True,
-                    "name": "helper",
-                    "system_prompt": "You are a helper.",
-                },
-            },
-            "tools": {
-                "file_tools": {"enabled": False},
-                "shell_tools": {"enabled": False},
-                "mcp_tools": {"enabled": False},
-            },
-            "output": {"streaming": True, "preset": "minimal"},
-            "sessions": {"workspace": "./data/sessions", "auto_save": True},
-        }
-
-        service = BotService(
-            config_dir=Path("./examples/bot_project/config"),
-            input_adapter=input_adapter,
-            output_adapter=output_adapter,
-            emitter_factory=emitter_factory,
-        )
-        service.config = mock_config
-
-        # 部分初始化：跳过真实 LLM/MemorySystem，只验证工具注册
         from framework.core.tool_manager import InMemoryToolManager
+        from framework.ioc.configs.agent import AgentConfig
+        from framework.ioc.configs.app import AppConfig
         from framework.messaging.broker_memory import InMemoryMessageBroker
-        from framework.multi_agent import (
-            DefaultAgentFactory,
-            SubagentService,
-            SessionRetentionPolicy,
-        )
+        from framework.multi_agent import CommunicationTracker
+        from framework.multi_agent.tools import DispatchTaskTool, SendMessageAsyncTool
+    except ImportError as exc:
+        pytest.skip(f"QQBotService dependencies not available: {exc}")
 
-        service.broker = InMemoryMessageBroker()
-        await service.broker.start()
-        service.tool_manager = InMemoryToolManager()
-        service.agent_factory = DefaultAgentFactory()
-        service.provider = MagicMock()  # mock LLM provider for subagent memory creation
-        service.subagent_manager = SubagentService(
-            broker=service.broker,
-            agent_factory=service.agent_factory,
-            coordination_config=SessionRetentionPolicy(enable_for_subagent=False),
-        )
+    service = BotService(
+        config_dir=Path("./examples/bot_project/config"),
+        input_adapter=MagicMock(name="input_adapter"),
+        output_adapter=MagicMock(name="output_adapter"),
+        emitter_factory=MagicMock(),
+        mode="pool",
+        app_config=AppConfig(
+            llm={"model": "mock", "api_key": "key"},
+            agents=[
+                AgentConfig(name="main", role="main"),
+                AgentConfig(name="helper", role="subagent"),
+            ],
+        ),
+    )
+    service.tool_manager = InMemoryToolManager()
+    service.broker = InMemoryMessageBroker()
+    await service.broker.start()
+    service.agent_bus = MagicMock()
+    service.agent_pool = MagicMock()
+    service.subagent_service = MagicMock()
+    service.communication_tracker = CommunicationTracker()
 
-        await service._register_multi_agent_tools()
-        tools = service.tool_manager.list_tools()
+    await service._register_multi_agent_tools()
+    tools = service.tool_manager.list_tools()
 
-        assert "spawn_subagent" in tools
-        assert "send_message" in tools
-
-    except ImportError as e:
-        pytest.skip(f"QQBotService dependencies not available: {e}")
+    assert "send_message" in tools
+    assert "send_message_async" in tools
+    assert "dispatch_task" in tools
+    assert "spawn_subagent" not in tools
+    assert isinstance(service.tool_manager.get_tool("dispatch_task"), DispatchTaskTool)
+    assert isinstance(
+        service.tool_manager.get_tool("send_message_async"),
+        SendMessageAsyncTool,
+    )
+    await service.broker.stop()
 
 
 @pytest.mark.asyncio
-async def test_spawn_subagent_tool_returns_result():
-    """spawn_subagent 工具执行后应直接返回字符串结果。"""
-    try:
-        from bot_service import SpawnSubagentTool
+async def test_dispatch_task_tool_returns_invocation_id() -> None:
+    """dispatch_task queues a task and tracks the pending invocation."""
+    from framework.messaging.broker_memory import InMemoryMessageBroker
+    from framework.multi_agent import AgentAddress, CommunicationTracker
+    from framework.multi_agent.tools import DispatchTaskTool
 
-        from framework.core.emitter import AgentResult
-        from framework.core.tool_manager import InMemoryToolManager
-        from framework.messaging.broker_memory import InMemoryMessageBroker
-        from framework.multi_agent import (
-            AgentAddress,
-            AgentDescriptor,
-            AgentLLMConfig,
-            DefaultAgentFactory,
-            SubagentService,
-            SessionRetentionPolicy,
-        )
-        from framework.multi_agent.descriptor import ContextGovernanceConfig
+    broker = InMemoryMessageBroker()
+    await broker.start()
+    tracker = CommunicationTracker()
+    tool = DispatchTaskTool(
+        broker=broker,
+        self_address=AgentAddress(name="main"),
+        allowed_targets=["helper"],
+        comm_tracker=tracker,
+    )
 
-        broker = InMemoryMessageBroker()
-        factory = MagicMock(spec=DefaultAgentFactory)
-        fake_instance = MagicMock()
-        fake_instance.session.process_message = AsyncMock(return_value=AgentResult(content="subagent_done"))
-        fake_instance.tool_manager = InMemoryToolManager()
-        factory.create_agent = AsyncMock(return_value=fake_instance)
+    result = await tool.execute(target_agent="helper", task_prompt="test task")
 
-        mgr = SubagentService(
-            broker=broker,
-            agent_factory=factory,
-            coordination_config=SessionRetentionPolicy(enable_for_subagent=False),
-        )
-
-        descriptor = AgentDescriptor(
-            address=AgentAddress(name="helper"),
-            llm_config=AgentLLMConfig(),
-            system_prompt_template="You are a helper.",
-            governance_config=ContextGovernanceConfig(),
-        )
-
-        tool = SpawnSubagentTool(
-            manager=mgr,
-            default_parent_address=AgentAddress(name="main"),
-            descriptor=descriptor,
-        )
-
-        result = await tool.execute(task_prompt="test task", conversation_id="conv_qq_1")
-        assert "subagent_done" in result
-
-    except ImportError as e:
-        pytest.skip(f"Dependencies not available: {e}")
+    assert "Task dispatched to helper" in result
+    assert "invocation_id: inv_" in result
+    assert len(tracker.get_pending_for_agent("main")) == 1
+    await broker.stop()

@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from framework.messaging.broker import MessageBroker
     from framework.multi_agent.address import AgentAddress
     from framework.multi_agent.bus import AgentMessageBus
+    from framework.multi_agent.comm_tracker import CommunicationTracker
     from framework.multi_agent.registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
@@ -217,6 +218,7 @@ class SendMessageAsyncTool(Tool):
         registry: AgentRegistry | None = None,
         wakeup_timeout: float | None = None,
         session_strategy: SessionIdStrategy | None = None,
+        comm_tracker: CommunicationTracker | None = None,
     ):
         self._broker = broker
         self._self_address = self_address
@@ -226,6 +228,7 @@ class SendMessageAsyncTool(Tool):
         self._registry = registry
         self._wakeup_timeout = wakeup_timeout if wakeup_timeout is not None and wakeup_timeout > 0 else 1.0
         self._session_strategy = session_strategy or DefaultSessionIdStrategy()
+        self._comm_tracker = comm_tracker
         self._wakeup_tasks: set[asyncio.Task] = set()
         super().__init__(
             name="send_message_async",
@@ -327,7 +330,7 @@ class SendMessageAsyncTool(Tool):
         base_session = agent_session_id or self._session_strategy.target_session(
             conversation_id, target_agent, self._self_address.name,
         )
-        if invocation_id:
+        if invocation_id and not base_session.endswith(f":{invocation_id}"):
             base_session = f"{base_session}:{invocation_id}"
 
         payload = {"content": content, "message_type": message_type}
@@ -346,6 +349,14 @@ class SendMessageAsyncTool(Tool):
         )
 
         inbox_key = self._session_strategy.agent_session(conversation_id, target_agent)
+        if invocation_id and self._comm_tracker is not None:
+            self._comm_tracker.record_send(
+                agent_name=self._self_address.name,
+                target_agent=target_agent,
+                invocation_id=invocation_id,
+                session_id=base_session,
+                content_summary=content[:500],
+            )
         await self._agent_bus.send_silent(inbox_key, envelope)
 
         task = asyncio.create_task(
@@ -411,6 +422,7 @@ class DispatchTaskTool(Tool):
         agent_bus: AgentMessageBus | None = None,
         registry: AgentRegistry | None = None,
         session_strategy: SessionIdStrategy | None = None,
+        comm_tracker: CommunicationTracker | None = None,
     ):
         import uuid as _uuid
 
@@ -421,6 +433,7 @@ class DispatchTaskTool(Tool):
         self._agent_bus = agent_bus
         self._registry = registry
         self._session_strategy = session_strategy or DefaultSessionIdStrategy()
+        self._comm_tracker = comm_tracker
         self._uuid = _uuid
         super().__init__(
             name="dispatch_task",
@@ -528,6 +541,14 @@ class DispatchTaskTool(Tool):
                 "DispatchTaskTool: dispatching to %s inv_id=%s session=%s",
                 target_agent, inv_id, session_id,
             )
+            if self._comm_tracker is not None:
+                self._comm_tracker.record_send(
+                    agent_name=self._self_address.name,
+                    target_agent=target_agent,
+                    invocation_id=inv_id,
+                    session_id=session_id,
+                    content_summary=content[:500],
+                )
             await self._broker.send_to(envelope.target, broker_msg)
             return f"Task dispatched to {target_agent}. invocation_id: {inv_id}"
         return "Error: target agent not specified."

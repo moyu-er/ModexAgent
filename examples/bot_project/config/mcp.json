@@ -5,22 +5,22 @@
       "args": ["@playwright/mcp"]
     },
     "fetch": {
-      "type": "sse",
-      "url": "https://mcp.api-inference.modelscope.net/bcd44d7e93bd40/sse",
+      "type": "streamable_http",
+      "url": "https://mcp.api-inference.modelscope.net/1697ff30a27342/mcp",
       "headers": {
         "Authorization": "Bearer ${MCP_BEARER_TOKEN}"
       }
     },
     "12306-mcp": {
-      "type": "sse",
-      "url": "https://mcp.api-inference.modelscope.net/c47d1c75706c44/sse",
+      "type": "streamable_http",
+      "url": "https://mcp.api-inference.modelscope.net/b4b3d3f601b44d/mcp",
       "headers": {
         "Authorization": "Bearer ${MCP_BEARER_TOKEN}"
       }
     },
     "mcp-deepwiki": {
-      "type": "sse",
-      "url": "https://mcp.api-inference.modelscope.net/f2f8c46fc2d64d/sse",
+      "type": "streamable_http",
+      "url": "https://mcp.api-inference.modelscope.net/bfec38642ada42/mcp",
       "headers": {
         "Authorization": "Bearer ${MCP_BEARER_TOKEN}"
       }

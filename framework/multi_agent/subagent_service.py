@@ -20,14 +20,14 @@ from typing import Any
 
 from framework.core.emitter import AgentResult
 from framework.core.types import InputMessage
-from framework.messaging.broker import BrokerMessage, MessageBroker
+from framework.messaging.broker import MessageBroker
 
 from .address import AgentAddress
 from .bus import AgentMessageBus
 from .descriptor import AgentDescriptor, AgentInstance
 from .envelope import AgentMessageEnvelope
 from .factory import AgentFactory
-from .pool import AgentPool, SessionMeta
+from .pool import AgentPool
 from .session_id import DefaultSessionIdStrategy, SessionIdStrategy
 
 logger = logging.getLogger(__name__)
@@ -69,6 +69,10 @@ class SubagentService:
         """
         return await self._pool.register_resident(descriptor, **kwargs)
 
+    async def stop(self) -> None:
+        """Stop all subagents owned by the underlying pool."""
+        await self._pool.shutdown_all()
+
     # ── Dynamic (runtime-created) ──
 
     async def admit_dynamic(
@@ -88,7 +92,7 @@ class SubagentService:
         The subagent is now addressable via ``send_message_async`` like any
         resident subagent.
         """
-        instance = await self._pool.register_resident(descriptor)
+        await self._pool.register_resident(descriptor)
         name = descriptor.address.name
 
         conversation_id = f"dyn.{name}.{uuid.uuid4().hex[:8]}"
@@ -157,8 +161,8 @@ class SubagentService:
             return await asyncio.wait_for(future, timeout=timeout)
         except TimeoutError:
             logger.warning("create_and_wait timed out for %s after %.0fs", name, timeout)
-            self._pool.pop_sync_future(correlation_id, None)
+            self._pool.pop_sync_future(correlation_id)
             return AgentResult(error=f"Subagent {name} timed out after {timeout}s", stop_reason="timeout")
         finally:
-            self._pool.pop_sync_future(correlation_id, None)
+            self._pool.pop_sync_future(correlation_id)
             await instance.stop()

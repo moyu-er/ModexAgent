@@ -89,21 +89,33 @@ async def test_pool_mode_subagent_sync_still_works():
 
     factory = MagicMock(spec=DefaultAgentFactory)
     fake_instance = MagicMock()
-    fake_session = MagicMock()
+    fake_pipeline = MagicMock()
 
     async def _mock_process(*args, **kwargs) -> AgentResult:
         return AgentResult(content="sync result", stop_reason="completed")
 
-    fake_session.process_message = AsyncMock(side_effect=_mock_process)
-    fake_instance.session = fake_session
+    fake_pipeline.process_message = AsyncMock(side_effect=_mock_process)
+    fake_instance.pipeline = fake_pipeline
     fake_instance.stop = AsyncMock()
     fake_instance.descriptor.address = AgentAddress(kind="agent", name="helper")
     factory.create_agent = AsyncMock(return_value=fake_instance)
 
-    mgr = SubagentService(
+    inbox_server = InMemoryInboxServer()
+    inbox_consumer = InboxConsumer(server=inbox_server)
+    inbox_producer = InboxProducer(server=inbox_server)
+    agent_bus = LocalAgentMessageBus(producer=inbox_producer, consumer=inbox_consumer)
+    pool = AgentPool(
         broker=broker,
         agent_factory=factory,
-        coordination_config=SessionRetentionPolicy(enable_for_subagent=False),
+        agent_bus=agent_bus,
+        enable_inbox_polling=False,
+        retention=SessionRetentionPolicy(),
+    )
+    mgr = SubagentService(
+        pool=pool,
+        factory=factory,
+        broker=broker,
+        agent_bus=agent_bus,
     )
 
     descriptor = AgentDescriptor(
@@ -111,14 +123,13 @@ async def test_pool_mode_subagent_sync_still_works():
         context_strategy="ephemeral",
     )
 
-    result = await mgr.spawn_and_wait(
-        parent_address=AgentAddress(kind="agent", name="main"),
+    result = await mgr.create_and_wait(
         descriptor=descriptor,
         task_prompt="sync task",
-        conversation_id="c3",
     )
 
     assert result.content == "sync result"
     assert result.stop_reason == "completed"
 
+    await pool.shutdown_all()
     await broker.stop()
