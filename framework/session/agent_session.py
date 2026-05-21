@@ -404,7 +404,7 @@ class AgentSession(Generic[E]):
 
             # 5.5 设置当前 conversation_id 上下文变量（供 peer 通信工具使用）
             from ..multi_agent.session_id import DefaultSessionIdStrategy
-            from ..multi_agent.subagent_manager import current_conversation_id
+            from ..multi_agent.context import current_conversation_id
             raw_id = runtime_info.get("conversation_id", session_id) if runtime_info else session_id
             conversation_id, _agent_name = DefaultSessionIdStrategy().parse(raw_id)
             conv_token = current_conversation_id.set(conversation_id)

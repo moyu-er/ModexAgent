@@ -155,7 +155,7 @@ class SendMessageTool(Tool):
 
         # 自动从当前上下文填充 conversation_id（确保 inbox 路由正确）
         if not conversation_id:
-            from framework.multi_agent.subagent_manager import current_conversation_id
+            from framework.multi_agent.context import current_conversation_id
 
             conversation_id = current_conversation_id.get() or ""
 
@@ -288,7 +288,7 @@ class SendMessageAsyncTool(Tool):
 
         # 自动从当前上下文填充 conversation_id（确保 inbox 路由正确）
         if not conversation_id:
-            from framework.multi_agent.subagent_manager import current_conversation_id
+            from framework.multi_agent.context import current_conversation_id
 
             conversation_id = current_conversation_id.get() or ""
 
