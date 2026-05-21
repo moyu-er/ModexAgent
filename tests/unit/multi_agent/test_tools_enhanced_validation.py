@@ -265,3 +265,41 @@ class TestSendMessageToolDynamicSchema:
 
 
 # ---------------------------------------------------------------------------
+# 4. SendMessageAsyncTool – task_request payload contract
+# ---------------------------------------------------------------------------
+
+
+class TestSendMessageAsyncToolTaskRequestPayload:
+    """task_request must carry canonical ``task_prompt`` key alongside ``content``."""
+
+    async def test_task_request_payload_includes_task_prompt(self):
+        """send_message_async with message_type="task_request" must populate
+        both ``task_prompt`` and ``content`` in the envelope payload."""
+        agent_bus = _make_bus()
+        tool = SendMessageAsyncTool(
+            broker=InMemoryMessageBroker(),
+            self_address=AgentAddress(name="main"),
+            allowed_targets=["worker"],
+            agent_bus=agent_bus,
+        )
+
+        await tool.execute(
+            target_agent="worker",
+            content="Please process this file",
+            conversation_id="conv_001",
+            message_type="task_request",
+        )
+
+        # Read back the envelope from the agent bus inbox
+        inbox_key = "conv_001:worker"
+        envelopes = await agent_bus.poll(inbox_key, limit=1)
+        assert len(envelopes) == 1, "Expected 1 envelope in the target inbox"
+        envelope = envelopes[0]
+        payload = envelope.payload
+        assert payload.get("task_prompt") == "Please process this file", (
+            "task_request payload must set task_prompt to the input content"
+        )
+        assert payload.get("content") == "Please process this file", (
+            "task_request payload must also include the content field"
+        )
+        assert payload.get("message_type") == "task_request"

@@ -471,7 +471,7 @@ class AgentPool(AgentRegistry):
         envelope: AgentMessageEnvelope,
     ) -> None:
         """将 task_request 信封转换为 InputMessage 并执行用户回合。"""
-        task_prompt = envelope.payload.get("task_prompt", "")
+        task_prompt = envelope.payload.get("task_prompt") or envelope.payload.get("content", "")
         conversation_id = envelope.conversation_id or envelope.payload.get(
             "conversation_id", "default"
         )

@@ -316,8 +316,12 @@ class SendMessageAsyncTool(Tool):
         from .address import AgentAddress
         from .envelope import AgentMessageEnvelope
 
+        payload = {"content": content, "message_type": message_type}
+        if message_type == "task_request":
+            payload["task_prompt"] = content
+
         envelope = AgentMessageEnvelope(
-            payload={"content": content, "message_type": message_type},
+            payload=payload,
             source=AgentAddress(kind=self._self_address.kind, name=self._self_address.name),
             target=AgentAddress(kind="agent", name=target_agent),
             message_type=message_type,
