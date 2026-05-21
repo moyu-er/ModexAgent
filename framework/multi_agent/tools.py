@@ -230,18 +230,24 @@ class SendMessageAsyncTool(Tool):
         super().__init__(
             name="send_message_async",
             description=(
-                "Send a message to another agent's inbox asynchronously. The target agent will pull it "
-                "during its next turn. If the message is not consumed within a short timeout, "
-                "the target agent will be automatically awakened. "
-                "IMPORTANT: This tool only queues the message; it does NOT return a real-time reply "
-                "from the target agent. If you expect a response, the target agent must send it back to you "
-                "in a separate message using its own communication tool."
+                "Send a message to another agent's inbox asynchronously. "
+                "The target agent will pull it during its next turn.\n\n"
+                "If invocation_id is provided, the message is routed to that specific "
+                "invocation session. Omit invocation_id to send to the default session."
             ),
             parameters={
                 "type": "object",
                 "properties": {
                     "target_agent": {"type": "string", "description": "Name of the target agent"},
                     "content": {"type": "string", "description": "Message content"},
+                    "invocation_id": {
+                        "type": "string",
+                        "description": (
+                            "Optional. The invocation_id returned by dispatch_task. "
+                            "If provided, routes this message to that specific task session. "
+                            "Omit to send to the default session."
+                        ),
+                    },
                     "message_type": {"type": "string", "default": "agent_message"},
                 },
                 "required": ["target_agent", "content"],
@@ -282,6 +288,7 @@ class SendMessageAsyncTool(Tool):
         target_agent = kwargs.get("target_agent", "")
         content = kwargs.get("content", "")
         message_type = kwargs.get("message_type", "agent_message")
+        invocation_id = kwargs.get("invocation_id")
         caller_context = kwargs.get("caller_context")
         conversation_id = kwargs.get("conversation_id", "")
         agent_session_id = kwargs.get("agent_session_id", "")
@@ -316,9 +323,18 @@ class SendMessageAsyncTool(Tool):
         from .address import AgentAddress
         from .envelope import AgentMessageEnvelope
 
+        # Build session_id with optional invocation suffix
+        base_session = agent_session_id or self._session_strategy.target_session(
+            conversation_id, target_agent, self._self_address.name,
+        )
+        if invocation_id:
+            base_session = f"{base_session}:{invocation_id}"
+
         payload = {"content": content, "message_type": message_type}
         if message_type == "task_request":
             payload["task_prompt"] = content
+        if invocation_id:
+            payload["invocation_id"] = invocation_id
 
         envelope = AgentMessageEnvelope(
             payload=payload,
@@ -326,8 +342,7 @@ class SendMessageAsyncTool(Tool):
             target=AgentAddress(kind="agent", name=target_agent),
             message_type=message_type,
             conversation_id=conversation_id,
-            agent_session_id=agent_session_id
-            or self._session_strategy.target_session(conversation_id, target_agent, self._self_address.name),
+            agent_session_id=base_session,
         )
 
         inbox_key = self._session_strategy.agent_session(conversation_id, target_agent)
@@ -371,4 +386,148 @@ class SendMessageAsyncTool(Tool):
         except Exception:
             _logger.exception("Wakeup task failed for %s", inbox_key)
 
+
+class DispatchTaskTool(Tool):
+    """Dispatch a new task to a subagent.
+
+    Creates an isolated invocation session and returns an invocation_id for
+    follow-up communication via send_message_async.
+
+    Use this when:
+    - Starting a new, independent task for a subagent
+    - You need clean context (no history leakage from other tasks)
+    - You want to run multiple tasks on the same subagent in parallel
+
+    The returned invocation_id can be passed to send_message_async for
+    follow-up messages targeting this specific task session.
+    """
+
+    def __init__(
+        self,
+        broker: MessageBroker,
+        self_address: AgentAddress,
+        allowed_callers: list[str] | None = None,
+        allowed_targets: list[str] | None = None,
+        agent_bus: AgentMessageBus | None = None,
+        registry: AgentRegistry | None = None,
+        session_strategy: SessionIdStrategy | None = None,
+    ):
+        import uuid as _uuid
+
+        self._broker = broker
+        self._self_address = self_address
+        self._allowed_callers = set(allowed_callers) if allowed_callers else None
+        self._allowed_targets = set(allowed_targets) if allowed_targets else None
+        self._agent_bus = agent_bus
+        self._registry = registry
+        self._session_strategy = session_strategy or DefaultSessionIdStrategy()
+        self._uuid = _uuid
+        super().__init__(
+            name="dispatch_task",
+            description=(
+                "Dispatch a new task to a subagent. Creates an isolated session "
+                "and returns an invocation_id for follow-up communication.\n\n"
+                "Use this when starting a new, independent task that should not "
+                "share context with other tasks. The returned invocation_id can "
+                "be passed to send_message_async for follow-up messages.\n\n"
+                "IMPORTANT: This sends the task asynchronously. The subagent will "
+                "process it and send results to your inbox."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "target_agent": {
+                        "type": "string",
+                        "description": "Name of the subagent to dispatch the task to.",
+                    },
+                    "task_prompt": {
+                        "type": "string",
+                        "description": "The task description. Be thorough and precise.",
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": "Optional additional context or background information.",
+                    },
+                },
+                "required": ["target_agent", "task_prompt"],
+            },
+        )
+
+    def _is_allowed(self, caller_context: dict | None = None) -> bool:
+        if self._allowed_callers is None:
+            return True
+        if not caller_context:
+            return True
+        agent_name = caller_context.get("agent_name")
+        return agent_name is None or agent_name in self._allowed_callers
+
+    def _is_target_allowed(self, target_agent: str) -> bool:
+        if self._allowed_targets is None:
+            return True
+        return target_agent in self._allowed_targets
+
+    async def execute(
+        self, target_agent: str, task_prompt: str, context: str | None = None
+    ) -> str:
+        caller_context = None
+
+        if not self._is_allowed(caller_context):
+            return "Error: dispatch_task is not allowed for this caller."
+
+        if not self._is_target_allowed(target_agent):
+            return f"Error: dispatch_task to {target_agent} is not allowed by policy."
+
+        if self._registry is not None:
+            available = [p.name for p in self._registry.list_profiles()]
+            if target_agent not in available:
+                return (
+                    f"Error: Target agent '{target_agent}' not found. "
+                    f"Available agents: {', '.join(available)}"
+                )
+
+        # Generate invocation_id
+        inv_id = f"inv_{self._uuid.uuid4().hex[:12]}"
+
+        # Resolve conversation_id from context
+        from framework.multi_agent.context import current_conversation_id
+        conv_id = current_conversation_id.get() or ""
+        if not conv_id:
+            conv_id = "default"
+
+        # Build isolated session_id
+        base = f"{conv_id}:{target_agent}"
+        session_id = f"{base}:{inv_id}"
+
+        # Build content with optional context
+        content = task_prompt
+        if context:
+            content = f"{task_prompt}\n\n[Additional Context]\n{context}"
+
+        from .address import AgentAddress
+        from .envelope import AgentMessageEnvelope
+
+        envelope = AgentMessageEnvelope(
+            payload={
+                "content": content,
+                "task_prompt": task_prompt,
+                "message_type": "task_request",
+                "invocation_id": inv_id,
+            },
+            source=AgentAddress(kind=self._self_address.kind, name=self._self_address.name),
+            target=AgentAddress(kind="agent", name=target_agent),
+            message_type="task_request",
+            conversation_id=conv_id,
+            agent_session_id=session_id,
+            correlation_id=inv_id,
+        )
+
+        if envelope.target is not None:
+            broker_msg = envelope.to_broker_message()
+            logger.info(
+                "DispatchTaskTool: dispatching to %s inv_id=%s session=%s",
+                target_agent, inv_id, session_id,
+            )
+            await self._broker.send_to(envelope.target, broker_msg)
+            return f"Task dispatched to {target_agent}. invocation_id: {inv_id}"
+        return "Error: target agent not specified."
 

@@ -32,7 +32,7 @@ from framework.memory.system import MemorySystemContextManager, create_memory_sy
 from framework.multi_agent import AgentAddress, AgentDescriptor
 from framework.multi_agent.descriptor import AgentLLMConfig
 from framework.multi_agent.session_id import DefaultSessionIdStrategy
-from framework.multi_agent.tools import SendMessageAsyncTool, SendMessageTool
+from framework.multi_agent.tools import DispatchTaskTool, SendMessageAsyncTool, SendMessageTool
 from framework.pipeline.adapters import NullOutputAdapter
 
 logger = logging.getLogger(__name__)
@@ -160,6 +160,13 @@ class AgentBuilderMixin:
                 registry=self.agent_pool, session_strategy=strategy,
             ))
             print("   [OK] send_message_async registered")
+
+            self.tool_manager.register(DispatchTaskTool(
+                broker=self.broker, self_address=parent_address,
+                allowed_targets=peer_names or None, agent_bus=self.agent_bus,
+                registry=self.agent_pool, session_strategy=strategy,
+            ))
+            print("   [OK] dispatch_task registered")
 
         subagent_cfg = next((a for a in agents if a.role == "subagent"), None)
         if subagent_cfg is not None:

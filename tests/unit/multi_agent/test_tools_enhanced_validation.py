@@ -14,6 +14,7 @@ from framework.multi_agent.inbox.consumer import InboxConsumer
 from framework.multi_agent.inbox.producer import InboxProducer
 from framework.multi_agent.inbox.server_memory import InMemoryInboxServer
 from framework.multi_agent.tools import (
+    DispatchTaskTool,
     SendMessageAsyncTool,
     SendMessageTool,
 )
@@ -303,3 +304,195 @@ class TestSendMessageAsyncToolTaskRequestPayload:
             "task_request payload must also include the content field"
         )
         assert payload.get("message_type") == "task_request"
+
+
+# ---------------------------------------------------------------------------
+# 5. DispatchTaskTool — invocation_id and session isolation
+# ---------------------------------------------------------------------------
+
+
+class TestDispatchTaskTool:
+    """dispatch_task must create invocation_id and isolated session."""
+
+    async def test_dispatch_returns_invocation_id(self):
+        broker = InMemoryMessageBroker()
+        await broker.start()
+        target_addr = AgentAddress(kind="agent", name="worker")
+        await broker.register_consumer(target_addr)
+
+        tool = DispatchTaskTool(
+            broker=broker,
+            self_address=AgentAddress(name="main"),
+            allowed_targets=["worker"],
+        )
+
+        result = await tool.execute(
+            target_agent="worker",
+            task_prompt="review file A",
+        )
+
+        assert "invocation_id:" in result, (
+            f"Response should contain invocation_id, got: {result!r}"
+        )
+        inv_id = result.split("invocation_id: ")[-1].strip()
+        assert inv_id.startswith("inv_"), (
+            f"invocation_id should start with 'inv_', got: {inv_id!r}"
+        )
+        await broker.stop()
+
+    async def test_dispatch_creates_isolated_session_ids(self):
+        broker = InMemoryMessageBroker()
+        await broker.start()
+        target_addr = AgentAddress(kind="agent", name="worker")
+        await broker.register_consumer(target_addr)
+
+        tool = DispatchTaskTool(
+            broker=broker,
+            self_address=AgentAddress(name="main"),
+            allowed_targets=["worker"],
+        )
+
+        r1 = await tool.execute(target_agent="worker", task_prompt="task A")
+        r2 = await tool.execute(target_agent="worker", task_prompt="task B")
+
+        inv1 = r1.split("invocation_id: ")[-1].strip()
+        inv2 = r2.split("invocation_id: ")[-1].strip()
+        assert inv1 != inv2, (
+            f"Each dispatch must get unique invocation_id, got {inv1!r} twice"
+        )
+        await broker.stop()
+
+    async def test_dispatch_allows_registered_target(self):
+        broker = InMemoryMessageBroker()
+        await broker.start()
+        target_addr = AgentAddress(kind="agent", name="worker")
+        await broker.register_consumer(target_addr)
+
+        registry = FakeRegistry([FakeProfile("main"), FakeProfile("worker")])
+        tool = DispatchTaskTool(
+            broker=broker,
+            self_address=AgentAddress(name="main"),
+            registry=registry,
+            allowed_targets=["worker"],
+        )
+
+        result = await tool.execute(target_agent="worker", task_prompt="task")
+        assert "invocation_id:" in result
+        await broker.stop()
+
+    async def test_dispatch_blocks_disallowed_target(self):
+        tool = DispatchTaskTool(
+            broker=InMemoryMessageBroker(),
+            self_address=AgentAddress(name="main"),
+            allowed_targets=["allowed_agent"],
+        )
+
+        result = await tool.execute(
+            target_agent="blocked_agent",
+            task_prompt="task",
+        )
+
+        assert "not allowed" in result
+        assert "invocation_id:" not in result
+
+    async def test_dispatch_blocks_nonexistent_target(self):
+        registry = FakeRegistry([FakeProfile("main"), FakeProfile("known")])
+        tool = DispatchTaskTool(
+            broker=InMemoryMessageBroker(),
+            self_address=AgentAddress(name="main"),
+            registry=registry,
+        )
+
+        result = await tool.execute(target_agent="unknown", task_prompt="task")
+        assert "not found" in result
+        assert "invocation_id:" not in result
+
+
+# ---------------------------------------------------------------------------
+# 6. SendMessageAsyncTool — invocation_id session routing
+# ---------------------------------------------------------------------------
+
+
+class TestSendMessageAsyncInvocationRouting:
+    """send_message_async must route to correct session based on invocation_id."""
+
+    async def test_with_invocation_id_appends_to_session(self):
+        agent_bus = _make_bus()
+        tool = SendMessageAsyncTool(
+            broker=InMemoryMessageBroker(),
+            self_address=AgentAddress(name="main"),
+            allowed_targets=["worker"],
+            agent_bus=agent_bus,
+        )
+
+        await tool.execute(
+            target_agent="worker",
+            content="followup message",
+            conversation_id="conv_001",
+            message_type="agent_message",
+            invocation_id="inv_test123",
+        )
+
+        inbox_key = "conv_001:worker"
+        envelopes = await agent_bus.poll(inbox_key, limit=1)
+        assert len(envelopes) == 1, "Expected 1 envelope"
+        envelope = envelopes[0]
+        assert envelope.agent_session_id.endswith(":inv_test123"), (
+            f"Session ID should end with :inv_test123, got {envelope.agent_session_id!r}"
+        )
+        assert envelope.payload.get("invocation_id") == "inv_test123", (
+            "Payload should contain invocation_id"
+        )
+
+    async def test_without_invocation_id_uses_default_session(self):
+        agent_bus = _make_bus()
+        tool = SendMessageAsyncTool(
+            broker=InMemoryMessageBroker(),
+            self_address=AgentAddress(name="main"),
+            allowed_targets=["worker"],
+            agent_bus=agent_bus,
+        )
+
+        await tool.execute(
+            target_agent="worker",
+            content="hello",
+            conversation_id="conv_001",
+            message_type="agent_message",
+        )
+
+        inbox_key = "conv_001:worker"
+        envelopes = await agent_bus.poll(inbox_key, limit=1)
+        assert len(envelopes) == 1
+        envelope = envelopes[0]
+        assert ":inv_" not in envelope.agent_session_id, (
+            f"Session ID should not contain invocation suffix, got {envelope.agent_session_id!r}"
+        )
+        assert "invocation_id" not in envelope.payload, (
+            "Payload should not contain invocation_id when not provided"
+        )
+
+    async def test_different_invocations_go_to_different_sessions(self):
+        agent_bus = _make_bus()
+        tool = SendMessageAsyncTool(
+            broker=InMemoryMessageBroker(),
+            self_address=AgentAddress(name="main"),
+            allowed_targets=["worker"],
+            agent_bus=agent_bus,
+        )
+
+        await tool.execute(
+            target_agent="worker", content="msg A",
+            conversation_id="conv_001", invocation_id="inv_aaa",
+        )
+        await tool.execute(
+            target_agent="worker", content="msg B",
+            conversation_id="conv_001", invocation_id="inv_bbb",
+        )
+
+        inbox_key = "conv_001:worker"
+        envelopes = await agent_bus.poll(inbox_key, limit=2)
+        assert len(envelopes) == 2
+        sessions = {e.agent_session_id for e in envelopes}
+        assert len(sessions) == 2, (
+            f"Two invocations should produce 2 different sessions, got {sessions}"
+        )
