@@ -467,9 +467,10 @@ class DispatchTaskTool(Tool):
         return target_agent in self._allowed_targets
 
     async def execute(
-        self, target_agent: str, task_prompt: str, context: str | None = None
+        self, target_agent: str, task_prompt: str, context: str | None = None,
+        **kwargs: object,
     ) -> str:
-        caller_context = None
+        caller_context = kwargs.get("caller_context")
 
         if not self._is_allowed(caller_context):
             return "Error: dispatch_task is not allowed for this caller."

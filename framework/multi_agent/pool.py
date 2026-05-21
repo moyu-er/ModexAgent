@@ -668,6 +668,14 @@ class AgentPool(AgentRegistry):
         """
         return self._session_locks.setdefault(session_id, asyncio.Lock())
 
+    def register_sync_future(self, correlation_id: str, future: asyncio.Future[object]) -> None:
+        """Register a Future for synchronous result delivery."""
+        self._sync_futures[correlation_id] = future
+
+    def pop_sync_future(self, correlation_id: str) -> asyncio.Future[object] | None:
+        """Retrieve and remove a registered sync Future."""
+        return self._sync_futures.pop(correlation_id, None)
+
     def _track_session(
         self, session_id: str, agent_name: str, is_dynamic: bool = False
     ) -> None:

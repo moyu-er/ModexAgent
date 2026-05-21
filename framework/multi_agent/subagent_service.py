@@ -132,7 +132,7 @@ class SubagentService:
 
         # Register a Future for the result
         future: asyncio.Future[AgentResult] = asyncio.get_event_loop().create_future()
-        self._pool._sync_futures[correlation_id] = future
+        self._pool.register_sync_future(correlation_id, future)
 
         instance = await self._factory.create_agent(
             descriptor, mode="pipeline",
@@ -157,8 +157,8 @@ class SubagentService:
             return await asyncio.wait_for(future, timeout=timeout)
         except TimeoutError:
             logger.warning("create_and_wait timed out for %s after %.0fs", name, timeout)
-            self._pool._sync_futures.pop(correlation_id, None)
+            self._pool.pop_sync_future(correlation_id, None)
             return AgentResult(error=f"Subagent {name} timed out after {timeout}s", stop_reason="timeout")
         finally:
-            self._pool._sync_futures.pop(correlation_id, None)
+            self._pool.pop_sync_future(correlation_id, None)
             await instance.stop()

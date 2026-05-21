@@ -616,10 +616,13 @@ class BotService(AgentBuilderMixin):
         return None
 
     def _find_peer_cfgs(self) -> list[IOCAgentConfig]:
-        """Find all peer configs by role."""
+        """Find all subagent configs by role, excluding the primary subagent."""
         if not self._app_config or not self._app_config.agents:
             return []
-        return [a for a in self._app_config.agents if a.role == "subagent"]
+        primary = self._find_subagent_cfg()
+        primary_name = primary.name if primary else None
+        return [a for a in self._app_config.agents
+                if a.role == "subagent" and a.name != primary_name]
 
     @property
     def safety_policy(self) -> RuntimeSafetyPolicy:

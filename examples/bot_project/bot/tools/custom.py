@@ -20,7 +20,7 @@ from framework.multi_agent import (
     AgentDescriptor,
     SubagentService,
 )
-from framework.multi_agent.subagent_manager import current_conversation_id
+from framework.multi_agent.context import current_conversation_id
 from framework.pipeline.adapters import OutputAdapter
 
 logger = logging.getLogger(__name__)
@@ -81,7 +81,7 @@ class SpawnSubagentTool(Tool):
 
     def __init__(
         self,
-        manager: SubagentService,
+        service: SubagentService,
         default_parent_address: AgentAddress,
         descriptor: AgentDescriptor,
         tool_manager: Any | None = None,
@@ -90,7 +90,7 @@ class SpawnSubagentTool(Tool):
         agent_bus: Any | None = None,
         registry: Any | None = None,
     ):
-        self._manager = manager
+        self._service = manager
         self._default_parent_address = default_parent_address
         self._descriptor = descriptor
         self._tool_manager = tool_manager
@@ -140,14 +140,10 @@ class SpawnSubagentTool(Tool):
 
         descriptor = _resolve_subagent_descriptor(self._descriptor, caller_name)
 
-        result = await self._manager.spawn_and_wait(
-            parent_address=parent_address,
+        result = await self._service.create_and_wait(
             descriptor=descriptor,
             task_prompt=task_prompt,
-            conversation_id=conversation_id,
             timeout=120.0,
-            tool_manager=tool_manager,
-            skill_manager=self._skill_manager,
         )
         partial = getattr(result, "partial_content", None) or ""
         content = result.content or partial or ""
