@@ -5,6 +5,7 @@ from framework.core.strategy import ExecutionStrategy, ReActStrategy, SingleTurn
 from framework.hook import Hook, HookRunner
 from framework.multi_agent.address import AgentAddress
 from framework.multi_agent.bus import AgentMessageBus, LocalAgentMessageBus
+from framework.multi_agent.comm_tracker import CommunicationTracker
 from framework.multi_agent.context import current_conversation_id
 from framework.multi_agent.coordinator import (
     InMemoryTaskCoordinator,
@@ -63,6 +64,7 @@ __all__ = [
     "AgentPool",
     "AgentRegistry",
     "AgentState",
+    "CommunicationTracker",
     "CompositeTaskEventReporter",
     "ContextGovernanceConfig",
     "DefaultAgentFactory",
