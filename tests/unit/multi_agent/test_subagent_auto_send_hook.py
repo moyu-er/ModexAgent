@@ -1,4 +1,4 @@
-"""Tests for PeerAutoSendHook.
+"""Tests for SubagentAutoSendHook.
 
 Covers:
 - Auto-forwarding when agent forgets to call send_message_async
@@ -19,10 +19,10 @@ from framework.core.emitter import AgentResult
 from framework.core.runtime_context import InMemoryRuntimeContext, RuntimeContextManager
 from framework.core.tool_manager import ToolManager
 from framework.memory.history import ListMessageHistory
-from framework.hook.builtin import PeerAutoSendHook
+from framework.hook.builtin import SubagentAutoSendHook
 
 
-class TestPeerAutoSendHook:
+class TestSubagentAutoSendHook:
     """Verify after_turn auto-forward logic with RuntimeContext-based detection."""
 
     def _make_bus(self):
@@ -51,7 +51,7 @@ class TestPeerAutoSendHook:
     async def test_auto_sends_when_no_tool_call(self):
         """Content exists and no send_message in context → bus.send is called."""
         bus = self._make_bus()
-        hook = PeerAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
+        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
         mgr = RuntimeContextManager()
         ctx = self._make_ctx([], runtime_mgr=mgr)
         result = AgentResult(content="Task completed successfully.")
@@ -74,7 +74,7 @@ class TestPeerAutoSendHook:
     async def test_skips_when_send_message_async_recorded(self):
         """send_message_async was recorded → bus.send is NOT called."""
         bus = self._make_bus()
-        hook = PeerAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
+        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
         mgr = RuntimeContextManager()
         ctx = self._make_ctx([], runtime_mgr=mgr)
         result = AgentResult(content="Already sent via tool.")
@@ -88,7 +88,7 @@ class TestPeerAutoSendHook:
     async def test_skips_when_send_message_recorded(self):
         """send_message was recorded → bus.send is NOT called."""
         bus = self._make_bus()
-        hook = PeerAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
+        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
         mgr = RuntimeContextManager()
         ctx = self._make_ctx([], runtime_mgr=mgr)
         result = AgentResult(content="Already sent via tool.")
@@ -106,7 +106,7 @@ class TestPeerAutoSendHook:
     async def test_auto_forwards_with_non_comm_tools(self):
         """search tool was called but not send_message → bus.send IS called."""
         bus = self._make_bus()
-        hook = PeerAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
+        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
         mgr = RuntimeContextManager()
         ctx = self._make_ctx([], runtime_mgr=mgr)
         result = AgentResult(content="Search results...")
@@ -124,7 +124,7 @@ class TestPeerAutoSendHook:
     async def test_skips_when_content_empty(self):
         """Result content is empty → bus.send is NOT called."""
         bus = self._make_bus()
-        hook = PeerAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
+        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
         ctx = self._make_ctx([])
         result = AgentResult(content="")
 
@@ -138,7 +138,7 @@ class TestPeerAutoSendHook:
     async def test_skips_when_result_none(self):
         """Result is None → bus.send is NOT called."""
         bus = self._make_bus()
-        hook = PeerAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
+        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
         ctx = self._make_ctx([])
 
         await hook.after_turn(ctx, None)
@@ -151,7 +151,7 @@ class TestPeerAutoSendHook:
     async def test_before_turn_is_noop(self):
         """before_turn does nothing; it exists for hook interface compliance."""
         bus = self._make_bus()
-        hook = PeerAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
+        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
         ctx = self._make_ctx([])
 
         # Should not raise
@@ -164,7 +164,7 @@ class TestPeerAutoSendHook:
     async def test_auto_forwards_after_context_cleared(self):
         """Simulate: tool sends → context cleared → new turn auto-forwards."""
         bus = self._make_bus()
-        hook = PeerAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
+        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
         mgr = RuntimeContextManager()
         ctx = self._make_ctx([], runtime_mgr=mgr)
 
@@ -188,7 +188,7 @@ class TestPeerAutoSendHook:
     async def test_sanitizes_think_tags(self):
         """Auto-forwarded content has <think/> tags stripped."""
         bus = self._make_bus()
-        hook = PeerAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
+        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
         ctx = self._make_ctx([])
         result = AgentResult(
             content="<think\nLLM reasoning here\n</think\n任务完成了！文档已创建。"
@@ -210,7 +210,7 @@ class TestPeerAutoSendHook:
     async def test_sanitizes_multiple_tag_types(self):
         """Strip <think/>, <reasoning/>, <reflection/> tags."""
         bus = self._make_bus()
-        hook = PeerAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
+        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
         ctx = self._make_ctx([])
         result = AgentResult(
             content="<reasoning>step 1</reasoning><think\ndepth analysis</think\nFinal answer."
@@ -236,7 +236,7 @@ class TestPeerAutoSendHook:
     async def test_peer_session_preserves_agent_session_id(self):
         """Peer session → agent_session_id = main_session(conv) (routes to main's user session)."""
         bus = self._make_bus()
-        hook = PeerAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
+        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
         peer_session = "conv_001:office-expert"
         ctx = self._make_ctx([], session_id=peer_session)
         result = AgentResult(content="Peer task done.")
@@ -255,7 +255,7 @@ class TestPeerAutoSendHook:
     async def test_peer_session_inbox_key_is_two_part(self):
         """inbox_key for inbox delivery is always {cid}:main (2-part)."""
         bus = self._make_bus()
-        hook = PeerAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
+        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
         ctx = self._make_ctx([], session_id="conv_001:office-expert")
         result = AgentResult(content="Done.")
 
@@ -274,7 +274,7 @@ class TestPeerAutoSendHook:
     async def test_peer_session_conversation_id_extracted(self):
         """conversation_id is extracted from the session via strategy.parse()."""
         bus = self._make_bus()
-        hook = PeerAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
+        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
         ctx = self._make_ctx([], session_id="user_abc:office-expert")
         result = AgentResult(content="Done.")
 
@@ -292,7 +292,7 @@ class TestPeerAutoSendHook:
     async def test_pool_session_preserves_agent_session_id(self):
         """2-part pool session → agent_session_id = main_session(conv)."""
         bus = self._make_bus()
-        hook = PeerAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
+        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
         pool_session = "conv_001:office-expert"
         ctx = self._make_ctx([], session_id=pool_session)
         result = AgentResult(content="Done.")
@@ -308,7 +308,7 @@ class TestPeerAutoSendHook:
     async def test_non_default_parent_name_uses_correct_session(self):
         """parent_name != 'main' → inbox_key uses correct parent name."""
         bus = self._make_bus()
-        hook = PeerAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="qq_bot")
+        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="qq_bot")
         ctx = self._make_ctx([], session_id="conv_001:office-expert")
         result = AgentResult(content="Done.")
 

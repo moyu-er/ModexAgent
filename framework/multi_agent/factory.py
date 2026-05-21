@@ -236,7 +236,7 @@ class DefaultAgentFactory(AgentFactory):
                 raise ValueError(f"Unsupported execution_strategy: {descriptor.execution_strategy}")
             emitter_factory = builder.build_emitter_factory(emitter_output_adapter)
             # Each agent needs its own HookRunner so that agent-specific hooks
-            # (e.g. PeerAutoSendHook) don't leak across agents.
+            # (e.g. SubagentAutoSendHook) don't leak across agents.
             hook_runner = (
                 HookRunner(self._default_hook_runner.hook_specs)
                 if self._default_hook_runner is not None

@@ -9,7 +9,7 @@ from typing import Any
 from framework.ioc.configs.memory import MemoryConfig
 
 
-def create_peer_compression_coordinator(
+def create_subagent_compression_coordinator(
     cfg: MemoryConfig | None,
 ) -> Any | None:
     """Build a lightweight compression coordinator for peers/subagents.

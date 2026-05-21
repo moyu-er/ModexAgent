@@ -79,9 +79,9 @@ def _build_session_only_memory(
         pending=PendingPrunedInputMemoryConfig(enabled=True),
     )
 
-    from framework.ioc.factories.compression import create_peer_compression_coordinator
+    from framework.ioc.factories.compression import create_subagent_compression_coordinator
 
-    coordinator = create_peer_compression_coordinator(cfg)
+    coordinator = create_subagent_compression_coordinator(cfg)
     lifecycle = (
         DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator)
         if coordinator

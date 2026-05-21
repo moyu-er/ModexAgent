@@ -8,7 +8,7 @@ from framework.ioc.configs.memory import (
     MemoryConfig,
     ShortTermConfig,
 )
-from framework.ioc.factories.governance import create_governance, create_peer_governance
+from framework.ioc.factories.governance import create_governance, create_subagent_governance
 
 
 class TestCreateGovernance:
@@ -56,19 +56,19 @@ class TestCreateGovernance:
 class TestCreatePeerGovernance:
     def test_none_cfg_uses_defaults(self) -> None:
         """None cfg → minimal governance (ToolChainRepair + FinalContextLegality)."""
-        gov = create_peer_governance(None, llm_max_tokens=80000)
+        gov = create_subagent_governance(None, llm_max_tokens=80000)
         assert gov is not None
         assert len(gov._strategies) == 2
 
     def test_none_governance_uses_defaults(self) -> None:
         """cfg set but governance=None → default governance."""
         cfg = MemoryConfig(short_term=ShortTermConfig(max_messages=50), governance=None)
-        gov = create_peer_governance(cfg, llm_max_tokens=80000)
+        gov = create_subagent_governance(cfg, llm_max_tokens=80000)
         assert gov is not None
         assert len(gov._strategies) == 2
 
     def test_peer_minimal(self) -> None:
         cfg = MemoryConfig(governance=GovernanceConfig())
-        gov = create_peer_governance(cfg, llm_max_tokens=80000)
+        gov = create_subagent_governance(cfg, llm_max_tokens=80000)
         assert gov is not None
         assert len(gov._strategies) == 2

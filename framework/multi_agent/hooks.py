@@ -1,6 +1,6 @@
 """Multi-agent 专属 Hook 实现。
 
-PeerAutoSendHook、SubagentMemoryCleanupHook 已迁入 framework.hook.builtin。
+SubagentAutoSendHook、SubagentMemoryCleanupHook 已迁入 framework.hook.builtin。
 TaskInterventionHook 已被 ControlDrainInterceptor + ControlCommand 机制替代，已移除。
 本文件仅保留 TaskProgressHook。
 """

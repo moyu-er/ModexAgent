@@ -10,7 +10,7 @@ from typing import Any
 
 from bot.tools.custom import SpawnSubagentTool
 from framework import InMemoryToolManager, ToolManagerConfig
-from framework.ioc.factories.governance import create_peer_governance
+from framework.ioc.factories.governance import create_subagent_governance
 from framework.core.context import ContextManager
 from framework.core.skills import (
     CompositeSkillSource,
@@ -260,14 +260,14 @@ class AgentBuilderMixin:
         )
 
     async def _create_subagent_memory(self, sub_name: str, base_system_prompt: str = "") -> ContextManager:
-        from framework.ioc.factories.compression import create_peer_compression_coordinator
+        from framework.ioc.factories.compression import create_subagent_compression_coordinator
         from framework.memory.core.scope import MemoryAgentRole
 
         subagent_cfg = self._find_subagent_cfg()
         sub_memory_cfg = subagent_cfg.memory if subagent_cfg else None
         sub_dir = self._resolve_path("memory_dir", "data/memory") / "subagents" / sub_name
         sub_dir.mkdir(parents=True, exist_ok=True)
-        coordinator = create_peer_compression_coordinator(sub_memory_cfg)
+        coordinator = create_subagent_compression_coordinator(sub_memory_cfg)
         memory_system = create_memory_system(
             workspace=sub_dir, config=self._session_only_memory_config(sub_memory_cfg),
             session_only=True,
@@ -285,7 +285,7 @@ class AgentBuilderMixin:
         )
 
     async def _create_peer_memory(self, peer_name: str, peer_cfg: Any) -> ContextManager:
-        from framework.ioc.factories.compression import create_peer_compression_coordinator
+        from framework.ioc.factories.compression import create_subagent_compression_coordinator
         from framework.memory.core.scope import MemoryAgentRole
 
         system_prompt = peer_cfg.system_prompt if peer_cfg else ""
@@ -297,7 +297,7 @@ class AgentBuilderMixin:
         peer_dir = self._resolve_path("memory_dir", "data/memory") / "peers" / peer_name
         peer_dir.mkdir(parents=True, exist_ok=True)
 
-        coordinator = create_peer_compression_coordinator(peer_memory_cfg)
+        coordinator = create_subagent_compression_coordinator(peer_memory_cfg)
         memory_system = create_memory_system(
             workspace=peer_dir, config=self._session_only_memory_config(peer_memory_cfg),
             session_only=True,
@@ -349,7 +349,7 @@ class AgentBuilderMixin:
     async def _initialize_peer_agents(self) -> None:
         from framework.ioc.factories.descriptors import build_peer_descriptor
         from framework.hook import HookErrorPolicy, HookSpec
-        from framework.hook.builtin import PeerAutoSendHook
+        from framework.hook.builtin import SubagentAutoSendHook
 
         if self.agent_pool is None or self.broker is None or self.subagent_manager is None:
             return
@@ -381,8 +381,8 @@ class AgentBuilderMixin:
                 for tool in mcp_tools:
                     tool_manager.register(tool)
 
-            from framework.multi_agent.peer_validator import PeerAgentValidator
-            PeerAgentValidator.validate(descriptor, parent_name)
+            from framework.multi_agent.peer_validator import SubagentAgentValidator
+            SubagentAgentValidator.validate(descriptor, parent_name)
 
             context_manager = memory_ctx
 
@@ -418,13 +418,13 @@ class AgentBuilderMixin:
 
             instance = self.agent_pool.get(peer_name)
             if instance and instance.pipeline:
-                instance.pipeline.governance = create_peer_governance(
+                instance.pipeline.governance = create_subagent_governance(
                     peer_cfg.memory, self._app_config.llm.max_tokens,
                 )
                 instance.pipeline.context_manager_factory = None
 
             if self.agent_bus is not None and instance and instance.pipeline:
-                hook = PeerAutoSendHook(agent_bus=self.agent_bus, self_name=peer_name, parent_name=parent_name)
+                hook = SubagentAutoSendHook(agent_bus=self.agent_bus, self_name=peer_name, parent_name=parent_name)
                 if instance.pipeline.hook_runner is not None:
                     instance.pipeline.hook_runner.add(HookSpec(hook=hook, on_error=HookErrorPolicy.LOG))
                 else:

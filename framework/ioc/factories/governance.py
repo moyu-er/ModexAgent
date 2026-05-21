@@ -61,7 +61,7 @@ def create_governance(
     return CompositeGovernance(strategies)
 
 
-def create_peer_governance(
+def create_subagent_governance(
     cfg: MemoryConfig | None,
     llm_max_tokens: int = 80000,  # noqa: ARG001  reserved for future use
 ) -> Any | None:

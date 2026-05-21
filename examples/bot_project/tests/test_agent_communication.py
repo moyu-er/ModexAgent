@@ -23,7 +23,7 @@ from framework.core.provider import StreamingLLMProvider
 from framework.core.runtime_context import RuntimeContextManager
 from framework.core.tool_manager import InMemoryToolManager, ToolResult
 from framework.core.types import LLMResponse, ToolCall
-from framework.hook.builtin import InboxFlushHook, PeerAutoSendHook
+from framework.hook.builtin import InboxFlushHook, SubagentAutoSendHook
 from framework.memory.history import ListMessageHistory
 from framework.messaging.broker_memory import InMemoryMessageBroker
 from framework.multi_agent.address import AgentAddress
@@ -312,12 +312,12 @@ class TestSessionRouting:
 
 
 # ---------------------------------------------------------------------------
-# 5. PeerAutoSendHook auto-forwarding
+# 5. SubagentAutoSendHook auto-forwarding
 # ---------------------------------------------------------------------------
 
 
-class TestPeerAutoSendHookBot:
-    """Verify PeerAutoSendHook forwards peer content to main."""
+class TestSubagentAutoSendHookBot:
+    """Verify SubagentAutoSendHook forwards peer content to main."""
 
     async def test_auto_forwards_when_no_tool_called(self):
         """If peer didn't call send_message_async, hook auto-forwards."""
@@ -326,7 +326,7 @@ class TestPeerAutoSendHookBot:
         bus = _make_bus(broker)
         runtime_mgr = RuntimeContextManager()
 
-        hook = PeerAutoSendHook(
+        hook = SubagentAutoSendHook(
             agent_bus=bus,
             self_name="office-expert",
             parent_name="main",
@@ -360,7 +360,7 @@ class TestPeerAutoSendHookBot:
         bus = _make_bus(broker)
         runtime_mgr = RuntimeContextManager()
 
-        hook = PeerAutoSendHook(
+        hook = SubagentAutoSendHook(
             agent_bus=bus,
             self_name="office-expert",
             parent_name="main",

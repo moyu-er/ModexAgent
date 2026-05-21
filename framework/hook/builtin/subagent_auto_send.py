@@ -1,6 +1,6 @@
-"""PeerAutoSendHook — peer agent 自动转发 Hook。
+"""SubagentAutoSendHook — agent 自动转发 Hook。
 
-确保 peer agent 内容总是转发给父 agent（main），即使 LLM 忘记调用 send_message_async。
+确保 agent 内容总是转发给父 agent（main），即使 LLM 忘记调用 send_message_async。
 这是一个安全网，不替代系统提示词指引。
 """
 
@@ -17,10 +17,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class PeerAutoSendHook:
+class SubagentAutoSendHook:
     """Peer agent auto-send hook。
 
-    在 peer agent turn 结束后自动将内容转发给父 agent。
+    在 agent turn 结束后自动将内容转发给父 agent。
     """
 
     _THINK_PAIRED_RE = re.compile(
@@ -66,13 +66,13 @@ class PeerAutoSendHook:
             sent_tools = {"send_message", "send_message_async"}
             if any(c.tool_name in sent_tools for c in calls):
                 logger.debug(
-                    "PeerAutoSendHook: skipped, message already sent via tool (peer=%s)",
+                    "SubagentAutoSendHook: skipped, message already sent via tool (peer=%s)",
                     self._self_name,
                 )
                 return
 
         logger.info(
-            "PeerAutoSendHook: auto-forwarding peer %s content to %s (len=%d)",
+            "SubagentAutoSendHook: auto-forwarding subagent %s content to %s (len=%d)",
             self._self_name,
             self._parent_name,
             len(result.content),
@@ -101,14 +101,14 @@ class PeerAutoSendHook:
         try:
             await self._agent_bus.send(inbox_key, envelope)
             logger.info(
-                "Auto-forwarded peer %s content to %s (session=%s)",
+                "Auto-forwarded subagent %s content to %s (session=%s)",
                 self._self_name,
                 self._parent_name,
                 session_id,
             )
         except Exception:
             logger.exception(
-                "Failed to auto-forward peer %s content to %s",
+                "Failed to auto-forward subagent %s content to %s",
                 self._self_name,
                 self._parent_name,
             )

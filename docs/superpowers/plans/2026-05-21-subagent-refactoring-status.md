@@ -32,11 +32,11 @@ After completing each task:
 
 | Task | Status | Summary |
 |------|--------|---------|
-| 1.1 Extract current_conversation_id | ⬜ pending | — |
-| 1.2 Remove from AgentPipeline | ⬜ pending | — |
-| 1.3 Remove from AgentSession | ⬜ pending | — |
-| 1.4 Delete SubagentManager module | ⬜ pending | — |
-| 1.5 Remove MemoryAgentRole.PEER | ⬜ pending | — |
+| 1.1 Extract current_conversation_id | ✅ completed | New context.py module; pipeline/session/tools imports updated. |
+| 1.2 Remove from AgentPipeline | ✅ completed | Removed parameter, import, and attribute assignment. |
+| 1.3 Remove from AgentSession | ✅ completed | Removed parameter, docstring, and attribute assignment. |
+| 1.4 Delete SubagentManager module | ✅ completed | subagent_manager.py deleted; __init__.py cleaned up. |
+| 1.5 Remove MemoryAgentRole.PEER | ✅ completed | PEER removed from enum, infer_agent_role, recorder, descriptors. |
 
 ## Phase 2: Framework Renaming
 

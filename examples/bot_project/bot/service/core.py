@@ -51,7 +51,7 @@ from framework.interceptor.chain import InterceptorChain
 from framework.ioc.configs.agent import AgentConfig as IOCAgentConfig
 from framework.ioc.configs.app import AppConfig
 from framework.ioc.configs.memory import MemoryConfig as IOCMemoryConfig
-from framework.ioc.factories.governance import create_governance, create_peer_governance
+from framework.ioc.factories.governance import create_governance, create_subagent_governance
 from framework.ioc.factories.llm import create_llm_provider
 from framework.ioc.factories.memory import create_memory
 from framework.memory.core.scope import MemoryContext
@@ -594,7 +594,7 @@ class BotService(AgentBuilderMixin):
                 # Inject lightweight governance into subagent pipeline
                 sub_instance = self.agent_pool.get(descriptor.address.name)
                 if sub_instance and sub_instance.pipeline:
-                    sub_instance.pipeline.governance = create_peer_governance(
+                    sub_instance.pipeline.governance = create_subagent_governance(
                         subagent_cfg.memory, self._app_config.llm.max_tokens,
                     )
                 print(f"[OK] Subagent '{descriptor.address.name}' registered as resident")
@@ -689,7 +689,7 @@ class BotService(AgentBuilderMixin):
     def _build_hook_runner(self, hooks: list[Any]) -> Any:
         """Build HookRunner from collected hooks with default HookSpec.
 
-        Explicitly injects RuntimeContextHook so PeerAutoSendHook can detect
+        Explicitly injects RuntimeContextHook so SubagentAutoSendHook can detect
         communication tool calls. Previously this was auto-injected by
         AgentPipeline into its hooks list, but ReActAgent prefers hook_runner
         and never falls back to hooks — causing the hook to be silently ignored.
