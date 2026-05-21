@@ -160,7 +160,7 @@ async def build_peer_descriptor(
     system_prompt = agent_cfg.system_prompt or DEFAULT_SYSTEM_PROMPT
     memory_ctx = _build_session_only_memory(
         agent_cfg.memory, workspace, peer_name,
-        MemoryAgentRole.PEER, system_prompt,
+        MemoryAgentRole.SUBAGENT, system_prompt,
     )
 
     _ = llm  # reserved for future per-peer LLM override

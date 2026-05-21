@@ -8,9 +8,146 @@
 
 **Tech Stack:** Python 3.12+, asyncio, LiteLLM
 
-**Phase dependency:** Phase 1 → Phase 2 → Phase 3 → Phase 4 → Phase 5 → Phase 6. Phases must execute sequentially; tasks within a phase are ordered by dependency.
+**Calibration note:** Execute Phase 0 before Phase 1. Phase 0 reflects current
+code inspection: `AgentPool` already has the async `task_request` path, but the
+tool payload contract and pool lock ownership need to be made explicit before
+broad deletion/renaming work starts.
+
+**Phase dependency:** Phase 0 → Phase 1 → Phase 2 → Phase 3 → Phase 4 → Phase 5 → Phase 6. Phases must execute sequentially; tasks within a phase are ordered by dependency.
 
 ---
+
+## Phase 0: Implementation Calibration
+
+These tasks align the plan with the current implementation before deleting or
+renaming broad surfaces. The refactor must preserve and extend the existing
+`AgentPool` `task_request` path instead of adding another queue.
+
+### Task 0.1: Verify task_request payload contract
+
+**Files:**
+- Test: `tests/unit/multi_agent/test_tools_enhanced_validation.py`
+- Test: `tests/unit/multi_agent/test_pool.py`
+- Modify: `framework/multi_agent/tools.py`
+- Modify: `framework/multi_agent/pool.py`
+
+- [ ] **Step 1: Add a failing test for SendMessageAsyncTool task_request payload**
+
+Add a test that calls `send_message_async` with `message_type="task_request"`
+and asserts the sent envelope payload contains `task_prompt` equal to the input
+content.
+
+Expected before implementation: FAIL because payload only contains `content`.
+
+- [ ] **Step 2: Add a defensive AgentPool fallback test**
+
+Add a test for `_dispatch_task_request()` with a legacy envelope containing
+`payload={"content": "legacy task"}` and no `task_prompt`. Assert the pipeline
+receives `InputMessage.content == "legacy task"`.
+
+Expected before implementation: FAIL because `_dispatch_task_request()` reads an
+empty task prompt.
+
+- [ ] **Step 3: Update SendMessageAsyncTool**
+
+When `message_type == "task_request"`, build payload with both fields:
+
+```python
+payload = {"content": content, "message_type": message_type}
+if message_type == "task_request":
+    payload["task_prompt"] = content
+```
+
+- [ ] **Step 4: Update AgentPool fallback**
+
+In `_dispatch_task_request()`, read:
+
+```python
+task_prompt = envelope.payload.get("task_prompt") or envelope.payload.get("content", "")
+```
+
+- [ ] **Step 5: Run focused tests**
+
+```bash
+pytest tests/unit/multi_agent/test_tools_enhanced_validation.py tests/unit/multi_agent/test_pool.py -v
+```
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add framework/multi_agent/tools.py framework/multi_agent/pool.py tests/unit/multi_agent/test_tools_enhanced_validation.py tests/unit/multi_agent/test_pool.py
+git commit -m "fix: align task_request payload contract"
+```
+
+### Task 0.2: Document and test pool session lock ownership
+
+**Files:**
+- Test: `tests/unit/multi_agent/test_pool.py`
+- Modify: `framework/multi_agent/pool.py`
+
+- [ ] **Step 1: Add a test proving same-session pool dispatch is serialized**
+
+Use two concurrent `_dispatch_agent_message()` calls with the same session id and
+a pipeline stub that records overlap. Assert no overlap occurs.
+
+- [ ] **Step 2: Add comments around `get_lock()`**
+
+Document that `AgentPool.get_lock(session_id)` is the lifecycle/eviction lock for
+pool-managed sessions. `AgentPipeline` keeps its own internal lock for direct
+pipeline callers.
+
+- [ ] **Step 3: Run focused tests**
+
+```bash
+pytest tests/unit/multi_agent/test_pool.py -v
+```
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add framework/multi_agent/pool.py tests/unit/multi_agent/test_pool.py
+git commit -m "test: document pool session lock ownership"
+```
+
+### Task 0.3: Define subagent lifecycle families and config boundaries
+
+**Files:**
+- Modify: `docs/superpowers/specs/2026-05-21-subagent-refactoring-design.md`
+- Modify: `docs/superpowers/plans/2026-05-21-subagent-refactoring-plan.md`
+- Later implementation targets: `framework/multi_agent/`, `framework/ioc/configs/`, `examples/bot_project/bot_config.yml`
+
+- [ ] **Step 1: Record the three lifecycle families**
+
+Document these as separate concepts before implementation begins:
+
+- Resident subagent: configured identity, stable address, optional eager or lazy activation.
+- Template subagent: preset definition only; no bus identity, memory, consumer, or session until instantiated.
+- Dynamic subagent: task-scoped runtime instance, optional, config-gated, with TTL and isolated memory.
+
+- [ ] **Step 2: Make dynamic creation optional by contract**
+
+Add plan/spec requirements that `CreateSubagentTool` is not registered unless
+dynamic subagents are enabled. Disabling dynamic creation must not affect
+resident subagent messaging or task dispatch.
+
+- [ ] **Step 3: Prefer template instantiation over arbitrary dynamic prompts**
+
+Specify that common workflows such as code review should normally instantiate a
+named template with a preconfigured system prompt and tool bundle. Ad-hoc prompt
+creation should require a separate explicit policy flag.
+
+- [ ] **Step 4: Define resource-saving behavior for resident subagents**
+
+Specify a lazy-resident mode where descriptor/config registration does not imply
+an active consumer loop, pipeline, or memory session until the subagent receives
+work.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add docs/superpowers/specs/2026-05-21-subagent-refactoring-design.md docs/superpowers/plans/2026-05-21-subagent-refactoring-plan.md
+git commit -m "docs: separate resident template dynamic subagents"
+```
 
 ## Phase 1: Framework Deletions
 
@@ -1018,6 +1155,11 @@ git commit -m "feat: add DelegateTaskTool to framework multi_agent tools"
 **Files:**
 - Modify: `framework/memory/layers/factory.py`
 
+**Calibration:** Current `SessionMemoryConfig` only has `max_messages`,
+`checkpoint_key`, `last_recovered_key`, and `scope`. Do not add `max_tokens` or
+keep-ratio arguments to `SessionMemoryConfig` in this task. Implement subagent
+memory as session + session-scoped archive + pending, with knowledge disabled.
+
 - [ ] **Step 1: Add factory method to MemoryLayerFactory**
 
 At the end of the `MemoryLayerFactory` class (or as a new static method), add:
@@ -1026,9 +1168,6 @@ At the end of the `MemoryLayerFactory` class (or as a new static method), add:
     @staticmethod
     def subagent_session_isolated(
         max_session_messages: int = 50,
-        max_tokens: int = 30000,
-        keep_ratio_for_messages: float = 0.5,
-        keep_ratio_for_token: float = 0.5,
     ) -> "MemoryLayerConfigSet":
         """Subagent memory: full session isolation.
 
@@ -1048,9 +1187,6 @@ At the end of the `MemoryLayerFactory` class (or as a new static method), add:
         return MemoryLayerConfigSet(
             session=SessionMemoryConfig(
                 max_messages=max_session_messages,
-                max_tokens=max_tokens,
-                keep_ratio_for_messages=keep_ratio_for_messages,
-                keep_ratio_for_token=keep_ratio_for_token,
             ),
             archive=ArchiveMemoryConfig(scope=SessionScope()),
             knowledge=None,
@@ -1247,7 +1383,75 @@ git commit -m "feat: add SubagentService (resident + dynamic + sync)"
 
 ---
 
+### Task 3.8: Separate resident, template, and dynamic lifecycle policies
+
+**Files:**
+- Create or modify: `framework/multi_agent/lifecycle.py`
+- Modify: `framework/multi_agent/subagent_service.py`
+- Modify: `framework/multi_agent/pool.py`
+- Modify: `framework/multi_agent/__init__.py`
+
+- [ ] **Step 1: Add typed lifecycle enums**
+
+Use enums instead of raw strings for lifecycle policy:
+
+```python
+class SubagentOrigin(str, Enum):
+    RESIDENT = "resident"
+    TEMPLATE_INSTANCE = "template_instance"
+    DYNAMIC = "dynamic"
+
+
+class SubagentActivationMode(str, Enum):
+    EAGER = "eager"
+    LAZY = "lazy"
+    ON_DEMAND_TEMPLATE = "on_demand_template"
+```
+
+- [ ] **Step 2: Store origin and activation mode in subagent metadata**
+
+Resident metadata must be separate from dynamic instance metadata. A resident
+subagent may have a stable address before it has an active consumer loop.
+Template definitions must not create an address, memory, session, or consumer
+until instantiated.
+
+- [ ] **Step 3: Add lazy-resident activation path**
+
+Support descriptor registration without immediately starting full runtime
+resources. On first message or task dispatch to a lazy resident target, activate
+the descriptor through the normal pool registration path, then process the
+message.
+
+- [ ] **Step 4: Add dynamic namespace and retention guards**
+
+Dynamic instances must use a separate id namespace such as
+`dyn.<template>.<correlation_id>`. They must not reuse resident session ids,
+archive keys, or retention metadata.
+
+- [ ] **Step 5: Add focused tests**
+
+Add tests proving:
+
+- Dynamic creation disabled does not break resident task dispatch.
+- Template registration does not allocate a bus identity or consumer.
+- Lazy resident registration does not start a consumer until first message.
+- Dynamic and resident subagents cannot collide on agent id/session/archive keys.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add framework/multi_agent/lifecycle.py framework/multi_agent/subagent_service.py framework/multi_agent/pool.py framework/multi_agent/__init__.py tests/unit/multi_agent/
+git commit -m "feat: separate subagent lifecycle policies"
+```
+
+---
+
 ## Phase 4: Bot Cleanup & Renaming
+
+**Calibration:** Do not remove descriptor-building capability outright. Remove
+the old `helper-sync`/`SpawnSubagentTool` path, but keep or rewrite a unified
+`build_subagent_descriptor()` for configured resident subagents and dynamic
+subagent defaults.
 
 ### Task 4.1: Delete helper-sync agent config
 
@@ -1518,6 +1722,12 @@ git commit -m "feat: create SubagentService instance in BotService"
 - Create: `examples/bot_project/bot/tools/create_subagent.py`
 - Modify: `examples/bot_project/bot/service/builders.py`
 
+**Calibration:** `CreateSubagentTool` is optional. It must not be registered
+unless `config.subagents.dynamic.enabled` is true. The tool should prefer
+`template_name` + `task_prompt` over arbitrary `system_prompt`/`tools`; ad-hoc
+prompt/tool creation should require a separate explicit config flag. This keeps
+resident subagent use independent from dynamic creation.
+
 - [ ] **Step 1: Write CreateSubagentTool**
 
 ```python
@@ -1646,13 +1856,16 @@ In `_register_multi_agent_tools()` for main agent, add:
 ```python
         from bot.tools.create_subagent import CreateSubagentTool
 
-        self.tool_manager.register(CreateSubagentTool(
-            subagent_service=self.subagent_service,
-            agent_factory=self.agent_factory,
-            parent_address=parent_address,
-            parent_name=parent_name,
-        ))
-        print("   [OK] create_subagent registered")
+        if self.config.subagents.dynamic.enabled:
+            self.tool_manager.register(CreateSubagentTool(
+                subagent_service=self.subagent_service,
+                agent_factory=self.agent_factory,
+                parent_address=parent_address,
+                parent_name=parent_name,
+                allowed_templates=self.config.subagents.dynamic.allowed_templates,
+                allow_ad_hoc=self.config.subagents.dynamic.allow_ad_hoc,
+            ))
+            print("   [OK] create_subagent registered")
 ```
 
 - [ ] **Step 3: Add "create_subagent" to SpawnSubagentTool's old spot in builders.py callsite for peers**
@@ -1944,6 +2157,11 @@ git commit -m "fix: test and lint fixes from full suite run"
 ## Implementation Order Summary
 
 ```
+Phase 0 (Implementation Calibration)
+  - 0.1 Verify task_request payload contract
+  - 0.2 Document/test pool session lock ownership
+  - 0.3 Define subagent lifecycle families and config boundaries
+
 Phase 1 (Framework Deletions)
   ├── 1.1 Extract current_conversation_id         ← MUST DO FIRST
   ├── 1.2 Remove subagent_manager from AgentPipeline
@@ -1963,7 +2181,8 @@ Phase 3 (Framework Additions)
   ├── 3.4 Sync-future result channel
   ├── 3.5 DelegateTaskTool
   ├── 3.6 subagent_session_isolated()
-  └── 3.7 SubagentService
+  ├── 3.7 SubagentService
+  └── 3.8 Lifecycle policies
 
 Phase 4 (Bot Cleanup & Renaming)  ← depends on Phase 3
   ├── 4.1 Delete helper-sync config
@@ -1989,6 +2208,7 @@ Phase 6 (Test Cleanup)  ← depends on Phase 5
 ## Type Safety Checklist (per rules/type-safety.md)
 
 - [ ] No raw `str` for categories/roles — use `MemoryAgentRole` enum
+- [ ] No raw `str` for subagent lifecycle policy — use `SubagentOrigin` and `SubagentActivationMode`
 - [ ] No bare `dict[str, Any]` in new function signatures — use typed dataclasses (`SessionMeta`)
 - [ ] No `getattr`/`hasattr` in new framework code — use explicit attributes
 - [ ] No example-specific config or assumptions in `framework/` new code

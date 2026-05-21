@@ -34,10 +34,6 @@ from framework.multi_agent.pool import AgentPool
 from framework.multi_agent.registry import AgentDirectory, AgentRegistry
 from framework.multi_agent.router import AgentMessageRouter, DefaultMeshRouter, RouteResult
 from framework.multi_agent.state import AgentState
-from framework.multi_agent.subagent_manager import (
-    SubagentManager,
-    TaskCoordinationConfig,
-)
 from framework.multi_agent.tools import (
     SendMessageAsyncTool,
     SendMessageTool,
@@ -82,8 +78,6 @@ __all__ = [
     "SendMessageAsyncTool",
     "SendMessageTool",
     "SingleTurnStrategy",
-    "SubagentManager",
-    "TaskCoordinationConfig",
     "TaskCoordinator",
     "TaskEvent",
     "TaskEventBus",

@@ -10,7 +10,6 @@ class MemoryAgentRole(StrEnum):
     """Agent role for memory ownership and background processing."""
 
     MAIN = "main"
-    PEER = "peer"
     SUBAGENT = "subagent"
 
 
@@ -91,8 +90,6 @@ def infer_agent_role(context: MemoryContext) -> MemoryAgentRole:
     normalized = {str(value).lower() for value in candidates if value}
     if MemoryAgentRole.SUBAGENT.value in normalized:
         return MemoryAgentRole.SUBAGENT
-    if MemoryAgentRole.PEER.value in normalized:
-        return MemoryAgentRole.PEER
     return MemoryAgentRole.MAIN
 
 

@@ -13,6 +13,21 @@ After completing each task:
 
 ---
 
+## Calibration Notes
+
+| Item | Status | Summary |
+|------|--------|---------|
+| Design/plan implementation calibration | completed | Added Phase 0 and spec notes for existing AgentPool task_request path, task payload contract, pool lock ownership, descriptor factory preservation, and subagent memory mode. |
+| Subagent lifecycle family calibration | completed | Documented resident, template, and dynamic subagents as isolated capabilities; dynamic creation is opt-in and resident messaging must work without it. |
+
+## Phase 0: Implementation Calibration
+
+| Task | Status | Summary |
+|------|--------|---------|
+| 0.1 Verify task_request payload contract | ✅ completed | SendMessageAsyncTool now emits `task_prompt` in payload for task_request; AgentPool._dispatch_task_request accepts `content` as defensive fallback. Tests added and pass (13/13). |
+| 0.2 Document/test pool session lock ownership | ✅ completed | Added concurrency serialization test; documented AgentPool.get_lock() as authoritative lifecycle/eviction lock distinct from pipeline lock. |
+| 0.3 Define subagent lifecycle families and config boundaries | ✅ completed | Spec sections 2.2.1/3.1/3.4 already cover resident/template/dynamic families, optional dynamic creation, template preference, and lazy-resident mode. |
+
 ## Phase 1: Framework Deletions
 
 | Task | Status | Summary |
@@ -42,6 +57,7 @@ After completing each task:
 | 3.5 DelegateTaskTool | ⬜ pending | — |
 | 3.6 subagent_session_isolated() | ⬜ pending | — |
 | 3.7 SubagentService | ⬜ pending | — |
+| 3.8 Lifecycle policies | pending | Add typed origin/activation modes and tests for lazy resident, template-only, and dynamic namespace isolation. |
 
 ## Phase 4: Bot Cleanup & Renaming
 
@@ -54,6 +70,10 @@ After completing each task:
 | 4.5 Rename skills/peers/ → skills/subagents/ | ⬜ pending | — |
 
 ## Phase 5: Bot Additions
+
+Note: Task 5.2 is config-gated. `CreateSubagentTool` should prefer
+`template_name` + `task_prompt`; ad-hoc creation needs a separate explicit
+flag.
 
 | Task | Status | Summary |
 |------|--------|---------|
@@ -95,6 +115,10 @@ After completing each task:
 - [ ] Subagent archive = SessionScope, knowledge = disabled
 - [ ] Different sessions on same subagent run concurrently
 - [ ] `create_subagent` works: create → execute → result via inbox
+- [ ] Dynamic subagent creation can be disabled while resident subagent messaging still works
+- [ ] Resident subagents can be lazily activated to avoid idle runtime resources
+- [ ] Template subagent definitions allocate no runtime resources until instantiated
+- [ ] Dynamic subagents use separate id/session/archive namespaces from resident subagents
 - [ ] Subagent cannot create sub-subagents
 - [ ] Bot exposes no sync tools to LLM
 - [ ] Framework tests pass, type check passes
