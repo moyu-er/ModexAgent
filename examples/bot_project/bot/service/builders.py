@@ -133,7 +133,7 @@ class AgentBuilderMixin:
             logger.warning("MCP tools registration failed: %s", e)
 
     async def _register_multi_agent_tools(self) -> None:
-        if self.tool_manager is None or self.subagent_manager is None or self.broker is None:
+        if self.tool_manager is None or self.subagent_service is None or self.broker is None:
             return
 
         agents = self._app_config.agents
@@ -170,7 +170,7 @@ class AgentBuilderMixin:
                 memory_dir, self.safety_policy, self.provider,
             )
             self.tool_manager.register(SpawnSubagentTool(
-                manager=self.subagent_manager, default_parent_address=parent_address,
+                service=self.subagent_service, default_parent_address=parent_address,
                 descriptor=descriptor, tool_manager=sub_tm,
                 skill_manager=sub_sm, broker=self.broker,
                 agent_bus=self.agent_bus, registry=self.agent_pool,
@@ -351,7 +351,7 @@ class AgentBuilderMixin:
         from framework.hook import HookErrorPolicy, HookSpec
         from framework.hook.builtin import SubagentAutoSendHook
 
-        if self.agent_pool is None or self.broker is None or self.subagent_manager is None:
+        if self.agent_pool is None or self.broker is None or self.subagent_service is None:
             return
 
         peer_cfgs = self._find_peer_cfgs()
@@ -404,7 +404,7 @@ class AgentBuilderMixin:
                     memory_dir, self.safety_policy, self.provider,
                 )
                 tool_manager.register(SpawnSubagentTool(
-                    manager=self.subagent_manager,
+                    service=self.subagent_service,
                     default_parent_address=peer_address,
                     descriptor=sub_descriptor, tool_manager=sub_tm,
                     skill_manager=sub_sm, broker=self.broker,

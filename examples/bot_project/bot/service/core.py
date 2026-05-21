@@ -125,7 +125,7 @@ class BotService(AgentBuilderMixin):
         self.auto_compact_service: Any | None = None
         self.agent: ReActAgent | None = None
         self.agent_factory: AgentFactory | None = None
-        self.subagent_manager: SubagentService | None = None
+        self.subagent_service: SubagentService | None = None
         self.broker: InMemoryMessageBroker | None = None
         self.inbox_server: LocalFileInboxServer | None = None
         self.inbox_producer: InboxProducer | None = None
@@ -411,7 +411,7 @@ class BotService(AgentBuilderMixin):
         print(f"   - ContextManager: {type(self.context_manager).__name__}")
         print(f"   - Agent: {self.agent.name}")
         print(f"   - AgentFactory: {type(self.agent_factory).__name__}")
-        print(f"   - SubagentService: {type(self.subagent_manager).__name__}")
+        print(f"   - SubagentService: {type(self.subagent_service).__name__}")
         print("   - InboxServer: LocalFileInboxServer")
         print(f"   - Mode: {self.mode}")
 
@@ -435,16 +435,9 @@ class BotService(AgentBuilderMixin):
             agent_name=parent_agent_name,
         )
 
-        self.subagent_manager = SubagentService(
-            broker=self.broker,
-            agent_factory=self.agent_factory,
-            retention=SessionRetentionPolicy(
-                enable_for_subagent=True,
-                default_timeout_seconds=180.0,
-            ),
-            on_task_complete=self._cleanup_subagent_memory,
-        )
-        print("[OK] SubagentService initialized")
+        # SubagentService not used in pipeline mode (no AgentPool)
+        self.subagent_service = None
+        print("[OK] Pipeline mode — SubagentService not needed")
 
         if self.agent is None:
             raise RuntimeError("Agent is not initialized")
@@ -472,7 +465,7 @@ class BotService(AgentBuilderMixin):
             hooks=pipeline_hooks,
             hook_runner=self._build_hook_runner(pipeline_hooks),
             interceptor_chain=self.interceptor_chain,
-            subagent_manager=self.subagent_manager,
+            
             context_manager_factory=self._get_context_manager,
             governance=create_governance(self._main_memory_cfg, self._app_config.llm.max_tokens),
             safety=self.safety_policy,
@@ -515,15 +508,12 @@ class BotService(AgentBuilderMixin):
         )
         print("[OK] LocalAgentMessageBus initialized")
 
-        # SubagentService
-        self.subagent_manager = SubagentService(
+        # SubagentService wraps AgentPool for subagent lifecycle management
+        self.subagent_service = SubagentService(
+            pool=self.agent_pool,
+            factory=self.agent_factory,
             broker=self.broker,
-            agent_factory=self.agent_factory,
-            retention=SessionRetentionPolicy(
-                enable_for_subagent=True,
-                default_timeout_seconds=180.0,
-            ),
-            on_task_complete=self._cleanup_subagent_memory,
+            agent_bus=self.agent_bus,
         )
         print("[OK] SubagentService initialized")
 
@@ -1052,10 +1042,10 @@ class BotService(AgentBuilderMixin):
             except Exception as e:
                 print(f"   [WARN] BrokerBridge stop error: {e}")
 
-        if self.subagent_manager:
+        if self.subagent_service:
             try:
                 print("   Stopping SubagentService...")
-                await self.subagent_manager.stop()
+                await self.subagent_service.stop()
                 print("   [OK] SubagentService stopped")
             except Exception as e:
                 print(f"   [WARN] SubagentService stop error: {e}")
