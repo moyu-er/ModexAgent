@@ -427,9 +427,9 @@ class TestSendMessageAsyncInvocationRouting:
 
         await tool.execute(
             target_agent="worker",
-            content="followup message",
+            content="task A",
             conversation_id="conv_001",
-            message_type="agent_message",
+            message_type="task_request",
             invocation_id="inv_test123",
         )
 
@@ -483,10 +483,12 @@ class TestSendMessageAsyncInvocationRouting:
         await tool.execute(
             target_agent="worker", content="msg A",
             conversation_id="conv_001", invocation_id="inv_aaa",
+            message_type="task_request",
         )
         await tool.execute(
             target_agent="worker", content="msg B",
             conversation_id="conv_001", invocation_id="inv_bbb",
+            message_type="task_request",
         )
 
         inbox_key = "conv_001:worker"

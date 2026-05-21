@@ -522,12 +522,6 @@ class AgentPool(AgentRegistry):
                 invocation_id=str(invocation_id),
                 content_summary=task_prompt[:500],
             )
-        prompt_section = self._comm_tracker.build_prompt_section(
-            descriptor.address.name
-        ) if self._comm_tracker is not None else ""
-        injected_prompt = (
-            f"{prompt_section}\n\n{task_prompt}" if prompt_section else task_prompt
-        )
         result: AgentResult | None = None
         if instance.pipeline is not None:
             lock = self.get_lock(session_id)
@@ -541,7 +535,7 @@ class AgentPool(AgentRegistry):
                 else:
                     self._touch_session(session_id)
                 result = await instance.pipeline.process_message(
-                    InputMessage(content=injected_prompt, session_id=session_id, metadata=metadata)
+                    InputMessage(content=task_prompt, session_id=session_id, metadata=metadata)
                 )
             await self._enforce_session_cap(descriptor.address.name)
 
@@ -661,12 +655,6 @@ class AgentPool(AgentRegistry):
                     invocation_id=str(invocation_id),
                     content_summary=content[:500],
                 )
-        prompt_section = self._comm_tracker.build_prompt_section(
-            instance.descriptor.address.name
-        ) if self._comm_tracker is not None else ""
-        injected_content = (
-            f"{prompt_section}\n\n{content}" if prompt_section else content
-        )
         if instance.pipeline is not None:
             lock = self.get_lock(session_id)
             async with lock:
@@ -679,7 +667,7 @@ class AgentPool(AgentRegistry):
                 else:
                     self._touch_session(session_id)
                 await instance.pipeline.process_message(
-                    InputMessage(content=injected_content, session_id=session_id, metadata=metadata)
+                    InputMessage(content=content, session_id=session_id, metadata=metadata)
                 )
             if envelope.payload.get("invocation_id"):
                 await self._enforce_session_cap(instance.descriptor.address.name)

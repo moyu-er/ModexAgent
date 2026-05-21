@@ -330,7 +330,7 @@ class SendMessageAsyncTool(Tool):
         base_session = agent_session_id or self._session_strategy.target_session(
             conversation_id, target_agent, self._self_address.name,
         )
-        if invocation_id and not base_session.endswith(f":{invocation_id}"):
+        if invocation_id and message_type == "task_request" and not base_session.endswith(f":{invocation_id}"):
             base_session = f"{base_session}:{invocation_id}"
 
         payload = {"content": content, "message_type": message_type}
