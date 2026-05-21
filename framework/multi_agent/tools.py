@@ -357,6 +357,12 @@ class SendMessageAsyncTool(Tool):
                 session_id=base_session,
                 content_summary=content[:500],
             )
+            self._comm_tracker.acknowledge_received(
+                invocation_id=invocation_id,
+                owner_agent=self._self_address.name,
+                reply_to=target_agent,
+                reply_summary=content[:500],
+            )
         await self._agent_bus.send_silent(inbox_key, envelope)
 
         task = asyncio.create_task(
