@@ -27,7 +27,8 @@ class EndNode(Node):
     async def execute(self, ctx: AgentContext) -> NodeTransition:
         state = get_react_state(ctx)
         response = state.llm_response if state else None
-        state.current_node = ReActNode.END if state else None
+        if state is not None:
+            state.current_node = ReActNode.END
 
         messages = [md.message for md in state.message_delta] if state else []
 

@@ -10,7 +10,7 @@ from .descriptor import AgentDescriptor
 logger = logging.getLogger(__name__)
 
 
-class PeerAgentValidator:
+class SubagentAgentValidator:
     """Peer Agent 配置校验器。"""
 
     @staticmethod

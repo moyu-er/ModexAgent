@@ -77,7 +77,7 @@ class AgentSession(Generic[E]):
         agent_descriptor: Any | None = None,
         sanitizer: Any | None = None,
         command_interceptor: Any | None = None,
-        subagent_manager: Any | None = None,
+
         runtime_context_manager: Any | None = None,
         hook_runner: Any | None = None,
         interceptor_chain: Any | None = None,
@@ -100,7 +100,6 @@ class AgentSession(Generic[E]):
             agent_descriptor: 可选的 AgentDescriptor（与 context_builder 配合使用）
             sanitizer: 可选的内容清洗器（Callable[[str], str]）
             command_interceptor: 可选的命令拦截器
-            subagent_manager: 可选的 SubagentManager，用于 turn 结束时取消子 Agent
         """
         if tool_manager is None:
             raise ValueError("tool_manager is required")
@@ -125,7 +124,7 @@ class AgentSession(Generic[E]):
         self._agent_descriptor = agent_descriptor
         self._sanitizer = sanitizer
         self._command_interceptor = command_interceptor
-        self._subagent_manager = subagent_manager
+
         self._runtime_context_manager = runtime_context_manager
         self._hook_runner = hook_runner
         self._interceptor_chain = interceptor_chain
@@ -404,7 +403,7 @@ class AgentSession(Generic[E]):
 
             # 5.5 设置当前 conversation_id 上下文变量（供 peer 通信工具使用）
             from ..multi_agent.session_id import DefaultSessionIdStrategy
-            from ..multi_agent.subagent_manager import current_conversation_id
+            from ..multi_agent.context import current_conversation_id
             raw_id = runtime_info.get("conversation_id", session_id) if runtime_info else session_id
             conversation_id, _agent_name = DefaultSessionIdStrategy().parse(raw_id)
             conv_token = current_conversation_id.set(conversation_id)

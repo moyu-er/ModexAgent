@@ -7,19 +7,18 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from framework.core.emitter import AgentResult
-from framework.core.tool_manager import InMemoryToolManager
-from framework.messaging.broker import Address
-from framework.messaging.broker_memory import InMemoryMessageBroker
+from framework.control.policy_registry import SupervisionPolicyRegistry, SupervisionPolicySpec
 from framework.control.task_supervision import (
+    NoOpSupervisionPolicy,
     SupervisionAction,
     SupervisionResult,
-    NoOpSupervisionPolicy,
     TaskSupervisionPolicy,
     TaskSupervisor,
     TimeoutSupervisionPolicy,
 )
-from framework.control.policy_registry import SupervisionPolicyRegistry, SupervisionPolicySpec
+from framework.core.emitter import AgentResult
+from framework.core.tool_manager import InMemoryToolManager
+from framework.messaging.broker_memory import InMemoryMessageBroker
 from framework.multi_agent import (
     AgentDescriptor,
     AgentDirectory,
@@ -27,6 +26,7 @@ from framework.multi_agent import (
     AgentLLMConfig,
     AgentPool,
     AgentState,
+    CommunicationTracker,
     CompositeTaskEventReporter,
     DefaultAgentFactory,
     InMemoryTaskCoordinator,
@@ -34,9 +34,9 @@ from framework.multi_agent import (
     LoggingTaskEventReporter,
     NullTaskCoordinator,
     ReActStrategy,
+    SessionRetentionPolicy,
     SingleTurnStrategy,
-    SubagentManager,
-    TaskCoordinationConfig,
+    SubagentService,
     TaskCoordinator,
     TaskEvent,
     TaskEventBus,
@@ -46,6 +46,7 @@ from framework.multi_agent import (
     TaskRecord,
 )
 from framework.multi_agent.address import AgentAddress
+from framework.multi_agent.envelope import AgentMessageEnvelope
 
 
 @pytest.fixture
@@ -440,48 +441,176 @@ async def test_task_progress_hook_reports():
 # ── 13. Subagent Manager ──
 
 @pytest.mark.asyncio
-async def test_subagent_manager_spawn_and_wait(any_broker):
+async def test_subagent_service_spawn_and_wait(any_broker):
     factory = MagicMock(spec=AgentFactory)
     fake_instance = MagicMock()
-    fake_instance.session.process_message = AsyncMock(return_value=AgentResult(content="result"))
+    fake_instance.pipeline = MagicMock()
+    fake_instance.pipeline.process_message = AsyncMock(return_value=AgentResult(content="result"))
+    fake_instance.stop = AsyncMock()
     fake_instance.tool_manager = InMemoryToolManager()
     factory.create_agent = AsyncMock(return_value=fake_instance)
 
-    mgr = SubagentManager(broker=any_broker, agent_factory=factory, coordination_config=TaskCoordinationConfig(enable_for_subagent=False))
-    descriptor = AgentDescriptor(address=AgentAddress(name="sub1"))
-    result = await mgr.spawn_and_wait(
-        parent_address=AgentAddress(name="main"),
-        descriptor=descriptor,
-        task_prompt="do work",
-        conversation_id="c1",
-        timeout=1.0,
+    pool = AgentPool(
+        broker=any_broker,
+        agent_factory=factory,
+        enable_inbox_polling=False,
     )
+    mgr = SubagentService(
+        pool=pool,
+        factory=factory,
+        broker=any_broker,
+        agent_bus=MagicMock(),
+    )
+    descriptor = AgentDescriptor(address=AgentAddress(name="sub1"))
+    try:
+        result = await mgr.create_and_wait(
+            descriptor=descriptor,
+            task_prompt="do work",
+            timeout=1.0,
+        )
+    finally:
+        await pool.shutdown_all()
     assert result.content == "result"
 
 
+def test_communication_tracker_acknowledges_owner_digest():
+    tracker = CommunicationTracker()
+    tracker.record_send(
+        agent_name="main",
+        target_agent="worker",
+        invocation_id="inv_1",
+        session_id="conv:worker:inv_1",
+        content_summary="review file",
+    )
+
+    assert len(tracker.get_pending_for_agent("main")) == 1
+
+    record = tracker.acknowledge(
+        invocation_id="inv_1",
+        reply_from="worker",
+        reply_summary="done",
+    )
+
+    assert record is not None
+    assert tracker.get_pending_for_agent("main") == []
+    digest = tracker.get_digest_for_agent("main")
+    assert digest.acknowledged == [record]
+
+
+def test_communication_tracker_reply_closes_received_bracket():
+    tracker = CommunicationTracker()
+    tracker.record_receive(
+        agent_name="worker",
+        source_agent="main",
+        invocation_id="inv_1",
+        content_summary="review file",
+    )
+
+    assert len(tracker.get_pending_for_agent("worker")) == 1
+
+    record = tracker.record_send(
+        agent_name="worker",
+        target_agent="main",
+        invocation_id="inv_1",
+        session_id="conv:worker:inv_1",
+        content_summary="done",
+    )
+
+    assert tracker.get_pending_for_agent("worker") == []
+    digest = tracker.get_digest_for_agent("worker")
+    assert digest.acknowledged == [record]
+
+
 @pytest.mark.asyncio
-async def test_subagent_manager_uses_null_coordinator_when_disabled(any_broker):
+async def test_subagent_service_create_and_wait_timeout_clears_future(any_broker):
     factory = MagicMock(spec=AgentFactory)
     fake_instance = MagicMock()
-    fake_instance.session.process_message = AsyncMock(return_value=AgentResult(content="ok"))
+    fake_instance.pipeline = MagicMock()
+    fake_instance.pipeline.process_message = AsyncMock(side_effect=asyncio.TimeoutError)
+    fake_instance.stop = AsyncMock()
+    factory.create_agent = AsyncMock(return_value=fake_instance)
+
+    pool = AgentPool(
+        broker=any_broker,
+        agent_factory=factory,
+        enable_inbox_polling=False,
+    )
+    mgr = SubagentService(
+        pool=pool,
+        factory=factory,
+        broker=any_broker,
+        agent_bus=MagicMock(),
+    )
+    descriptor = AgentDescriptor(address=AgentAddress(name="sub3"))
+    try:
+        result = await mgr.create_and_wait(
+            descriptor=descriptor,
+            task_prompt="hi",
+            timeout=0.01,
+        )
+    finally:
+        await pool.shutdown_all()
+    assert result.stop_reason == "timeout"
+    assert pool._sync_futures == {}
+
+
+@pytest.mark.asyncio
+async def test_subagent_service_create_and_wait_forwards_factory_params(any_broker):
+    factory = MagicMock(spec=AgentFactory)
+    fake_instance = MagicMock()
+    fake_instance.pipeline = MagicMock()
+    fake_instance.pipeline.process_message = AsyncMock(return_value=AgentResult(content="ok"))
+    fake_instance.stop = AsyncMock()
     fake_instance.tool_manager = InMemoryToolManager()
     factory.create_agent = AsyncMock(return_value=fake_instance)
 
-    mgr = SubagentManager(
+    pool = AgentPool(
         broker=any_broker,
         agent_factory=factory,
-        task_coordinator=None,
-        coordination_config=TaskCoordinationConfig(enable_for_subagent=False),
+        enable_inbox_polling=False,
     )
-    assert isinstance(mgr._coordinator, NullTaskCoordinator)
-    descriptor = AgentDescriptor(address=AgentAddress(name="sub3"))
-    result = await mgr.spawn_and_wait(
-        parent_address=AgentAddress(name="main"),
-        descriptor=descriptor,
-        task_prompt="hi",
-        conversation_id="c3",
+    mgr = SubagentService(
+        pool=pool,
+        factory=factory,
+        broker=any_broker,
+        agent_bus=MagicMock(),
     )
+    descriptor = AgentDescriptor(address=AgentAddress(name="sub_params"))
+    try:
+        result = await mgr.create_and_wait(
+            descriptor=descriptor,
+            task_prompt="do work",
+            timeout=1.0,
+        )
+    finally:
+        await pool.shutdown_all()
     assert result.content == "ok"
+    call_args = factory.create_agent.await_args
+    assert call_args.args[0] == descriptor
+    call_kwargs = call_args.kwargs
+    assert call_kwargs["mode"] == "pipeline"
+
+
+@pytest.mark.asyncio
+async def test_subagent_service_registers_resident(any_broker):
+    factory = MagicMock(spec=AgentFactory)
+    fake_instance = MagicMock()
+    factory.create_agent = AsyncMock(return_value=fake_instance)
+    pool = MagicMock()
+    pool.register_resident = AsyncMock(return_value=fake_instance)
+    mgr = SubagentService(
+        pool=pool,
+        factory=factory,
+        broker=any_broker,
+        agent_bus=MagicMock(),
+    )
+    descriptor = AgentDescriptor(address=AgentAddress(name="sub4"))
+    result = await mgr.register_resident(
+        descriptor=descriptor,
+        context_manager=MagicMock(),
+    )
+    assert result is fake_instance
+    pool.register_resident.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -579,56 +708,56 @@ async def test_agent_pool_resets_error_count_on_success(any_broker):
     assert "resilient_agent" not in pool._error_counts
 
 
-@pytest.mark.asyncio
-async def test_default_agent_factory_passes_session_params():
-    factory = DefaultAgentFactory()
-    descriptor = AgentDescriptor(address=AgentAddress(name="test"))
-    sanitizer = lambda x: x.strip()
-    interceptor = MagicMock()
-    sub_mgr = MagicMock()
-
-    instance = await factory.create_agent(
-        descriptor,
-        mode="session",
-        sanitizer=sanitizer,
-        command_interceptor=interceptor,
-        subagent_manager=sub_mgr,
-    )
-    assert instance.session is not None
-    assert instance.session._sanitizer is sanitizer
-    assert instance.session._command_interceptor is interceptor
-    assert instance.session._subagent_manager is sub_mgr
 
 
 @pytest.mark.asyncio
-async def test_subagent_manager_forwards_session_params(any_broker):
-    factory = MagicMock(spec=AgentFactory)
+async def test_agent_pool_tracks_and_caps_invocation_sessions(any_broker):
+    """Pool dispatch should track invocation sessions and keep only the latest cap."""
     fake_instance = MagicMock()
-    fake_instance.session.process_message = AsyncMock(return_value=AgentResult(content="ok"))
-    fake_instance.tool_manager = InMemoryToolManager()
-    factory.create_agent = AsyncMock(return_value=fake_instance)
+    fake_instance.pipeline = MagicMock()
+    fake_instance.pipeline.process_message = AsyncMock(return_value=AgentResult(content="ok"))
+    fake_instance.context_manager = MagicMock()
+    fake_instance.context_manager.clear = AsyncMock()
+    fake_instance.stop = AsyncMock()
+    descriptor = AgentDescriptor(address=AgentAddress(name="worker"))
+    fake_instance.descriptor = descriptor
 
-    sanitizer = lambda x: x.strip()
-    interceptor = MagicMock()
-    mgr = SubagentManager(
+    pool = AgentPool(
         broker=any_broker,
-        agent_factory=factory,
-        coordination_config=TaskCoordinationConfig(enable_for_subagent=False),
-        sanitizer=sanitizer,
-        command_interceptor=interceptor,
+        agent_factory=MagicMock(),
+        enable_inbox_polling=False,
+        retention=SessionRetentionPolicy(max_sessions_per_subagent=10),
     )
-    descriptor = AgentDescriptor(address=AgentAddress(name="sub_params"))
-    result = await mgr.spawn_and_wait(
-        parent_address=AgentAddress(name="main"),
-        descriptor=descriptor,
-        task_prompt="do work",
-        conversation_id="c1",
-        timeout=1.0,
-    )
-    assert result.content == "ok"
-    call_kwargs = factory.create_agent.await_args.kwargs
-    assert call_kwargs.get("sanitizer") is sanitizer
-    assert call_kwargs.get("command_interceptor") is interceptor
-    assert call_kwargs.get("subagent_manager") is mgr
+    pool._agents["worker"] = fake_instance
+
+    try:
+        for index in range(11):
+            invocation_id = f"inv_{index:02d}"
+            envelope = AgentMessageEnvelope(
+                payload={
+                    "content": f"task {index}",
+                    "task_prompt": f"task {index}",
+                    "message_type": "task_request",
+                    "invocation_id": invocation_id,
+                },
+                source=AgentAddress(name="main"),
+                target=AgentAddress(name="worker"),
+                message_type="task_request",
+                conversation_id="conv",
+                agent_session_id=f"conv:worker:{invocation_id}",
+                correlation_id=invocation_id,
+            )
+            await pool._dispatch_task_request(fake_instance, descriptor, envelope)
+
+        worker_sessions = [
+            sid for sid, meta in pool._session_meta.items()
+            if meta.agent_name == "worker"
+        ]
+        assert len(worker_sessions) == 10
+        assert "conv:worker:inv_00" not in worker_sessions
+        assert "conv:worker:inv_10" in worker_sessions
+        fake_instance.context_manager.clear.assert_any_await("conv:worker:inv_00")
+    finally:
+        await pool.shutdown_all()
 
 

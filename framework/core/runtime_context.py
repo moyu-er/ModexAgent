@@ -7,7 +7,7 @@ session-scoped RuntimeContext, managed by RuntimeContextManager.
 Layering:
 - core/runtime_context.py  → generic ABCs + in-memory defaults
 - agents/react/agent.py    → ReActAgent clears/records tool calls each turn
-- multi_agent/hooks.py     → PeerAutoSendHook reads communication-tool calls
+- multi_agent/hooks.py     → SubagentAutoSendHook reads communication-tool calls
 """
 
 from __future__ import annotations

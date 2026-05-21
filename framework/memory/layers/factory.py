@@ -110,6 +110,55 @@ class MemoryLayerFactory:
         return MemoryLayerSet(session=session_manager, pending=pending_manager)
 
     @staticmethod
+    def subagent_session_isolated(
+        registry: MemoryStoreRegistry,
+        max_session_messages: int = 50,
+    ) -> MemoryLayerSet:
+        """Subagent memory: session-scoped archive, no knowledge layer.
+
+        All layers use SessionScope to ensure complete isolation:
+        - Session: SessionScope (unchanged)
+        - Archive: SessionScope (NOT UserScope — each task session isolated)
+        - Knowledge: disabled (None — no SOUL/USER/MEMORY.md access)
+        """
+        from framework.memory.layers.config import ArchiveMemoryConfig
+
+        session_config = SessionMemoryConfig(max_messages=max_session_messages)
+        archive_config = ArchiveMemoryConfig(scope=SessionScope())
+        pending_config = PendingPrunedInputMemoryConfig(enabled=True)
+
+        session_manager = ScopedSessionMemoryManager(
+            MemoryLayerFactory._storage_factory(
+                registry,
+                MemoryLayerName.SESSION,
+                session_config.scope,
+            ),
+            session_config,
+        )
+        archive_manager = ScopedArchiveMemoryManager(
+            MemoryLayerFactory._storage_factory(
+                registry,
+                MemoryLayerName.ARCHIVE,
+                archive_config.scope,
+            ),
+            archive_config,
+        )
+        pending_manager = ScopedPendingPrunedInputMemoryManager(
+            MemoryLayerFactory._storage_factory(
+                registry,
+                MemoryLayerName.PENDING,
+                pending_config.scope,
+            ),
+            pending_config,
+        )
+        return MemoryLayerSet(
+            session=session_manager,
+            archive=archive_manager,
+            knowledge=None,
+            pending=pending_manager,
+        )
+
+    @staticmethod
     def _storage_factory(
         registry: MemoryStoreRegistry,
         layer: MemoryLayerName,

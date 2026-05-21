@@ -14,7 +14,7 @@ Primary end-to-end reference — a QQ Bot demonstrating all ModexAgent framework
 | `bot/service/builders.py` | `AgentBuilderMixin` — tool registration, memory creation, peer construction |
 | `bot/adapters/qq.py` | QQ platform adapters (`QQInputAdapter`, `QQOutputAdapter`, `QQBotEmitter`) |
 | `bot/plugins/integration.py` | `PluginIntegration` facade |
-| `bot/tools/custom.py` | `SpawnSubagentTool`, `SendFileToUserTool` |
+| `bot/tools/custom.py` | `DispatchTaskTool`, `SendFileToUserTool` |
 | `bot/utils/config_loader.py` | YAML/JSON config with `${VAR}` interpolation |
 
 ## Subdirectories

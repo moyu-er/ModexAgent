@@ -1,7 +1,7 @@
 """BotService core — generic bot orchestration for any InputAdapter/OutputAdapter pair.
 
 Supports two runtime modes:
-- pipeline: single AgentPipeline, SubagentManager creates asyncio.Task directly.
+- pipeline: single AgentPipeline, SubagentService creates asyncio.Task directly.
 - pool: AgentPool with resident agents, BrokerBridgeService routes messages.
 """
 
@@ -51,7 +51,7 @@ from framework.interceptor.chain import InterceptorChain
 from framework.ioc.configs.agent import AgentConfig as IOCAgentConfig
 from framework.ioc.configs.app import AppConfig
 from framework.ioc.configs.memory import MemoryConfig as IOCMemoryConfig
-from framework.ioc.factories.governance import create_governance, create_peer_governance
+from framework.ioc.factories.governance import create_governance, create_subagent_governance
 from framework.ioc.factories.llm import create_llm_provider
 from framework.ioc.factories.memory import create_memory
 from framework.memory.core.scope import MemoryContext
@@ -67,9 +67,10 @@ from framework.multi_agent import (
     AgentDescriptor,
     AgentFactory,
     AgentPool,
+    CommunicationTracker,
     DefaultAgentFactory,
-    SubagentManager,
-    TaskCoordinationConfig,
+    SessionRetentionPolicy,
+    SubagentService, SendMessageAsyncTool,
 )
 from framework.multi_agent.descriptor import AgentLLMConfig
 from framework.multi_agent.inbox.consumer import InboxConsumer
@@ -90,7 +91,7 @@ class BotService(AgentBuilderMixin):
     Just provide the corresponding adapters and an Emitter factory.
 
     Modes:
-    - pipeline: single AgentPipeline (default). SubagentManager spawns asyncio.Task.
+    - pipeline: single AgentPipeline (default). SubagentService spawns asyncio.Task.
     - pool: resident AgentPool with MessageBroker routing.
 
     Accepts an IOC AppConfig object as the single source of truth.
@@ -126,7 +127,8 @@ class BotService(AgentBuilderMixin):
         self.auto_compact_service: Any | None = None
         self.agent: ReActAgent | None = None
         self.agent_factory: AgentFactory | None = None
-        self.subagent_manager: SubagentManager | None = None
+        self.subagent_service: SubagentService | None = None
+        self.communication_tracker: CommunicationTracker | None = None
         self.broker: InMemoryMessageBroker | None = None
         self.inbox_server: LocalFileInboxServer | None = None
         self.inbox_producer: InboxProducer | None = None
@@ -268,12 +270,13 @@ class BotService(AgentBuilderMixin):
         memory_dir = self._resolve_path("memory_dir", str(Path(data_dir) / "memory"))
         memory_dir.mkdir(parents=True, exist_ok=True)
         main_cfg = self._main_agent_cfg
-        main_memory_cfg = main_cfg.memory if main_cfg else None
-        if main_memory_cfg is not None:
-            self.memory_system = create_memory(main_memory_cfg, self.provider, memory_dir)
-            await self.memory_system.initialize()
-        else:
-            self.memory_system = None
+        main_memory_cfg = main_cfg.memory if main_cfg else self._app_config.memory
+        self.memory_system = create_memory(
+            main_memory_cfg or IOCMemoryConfig(),
+            self.provider,
+            memory_dir,
+        )
+        await self.memory_system.initialize()
 
         self.context_manager = MemorySystemContextManager(
             memory_system=self.memory_system,
@@ -412,7 +415,7 @@ class BotService(AgentBuilderMixin):
         print(f"   - ContextManager: {type(self.context_manager).__name__}")
         print(f"   - Agent: {self.agent.name}")
         print(f"   - AgentFactory: {type(self.agent_factory).__name__}")
-        print(f"   - SubagentManager: {type(self.subagent_manager).__name__}")
+        print(f"   - SubagentService: {type(self.subagent_service).__name__}")
         print("   - InboxServer: LocalFileInboxServer")
         print(f"   - Mode: {self.mode}")
 
@@ -436,16 +439,9 @@ class BotService(AgentBuilderMixin):
             agent_name=parent_agent_name,
         )
 
-        self.subagent_manager = SubagentManager(
-            broker=self.broker,
-            agent_factory=self.agent_factory,
-            coordination_config=TaskCoordinationConfig(
-                enable_for_subagent=True,
-                default_timeout_seconds=180.0,
-            ),
-            on_task_complete=self._cleanup_subagent_memory,
-        )
-        print("[OK] SubagentManager initialized")
+        # SubagentService not used in pipeline mode (no AgentPool)
+        self.subagent_service = None
+        print("[OK] Pipeline mode — SubagentService not needed")
 
         if self.agent is None:
             raise RuntimeError("Agent is not initialized")
@@ -473,7 +469,7 @@ class BotService(AgentBuilderMixin):
             hooks=pipeline_hooks,
             hook_runner=self._build_hook_runner(pipeline_hooks),
             interceptor_chain=self.interceptor_chain,
-            subagent_manager=self.subagent_manager,
+
             context_manager_factory=self._get_context_manager,
             governance=create_governance(self._main_memory_cfg, self._app_config.llm.max_tokens),
             safety=self.safety_policy,
@@ -516,20 +512,17 @@ class BotService(AgentBuilderMixin):
         )
         print("[OK] LocalAgentMessageBus initialized")
 
-        # SubagentManager
-        self.subagent_manager = SubagentManager(
-            broker=self.broker,
-            agent_factory=self.agent_factory,
-            coordination_config=TaskCoordinationConfig(
-                enable_for_subagent=True,
-                default_timeout_seconds=180.0,
-            ),
-            on_task_complete=self._cleanup_subagent_memory,
-        )
-        print("[OK] SubagentManager initialized")
-
-        # Create AgentPool
+        # Create AgentPool BEFORE SubagentService (pool is required by SubagentService)
         from framework.multi_agent.session_id import DefaultSessionIdStrategy
+
+        retention_cfg = self._app_config.multi_agent.session_retention
+        retention = SessionRetentionPolicy(
+            max_sessions_per_subagent=retention_cfg.max_sessions_per_subagent,
+            max_sessions_global=retention_cfg.max_sessions_global,
+            ttl_seconds=retention_cfg.ttl_seconds,
+            cleanup_interval_seconds=retention_cfg.cleanup_interval_seconds,
+        )
+        self.communication_tracker = CommunicationTracker()
 
         self.agent_pool = AgentPool(
             broker=self.broker,
@@ -542,7 +535,18 @@ class BotService(AgentBuilderMixin):
             default_context_manager_factory=self._get_context_manager,
             session_strategy=DefaultSessionIdStrategy(main_agent_name=parent_agent_name),
             safety=self.safety_policy,
+            retention=retention,
+            comm_tracker=self.communication_tracker,
         )
+
+        # SubagentService wraps AgentPool for subagent lifecycle management
+        self.subagent_service = SubagentService(
+            pool=self.agent_pool,
+            factory=self.agent_factory,
+            broker=self.broker,
+            agent_bus=self.agent_bus,
+        )
+        print("[OK] SubagentService initialized")
 
         # Register main agent as resident
         main_descriptor = AgentDescriptor(
@@ -594,9 +598,18 @@ class BotService(AgentBuilderMixin):
                 # Inject lightweight governance into subagent pipeline
                 sub_instance = self.agent_pool.get(descriptor.address.name)
                 if sub_instance and sub_instance.pipeline:
-                    sub_instance.pipeline.governance = create_peer_governance(
+                    sub_instance.pipeline.governance = create_subagent_governance(
                         subagent_cfg.memory, self._app_config.llm.max_tokens,
                     )
+                    # Register send_message_async so subagent can reply to parent
+                    sub_address = AgentAddress(name=descriptor.address.name)
+                    strategy = DefaultSessionIdStrategy(main_agent_name=parent_agent_name)
+                    sub_tool_manager.register(SendMessageAsyncTool(
+                        broker=self.broker, self_address=sub_address,
+                        allowed_targets=[parent_agent_name], agent_bus=self.agent_bus,
+                        registry=self.agent_pool, session_strategy=strategy,
+                    ))
+
                 print(f"[OK] Subagent '{descriptor.address.name}' registered as resident")
 
         # Initialize peer agents
@@ -627,10 +640,13 @@ class BotService(AgentBuilderMixin):
         return None
 
     def _find_peer_cfgs(self) -> list[IOCAgentConfig]:
-        """Find all peer configs by role."""
+        """Find all subagent configs by role, excluding the primary subagent."""
         if not self._app_config or not self._app_config.agents:
             return []
-        return [a for a in self._app_config.agents if a.role == "peer"]
+        primary = self._find_subagent_cfg()
+        primary_name = primary.name if primary else None
+        return [a for a in self._app_config.agents
+                if a.role == "subagent" and a.name != primary_name]
 
     @property
     def safety_policy(self) -> RuntimeSafetyPolicy:
@@ -689,7 +705,7 @@ class BotService(AgentBuilderMixin):
     def _build_hook_runner(self, hooks: list[Any]) -> Any:
         """Build HookRunner from collected hooks with default HookSpec.
 
-        Explicitly injects RuntimeContextHook so PeerAutoSendHook can detect
+        Explicitly injects RuntimeContextHook so SubagentAutoSendHook can detect
         communication tool calls. Previously this was auto-injected by
         AgentPipeline into its hooks list, but ReActAgent prefers hook_runner
         and never falls back to hooks — causing the hook to be silently ignored.
@@ -986,7 +1002,6 @@ class BotService(AgentBuilderMixin):
 
         from framework.memory.consolidation.dream_engine import DreamEngine
 
-        de_cfg = self._main_memory_cfg.dream_engine
         self.dream_engine = DreamEngine(
             llm_provider=self.provider,
             history_manager=self.memory_system.archive_manager,
@@ -1053,13 +1068,13 @@ class BotService(AgentBuilderMixin):
             except Exception as e:
                 print(f"   [WARN] BrokerBridge stop error: {e}")
 
-        if self.subagent_manager:
+        if self.subagent_service:
             try:
-                print("   Stopping SubagentManager...")
-                await self.subagent_manager.stop()
-                print("   [OK] SubagentManager stopped")
+                print("   Stopping SubagentService...")
+                await self.subagent_service.stop()
+                print("   [OK] SubagentService stopped")
             except Exception as e:
-                print(f"   [WARN] SubagentManager stop error: {e}")
+                print(f"   [WARN] SubagentService stop error: {e}")
 
         if self.agent_bus:
             try:

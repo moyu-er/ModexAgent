@@ -5,6 +5,8 @@ from framework.core.strategy import ExecutionStrategy, ReActStrategy, SingleTurn
 from framework.hook import Hook, HookRunner
 from framework.multi_agent.address import AgentAddress
 from framework.multi_agent.bus import AgentMessageBus, LocalAgentMessageBus
+from framework.multi_agent.comm_tracker import CommunicationTracker
+from framework.multi_agent.context import current_conversation_id
 from framework.multi_agent.coordinator import (
     InMemoryTaskCoordinator,
     NullTaskCoordinator,
@@ -28,16 +30,14 @@ from framework.multi_agent.event_bus import (
 )
 from framework.multi_agent.factory import AgentFactory, DefaultAgentFactory
 from framework.multi_agent.hooks import TaskProgressHook
-from framework.multi_agent.peer_validator import PeerAgentValidator
-from framework.multi_agent.pool import AgentPool
+from framework.multi_agent.peer_validator import SubagentAgentValidator
+from framework.multi_agent.pool import AgentPool, SessionMeta, SessionRetentionPolicy
 from framework.multi_agent.registry import AgentDirectory, AgentRegistry
 from framework.multi_agent.router import AgentMessageRouter, DefaultMeshRouter, RouteResult
 from framework.multi_agent.state import AgentState
-from framework.multi_agent.subagent_manager import (
-    SubagentManager,
-    TaskCoordinationConfig,
-)
+from framework.multi_agent.subagent_service import SubagentService
 from framework.multi_agent.tools import (
+    DispatchTaskTool,
     SendMessageAsyncTool,
     SendMessageTool,
 )
@@ -64,10 +64,12 @@ __all__ = [
     "AgentPool",
     "AgentRegistry",
     "AgentState",
+    "CommunicationTracker",
     "CompositeTaskEventReporter",
     "ContextGovernanceConfig",
     "DefaultAgentFactory",
     "DefaultMeshRouter",
+    "DispatchTaskTool",
     "ExecutionStrategy",
     "Hook",
     "HookRunner",
@@ -75,14 +77,15 @@ __all__ = [
     "InterruptibleRunner",
     "LoggingTaskEventReporter",
     "NullTaskCoordinator",
-    "PeerAgentValidator",
+    "SubagentAgentValidator",
     "ReActStrategy",
     "RouteResult",
+    "SessionMeta",
+    "SessionRetentionPolicy",
     "SendMessageAsyncTool",
     "SendMessageTool",
     "SingleTurnStrategy",
-    "SubagentManager",
-    "TaskCoordinationConfig",
+    "SubagentService",
     "TaskCoordinator",
     "TaskEvent",
     "TaskEventBus",

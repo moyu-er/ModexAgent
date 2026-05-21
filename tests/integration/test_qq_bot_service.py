@@ -10,10 +10,10 @@
 import pytest
 
 pytestmark = pytest.mark.integration
-import sys
 import asyncio
+import sys
 from pathlib import Path
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Add framework path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -61,7 +61,7 @@ class TestQQBotServiceIntegration:
 
     def test_streaming_aware_emitter_import(self):
         """Test that StreamingAwareEmitter can be imported."""
-        from framework import StreamingAwareEmitter, ReActEvent
+        from framework import ReActEvent, StreamingAwareEmitter
 
         # Should be able to create a subclass
         class TestEmitter(StreamingAwareEmitter[ReActEvent]):
@@ -92,6 +92,7 @@ class TestQQBotServiceIntegration:
 
         try:
             from qq_adapters import QQBotEmitter
+
             from framework.agents.react import ReActEvent
             from framework.core.emitter import AgentResult, ToolCall
 
@@ -177,7 +178,7 @@ class TestQQBotServiceIntegration:
                 return True
 
         emitter = StreamingEmitter()
-        result = await agent.run(context, emitter)
+        await agent.run(context, emitter)
         assert provider.chat_stream_called is True
         assert provider.chat_called is False
 
@@ -187,7 +188,7 @@ class TestQQBotServiceIntegration:
 
         # Test non-streaming mode (emitter doesn't want streaming)
         emitter2 = BufferingEmitter[ReActEvent]()
-        result = await agent.run(context, emitter2)
+        await agent.run(context, emitter2)
         assert provider.chat_stream_called is False
         assert provider.chat_called is True
 
@@ -205,7 +206,7 @@ class TestQQBotServiceIntegration:
         """Test complete event flow from Agent to QQ Output."""
         from framework.agents.react import ReActAgent, ReActEvent
         from framework.core.agent import AgentContext
-        from framework.core.emitter import StreamingAwareEmitter, AgentResult
+        from framework.core.emitter import StreamingAwareEmitter
 
         # Track events
         events_received = []
@@ -294,6 +295,7 @@ class TestQQBotServiceIntegration:
         sys.path.insert(0, 'F:\\tool\\pythonProject\\multiDemo\\backend\\app\\framework\\examples\\bot_project')
 
         from pathlib import Path
+
         from framework.core.skills import (
             FileSkillSource,
             ProgressiveBuilder,
@@ -336,13 +338,13 @@ class TestQQBotServiceIntegration:
         """BotService(mode='pool') 通过 BrokerBridgeService 正确路由输入/输出。"""
         import sys
         from pathlib import Path
-        from unittest.mock import patch, AsyncMock
 
         qq_project = Path(__file__).parent.parent.parent / "examples" / "bot_project"
         if str(qq_project) not in sys.path:
             sys.path.insert(0, str(qq_project))
 
         from bot_service import BotService
+
         from framework.core.types import InputMessage, LLMResponse
         from framework.pipeline.adapters import InputAdapter, OutputAdapter, OutputMessage
 
@@ -444,11 +446,11 @@ mcp:
         output_adapter = _MockOutputAdapter()
 
         def _emitter_factory(session_id: str):
-            from framework.core.emitter import BufferingEmitter
             from framework.agents.react import ReActEvent
+            from framework.core.emitter import BufferingEmitter
             return BufferingEmitter[ReActEvent]()
 
-        with patch.object(BotService, "_create_provider", return_value=_MockProvider()):
+        with patch("bot.service.core.create_llm_provider", return_value=_MockProvider()):
             service = BotService(
                 config_dir=config_dir,
                 input_adapter=input_adapter,
@@ -484,13 +486,13 @@ mcp:
         """BotService(mode='pipeline') 初始化后 MemorySystem 和 ContextManager 应正确创建。"""
         import sys
         from pathlib import Path
-        from unittest.mock import patch
 
         qq_project = Path(__file__).parent.parent.parent / "examples" / "bot_project"
         if str(qq_project) not in sys.path:
             sys.path.insert(0, str(qq_project))
 
         from bot_service import BotService
+
         from framework.core.types import LLMResponse
         from framework.pipeline.adapters import InputAdapter, OutputAdapter, OutputMessage
 
@@ -547,7 +549,7 @@ mcp:
             encoding="utf-8",
         )
 
-        with patch.object(BotService, "_create_provider", return_value=_MockProvider()):
+        with patch("bot.service.core.create_llm_provider", return_value=_MockProvider()):
             service = BotService(
                 config_dir=config_dir,
                 input_adapter=_MockInputAdapter(),
@@ -563,13 +565,13 @@ mcp:
             assert service.inbox_producer is not None
             assert service.inbox_consumer is not None
             assert service.pipeline is not None
-            assert service.subagent_manager is not None
+            assert service.subagent_service is None
 
             await service.stop()
 
     @pytest.mark.asyncio
-    async def test_spawn_subagent_tool_delegates_to_manager(self):
-        """SpawnSubagentTool 应正确将参数传递给 SubagentManager.spawn_and_wait。"""
+    async def test_dispatch_task_tool_queues_invocation(self):
+        """DispatchTaskTool should queue an invocation-scoped task request."""
         import sys
         from pathlib import Path
 
@@ -577,42 +579,37 @@ mcp:
         if str(qq_project) not in sys.path:
             sys.path.insert(0, str(qq_project))
 
-        from bot_service import SpawnSubagentTool
-        from framework.multi_agent import SubagentManager, AgentDescriptor, AgentAddress
-        from framework.core.emitter import AgentResult
+        from framework.messaging.broker_memory import InMemoryMessageBroker
+        from framework.multi_agent import AgentAddress, CommunicationTracker
+        from framework.multi_agent.tools import DispatchTaskTool
 
-        manager = AsyncMock(spec=SubagentManager)
-        manager.spawn_and_wait = AsyncMock(return_value=AgentResult(content="done"))
-
-        descriptor = AgentDescriptor(address=AgentAddress(name="helper"))
-        parent_address = AgentAddress(name="main")
-        tool = SpawnSubagentTool(
-            manager=manager,
-            default_parent_address=parent_address,
-            descriptor=descriptor,
+        broker = InMemoryMessageBroker()
+        await broker.start()
+        tracker = CommunicationTracker()
+        tool = DispatchTaskTool(
+            broker=broker,
+            self_address=AgentAddress(name="main"),
+            allowed_targets=["helper"],
+            comm_tracker=tracker,
         )
 
-        result = await tool.execute(task_prompt="solve this", conversation_id="conv_123")
-        assert result == "done"
-        manager.spawn_and_wait.assert_awaited_once()
-        call_kwargs = manager.spawn_and_wait.call_args.kwargs
-        assert call_kwargs["task_prompt"] == "solve this"
-        assert call_kwargs["conversation_id"] == "conv_123"
-        assert call_kwargs["parent_address"] == parent_address
-        assert call_kwargs["descriptor"] == descriptor
+        result = await tool.execute(target_agent="helper", task_prompt="solve this")
+        assert "invocation_id: inv_" in result
+        assert len(tracker.get_pending_for_agent("main")) == 1
+        await broker.stop()
 
     @pytest.mark.asyncio
     async def test_bot_service_stop_cleans_up_resources(self, tmp_path):
         """stop() 应正确清理 pipeline、broker、agent_bus、subagent_manager 等资源。"""
         import sys
         from pathlib import Path
-        from unittest.mock import patch
 
         qq_project = Path(__file__).parent.parent.parent / "examples" / "bot_project"
         if str(qq_project) not in sys.path:
             sys.path.insert(0, str(qq_project))
 
         from bot_service import BotService
+
         from framework.core.types import LLMResponse
         from framework.pipeline.adapters import InputAdapter, OutputAdapter, OutputMessage
 
@@ -663,7 +660,7 @@ mcp:
             encoding="utf-8",
         )
 
-        with patch.object(BotService, "_create_provider", return_value=_MockProvider()):
+        with patch("bot.service.core.create_llm_provider", return_value=_MockProvider()):
             service = BotService(
                 config_dir=config_dir,
                 input_adapter=_MockInputAdapter(),
@@ -674,7 +671,7 @@ mcp:
             await service.initialize()
 
             # 启动 pipeline 后再停止
-            run_task = asyncio.create_task(service.pipeline.run())
+            asyncio.create_task(service.pipeline.run())
             await asyncio.sleep(0.05)
             await service.stop()
 
@@ -688,13 +685,13 @@ mcp:
         """pipeline 模式下 initialize 后应多 Agent 工具被正确注册到 ToolManager。"""
         import sys
         from pathlib import Path
-        from unittest.mock import patch
 
         qq_project = Path(__file__).parent.parent.parent / "examples" / "bot_project"
         if str(qq_project) not in sys.path:
             sys.path.insert(0, str(qq_project))
 
         from bot_service import BotService
+
         from framework.core.types import LLMResponse
         from framework.pipeline.adapters import InputAdapter, OutputAdapter, OutputMessage
 
@@ -734,13 +731,13 @@ agent:
   system_prompt: "test"
 multi_agent:
   enabled: true
-  parent_agent_name: main
-  subagent_sync:
-    enabled: true
-    name: helper
-  subagent_async:
-    enabled: true
-    name: helper
+agents:
+  - name: main
+    role: main
+    system_prompt: "test"
+  - name: helper
+    role: subagent
+    system_prompt: "helper"
 tools:
   file_tools:
     enabled: false
@@ -752,19 +749,21 @@ mcp:
             encoding="utf-8",
         )
 
-        with patch.object(BotService, "_create_provider", return_value=_MockProvider()):
+        with patch("bot.service.core.create_llm_provider", return_value=_MockProvider()):
             service = BotService(
                 config_dir=config_dir,
                 input_adapter=_MockInputAdapter(),
                 output_adapter=_MockOutputAdapter(),
                 emitter_factory=lambda sid: None,
-                mode="pipeline",
+                mode="pool",
             )
             await service.initialize()
 
             tool_names = service.tool_manager.list_tools()
             assert "send_message" in tool_names
-            assert "spawn_subagent" in tool_names or "spawn_subagent_sync" in tool_names
+            assert "send_message_async" in tool_names
+            assert "dispatch_task" in tool_names
+            assert "spawn_subagent" not in tool_names
 
             await service.stop()
 
@@ -773,13 +772,13 @@ mcp:
         """pool 模式下 initialize 后子 Agent 应被注册为 AgentPool 常驻代理。"""
         import sys
         from pathlib import Path
-        from unittest.mock import patch
 
         qq_project = Path(__file__).parent.parent.parent / "examples" / "bot_project"
         if str(qq_project) not in sys.path:
             sys.path.insert(0, str(qq_project))
 
         from bot_service import BotService
+
         from framework.core.types import LLMResponse
         from framework.pipeline.adapters import InputAdapter, OutputAdapter, OutputMessage
 
@@ -819,13 +818,13 @@ agent:
   system_prompt: "test"
 multi_agent:
   enabled: true
-  parent_agent_name: main
-  subagent_sync:
-    enabled: true
-    name: helper
-  subagent_async:
-    enabled: true
-    name: helper
+agents:
+  - name: main
+    role: main
+    system_prompt: "test"
+  - name: helper
+    role: subagent
+    system_prompt: "helper"
 tools:
   file_tools:
     enabled: false
@@ -837,7 +836,7 @@ mcp:
             encoding="utf-8",
         )
 
-        with patch.object(BotService, "_create_provider", return_value=_MockProvider()):
+        with patch("bot.service.core.create_llm_provider", return_value=_MockProvider()):
             service = BotService(
                 config_dir=config_dir,
                 input_adapter=_MockInputAdapter(),

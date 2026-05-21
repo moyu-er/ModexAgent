@@ -5,6 +5,7 @@ import logging
 import sys
 import time
 from collections.abc import Callable, Coroutine
+from dataclasses import dataclass
 from typing import Any
 
 from framework.core.context import ContextManager
@@ -17,6 +18,7 @@ from framework.messaging.broker import BrokerMessage, MessageBroker
 
 from .address import AgentAddress
 from .bus import AgentMessageBus
+from .comm_tracker import CommunicationTracker
 from .descriptor import AgentDescriptor, AgentInstance
 from .envelope import AgentMessageEnvelope
 from .factory import AgentFactory
@@ -31,6 +33,24 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_INBOX_POLL_INTERVAL: float = 10.0
 MAX_ENVELOPE_HOPS: int = 5
+
+
+@dataclass
+class SessionMeta:
+    """Per-session metadata for lifecycle tracking."""
+    agent_name: str
+    created_at: float
+    last_active: float
+    is_dynamic: bool = False
+
+
+@dataclass
+class SessionRetentionPolicy:
+    """Controls session cleanup for subagent task sessions."""
+    max_sessions_per_subagent: int = 10
+    max_sessions_global: int = 200
+    ttl_seconds: float = 86400.0
+    cleanup_interval_seconds: float = 1800.0
 
 
 class AgentPool(AgentRegistry):
@@ -49,6 +69,8 @@ class AgentPool(AgentRegistry):
         default_context_manager_factory: Callable[[str], ContextManager] | None = None,
         session_strategy: SessionIdStrategy | None = None,
         safety: RuntimeSafetyPolicy | None = None,
+        retention: SessionRetentionPolicy | None = None,
+        comm_tracker: CommunicationTracker | None = None,
     ):
         self._agents: dict[str, AgentInstance] = {}
         self._status: dict[str, AgentState] = {}
@@ -63,6 +85,11 @@ class AgentPool(AgentRegistry):
         self._session_strategy = session_strategy or DefaultSessionIdStrategy()
         self._safety = safety or RuntimeSafetyPolicy()
         self._session_locks: dict[str, asyncio.Lock] = {}
+        self._session_meta: dict[str, SessionMeta] = {}
+        self._sync_futures: dict[str, asyncio.Future] = {}
+        self._retention = retention or SessionRetentionPolicy()
+        self._comm_tracker = comm_tracker
+        self._cleanup_task: asyncio.Task | None = None
         self._consumers: dict[str, asyncio.Task] = {}
         self._agent_tasks: dict[str, list[asyncio.Task]] = {}
         self._active_session_counts: dict[str, int] = {}
@@ -81,6 +108,7 @@ class AgentPool(AgentRegistry):
         }
         if self._enable_inbox_polling:
             self._inbox_poll_task = asyncio.create_task(self._poll_inbox_for_idle_agents())
+        self._cleanup_task = asyncio.create_task(self._cleanup_stale_sessions())
 
     def _transition(self, name: str, new_state: AgentState, reason: str = "") -> None:
         current = self._status.get(name, AgentState.SHUTDOWN)
@@ -471,7 +499,7 @@ class AgentPool(AgentRegistry):
         envelope: AgentMessageEnvelope,
     ) -> None:
         """将 task_request 信封转换为 InputMessage 并执行用户回合。"""
-        task_prompt = envelope.payload.get("task_prompt", "")
+        task_prompt = envelope.payload.get("task_prompt") or envelope.payload.get("content", "")
         conversation_id = envelope.conversation_id or envelope.payload.get(
             "conversation_id", "default"
         )
@@ -482,16 +510,34 @@ class AgentPool(AgentRegistry):
             "conversation_id": conversation_id,
             "agent_session_id": session_id,
             "message_type": envelope.message_type,
+            "invocation_id": envelope.payload.get("invocation_id"),
             "source_agent": envelope.source.name if envelope.source else None,
             **envelope.metadata,
         }
+        invocation_id = envelope.payload.get("invocation_id") or envelope.correlation_id
+        if invocation_id and self._comm_tracker is not None:
+            self._comm_tracker.record_receive(
+                agent_name=descriptor.address.name,
+                source_agent=envelope.source.name if envelope.source else "unknown",
+                invocation_id=str(invocation_id),
+                content_summary=task_prompt[:500],
+            )
         result: AgentResult | None = None
         if instance.pipeline is not None:
             lock = self.get_lock(session_id)
             async with lock:
+                if session_id not in self._session_meta:
+                    self._track_session(
+                        session_id,
+                        descriptor.address.name,
+                        is_dynamic=True,
+                    )
+                else:
+                    self._touch_session(session_id)
                 result = await instance.pipeline.process_message(
                     InputMessage(content=task_prompt, session_id=session_id, metadata=metadata)
                 )
+            await self._enforce_session_cap(descriptor.address.name)
 
         # ephemeral agent: clear context after each turn
         if descriptor.context_strategy == "ephemeral" and instance.context_manager is not None:
@@ -527,6 +573,7 @@ class AgentPool(AgentRegistry):
                 "stop_reason": result.stop_reason,
                 "partial_content": getattr(result, "partial_content", None),
                 "error": getattr(result, "error", None),
+                "invocation_id": envelope.payload.get("invocation_id") or envelope.correlation_id,
             },
             source=descriptor.address,
             target=parent_address,
@@ -535,6 +582,13 @@ class AgentPool(AgentRegistry):
             agent_session_id=parent_session_id,
             correlation_id=envelope.correlation_id,
         )
+        result_invocation_id = envelope.payload.get("invocation_id") or envelope.correlation_id
+        if result_invocation_id and self._comm_tracker is not None:
+            self._comm_tracker.acknowledge(
+                invocation_id=str(result_invocation_id),
+                reply_from=descriptor.address.name,
+                reply_summary=(result.content or "")[:500],
+            )
 
         if self._agent_bus is not None:
             await self._agent_bus.send(parent_session_id, result_envelope)
@@ -555,6 +609,12 @@ class AgentPool(AgentRegistry):
                 descriptor.address.name,
             )
 
+        # Channel 2: sync Future for create_and_wait() consumers
+        correlation = envelope.correlation_id
+        future = self._sync_futures.pop(correlation, None) if correlation else None
+        if future is not None and not future.done():
+            future.set_result(result)
+
     async def _dispatch_agent_message(
         self,
         instance: AgentInstance,
@@ -574,17 +634,43 @@ class AgentPool(AgentRegistry):
             "conversation_id": conversation_id,
             "agent_session_id": session_id,
             "message_type": envelope.message_type,
+            "invocation_id": envelope.payload.get("invocation_id"),
             "source_agent": source_name,
             "sender_agent": source_name,
             "receiver_agent": target_name,
             **envelope.metadata,
         }
+        invocation_id = envelope.payload.get("invocation_id") or envelope.correlation_id
+        if invocation_id and self._comm_tracker is not None:
+            if envelope.message_type == "subagent_result":
+                self._comm_tracker.acknowledge(
+                    invocation_id=str(invocation_id),
+                    reply_from=source_name or "unknown",
+                    reply_summary=content[:500],
+                )
+            else:
+                self._comm_tracker.record_receive(
+                    agent_name=instance.descriptor.address.name,
+                    source_agent=source_name or "unknown",
+                    invocation_id=str(invocation_id),
+                    content_summary=content[:500],
+                )
         if instance.pipeline is not None:
             lock = self.get_lock(session_id)
             async with lock:
+                if session_id not in self._session_meta:
+                    self._track_session(
+                        session_id,
+                        instance.descriptor.address.name,
+                        is_dynamic=bool(envelope.payload.get("invocation_id")),
+                    )
+                else:
+                    self._touch_session(session_id)
                 await instance.pipeline.process_message(
                     InputMessage(content=content, session_id=session_id, metadata=metadata)
                 )
+            if envelope.payload.get("invocation_id"):
+                await self._enforce_session_cap(instance.descriptor.address.name)
 
     async def _dispatch_raw_broker_message(
         self,
@@ -625,7 +711,127 @@ class AgentPool(AgentRegistry):
         return self._status.get(name, AgentState.SHUTDOWN)
 
     def get_lock(self, session_id: str) -> asyncio.Lock:
+        """Return the per-session lock for pool-managed lifecycle and eviction.
+
+        This is the **authoritative** concurrency guard for pool sessions.
+        Session metadata (_session_meta), eviction decisions, and dispatch
+        calls all acquire this lock to serialize access to a given session.
+
+        AgentPipeline retains its own internal lock for direct (non-pool)
+        callers. Pool code must NOT rely on the pipeline lock for lifecycle
+        operations — use this lock instead.
+        """
         return self._session_locks.setdefault(session_id, asyncio.Lock())
+
+    def register_sync_future(self, correlation_id: str, future: asyncio.Future[object]) -> None:
+        """Register a Future for synchronous result delivery."""
+        self._sync_futures[correlation_id] = future
+
+    def pop_sync_future(self, correlation_id: str) -> asyncio.Future[object] | None:
+        """Retrieve and remove a registered sync Future."""
+        return self._sync_futures.pop(correlation_id, None)
+
+    def _track_session(
+        self, session_id: str, agent_name: str, is_dynamic: bool = False
+    ) -> None:
+        """Register new session metadata. Call inside lock-protected section."""
+        self._session_meta[session_id] = SessionMeta(
+            agent_name=agent_name,
+            created_at=time.monotonic(),
+            last_active=time.monotonic(),
+            is_dynamic=is_dynamic,
+        )
+
+    def _touch_session(self, session_id: str) -> None:
+        """Refresh activity timestamp. Call inside lock-protected section."""
+        meta = self._session_meta.get(session_id)
+        if meta:
+            meta.last_active = time.monotonic()
+
+    async def _try_evict_if_stale(self, session_id: str) -> None:
+        """Evict a session if stale (TTL) OR if count exceeds per-subagent cap.
+
+        Two policies:
+        1. TTL: evict sessions inactive longer than ttl_seconds
+        2. LRU count cap: when a subagent has > max_sessions_per_subagent
+           sessions, evict the oldest (by created_at) first, regardless of TTL.
+
+        Safety: acquires the session lock before making eviction decisions
+        to eliminate the TOCTOU window between staleness check and eviction.
+        """
+        lock = self._session_locks.get(session_id)
+        if lock is None:
+            self._session_meta.pop(session_id, None)
+            return
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=3.0)
+        except (TimeoutError, asyncio.CancelledError):
+            return
+        try:
+            meta = self._session_meta.get(session_id)
+            if meta is None:
+                self._session_locks.pop(session_id, None)
+                return
+            if not meta.is_dynamic:
+                return
+
+            should_evict = False
+
+            # Policy 1: TTL staleness
+            if time.monotonic() - meta.last_active >= self._retention.ttl_seconds:
+                should_evict = True
+
+            # Policy 2: per-subagent count cap (LRU by created_at)
+            if not should_evict:
+                same_agent = [
+                    (sid, m) for sid, m in self._session_meta.items()
+                    if m.agent_name == meta.agent_name and m.is_dynamic
+                ]
+                if len(same_agent) > self._retention.max_sessions_per_subagent:
+                    same_agent.sort(key=lambda x: x[1].created_at)
+                    oldest_sid = same_agent[0][0]
+                    if oldest_sid == session_id:
+                        should_evict = True
+
+            if not should_evict:
+                return
+
+            instance = self._agents.get(meta.agent_name)
+            if instance and instance.context_manager:
+                await instance.context_manager.clear(session_id)
+            self._session_locks.pop(session_id, None)
+            self._session_meta.pop(session_id, None)
+        finally:
+            lock.release()
+
+    async def _cleanup_stale_sessions(self) -> None:
+        """Background task: TTL eviction with concurrency safety."""
+        while True:
+            await asyncio.sleep(self._retention.cleanup_interval_seconds)
+            # Per-agent session cap enforcement (LRU eviction)
+            agents_seen: set[str] = {m.agent_name for m in self._session_meta.values()}
+            for agent_name in agents_seen:
+                await self._enforce_session_cap(agent_name)
+            # TTL eviction
+            for sid in list(self._session_meta.keys()):
+                await self._try_evict_if_stale(sid)
+
+    async def _enforce_session_cap(self, agent_name: str) -> None:
+        """Ensure per-agent session count does not exceed cap.
+
+        Evicts the least recently active dynamic sessions when the cap
+        is exceeded. Resident (non-dynamic) sessions are not evicted
+        by this mechanism.
+        """
+        cap = self._retention.max_sessions_per_subagent
+        dynamic_sessions = sorted(
+            ((sid, meta) for sid, meta in self._session_meta.items()
+             if meta.agent_name == agent_name and meta.is_dynamic),
+            key=lambda x: x[1].last_active,
+        )
+        excess = len(dynamic_sessions) - cap
+        for sid, _meta in dynamic_sessions[:excess]:
+            await self._try_evict_if_stale(sid)
 
     def list_agents(self) -> list[AgentDescriptor]:
         return [inst.descriptor for inst in self._agents.values()]
@@ -741,6 +947,8 @@ class AgentPool(AgentRegistry):
     async def shutdown_all(self, timeout: float = 10.0) -> None:
         if self._inbox_poll_task is not None:
             self._inbox_poll_task.cancel()
+        if self._cleanup_task is not None:
+            self._cleanup_task.cancel()
         for name in list(self._agents.keys()):
             self._transition(name, AgentState.SHUTTING_DOWN, reason="shutdown_all")
         for _, task in list(self._consumers.items()):

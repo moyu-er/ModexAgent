@@ -11,16 +11,16 @@ Multi-agent orchestration — factory, pool, inbox, subagent management, and sta
 |------|-------------|
 | `factory.py` | `AgentFactory` ABC, `DefaultAgentFactory` — creates `AgentInstance` with full wiring |
 | `pool.py` | `AgentPool` — manages resident agents with `BrokerBridgeService` |
-| `subagent_manager.py` | `SubagentManager` — spawn/spawn_and_wait/cancel subagent lifecycle |
+| `subagent_manager.py` | `SubagentService` — spawn/spawn_and_wait/cancel subagent lifecycle |
 | `coordinator.py` | `TaskCoordinator` — task coordination across agents |
-| `hooks.py` | `PeerAutoSendHook`, `SubagentMemoryCleanupHook` |
+| `hooks.py` | `SubagentAutoSendHook`, `SubagentMemoryCleanupHook` |
 | `descriptors.py` | `AgentDescriptor`, `build_peer_descriptor` — agent configuration |
 | `instances.py` | `AgentInstance` — runtime agent wrapper |
 | `state.py` | Agent state types |
 | `directory.py` | `AgentDirectory` — agent lookup registry |
 | `router.py` | `MessageRouter` — routes messages to target agents |
 | `bus.py` | `LocalAgentMessageBus` — producer + consumer message bus |
-| `tools.py` | `SendMessageTool`, `SendMessageAsyncTool`, `SpawnSubagentTool` |
+| `tools.py` | `SendMessageTool`, `SendMessageAsyncTool`, `DispatchTaskTool` |
 | `utils.py` | Utility functions |
 
 ## Subdirectories
@@ -32,5 +32,5 @@ Multi-agent orchestration — factory, pool, inbox, subagent management, and sta
 - `DefaultAgentFactory.create_agent()` is the main entry for agent construction
 - Per-agent `InterceptorChain` and `HookRunner` copies prevent cross-agent state leakage
 - Star topology: peers communicate only through main agent (`peer_validator.py` enforces)
-- `PeerAutoSendHook` auto-forwards messages if LLM forgets `send_message_async`
+- `SubagentAutoSendHook` auto-forwards messages if LLM forgets `send_message_async`
 - `SubagentMemoryCleanupHook` cleans session memory on subagent exit

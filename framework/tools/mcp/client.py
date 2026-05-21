@@ -35,6 +35,8 @@ class TransportType(StrEnum):
 _TRANSPORT_ALIASES = {
     "http": TransportType.STREAMABLE_HTTP,
     "streamable_http": TransportType.STREAMABLE_HTTP,
+    "streamablehttp": TransportType.STREAMABLE_HTTP,
+    "streamable-http": TransportType.STREAMABLE_HTTP,
 }
 
 

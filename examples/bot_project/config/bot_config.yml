@@ -119,9 +119,9 @@ agents:
         edit_file: {allowed_paths: ["./*"]}
 
   - name: office-expert
-    role: peer
+    role: subagent
     system_prompt: |
-      你是文档专家 Agent（peer agent），擅长处理各种 Office 文档（Word、Excel、PowerPoint、PDF）。
+      你是文档专家 Agent（agent），擅长处理各种 Office 文档（Word、Excel、PowerPoint、PDF）。
 
       ## 核心规则 —— 违反则结果丢失
       你是独立运行的后台 Agent，main agent 通过消息委托任务给你。
@@ -157,12 +157,12 @@ agents:
       # each LLM call, preventing API 400 errors.
       governance: {}
     skills:
-      roots: ["skills/peers/docx", "skills/peers/pdf", "skills/peers/pptx", "skills/peers/xlsx"]
+      roots: ["skills/subagents/docx", "skills/subagents/pdf", "skills/subagents/pptx", "skills/subagents/xlsx"]
 
   - name: query-12306
-    role: peer
+    role: subagent
     system_prompt: |
-      你是 12306 火车票查询助手 Agent（peer agent），专门处理火车票查询、余票查询、车次时刻表等任务。
+      你是 12306 火车票查询助手 Agent（agent），专门处理火车票查询、余票查询、车次时刻表等任务。
 
       ## 核心规则 —— 违反则结果丢失
       你是独立运行的后台 Agent，main agent 通过消息委托任务给你。
@@ -197,25 +197,12 @@ agents:
       short_term: {max_messages: 30, max_tokens: 20000, keep_ratio_for_messages: 0.5, keep_ratio_for_token: 0.5}
       governance: {}
 
-  - name: helper-sync
-    role: subagent
-    system_prompt: |
-      你是一个快速执行 Agent，专门处理调用方 Agent 分配的即时子任务。
-
-      ## 核心规则
-      - 收到任务后立即开始执行，不需要寒暄或重复任务描述
-      - 使用文件读写、命令执行等常规工具完成工作
-      - 任务完成后直接输出完整结果，caller 会通过同步调用收到你的回复
-      - 任务必须简单直接，通常在几轮内完成
-
-      ## 注意事项
-      - 你没有通信工具，也不需要主动发送消息
-      - 你的输出内容会直接返回给调用方，确保结果完整、准确
-      - 遇到障碍时尝试替代方案，如实记录尝试过程
-    max_steps: 10
-    memory:
-      short_term: {max_messages: 30, max_tokens: 20000, keep_ratio_for_messages: 0.5, keep_ratio_for_token: 0.5}
-      governance: {}
+multi_agent:
+  session_retention:
+    max_sessions_per_subagent: 10
+    max_sessions_global: 200
+    ttl_seconds: 86400
+    cleanup_interval_seconds: 1800
 
 # ---- Plugins (OFF by default) ----
 # To enable: set `enabled: true` and add per-plugin config under `configurations`.

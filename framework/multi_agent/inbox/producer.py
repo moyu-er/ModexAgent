@@ -36,7 +36,7 @@ class InboxProducer(BaseInboxProducer):
     """Inbox 消息生产端（本地缓存去重实现）。
 
     职责仅限于持久化消息到 InboxServer，不处理唤醒信号或 Broker 交互。
-    唤醒/通知逻辑由上层组件（如 AgentMessageBus 或 SubagentManager）负责。
+    唤醒/通知逻辑由上层组件（如 AgentMessageBus 或 SubagentService）负责。
     """
 
     def __init__(

@@ -63,3 +63,111 @@ class TestRunDispatch:
             await pool._run_dispatch("main", _raising_coro())
 
         assert pool._status.get("main") == AgentState.IDLE
+
+
+class TestDispatchTaskRequestFallback:
+    """_dispatch_task_request must accept legacy envelopes with ``content`` as
+    a defensive fallback for ``task_prompt``."""
+
+    @pytest.fixture
+    async def pool(self):
+        p = AgentPool(
+            broker=_FakeBroker(),
+            agent_factory=MagicMock(),
+            enable_inbox_polling=False,
+        )
+        yield p
+        await p.shutdown_all(timeout=0.1)
+
+    @pytest.mark.asyncio
+    async def test_dispatch_falls_back_to_content_when_task_prompt_missing(self, pool):
+        """When the envelope payload has ``content`` but no ``task_prompt``,
+        _dispatch_task_request should still extract the task via the fallback."""
+        from framework.core.context import InMemoryContextManager
+        from framework.core.types import InputMessage
+        from framework.multi_agent.address import AgentAddress
+        from framework.multi_agent.descriptor import AgentDescriptor, AgentInstance
+        from framework.multi_agent.envelope import AgentMessageEnvelope
+        from framework.pipeline.pipeline import AgentPipeline
+
+        from framework.core.agent import Agent
+        from framework.core.tool_manager import InMemoryToolManager
+
+        desc = AgentDescriptor(address=AgentAddress(name="worker"))
+        agent_stub = MagicMock(spec=Agent)
+        agent_stub.name = "worker"
+
+        pipeline_stub = MagicMock(spec=AgentPipeline)
+        processed_content = []
+
+        async def _fake_process(msg):
+            processed_content.append(msg.content)
+            from framework.core.emitter import AgentResult
+            return AgentResult(content="done")
+
+        pipeline_stub.process_message.side_effect = _fake_process
+        instance = AgentInstance(
+            descriptor=desc,
+            agent=agent_stub,
+            tool_manager=InMemoryToolManager(),
+            pipeline=pipeline_stub,
+            context_manager=InMemoryContextManager(),
+        )
+
+        envelope = AgentMessageEnvelope(
+            payload={"content": "legacy task", "message_type": "task_request"},
+            source=AgentAddress(name="main"),
+            message_type="task_request",
+            conversation_id="conv",
+        )
+
+        await pool._dispatch_task_request(instance, desc, envelope)
+        assert processed_content, "Pipeline should have been called"
+        assert processed_content[0] == "legacy task", (
+            f"Expected 'legacy task' but got {processed_content[0]!r}"
+        )
+
+
+class TestPoolSessionLockSerialization:
+    """Pool per-session lock must serialize same-session dispatch, preventing overlap."""
+
+    @pytest.fixture
+    async def pool(self):
+        p = AgentPool(
+            broker=_FakeBroker(),
+            agent_factory=MagicMock(),
+            enable_inbox_polling=False,
+        )
+        yield p
+        await p.shutdown_all(timeout=0.1)
+
+    @pytest.mark.asyncio
+    async def test_same_session_dispatches_are_serialized(self, pool):
+        """Two concurrent dispatches on the same session must not overlap.
+        The pool get_lock acquires per-session, serializing pipeline execution."""
+        sid = "conv:worker:task-X"
+        lock = pool.get_lock(sid)
+
+        enter_order: list[int] = []
+        exit_order: list[int] = []
+
+        async def _dispatch_with_index(idx: int):
+            enter_order.append(idx)
+            await asyncio.sleep(0.05)
+            exit_order.append(idx)
+
+        async def _locked_task(idx):
+            async with lock:
+                await _dispatch_with_index(idx)
+
+        t1 = asyncio.create_task(_locked_task(1))
+        await asyncio.sleep(0.01)
+        t2 = asyncio.create_task(_locked_task(2))
+        await asyncio.gather(t1, t2)
+
+        assert enter_order == [1, 2], (
+            f"Task 1 must enter before Task 2 (lock serializes); got {enter_order}"
+        )
+        assert exit_order == [1, 2], (
+            f"Task 1 must exit before Task 2; got {exit_order}"
+        )

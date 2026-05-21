@@ -217,7 +217,8 @@ class StreamingAwareEmitter(ContentEmitter[E]):
         self._reasoning_buffer = ""
 
     def wants_streaming(self) -> bool:
-        return self.output_adapter.streaming_mode in (
+        streaming_mode = getattr(self.output_adapter, "streaming_mode", None)
+        return streaming_mode in (
             StreamingMode.NATIVE,
             StreamingMode.PSEUDO,
         )
@@ -225,7 +226,7 @@ class StreamingAwareEmitter(ContentEmitter[E]):
     @property
     def is_true_streaming(self) -> bool:
         """是否是真流式（Adapter 支持 NATIVE 模式）"""
-        return self.output_adapter.streaming_mode == StreamingMode.NATIVE
+        return getattr(self.output_adapter, "streaming_mode", None) == StreamingMode.NATIVE
 
     async def _safe_adapter_send(self, message: Any, log_label: str = "send") -> None:
         """通过 output_adapter 发送消息，带 timeout 保护。"""
