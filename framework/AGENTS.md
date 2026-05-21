@@ -1,4 +1,4 @@
-<!-- Generated: 2026-05-16 | Updated: 2026-05-16 -->
+<!-- Generated: 2026-05-16 | Updated: 2026-05-22 -->
 
 # framework
 
@@ -9,21 +9,22 @@ Core multi-agent framework package. All abstractions, implementations, and the f
 | Directory | Purpose |
 |-----------|---------|
 | `core/` | ABCs, AgentContext, events, emitter, provider, tool manager, graph engine, skills (see `core/AGENTS.md`) |
-| `agents/` | ReActAgent (graph-based), SummarizerAgent (see `agents/AGENTS.md`) |
+| `agents/` | ReActAgent (graph-based 4-node), SummarizerAgent (see `agents/AGENTS.md`) |
 | `approval/` | Tiered tool approval — tiers, decisions, response parsing (see `approval/AGENTS.md`) |
 | `pipeline/` | AgentPipeline orchestration, I/O adapters, approval renderer (see `pipeline/AGENTS.md`) |
 | `session/` | AgentSession — request/response mode |
 | `control/` | Runtime control plane — ControlChannel, EventBus, TurnStateStore, ui/ (see `control/AGENTS.md`) |
 | `hook/` | Lifecycle hooks — HookRunner, HookPoint, 10 builtin hooks (see `hook/AGENTS.md`) |
-| `interceptor/` | AOP interceptor chain — InterceptorChain, 8 builtin interceptors (see `interceptor/AGENTS.md`) |
-| `memory/` | Three-layer memory — session/archive/knowledge, compaction, consolidation, injection (see `memory/AGENTS.md`) |
-| `multi_agent/` | Star-topology orchestration — pool, subagent_manager, inbox, factory (see `multi_agent/AGENTS.md`) |
+| `interceptor/` | AOP interceptor chain — InterceptorChain, 9 builtin interceptors (see `interceptor/AGENTS.md`) |
+| `memory/` | Three-layer memory — session/archive/knowledge, compaction, consolidation, governance, injection (see `memory/AGENTS.md`) |
+| `multi_agent/` | Star-topology orchestration — pool, subagent_service, inbox, communication tracker (see `multi_agent/AGENTS.md`) |
 | `tools/` | Tool subsystem — registry, executor, MCP, standard tools (see `tools/AGENTS.md`) |
 | `plugins/` | Plugin system — PluginManager, PluginContext, MemoryProvider (see `plugins/AGENTS.md`) |
 | `messaging/` | MessageBroker, BrokerBridgeService (see `messaging/AGENTS.md`) |
 | `providers/` | LLM providers — LiteLLM, OpenAI implementations |
-| `ioc/` | AppConfig, typed configs, factory layer (agent, LLM, memory, tools, governance) |
+| `ioc/` | AppConfig (Pydantic), typed configs, factory layer (agent, LLM, memory, tools, governance) |
 | `runtime/` | AgentRuntime, TurnStateStore, RuntimeCommandStore, codec, snapshot policy (see `runtime/AGENTS.md`) |
+| `commands/` | Slash command processor — parse, dispatch, approval/continue/transform actions (see `commands/AGENTS.md`) |
 | `sandbox/` | Sandboxed execution — Subprocess, Docker, E2B, Landlock (see `sandbox/AGENTS.md`) |
 | `security/` | SecurityPolicy, validators, handlers (see `security/AGENTS.md`) |
 | `adapters/` | PlatformAdapter ABC, AdapterRegistry, StreamingMode |
@@ -47,3 +48,5 @@ Core multi-agent framework package. All abstractions, implementations, and the f
 - `scopes: frozenset[InterceptorScope]` for declaring interceptor scope
 - Per-turn state in `runtime.state` (typed), not instance attributes
 - Control commands: `ControlChannel` inbound; events: `ControlEventBus` outbound
+- `GraphInterrupt` for approval suspension — never catch and swallow it
+- `TurnCustomKey` enum for per-turn custom state keys in `TurnStateBase.custom`
