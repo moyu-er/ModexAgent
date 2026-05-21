@@ -126,3 +126,48 @@ class TestDispatchTaskRequestFallback:
         assert processed_content[0] == "legacy task", (
             f"Expected 'legacy task' but got {processed_content[0]!r}"
         )
+
+
+class TestPoolSessionLockSerialization:
+    """Pool per-session lock must serialize same-session dispatch, preventing overlap."""
+
+    @pytest.fixture
+    async def pool(self):
+        p = AgentPool(
+            broker=_FakeBroker(),
+            agent_factory=MagicMock(),
+            enable_inbox_polling=False,
+        )
+        yield p
+        await p.shutdown_all(timeout=0.1)
+
+    @pytest.mark.asyncio
+    async def test_same_session_dispatches_are_serialized(self, pool):
+        """Two concurrent dispatches on the same session must not overlap.
+        The pool get_lock acquires per-session, serializing pipeline execution."""
+        sid = "conv:worker:task-X"
+        lock = pool.get_lock(sid)
+
+        enter_order: list[int] = []
+        exit_order: list[int] = []
+
+        async def _dispatch_with_index(idx: int):
+            enter_order.append(idx)
+            await asyncio.sleep(0.05)
+            exit_order.append(idx)
+
+        async def _locked_task(idx):
+            async with lock:
+                await _dispatch_with_index(idx)
+
+        t1 = asyncio.create_task(_locked_task(1))
+        await asyncio.sleep(0.01)
+        t2 = asyncio.create_task(_locked_task(2))
+        await asyncio.gather(t1, t2)
+
+        assert enter_order == [1, 2], (
+            f"Task 1 must enter before Task 2 (lock serializes); got {enter_order}"
+        )
+        assert exit_order == [1, 2], (
+            f"Task 1 must exit before Task 2; got {exit_order}"
+        )

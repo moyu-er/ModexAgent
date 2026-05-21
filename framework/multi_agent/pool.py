@@ -625,6 +625,16 @@ class AgentPool(AgentRegistry):
         return self._status.get(name, AgentState.SHUTDOWN)
 
     def get_lock(self, session_id: str) -> asyncio.Lock:
+        """Return the per-session lock for pool-managed lifecycle and eviction.
+
+        This is the **authoritative** concurrency guard for pool sessions.
+        Session metadata (_session_meta), eviction decisions, and dispatch
+        calls all acquire this lock to serialize access to a given session.
+
+        AgentPipeline retains its own internal lock for direct (non-pool)
+        callers. Pool code must NOT rely on the pipeline lock for lifecycle
+        operations — use this lock instead.
+        """
         return self._session_locks.setdefault(session_id, asyncio.Lock())
 
     def list_agents(self) -> list[AgentDescriptor]:
