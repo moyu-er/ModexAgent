@@ -5,6 +5,7 @@ import logging
 import sys
 import time
 from collections.abc import Callable, Coroutine
+from dataclasses import dataclass
 from typing import Any
 
 from framework.core.context import ContextManager
@@ -33,6 +34,24 @@ DEFAULT_INBOX_POLL_INTERVAL: float = 10.0
 MAX_ENVELOPE_HOPS: int = 5
 
 
+@dataclass
+class SessionMeta:
+    """Per-session metadata for lifecycle tracking."""
+    agent_name: str
+    created_at: float
+    last_active: float
+    is_dynamic: bool = False
+
+
+@dataclass
+class SessionRetentionPolicy:
+    """Controls session cleanup for subagent task sessions."""
+    max_sessions_per_subagent: int = 50
+    max_sessions_global: int = 200
+    ttl_seconds: float = 86400.0
+    cleanup_interval_seconds: float = 1800.0
+
+
 class AgentPool(AgentRegistry):
     """Agent 生命周期管理池。"""
 
@@ -49,6 +68,7 @@ class AgentPool(AgentRegistry):
         default_context_manager_factory: Callable[[str], ContextManager] | None = None,
         session_strategy: SessionIdStrategy | None = None,
         safety: RuntimeSafetyPolicy | None = None,
+        retention: SessionRetentionPolicy | None = None,
     ):
         self._agents: dict[str, AgentInstance] = {}
         self._status: dict[str, AgentState] = {}
@@ -63,6 +83,10 @@ class AgentPool(AgentRegistry):
         self._session_strategy = session_strategy or DefaultSessionIdStrategy()
         self._safety = safety or RuntimeSafetyPolicy()
         self._session_locks: dict[str, asyncio.Lock] = {}
+        self._session_meta: dict[str, SessionMeta] = {}
+        self._sync_futures: dict[str, asyncio.Future] = {}
+        self._retention = retention or SessionRetentionPolicy()
+        self._cleanup_task: asyncio.Task | None = None
         self._consumers: dict[str, asyncio.Task] = {}
         self._agent_tasks: dict[str, list[asyncio.Task]] = {}
         self._active_session_counts: dict[str, int] = {}
@@ -81,6 +105,7 @@ class AgentPool(AgentRegistry):
         }
         if self._enable_inbox_polling:
             self._inbox_poll_task = asyncio.create_task(self._poll_inbox_for_idle_agents())
+        self._cleanup_task = asyncio.create_task(self._cleanup_stale_sessions())
 
     def _transition(self, name: str, new_state: AgentState, reason: str = "") -> None:
         current = self._status.get(name, AgentState.SHUTDOWN)
@@ -555,6 +580,12 @@ class AgentPool(AgentRegistry):
                 descriptor.address.name,
             )
 
+        # Channel 2: sync Future for create_and_wait() consumers
+        correlation = envelope.correlation_id
+        future = self._sync_futures.pop(correlation, None) if correlation else None
+        if future is not None and not future.done():
+            future.set_result(result)
+
     async def _dispatch_agent_message(
         self,
         instance: AgentInstance,
@@ -636,6 +667,61 @@ class AgentPool(AgentRegistry):
         operations — use this lock instead.
         """
         return self._session_locks.setdefault(session_id, asyncio.Lock())
+
+    def _track_session(
+        self, session_id: str, agent_name: str, is_dynamic: bool = False
+    ) -> None:
+        """Register new session metadata. Call inside lock-protected section."""
+        self._session_meta[session_id] = SessionMeta(
+            agent_name=agent_name,
+            created_at=time.monotonic(),
+            last_active=time.monotonic(),
+            is_dynamic=is_dynamic,
+        )
+
+    def _touch_session(self, session_id: str) -> None:
+        """Refresh activity timestamp. Call inside lock-protected section."""
+        meta = self._session_meta.get(session_id)
+        if meta:
+            meta.last_active = time.monotonic()
+
+    async def _try_evict_if_stale(self, session_id: str) -> None:
+        """Evict a session only if stale AND no active task is using it.
+
+        Safety: acquires the session lock before making eviction decisions
+        to eliminate the TOCTOU window between staleness check and eviction.
+        """
+        lock = self._session_locks.get(session_id)
+        if lock is None:
+            self._session_meta.pop(session_id, None)
+            return
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=3.0)
+        except (TimeoutError, asyncio.CancelledError):
+            return
+        try:
+            meta = self._session_meta.get(session_id)
+            if meta is None:
+                self._session_locks.pop(session_id, None)
+                return
+            if not meta.is_dynamic:
+                return
+            if time.monotonic() - meta.last_active < self._retention.ttl_seconds:
+                return
+            instance = self._agents.get(meta.agent_name)
+            if instance and instance.context_manager:
+                await instance.context_manager.clear(session_id)
+            self._session_locks.pop(session_id, None)
+            self._session_meta.pop(session_id, None)
+        finally:
+            lock.release()
+
+    async def _cleanup_stale_sessions(self) -> None:
+        """Background task: TTL eviction with concurrency safety."""
+        while True:
+            await asyncio.sleep(self._retention.cleanup_interval_seconds)
+            for sid in list(self._session_meta.keys()):
+                await self._try_evict_if_stale(sid)
 
     def list_agents(self) -> list[AgentDescriptor]:
         return [inst.descriptor for inst in self._agents.values()]
@@ -751,6 +837,8 @@ class AgentPool(AgentRegistry):
     async def shutdown_all(self, timeout: float = 10.0) -> None:
         if self._inbox_poll_task is not None:
             self._inbox_poll_task.cancel()
+        if self._cleanup_task is not None:
+            self._cleanup_task.cancel()
         for name in list(self._agents.keys()):
             self._transition(name, AgentState.SHUTTING_DOWN, reason="shutdown_all")
         for _, task in list(self._consumers.items()):
