@@ -32,7 +32,7 @@ from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
 from framework.memory.system import MemorySystemContextManager, create_memory_system
 from framework.multi_agent import AgentAddress
 from framework.multi_agent.session_id import DefaultSessionIdStrategy
-from framework.multi_agent.tools import SendToAgentAsyncTool
+from framework.multi_agent.tools import ListCommunicationTargetsTool, SendToAgentAsyncTool
 from framework.pipeline.adapters import NullOutputAdapter
 
 logger = logging.getLogger(__name__)
@@ -162,6 +162,12 @@ class AgentBuilderMixin:
                 comm_tracker=self.communication_tracker,
             ))
             print("   [OK] send_to_agent_async registered")
+
+            self.tool_manager.register(ListCommunicationTargetsTool(
+                self_address=parent_address,
+                registry=self.agent_pool,
+            ))
+            print("   [OK] list_communication_targets registered")
 
     # ── Peer / Subagent Tool Manager (code-driven) ──
 

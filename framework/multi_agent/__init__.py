@@ -38,6 +38,7 @@ from framework.multi_agent.router import AgentMessageRouter, DefaultMeshRouter, 
 from framework.multi_agent.state import AgentState
 from framework.multi_agent.subagent_service import SubagentService
 from framework.multi_agent.tools import (
+    ListCommunicationTargetsTool,
     SendToAgentAsyncTool,
     SendToAgentTool,
 )
@@ -68,6 +69,7 @@ __all__ = [
     "HookRunner",
     "InMemoryTaskCoordinator",
     "InterruptibleRunner",
+    "ListCommunicationTargetsTool",
     "LoggingTaskEventReporter",
     "NullTaskCoordinator",
     "SubagentAgentValidator",

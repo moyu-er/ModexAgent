@@ -1,10 +1,14 @@
 """Multi-agent communication tools — thin wrappers around AgentCommunicationService.
 
-The LLM sees only two tools:
+The LLM sees three tools in the communication system:
+- ListCommunicationTargetsTool: discovery — MUST be called first to see available
+  targets, their kinds, and invocation_id requirements.
 - SendToAgentTool: synchronous broker/wakeup delivery.
 - SendToAgentAsyncTool: inbox-based async delivery.
 
-The old SendMessageTool, SendMessageAsyncTool, and DispatchTaskTool are removed.
+The send tools require exact invocation_id values obtained from the listing tool.
+They do NOT perform target discovery or permission validation — the listing tool
+handles that.
 """
 
 from __future__ import annotations
@@ -13,6 +17,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from framework.core.tool_manager import Tool, ToolConfig
+from framework.multi_agent.comm_kind import AgentCommKind
 
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
@@ -79,7 +84,11 @@ class SendToAgentTool(Tool):
         self._comm_tracker = comm_tracker
         super().__init__(
             name="send_to_agent",
-            description="Send a message to another agent and trigger immediate processing.",
+            description=(
+                "Send a message to another agent and trigger immediate processing. "
+                "Call list_communication_targets FIRST to see available agents "
+                "and their required invocation_id format."
+            ),
             parameters={
                 "type": "object",
                 "properties": _COMMON_PARAMS,
@@ -143,7 +152,11 @@ class SendToAgentAsyncTool(Tool):
         self._wakeup_timeout = wakeup_timeout
         super().__init__(
             name="send_to_agent_async",
-            description="Send a message to another agent's inbox for asynchronous processing.",
+            description=(
+                "Send a message to another agent's inbox for asynchronous processing. "
+                "Call list_communication_targets FIRST to see available agents "
+                "and their required invocation_id format."
+            ),
             parameters={
                 "type": "object",
                 "properties": _COMMON_PARAMS,
@@ -179,3 +192,82 @@ class SendToAgentAsyncTool(Tool):
     def _get_context() -> AgentContext | None:
         from framework.core.agent import current_agent_context
         return current_agent_context.get(None)
+
+
+class ListCommunicationTargetsTool(Tool):
+    """Discovery tool — lists agents the current agent can communicate with.
+
+    **MUST be called first** before using send_to_agent / send_to_agent_async.
+    The send tools require precise invocation_id values that depend on the
+    target's kind. This tool provides:
+    - Target names and descriptions
+    - Kind (NORMAL or SUBAGENT) — determines invocation_id semantics
+    - Required invocation_id format for each target
+    """
+
+    def __init__(
+        self,
+        *,
+        self_address: AgentAddress,
+        registry: AgentRegistry,
+    ) -> None:
+        self._self_address = self_address
+        self._registry = registry
+        super().__init__(
+            name="list_communication_targets",
+            description=(
+                "List all agents available for communication. "
+                "MUST be called BEFORE send_to_agent or send_to_agent_async "
+                "to verify target existence, kind, and invocation_id requirements. "
+                "Sending without calling this first may result in errors."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+            config=ToolConfig(),
+        )
+
+    async def execute(self, **kwargs: Any) -> str:
+        _ = kwargs  # unused
+        profiles = self._registry.list_profiles()
+        current_name = self._self_address.name
+
+        targets = [p for p in profiles if p.name != current_name]
+        if not targets:
+            return "No other agents are currently available for communication."
+
+        lines = ["# Available Communication Targets", ""]
+        lines.append("Call this tool FIRST before sending messages. The send tools")
+        lines.append("require exact invocation_id values shown below for each target.")
+        lines.append("")
+
+        for p in targets:
+            kind_label = p.comm_kind.value.upper()
+            lines.append(f"## {p.name}")
+            lines.append(f"  Kind: {kind_label}")
+
+            if p.role_description:
+                lines.append(f"  Description: {p.role_description}")
+
+            if p.comm_kind == AgentCommKind.NORMAL:
+                lines.append("  invocation_id: MUST be null")
+                lines.append(f'    Example: send_to_agent_async(target_agent="{p.name}", content="...", invocation_id=null)')
+            else:
+                lines.append('  invocation_id: "" (new task) OR "<existing>" (continue task)')
+                lines.append(f'    New task: send_to_agent_async(target_agent="{p.name}", content="...", invocation_id="")')
+                lines.append(f'    Continue: send_to_agent_async(target_agent="{p.name}", content="...", invocation_id="<from previous reply>")')
+            lines.append("")
+
+        # Summary table
+        lines.append("## Summary")
+        lines.append("| Agent | Kind | invocation_id |")
+        lines.append("|-------|------|---------------|")
+        for p in targets:
+            if p.comm_kind == AgentCommKind.NORMAL:
+                lines.append(f"| {p.name} | NORMAL | null |")
+            else:
+                lines.append(f'| {p.name} | SUBAGENT | "" (new) or existing |')
+
+        return "\n".join(lines)
