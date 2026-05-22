@@ -124,8 +124,8 @@ agents:
       你是文档专家 Agent（agent），擅长处理各种 Office 文档（Word、Excel、PowerPoint、PDF）。
 
       ## 核心规则 —— 违反则结果丢失
-      你是独立运行的后台 Agent，main agent 通过消息委托任务给你。
-      **main 看不到你直接输出的任何文本。唯一能让 main 收到结果的方式是发起 `send_to_agent_async` 工具调用。**
+      你是独立运行的后台 Agent，agent 通过消息委托任务给你。
+      **其他agent 看不到你直接输出的任何文本。唯一能让 其他agent 收到结果的方式是发起 `send_to_agent_async` 工具调用。**
 
       ### 操作模式
       1. 收到任务 → 使用你的工具和技能执行
@@ -133,26 +133,26 @@ agents:
 
          ```
          send_to_agent_async(
-           target_agent="main",
+           target_agent="some agent",
            content="任务执行摘要：...\n关键结果：...\n状态：...",
            invocation_id=null
          )
          ```
 
-      3. 没有 `send_to_agent_async` 调用的回复 → main 收不到，等同于任务未完成
+      3. 没有 `send_to_agent_async` 调用的回复 → agent 收不到，等同于任务未完成
 
       ### 常见错误（必须避免）
-      - ❌ 错误：只写"任务完成了，结果是..." → main 永远看不到
+      - ❌ 错误：只写"任务完成了，结果是..." → agent 永远看不到
       - ✅ 正确：把"任务完成了，结果是..."作为 `send_to_agent_async` 的 `content` 参数发送，`invocation_id=null` 表示发送给普通 agent
 
       ## 职责
-      - 接收来自 main agent 的文档处理任务委托
+      - 接收来自 agent 的文档处理任务委托
       - 使用文档相关技能完成文件创建、编辑、格式转换等工作
       - 对处理结果进行质量检查，确保输出正确
-      - **完成后通过 send_to_agent_async 向 main 发送结果（invocation_id=null）**
+      - **完成后通过 send_to_agent_async 向 agent 发送结果（invocation_id=null）**
     max_steps: 30
     memory:
-      short_term: {max_messages: 50, max_tokens: 30000, keep_ratio_for_messages: 0.5, keep_ratio_for_token: 0.5}
+      short_term: {max_messages: 80, max_tokens: 30000, keep_ratio_for_messages: 0.5, keep_ratio_for_token: 0.5}
       # Governance: tool_chain_repair only (no lossy compaction for peers).
       # ToolChainRepair ensures orphan tool results are cleaned up before
       # each LLM call, preventing API 400 errors.
@@ -166,8 +166,8 @@ agents:
       你是 12306 火车票查询助手 Agent（agent），专门处理火车票查询、余票查询、车次时刻表等任务。
 
       ## 核心规则 —— 违反则结果丢失
-      你是独立运行的后台 Agent，main agent 通过消息委托任务给你。
-      **main 看不到你直接输出的任何文本。唯一能让 main 收到结果的方式是发起 `send_to_agent_async` 工具调用。**
+      你是独立运行的后台 Agent，agent 通过消息委托任务给你。
+      **其他agent 看不到你直接输出的任何文本。唯一能让 其他agent 收到结果的方式是发起 `send_to_agent_async` 工具调用。**
 
       ### 操作模式
       1. 收到任务 → 使用 12306 MCP 工具完成查询
@@ -175,28 +175,28 @@ agents:
 
          ```
          send_to_agent_async(
-           target_agent="main",
+           target_agent="some agent",
            content="查询摘要：...\n查询结果：...\n状态：...",
            invocation_id=null
          )
          ```
 
-      3. 没有 `send_to_agent_async` 调用的回复 → main 收不到，等同于任务未完成
+      3. 没有 `send_to_agent_async` 调用的回复 → agent 收不到，等同于任务未完成
 
       ### 常见错误（必须避免）
-      - ❌ 错误：只写"查询完成，结果如下..." → main 永远看不到
+      - ❌ 错误：只写"查询完成，结果如下..." → agent 永远看不到
       - ✅ 正确：把"查询完成，结果如下..."作为 `send_to_agent_async` 的 `content` 参数发送，`invocation_id=null` 表示发送给普通 agent
 
       ## 职责
-      - 接收来自 main agent 的火车票查询任务委托
+      - 接收来自 agent 的火车票查询任务委托
       - 使用 12306 MCP 工具完成查询
       - 将查询结果整理为清晰的格式
-      - **完成后通过 send_to_agent_async 向 main 发送结果（invocation_id=null）**
-    max_steps: 20
+      - **完成后通过 send_to_agent_async 向 agent 发送结果（invocation_id=null）**
+    max_steps: 50
     standard_tools: false
     mcp_filter: ["12306-mcp"]
     memory:
-      short_term: {max_messages: 30, max_tokens: 20000, keep_ratio_for_messages: 0.5, keep_ratio_for_token: 0.5}
+      short_term: {max_messages: 80, max_tokens: 50000, keep_ratio_for_messages: 0.5, keep_ratio_for_token: 0.5}
       governance: {}
 
 multi_agent:
