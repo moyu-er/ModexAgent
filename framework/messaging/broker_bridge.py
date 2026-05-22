@@ -67,7 +67,7 @@ def _broker_msg_to_input_message(msg: BrokerMessage) -> InputMessage:
     sender = msg.sender
     metadata = dict(payload.get("metadata", {}))
     # 透传 AgentMessageEnvelope 路由字段到 metadata
-    for key in ("conversation_id", "agent_session_id", "message_id", "in_reply_to", "message_type"):
+    for key in ("conversation_id", "agent_session_id", "message_id", "in_reply_to", "message_type", "uuid"):
         value = payload.get(key) or msg.headers.get(key)
         if value:
             metadata[key] = value

@@ -22,6 +22,7 @@ class AgentMessageEnvelope:
     message_type: str = "agent_message"
     conversation_id: str = ""
     agent_session_id: str = ""
+    uuid: str | None = None
     message_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     in_reply_to: str | None = None
     correlation_id: str | None = None
@@ -32,20 +33,23 @@ class AgentMessageEnvelope:
     def to_broker_message(self) -> BrokerMessage:
         """转换为 BrokerMessage，所有路由字段放入 headers。"""
         recipient = self.target or Address(kind="agent", name="")
+        headers: dict[str, str] = {
+            "conversation_id": self.conversation_id,
+            "agent_session_id": self.agent_session_id,
+            "message_id": self.message_id,
+            "in_reply_to": self.in_reply_to or "",
+            "message_type": self.message_type,
+            "hop_count": str(self.hop_count),
+            **{k: str(v) for k, v in self.metadata.items()},
+        }
+        if self.uuid is not None:
+            headers["uuid"] = self.uuid
         return BrokerMessage(
             payload=self.payload,
             sender=Address(kind=self.source.kind, name=self.source.name),
             recipient=recipient if self.target else None,
             topic=self.topic,
-            headers={
-                "conversation_id": self.conversation_id,
-                "agent_session_id": self.agent_session_id,
-                "message_id": self.message_id,
-                "in_reply_to": self.in_reply_to or "",
-                "message_type": self.message_type,
-                "hop_count": str(self.hop_count),
-                **self.metadata,
-            },
+            headers=headers,
             correlation_id=self.correlation_id,
             timestamp=self.timestamp,
         )
@@ -64,6 +68,8 @@ class AgentMessageEnvelope:
             return None
         from framework.multi_agent.address import AgentAddress
 
+        envelope_uuid = headers.get("uuid") or None
+
         return cls(
             payload=msg.payload,
             source=AgentAddress(kind=msg.sender.kind, name=msg.sender.name),
@@ -74,13 +80,14 @@ class AgentMessageEnvelope:
             message_type=headers.get("message_type", "agent_message"),
             conversation_id=conversation_id,
             agent_session_id=agent_session_id,
+            uuid=envelope_uuid,
             message_id=headers.get("message_id") or uuid.uuid4().hex,
             in_reply_to=headers.get("in_reply_to") or None,
             correlation_id=msg.correlation_id,
             timestamp=msg.timestamp,
             metadata={k: v for k, v in headers.items() if k not in {
                 "conversation_id", "agent_session_id", "message_id",
-                "in_reply_to", "message_type",
+                "in_reply_to", "message_type", "uuid",
             }},
             hop_count=int(headers.get("hop_count", 0)),
         )
