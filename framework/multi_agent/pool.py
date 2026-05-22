@@ -962,16 +962,16 @@ class AgentPool(AgentRegistry):
                         logger.debug("Failed to list inbox sessions", exc_info=True)
 
                 for session_id in sessions_to_check:
-                    _, agent_name = self._session_strategy.parse(session_id)
-                    if not agent_name or agent_name not in self._agents:
+                    parts = self._session_strategy.parse(session_id)
+                    if not parts.agent_name or parts.agent_name not in self._agents:
                         continue
-                    if self._status.get(agent_name) not in (AgentState.IDLE,):
+                    if self._status.get(parts.agent_name) not in (AgentState.IDLE,):
                         continue
                     if not await self._agent_bus.has_pending(session_id):
                         continue
                     try:
                         await self._broker.send_to(
-                            AgentAddress(kind="agent", name=agent_name),
+                            AgentAddress(kind="agent", name=parts.agent_name),
                             BrokerMessage(
                                 payload={"_inbox_wakeup": True, "session_id": session_id},
                                 sender=AgentAddress(kind="system", name="agent_pool_inbox_poller"),

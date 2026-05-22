@@ -15,10 +15,15 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class AgentSessionParts:
-    """Parsed components of a receiver-owned agent session ID."""
+    """Parsed components of a receiver-owned agent session ID.
+
+    ``agent_name`` is ``None`` only for legacy/incompatible session IDs
+    that do not follow the ``{conv}:{agent}[:{invocation_id}]`` format.
+    Callers must handle this case by skipping the session.
+    """
 
     conversation_id: str
-    agent_name: str
+    agent_name: str | None
     invocation_id: str | None = None
 
 
@@ -103,7 +108,15 @@ class DefaultSessionIdStrategy:
         elif len(parts) == 3:
             conversation_id, agent_name, invocation_id = parts
         else:
-            raise ValueError(f"Invalid agent session id: {session_id!r}")
+            # Legacy fallback for non-standard session IDs (e.g. underscore-
+            # separated formats like {hex_user_id}_{agent_name} from inbox).
+            # Return the full string as conversation_id so callers can safely
+            # skip unparseable sessions instead of crashing.
+            return AgentSessionParts(
+                conversation_id=session_id,
+                agent_name=None,
+                invocation_id=None,
+            )
         if not conversation_id or not agent_name:
             raise ValueError(f"Invalid agent session id: {session_id!r}")
         if invocation_id == "":

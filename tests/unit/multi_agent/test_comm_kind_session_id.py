@@ -107,6 +107,18 @@ class TestSessionIdStrategyFormat:
 
 
 class TestSessionIdStrategyParse:
+    def test_parse_legacy_underscore_separator(self) -> None:
+        """Legacy inbox session IDs use _ instead of : (e.g. {hex_user_id}_{agent_name}).
+        parse() must handle these gracefully rather than crashing the pool polling loop."""
+        strategy = DefaultSessionIdStrategy()
+        session_id = "30932BC02F825E64D069B1E67347C8FF_main"
+        # Must not raise ValueError — this is the exact bug from pool.py:965
+        try:
+            parts = strategy.parse(session_id)
+        except ValueError:
+            pytest.fail("parse() crashed on legacy underscore session ID — pool polling loop would crash")
+        assert parts.conversation_id == session_id
+
     def test_parse_two_part(self) -> None:
         strategy = DefaultSessionIdStrategy()
         parts = strategy.parse("conv-1:main")
@@ -137,15 +149,19 @@ class TestSessionIdStrategyParse:
         assert parts.agent_name == "office-expert"
         assert parts.invocation_id == "a1b2c3"
 
-    def test_parse_rejects_one_part(self) -> None:
+    def test_parse_legacy_nonstandard_formats_return_fallback(self) -> None:
+        """Non-standard formats (1-part, 4-part, underscore) get legacy fallback
+        with agent_name=None, rather than crashing. This prevents the pool polling
+        loop from breaking on legacy inbox session IDs."""
         strategy = DefaultSessionIdStrategy()
-        with pytest.raises(ValueError):
-            strategy.parse("conv1")
-
-    def test_parse_rejects_four_part(self) -> None:
-        strategy = DefaultSessionIdStrategy()
-        with pytest.raises(ValueError):
-            strategy.parse("a:b:c:d")
+        # 1-part
+        parts1 = strategy.parse("conv1")
+        assert parts1.conversation_id == "conv1"
+        assert parts1.agent_name is None
+        # 4-part
+        parts4 = strategy.parse("a:b:c:d")
+        assert parts4.conversation_id == "a:b:c:d"
+        assert parts4.agent_name is None
 
     def test_parse_rejects_empty_uuid_segment(self) -> None:
         strategy = DefaultSessionIdStrategy()
