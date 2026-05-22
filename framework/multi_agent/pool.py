@@ -886,6 +886,7 @@ class AgentPool(AgentRegistry):
             allowed_skills=descriptor.allowed_skills,
             capabilities=descriptor.address.capabilities or None,
             exposed_to_peers=descriptor.exposed_to_peers,
+            comm_kind=descriptor.comm_kind,
         )
 
     def _is_visible_to(self, descriptor: AgentDescriptor, caller: str | None) -> bool:

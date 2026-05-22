@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
+from framework.multi_agent.comm_kind import AgentCommKind
+
 from .state import AgentState
 
 if TYPE_CHECKING:
@@ -21,6 +23,7 @@ class AgentProfile:
     allowed_skills: list[str] | None = None
     capabilities: list[str] | None = None
     exposed_to_peers: bool = True
+    comm_kind: AgentCommKind = AgentCommKind.NORMAL
 
 
 class AgentRegistry(Protocol):
