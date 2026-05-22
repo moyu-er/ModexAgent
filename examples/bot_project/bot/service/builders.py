@@ -4,10 +4,12 @@ All tool registration methods use Tool objects directly (code-passed).
 No tool configuration is read from YAML/config dicts.
 """
 
+from __future__ import annotations
+
 import logging
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from framework import InMemoryToolManager, ToolManagerConfig
 from framework.core.context import ContextManager
@@ -19,6 +21,7 @@ from framework.core.skills import (
     SkillManager,
 )
 from framework.core.tool_manager import Tool
+from framework.ioc.configs.app import AppConfig
 from framework.ioc.factories.governance import create_subagent_governance
 from framework.memory.core.scope import MemoryAgentRole, MemoryContext, SessionScope
 from framework.memory.injection import RestrictedInjectionPolicy
@@ -30,10 +33,16 @@ from framework.memory.layers.config import (
 )
 from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
 from framework.memory.system import MemorySystemContextManager, create_memory_system
-from framework.multi_agent import AgentAddress
+from framework.messaging.broker_memory import InMemoryMessageBroker
+from framework.multi_agent import (
+    AgentAddress,
+    AgentPool,
+    CommunicationTracker,
+    SubagentService,
+)
 from framework.multi_agent.session_id import DefaultSessionIdStrategy
 from framework.multi_agent.tools import ListCommunicationTargetsTool, SendToAgentAsyncTool
-from framework.pipeline.adapters import NullOutputAdapter
+from framework.pipeline.adapters import NullOutputAdapter, OutputAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +87,35 @@ async def _mcp_tools_for_agent(
 
 
 class AgentBuilderMixin:
-    """Mixin providing tool registration, skill/memory management, and agent building."""
+    """Mixin providing tool registration, skill/memory management, and agent building.
+
+    All fields below are provided by the host ``BotService`` class.
+    They are declared here so the mixin's contract is visible to type checkers and IDEs.
+    """
+
+    # ── Fields provided by the host BotService class ──
+
+    # Configuration
+    _app_config: AppConfig | None
+    mode: Literal["pipeline", "pool"]
+
+    # Core components
+    tool_manager: InMemoryToolManager | None
+    output_adapter: OutputAdapter
+    agent_pool: AgentPool | None
+    broker: InMemoryMessageBroker | None
+    agent_bus: Any | None
+    subagent_service: SubagentService | None
+    communication_tracker: CommunicationTracker | None
+    mcp_manager: Any | None
+    context_manager: Any | None
+    provider: Any | None
+    plugin_integration: Any | None
+
+    # Subagent caches
+    _subagent_skill_managers: dict[str, SkillManager]
+    _subagent_memory_systems: dict[str, Any]
+    _additional_subagent_memory_systems: dict[str, Any]
 
     # ── Tool Registration (code-driven, no config dict) ──
 
@@ -334,11 +371,11 @@ class AgentBuilderMixin:
     # ── Cleanup ──
 
     async def _cleanup_subagent_memory(self, session_id: str) -> None:
-        from framework.multi_agent.session_id import DefaultSessionIdStrategy
         main_cfg = self._main_agent_cfg
         parent_name = main_cfg.name if main_cfg else "main"
         strategy = DefaultSessionIdStrategy(main_agent_name=parent_name)
-        _, sub_name = strategy.parse(session_id)
+        parts = strategy.parse(session_id)
+        sub_name = parts.agent_name
         if sub_name is None:
             return
         memory_system = self._subagent_memory_systems.get(sub_name)
