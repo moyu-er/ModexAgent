@@ -32,7 +32,7 @@ from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
 from framework.memory.system import MemorySystemContextManager, create_memory_system
 from framework.multi_agent import AgentAddress
 from framework.multi_agent.session_id import DefaultSessionIdStrategy
-from framework.multi_agent.tools import DispatchTaskTool, SendMessageAsyncTool, SendMessageTool
+from framework.multi_agent.tools import SendToAgentAsyncTool
 from framework.pipeline.adapters import NullOutputAdapter
 
 logger = logging.getLogger(__name__)
@@ -143,33 +143,25 @@ class AgentBuilderMixin:
         main_cfg = next((a for a in agents if a.role == "main"), agents[0] if agents else None)
         parent_name = main_cfg.name if main_cfg else "main"
         parent_address = AgentAddress(name=parent_name)
-        peer_names = [a.name for a in agents if a.role == "subagent"]
 
         strategy = DefaultSessionIdStrategy(main_agent_name=parent_name)
-        self.tool_manager.register(SendMessageTool(
-            broker=self.broker, self_address=parent_address,
-            allowed_targets=peer_names or None, registry=self.agent_pool,
-            session_strategy=strategy,
-        ))
-        print("   [OK] send_message registered")
 
         if self.agent_bus is not None:
-            self.tool_manager.register(SendMessageAsyncTool(
-                broker=self.broker, self_address=parent_address,
-                allowed_targets=peer_names or None, agent_bus=self.agent_bus,
-                registry=self.agent_pool, session_strategy=strategy,
+            from framework.multi_agent.communication import AgentCommunicationService
+            service = AgentCommunicationService(
+                source=parent_address,
+                broker=self.broker,
+                registry=self.agent_pool,
+                agent_bus=self.agent_bus,
+                session_strategy=strategy,
                 comm_tracker=self.communication_tracker,
-                invocation_session_targets=peer_names,
-            ))
-            print("   [OK] send_message_async registered")
-
-            self.tool_manager.register(DispatchTaskTool(
-                broker=self.broker, self_address=parent_address,
-                allowed_targets=peer_names or None, agent_bus=self.agent_bus,
-                registry=self.agent_pool, session_strategy=strategy,
+            )
+            self.tool_manager.register(SendToAgentAsyncTool(
+                source=parent_address, broker=self.broker, registry=self.agent_pool,
+                agent_bus=self.agent_bus, service=service,
                 comm_tracker=self.communication_tracker,
             ))
-            print("   [OK] dispatch_task registered")
+            print("   [OK] send_to_agent_async registered")
 
     # ── Peer / Subagent Tool Manager (code-driven) ──
 
@@ -396,13 +388,18 @@ class AgentBuilderMixin:
 
             context_manager = memory_ctx
 
-            # register send_message_async (star topology)
+            # register send_to_agent_async (star topology)
             peer_address = AgentAddress(name=peer_name)
             strategy = DefaultSessionIdStrategy(main_agent_name=parent_name)
-            tool_manager.register(SendMessageAsyncTool(
-                broker=self.broker, self_address=peer_address, allowed_targets=[parent_name],
-                agent_bus=self.agent_bus, registry=self.agent_pool,
-                session_strategy=strategy,
+            from framework.multi_agent.communication import AgentCommunicationService
+            peer_service = AgentCommunicationService(
+                source=peer_address, broker=self.broker, registry=self.agent_pool,
+                agent_bus=self.agent_bus, session_strategy=strategy,
+                comm_tracker=self.communication_tracker,
+            )
+            tool_manager.register(SendToAgentAsyncTool(
+                source=peer_address, broker=self.broker, registry=self.agent_pool,
+                agent_bus=self.agent_bus, service=peer_service,
                 comm_tracker=self.communication_tracker,
             ))
 
