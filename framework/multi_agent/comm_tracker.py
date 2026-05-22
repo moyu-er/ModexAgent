@@ -1,7 +1,7 @@
 """Communication state tracker — sideband memory for agent communication.
 
 Tracks pending communications (send-ack bracket matching), maintains
-communication digests per agent/UUID, and provides prompt injection for
+communication digests per agent invocation, and provides prompt injection for
 the system prompt so agents know which communications are still pending.
 
 This prevents memory compression from silently dropping communication
@@ -242,7 +242,7 @@ class CommunicationTracker:
                 f"- **[SENT] To: {record.target_agent}** "
                 f"(invocation_id: {record.invocation_id or 'N/A'})\n"
                 f"  Content: {record.content_summary}\n"
-                f"  Status: awaiting reply — use this invocation_id in responses"
+                f"  Status: awaiting reply - use this invocation_id in send_to_agent_async responses"
             )
 
         for record in digest.pending_received:
@@ -250,7 +250,7 @@ class CommunicationTracker:
                 f"- **[RECEIVED] From: {record.target_agent}** "
                 f"(invocation_id: {record.invocation_id or 'N/A'})\n"
                 f"  Content: {record.content_summary}\n"
-                f"  Status: needs acknowledgment — reply with matching invocation_id"
+                f"  Status: needs acknowledgment - reply with matching invocation_id"
             )
 
         return "\n".join(lines)

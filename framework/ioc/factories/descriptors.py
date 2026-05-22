@@ -24,6 +24,7 @@ from framework.memory.layers.config import (
 from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
 from framework.memory.system import MemorySystemContextManager, create_memory_system
 from framework.multi_agent import AgentAddress, AgentDescriptor
+from framework.multi_agent.comm_kind import AgentCommKind
 from framework.multi_agent.descriptor import AgentLLMConfig
 
 # ── Standard tool builders (code objects, no config) ──
@@ -187,6 +188,9 @@ async def build_peer_descriptor(
         execution_strategy="react",
         context_strategy="persistent",
         safety_policy=safety,
+        comm_kind=AgentCommKind.SUBAGENT
+        if agent_cfg.role == "subagent"
+        else AgentCommKind.NORMAL,
     )
     return descriptor, tool_manager, skill_manager, memory_ctx
 
@@ -225,7 +229,6 @@ async def build_subagent_descriptor(
             max_tokens=app_cfg.llm.max_tokens,
         ),
         system_prompt_template=system_prompt,
-        denied_tools=["spawn_subagent", "send_message", "dispatch_task"],
         max_iterations=agent_cfg.max_steps,
         max_tools_per_turn=10,
         execution_strategy="react",
@@ -233,6 +236,7 @@ async def build_subagent_descriptor(
         streaming_to_user=False,
         internal_streaming=False,
         safety_policy=safety,
+        comm_kind=AgentCommKind.SUBAGENT,
     )
     return descriptor, tool_manager, skill_manager, memory_ctx
 

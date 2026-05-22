@@ -104,8 +104,16 @@ class LocalAgentMessageBus(AgentMessageBus):
                     payload={"_inbox_wakeup": True, "session_id": session_id},
                     sender=Address(kind="system", name="local_agent_message_bus"),
                 )
-                _, target_name = DefaultSessionIdStrategy().parse(session_id)
-                target_name = target_name or (envelope.target.name if envelope.target else session_id)
+                from framework.multi_agent.session_id import DefaultSessionIdStrategy
+                try:
+                    parts = DefaultSessionIdStrategy().parse(session_id)
+                    target_name = parts.agent_name or (
+                        envelope.target.name if envelope.target else session_id
+                    )
+                except ValueError:
+                    target_name = (
+                        envelope.target.name if envelope.target else str(session_id)
+                    )
                 await self._broker.send_to(
                     AgentAddress(kind="agent", name=target_name),
                     wakeup,
@@ -156,9 +164,10 @@ class LocalAgentMessageBus(AgentMessageBus):
                 message_type=msg.message_type,
                 conversation_id=msg.metadata.get("conversation_id", session_id),
                 agent_session_id=msg.metadata.get("agent_session_id", session_id),
+                invocation_id=msg.metadata.get("invocation_id") if msg.metadata else None,
                 message_id=msg.message_id,
                 timestamp=msg.timestamp,
-                metadata={k: v for k, v in msg.metadata.items() if k != "payload"},
+                metadata={k: v for k, v in msg.metadata.items() if k not in ("payload", "invocation_id")},
             )
             envelopes.append(envelope)
 

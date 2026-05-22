@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from framework.multi_agent.comm_kind import AgentCommKind
+
 if TYPE_CHECKING:
     from framework.core.agent import Agent
     from framework.core.context import ContextManager
@@ -70,6 +72,7 @@ class AgentDescriptor:
     specialties: list[str] = field(default_factory=list)
     exposed_to_peers: bool = True
     safety_policy: RuntimeSafetyPolicy | None = None
+    comm_kind: AgentCommKind = AgentCommKind.NORMAL
 
 
 @dataclass

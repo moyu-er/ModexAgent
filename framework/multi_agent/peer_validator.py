@@ -31,9 +31,9 @@ class SubagentAgentValidator:
             )
 
         denied = set(peer_descriptor.denied_tools or [])
-        if "send_message_async" in denied:
+        if "send_to_agent_async" in denied:
             raise ValueError(
-                f"Peer '{peer_name}' must not deny 'send_message_async' (needed to reply to main)"
+                f"Peer '{peer_name}' must not deny 'send_to_agent_async' (needed to reply to main)"
             )
 
         if peer_descriptor.execution_strategy == "pipeline":

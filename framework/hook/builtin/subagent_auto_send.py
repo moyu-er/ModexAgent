@@ -1,6 +1,6 @@
 """SubagentAutoSendHook — agent 自动转发 Hook。
 
-确保 agent 内容总是转发给父 agent（main），即使 LLM 忘记调用 send_message_async。
+确保 agent 内容总是转发给父 agent（main），即使 LLM 忘记调用 send_to_agent_async。
 这是一个安全网，不替代系统提示词指引。
 """
 
@@ -63,7 +63,7 @@ class SubagentAutoSendHook:
                 rt._runtime_context = rc
         if rc is not None:
             calls = await rc.get_tool_calls()
-            sent_tools = {"send_message", "send_message_async"}
+            sent_tools = {"send_to_agent", "send_to_agent_async"}
             if any(c.tool_name in sent_tools for c in calls):
                 logger.debug(
                     "SubagentAutoSendHook: skipped, message already sent via tool (peer=%s)",
@@ -84,8 +84,9 @@ class SubagentAutoSendHook:
         from framework.multi_agent.session_id import DefaultSessionIdStrategy
 
         strategy = DefaultSessionIdStrategy(main_agent_name=self._parent_name)
-        conversation_id, _ = strategy.parse(session_id)
-        inbox_key = strategy.main_session(conversation_id)
+        parts = strategy.parse(session_id)
+        conversation_id = parts.conversation_id
+        inbox_key = strategy.format(conversation_id=conversation_id, agent_name=self._parent_name)
 
         sanitized = self._sanitize_forward_content(result.content)
 
@@ -96,6 +97,7 @@ class SubagentAutoSendHook:
             message_type="agent_message",
             conversation_id=conversation_id,
             agent_session_id=inbox_key,
+            invocation_id=parts.invocation_id,
         )
 
         try:

@@ -58,10 +58,10 @@ class TestInMemoryRuntimeContext:
 
     async def test_has_called(self):
         ctx = InMemoryRuntimeContext()
-        assert not await ctx.has_called("send_message")
+        assert not await ctx.has_called("send_to_agent_async")
 
-        await ctx.record_tool_call("send_message", {"to": "main"}, "ok")
-        assert await ctx.has_called("send_message")
+        await ctx.record_tool_call("send_to_agent_async", {"target_agent": "main"}, "ok")
+        assert await ctx.has_called("send_to_agent_async")
         assert not await ctx.has_called("other_tool")
 
     async def test_tool_calls_are_immutable(self):

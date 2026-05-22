@@ -47,6 +47,7 @@ from framework.multi_agent import (
 )
 from framework.multi_agent.address import AgentAddress
 from framework.multi_agent.envelope import AgentMessageEnvelope
+from framework.multi_agent.router import DefaultMeshRouter
 
 
 @pytest.fixture
@@ -72,6 +73,15 @@ async def test_default_agent_factory_creates_session_agent(sample_descriptor):
     instance = await factory.create_agent(sample_descriptor, mode="session")
     assert instance.descriptor == sample_descriptor
     assert instance.session is not None
+
+
+@pytest.mark.asyncio
+async def test_default_agent_factory_pipeline_uses_mesh_router(sample_descriptor, any_broker):
+    factory = DefaultAgentFactory()
+    instance = await factory.create_agent(sample_descriptor, mode="pipeline", broker=any_broker)
+
+    assert instance.pipeline is not None
+    assert isinstance(instance.pipeline.router, DefaultMeshRouter)
 
 
 def test_agent_factory_abc():

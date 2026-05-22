@@ -5,6 +5,7 @@ from framework.core.strategy import ExecutionStrategy, ReActStrategy, SingleTurn
 from framework.hook import Hook, HookRunner
 from framework.multi_agent.address import AgentAddress
 from framework.multi_agent.bus import AgentMessageBus, LocalAgentMessageBus
+from framework.multi_agent.comm_kind import AgentCommKind
 from framework.multi_agent.comm_tracker import CommunicationTracker
 from framework.multi_agent.context import current_conversation_id
 from framework.multi_agent.coordinator import (
@@ -37,21 +38,14 @@ from framework.multi_agent.router import AgentMessageRouter, DefaultMeshRouter, 
 from framework.multi_agent.state import AgentState
 from framework.multi_agent.subagent_service import SubagentService
 from framework.multi_agent.tools import (
-    DispatchTaskTool,
-    SendMessageAsyncTool,
-    SendMessageTool,
-)
-from framework.multi_agent.utils import (
-    format_peer_session_id,
-    format_pool_session_id,
-    is_peer_session_id,
-    parse_peer_session_id,
-    parse_pool_session_id,
-    reverse_peer_session_id,
+    ListCommunicationTargetsTool,
+    SendToAgentAsyncTool,
+    SendToAgentTool,
 )
 
 __all__ = [
     "AgentAddress",
+    "AgentCommKind",
     "AgentDescriptor",
     "AgentDirectory",
     "AgentMessageBus",
@@ -70,12 +64,12 @@ __all__ = [
     "current_conversation_id",
     "DefaultAgentFactory",
     "DefaultMeshRouter",
-    "DispatchTaskTool",
     "ExecutionStrategy",
     "Hook",
     "HookRunner",
     "InMemoryTaskCoordinator",
     "InterruptibleRunner",
+    "ListCommunicationTargetsTool",
     "LoggingTaskEventReporter",
     "NullTaskCoordinator",
     "SubagentAgentValidator",
@@ -83,8 +77,8 @@ __all__ = [
     "RouteResult",
     "SessionMeta",
     "SessionRetentionPolicy",
-    "SendMessageAsyncTool",
-    "SendMessageTool",
+    "SendToAgentAsyncTool",
+    "SendToAgentTool",
     "SingleTurnStrategy",
     "SubagentService",
     "TaskCoordinator",
@@ -94,10 +88,4 @@ __all__ = [
     "TaskEventType",
     "TaskProgressHook",
     "TaskRecord",
-    "format_pool_session_id",
-    "format_peer_session_id",
-    "is_peer_session_id",
-    "parse_pool_session_id",
-    "parse_peer_session_id",
-    "reverse_peer_session_id",
 ]

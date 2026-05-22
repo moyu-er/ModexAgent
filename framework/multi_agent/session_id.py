@@ -1,68 +1,54 @@
-"""Session ID strategy — pluggable abstraction for generating and routing agent sessions.
+"""Unified session ID strategy — receiver-owned ``{conv}:{agent}[:{invocation_id}]`` format.
 
-Agents use a ``{conversation_id}:{agent_name}`` format by default.
-The strategy is injectable so different topologies can override routing rules.
+All agents use receiver-owned session IDs. Sender information belongs in
+``AgentMessageEnvelope.source``, never in the session id.
 
-Key extension point:
-  ``target_session(conv, target, source)`` — called by the *sender* to determine
-  what session ID the *receiver* should use.
-
-  Default: every agent gets its own ``{conv}:{name}`` session.
-  This naturally routes peer→main replies to main's own session.
+The ``invocation_id`` is a task-scoped routing identifier. Currently
+generated via ``uuid4().hex[:8]``, but the field name describes what it
+IS (a task invocation identifier), not HOW it is generated.
 """
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-
-SEP: str = ":"
+from dataclasses import dataclass
 
 
-class SessionIdStrategy(ABC):
-    """Generates and parses session IDs with pluggable routing rules.
+@dataclass(frozen=True)
+class AgentSessionParts:
+    """Parsed components of a receiver-owned agent session ID.
 
-    All agents use ``{conversation_id}:{agent_name}`` format.
-    ``target_session()`` lets callers override which session the
-    receiver should use — the primary extension point.
+    ``agent_name`` is ``None`` only for legacy/incompatible session IDs
+    that do not follow the ``{conv}:{agent}[:{invocation_id}]`` format.
+    Callers must handle this case by skipping the session.
     """
 
-    @abstractmethod
-    def main_session(self, conversation_id: str) -> str:
-        """Return the session ID for the main agent's user-facing conversation."""
-        ...
-
-    @abstractmethod
-    def agent_session(self, conversation_id: str, agent_name: str) -> str:
-        """Return the session ID for a named agent within a conversation."""
-        ...
-
-    def target_session(
-        self, conversation_id: str, target_agent: str, source_agent: str = "",
-    ) -> str:
-        """Return the session ID that *receiver* should use.
-
-        Called by the sender when routing a message.  The receiver will
-        use this session ID to store context and load history.
-
-        Default: ``agent_session(conversation_id, target_agent)``.
-        Override to implement per-topology routing (e.g. always route
-        peer replies to main's user session).
-        """
-        return self.agent_session(conversation_id, target_agent)
-
-    def parse(self, session_id: str) -> tuple[str, str | None]:
-        """Parse into (conversation_id, agent_name).
-
-        Returns (session_id, None) if format is unrecognized.
-        """
-        if SEP in session_id:
-            conversation_id, agent_name = session_id.rsplit(SEP, 1)
-            return conversation_id, agent_name
-        return session_id, None
+    conversation_id: str
+    agent_name: str | None
+    invocation_id: str | None = None
 
 
-class DefaultSessionIdStrategy(SessionIdStrategy):
-    """Default: ``{conversation_id}:{agent_name}`` for every agent."""
+class DefaultSessionIdStrategy:
+    """Unified ``{conversation_id}:{agent_name}[:{invocation_id}]`` format.
+
+    Usage::
+
+        strategy = DefaultSessionIdStrategy()
+
+        # format
+        session_id = strategy.format(conversation_id="conv-1", agent_name="main")
+        # → "conv-1:main"
+
+        task_id = strategy.format(
+            conversation_id="conv-1", agent_name="office-expert", invocation_id="a1b2c3",
+        )
+        # → "conv-1:office-expert:a1b2c3"
+
+        # parse
+        parts = strategy.parse("conv-1:office-expert:a1b2c3")
+        # → AgentSessionParts(conversation_id="conv-1", agent_name="office-expert", invocation_id="a1b2c3")
+    """
+
+    SEP: str = ":"
 
     def __init__(self, main_agent_name: str = "main") -> None:
         self._main_name = main_agent_name
@@ -71,8 +57,72 @@ class DefaultSessionIdStrategy(SessionIdStrategy):
     def main_agent_name(self) -> str:
         return self._main_name
 
-    def main_session(self, conversation_id: str) -> str:
-        return f"{conversation_id}{SEP}{self._main_name}"
+    def format(
+        self,
+        *,
+        conversation_id: str,
+        agent_name: str,
+        invocation_id: str | None = None,
+    ) -> str:
+        """Build a receiver-owned session ID.
 
-    def agent_session(self, conversation_id: str, agent_name: str) -> str:
-        return f"{conversation_id}{SEP}{agent_name}"
+        Args:
+            conversation_id: External conversation scope.
+            agent_name: The agent that owns this session (always the receiver).
+            invocation_id: Task invocation ID for SUBAGENT sessions only.
+                Must be non-empty if provided. Currently generated via uuid4().
+
+        Returns:
+            ``{conversation_id}:{agent_name}`` or ``{conversation_id}:{agent_name}:{invocation_id}``.
+
+        Raises:
+            ValueError: If ``conversation_id`` or ``agent_name`` is empty, or if
+                ``invocation_id`` is an empty string.
+        """
+        if not conversation_id:
+            raise ValueError("conversation_id is required")
+        if not agent_name:
+            raise ValueError("agent_name is required")
+        if invocation_id is None:
+            return f"{conversation_id}{self.SEP}{agent_name}"
+        if not invocation_id:
+            raise ValueError("invocation_id must be non-empty when provided")
+        return f"{conversation_id}{self.SEP}{agent_name}{self.SEP}{invocation_id}"
+
+    def parse(self, session_id: str) -> AgentSessionParts:
+        """Parse a receiver-owned session ID into its components.
+
+        Args:
+            session_id: A session ID in ``{conv}:{agent}`` or ``{conv}:{agent}:{invocation_id}`` format.
+
+        Returns:
+            ``AgentSessionParts`` with ``conversation_id``, ``agent_name``, and optional ``invocation_id``.
+
+        Raises:
+            ValueError: If the session ID does not match the expected format.
+        """
+        parts = session_id.split(self.SEP)
+        if len(parts) == 2:
+            conversation_id, agent_name = parts
+            invocation_id: str | None = None
+        elif len(parts) == 3:
+            conversation_id, agent_name, invocation_id = parts
+        else:
+            # Legacy fallback for non-standard session IDs (e.g. underscore-
+            # separated formats like {hex_user_id}_{agent_name} from inbox).
+            # Return the full string as conversation_id so callers can safely
+            # skip unparseable sessions instead of crashing.
+            return AgentSessionParts(
+                conversation_id=session_id,
+                agent_name=None,
+                invocation_id=None,
+            )
+        if not conversation_id or not agent_name:
+            raise ValueError(f"Invalid agent session id: {session_id!r}")
+        if invocation_id == "":
+            raise ValueError(f"Invalid agent session id: {session_id!r} (empty invocation_id segment)")
+        return AgentSessionParts(
+            conversation_id=conversation_id,
+            agent_name=agent_name,
+            invocation_id=invocation_id,
+        )

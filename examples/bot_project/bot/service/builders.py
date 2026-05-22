@@ -4,10 +4,12 @@ All tool registration methods use Tool objects directly (code-passed).
 No tool configuration is read from YAML/config dicts.
 """
 
+from __future__ import annotations
+
 import logging
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from framework import InMemoryToolManager, ToolManagerConfig
 from framework.core.context import ContextManager
@@ -19,6 +21,7 @@ from framework.core.skills import (
     SkillManager,
 )
 from framework.core.tool_manager import Tool
+from framework.ioc.configs.app import AppConfig
 from framework.ioc.factories.governance import create_subagent_governance
 from framework.memory.core.scope import MemoryAgentRole, MemoryContext, SessionScope
 from framework.memory.injection import RestrictedInjectionPolicy
@@ -30,10 +33,16 @@ from framework.memory.layers.config import (
 )
 from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
 from framework.memory.system import MemorySystemContextManager, create_memory_system
-from framework.multi_agent import AgentAddress
+from framework.messaging.broker_memory import InMemoryMessageBroker
+from framework.multi_agent import (
+    AgentAddress,
+    AgentPool,
+    CommunicationTracker,
+    SubagentService,
+)
 from framework.multi_agent.session_id import DefaultSessionIdStrategy
-from framework.multi_agent.tools import DispatchTaskTool, SendMessageAsyncTool, SendMessageTool
-from framework.pipeline.adapters import NullOutputAdapter
+from framework.multi_agent.tools import ListCommunicationTargetsTool, SendToAgentAsyncTool
+from framework.pipeline.adapters import NullOutputAdapter, OutputAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +87,35 @@ async def _mcp_tools_for_agent(
 
 
 class AgentBuilderMixin:
-    """Mixin providing tool registration, skill/memory management, and agent building."""
+    """Mixin providing tool registration, skill/memory management, and agent building.
+
+    All fields below are provided by the host ``BotService`` class.
+    They are declared here so the mixin's contract is visible to type checkers and IDEs.
+    """
+
+    # ── Fields provided by the host BotService class ──
+
+    # Configuration
+    _app_config: AppConfig | None
+    mode: Literal["pipeline", "pool"]
+
+    # Core components
+    tool_manager: InMemoryToolManager | None
+    output_adapter: OutputAdapter
+    agent_pool: AgentPool | None
+    broker: InMemoryMessageBroker | None
+    agent_bus: Any | None
+    subagent_service: SubagentService | None
+    communication_tracker: CommunicationTracker | None
+    mcp_manager: Any | None
+    context_manager: Any | None
+    provider: Any | None
+    plugin_integration: Any | None
+
+    # Subagent caches
+    _subagent_skill_managers: dict[str, SkillManager]
+    _subagent_memory_systems: dict[str, Any]
+    _additional_subagent_memory_systems: dict[str, Any]
 
     # ── Tool Registration (code-driven, no config dict) ──
 
@@ -143,37 +180,35 @@ class AgentBuilderMixin:
         main_cfg = next((a for a in agents if a.role == "main"), agents[0] if agents else None)
         parent_name = main_cfg.name if main_cfg else "main"
         parent_address = AgentAddress(name=parent_name)
-        peer_names = [a.name for a in agents if a.role == "subagent"]
 
         strategy = DefaultSessionIdStrategy(main_agent_name=parent_name)
-        self.tool_manager.register(SendMessageTool(
-            broker=self.broker, self_address=parent_address,
-            allowed_targets=peer_names or None, registry=self.agent_pool,
-            session_strategy=strategy,
-        ))
-        print("   [OK] send_message registered")
 
         if self.agent_bus is not None:
-            self.tool_manager.register(SendMessageAsyncTool(
-                broker=self.broker, self_address=parent_address,
-                allowed_targets=peer_names or None, agent_bus=self.agent_bus,
-                registry=self.agent_pool, session_strategy=strategy,
+            from framework.multi_agent.communication import AgentCommunicationService
+            service = AgentCommunicationService(
+                source=parent_address,
+                broker=self.broker,
+                registry=self.agent_pool,
+                agent_bus=self.agent_bus,
+                session_strategy=strategy,
                 comm_tracker=self.communication_tracker,
-                invocation_session_targets=peer_names,
+            )
+            self.tool_manager.register(SendToAgentAsyncTool(
+                source=parent_address, broker=self.broker, registry=self.agent_pool,
+                agent_bus=self.agent_bus, service=service,
+                comm_tracker=self.communication_tracker,
             ))
-            print("   [OK] send_message_async registered")
+            print("   [OK] send_to_agent_async registered")
 
-            self.tool_manager.register(DispatchTaskTool(
-                broker=self.broker, self_address=parent_address,
-                allowed_targets=peer_names or None, agent_bus=self.agent_bus,
-                registry=self.agent_pool, session_strategy=strategy,
-                comm_tracker=self.communication_tracker,
+            self.tool_manager.register(ListCommunicationTargetsTool(
+                self_address=parent_address,
+                registry=self.agent_pool,
             ))
-            print("   [OK] dispatch_task registered")
+            print("   [OK] list_communication_targets registered")
 
     # ── Peer / Subagent Tool Manager (code-driven) ──
 
-    async def _build_peer_tool_manager(
+    async def _build_subagent_tool_manager(
         self,
         tools: list[Tool],
         mcp_server_filter: list[str] | None = None,
@@ -294,7 +329,7 @@ class AgentBuilderMixin:
             injection_policy=RestrictedInjectionPolicy(max_session_messages=20),
         )
 
-    async def _create_peer_memory(self, peer_name: str, peer_cfg: Any) -> ContextManager:
+    async def _create_subagent_memory_context(self, peer_name: str, peer_cfg: Any) -> ContextManager:
         from framework.ioc.factories.compression import create_subagent_compression_coordinator
         from framework.memory.core.scope import MemoryAgentRole
 
@@ -316,7 +351,7 @@ class AgentBuilderMixin:
         await memory_system.initialize()
         if self.plugin_integration:
             self.plugin_integration.inject_memory_system_modifiers(memory_system)
-        self._peer_memory_systems[peer_name] = memory_system
+        self._additional_subagent_memory_systems[peer_name] = memory_system
         max_messages = 50
         if peer_memory_cfg is not None and hasattr(peer_memory_cfg, "short_term"):
             max_messages = peer_memory_cfg.short_term.max_messages
@@ -336,11 +371,11 @@ class AgentBuilderMixin:
     # ── Cleanup ──
 
     async def _cleanup_subagent_memory(self, session_id: str) -> None:
-        from framework.multi_agent.session_id import DefaultSessionIdStrategy
         main_cfg = self._main_agent_cfg
         parent_name = main_cfg.name if main_cfg else "main"
         strategy = DefaultSessionIdStrategy(main_agent_name=parent_name)
-        _, sub_name = strategy.parse(session_id)
+        parts = strategy.parse(session_id)
+        sub_name = parts.agent_name
         if sub_name is None:
             return
         memory_system = self._subagent_memory_systems.get(sub_name)
@@ -356,7 +391,7 @@ class AgentBuilderMixin:
 
     # ── Peer Agent Initialization ──
 
-    async def _initialize_peer_agents(self) -> None:
+    async def _initialize_additional_subagents(self) -> None:
         from framework.hook import HookErrorPolicy, HookSpec
         from framework.hook.builtin import SubagentAutoSendHook
         from framework.ioc.factories.descriptors import build_peer_descriptor
@@ -364,7 +399,7 @@ class AgentBuilderMixin:
         if self.agent_pool is None or self.broker is None or self.subagent_service is None:
             return
 
-        peer_cfgs = self._find_peer_cfgs()
+        peer_cfgs = self._find_additional_subagent_cfgs()
         main_cfg = self._main_agent_cfg
         parent_name = main_cfg.name if main_cfg else "main"
 
@@ -396,14 +431,23 @@ class AgentBuilderMixin:
 
             context_manager = memory_ctx
 
-            # register send_message_async (star topology)
+            # register send_to_agent_async (star topology)
             peer_address = AgentAddress(name=peer_name)
             strategy = DefaultSessionIdStrategy(main_agent_name=parent_name)
-            tool_manager.register(SendMessageAsyncTool(
-                broker=self.broker, self_address=peer_address, allowed_targets=[parent_name],
-                agent_bus=self.agent_bus, registry=self.agent_pool,
-                session_strategy=strategy,
+            from framework.multi_agent.communication import AgentCommunicationService
+            peer_service = AgentCommunicationService(
+                source=peer_address, broker=self.broker, registry=self.agent_pool,
+                agent_bus=self.agent_bus, session_strategy=strategy,
                 comm_tracker=self.communication_tracker,
+            )
+            tool_manager.register(SendToAgentAsyncTool(
+                source=peer_address, broker=self.broker, registry=self.agent_pool,
+                agent_bus=self.agent_bus, service=peer_service,
+                comm_tracker=self.communication_tracker,
+            ))
+            tool_manager.register(ListCommunicationTargetsTool(
+                self_address=peer_address,
+                registry=self.agent_pool,
             ))
 
             await self.agent_pool.register_resident(

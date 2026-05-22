@@ -20,8 +20,34 @@ from .message_utils import normalize_agent_messages_for_llm
 from .tool_manager import ToolManager
 
 if TYPE_CHECKING:
+    from framework.multi_agent.comm_kind import AgentCommKind
     from framework.runtime.models import TurnIdentity
     from framework.runtime.services import AgentRuntime
+
+
+@dataclass(frozen=True)
+class AgentSessionMeta:
+    """Framework-populated session metadata for the current turn.
+
+    Populated by the framework before each turn. The LLM does not provide
+    ``conversation_id``, ``agent_name``, or ``comm_kind`` — these are
+    framework-owned. Tools read session identity from this object.
+    """
+
+    conversation_id: str
+    agent_name: str
+    comm_kind: AgentCommKind
+    invocation_id: str | None = None
+
+    @property
+    def session_id(self) -> str:
+        from framework.multi_agent.session_id import DefaultSessionIdStrategy
+
+        return DefaultSessionIdStrategy().format(
+            conversation_id=self.conversation_id,
+            agent_name=self.agent_name,
+            invocation_id=self.invocation_id,
+        )
 
 
 @dataclass
@@ -39,6 +65,7 @@ class AgentContext:
     emitter: ContentEmitter | None = None
     runtime: AgentRuntime | None = None
     identity: TurnIdentity | None = None
+    session_meta: AgentSessionMeta | None = None
 
     def add_attachment(self, path: str) -> None:
         self.attachments.append(path)

@@ -186,6 +186,27 @@ class TestLocalFileInboxServer:
             assert s1_msgs[0].content == "s1msg"
             assert await server.count("s2") == 1
 
+    async def test_list_sessions_returns_original_session_id_from_metadata(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            server = LocalFileInboxServer(workspace=Path(tmpdir))
+            session_id = "30932BC02F825E64D069B1E67347C8FF:office-expert:c3f7b726"
+            await server.receive(
+                session_id,
+                InboxMessage(
+                    session_id=session_id,
+                    source="main",
+                    content="make a report",
+                    message_type="agent_message",
+                    message_id="m1",
+                    metadata={"agent_session_id": session_id},
+                ),
+            )
+
+            sessions = await server.list_sessions()
+
+            assert session_id in sessions
+            assert session_id.replace(":", "_") not in sessions
+
     async def test_persists_across_instances(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             workspace = Path(tmpdir)
