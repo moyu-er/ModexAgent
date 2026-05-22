@@ -27,7 +27,8 @@ from ..approval.constants import ApprovalDecision
 from ..approval.response import parse_input_command
 from ..approval.types import ApprovalAction
 from ..control.ui.abc import ControlUserInterface
-from ..core.agent import Agent, AgentContext
+from ..core.agent import Agent, AgentContext, AgentSessionMeta
+from ..multi_agent.comm_kind import AgentCommKind
 from ..core.context import ContextManager
 from ..core.emitter import AgentResult, StreamingAwareEmitter
 from ..core.graph.interrupt import GraphInterrupt
@@ -572,6 +573,12 @@ class AgentPipeline:
             max_iterations=self.max_iterations,
         )
         agent_context.identity = turn_identity
+        agent_context.session_meta = AgentSessionMeta(
+            conversation_id=session_id,
+            agent_name=getattr(self.agent, "name", "main"),
+            comm_kind=AgentCommKind.NORMAL,
+            uuid=None,
+        )
 
         # ---- governance (pending injection, etc.) — unconditional ----
         base_services = self.runtime_services

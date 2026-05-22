@@ -514,7 +514,7 @@ class AgentPool(AgentRegistry):
             "conversation_id": conversation_id,
             "agent_session_id": session_id,
             "message_type": envelope.message_type,
-            "invocation_id": envelope.payload.get("invocation_id"),
+            "uuid": envelope.uuid,
             "source_agent": envelope.source.name if envelope.source else None,
             **envelope.metadata,
         }
@@ -522,12 +522,12 @@ class AgentPool(AgentRegistry):
             prompt_section = self._comm_tracker.build_prompt_section(descriptor.address.name)
             if prompt_section:
                 metadata["sideband_system_prompt"] = prompt_section
-        invocation_id = envelope.payload.get("invocation_id") or envelope.correlation_id
-        if invocation_id and self._comm_tracker is not None:
+        task_uuid = envelope.uuid or envelope.correlation_id
+        if task_uuid and self._comm_tracker is not None:
             self._comm_tracker.record_receive(
                 agent_name=descriptor.address.name,
                 source_agent=envelope.source.name if envelope.source else "unknown",
-                invocation_id=str(invocation_id),
+                invocation_id=str(task_uuid),
                 content_summary=task_prompt[:500],
             )
         result: AgentResult | None = None
@@ -581,19 +581,19 @@ class AgentPool(AgentRegistry):
                 "stop_reason": result.stop_reason,
                 "partial_content": getattr(result, "partial_content", None),
                 "error": getattr(result, "error", None),
-                "invocation_id": envelope.payload.get("invocation_id") or envelope.correlation_id,
             },
             source=descriptor.address,
             target=parent_address,
             message_type="subagent_result",
             conversation_id=conversation_id,
             agent_session_id=parent_session_id,
+            uuid=envelope.uuid or envelope.correlation_id,
             correlation_id=envelope.correlation_id,
         )
-        result_invocation_id = envelope.payload.get("invocation_id") or envelope.correlation_id
-        if result_invocation_id and self._comm_tracker is not None:
+        result_uuid = envelope.uuid or envelope.correlation_id
+        if result_uuid and self._comm_tracker is not None:
             self._comm_tracker.acknowledge(
-                invocation_id=str(result_invocation_id),
+                invocation_id=str(result_uuid),
                 reply_from=descriptor.address.name,
                 reply_summary=(result.content or "")[:500],
             )
@@ -642,7 +642,7 @@ class AgentPool(AgentRegistry):
             "conversation_id": conversation_id,
             "agent_session_id": session_id,
             "message_type": envelope.message_type,
-            "invocation_id": envelope.payload.get("invocation_id"),
+            "uuid": envelope.uuid,
             "source_agent": source_name,
             "sender_agent": source_name,
             "receiver_agent": target_name,
@@ -654,11 +654,11 @@ class AgentPool(AgentRegistry):
             )
             if prompt_section:
                 metadata["sideband_system_prompt"] = prompt_section
-        invocation_id = envelope.payload.get("invocation_id") or envelope.correlation_id
-        if invocation_id and self._comm_tracker is not None:
+        task_uuid = envelope.uuid or envelope.correlation_id
+        if task_uuid and self._comm_tracker is not None:
             if envelope.message_type == "subagent_result":
                 self._comm_tracker.acknowledge(
-                    invocation_id=str(invocation_id),
+                    invocation_id=str(task_uuid),
                     reply_from=source_name or "unknown",
                     reply_summary=content[:500],
                 )
@@ -666,7 +666,7 @@ class AgentPool(AgentRegistry):
                 self._comm_tracker.record_receive(
                     agent_name=instance.descriptor.address.name,
                     source_agent=source_name or "unknown",
-                    invocation_id=str(invocation_id),
+                    invocation_id=str(task_uuid),
                     content_summary=content[:500],
                 )
         if instance.pipeline is not None:
@@ -676,14 +676,14 @@ class AgentPool(AgentRegistry):
                     self._track_session(
                         session_id,
                         instance.descriptor.address.name,
-                        is_dynamic=bool(envelope.payload.get("invocation_id")),
+                        is_dynamic=bool(envelope.uuid),
                     )
                 else:
                     self._touch_session(session_id)
                 await instance.pipeline.process_message(
                     InputMessage(content=content, session_id=session_id, metadata=metadata)
                 )
-            if envelope.payload.get("invocation_id"):
+            if envelope.uuid:
                 await self._enforce_session_cap(instance.descriptor.address.name)
 
     async def _dispatch_raw_broker_message(
