@@ -362,7 +362,7 @@ class AgentBuilderMixin:
         if self.agent_pool is None or self.broker is None or self.subagent_service is None:
             return
 
-        peer_cfgs = self._find_peer_cfgs()
+        peer_cfgs = self._find_additional_subagent_cfgs()
         main_cfg = self._main_agent_cfg
         parent_name = main_cfg.name if main_cfg else "main"
 
