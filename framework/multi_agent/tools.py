@@ -13,7 +13,6 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from framework.core.tool_manager import Tool, ToolConfig
-from framework.multi_agent.comm_kind import AgentCommKind
 
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
@@ -23,7 +22,6 @@ if TYPE_CHECKING:
     from framework.multi_agent.comm_tracker import CommunicationTracker
     from framework.multi_agent.communication import AgentCommunicationService
     from framework.multi_agent.registry import AgentRegistry
-    from framework.multi_agent.session_id import DefaultSessionIdStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +113,6 @@ class SendToAgentTool(Tool):
 
     @staticmethod
     def _get_context() -> AgentContext | None:
-        import contextvars
         from framework.core.agent import current_agent_context
         return current_agent_context.get(None)
 
@@ -180,6 +177,5 @@ class SendToAgentAsyncTool(Tool):
 
     @staticmethod
     def _get_context() -> AgentContext | None:
-        import contextvars
         from framework.core.agent import current_agent_context
         return current_agent_context.get(None)

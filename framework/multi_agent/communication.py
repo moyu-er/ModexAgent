@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import uuid as _uuid_mod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from framework.multi_agent.comm_kind import AgentCommKind
 from framework.multi_agent.session_id import DefaultSessionIdStrategy
