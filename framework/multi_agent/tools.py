@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from framework.multi_agent.address import AgentAddress
     from framework.multi_agent.bus import AgentMessageBus
     from framework.multi_agent.comm_tracker import CommunicationTracker
-    from framework.multi_agent.registry import AgentRegistry
+    from framework.multi_agent.registry import AgentProfile, AgentRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ _MAX_DYNAMIC_SPECIALTIES = 3
 _MAX_DYNAMIC_DESCRIPTION_LENGTH = 800
 
 
-def _build_peer_description(profile) -> str:
+def _build_peer_description(profile: AgentProfile) -> str:
     parts = [profile.name]
     if profile.role_description:
         parts.append(f" ({profile.role_description})")
@@ -135,7 +135,7 @@ class SendMessageTool(Tool):
             },
         }
 
-    def _is_allowed(self, caller_context: dict | None = None) -> bool:
+    def _is_allowed(self, caller_context: dict[str, Any] | None = None) -> bool:
         if self._allowed_callers is None:
             return True
         caller = (caller_context or {}).get("agent_name", "")
@@ -146,13 +146,14 @@ class SendMessageTool(Tool):
             return True
         return target_agent in self._allowed_targets
 
-    async def execute(self, **kwargs) -> str:
-        target_agent = kwargs.get("target_agent", "")
-        content = kwargs.get("content", "")
-        message_type = kwargs.get("message_type", "agent_message")
-        caller_context = kwargs.get("caller_context")
-        conversation_id = kwargs.get("conversation_id", "")
-        agent_session_id = kwargs.get("agent_session_id", "")
+    async def execute(self, **kwargs: Any) -> str:
+        target_agent = str(kwargs.get("target_agent", ""))
+        content = str(kwargs.get("content", ""))
+        message_type = str(kwargs.get("message_type", "agent_message"))
+        caller_context_value = kwargs.get("caller_context")
+        caller_context = caller_context_value if isinstance(caller_context_value, dict) else None
+        conversation_id = str(kwargs.get("conversation_id", ""))
+        agent_session_id = str(kwargs.get("agent_session_id", ""))
 
         # 自动从当前上下文填充 conversation_id（确保 inbox 路由正确）
         if not conversation_id:
@@ -219,6 +220,7 @@ class SendMessageAsyncTool(Tool):
         wakeup_timeout: float | None = None,
         session_strategy: SessionIdStrategy | None = None,
         comm_tracker: CommunicationTracker | None = None,
+        invocation_session_targets: list[str] | None = None,
     ):
         self._broker = broker
         self._self_address = self_address
@@ -229,7 +231,10 @@ class SendMessageAsyncTool(Tool):
         self._wakeup_timeout = wakeup_timeout if wakeup_timeout is not None and wakeup_timeout > 0 else 1.0
         self._session_strategy = session_strategy or DefaultSessionIdStrategy()
         self._comm_tracker = comm_tracker
-        self._wakeup_tasks: set[asyncio.Task] = set()
+        self._invocation_session_targets = (
+            set(invocation_session_targets) if invocation_session_targets else set()
+        )
+        self._wakeup_tasks: set[asyncio.Task[None]] = set()
         super().__init__(
             name="send_message_async",
             description=(
@@ -276,7 +281,7 @@ class SendMessageAsyncTool(Tool):
             },
         }
 
-    def _is_allowed(self, caller_context: dict | None = None) -> bool:
+    def _is_allowed(self, caller_context: dict[str, Any] | None = None) -> bool:
         if self._allowed_callers is None:
             return True
         caller = (caller_context or {}).get("agent_name", "")
@@ -287,14 +292,16 @@ class SendMessageAsyncTool(Tool):
             return True
         return target_agent in self._allowed_targets
 
-    async def execute(self, **kwargs) -> str:
-        target_agent = kwargs.get("target_agent", "")
-        content = kwargs.get("content", "")
-        message_type = kwargs.get("message_type", "agent_message")
-        invocation_id = kwargs.get("invocation_id")
-        caller_context = kwargs.get("caller_context")
-        conversation_id = kwargs.get("conversation_id", "")
-        agent_session_id = kwargs.get("agent_session_id", "")
+    async def execute(self, **kwargs: Any) -> str:
+        target_agent = str(kwargs.get("target_agent", ""))
+        content = str(kwargs.get("content", ""))
+        message_type = str(kwargs.get("message_type", "agent_message"))
+        invocation_id_value = kwargs.get("invocation_id")
+        invocation_id = str(invocation_id_value) if invocation_id_value else ""
+        caller_context_value = kwargs.get("caller_context")
+        caller_context = caller_context_value if isinstance(caller_context_value, dict) else None
+        conversation_id = str(kwargs.get("conversation_id", ""))
+        agent_session_id = str(kwargs.get("agent_session_id", ""))
 
         # 自动从当前上下文填充 conversation_id（确保 inbox 路由正确）
         if not conversation_id:
@@ -330,7 +337,8 @@ class SendMessageAsyncTool(Tool):
         base_session = agent_session_id or self._session_strategy.target_session(
             conversation_id, target_agent, self._self_address.name,
         )
-        if invocation_id and message_type == "task_request" and not base_session.endswith(f":{invocation_id}"):
+        uses_invocation_session = target_agent in self._invocation_session_targets
+        if invocation_id and uses_invocation_session and not base_session.endswith(f":{invocation_id}"):
             base_session = f"{base_session}:{invocation_id}"
 
         payload = {"content": content, "message_type": message_type}
@@ -472,7 +480,7 @@ class DispatchTaskTool(Tool):
             },
         )
 
-    def _is_allowed(self, caller_context: dict | None = None) -> bool:
+    def _is_allowed(self, caller_context: dict[str, Any] | None = None) -> bool:
         if self._allowed_callers is None:
             return True
         if not caller_context:
@@ -485,11 +493,13 @@ class DispatchTaskTool(Tool):
             return True
         return target_agent in self._allowed_targets
 
-    async def execute(
-        self, target_agent: str, task_prompt: str, context: str | None = None,
-        **kwargs: object,
-    ) -> str:
-        caller_context = kwargs.get("caller_context")
+    async def execute(self, **kwargs: Any) -> str:
+        target_agent = str(kwargs.get("target_agent", ""))
+        task_prompt = str(kwargs.get("task_prompt", ""))
+        context_value = kwargs.get("context")
+        context = context_value if isinstance(context_value, str) else None
+        caller_context_value = kwargs.get("caller_context")
+        caller_context = caller_context_value if isinstance(caller_context_value, dict) else None
 
         if not self._is_allowed(caller_context):
             return "Error: dispatch_task is not allowed for this caller."
@@ -529,7 +539,7 @@ class DispatchTaskTool(Tool):
         envelope = AgentMessageEnvelope(
             payload={
                 "content": content,
-                "task_prompt": task_prompt,
+                "task_prompt": content,
                 "message_type": "task_request",
                 "invocation_id": inv_id,
             },

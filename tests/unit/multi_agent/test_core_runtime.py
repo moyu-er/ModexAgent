@@ -614,6 +614,39 @@ async def test_subagent_service_registers_resident(any_broker):
 
 
 @pytest.mark.asyncio
+async def test_subagent_service_admit_dynamic_namespaces_descriptor(any_broker):
+    factory = MagicMock(spec=AgentFactory)
+    fake_instance = MagicMock()
+    fake_instance.pipeline = MagicMock()
+    fake_instance.stop = AsyncMock()
+    fake_instance.context_manager = MagicMock()
+    factory.create_agent = AsyncMock(return_value=fake_instance)
+    pool = AgentPool(
+        broker=any_broker,
+        agent_factory=factory,
+        enable_inbox_polling=False,
+    )
+    mgr = SubagentService(
+        pool=pool,
+        factory=factory,
+        broker=any_broker,
+        agent_bus=MagicMock(),
+    )
+    descriptor = AgentDescriptor(address=AgentAddress(name="worker"))
+    try:
+        session_id = await mgr.admit_dynamic(
+            descriptor=descriptor,
+            initial_task="do work",
+        )
+        dynamic_names = [name for name in pool._agents if name.startswith("dyn.worker.")]
+        assert len(dynamic_names) == 1
+        assert "worker" not in pool._agents
+        assert dynamic_names[0] in session_id
+    finally:
+        await pool.shutdown_all()
+
+
+@pytest.mark.asyncio
 async def test_default_agent_factory_uses_allowed_skills():
     from framework.core.skills import FileSkillSource, ProgressiveBuilder, SkillManager
 
@@ -761,3 +794,75 @@ async def test_agent_pool_tracks_and_caps_invocation_sessions(any_broker):
         await pool.shutdown_all()
 
 
+@pytest.mark.asyncio
+async def test_agent_pool_session_cap_evicts_lru_after_touching_oldest(any_broker):
+    fake_instance = MagicMock()
+    fake_instance.context_manager = MagicMock()
+    fake_instance.context_manager.clear = AsyncMock()
+    fake_instance.stop = AsyncMock()
+
+    pool = AgentPool(
+        broker=any_broker,
+        agent_factory=MagicMock(),
+        enable_inbox_polling=False,
+        retention=SessionRetentionPolicy(max_sessions_per_subagent=2),
+    )
+    pool._agents["worker"] = fake_instance
+    try:
+        pool._track_session("conv:worker:inv_old", "worker", is_dynamic=True)
+        pool._track_session("conv:worker:inv_mid", "worker", is_dynamic=True)
+        pool._touch_session("conv:worker:inv_old")
+        pool._track_session("conv:worker:inv_new", "worker", is_dynamic=True)
+
+        await pool._enforce_session_cap("worker")
+
+        assert "conv:worker:inv_old" in pool._session_meta
+        assert "conv:worker:inv_new" in pool._session_meta
+        assert "conv:worker:inv_mid" not in pool._session_meta
+        fake_instance.context_manager.clear.assert_awaited_once_with("conv:worker:inv_mid")
+    finally:
+        await pool.shutdown_all()
+
+
+@pytest.mark.asyncio
+async def test_agent_pool_injects_communication_sideband_metadata(any_broker):
+    tracker = CommunicationTracker()
+    tracker.record_receive(
+        agent_name="worker",
+        source_agent="main",
+        invocation_id="inv_1",
+        content_summary="review file",
+    )
+    fake_instance = MagicMock()
+    fake_instance.pipeline = MagicMock()
+    fake_instance.pipeline.process_message = AsyncMock(return_value=AgentResult(content="ok"))
+    fake_instance.stop = AsyncMock()
+    descriptor = AgentDescriptor(address=AgentAddress(name="worker"))
+    fake_instance.descriptor = descriptor
+    pool = AgentPool(
+        broker=any_broker,
+        agent_factory=MagicMock(),
+        enable_inbox_polling=False,
+        comm_tracker=tracker,
+    )
+    pool._agents["worker"] = fake_instance
+    try:
+        envelope = AgentMessageEnvelope(
+            payload={
+                "content": "follow up",
+                "message_type": "agent_message",
+            },
+            source=AgentAddress(name="main"),
+            target=AgentAddress(name="worker"),
+            message_type="agent_message",
+            conversation_id="conv",
+            agent_session_id="conv:worker",
+        )
+        await pool._dispatch_agent_message(fake_instance, envelope)
+
+        input_msg = fake_instance.pipeline.process_message.await_args.args[0]
+        sideband = input_msg.metadata["sideband_system_prompt"]
+        assert "Pending Communications" in sideband
+        assert "inv_1" in sideband
+    finally:
+        await pool.shutdown_all()

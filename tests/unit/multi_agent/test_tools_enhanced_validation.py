@@ -282,6 +282,7 @@ class TestSendMessageAsyncToolTaskRequestPayload:
             self_address=AgentAddress(name="main"),
             allowed_targets=["worker"],
             agent_bus=agent_bus,
+            invocation_session_targets=["worker"],
         )
 
         await tool.execute(
@@ -362,6 +363,29 @@ class TestDispatchTaskTool:
         )
         await broker.stop()
 
+    async def test_dispatch_preserves_additional_context_in_task_prompt(self):
+        broker = InMemoryMessageBroker()
+        await broker.start()
+        target_addr = AgentAddress(kind="agent", name="worker")
+        await broker.register_consumer(target_addr)
+
+        tool = DispatchTaskTool(
+            broker=broker,
+            self_address=AgentAddress(name="main"),
+            allowed_targets=["worker"],
+        )
+
+        await tool.execute(
+            target_agent="worker",
+            task_prompt="review file",
+            context="focus on imports",
+        )
+
+        msg = await broker.consume(target_addr)
+        assert msg.payload["task_prompt"] == "review file\n\n[Additional Context]\nfocus on imports"
+        assert msg.payload["content"] == msg.payload["task_prompt"]
+        await broker.stop()
+
     async def test_dispatch_allows_registered_target(self):
         broker = InMemoryMessageBroker()
         await broker.start()
@@ -423,6 +447,7 @@ class TestSendMessageAsyncInvocationRouting:
             self_address=AgentAddress(name="main"),
             allowed_targets=["worker"],
             agent_bus=agent_bus,
+            invocation_session_targets=["worker"],
         )
 
         await tool.execute(
@@ -444,6 +469,51 @@ class TestSendMessageAsyncInvocationRouting:
             "Payload should contain invocation_id"
         )
 
+    async def test_agent_message_with_invocation_id_appends_to_subagent_session(self):
+        agent_bus = _make_bus()
+        tool = SendMessageAsyncTool(
+            broker=InMemoryMessageBroker(),
+            self_address=AgentAddress(name="main"),
+            allowed_targets=["worker"],
+            agent_bus=agent_bus,
+            invocation_session_targets=["worker"],
+        )
+
+        await tool.execute(
+            target_agent="worker",
+            content="follow up",
+            conversation_id="conv_001",
+            message_type="agent_message",
+            invocation_id="inv_followup",
+        )
+
+        envelopes = await agent_bus.poll("conv_001:worker", limit=1)
+        assert len(envelopes) == 1
+        assert envelopes[0].agent_session_id == "conv_001:worker:inv_followup"
+        assert envelopes[0].payload.get("invocation_id") == "inv_followup"
+
+    async def test_invocation_id_does_not_append_without_invocation_session_target(self):
+        agent_bus = _make_bus()
+        tool = SendMessageAsyncTool(
+            broker=InMemoryMessageBroker(),
+            self_address=AgentAddress(name="worker"),
+            allowed_targets=["main"],
+            agent_bus=agent_bus,
+        )
+
+        await tool.execute(
+            target_agent="main",
+            content="done",
+            conversation_id="conv_001",
+            message_type="agent_message",
+            invocation_id="inv_result",
+        )
+
+        envelopes = await agent_bus.poll("conv_001:main", limit=1)
+        assert len(envelopes) == 1
+        assert envelopes[0].agent_session_id == "conv_001:main"
+        assert envelopes[0].payload.get("invocation_id") == "inv_result"
+
     async def test_without_invocation_id_uses_default_session(self):
         agent_bus = _make_bus()
         tool = SendMessageAsyncTool(
@@ -451,6 +521,7 @@ class TestSendMessageAsyncInvocationRouting:
             self_address=AgentAddress(name="main"),
             allowed_targets=["worker"],
             agent_bus=agent_bus,
+            invocation_session_targets=["worker"],
         )
 
         await tool.execute(
@@ -478,6 +549,7 @@ class TestSendMessageAsyncInvocationRouting:
             self_address=AgentAddress(name="main"),
             allowed_targets=["worker"],
             agent_bus=agent_bus,
+            invocation_session_targets=["worker"],
         )
 
         await tool.execute(

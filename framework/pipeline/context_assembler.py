@@ -20,7 +20,8 @@ from ..memory.history import (
 if TYPE_CHECKING:
     from ..core.skills import SkillManager
     from ..core.tool_manager import ToolManager
-    from ..multi_agent import AgentDescriptor, MultiAgentContextBuilder
+    from ..multi_agent import AgentDescriptor
+    from ..utils.context_builder import MultiAgentContextBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +135,11 @@ async def assemble_context(
         skill_manager=skill_manager,
         runtime_info=runtime_info,
     )
+    sideband_prompt = input_metadata.get("sideband_system_prompt")
+    if isinstance(sideband_prompt, str) and sideband_prompt:
+        context_state.system_prompt = "\n\n".join(
+            part for part in (context_state.system_prompt, sideband_prompt) if part
+        )
 
     # MultiAgentContextBuilder
     if context_builder is not None and agent_descriptor is not None:
@@ -165,6 +171,10 @@ async def assemble_context(
         system_msgs = [m for m in built_messages if m.get("role") == "system"]
         if system_msgs:
             context_state.system_prompt = "\n\n".join(m.get("content", "") for m in system_msgs)
+            if isinstance(sideband_prompt, str) and sideband_prompt:
+                context_state.system_prompt = "\n\n".join(
+                    part for part in (context_state.system_prompt, sideband_prompt) if part
+                )
         non_system = [m for m in built_messages if m.get("role") != "system"]
         if append_user_message and user_message.get("role") == MessageRole.USER and not any(
             m.get("role") == MessageRole.USER for m in non_system

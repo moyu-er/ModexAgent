@@ -69,8 +69,9 @@ from framework.multi_agent import (
     AgentPool,
     CommunicationTracker,
     DefaultAgentFactory,
+    SendMessageAsyncTool,
     SessionRetentionPolicy,
-    SubagentService, SendMessageAsyncTool,
+    SubagentService,
 )
 from framework.multi_agent.descriptor import AgentLLMConfig
 from framework.multi_agent.inbox.consumer import InboxConsumer

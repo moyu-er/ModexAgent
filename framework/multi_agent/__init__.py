@@ -67,6 +67,7 @@ __all__ = [
     "CommunicationTracker",
     "CompositeTaskEventReporter",
     "ContextGovernanceConfig",
+    "current_conversation_id",
     "DefaultAgentFactory",
     "DefaultMeshRouter",
     "DispatchTaskTool",
