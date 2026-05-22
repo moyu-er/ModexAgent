@@ -39,6 +39,16 @@ class AgentSessionMeta:
     comm_kind: AgentCommKind
     uuid: str | None = None
 
+    @property
+    def session_id(self) -> str:
+        from framework.multi_agent.session_id import DefaultSessionIdStrategy
+
+        return DefaultSessionIdStrategy().format(
+            conversation_id=self.conversation_id,
+            agent_name=self.agent_name,
+            uuid=self.uuid,
+        )
+
 
 @dataclass
 class AgentContext:

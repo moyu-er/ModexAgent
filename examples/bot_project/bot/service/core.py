@@ -69,7 +69,6 @@ from framework.multi_agent import (
     AgentPool,
     CommunicationTracker,
     DefaultAgentFactory,
-    SendMessageAsyncTool,
     SessionRetentionPolicy,
     SubagentService,
 )
@@ -602,13 +601,20 @@ class BotService(AgentBuilderMixin):
                     sub_instance.pipeline.governance = create_subagent_governance(
                         subagent_cfg.memory, self._app_config.llm.max_tokens,
                     )
-                    # Register send_message_async so subagent can reply to parent
+                    # Register send_to_agent_async so subagent can reply to parent
+                    from framework.multi_agent.communication import AgentCommunicationService
+                    from framework.multi_agent.tools import SendToAgentAsyncTool
                     sub_address = AgentAddress(name=descriptor.address.name)
                     strategy = DefaultSessionIdStrategy(main_agent_name=parent_agent_name)
-                    sub_tool_manager.register(SendMessageAsyncTool(
-                        broker=self.broker, self_address=sub_address,
-                        allowed_targets=[parent_agent_name], agent_bus=self.agent_bus,
-                        registry=self.agent_pool, session_strategy=strategy,
+                    sub_service = AgentCommunicationService(
+                        source=sub_address, broker=self.broker, registry=self.agent_pool,
+                        agent_bus=self.agent_bus, session_strategy=strategy,
+                        comm_tracker=self.communication_tracker,
+                    )
+                    sub_tool_manager.register(SendToAgentAsyncTool(
+                        source=sub_address, broker=self.broker, registry=self.agent_pool,
+                        agent_bus=self.agent_bus, service=sub_service,
+                        comm_tracker=self.communication_tracker,
                     ))
 
                 print(f"[OK] Subagent '{descriptor.address.name}' registered as resident")

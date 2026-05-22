@@ -29,6 +29,7 @@ from ..approval.types import ApprovalAction
 from ..control.ui.abc import ControlUserInterface
 from ..core.agent import Agent, AgentContext, AgentSessionMeta
 from ..multi_agent.comm_kind import AgentCommKind
+from ..multi_agent.session_id import DefaultSessionIdStrategy
 from ..core.context import ContextManager
 from ..core.emitter import AgentResult, StreamingAwareEmitter
 from ..core.graph.interrupt import GraphInterrupt
@@ -575,11 +576,14 @@ class AgentPipeline:
             max_iterations=self.max_iterations,
         )
         agent_context.identity = turn_identity
+        # Parse session_id to extract clean conversation_id and uuid
+        strategy = DefaultSessionIdStrategy()
+        parts = strategy.parse(session_id)
         agent_context.session_meta = AgentSessionMeta(
-            conversation_id=session_id,
-            agent_name=getattr(self.agent, "name", "main"),
+            conversation_id=parts.conversation_id,
+            agent_name=parts.agent_name or getattr(self.agent, "name", "main"),
             comm_kind=self.agent_descriptor.comm_kind if self.agent_descriptor else AgentCommKind.NORMAL,
-            uuid=(input_metadata or {}).get("uuid") if (
+            uuid=parts.uuid or (input_metadata or {}).get("uuid") if (
                 self.agent_descriptor and self.agent_descriptor.comm_kind == AgentCommKind.SUBAGENT
             ) else None,
         )

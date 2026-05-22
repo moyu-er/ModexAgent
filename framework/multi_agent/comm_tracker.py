@@ -240,17 +240,17 @@ class CommunicationTracker:
         for record in digest.pending_sent:
             lines.append(
                 f"- **[SENT] To: {record.target_agent}** "
-                f"(invocation_id: {record.invocation_id or 'N/A'})\n"
+                f"(task uuid: {record.invocation_id or 'N/A'})\n"
                 f"  Content: {record.content_summary}\n"
-                f"  Status: awaiting reply — use this invocation_id in responses"
+                f"  Status: awaiting reply — use this uuid in send_to_agent_async responses"
             )
 
         for record in digest.pending_received:
             lines.append(
                 f"- **[RECEIVED] From: {record.target_agent}** "
-                f"(invocation_id: {record.invocation_id or 'N/A'})\n"
+                f"(task uuid: {record.invocation_id or 'N/A'})\n"
                 f"  Content: {record.content_summary}\n"
-                f"  Status: needs acknowledgment — reply with matching invocation_id"
+                f"  Status: needs acknowledgment — reply with matching uuid"
             )
 
         return "\n".join(lines)
