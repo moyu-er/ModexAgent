@@ -19,8 +19,7 @@ from framework.multi_agent.inbox.consumer import InboxConsumer
 from framework.multi_agent.inbox.producer import InboxProducer
 from framework.multi_agent.inbox.server_memory import InMemoryInboxServer
 from framework.multi_agent.inbox.types import InboxMessage
-from framework.multi_agent.tools import SendMessageAsyncTool, SendMessageTool
-from framework.multi_agent.utils import format_pool_session_id
+from framework.multi_agent.session_id import DefaultSessionIdStrategy
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -62,7 +61,7 @@ class TestSendMessageAsyncTool:
         assert result == "Async message queued for main."
 
         # Verify the message is in the inbox under the correct session_id
-        session_id = format_pool_session_id("conv_001", "main")
+        session_id = DefaultSessionIdStrategy().format(conversation_id="conv_001", agent_name="main")
         polled = await bus.poll(session_id, limit=10)
         assert len(polled) == 1
         assert polled[0].payload["content"] == "坦克大战已完成！"
@@ -284,7 +283,7 @@ class TestPeerAgentReplyChain:
         assert "queued" in result
 
         # 2. Verify main's inbox has the message (non-destructive check)
-        main_session = format_pool_session_id("conv_002", "main")
+        main_session = DefaultSessionIdStrategy().format(conversation_id="conv_002", agent_name="main")
         assert await bus.has_pending(main_session) is True
 
         # 3. Main consumes the message (simulating InboxFlushHook or wakeup)
@@ -314,7 +313,7 @@ class TestPeerAgentReplyChain:
                 conversation_id="conv_003",
             )
 
-        session = format_pool_session_id("conv_003", "main")
+        session = DefaultSessionIdStrategy().format(conversation_id="conv_003", agent_name="main")
         assert await bus.has_pending(session) is True
 
         results = await bus.poll(session, limit=10)
@@ -348,8 +347,8 @@ class TestPeerAgentReplyChain:
         )
 
         # Check isolation
-        main_session = format_pool_session_id("conv_004", "main")
-        peer_session = format_pool_session_id("conv_004", "peer")
+        main_session = DefaultSessionIdStrategy().format(conversation_id="conv_004", agent_name="main")
+        peer_session = DefaultSessionIdStrategy().format(conversation_id="conv_004", agent_name="peer")
 
         main_msgs = await bus.poll(main_session, limit=10)
         peer_msgs = await bus.poll(peer_session, limit=10)
@@ -447,7 +446,7 @@ class TestWakeupTimeoutNoDuplicateConsumption:
         )
 
         # Message is in inbox
-        session = format_pool_session_id("conv_wakeup", "main")
+        session = DefaultSessionIdStrategy().format(conversation_id="conv_wakeup", agent_name="main")
         assert await bus.has_pending(session) is True
 
         # Simulate early consumption (e.g., by InboxFlushHook or another wakeup)

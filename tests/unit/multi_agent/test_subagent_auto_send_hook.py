@@ -1,7 +1,7 @@
 """Tests for SubagentAutoSendHook.
 
 Covers:
-- Auto-forwarding when agent forgets to call send_message_async
+- Auto-forwarding when agent forgets to call send_to_agent_async
 - Skipping when RuntimeContext records a communication tool call
 - Skipping when content is empty
 - before_turn is a no-op (clearing is done by ReActAgent)
@@ -49,7 +49,7 @@ class TestSubagentAutoSendHook:
     # ------------------------------------------------------------------
 
     async def test_auto_sends_when_no_tool_call(self):
-        """Content exists and no send_message in context → bus.send is called."""
+        """Content exists and no send_to_agent in context → bus.send is called."""
         bus = self._make_bus()
         hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
         mgr = RuntimeContextManager()
@@ -71,8 +71,8 @@ class TestSubagentAutoSendHook:
     # 2. Skip when RuntimeContext has a communication tool call
     # ------------------------------------------------------------------
 
-    async def test_skips_when_send_message_async_recorded(self):
-        """send_message_async was recorded → bus.send is NOT called."""
+    async def test_skips_when_send_to_agent_async_recorded(self):
+        """send_to_agent_async was recorded → bus.send is NOT called."""
         bus = self._make_bus()
         hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
         mgr = RuntimeContextManager()
@@ -80,13 +80,13 @@ class TestSubagentAutoSendHook:
         result = AgentResult(content="Already sent via tool.")
 
         rc = await mgr.get_context("conv_001:main")
-        await rc.record_tool_call("send_message_async", {"target_agent": "main"}, "ok")
+        await rc.record_tool_call("send_to_agent_async", {"target_agent": "main"}, "ok")
 
         await hook.after_turn(ctx, result)
         bus.send.assert_not_awaited()
 
-    async def test_skips_when_send_message_recorded(self):
-        """send_message was recorded → bus.send is NOT called."""
+    async def test_skips_when_send_to_agent_recorded(self):
+        """send_to_agent was recorded → bus.send is NOT called."""
         bus = self._make_bus()
         hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
         mgr = RuntimeContextManager()
@@ -94,7 +94,7 @@ class TestSubagentAutoSendHook:
         result = AgentResult(content="Already sent via tool.")
 
         rc = await mgr.get_context("conv_001:main")
-        await rc.record_tool_call("send_message", {"target_agent": "main"}, "ok")
+        await rc.record_tool_call("send_to_agent", {"target_agent": "main"}, "ok")
 
         await hook.after_turn(ctx, result)
         bus.send.assert_not_awaited()
@@ -104,7 +104,7 @@ class TestSubagentAutoSendHook:
     # ------------------------------------------------------------------
 
     async def test_auto_forwards_with_non_comm_tools(self):
-        """search tool was called but not send_message → bus.send IS called."""
+        """search tool was called but not send_to_agent → bus.send IS called."""
         bus = self._make_bus()
         hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
         mgr = RuntimeContextManager()
@@ -170,7 +170,7 @@ class TestSubagentAutoSendHook:
 
         # Turn 1: tool sends
         rc = await mgr.get_context("conv_001:main")
-        await rc.record_tool_call("send_message_async", {"to": "main"}, "ok")
+        await rc.record_tool_call("send_to_agent_async", {"to": "main"}, "ok")
         result1 = AgentResult(content="Sent via tool.")
         await hook.after_turn(ctx, result1)
         bus.send.assert_not_awaited()
