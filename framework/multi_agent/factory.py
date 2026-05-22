@@ -198,6 +198,7 @@ class DefaultAgentFactory(AgentFactory):
                 BrokerOutputAdapter,
             )
             from framework.messaging.broker_memory import InMemoryMessageBroker
+            from framework.multi_agent.router import DefaultMeshRouter
             from framework.pipeline.pipeline import AgentPipeline
 
             if broker is None:
@@ -266,6 +267,8 @@ class DefaultAgentFactory(AgentFactory):
                 context_manager_factory=context_manager_factory,
                 runtime_context_manager=self._runtime_context_manager,
                 safety=descriptor.safety_policy,
+                agent_descriptor=descriptor,
+                router=DefaultMeshRouter(),
             )
         elif mode in ("session", "ephemeral"):
             # Auto-inject InboxFlushHook for session-mode agents (BEFORE session construction)

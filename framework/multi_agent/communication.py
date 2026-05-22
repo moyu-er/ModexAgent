@@ -39,6 +39,7 @@ class AgentSendResult:
     invocation_id: str | None
     created_new_task: bool
     error: str | None = None
+    warning: str | None = None
 
 
 class AgentCommunicationService:
@@ -84,11 +85,11 @@ class AgentCommunicationService:
 
         Rules:
         - NORMAL target: invocation_id must be None.
-        - SUBAGENT target: invocation_id must not be None. "" generates a new uuid.
+        - SUBAGENT target: invocation_id must not be None. "" generates a new id.
         """
         if target_kind == AgentCommKind.NORMAL:
             if invocation_id_in is not None:
-                return None, f"Cannot send with uuid to a normal agent ({target_kind.value})"
+                return None, f"Cannot send with invocation_id to a normal agent ({target_kind.value})"
             return None, None
 
         if target_kind == AgentCommKind.SUBAGENT:
@@ -119,9 +120,12 @@ class AgentCommunicationService:
         )
         if result.error:
             return f"Error: {result.error}"
-        return f"Message sent to {result.target_agent}." + (
+        text = f"Message sent to {result.target_agent}." + (
             f" invocation_id: {result.invocation_id}" if result.invocation_id else ""
         )
+        if result.warning:
+            text = f"{text} {result.warning}"
+        return text
 
     async def send_async(
         self,
@@ -141,9 +145,12 @@ class AgentCommunicationService:
         )
         if result.error:
             return f"Error: {result.error}"
-        return f"Message sent to {result.target_agent}." + (
+        text = f"Message sent to {result.target_agent}." + (
             f" invocation_id: {result.invocation_id}" if result.invocation_id else ""
         )
+        if result.warning:
+            text = f"{text} {result.warning}"
+        return text
 
     async def _send(
         self,
@@ -179,6 +186,19 @@ class AgentCommunicationService:
             target_kind = AgentCommKind.NORMAL
 
         # 3. Validate invocation_id
+        warning = None
+        if session_meta.comm_kind == AgentCommKind.SUBAGENT and target_kind == AgentCommKind.SUBAGENT:
+            return AgentSendResult(
+                target_agent=target_agent,
+                target_kind=target_kind,
+                session_id="",
+                invocation_id=None,
+                created_new_task=False,
+                error="Subagents can only reply to normal agents; send subagent-to-subagent requests through a normal agent.",
+            )
+        if target_kind == AgentCommKind.NORMAL and invocation_id is not None:
+            warning = "invocation_id was ignored for normal-agent delivery; do not pass invocation_id when targeting normal agents."
+            invocation_id = None
         normalized_invocation_id, error = self._validate_invocation_id(invocation_id, target_kind)
         if error is not None:
             return AgentSendResult(
@@ -197,7 +217,7 @@ class AgentCommunicationService:
         )
 
         # 5. Build envelope
-        # For subagent replying to normal parent: preserve caller's uuid on envelope
+        # For subagent replying to normal parent: preserve caller's invocation_id on envelope
         envelope_invocation_id = normalized_invocation_id
         if target_kind == AgentCommKind.NORMAL and session_meta.comm_kind == AgentCommKind.SUBAGENT:
             envelope_invocation_id = session_meta.invocation_id
@@ -214,20 +234,30 @@ class AgentCommunicationService:
 
         # 6. Record communication tracker events
         if self._comm_tracker is not None and envelope.invocation_id is not None:
-            self._comm_tracker.record_send(
-                agent_name=self._source.name,
-                target_agent=target_agent,
-                invocation_id=envelope.invocation_id,
-                session_id=session_id,
-                content_summary=content[:500],
-            )
+            if target_kind == AgentCommKind.NORMAL and session_meta.comm_kind == AgentCommKind.SUBAGENT:
+                self._comm_tracker.acknowledge(
+                    invocation_id=envelope.invocation_id,
+                    reply_from=self._source.name,
+                    reply_summary=content[:500],
+                )
+                self._comm_tracker.acknowledge_received(
+                    invocation_id=envelope.invocation_id,
+                    owner_agent=self._source.name,
+                    reply_to=target_agent,
+                    reply_summary=content[:500],
+                )
+            else:
+                self._comm_tracker.record_send(
+                    agent_name=self._source.name,
+                    target_agent=target_agent,
+                    invocation_id=envelope.invocation_id,
+                    session_id=session_id,
+                    content_summary=content[:500],
+                )
 
         # 7. Deliver
         if async_mode and self._agent_bus is not None:
-            inbox_key = self._session_strategy.format(
-                conversation_id=conversation_id, agent_name=target_agent,
-            )
-            await self._agent_bus.send_silent(inbox_key, envelope)
+            await self._agent_bus.send_silent(session_id, envelope)
         else:
             if envelope.target is None:
                 return AgentSendResult(
@@ -244,6 +274,7 @@ class AgentCommunicationService:
             session_id=session_id,
             invocation_id=normalized_invocation_id,
             created_new_task=created_new_task,
+            warning=warning,
         )
 
     def build_targets_description(self) -> str:

@@ -188,6 +188,9 @@ async def build_peer_descriptor(
         execution_strategy="react",
         context_strategy="persistent",
         safety_policy=safety,
+        comm_kind=AgentCommKind.SUBAGENT
+        if agent_cfg.role == "subagent"
+        else AgentCommKind.NORMAL,
     )
     return descriptor, tool_manager, skill_manager, memory_ctx
 
@@ -226,7 +229,6 @@ async def build_subagent_descriptor(
             max_tokens=app_cfg.llm.max_tokens,
         ),
         system_prompt_template=system_prompt,
-        denied_tools=["send_to_agent", "send_to_agent_async"],
         max_iterations=agent_cfg.max_steps,
         max_tools_per_turn=10,
         execution_strategy="react",

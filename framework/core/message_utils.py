@@ -19,7 +19,7 @@ AGENT_COMMUNICATION_SYSTEM_NOTE = (
     "\n\n## Agent Messages\n"
     "Messages prefixed with `[From Agent <name>]` are from other agents, not the human user. "
     "Treat them as input from collaborators. If a response is needed, use your available "
-    "communication tool (send_message or send_message_async) with `target_agent` set to the sender name."
+    "communication tool (`send_to_agent` or `send_to_agent_async`) with `target_agent` set to the sender name."
 )
 
 

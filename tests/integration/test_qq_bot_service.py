@@ -570,35 +570,6 @@ mcp:
             await service.stop()
 
     @pytest.mark.asyncio
-    async def test_dispatch_task_tool_queues_invocation(self):
-        """DispatchTaskTool should queue an invocation-scoped task request."""
-        import sys
-        from pathlib import Path
-
-        qq_project = Path(__file__).parent.parent.parent / "examples" / "bot_project"
-        if str(qq_project) not in sys.path:
-            sys.path.insert(0, str(qq_project))
-
-        from framework.messaging.broker_memory import InMemoryMessageBroker
-        from framework.multi_agent import AgentAddress, CommunicationTracker
-        from framework.multi_agent.tools import DispatchTaskTool
-
-        broker = InMemoryMessageBroker()
-        await broker.start()
-        tracker = CommunicationTracker()
-        tool = DispatchTaskTool(
-            broker=broker,
-            self_address=AgentAddress(name="main"),
-            allowed_targets=["helper"],
-            comm_tracker=tracker,
-        )
-
-        result = await tool.execute(target_agent="helper", task_prompt="solve this")
-        assert "invocation_id: inv_" in result
-        assert len(tracker.get_pending_for_agent("main")) == 1
-        await broker.stop()
-
-    @pytest.mark.asyncio
     async def test_bot_service_stop_cleans_up_resources(self, tmp_path):
         """stop() 应正确清理 pipeline、broker、agent_bus、subagent_manager 等资源。"""
         import sys
@@ -760,9 +731,11 @@ mcp:
             await service.initialize()
 
             tool_names = service.tool_manager.list_tools()
-            assert "send_message" in tool_names
-            assert "send_message_async" in tool_names
-            assert "dispatch_task" in tool_names
+            assert "send_to_agent_async" in tool_names
+            assert "list_communication_targets" in tool_names
+            assert "send_message" not in tool_names
+            assert "send_message_async" not in tool_names
+            assert "dispatch_task" not in tool_names
             assert "spawn_subagent" not in tool_names
 
             await service.stop()
@@ -850,6 +823,10 @@ mcp:
             resident_names = [d.address.name for d in service.agent_pool.list_agents()]
             assert "main" in resident_names
             assert "helper" in resident_names
+            helper = service.agent_pool.get("helper")
+            assert helper is not None
+            assert "send_to_agent_async" in helper.tool_manager.list_tools()
+            assert "list_communication_targets" in helper.tool_manager.list_tools()
 
             await service.stop()
 

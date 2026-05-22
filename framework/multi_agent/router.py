@@ -5,11 +5,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from framework.core.types import InputMessage
+from framework.multi_agent.session_id import DefaultSessionIdStrategy
 
 
 @dataclass
 class RouteResult:
-    """消息路由结果。"""
+    """Result of routing an input message to an agent-owned session."""
 
     conversation_id: str
     agent_session_id: str
@@ -20,10 +21,7 @@ class RouteResult:
 
 
 class AgentMessageRouter(ABC):
-    """Agent 消息路由器抽象基类。
-
-    决定输入消息进入哪个 agent_session_id，以及是否需要修改 prompt。
-    """
+    """Decides the agent-owned session for an incoming message."""
 
     @abstractmethod
     def route(
@@ -31,15 +29,15 @@ class AgentMessageRouter(ABC):
         input_msg: InputMessage,
         default_agent_name: str = "main",
     ) -> RouteResult:
-        """对输入消息进行路由决策，返回 RouteResult。"""
+        """Route an input message and return the complete agent session id."""
         ...
 
 
 class DefaultMeshRouter(AgentMessageRouter):
-    """默认网格路由器。
+    """Default router for receiver-owned agent sessions.
 
-    从 InputMessage.metadata 中提取 conversation_id、agent_session_id、
-    message_type 等字段；若缺失则使用 fallback 规则构造默认值。
+    The router, not the pipeline, constructs fallback agent session IDs. The
+    pipeline then uses the returned session ID for locking and memory scope.
     """
 
     def route(
@@ -48,22 +46,27 @@ class DefaultMeshRouter(AgentMessageRouter):
         default_agent_name: str = "main",
     ) -> RouteResult:
         metadata = input_msg.metadata or {}
-        conversation_id = metadata.get("conversation_id") or input_msg.session_id
+        strategy = DefaultSessionIdStrategy()
+        conversation_id = str(metadata.get("conversation_id") or input_msg.session_id)
         agent_session_id = metadata.get("agent_session_id")
         agent_name = default_agent_name
 
         if agent_session_id:
-            # 尝试从 agent_session_id 解析 agent_name，格式为 "{conversation_id}:{agent_name}"
-            parts = agent_session_id.split(":", 1)
-            agent_name = parts[1] if len(parts) == 2 else agent_session_id
+            agent_session_id = str(agent_session_id)
+            parts = strategy.parse(agent_session_id)
+            if parts.agent_name is not None:
+                conversation_id = str(metadata.get("conversation_id") or parts.conversation_id)
+                agent_name = parts.agent_name
         else:
-            agent_session_id = f"{conversation_id}:{default_agent_name}"
+            agent_session_id = strategy.format(
+                conversation_id=conversation_id,
+                agent_name=default_agent_name,
+            )
 
         prompt_modifier = None
         message_type = metadata.get("message_type", "agent_message")
         is_envelope = message_type in ("agent_message", "subagent_result", "rpc_request")
 
-        # 对子 Agent 结果注入来源提示
         if message_type == "subagent_result" and metadata.get("source_agent"):
             prompt_modifier = f"[Subagent {metadata['source_agent']} result]\n\n"
 

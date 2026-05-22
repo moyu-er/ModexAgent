@@ -35,7 +35,7 @@ _INVOCATION_ID_PARAM = {
     "description": (
         "Routing selector. Use null for normal-agent delivery. "
         "Use an empty string to start a new subagent task. "
-        "Use a concrete uuid to continue an existing subagent task."
+        "Use a concrete invocation_id to continue an existing subagent task."
     ),
 }
 
@@ -56,7 +56,7 @@ def _build_dynamic_description(
     service: AgentCommunicationService,
     base_description: str,
 ) -> str:
-    """Append available targets and uuid guidance to the base description."""
+    """Append available targets and invocation_id guidance to the base description."""
     targets_desc = service.build_targets_description()
     return f"{base_description}\n\n{targets_desc}"
 
@@ -110,14 +110,14 @@ class SendToAgentTool(Tool):
     async def execute(self, **kwargs: Any) -> str:
         target_agent = str(kwargs.get("target_agent", ""))
         content = str(kwargs.get("content", ""))
-        uuid_value = kwargs.get("invocation_id")
-        invocation_id: str | None = None if uuid_value is None else str(uuid_value)
+        invocation_id_value = kwargs.get("invocation_id")
+        invocation_id: str | None = None if invocation_id_value is None else str(invocation_id_value)
 
         context = self._get_context()
         if context is None:
             return "Error: no agent context available"
         return await self._service.send_sync(
-            target_agent=target_agent, content=content, invocation_id=None, context=context,
+            target_agent=target_agent, content=content, invocation_id=invocation_id, context=context,
         )
 
     @staticmethod
@@ -178,14 +178,14 @@ class SendToAgentAsyncTool(Tool):
     async def execute(self, **kwargs: Any) -> str:
         target_agent = str(kwargs.get("target_agent", ""))
         content = str(kwargs.get("content", ""))
-        uuid_value = kwargs.get("invocation_id")
-        invocation_id: str | None = None if uuid_value is None else str(uuid_value)
+        invocation_id_value = kwargs.get("invocation_id")
+        invocation_id: str | None = None if invocation_id_value is None else str(invocation_id_value)
 
         context = self._get_context()
         if context is None:
             return "Error: no agent context available"
         return await self._service.send_async(
-            target_agent=target_agent, content=content, invocation_id=None, context=context,
+            target_agent=target_agent, content=content, invocation_id=invocation_id, context=context,
         )
 
     @staticmethod
@@ -233,8 +233,11 @@ class ListCommunicationTargetsTool(Tool):
         _ = kwargs  # unused
         profiles = self._registry.list_profiles()
         current_name = self._self_address.name
+        current_profile = next((p for p in profiles if p.name == current_name), None)
 
         targets = [p for p in profiles if p.name != current_name]
+        if current_profile is not None and current_profile.comm_kind == AgentCommKind.SUBAGENT:
+            targets = [p for p in targets if p.comm_kind == AgentCommKind.NORMAL]
         if not targets:
             return "No other agents are currently available for communication."
 

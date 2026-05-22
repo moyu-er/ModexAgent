@@ -408,6 +408,10 @@ class AgentBuilderMixin:
                 agent_bus=self.agent_bus, service=peer_service,
                 comm_tracker=self.communication_tracker,
             ))
+            tool_manager.register(ListCommunicationTargetsTool(
+                self_address=peer_address,
+                registry=self.agent_pool,
+            ))
 
             await self.agent_pool.register_resident(
                 descriptor, context_manager=context_manager, tool_manager=tool_manager,

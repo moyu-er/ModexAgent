@@ -69,6 +69,7 @@ from framework.multi_agent import (
     AgentPool,
     CommunicationTracker,
     DefaultAgentFactory,
+    DefaultMeshRouter,
     SessionRetentionPolicy,
     SubagentService,
 )
@@ -434,6 +435,20 @@ class BotService(AgentBuilderMixin):
 
         main_cfg = self._main_agent_cfg
         parent_agent_name = main_cfg.name if main_cfg else "main"
+        main_address = AgentAddress(kind="agent", name=parent_agent_name)
+        main_descriptor = AgentDescriptor(
+            address=main_address,
+            llm_config=AgentLLMConfig(
+                model=self._app_config.llm.model,
+                temperature=self._app_config.llm.temperature,
+                max_tokens=self._app_config.llm.max_tokens,
+            ),
+            system_prompt_template=main_cfg.system_prompt if main_cfg else "",
+            context_strategy="persistent",
+            max_iterations=main_cfg.max_steps if main_cfg else 40,
+            execution_strategy="react",
+            safety_policy=self.safety_policy,
+        )
         inbox_flush_hook = InboxFlushHook(
             consumer=self.inbox_consumer,
             agent_name=parent_agent_name,
@@ -479,6 +494,8 @@ class BotService(AgentBuilderMixin):
             command_store=self._command_store,
             runtime_services=runtime.services,
             command_processor=command_processor,
+            router=DefaultMeshRouter(),
+            agent_descriptor=main_descriptor,
         )
         print("[OK] AgentPipeline initialized")
         print(f"   Input: {self.input_adapter.name}")
@@ -603,7 +620,7 @@ class BotService(AgentBuilderMixin):
                     )
                     # Register send_to_agent_async so subagent can reply to parent
                     from framework.multi_agent.communication import AgentCommunicationService
-                    from framework.multi_agent.tools import SendToAgentAsyncTool
+                    from framework.multi_agent.tools import ListCommunicationTargetsTool, SendToAgentAsyncTool
                     sub_address = AgentAddress(name=descriptor.address.name)
                     strategy = DefaultSessionIdStrategy(main_agent_name=parent_agent_name)
                     sub_service = AgentCommunicationService(
@@ -615,6 +632,10 @@ class BotService(AgentBuilderMixin):
                         source=sub_address, broker=self.broker, registry=self.agent_pool,
                         agent_bus=self.agent_bus, service=sub_service,
                         comm_tracker=self.communication_tracker,
+                    ))
+                    sub_tool_manager.register(ListCommunicationTargetsTool(
+                        self_address=sub_address,
+                        registry=self.agent_pool,
                     ))
 
                 print(f"[OK] Subagent '{descriptor.address.name}' registered as resident")

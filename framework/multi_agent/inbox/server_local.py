@@ -182,8 +182,31 @@ class LocalFileInboxServer(InboxServer):
         for item in self._workspace.iterdir():
             if item.is_dir() and (item / "pending.jsonl").exists():
                 # 尝试从安全目录名还原原始 session_id
-                sessions.append(self._unsafe_dir_name(item.name))
+                sessions.append(
+                    self._session_id_from_pending(item / "pending.jsonl")
+                    or self._unsafe_dir_name(item.name)
+                )
         return sessions
+
+    def _session_id_from_pending(self, pending_path: Path) -> str | None:
+        """Read the original session ID from pending message metadata."""
+        try:
+            text = pending_path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+        for line in text.splitlines():
+            if not line.strip():
+                continue
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            metadata = data.get("metadata")
+            if isinstance(metadata, dict):
+                agent_session_id = metadata.get("agent_session_id")
+                if isinstance(agent_session_id, str) and agent_session_id:
+                    return agent_session_id
+        return None
 
     def _unsafe_dir_name(self, safe_name: str) -> str:
         """尝试将安全目录名还原为原始 session_id。"""

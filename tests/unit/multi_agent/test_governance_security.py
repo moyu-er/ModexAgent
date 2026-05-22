@@ -18,7 +18,6 @@ from framework.multi_agent.descriptor import AgentDescriptor
 from framework.multi_agent.envelope import AgentMessageEnvelope
 from framework.tools.filter import FilteredToolManager
 from framework.utils.sanitizer import ContentSanitizer
-pytestmark = pytest.mark.skip(reason="Old communication tools removed; tests need rewrite for SendToAgentTool")
 
 
 class TestAgentMessageEnvelope:
@@ -157,45 +156,6 @@ class TestMultiAgentContextBuilder:
         assert messages[0]["role"] == "system"
         assert messages[1]["role"] == "user"
         assert messages[1]["metadata"]["agent_session_id"] == "c1:a"
-
-
-class TestSendMessageTool:
-    @pytest.mark.asyncio
-    async def test_send_message_allowed(self) -> None:
-        broker = InMemoryMessageBroker()
-        await broker.start()
-        tool = SendMessageTool(
-            broker=broker,
-            self_address=AgentAddress(kind="agent", name="sender"),
-            allowed_callers=["planner"],
-        )
-        result = await tool.execute(
-            target_agent="receiver",
-            content="hi",
-            caller_context={"agent_name": "planner"},
-            conversation_id="c1",
-            agent_session_id="c1:receiver",
-        )
-        assert "sent to receiver" in result
-        await broker.stop()
-
-    @pytest.mark.asyncio
-    async def test_send_message_denied(self) -> None:
-        broker = InMemoryMessageBroker()
-        await broker.start()
-        tool = SendMessageTool(
-            broker=broker,
-            self_address=AgentAddress(kind="agent", name="sender"),
-            allowed_callers=["planner"],
-        )
-        result = await tool.execute(
-            target_agent="receiver",
-            content="hi",
-            caller_context={"agent_name": "hacker"},
-            conversation_id="c1",
-        )
-        assert "not allowed" in result
-        await broker.stop()
 
 
 class TestContextManagerMetaSource:

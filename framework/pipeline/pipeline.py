@@ -356,7 +356,12 @@ class AgentPipeline:
         """处理单个消息（内部入口）"""
         # 消息路由
         if self.router is not None:
-            route_result = self.router.route(input_msg)
+            default_agent_name = (
+                self.agent_descriptor.address.name
+                if self.agent_descriptor is not None
+                else getattr(self.agent, "name", "main")
+            )
+            route_result = self.router.route(input_msg, default_agent_name=default_agent_name)
             session_id = route_result.agent_session_id
         else:
             route_result = None
@@ -561,11 +566,13 @@ class AgentPipeline:
         from uuid import uuid4
 
         from framework.runtime.models import TurnIdentity
+        strategy = DefaultSessionIdStrategy()
+        parts = strategy.parse(session_id)
         turn_identity = TurnIdentity(
             agent_id=getattr(self.agent, "name", "agent"),
             session_id=session_id,
             turn_id=uuid4().hex,
-            conversation_id=session_id,
+            conversation_id=parts.conversation_id,
         )
 
         agent_context = AgentContext(
@@ -576,9 +583,7 @@ class AgentPipeline:
             max_iterations=self.max_iterations,
         )
         agent_context.identity = turn_identity
-        # Parse session_id to extract clean conversation_id and uuid
-        strategy = DefaultSessionIdStrategy()
-        parts = strategy.parse(session_id)
+        # Parse session_id to extract clean conversation_id and invocation id.
         agent_context.session_meta = AgentSessionMeta(
             conversation_id=parts.conversation_id,
             agent_name=parts.agent_name or getattr(self.agent, "name", "main"),
@@ -680,9 +685,11 @@ class AgentPipeline:
         from ..multi_agent.context import current_conversation_id
 
         raw_id = input_metadata.get("conversation_id") or session_id
-        conversation_id, agent_name = DefaultSessionIdStrategy().parse(raw_id)
-        if not agent_name:
-            agent_name = self.agent_descriptor.address.name if self.agent_descriptor else "main"
+        parts = DefaultSessionIdStrategy().parse(raw_id)
+        conversation_id = parts.conversation_id
+        agent_name = parts.agent_name or (
+            self.agent_descriptor.address.name if self.agent_descriptor else "main"
+        )
         conv_token = current_conversation_id.set(conversation_id)
         result: AgentResult | None = None
         turn_clean = False
@@ -1039,4 +1046,3 @@ class AgentPipeline:
         for sid in list(self._session_locks.keys()):
             await self.cleanup_session_resources(sid)
         logger.info("Pipeline stop requested, waiting for current message to complete...")
-

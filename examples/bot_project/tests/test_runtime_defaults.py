@@ -40,7 +40,6 @@ def test_default_interceptor_chain_keeps_only_effective_defaults() -> None:
         input_adapter=_InputAdapter(),
         output_adapter=NullOutputAdapter(),
         emitter_factory=lambda _session_id: None,
-        config={"tools": {}},
     )
 
     chain = service._build_interceptor_chain()
