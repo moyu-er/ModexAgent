@@ -88,7 +88,7 @@ def _make_context(
     conversation_id: str = "conv-1",
     agent_name: str = "main",
     comm_kind: AgentCommKind = AgentCommKind.NORMAL,
-    uuid: str | None = None,
+    invocation_id: str | None = None,
 ) -> AgentContext:
     return AgentContext(
         system_prompt="test",
@@ -98,7 +98,7 @@ def _make_context(
             conversation_id=conversation_id,
             agent_name=agent_name,
             comm_kind=comm_kind,
-            uuid=uuid,
+            invocation_id=invocation_id,
         ),
     )
 
@@ -125,7 +125,7 @@ class TestCommunicationService:
         )
         ctx = _make_context()
         result = await svc.send_sync(
-            target_agent="main", content="hello", uuid=None, context=ctx,
+            target_agent="main", content="hello", invocation_id=None, context=ctx,
         )
         assert "main" in result
 
@@ -137,9 +137,9 @@ class TestCommunicationService:
         )
         ctx = _make_context()
         result = await svc.send_sync(
-            target_agent="reviewer", content="hello", uuid="", context=ctx,
+            target_agent="reviewer", content="hello", invocation_id="", context=ctx,
         )
-        assert "uuid" in result.lower() or "Error" in result or "not found" in result.lower()
+        assert "invocation_id" in result.lower() or "Error" in result or "not found" in result.lower()
 
     @pytest.mark.asyncio
     async def test_normal_target_with_concrete_uuid_errors(self) -> None:
@@ -149,9 +149,9 @@ class TestCommunicationService:
         )
         ctx = _make_context()
         result = await svc.send_sync(
-            target_agent="reviewer", content="hello", uuid="abc123", context=ctx,
+            target_agent="reviewer", content="hello", invocation_id="abc123", context=ctx,
         )
-        assert "uuid" in result.lower() or "Error" in result or "not found" in result.lower()
+        assert "invocation_id" in result.lower() or "Error" in result or "not found" in result.lower()
 
     @pytest.mark.asyncio
     async def test_subagent_empty_uuid_creates_task(self) -> None:
@@ -163,10 +163,10 @@ class TestCommunicationService:
         )
         ctx = _make_context()
         result = await svc.send_sync(
-            target_agent="office-expert", content="do task", uuid="", context=ctx,
+            target_agent="office-expert", content="do task", invocation_id="", context=ctx,
         )
         assert "office-expert" in result
-        assert "uuid:" in result
+        assert "invocation_id:" in result
 
     @pytest.mark.asyncio
     async def test_subagent_existing_uuid_routes_correctly(self) -> None:
@@ -178,7 +178,7 @@ class TestCommunicationService:
         )
         ctx = _make_context()
         result = await svc.send_sync(
-            target_agent="office-expert", content="follow-up", uuid="a1b2c3d4", context=ctx,
+            target_agent="office-expert", content="follow-up", invocation_id="a1b2c3d4", context=ctx,
         )
         assert "office-expert" in result
         assert "a1b2c3d4" in result
@@ -193,9 +193,9 @@ class TestCommunicationService:
         )
         ctx = _make_context()
         result = await svc.send_sync(
-            target_agent="office-expert", content="hello", uuid=None, context=ctx,
+            target_agent="office-expert", content="hello", invocation_id=None, context=ctx,
         )
-        assert "uuid" in result.lower() or "Error" in result or "not found" in result.lower()
+        assert "invocation_id" in result.lower() or "Error" in result or "not found" in result.lower()
 
     def test_build_targets_description(self) -> None:
         svc = self._make_service(

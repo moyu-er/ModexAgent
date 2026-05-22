@@ -31,17 +31,17 @@ class TestAgentSessionMeta:
         assert meta.conversation_id == "conv-1"
         assert meta.agent_name == "main"
         assert meta.comm_kind == AgentCommKind.NORMAL
-        assert meta.uuid is None
+        assert meta.invocation_id is None
 
     def test_subagent_session_meta_with_uuid(self) -> None:
         meta = AgentSessionMeta(
             conversation_id="conv-1",
             agent_name="office-expert",
             comm_kind=AgentCommKind.SUBAGENT,
-            uuid="a1b2c3d4e5f6",
+            invocation_id="a1b2c3d4e5f6",
         )
         assert meta.comm_kind == AgentCommKind.SUBAGENT
-        assert meta.uuid == "a1b2c3d4e5f6"
+        assert meta.invocation_id == "a1b2c3d4e5f6"
 
     def test_session_meta_is_frozen(self) -> None:
         meta = AgentSessionMeta(
@@ -50,7 +50,7 @@ class TestAgentSessionMeta:
             comm_kind=AgentCommKind.NORMAL,
         )
         with pytest.raises(Exception):
-            meta.uuid = "abc"  # type: ignore[misc]
+            meta.invocation_id = "abc"  # type: ignore[misc]
 
 
 class TestAgentDescriptorCommKind:
@@ -87,7 +87,7 @@ class TestSessionIdStrategyFormat:
 
     def test_subagent_format_with_uuid(self) -> None:
         strategy = DefaultSessionIdStrategy()
-        sid = strategy.format(conversation_id="conv-1", agent_name="office-expert", uuid="a1b2c3")
+        sid = strategy.format(conversation_id="conv-1", agent_name="office-expert", invocation_id="a1b2c3")
         assert sid == "conv-1:office-expert:a1b2c3"
 
     def test_format_rejects_empty_conversation_id(self) -> None:
@@ -103,7 +103,7 @@ class TestSessionIdStrategyFormat:
     def test_format_rejects_empty_uuid(self) -> None:
         strategy = DefaultSessionIdStrategy()
         with pytest.raises(ValueError):
-            strategy.format(conversation_id="conv-1", agent_name="office-expert", uuid="")
+            strategy.format(conversation_id="conv-1", agent_name="office-expert", invocation_id="")
 
 
 class TestSessionIdStrategyParse:
@@ -112,14 +112,14 @@ class TestSessionIdStrategyParse:
         parts = strategy.parse("conv-1:main")
         assert parts.conversation_id == "conv-1"
         assert parts.agent_name == "main"
-        assert parts.uuid is None
+        assert parts.invocation_id is None
 
     def test_parse_three_part(self) -> None:
         strategy = DefaultSessionIdStrategy()
         parts = strategy.parse("conv-1:office-expert:a1b2c3")
         assert parts.conversation_id == "conv-1"
         assert parts.agent_name == "office-expert"
-        assert parts.uuid == "a1b2c3"
+        assert parts.invocation_id == "a1b2c3"
 
     def test_parse_round_trip_normal(self) -> None:
         strategy = DefaultSessionIdStrategy()
@@ -127,15 +127,15 @@ class TestSessionIdStrategyParse:
         parts = strategy.parse(sid)
         assert parts.conversation_id == "conv-1"
         assert parts.agent_name == "main"
-        assert parts.uuid is None
+        assert parts.invocation_id is None
 
     def test_parse_round_trip_subagent(self) -> None:
         strategy = DefaultSessionIdStrategy()
-        sid = strategy.format(conversation_id="conv-1", agent_name="office-expert", uuid="a1b2c3")
+        sid = strategy.format(conversation_id="conv-1", agent_name="office-expert", invocation_id="a1b2c3")
         parts = strategy.parse(sid)
         assert parts.conversation_id == "conv-1"
         assert parts.agent_name == "office-expert"
-        assert parts.uuid == "a1b2c3"
+        assert parts.invocation_id == "a1b2c3"
 
     def test_parse_rejects_one_part(self) -> None:
         strategy = DefaultSessionIdStrategy()

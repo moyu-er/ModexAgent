@@ -37,7 +37,7 @@ class AgentSessionMeta:
     conversation_id: str
     agent_name: str
     comm_kind: AgentCommKind
-    uuid: str | None = None
+    invocation_id: str | None = None
 
     @property
     def session_id(self) -> str:
@@ -46,7 +46,7 @@ class AgentSessionMeta:
         return DefaultSessionIdStrategy().format(
             conversation_id=self.conversation_id,
             agent_name=self.agent_name,
-            uuid=self.uuid,
+            invocation_id=self.invocation_id,
         )
 
 

@@ -1,6 +1,6 @@
 """Internal agent communication service — routing logic shared by sync and async tools.
 
-This service owns target validation, UUID semantics, session ID construction,
+This service owns target validation, invocation_id semantics, session ID construction,
 envelope building, and delivery. Tool classes become thin wrappers around it.
 """
 
@@ -11,7 +11,9 @@ import uuid as _uuid_mod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from framework.multi_agent.address import AgentAddress
 from framework.multi_agent.comm_kind import AgentCommKind
+from framework.multi_agent.envelope import AgentMessageEnvelope
 from framework.multi_agent.session_id import DefaultSessionIdStrategy
 
 if TYPE_CHECKING:
@@ -24,7 +26,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_TASK_UUID_BYTES = 8
+_TASK_ID_BYTES = 8
 
 
 @dataclass(frozen=True)
@@ -34,7 +36,7 @@ class AgentSendResult:
     target_agent: str
     target_kind: AgentCommKind
     session_id: str
-    uuid: str | None
+    invocation_id: str | None
     created_new_task: bool
     error: str | None = None
 
@@ -42,7 +44,7 @@ class AgentSendResult:
 class AgentCommunicationService:
     """Internal service for inter-agent communication routing.
 
-    Owns validation, UUID semantics, session ID building, envelope construction,
+    Owns validation, invocation_id semantics, session ID building, envelope construction,
     and sync/async delivery selection. Tool classes delegate to this service.
     """
 
@@ -73,29 +75,29 @@ class AgentCommunicationService:
             return profile.comm_kind
         return None
 
-    def _validate_uuid(
+    def _validate_invocation_id(
         self,
-        uuid_in: str | None,
+        invocation_id_in: str | None,
         target_kind: AgentCommKind,
     ) -> tuple[str | None, str | None]:
-        """Validate uuid against target kind. Returns (normalized_uuid, error).
+        """Validate invocation_id against target kind. Returns (normalized_invocation_id, error).
 
         Rules:
-        - NORMAL target: uuid must be None.
-        - SUBAGENT target: uuid must not be None. "" generates a new uuid.
+        - NORMAL target: invocation_id must be None.
+        - SUBAGENT target: invocation_id must not be None. "" generates a new uuid.
         """
         if target_kind == AgentCommKind.NORMAL:
-            if uuid_in is not None:
+            if invocation_id_in is not None:
                 return None, f"Cannot send with uuid to a normal agent ({target_kind.value})"
             return None, None
 
         if target_kind == AgentCommKind.SUBAGENT:
-            if uuid_in is None:
-                return None, "uuid is required for subagent targets"
-            if uuid_in == "":
-                new_uuid = _uuid_mod.uuid4().hex[:_TASK_UUID_BYTES]
-                return new_uuid, None
-            return uuid_in, None
+            if invocation_id_in is None:
+                return None, "invocation_id is required for subagent targets"
+            if invocation_id_in == "":
+                new_invocation_id = _uuid_mod.uuid4().hex[:_TASK_ID_BYTES]
+                return new_invocation_id, None
+            return invocation_id_in, None
 
         return None, f"Unknown target kind: {target_kind!r}"
 
@@ -104,21 +106,21 @@ class AgentCommunicationService:
         *,
         target_agent: str,
         content: str,
-        uuid: str | None,
+        invocation_id: str | None,
         context: AgentContext,
     ) -> str:
         """Send synchronously via broker wakeup. Returns result text."""
         result = await self._send(
             target_agent=target_agent,
             content=content,
-            uuid=uuid,
+            invocation_id=invocation_id,
             context=context,
             async_mode=False,
         )
         if result.error:
             return f"Error: {result.error}"
         return f"Message sent to {result.target_agent}." + (
-            f" uuid: {result.uuid}" if result.uuid else ""
+            f" invocation_id: {result.invocation_id}" if result.invocation_id else ""
         )
 
     async def send_async(
@@ -126,21 +128,21 @@ class AgentCommunicationService:
         *,
         target_agent: str,
         content: str,
-        uuid: str | None,
+        invocation_id: str | None,
         context: AgentContext,
     ) -> str:
         """Send asynchronously via inbox. Returns acknowledgement text."""
         result = await self._send(
             target_agent=target_agent,
             content=content,
-            uuid=uuid,
+            invocation_id=invocation_id,
             context=context,
             async_mode=True,
         )
         if result.error:
             return f"Error: {result.error}"
         return f"Message sent to {result.target_agent}." + (
-            f" uuid: {result.uuid}" if result.uuid else ""
+            f" invocation_id: {result.invocation_id}" if result.invocation_id else ""
         )
 
     async def _send(
@@ -148,7 +150,7 @@ class AgentCommunicationService:
         *,
         target_agent: str,
         content: str,
-        uuid: str | None,
+        invocation_id: str | None,
         context: AgentContext,
         async_mode: bool,
     ) -> AgentSendResult | None:
@@ -158,7 +160,7 @@ class AgentCommunicationService:
         if session_meta is None:
             return AgentSendResult(
                 target_agent=target_agent, target_kind=AgentCommKind.NORMAL,
-                session_id="", uuid=None, created_new_task=False,
+                session_id="", invocation_id=None, created_new_task=False,
                 error="No agent session metadata available",
             )
 
@@ -171,37 +173,34 @@ class AgentCommunicationService:
             if target_agent not in available:
                 return AgentSendResult(
                     target_agent=target_agent, target_kind=AgentCommKind.NORMAL,
-                    session_id="", uuid=None, created_new_task=False,
+                    session_id="", invocation_id=None, created_new_task=False,
                     error=f"Target agent '{target_agent}' not found",
                 )
             target_kind = AgentCommKind.NORMAL
 
-        # 3. Validate uuid
-        normalized_uuid, error = self._validate_uuid(uuid, target_kind)
+        # 3. Validate invocation_id
+        normalized_invocation_id, error = self._validate_invocation_id(invocation_id, target_kind)
         if error is not None:
             return AgentSendResult(
                 target_agent=target_agent, target_kind=target_kind,
-                session_id="", uuid=None, created_new_task=False,
+                session_id="", invocation_id=None, created_new_task=False,
                 error=error,
             )
 
-        created_new_task = uuid == "" and target_kind == AgentCommKind.SUBAGENT
+        created_new_task = invocation_id == "" and target_kind == AgentCommKind.SUBAGENT
 
         # 4. Build session ID (receiver-owned)
         session_id = self._session_strategy.format(
             conversation_id=conversation_id,
             agent_name=target_agent,
-            uuid=normalized_uuid,
+            invocation_id=normalized_invocation_id,
         )
 
         # 5. Build envelope
         # For subagent replying to normal parent: preserve caller's uuid on envelope
-        envelope_uuid = normalized_uuid
+        envelope_invocation_id = normalized_invocation_id
         if target_kind == AgentCommKind.NORMAL and session_meta.comm_kind == AgentCommKind.SUBAGENT:
-            envelope_uuid = session_meta.uuid
-
-        from framework.multi_agent.address import AgentAddress
-        from framework.multi_agent.envelope import AgentMessageEnvelope
+            envelope_invocation_id = session_meta.invocation_id
 
         envelope = AgentMessageEnvelope(
             payload={"content": content, "message_type": "agent_message"},
@@ -210,15 +209,15 @@ class AgentCommunicationService:
             message_type="agent_message",
             conversation_id=conversation_id,
             agent_session_id=session_id,
-            uuid=envelope_uuid,
+            invocation_id=envelope_invocation_id,
         )
 
         # 6. Record communication tracker events
-        if self._comm_tracker is not None and envelope.uuid is not None:
+        if self._comm_tracker is not None and envelope.invocation_id is not None:
             self._comm_tracker.record_send(
                 agent_name=self._source.name,
                 target_agent=target_agent,
-                invocation_id=envelope.uuid,
+                invocation_id=envelope.invocation_id,
                 session_id=session_id,
                 content_summary=content[:500],
             )
@@ -233,7 +232,7 @@ class AgentCommunicationService:
             if envelope.target is None:
                 return AgentSendResult(
                     target_agent=target_agent, target_kind=target_kind,
-                    session_id=session_id, uuid=normalized_uuid,
+                    session_id=session_id, invocation_id=normalized_invocation_id,
                     created_new_task=created_new_task,
                     error="No target address for broker delivery",
                 )
@@ -243,7 +242,7 @@ class AgentCommunicationService:
             target_agent=target_agent,
             target_kind=target_kind,
             session_id=session_id,
-            uuid=normalized_uuid,
+            invocation_id=normalized_invocation_id,
             created_new_task=created_new_task,
         )
 
@@ -257,7 +256,7 @@ class AgentCommunicationService:
         for p in profiles:
             lines.append(f"- {p.name} ({p.comm_kind.value})")
         lines.append("")
-        lines.append("Use uuid=null when sending to a normal agent.")
-        lines.append('Use uuid="" when starting a new task for a subagent.')
-        lines.append("Use uuid=\"<existing uuid>\" when continuing a subagent task.")
+        lines.append("Use invocation_id=null when sending to a normal agent.")
+        lines.append('Use invocation_id="" when starting a new task for a subagent.')
+        lines.append('Use invocation_id="<existing invocation_id>" when continuing a subagent task.')
         return "\n".join(lines)

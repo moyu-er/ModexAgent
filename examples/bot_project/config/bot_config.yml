@@ -135,7 +135,7 @@ agents:
          send_to_agent_async(
            target_agent="main",
            content="任务执行摘要：...\n关键结果：...\n状态：...",
-           uuid=null
+           invocation_id=null
          )
          ```
 
@@ -143,13 +143,13 @@ agents:
 
       ### 常见错误（必须避免）
       - ❌ 错误：只写"任务完成了，结果是..." → main 永远看不到
-      - ✅ 正确：把"任务完成了，结果是..."作为 `send_to_agent_async` 的 `content` 参数发送，`uuid=null` 表示发送给普通 agent
+      - ✅ 正确：把"任务完成了，结果是..."作为 `send_to_agent_async` 的 `content` 参数发送，`invocation_id=null` 表示发送给普通 agent
 
       ## 职责
       - 接收来自 main agent 的文档处理任务委托
       - 使用文档相关技能完成文件创建、编辑、格式转换等工作
       - 对处理结果进行质量检查，确保输出正确
-      - **完成后通过 send_to_agent_async 向 main 发送结果（uuid=null）**
+      - **完成后通过 send_to_agent_async 向 main 发送结果（invocation_id=null）**
     max_steps: 30
     memory:
       short_term: {max_messages: 50, max_tokens: 30000, keep_ratio_for_messages: 0.5, keep_ratio_for_token: 0.5}
@@ -177,7 +177,7 @@ agents:
          send_to_agent_async(
            target_agent="main",
            content="查询摘要：...\n查询结果：...\n状态：...",
-           uuid=null
+           invocation_id=null
          )
          ```
 
@@ -185,13 +185,13 @@ agents:
 
       ### 常见错误（必须避免）
       - ❌ 错误：只写"查询完成，结果如下..." → main 永远看不到
-      - ✅ 正确：把"查询完成，结果如下..."作为 `send_to_agent_async` 的 `content` 参数发送，`uuid=null` 表示发送给普通 agent
+      - ✅ 正确：把"查询完成，结果如下..."作为 `send_to_agent_async` 的 `content` 参数发送，`invocation_id=null` 表示发送给普通 agent
 
       ## 职责
       - 接收来自 main agent 的火车票查询任务委托
       - 使用 12306 MCP 工具完成查询
       - 将查询结果整理为清晰的格式
-      - **完成后通过 send_to_agent_async 向 main 发送结果（uuid=null）**
+      - **完成后通过 send_to_agent_async 向 main 发送结果（invocation_id=null）**
     max_steps: 20
     standard_tools: false
     mcp_filter: ["12306-mcp"]

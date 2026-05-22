@@ -583,7 +583,7 @@ class AgentPipeline:
             conversation_id=parts.conversation_id,
             agent_name=parts.agent_name or getattr(self.agent, "name", "main"),
             comm_kind=self.agent_descriptor.comm_kind if self.agent_descriptor else AgentCommKind.NORMAL,
-            uuid=parts.uuid or (input_metadata or {}).get("uuid") if (
+            invocation_id=parts.invocation_id or (input_metadata or {}).get("invocation_id") if (
                 self.agent_descriptor and self.agent_descriptor.comm_kind == AgentCommKind.SUBAGENT
             ) else None,
         )

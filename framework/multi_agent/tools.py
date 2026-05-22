@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_UUID_PARAM = {
+_INVOCATION_ID_PARAM = {
     "type": ["string", "null"],
     "description": (
         "Routing selector. Use null for normal-agent delivery. "
@@ -43,7 +43,7 @@ _COMMON_PARAMS: dict[str, dict[str, Any]] = {
         "type": "string",
         "description": "Message content.",
     },
-    "uuid": _UUID_PARAM,
+    "invocation_id": _INVOCATION_ID_PARAM,
 }
 
 
@@ -83,7 +83,7 @@ class SendToAgentTool(Tool):
             parameters={
                 "type": "object",
                 "properties": _COMMON_PARAMS,
-                "required": ["target_agent", "content", "uuid"],
+                "required": ["target_agent", "content", "invocation_id"],
             },
             config=ToolConfig(),
         )
@@ -101,14 +101,14 @@ class SendToAgentTool(Tool):
     async def execute(self, **kwargs: Any) -> str:
         target_agent = str(kwargs.get("target_agent", ""))
         content = str(kwargs.get("content", ""))
-        uuid_value = kwargs.get("uuid")
-        uuid: str | None = None if uuid_value is None else str(uuid_value)
+        uuid_value = kwargs.get("invocation_id")
+        invocation_id: str | None = None if uuid_value is None else str(uuid_value)
 
         context = self._get_context()
         if context is None:
             return "Error: no agent context available"
         return await self._service.send_sync(
-            target_agent=target_agent, content=content, uuid=uuid, context=context,
+            target_agent=target_agent, content=content, invocation_id=None, context=context,
         )
 
     @staticmethod
@@ -147,7 +147,7 @@ class SendToAgentAsyncTool(Tool):
             parameters={
                 "type": "object",
                 "properties": _COMMON_PARAMS,
-                "required": ["target_agent", "content", "uuid"],
+                "required": ["target_agent", "content", "invocation_id"],
             },
             config=ToolConfig(),
         )
@@ -165,14 +165,14 @@ class SendToAgentAsyncTool(Tool):
     async def execute(self, **kwargs: Any) -> str:
         target_agent = str(kwargs.get("target_agent", ""))
         content = str(kwargs.get("content", ""))
-        uuid_value = kwargs.get("uuid")
-        uuid: str | None = None if uuid_value is None else str(uuid_value)
+        uuid_value = kwargs.get("invocation_id")
+        invocation_id: str | None = None if uuid_value is None else str(uuid_value)
 
         context = self._get_context()
         if context is None:
             return "Error: no agent context available"
         return await self._service.send_async(
-            target_agent=target_agent, content=content, uuid=uuid, context=context,
+            target_agent=target_agent, content=content, invocation_id=None, context=context,
         )
 
     @staticmethod

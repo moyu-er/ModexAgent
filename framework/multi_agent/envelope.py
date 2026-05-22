@@ -22,7 +22,7 @@ class AgentMessageEnvelope:
     message_type: str = "agent_message"
     conversation_id: str = ""
     agent_session_id: str = ""
-    uuid: str | None = None
+    invocation_id: str | None = None
     message_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     in_reply_to: str | None = None
     correlation_id: str | None = None
@@ -42,8 +42,8 @@ class AgentMessageEnvelope:
             "hop_count": str(self.hop_count),
             **{k: str(v) for k, v in self.metadata.items()},
         }
-        if self.uuid is not None:
-            headers["uuid"] = self.uuid
+        if self.invocation_id is not None:
+            headers["invocation_id"] = self.invocation_id
         return BrokerMessage(
             payload=self.payload,
             sender=Address(kind=self.source.kind, name=self.source.name),
@@ -68,7 +68,7 @@ class AgentMessageEnvelope:
             return None
         from framework.multi_agent.address import AgentAddress
 
-        envelope_uuid = headers.get("uuid") or None
+        envelope_invocation_id = headers.get("invocation_id") or None
 
         return cls(
             payload=msg.payload,
@@ -80,14 +80,14 @@ class AgentMessageEnvelope:
             message_type=headers.get("message_type", "agent_message"),
             conversation_id=conversation_id,
             agent_session_id=agent_session_id,
-            uuid=envelope_uuid,
+            invocation_id=envelope_invocation_id,
             message_id=headers.get("message_id") or uuid.uuid4().hex,
             in_reply_to=headers.get("in_reply_to") or None,
             correlation_id=msg.correlation_id,
             timestamp=msg.timestamp,
             metadata={k: v for k, v in headers.items() if k not in {
                 "conversation_id", "agent_session_id", "message_id",
-                "in_reply_to", "message_type", "uuid",
+                "in_reply_to", "message_type", "invocation_id",
             }},
             hop_count=int(headers.get("hop_count", 0)),
         )

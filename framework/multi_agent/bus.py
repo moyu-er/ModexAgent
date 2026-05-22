@@ -164,10 +164,10 @@ class LocalAgentMessageBus(AgentMessageBus):
                 message_type=msg.message_type,
                 conversation_id=msg.metadata.get("conversation_id", session_id),
                 agent_session_id=msg.metadata.get("agent_session_id", session_id),
-                uuid=msg.metadata.get("uuid") if msg.metadata else None,
+                invocation_id=msg.metadata.get("invocation_id") if msg.metadata else None,
                 message_id=msg.message_id,
                 timestamp=msg.timestamp,
-                metadata={k: v for k, v in msg.metadata.items() if k not in ("payload", "uuid")},
+                metadata={k: v for k, v in msg.metadata.items() if k not in ("payload", "invocation_id")},
             )
             envelopes.append(envelope)
 
