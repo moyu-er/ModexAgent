@@ -15,7 +15,11 @@ Unify agent session ownership and inter-agent communication so that:
 
 This design keeps the current resident-agent model. A `SUBAGENT` can be resident
 and persistent. `SUBAGENT` means task-scoped communication and session routing,
-not ephemeral lifecycle.
+not ephemeral lifecycle and not a memory policy.
+
+This is a breaking cleanup. The implementation should replace the old
+communication/session design completely, clean up old code paths and tests, and
+finish with `examples/bot_project` correctly adapted and usable.
 
 ## 2. Current Problems
 
@@ -78,8 +82,9 @@ Meaning:
 - `NORMAL`: one stable session per conversation and agent.
 - `SUBAGENT`: task-scoped sessions. Every delivered task session has a uuid.
 
-Important: `SUBAGENT` does not mean "temporary memory" and does not mean
-"non-resident". It means "session is scoped by task uuid".
+Important: `SUBAGENT` does not mean "temporary memory", does not mean
+"non-resident", and does not decide whether memory is persistent or ephemeral.
+It means "communication and session routing are scoped by task uuid".
 
 Configuration mapping:
 
@@ -90,12 +95,16 @@ Configuration mapping:
 | `subagent` | `SUBAGENT` | task-scoped agent with uuid sessions |
 
 `examples/bot_project` should treat `office-expert` and `query-12306` as
-`SUBAGENT`. Their memory may still be persistent. Their session and archive
-scope is the complete task session id:
+`SUBAGENT`. They must still have memory. Their default intended memory is
+persistent session/archive memory scoped by the complete task session id:
 
 ```text
 {conversation_id}:{agent_name}:{uuid}
 ```
+
+Ephemeral memory is a separate implementation option for some future or
+specialized subagent. It must not be represented by `AgentCommKind`; it belongs
+in existing context/memory strategy fields or a separate memory configuration.
 
 ### 3.2 AgentSessionMeta
 
@@ -126,6 +135,7 @@ Rules:
 - Tools read session metadata from `AgentContext`.
 - For `NORMAL`, `uuid` is always `None`.
 - For a running `SUBAGENT` task session, `uuid` is the current task uuid.
+- `session_meta.comm_kind` is not a memory lifetime selector.
 
 The existing `current_conversation_id` contextvar can be removed after migration
 or kept only as a short-lived bridge while every dispatch path is converted to
@@ -611,21 +621,33 @@ Remove old strategy methods:
 If any old behavior is still needed internally, reimplement it behind
 `AgentCommunicationService` with the new session and uuid semantics.
 
-## 13. Migration Notes
+## 13. Breaking Migration Notes
 
 This is a breaking internal cleanup. Tests should be updated to the new API
-rather than preserving old tool behavior.
+rather than preserving old tool behavior. The implementation should not keep
+compatibility wrappers for the old LLM-facing tools or old session strategy
+surface.
 
-Short-lived migration allowances:
+Allowed only while editing a single patch series:
 
-- `AgentMessageEnvelope.from_broker_message()` may accept legacy
-  `payload["invocation_id"]` as input.
-- Existing runtime data written before this change may not resume cleanly if it
-  depends on legacy payload fields. This is acceptable unless explicit runtime
-  state migration is required later.
+- temporary local helper code may exist during implementation, but it must not
+  remain in the final committed design.
+- tests should be rewritten to the new semantics rather than asserting old
+  behavior.
+- runtime data written before this change is not guaranteed to resume if it
+  depends on legacy payload fields.
 
 Do not leave both old and new LLM tools registered. That would recreate the tool
 selection problem this design removes.
+
+Final implementation state:
+
+- no old communication tools are exported or registered.
+- no old peer-pair session helpers remain.
+- no `main_session()` or `target_session()` strategy methods remain.
+- new first-class `uuid` is used throughout routing, envelopes, bus, broker
+  bridge, pool dispatch, and tracker matching.
+- `examples/bot_project` starts and works with the new async send-to-agent tool.
 
 ## 14. Verification Matrix
 
@@ -657,6 +679,8 @@ Add or update tests for:
 - `CommunicationTracker` matches replies using envelope uuid.
 - `bot_project` registers only async send-to-agent.
 - `office-expert` and `query-12306` use task-scoped persistent memory.
+- every subagent has a configured memory strategy; ephemeral memory is allowed
+  only as a separate memory/context strategy, not through `AgentCommKind`.
 - old tools and peer-pair helpers are no longer imported or exported.
 
 Run:
@@ -676,5 +700,6 @@ mypy framework/
 - Do not change star topology.
 - Do not redesign memory layers.
 - Do not require subagent memory to be ephemeral.
+- Do not encode memory persistence or ephemerality in `AgentCommKind`.
 - Do not expose `conversation_id` as an LLM tool parameter.
 - Do not keep old communication tools as compatibility APIs.
