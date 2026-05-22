@@ -38,9 +38,8 @@ from framework.multi_agent.router import AgentMessageRouter, DefaultMeshRouter, 
 from framework.multi_agent.state import AgentState
 from framework.multi_agent.subagent_service import SubagentService
 from framework.multi_agent.tools import (
-    DispatchTaskTool,
-    SendMessageAsyncTool,
-    SendMessageTool,
+    SendToAgentAsyncTool,
+    SendToAgentTool,
 )
 
 __all__ = [
@@ -64,7 +63,6 @@ __all__ = [
     "current_conversation_id",
     "DefaultAgentFactory",
     "DefaultMeshRouter",
-    "DispatchTaskTool",
     "ExecutionStrategy",
     "Hook",
     "HookRunner",
@@ -77,8 +75,8 @@ __all__ = [
     "RouteResult",
     "SessionMeta",
     "SessionRetentionPolicy",
-    "SendMessageAsyncTool",
-    "SendMessageTool",
+    "SendToAgentAsyncTool",
+    "SendToAgentTool",
     "SingleTurnStrategy",
     "SubagentService",
     "TaskCoordinator",
