@@ -97,6 +97,7 @@ class SubagentAutoSendHook:
             message_type="agent_message",
             conversation_id=conversation_id,
             agent_session_id=inbox_key,
+            uuid=parts.uuid,
         )
 
         try:

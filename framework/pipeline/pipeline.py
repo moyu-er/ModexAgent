@@ -544,6 +544,8 @@ class AgentPipeline:
         session_id: str,
         context_state: Any,
         ctx_mgr: Any,
+        *,
+        input_metadata: dict[str, Any] | None = None,
     ) -> tuple[AgentContext, Any]:
         """Build AgentContext and emitter for the turn."""
         async def on_checkpoint(messages: list[ChatMessage | dict[str, Any]]) -> None:
@@ -576,8 +578,10 @@ class AgentPipeline:
         agent_context.session_meta = AgentSessionMeta(
             conversation_id=session_id,
             agent_name=getattr(self.agent, "name", "main"),
-            comm_kind=AgentCommKind.NORMAL,
-            uuid=None,
+            comm_kind=self.agent_descriptor.comm_kind if self.agent_descriptor else AgentCommKind.NORMAL,
+            uuid=(input_metadata or {}).get("uuid") if (
+                self.agent_descriptor and self.agent_descriptor.comm_kind == AgentCommKind.SUBAGENT
+            ) else None,
         )
 
         # ---- governance (pending injection, etc.) — unconditional ----
@@ -983,6 +987,7 @@ class AgentPipeline:
             session_id,
             context_state,
             ctx_mgr,
+            input_metadata=input_metadata,
         )
 
         if approval_state is not None:

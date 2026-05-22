@@ -29,13 +29,14 @@ _TASK_UUID_BYTES = 8
 
 @dataclass(frozen=True)
 class AgentSendResult:
-    """Result returned by AgentCommunicationService after a successful send."""
+    """Result returned by AgentCommunicationService after a send attempt."""
 
     target_agent: str
     target_kind: AgentCommKind
     session_id: str
     uuid: str | None
     created_new_task: bool
+    error: str | None = None
 
 
 class AgentCommunicationService:
@@ -114,8 +115,8 @@ class AgentCommunicationService:
             context=context,
             async_mode=False,
         )
-        if result is None:
-            return f"Error: target agent '{target_agent}' not found"
+        if result.error:
+            return f"Error: {result.error}"
         return f"Message sent to {result.target_agent}." + (
             f" uuid: {result.uuid}" if result.uuid else ""
         )
@@ -136,8 +137,8 @@ class AgentCommunicationService:
             context=context,
             async_mode=True,
         )
-        if result is None:
-            return f"Error: target agent '{target_agent}' not found"
+        if result.error:
+            return f"Error: {result.error}"
         return f"Message sent to {result.target_agent}." + (
             f" uuid: {result.uuid}" if result.uuid else ""
         )
@@ -155,23 +156,34 @@ class AgentCommunicationService:
         # 1. Validate context
         session_meta = context.session_meta
         if session_meta is None:
-            return None
+            return AgentSendResult(
+                target_agent=target_agent, target_kind=AgentCommKind.NORMAL,
+                session_id="", uuid=None, created_new_task=False,
+                error="No agent session metadata available",
+            )
 
         conversation_id = session_meta.conversation_id
 
         # 2. Look up target
         target_kind = self._resolve_target_kind(target_agent)
         if target_kind is None:
-            # Check if target exists at all
             available = [p.name for p in self._registry.list_profiles()]
             if target_agent not in available:
-                return None  # caller should report error
-            target_kind = AgentCommKind.NORMAL  # fallback default
+                return AgentSendResult(
+                    target_agent=target_agent, target_kind=AgentCommKind.NORMAL,
+                    session_id="", uuid=None, created_new_task=False,
+                    error=f"Target agent '{target_agent}' not found",
+                )
+            target_kind = AgentCommKind.NORMAL
 
         # 3. Validate uuid
         normalized_uuid, error = self._validate_uuid(uuid, target_kind)
         if error is not None:
-            return None  # caller should report error
+            return AgentSendResult(
+                target_agent=target_agent, target_kind=target_kind,
+                session_id="", uuid=None, created_new_task=False,
+                error=error,
+            )
 
         created_new_task = uuid == "" and target_kind == AgentCommKind.SUBAGENT
 
@@ -218,6 +230,13 @@ class AgentCommunicationService:
             )
             await self._agent_bus.send_silent(inbox_key, envelope)
         else:
+            if envelope.target is None:
+                return AgentSendResult(
+                    target_agent=target_agent, target_kind=target_kind,
+                    session_id=session_id, uuid=normalized_uuid,
+                    created_new_task=created_new_task,
+                    error="No target address for broker delivery",
+                )
             await self._broker.send_to(envelope.target, envelope.to_broker_message())
 
         return AgentSendResult(

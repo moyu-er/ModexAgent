@@ -487,12 +487,13 @@ class AgentPool(AgentRegistry):
             agent_session_id=inbox_msg.metadata.get("agent_session_id", session_id)
             if inbox_msg.metadata
             else session_id,
+            uuid=inbox_msg.metadata.get("uuid") if inbox_msg.metadata else None,
             message_id=inbox_msg.message_id,
             timestamp=inbox_msg.timestamp,
             metadata={
                 k: v
                 for k, v in (inbox_msg.metadata or {}).items()
-                if k not in ("payload", "conversation_id")
+                if k not in ("payload", "conversation_id", "uuid")
             },
         )
 
