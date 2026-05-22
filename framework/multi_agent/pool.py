@@ -86,18 +86,18 @@ class AgentPool(AgentRegistry):
         self._safety = safety or RuntimeSafetyPolicy()
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._session_meta: dict[str, SessionMeta] = {}
-        self._sync_futures: dict[str, asyncio.Future] = {}
+        self._sync_futures: dict[str, asyncio.Future[Any]] = {}
         self._retention = retention or SessionRetentionPolicy()
         self._comm_tracker = comm_tracker
-        self._cleanup_task: asyncio.Task | None = None
-        self._consumers: dict[str, asyncio.Task] = {}
-        self._agent_tasks: dict[str, list[asyncio.Task]] = {}
+        self._cleanup_task: asyncio.Task[None] | None = None
+        self._consumers: dict[str, asyncio.Task[None]] = {}
+        self._agent_tasks: dict[str, list[asyncio.Task[None]]] = {}
         self._active_session_counts: dict[str, int] = {}
         self._error_counts: dict[str, int] = {}
         self._max_error_retries: int = 5
         self._max_backoff_seconds: float = 10.0
         self._dispatch_locks: dict[str, asyncio.Lock] = {}
-        self._inbox_poll_task: asyncio.Task | None = None
+        self._inbox_poll_task: asyncio.Task[None] | None = None
         self._valid_transitions: dict[AgentState, set[AgentState]] = {
             AgentState.INITIALIZING: {AgentState.IDLE, AgentState.ERROR, AgentState.SHUTTING_DOWN},
             AgentState.IDLE: {AgentState.WORKING, AgentState.ERROR, AgentState.SHUTTING_DOWN},
@@ -171,17 +171,21 @@ class AgentPool(AgentRegistry):
         self._agents[name] = instance
         self._transition(name, AgentState.IDLE, reason="register_resident_complete")
         consumer_task = asyncio.create_task(self._consume_messages(instance, descriptor))
-        consumer_task.add_done_callback(lambda t, n=name: self._on_consumer_done(t, n))
+
+        def on_consumer_done(task: asyncio.Task[Any], agent_name: str = name) -> None:
+            self._on_consumer_done(task, agent_name)
+
+        consumer_task.add_done_callback(on_consumer_done)
         self._consumers[name] = consumer_task
         return instance
 
-    def _track_agent_task(self, agent_name: str, task: asyncio.Task) -> None:
+    def _track_agent_task(self, agent_name: str, task: asyncio.Task[None]) -> None:
         """追踪 agent 的后台处理任务。"""
         tasks = self._agent_tasks.setdefault(agent_name, [])
         tasks.append(task)
         task.add_done_callback(lambda t: self._prune_agent_task(agent_name, t))
 
-    def _prune_agent_task(self, agent_name: str, task: asyncio.Task) -> None:
+    def _prune_agent_task(self, agent_name: str, task: asyncio.Task[None]) -> None:
         """清理已完成的任务引用。"""
         tasks = self._agent_tasks.get(agent_name, [])
         if task in tasks:
@@ -514,6 +518,10 @@ class AgentPool(AgentRegistry):
             "source_agent": envelope.source.name if envelope.source else None,
             **envelope.metadata,
         }
+        if self._comm_tracker is not None:
+            prompt_section = self._comm_tracker.build_prompt_section(descriptor.address.name)
+            if prompt_section:
+                metadata["sideband_system_prompt"] = prompt_section
         invocation_id = envelope.payload.get("invocation_id") or envelope.correlation_id
         if invocation_id and self._comm_tracker is not None:
             self._comm_tracker.record_receive(
@@ -640,6 +648,12 @@ class AgentPool(AgentRegistry):
             "receiver_agent": target_name,
             **envelope.metadata,
         }
+        if self._comm_tracker is not None:
+            prompt_section = self._comm_tracker.build_prompt_section(
+                instance.descriptor.address.name
+            )
+            if prompt_section:
+                metadata["sideband_system_prompt"] = prompt_section
         invocation_id = envelope.payload.get("invocation_id") or envelope.correlation_id
         if invocation_id and self._comm_tracker is not None:
             if envelope.message_type == "subagent_result":
@@ -723,7 +737,7 @@ class AgentPool(AgentRegistry):
         """
         return self._session_locks.setdefault(session_id, asyncio.Lock())
 
-    def register_sync_future(self, correlation_id: str, future: asyncio.Future[object]) -> None:
+    def register_sync_future(self, correlation_id: str, future: asyncio.Future[Any]) -> None:
         """Register a Future for synchronous result delivery."""
         self._sync_futures[correlation_id] = future
 
@@ -735,6 +749,7 @@ class AgentPool(AgentRegistry):
         self, session_id: str, agent_name: str, is_dynamic: bool = False
     ) -> None:
         """Register new session metadata. Call inside lock-protected section."""
+        self._session_locks.setdefault(session_id, asyncio.Lock())
         self._session_meta[session_id] = SessionMeta(
             agent_name=agent_name,
             created_at=time.monotonic(),
@@ -830,8 +845,32 @@ class AgentPool(AgentRegistry):
             key=lambda x: x[1].last_active,
         )
         excess = len(dynamic_sessions) - cap
+        if excess <= 0:
+            return
         for sid, _meta in dynamic_sessions[:excess]:
-            await self._try_evict_if_stale(sid)
+            await self._evict_dynamic_session(sid)
+
+    async def _evict_dynamic_session(self, session_id: str) -> None:
+        """Evict a dynamic session selected by policy."""
+        lock = self._session_locks.get(session_id)
+        if lock is None:
+            self._session_meta.pop(session_id, None)
+            return
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=3.0)
+        except (TimeoutError, asyncio.CancelledError):
+            return
+        try:
+            meta = self._session_meta.get(session_id)
+            if meta is None or not meta.is_dynamic:
+                return
+            instance = self._agents.get(meta.agent_name)
+            if instance and instance.context_manager:
+                await instance.context_manager.clear(session_id)
+            self._session_meta.pop(session_id, None)
+            self._session_locks.pop(session_id, None)
+        finally:
+            lock.release()
 
     def list_agents(self) -> list[AgentDescriptor]:
         return [inst.descriptor for inst in self._agents.values()]
@@ -956,7 +995,7 @@ class AgentPool(AgentRegistry):
         if self._consumers:
             await asyncio.gather(*self._consumers.values(), return_exceptions=True)
         # 等待所有后台处理任务完成
-        all_tasks: list[asyncio.Task] = []
+        all_tasks: list[asyncio.Task[None]] = []
         for tasks in list(self._agent_tasks.values()):
             all_tasks.extend(t for t in tasks if not t.done())
         if all_tasks:

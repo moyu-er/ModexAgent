@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-05-16 | Updated: 2026-05-16 -->
+<!-- Generated: 2026-05-16 | Updated: 2026-05-22 -->
 
 # memory
 
@@ -9,32 +9,25 @@ Three-layer memory system with scope isolation. Layers: Session (short-term), Ar
 
 | File | Description |
 |------|-------------|
-| `system.py` | `MemorySystem` — high-level facade |
+| `system.py` | `MemorySystemContextManager(ContextManager)`, `create_memory_system()` — high-level facade for pipeline |
 | `default_system.py` | `DefaultMemorySystem` — standard implementation wiring all layers |
 | `history.py` | `MessageHistory`, `ListMessageHistory`, `inject_attachments_to_history` |
-| `content_transform.py` | Content transformation utilities for memory |
-| `context_governance.py` | `ContextGovernance` — LLM input copy governance chain (lossy_compaction, tool_chain_repair, token_budget) |
-| `history_search.py` | History search functionality |
-| `knowledge_search.py` | Knowledge layer search |
-| `lifecycle.py` | Memory lifecycle hooks (AutoCompact, retention) |
-| `pending.py` | Pending message handling |
-| `recorder.py` | Message recording utilities |
-| `utils.py` | Shared memory utilities |
+| `context_governance.py` | `ContextGovernance` ABC — `CompositeGovernance`, `TokenBudgetGovernance`, `MicrocompactGovernance`, `ToolChainRepairGovernance` |
+| `archive_generation.py` | `ArchiveGenerationStrategy`, `DualLLMArchiveGenerationStrategy` |
+| `pending.py` | `PendingPrunedInputExtractor`/`Injector` — handles messages pruned from session but not yet delivered |
+| `recorder.py` | `MemoryAppendRecorder` — records what gets appended and from where |
 
 ## Subdirectories
 
 | Directory | Purpose |
 |-----------|---------|
-| `core/` | ABCs — `MemoryScope`, `MemoryStorage`, `ChatMessage`, scope metadata |
-| `layers/` | Concrete layer managers — Session, Archive, Knowledge, Pending + factory |
+| `core/` | ABCs — `MemoryScope`, `MemoryStorage`, `ChatMessage`, `MemoryContext`, scope metadata, layer managers |
+| `layers/` | Concrete layer managers — Session, Archive, Knowledge, Pending + `MemoryLayerFactory` + config |
 | `compaction/` | `MessageCompactionPolicy`, `BoundaryPolicy` — per-message compaction decisions |
-| `compression/` | Compression coordinator, planners, policies, semantic filter, tool-chain awareness |
-| `consolidation/` | `Consolidator` (online LLM-based) + `DreamEngine` (offline background) |
-| `retention/` | `RetentionPolicy`, `RetentionConfig` — message lifecycle |
-| `injection/` | `MemoryInjectionPolicy` → `ContextState` assembly (full/restricted) |
-| `stores/` | `FileStorage` (JSONL+KV), `InMemoryStorage` (plain + scoped variants) |
-| `registry/` | Memory provider registry (base, file, in_memory) |
-| `archive/` | Archival strategies |
+| `compression/` | Compression coordinator, planners, policies, semantic filter, tool-chain sanitizer |
+| `consolidation/` | `DreamEngine` (offline background consolidation) |
+| `injection/` | `MemoryInjectionPolicy` → `ContextState` assembly (`FullInjectionPolicy`, `RestrictedInjectionPolicy`, `ToolMessageFilterStrategy`) |
+| `registry/` | `MemoryStoreRegistry` — storage provider registry |
 
 ## For AI Agents
 
@@ -44,8 +37,17 @@ Three-layer memory system with scope isolation. Layers: Session (short-term), Ar
 - `BoundaryPolicy` ensures tool-call chains are not broken by truncation
 - Governance mutates only LLM input copy, never persisted session data
 - `archive=None` = session-only mode (standard for peer/subagent)
+- `RestrictedInjectionPolicy` is default for subagents — limits session messages to prevent context overflow
+
+### Subagent Memory Lifecycle
+1. Each peer gets its own `MemorySystemContextManager` with isolated workspace
+2. `MemoryAgentRole.SUBAGENT` scope — session-only by default, no knowledge layer
+3. `DefaultMemoryLifecyclePolicy` with subagent compression coordinator
+4. `AgentPool` session eviction (TTL + LRU cap) triggers context cleanup
+5. `_cleanup_subagent_memory()` called on session end via `on_session_end` callback
 
 ### Common Patterns
 - `MemoryScope` resolves to scope keys via `MemoryContext`
 - Plugin memory providers hook into `add()`, `search()`, `prefetch()`, `on_pre_compress()`
 - `MemorySystemModifier` wraps internal managers via plugin injection
+- `MemoryLayerConfigSet` holds all layer configs; `MemoryLayerFactory` builds from it

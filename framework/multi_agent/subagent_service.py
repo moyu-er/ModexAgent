@@ -14,9 +14,10 @@ gate, with TTL, distinct namespace, and isolated memory.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import uuid
-from typing import Any
+from typing import Any, cast
 
 from framework.core.emitter import AgentResult
 from framework.core.types import InputMessage
@@ -92,10 +93,15 @@ class SubagentService:
         The subagent is now addressable via ``send_message_async`` like any
         resident subagent.
         """
+        template_name = descriptor.address.name
+        name = f"dyn.{template_name}.{uuid.uuid4().hex[:8]}"
+        descriptor = dataclasses.replace(
+            descriptor,
+            address=dataclasses.replace(descriptor.address, name=name),
+        )
         await self._pool.register_resident(descriptor)
-        name = descriptor.address.name
 
-        conversation_id = f"dyn.{name}.{uuid.uuid4().hex[:8]}"
+        conversation_id = f"dyn.{name}"
         session_id = self._session_strategy.agent_session(conversation_id, name)
 
         envelope = AgentMessageEnvelope(
@@ -135,7 +141,7 @@ class SubagentService:
         correlation_id = uuid.uuid4().hex
 
         # Register a Future for the result
-        future: asyncio.Future[AgentResult] = asyncio.get_event_loop().create_future()
+        future: asyncio.Future[Any] = asyncio.get_event_loop().create_future()
         self._pool.register_sync_future(correlation_id, future)
 
         instance = await self._factory.create_agent(
@@ -156,9 +162,12 @@ class SubagentService:
                     ),
                     timeout=timeout,
                 )
+                if result is None:
+                    return AgentResult(error=f"Subagent {name} returned no result")
                 return result
 
-            return await asyncio.wait_for(future, timeout=timeout)
+            result = await asyncio.wait_for(future, timeout=timeout)
+            return cast(AgentResult, result)
         except TimeoutError:
             logger.warning("create_and_wait timed out for %s after %.0fs", name, timeout)
             self._pool.pop_sync_future(correlation_id)

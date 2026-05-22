@@ -278,10 +278,10 @@ class TestQQBotServiceIntegration:
 
         try:
             from bot_service import QQBotService
-            from qq_adapters import QQBotEmitter
 
-            # Verify that emitter_factory pattern is supported
-            assert hasattr(QQBotService, "_load_config")
+            # Verify current IOC-based service construction surface.
+            assert hasattr(QQBotService, "initialize")
+            assert hasattr(QQBotService, "start")
 
         except ImportError as e:
             pytest.skip(f"QQBotService not importable: {e}")

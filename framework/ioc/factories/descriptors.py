@@ -30,7 +30,12 @@ from framework.multi_agent.descriptor import AgentLLMConfig
 
 def _make_file_tools() -> list[Tool]:
     from framework.tools.standard import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
-    return [ReadFileTool(), WriteFileTool(), EditFileTool(), ListDirTool()]
+    return [
+        ReadFileTool(),  # type: ignore[no-untyped-call]
+        WriteFileTool(),  # type: ignore[no-untyped-call]
+        EditFileTool(),  # type: ignore[no-untyped-call]
+        ListDirTool(),  # type: ignore[no-untyped-call]
+    ]
 
 
 def _make_shell_tool(timeout: int = 60, enable_safety_guard: bool = True) -> Tool:
@@ -40,7 +45,10 @@ def _make_shell_tool(timeout: int = 60, enable_safety_guard: bool = True) -> Too
 
 def _make_search_tools() -> list[Tool]:
     from framework.tools.standard import FindFilesTool, SearchFilesTool
-    return [SearchFilesTool(), FindFilesTool()]
+    return [
+        SearchFilesTool(),  # type: ignore[no-untyped-call]
+        FindFilesTool(),  # type: ignore[no-untyped-call]
+    ]
 
 
 def _make_standard_tools() -> list[Tool]:

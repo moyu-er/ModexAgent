@@ -159,6 +159,7 @@ class AgentBuilderMixin:
                 allowed_targets=peer_names or None, agent_bus=self.agent_bus,
                 registry=self.agent_pool, session_strategy=strategy,
                 comm_tracker=self.communication_tracker,
+                invocation_session_targets=peer_names,
             ))
             print("   [OK] send_message_async registered")
 
