@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from framework.core.tool_manager import Tool, ToolConfig
 
-from .session_id import DefaultSessionIdStrategy, SessionIdStrategy
+from .session_id import DefaultSessionIdStrategy
 
 if TYPE_CHECKING:
     from framework.messaging.broker import MessageBroker
@@ -86,7 +86,7 @@ class SendMessageTool(Tool):
         allowed_callers: list[str] | None = None,
         allowed_targets: list[str] | None = None,
         registry: AgentRegistry | None = None,
-        session_strategy: SessionIdStrategy | None = None,
+        session_strategy: DefaultSessionIdStrategy | None = None,
     ):
         self._broker = broker
         self._self_address = self_address
@@ -189,7 +189,7 @@ class SendMessageTool(Tool):
             message_type=message_type,
             conversation_id=conversation_id,
             agent_session_id=agent_session_id
-            or self._session_strategy.target_session(conversation_id, target_agent, self._self_address.name),
+            or self._session_strategy.format(conversation_id=conversation_id, agent_name=target_agent),
         )
 
         if envelope.target is not None:
@@ -218,7 +218,7 @@ class SendMessageAsyncTool(Tool):
         agent_bus: AgentMessageBus | None = None,
         registry: AgentRegistry | None = None,
         wakeup_timeout: float | None = None,
-        session_strategy: SessionIdStrategy | None = None,
+        session_strategy: DefaultSessionIdStrategy | None = None,
         comm_tracker: CommunicationTracker | None = None,
         invocation_session_targets: list[str] | None = None,
     ):
@@ -334,9 +334,7 @@ class SendMessageAsyncTool(Tool):
         from .envelope import AgentMessageEnvelope
 
         # Build session_id with optional invocation suffix
-        base_session = agent_session_id or self._session_strategy.target_session(
-            conversation_id, target_agent, self._self_address.name,
-        )
+        base_session = agent_session_id or self._session_strategy.format(conversation_id=conversation_id, agent_name=target_agent)
         uses_invocation_session = target_agent in self._invocation_session_targets
         if invocation_id and uses_invocation_session and not base_session.endswith(f":{invocation_id}"):
             base_session = f"{base_session}:{invocation_id}"
@@ -356,7 +354,7 @@ class SendMessageAsyncTool(Tool):
             agent_session_id=base_session,
         )
 
-        inbox_key = self._session_strategy.agent_session(conversation_id, target_agent)
+        inbox_key = self._session_strategy.format(conversation_id=conversation_id, agent_name=target_agent)
         if invocation_id and self._comm_tracker is not None:
             self._comm_tracker.record_send(
                 agent_name=self._self_address.name,
@@ -435,7 +433,7 @@ class DispatchTaskTool(Tool):
         allowed_targets: list[str] | None = None,
         agent_bus: AgentMessageBus | None = None,
         registry: AgentRegistry | None = None,
-        session_strategy: SessionIdStrategy | None = None,
+        session_strategy: DefaultSessionIdStrategy | None = None,
         comm_tracker: CommunicationTracker | None = None,
     ):
         import uuid as _uuid

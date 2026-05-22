@@ -1,4 +1,4 @@
-"""Tests for AgentCommKind, AgentSessionMeta, and descriptor/profile changes."""
+"""Tests for AgentCommKind, AgentSessionMeta, session ID strategy, and descriptor/profile changes."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from framework.multi_agent.comm_kind import AgentCommKind
 from framework.multi_agent.descriptor import AgentDescriptor, AgentLLMConfig
 from framework.multi_agent.registry import AgentProfile
 from framework.multi_agent.address import AgentAddress
+from framework.multi_agent.session_id import AgentSessionParts, DefaultSessionIdStrategy
 
 
 class TestAgentCommKind:
@@ -76,3 +77,77 @@ class TestAgentProfileCommKind:
             comm_kind=AgentCommKind.SUBAGENT,
         )
         assert profile.comm_kind == AgentCommKind.SUBAGENT
+
+
+class TestSessionIdStrategyFormat:
+    def test_normal_format(self) -> None:
+        strategy = DefaultSessionIdStrategy()
+        sid = strategy.format(conversation_id="conv-1", agent_name="main")
+        assert sid == "conv-1:main"
+
+    def test_subagent_format_with_uuid(self) -> None:
+        strategy = DefaultSessionIdStrategy()
+        sid = strategy.format(conversation_id="conv-1", agent_name="office-expert", uuid="a1b2c3")
+        assert sid == "conv-1:office-expert:a1b2c3"
+
+    def test_format_rejects_empty_conversation_id(self) -> None:
+        strategy = DefaultSessionIdStrategy()
+        with pytest.raises(ValueError):
+            strategy.format(conversation_id="", agent_name="main")
+
+    def test_format_rejects_empty_agent_name(self) -> None:
+        strategy = DefaultSessionIdStrategy()
+        with pytest.raises(ValueError):
+            strategy.format(conversation_id="conv-1", agent_name="")
+
+    def test_format_rejects_empty_uuid(self) -> None:
+        strategy = DefaultSessionIdStrategy()
+        with pytest.raises(ValueError):
+            strategy.format(conversation_id="conv-1", agent_name="office-expert", uuid="")
+
+
+class TestSessionIdStrategyParse:
+    def test_parse_two_part(self) -> None:
+        strategy = DefaultSessionIdStrategy()
+        parts = strategy.parse("conv-1:main")
+        assert parts.conversation_id == "conv-1"
+        assert parts.agent_name == "main"
+        assert parts.uuid is None
+
+    def test_parse_three_part(self) -> None:
+        strategy = DefaultSessionIdStrategy()
+        parts = strategy.parse("conv-1:office-expert:a1b2c3")
+        assert parts.conversation_id == "conv-1"
+        assert parts.agent_name == "office-expert"
+        assert parts.uuid == "a1b2c3"
+
+    def test_parse_round_trip_normal(self) -> None:
+        strategy = DefaultSessionIdStrategy()
+        sid = strategy.format(conversation_id="conv-1", agent_name="main")
+        parts = strategy.parse(sid)
+        assert parts.conversation_id == "conv-1"
+        assert parts.agent_name == "main"
+        assert parts.uuid is None
+
+    def test_parse_round_trip_subagent(self) -> None:
+        strategy = DefaultSessionIdStrategy()
+        sid = strategy.format(conversation_id="conv-1", agent_name="office-expert", uuid="a1b2c3")
+        parts = strategy.parse(sid)
+        assert parts.conversation_id == "conv-1"
+        assert parts.agent_name == "office-expert"
+        assert parts.uuid == "a1b2c3"
+
+    def test_parse_rejects_one_part(self) -> None:
+        strategy = DefaultSessionIdStrategy()
+        with pytest.raises(ValueError):
+            strategy.parse("conv1")
+
+    def test_parse_rejects_four_part(self) -> None:
+        strategy = DefaultSessionIdStrategy()
+        with pytest.raises(ValueError):
+            strategy.parse("a:b:c:d")
+
+    def test_parse_rejects_empty_uuid_segment(self) -> None:
+        strategy = DefaultSessionIdStrategy()
+        with pytest.raises(ValueError):
+            strategy.parse("conv-1:office-expert:")

@@ -84,8 +84,9 @@ class SubagentAutoSendHook:
         from framework.multi_agent.session_id import DefaultSessionIdStrategy
 
         strategy = DefaultSessionIdStrategy(main_agent_name=self._parent_name)
-        conversation_id, _ = strategy.parse(session_id)
-        inbox_key = strategy.main_session(conversation_id)
+        parts = strategy.parse(session_id)
+        conversation_id = parts.conversation_id
+        inbox_key = strategy.format(conversation_id=conversation_id, agent_name=self._parent_name)
 
         sanitized = self._sanitize_forward_content(result.content)
 

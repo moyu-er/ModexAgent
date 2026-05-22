@@ -5,6 +5,7 @@ from framework.core.strategy import ExecutionStrategy, ReActStrategy, SingleTurn
 from framework.hook import Hook, HookRunner
 from framework.multi_agent.address import AgentAddress
 from framework.multi_agent.bus import AgentMessageBus, LocalAgentMessageBus
+from framework.multi_agent.comm_kind import AgentCommKind
 from framework.multi_agent.comm_tracker import CommunicationTracker
 from framework.multi_agent.context import current_conversation_id
 from framework.multi_agent.coordinator import (
@@ -41,17 +42,10 @@ from framework.multi_agent.tools import (
     SendMessageAsyncTool,
     SendMessageTool,
 )
-from framework.multi_agent.utils import (
-    format_peer_session_id,
-    format_pool_session_id,
-    is_peer_session_id,
-    parse_peer_session_id,
-    parse_pool_session_id,
-    reverse_peer_session_id,
-)
 
 __all__ = [
     "AgentAddress",
+    "AgentCommKind",
     "AgentDescriptor",
     "AgentDirectory",
     "AgentMessageBus",
@@ -94,10 +88,4 @@ __all__ = [
     "TaskEventType",
     "TaskProgressHook",
     "TaskRecord",
-    "format_pool_session_id",
-    "format_peer_session_id",
-    "is_peer_session_id",
-    "parse_pool_session_id",
-    "parse_peer_session_id",
-    "reverse_peer_session_id",
 ]

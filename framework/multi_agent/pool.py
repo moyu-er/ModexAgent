@@ -26,7 +26,7 @@ from .inbox.consumer import InboxConsumer
 from .inbox.producer import InboxProducer
 from .inbox.types import InboxMessage
 from .registry import AgentProfile, AgentRegistry
-from .session_id import DefaultSessionIdStrategy, SessionIdStrategy
+from .session_id import DefaultSessionIdStrategy
 from .state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -67,7 +67,7 @@ class AgentPool(AgentRegistry):
         enable_inbox_polling: bool = True,
         inbox_poll_interval: float = 10.0,
         default_context_manager_factory: Callable[[str], ContextManager] | None = None,
-        session_strategy: SessionIdStrategy | None = None,
+        session_strategy: DefaultSessionIdStrategy | None = None,
         safety: RuntimeSafetyPolicy | None = None,
         retention: SessionRetentionPolicy | None = None,
         comm_tracker: CommunicationTracker | None = None,
@@ -507,8 +507,8 @@ class AgentPool(AgentRegistry):
         conversation_id = envelope.conversation_id or envelope.payload.get(
             "conversation_id", "default"
         )
-        session_id = envelope.agent_session_id or self._session_strategy.agent_session(
-            conversation_id, descriptor.address.name
+        session_id = envelope.agent_session_id or self._session_strategy.format(
+            conversation_id=conversation_id, agent_name=descriptor.address.name
         )
         metadata = {
             "conversation_id": conversation_id,
@@ -570,7 +570,7 @@ class AgentPool(AgentRegistry):
         """将 AgentResult 包装为 subagent_result 回传给父 Agent。"""
         parent_address = envelope.source
         parent_session_id = (
-            self._session_strategy.agent_session(conversation_id, parent_address.name)
+            self._session_strategy.format(conversation_id=conversation_id, agent_name=parent_address.name)
             if parent_address
             else conversation_id
         )
@@ -632,8 +632,8 @@ class AgentPool(AgentRegistry):
         conversation_id = envelope.conversation_id or envelope.payload.get(
             "conversation_id", "default"
         )
-        session_id = envelope.agent_session_id or self._session_strategy.agent_session(
-            conversation_id, instance.descriptor.address.name
+        session_id = envelope.agent_session_id or self._session_strategy.format(
+            conversation_id=conversation_id, agent_name=instance.descriptor.address.name
         )
         content = envelope.payload.get("content", "")
         source_name = envelope.source.name if envelope.source else None
@@ -698,8 +698,8 @@ class AgentPool(AgentRegistry):
             or msg.payload.get("conversation_id")
             or msg.payload.get("session_id", "default")
         )
-        session_id = msg.payload.get("agent_session_id") or self._session_strategy.agent_session(
-            conversation_id, descriptor.address.name
+        session_id = msg.payload.get("agent_session_id") or self._session_strategy.format(
+            conversation_id=conversation_id, agent_name=descriptor.address.name
         )
         content = msg.payload.get("content", "")
         metadata = {"conversation_id": conversation_id, "agent_session_id": session_id}

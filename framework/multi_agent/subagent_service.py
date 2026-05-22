@@ -29,7 +29,7 @@ from .descriptor import AgentDescriptor, AgentInstance
 from .envelope import AgentMessageEnvelope
 from .factory import AgentFactory
 from .pool import AgentPool
-from .session_id import DefaultSessionIdStrategy, SessionIdStrategy
+from .session_id import DefaultSessionIdStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ class SubagentService:
         broker: MessageBroker,
         agent_bus: AgentMessageBus,
         *,
-        session_strategy: SessionIdStrategy | None = None,
+        session_strategy: DefaultSessionIdStrategy | None = None,
     ) -> None:
         self._pool = pool
         self._factory = factory
@@ -102,7 +102,7 @@ class SubagentService:
         await self._pool.register_resident(descriptor)
 
         conversation_id = f"dyn.{name}"
-        session_id = self._session_strategy.agent_session(conversation_id, name)
+        session_id = self._session_strategy.format(conversation_id=conversation_id, agent_name=name)
 
         envelope = AgentMessageEnvelope(
             payload={"task_prompt": initial_task, "content": initial_task, "message_type": "task_request"},
@@ -152,7 +152,7 @@ class SubagentService:
         )
 
         conv_id = f"sync.{name}.{correlation_id[:8]}"
-        session_id = self._session_strategy.agent_session(conv_id, name)
+        session_id = self._session_strategy.format(conversation_id=conv_id, agent_name=name)
 
         try:
             if instance.pipeline is not None:
