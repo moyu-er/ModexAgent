@@ -171,7 +171,7 @@ class AgentBuilderMixin:
 
     # ── Peer / Subagent Tool Manager (code-driven) ──
 
-    async def _build_peer_tool_manager(
+    async def _build_subagent_tool_manager(
         self,
         tools: list[Tool],
         mcp_server_filter: list[str] | None = None,
@@ -292,7 +292,7 @@ class AgentBuilderMixin:
             injection_policy=RestrictedInjectionPolicy(max_session_messages=20),
         )
 
-    async def _create_peer_memory(self, peer_name: str, peer_cfg: Any) -> ContextManager:
+    async def _create_subagent_memory_context(self, peer_name: str, peer_cfg: Any) -> ContextManager:
         from framework.ioc.factories.compression import create_subagent_compression_coordinator
         from framework.memory.core.scope import MemoryAgentRole
 
@@ -314,7 +314,7 @@ class AgentBuilderMixin:
         await memory_system.initialize()
         if self.plugin_integration:
             self.plugin_integration.inject_memory_system_modifiers(memory_system)
-        self._peer_memory_systems[peer_name] = memory_system
+        self._additional_subagent_memory_systems[peer_name] = memory_system
         max_messages = 50
         if peer_memory_cfg is not None and hasattr(peer_memory_cfg, "short_term"):
             max_messages = peer_memory_cfg.short_term.max_messages
@@ -354,7 +354,7 @@ class AgentBuilderMixin:
 
     # ── Peer Agent Initialization ──
 
-    async def _initialize_peer_agents(self) -> None:
+    async def _initialize_additional_subagents(self) -> None:
         from framework.hook import HookErrorPolicy, HookSpec
         from framework.hook.builtin import SubagentAutoSendHook
         from framework.ioc.factories.descriptors import build_peer_descriptor

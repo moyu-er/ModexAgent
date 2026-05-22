@@ -143,7 +143,7 @@ class BotService(AgentBuilderMixin):
         # Subagent/peer caches
         self._subagent_skill_managers: dict[str, SkillManager] = {}
         self._subagent_memory_systems: dict[str, Any] = {}
-        self._peer_memory_systems: dict[str, Any] = {}
+        self._additional_subagent_memory_systems: dict[str, Any] = {}
 
         # Auto-compact
         self._auto_compact_task: asyncio.Task | None = None
@@ -641,7 +641,7 @@ class BotService(AgentBuilderMixin):
                 print(f"[OK] Subagent '{descriptor.address.name}' registered as resident")
 
         # Initialize peer agents
-        await self._initialize_peer_agents()
+        await self._initialize_additional_subagents()
 
         # Configure BrokerBridgeService
         self.broker_bridge = BrokerBridgeService(
@@ -667,7 +667,7 @@ class BotService(AgentBuilderMixin):
                 return a
         return None
 
-    def _find_peer_cfgs(self) -> list[IOCAgentConfig]:
+    def _find_additional_subagent_cfgs(self) -> list[IOCAgentConfig]:
         """Find all subagent configs by role, excluding the primary subagent."""
         if not self._app_config or not self._app_config.agents:
             return []
@@ -1140,7 +1140,7 @@ class BotService(AgentBuilderMixin):
                 print(f"   [WARN] Subagent memory system '{sub_name}' close error: {e}")
 
         # Close peer memory systems
-        for peer_name, peer_ms in getattr(self, "_peer_memory_systems", {}).items():
+        for peer_name, peer_ms in getattr(self, "_additional_subagent_memory_systems", {}).items():
             try:
                 print(f"   Closing peer memory system: {peer_name}...")
                 await peer_ms.close()
