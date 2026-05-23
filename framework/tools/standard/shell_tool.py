@@ -93,6 +93,48 @@ class SubprocessExecutor(ShellExecutor):
         return self._shell_info
 
 
+class TerminalSessionExecutor(ShellExecutor):
+    """Stateful executor: commands run in a persistent terminal session.
+
+    EXTENSION: Phase 2+ can add:
+      - RemoteExecutor: asyncssh/paramiko remote execution
+      - DockerExecutor: docker exec
+    """
+
+    def __init__(
+        self,
+        terminal_manager: Any,
+        default_terminal: str | None = None,
+    ):
+        self._tm = terminal_manager
+        self._default_terminal = default_terminal
+
+    async def execute(self, command: str, working_dir: str | None = None, timeout: int = 60) -> str:
+        session = self._tm.get_default_session()
+        if session is None:
+            name = self._default_terminal or "default"
+            session = await self._tm.get_or_create(name, cwd=working_dir)
+        return await session.execute(command, timeout=timeout)
+
+    def shell_info(self) -> ShellInfo:
+        session = self._tm.get_default_session()
+        if session is not None:
+            info = session.shell_info
+            return ShellInfo(
+                name=info.name,
+                path=info.path,
+                platform=info.platform,
+                is_stateful=True,
+            )
+        info = detect_platform_shell()
+        return ShellInfo(
+            name=info.name,
+            path=info.path,
+            platform=info.platform,
+            is_stateful=True,
+        )
+
+
 def detect_platform_shell() -> ShellInfo:
     """Detect the best available shell for the current platform.
 
