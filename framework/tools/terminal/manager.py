@@ -1,0 +1,210 @@
+"""TerminalManager — multi-session management with LRU eviction and persistence."""
+
+from __future__ import annotations
+
+import logging
+import time
+from pathlib import Path
+from typing import Any
+
+from framework.tools.standard.shell_tool import ShellInfo, detect_platform_shell
+from framework.tools.terminal.backends.factory import create_pty_backend
+from framework.tools.terminal.session import CommandRecord, TerminalSession
+from framework.tools.terminal.state_store import JsonTerminalStateStore
+
+logger = logging.getLogger(__name__)
+
+
+class TerminalManager:
+    """Manages named terminal sessions with LRU eviction and JSON persistence.
+
+    Responsibilities:
+    - Named session collection (name -> TerminalSession)
+    - Default terminal for ShellTool
+    - LRU eviction when max_terminals exceeded
+    - Lazy alive detection (check only on use)
+    - Persist/restore session metadata and history
+    """
+
+    def __init__(
+        self,
+        storage_dir: Path | str = "data/terminals",
+        max_terminals: int = 5,
+        history_count: int = 5,
+        history_truncate: int = 200,
+        default_timeout: float = 60.0,
+        backend_factory: Any | None = None,
+    ):
+        self._storage_dir = Path(storage_dir)
+        self._max_terminals = max_terminals
+        self._history_count = history_count
+        self._history_truncate = history_truncate
+        self._default_timeout = default_timeout
+        self._sessions: dict[str, TerminalSession] = {}
+        self._default_terminal: str | None = None
+        self._store = JsonTerminalStateStore(self._storage_dir)
+        self._shell_info = detect_platform_shell()
+        self._backend_factory = backend_factory or create_pty_backend
+
+    async def get_or_create(self, name: str, cwd: str | None = None) -> TerminalSession:
+        """Get existing session or create a new one. Evicts LRU if at capacity."""
+        if name in self._sessions:
+            session = self._sessions[name]
+            session.last_active = time.time()
+            return session
+
+        # Evict oldest if at capacity
+        if len(self._sessions) >= self._max_terminals:
+            await self._evict_oldest()
+
+        backend = self._backend_factory()
+        session = TerminalSession(
+            name=name,
+            backend=backend,
+            shell_info=self._shell_info,
+            cwd=cwd,
+            max_history=self._history_count,
+            history_truncate=self._history_truncate,
+        )
+        self._sessions[name] = session
+        self._default_terminal = name
+        logger.info("Created terminal session: %s", name)
+        return session
+
+    def get(self, name: str) -> TerminalSession | None:
+        """Get session by name without creating."""
+        return self._sessions.get(name)
+
+    async def close(self, name: str) -> bool:
+        """Close a session. Returns True if existed."""
+        session = self._sessions.pop(name, None)
+        if session is None:
+            return False
+        await session.close()
+        if self._default_terminal == name:
+            self._default_terminal = next(iter(self._sessions), None)
+        logger.info("Closed terminal session: %s", name)
+        return True
+
+    def list_sessions(self) -> list[dict[str, Any]]:
+        """List all sessions with metadata."""
+        result = []
+        for name, session in self._sessions.items():
+            result.append({
+                "name": name,
+                "shell_type": session.shell_info.name,
+                "is_alive": True,
+                "last_active": session.last_active,
+                "command_count": len(session.get_history()),
+                "is_default": name == self._default_terminal,
+            })
+        return result
+
+    def list_names(self) -> list[str]:
+        """Return just the session names."""
+        return list(self._sessions.keys())
+
+    def select_default(self, name: str) -> None:
+        """Select the default terminal for ShellTool."""
+        if name not in self._sessions:
+            raise ValueError(f"Terminal '{name}' does not exist")
+        self._default_terminal = name
+
+    def get_default_session(self) -> TerminalSession | None:
+        """Get the default session, or the only session, or None."""
+        if self._default_terminal and self._default_terminal in self._sessions:
+            return self._sessions[self._default_terminal]
+        if len(self._sessions) == 1:
+            return next(iter(self._sessions.values()))
+        return None
+
+    def get_history(self, name: str) -> list[CommandRecord]:
+        """Get command history for a session."""
+        session = self._sessions.get(name)
+        if session is None:
+            return []
+        return session.get_history()
+
+    async def save_state(self) -> None:
+        """Persist session metadata and history to JSON."""
+        sessions_data = []
+        for name, session in self._sessions.items():
+            sessions_data.append({
+                "name": name,
+                "shell_type": session.shell_info.name,
+                "shell_path": session.shell_info.path,
+                "cwd": session._cwd,
+                "env": session._env,
+                "created_at": session.last_active - 1,
+                "last_active": session.last_active,
+                "history": [
+                    {
+                        "command": rec.command,
+                        "output": rec.output,
+                        "exit_code": rec.exit_code,
+                        "timestamp": rec.timestamp,
+                    }
+                    for rec in session.get_history()
+                ],
+                "needs_restart": True,
+            })
+        state = {
+            "version": 1,
+            "default_terminal": self._default_terminal,
+            "sessions": sessions_data,
+        }
+        self._store.save(state)
+
+    async def load_state(self) -> None:
+        """Restore session metadata from JSON. Sessions are lazily restarted on use."""
+        data = self._store.load()
+        if not data:
+            return
+
+        for sess_data in data.get("sessions", []):
+            name = sess_data["name"]
+            shell_type = sess_data.get("shell_type", self._shell_info.name)
+            shell_path = sess_data.get("shell_path", self._shell_info.path)
+            backend = self._backend_factory()
+            session = TerminalSession(
+                name=name,
+                backend=backend,
+                shell_info=ShellInfo(
+                    name=shell_type,
+                    path=shell_path,
+                    platform=self._shell_info.platform,
+                    is_stateful=True,
+                ),
+                cwd=sess_data.get("cwd"),
+                env=sess_data.get("env"),
+                max_history=self._history_count,
+                history_truncate=self._history_truncate,
+            )
+            session.last_active = sess_data.get("last_active", time.time())
+            for rec_data in sess_data.get("history", []):
+                session._history.append(CommandRecord(
+                    command=rec_data["command"],
+                    output=rec_data["output"],
+                    exit_code=rec_data.get("exit_code"),
+                    timestamp=rec_data.get("timestamp", time.time()),
+                ))
+            session._needs_restart = True
+            self._sessions[name] = session
+
+        self._default_terminal = data.get("default_terminal")
+        if self._default_terminal not in self._sessions:
+            self._default_terminal = next(iter(self._sessions), None)
+        logger.info("Loaded %d terminal sessions from state", len(self._sessions))
+
+    async def _evict_oldest(self) -> None:
+        """Close the least recently used session."""
+        if not self._sessions:
+            return
+        oldest_name = min(self._sessions, key=lambda n: self._sessions[n].last_active)
+        logger.info("LRU evicting terminal: %s", oldest_name)
+        await self.close(oldest_name)
+
+    async def close_all(self) -> None:
+        """Close all sessions."""
+        for name in list(self._sessions.keys()):
+            await self.close(name)
