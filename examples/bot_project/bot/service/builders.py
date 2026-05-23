@@ -230,7 +230,7 @@ class AgentBuilderMixin:
             ))
             print("   [OK] list_communication_targets registered")
 
-    # ── Peer / Subagent Tool Manager (code-driven) ──
+    # ── Subagent Tool Manager (code-driven) ──
 
     async def _build_subagent_tool_manager(
         self,
@@ -413,7 +413,7 @@ class AgentBuilderMixin:
         except Exception:
             logger.exception("Failed to clean up subagent memory for session: %s", session_id)
 
-    # ── Peer Agent Initialization ──
+    # ── Additional Subagent Initialization ──
 
     async def _initialize_additional_subagents(self) -> None:
         from framework.hook import HookErrorPolicy, HookSpec
@@ -423,30 +423,30 @@ class AgentBuilderMixin:
         if self.agent_pool is None or self.broker is None or self.subagent_service is None:
             return
 
-        peer_cfgs = self._find_additional_subagent_cfgs()
+        subagent_cfgs = self._find_additional_subagent_cfgs()
         main_cfg = self._main_agent_cfg
         parent_name = main_cfg.name if main_cfg else "main"
 
-        if not peer_cfgs:
+        if not subagent_cfgs:
             return
         if self.mode != "pool":
-            print(f"   [WARN] {len(peer_cfgs)} peer agents require pool mode")
+            print(f"   [WARN] {len(subagent_cfgs)} subagents require pool mode")
             return
 
-        print(f"\n[INIT] Initializing {len(peer_cfgs)} peer agents...")
+        print(f"\n[INIT] Initializing {len(subagent_cfgs)} subagents...")
         memory_dir = self._resolve_path("memory_dir", "data/memory")
-        for peer_cfg in peer_cfgs:
-            peer_name = peer_cfg.name
-            print(f"[INIT] Initializing peer agent: {peer_name}")
+        for sub_cfg in subagent_cfgs:
+            sub_name = sub_cfg.name
+            print(f"[INIT] Initializing subagent: {sub_name}")
 
             descriptor, tool_manager, skill_manager, memory_ctx = await build_peer_descriptor(
-                peer_cfg, self._app_config, self._project_dir,
+                sub_cfg, self._app_config, self._project_dir,
                 memory_dir, self.safety_policy, self.provider,
             )
 
             # Per-agent MCP tool injection (config-driven, no name checks)
-            if peer_cfg.mcp_filter and self.mcp_manager:
-                mcp_tools = await _mcp_tools_for_agent(self.mcp_manager, peer_cfg.mcp_filter)
+            if sub_cfg.mcp_filter and self.mcp_manager:
+                mcp_tools = await _mcp_tools_for_agent(self.mcp_manager, sub_cfg.mcp_filter)
                 for tool in mcp_tools:
                     tool_manager.register(tool)
 
@@ -456,21 +456,21 @@ class AgentBuilderMixin:
             context_manager = memory_ctx
 
             # register send_to_agent_async (star topology)
-            peer_address = AgentAddress(name=peer_name)
+            sub_address = AgentAddress(name=sub_name)
             strategy = DefaultSessionIdStrategy(main_agent_name=parent_name)
             from framework.multi_agent.communication import AgentCommunicationService
-            peer_service = AgentCommunicationService(
-                source=peer_address, broker=self.broker, registry=self.agent_pool,
+            sub_service = AgentCommunicationService(
+                source=sub_address, broker=self.broker, registry=self.agent_pool,
                 agent_bus=self.agent_bus, session_strategy=strategy,
                 comm_tracker=self.communication_tracker,
             )
             tool_manager.register(SendToAgentAsyncTool(
-                source=peer_address, broker=self.broker, registry=self.agent_pool,
-                agent_bus=self.agent_bus, service=peer_service,
+                source=sub_address, broker=self.broker, registry=self.agent_pool,
+                agent_bus=self.agent_bus, service=sub_service,
                 comm_tracker=self.communication_tracker,
             ))
             tool_manager.register(ListCommunicationTargetsTool(
-                self_address=peer_address,
+                self_address=sub_address,
                 registry=self.agent_pool,
             ))
 
@@ -479,19 +479,19 @@ class AgentBuilderMixin:
                 skill_manager=skill_manager, output_adapter=NullOutputAdapter(),
             )
 
-            instance = self.agent_pool.get(peer_name)
+            instance = self.agent_pool.get(sub_name)
             if instance and instance.pipeline:
                 instance.pipeline.governance = create_subagent_governance(
-                    peer_cfg.memory, self._app_config.llm.max_tokens,
+                    sub_cfg.memory, self._app_config.llm.max_tokens,
                 )
                 instance.pipeline.context_manager_factory = None
 
             if self.agent_bus is not None and instance and instance.pipeline:
-                hook = SubagentAutoSendHook(agent_bus=self.agent_bus, self_name=peer_name, parent_name=parent_name)
+                hook = SubagentAutoSendHook(agent_bus=self.agent_bus, self_name=sub_name, parent_name=parent_name)
                 if instance.pipeline.hook_runner is not None:
                     instance.pipeline.hook_runner.add(HookSpec(hook=hook, on_error=HookErrorPolicy.LOG))
                 else:
                     instance.pipeline.hooks.append(hook)
 
-            print(f"[OK] Peer agent '{peer_name}' registered as resident")
-        print(f"[OK] {len(peer_cfgs)} peer agents initialized\n")
+            print(f"[OK] Subagent '{sub_name}' registered as resident")
+        print(f"[OK] {len(subagent_cfgs)} subagents initialized\n")

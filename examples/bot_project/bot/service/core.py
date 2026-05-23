@@ -143,7 +143,7 @@ class BotService(AgentBuilderMixin):
         self.plugin_integration: Any | None = None
         self.dream_engine: Any | None = None
 
-        # Subagent/peer caches
+        # Subagent caches
         self._subagent_skill_managers: dict[str, SkillManager] = {}
         self._subagent_memory_systems: dict[str, Any] = {}
         self._additional_subagent_memory_systems: dict[str, Any] = {}
@@ -661,7 +661,7 @@ class BotService(AgentBuilderMixin):
 
                 print(f"[OK] Subagent '{descriptor.address.name}' registered as resident")
 
-        # Initialize peer agents
+        # Initialize additional subagents
         await self._initialize_additional_subagents()
 
         # Configure BrokerBridgeService
@@ -1160,14 +1160,14 @@ class BotService(AgentBuilderMixin):
             except Exception as e:
                 print(f"   [WARN] Subagent memory system '{sub_name}' close error: {e}")
 
-        # Close peer memory systems
-        for peer_name, peer_ms in getattr(self, "_additional_subagent_memory_systems", {}).items():
+        # Close additional subagent memory systems
+        for sub_name, sub_ms in getattr(self, "_additional_subagent_memory_systems", {}).items():
             try:
-                print(f"   Closing peer memory system: {peer_name}...")
-                await peer_ms.close()
-                print(f"   [OK] Peer memory system '{peer_name}' closed")
+                print(f"   Closing subagent memory system: {sub_name}...")
+                await sub_ms.close()
+                print(f"   [OK] Subagent memory system '{sub_name}' closed")
             except Exception as e:
-                print(f"   [WARN] Peer memory system '{peer_name}' close error: {e}")
+                print(f"   [WARN] Subagent memory system '{sub_name}' close error: {e}")
 
         if self._overflow_cleaner is not None:
             try:
