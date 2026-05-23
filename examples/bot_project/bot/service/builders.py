@@ -450,7 +450,7 @@ class AgentBuilderMixin:
                 for tool in mcp_tools:
                     tool_manager.register(tool)
 
-            from framework.multi_agent.peer_validator import SubagentAgentValidator
+            from framework.multi_agent.subagent_validator import SubagentAgentValidator
             SubagentAgentValidator.validate(descriptor, parent_name)
 
             context_manager = memory_ctx

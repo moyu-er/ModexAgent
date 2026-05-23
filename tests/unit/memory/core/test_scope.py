@@ -7,7 +7,6 @@ from framework.memory.core.scope import (
     CompositeScope,
     GlobalScope,
     MemoryContext,
-    PeerPairScope,
     SessionScope,
     TenantScope,
     UserScope,
@@ -99,62 +98,3 @@ class TestCompositeScope:
     def test_name(self):
         scope = CompositeScope(UserScope(), SessionScope())
         assert scope.name == "user:session"
-
-
-class TestPeerPairScope:
-    def test_three_segment_session_id_passthrough(self):
-        """三段式 session_id 应直接透传。"""
-        scope = PeerPairScope()
-        ctx = MemoryContext(session_id="conv_001:sender:receiver")
-        assert scope.get_scope_key(ctx) == "conv_001:sender:receiver"
-
-    def test_construct_from_context_fields(self):
-        """从独立字段构造 scope key。"""
-        scope = PeerPairScope()
-        ctx = MemoryContext(
-            session_id="conv_001",
-            sender_agent="alice",
-            receiver_agent="bob",
-        )
-        assert scope.get_scope_key(ctx) == "conv_001:alice:bob"
-
-    def test_two_segment_session_id_extracts_conv_id(self):
-        """两段式 session_id 应提取 conversation_id 部分。"""
-        scope = PeerPairScope()
-        ctx = MemoryContext(
-            session_id="conv_001:main",
-            sender_agent="alice",
-            receiver_agent="bob",
-        )
-        assert scope.get_scope_key(ctx) == "conv_001:alice:bob"
-
-    def test_fallback_to_agent_id(self):
-        """sender_agent 缺失时回退到 agent_id。"""
-        scope = PeerPairScope()
-        ctx = MemoryContext(
-            session_id="conv_001",
-            agent_id="agent_x",
-            receiver_agent="bob",
-        )
-        assert scope.get_scope_key(ctx) == "conv_001:agent_x:bob"
-
-    def test_defaults_when_all_missing(self):
-        """所有字段缺失时使用默认值。"""
-        scope = PeerPairScope()
-        ctx = MemoryContext()
-        assert scope.get_scope_key(ctx) == "default:unknown:unknown"
-
-    def test_custom_separator(self):
-        """自定义分隔符。"""
-        scope = PeerPairScope(separator="|")
-        ctx = MemoryContext(session_id="conv_001|sender|receiver")
-        assert scope.get_scope_key(ctx) == "conv_001|sender|receiver"
-
-    def test_create_key_classmethod(self):
-        """便捷类方法构造 key。"""
-        key = PeerPairScope.create_key("conv_1", "a", "b")
-        assert key == "conv_1:a:b"
-
-    def test_name(self):
-        scope = PeerPairScope()
-        assert scope.name == "peer_pair"

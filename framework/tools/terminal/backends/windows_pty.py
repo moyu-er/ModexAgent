@@ -1,4 +1,7 @@
-"""Windows PTY backend — thin wrapper around pywinpty."""
+"""Windows PTY backend — thin wrapper around pywinpty.
+
+Note: pip package name is 'pywinpty', but the importable module is 'winpty'.
+"""
 
 from __future__ import annotations
 
@@ -24,12 +27,12 @@ class WindowsPtyBackend(TerminalBackend):
 
     def __init__(self):
         try:
-            import pywinpty
+            import winpty
         except ImportError as e:
             raise ImportError(
                 "pywinpty is required for Windows PTY. Install: pip install pywinpty"
             ) from e
-        self._pywinpty = pywinpty
+        self._winpty = winpty
         self._pty: Any | None = None
 
     async def start(
@@ -42,7 +45,7 @@ class WindowsPtyBackend(TerminalBackend):
         shell = shell or "cmd.exe"
         self._pty = await loop.run_in_executor(
             None,
-            lambda: self._pywinpty.PTY(80, 24),
+            lambda: self._winpty.PTY(80, 24),
         )
         await loop.run_in_executor(
             None,
