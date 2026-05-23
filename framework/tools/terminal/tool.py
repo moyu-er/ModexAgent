@@ -98,15 +98,16 @@ class TerminalTool(Tool):
             return f"Closed terminal '{name}'." if success else f"Terminal '{name}' not found."
 
         if action_enum == TerminalAction.LIST:
-            sessions = self._manager.list_sessions()
+            sessions = await self._manager.list_sessions()
             if not sessions:
                 return "No active terminals."
             lines = ["Active terminals:"]
             for s in sessions:
-                default_marker = " (default)" if s.get("is_default") else ""
+                default_marker = " (default)" if s.is_default else ""
+                alive_marker = "" if s.is_alive else " [dead]"
                 lines.append(
-                    f"  - {s['name']}: {s['shell_type']}, "
-                    f"commands={s['command_count']}{default_marker}"
+                    f"  - {s.name}: {s.shell_type}, "
+                    f"commands={s.command_count}{default_marker}{alive_marker}"
                 )
             return "\n".join(lines)
 

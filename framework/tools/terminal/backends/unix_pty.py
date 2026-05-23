@@ -39,7 +39,7 @@ class UnixPtyBackend(TerminalBackend):
         env: dict[str, str] | None = None,
     ) -> None:
         shell = shell or "/bin/sh"
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         self._child = await loop.run_in_executor(
             None,
             lambda: self._pexpect.spawn(shell, cwd=cwd, env=env, encoding="utf-8"),
@@ -49,13 +49,17 @@ class UnixPtyBackend(TerminalBackend):
     async def write(self, data: str) -> None:
         if self._child is None:
             raise RuntimeError("PTY not started")
-        self._child.send(data)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self._child.send, data)
 
     async def read(self, timeout: float = 5.0, max_size: int = 65536) -> str:
         if self._child is None:
             raise RuntimeError("PTY not started")
+        loop = asyncio.get_running_loop()
         try:
-            return self._child.read_nonblocking(size=max_size, timeout=timeout)
+            return await loop.run_in_executor(
+                None, lambda: self._child.read_nonblocking(size=max_size, timeout=timeout)
+            )
         except self._pexpect.TIMEOUT:
             return ""
         except self._pexpect.EOF:
@@ -64,12 +68,15 @@ class UnixPtyBackend(TerminalBackend):
     async def is_alive(self) -> bool:
         if self._child is None:
             return False
-        return self._child.isalive()
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._child.isalive)
 
     async def terminate(self) -> None:
         if self._child is not None:
-            self._child.terminate()
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self._child.terminate)
 
     async def kill(self) -> None:
         if self._child is not None:
-            self._child.kill(9)
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, lambda: self._child.kill(9))

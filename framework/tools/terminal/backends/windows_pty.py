@@ -38,7 +38,7 @@ class WindowsPtyBackend(TerminalBackend):
         cwd: str | None = None,
         env: dict[str, str] | None = None,
     ) -> None:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         shell = shell or "cmd.exe"
         self._pty = await loop.run_in_executor(
             None,
@@ -53,13 +53,13 @@ class WindowsPtyBackend(TerminalBackend):
     async def write(self, data: str) -> None:
         if self._pty is None:
             raise RuntimeError("PTY not started")
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._pty.write, data)
 
     async def read(self, timeout: float = 5.0, max_size: int = 65536) -> str:
         if self._pty is None:
             raise RuntimeError("PTY not started")
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             return await asyncio.wait_for(
                 loop.run_in_executor(None, self._pty.read, max_size),
@@ -71,15 +71,15 @@ class WindowsPtyBackend(TerminalBackend):
     async def is_alive(self) -> bool:
         if self._pty is None:
             return False
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, lambda: self._pty.isalive())
 
     async def terminate(self) -> None:
         if self._pty is not None:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, self._pty.terminate)
 
     async def kill(self) -> None:
         if self._pty is not None:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, self._pty.kill)

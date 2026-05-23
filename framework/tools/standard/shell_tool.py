@@ -14,9 +14,12 @@ import subprocess
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ...core.tool_manager import Tool
+
+if TYPE_CHECKING:
+    from framework.tools.terminal.manager import TerminalManager
 
 
 @dataclass(frozen=True)
@@ -103,7 +106,7 @@ class TerminalSessionExecutor(ShellExecutor):
 
     def __init__(
         self,
-        terminal_manager: Any,
+        terminal_manager: TerminalManager,
         default_terminal: str | None = None,
     ):
         self._tm = terminal_manager
@@ -114,6 +117,8 @@ class TerminalSessionExecutor(ShellExecutor):
         if session is None:
             name = self._default_terminal or "default"
             session = await self._tm.get_or_create(name, cwd=working_dir)
+        elif working_dir is not None:
+            await session.execute(f"cd {working_dir}", timeout=10)
         return await session.execute(command, timeout=timeout)
 
     def shell_info(self) -> ShellInfo:

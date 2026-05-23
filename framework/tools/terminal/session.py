@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from framework.tools.standard.shell_tool import ShellInfo
@@ -31,6 +31,7 @@ class TerminalInfo:
     is_alive: bool
     last_active: float
     command_count: int
+    is_default: bool = False
 
 
 class TerminalSession:
@@ -60,6 +61,7 @@ class TerminalSession:
         self._max_history = max_history
         self._history_truncate = history_truncate
         self._history: list[CommandRecord] = []
+        self.created_at = time.time()
         self.last_active = time.time()
         self._needs_restart = True
 
@@ -90,9 +92,11 @@ class TerminalSession:
             chunk = await self._backend.read(timeout=0.5, max_size=65536)
             if chunk:
                 output_parts.append(chunk)
-            # Simple heuristic: if we see a prompt-like ending, break early
+            # Simple heuristic: if we see a prompt-like ending, break early.
+            # Check before rstrip — prompts like "$ ", "# ", "> " have trailing
+            # whitespace that rstrip would remove, breaking the match.
             combined = "".join(output_parts)
-            if combined.rstrip().endswith(("$ ", "# ", "> ")):
+            if any(combined.endswith(s) for s in ("$ ", "# ", "> ")):
                 break
             await asyncio.sleep(0.1)
 
@@ -116,14 +120,50 @@ class TerminalSession:
         """Return command history (newest last)."""
         return list(self._history)
 
-    def to_info(self) -> TerminalInfo:
+    def get_state(self) -> dict[str, Any]:
+        """Return serializable state for persistence."""
+        return {
+            "name": self.name,
+            "shell_type": self.shell_info.name,
+            "shell_path": self.shell_info.path,
+            "cwd": self._cwd,
+            "env": self._env,
+            "created_at": self.created_at,
+            "last_active": self.last_active,
+            "history": [
+                {
+                    "command": rec.command,
+                    "output": rec.output,
+                    "exit_code": rec.exit_code,
+                    "timestamp": rec.timestamp,
+                }
+                for rec in self._history
+            ],
+        }
+
+    def restore_state(self, data: dict[str, Any]) -> None:
+        """Restore session state from persisted data."""
+        self.last_active = data.get("last_active", time.time())
+        self.created_at = data.get("created_at", self.created_at)
+        self._needs_restart = True
+        for rec_data in data.get("history", []):
+            self._history.append(CommandRecord(
+                command=rec_data["command"],
+                output=rec_data["output"],
+                exit_code=rec_data.get("exit_code"),
+                timestamp=rec_data.get("timestamp", time.time()),
+            ))
+
+    async def to_info(self, is_default: bool = False) -> TerminalInfo:
         """Return metadata for list/inspection."""
+        alive = await self._backend.is_alive() and not self._needs_restart
         return TerminalInfo(
             name=self.name,
             shell_type=self.shell_info.name,
-            is_alive=True,
+            is_alive=alive,
             last_active=self.last_active,
             command_count=len(self._history),
+            is_default=is_default,
         )
 
     async def close(self) -> None:

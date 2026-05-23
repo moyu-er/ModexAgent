@@ -99,3 +99,38 @@ class TestTerminalManager:
         )
         await manager2.load_state()
         assert "tab-1" in manager2.list_names()
+
+    @pytest.mark.asyncio
+    async def test_default_not_overwritten_on_get(self, manager):
+        """get_or_create on existing session should NOT change default."""
+        await manager.get_or_create("tab-1")
+        manager.select_default("tab-1")
+        await manager.get_or_create("tab-2")
+        assert manager.get_default_session().name == "tab-1"
+
+    @pytest.mark.asyncio
+    async def test_lru_eviction_default_reassigns(self, manager):
+        """When default terminal is evicted, default falls back to remaining session."""
+        s1 = await manager.get_or_create("tab-1")
+        s2 = await manager.get_or_create("tab-2")
+        s3 = await manager.get_or_create("tab-3")
+        manager.select_default("tab-1")
+
+        # Make tab-1 the oldest so it gets evicted
+        s1.last_active = 0.0
+        s4 = await manager.get_or_create("tab-4")
+
+        # Default should have been reassigned since tab-1 was evicted
+        assert "tab-1" not in manager.list_names()
+        default = manager.get_default_session()
+        assert default is not None
+        assert default.name != "tab-1"
+
+    @pytest.mark.asyncio
+    async def test_list_sessions_returns_terminal_info(self, manager):
+        await manager.get_or_create("tab-1")
+        sessions = await manager.list_sessions()
+        assert len(sessions) == 1
+        assert sessions[0].name == "tab-1"
+        assert hasattr(sessions[0], "is_alive")
+        assert hasattr(sessions[0], "is_default")
