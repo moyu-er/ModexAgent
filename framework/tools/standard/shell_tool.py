@@ -3,13 +3,146 @@
 提供简洁的命令执行功能，支持动态描述生成和可配置的安全校验。
 """
 
+from __future__ import annotations
+
 import asyncio
 import os
 import platform
 import re
+import shutil
+import subprocess
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from ...core.tool_manager import Tool
+
+
+@dataclass(frozen=True)
+class ShellInfo:
+    """Information about the detected shell.
+
+    Used to generate dynamic tool descriptions so the LLM knows
+    which shell syntax to use.
+    """
+
+    name: str
+    path: str
+    platform: str
+    is_stateful: bool
+
+
+class ShellExecutor(ABC):
+    """Abstract strategy for executing shell commands.
+
+    EXTENSION: Phase 2+ can add:
+      - RemoteExecutor (asyncssh/paramiko)
+      - DockerExecutor (docker exec)
+    """
+
+    @abstractmethod
+    async def execute(self, command: str, working_dir: str | None = None, timeout: int = 60) -> str:
+        """Execute a shell command and return its output."""
+
+    @abstractmethod
+    def shell_info(self) -> ShellInfo:
+        """Return information about the shell for dynamic description generation."""
+
+
+class SubprocessExecutor(ShellExecutor):
+    """Stateless executor: each command runs in a fresh subprocess.
+
+    This is the fallback when TerminalManager is unavailable.
+    """
+
+    def __init__(self, shell_info: ShellInfo | None = None):
+        self._shell_info = shell_info or detect_platform_shell()
+
+    async def execute(self, command: str, working_dir: str | None = None, timeout: int = 60) -> str:
+        cwd = working_dir or os.getcwd()
+        process = await asyncio.create_subprocess_shell(
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=cwd,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+        except TimeoutError:
+            process.kill()
+            return f"Error: Command timed out after {timeout} seconds"
+
+        output_parts: list[str] = []
+        if stdout:
+            output_parts.append(stdout.decode("utf-8", errors="replace"))
+        if stderr:
+            stderr_text = stderr.decode("utf-8", errors="replace")
+            if stderr_text.strip():
+                output_parts.append(f"STDERR:\n{stderr_text}")
+        if process.returncode != 0:
+            output_parts.append(f"\nExit code: {process.returncode}")
+
+        result = "\n".join(output_parts) if output_parts else "(no output)"
+        max_len = 10000
+        if len(result) > max_len:
+            result = result[:max_len] + f"\n... (truncated, {len(result) - max_len} more chars)"
+        return result
+
+    def shell_info(self) -> ShellInfo:
+        return self._shell_info
+
+
+def detect_platform_shell() -> ShellInfo:
+    """Detect the best available shell for the current platform.
+
+    Windows priority: bash > powershell > cmd
+    Linux priority: bash > sh
+    macOS priority: bash > zsh > sh
+    """
+    plat = platform.system().lower()
+
+    if plat == "windows":
+        bash_path = shutil.which("bash")
+        if bash_path:
+            try:
+                result = subprocess.run(
+                    [bash_path, "--version"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if result.returncode == 0 and "bash" in result.stdout.lower():
+                    return ShellInfo(name="bash", path=bash_path, platform="windows", is_stateful=False)
+            except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+                pass
+
+        ps_path = shutil.which("powershell") or shutil.which("pwsh")
+        if ps_path:
+            return ShellInfo(name="powershell", path=ps_path, platform="windows", is_stateful=False)
+
+        cmd_path = shutil.which("cmd") or shutil.which("cmd.exe")
+        if cmd_path:
+            return ShellInfo(name="cmd", path=cmd_path, platform="windows", is_stateful=False)
+
+        return ShellInfo(name="cmd", path="cmd.exe", platform="windows", is_stateful=False)
+
+    env_shell = os.environ.get("SHELL", "")
+    if env_shell and shutil.which(env_shell):
+        shell_name = Path(env_shell).name
+        return ShellInfo(name=shell_name, path=env_shell, platform=plat, is_stateful=False)
+
+    bash_path = shutil.which("bash")
+    if bash_path:
+        return ShellInfo(name="bash", path=bash_path, platform=plat, is_stateful=False)
+
+    if plat == "darwin":
+        zsh_path = shutil.which("zsh")
+        if zsh_path:
+            return ShellInfo(name="zsh", path=zsh_path, platform="darwin", is_stateful=False)
+
+    sh_path = shutil.which("sh") or "/bin/sh"
+    return ShellInfo(name="sh", path=sh_path, platform=plat, is_stateful=False)
 
 
 class ShellTool(Tool):
@@ -44,25 +177,27 @@ class ShellTool(Tool):
 
     def __init__(
         self,
+        executor: ShellExecutor | None = None,
         timeout: int = 60,
         enable_safety_guard: bool = True,
         deny_patterns: list[str] | None = None,
         allow_patterns: list[str] | None = None,
     ):
-        """初始化 Shell 工具.
+        """Initialize Shell tool.
 
         Args:
-            timeout: 命令超时时间（秒）
-            enable_safety_guard: 是否启用安全校验（默认 True）
-            deny_patterns: 自定义禁止命令模式列表
-            allow_patterns: 允许命令模式列表（如设置则只允许这些命令）
+            executor: Shell execution strategy (defaults to SubprocessExecutor).
+            timeout: Command timeout in seconds.
+            enable_safety_guard: Whether to enable safety checks.
+            deny_patterns: Custom deny patterns.
+            allow_patterns: Allowlist patterns.
         """
         super().__init__()
+        self._executor = executor or SubprocessExecutor()
         self.timeout = timeout
         self.enable_safety_guard = enable_safety_guard
         self._platform = platform.system().lower()
 
-        # 根据平台设置默认危险模式，或接受自定义模式
         if deny_patterns is not None:
             self.deny_patterns = deny_patterns
         elif self._platform == "windows":
@@ -78,26 +213,50 @@ class ShellTool(Tool):
 
     @property
     def description(self) -> str:
-        """动态生成描述，包含操作系统特定的提示."""
-        parts = ["Execute a shell command and return its output."]
+        """Dynamically generate description based on actual shell type."""
+        shell_info = self._executor.shell_info()
+        parts = [
+            f"Execute a shell command using {shell_info.name} and return its output."
+        ]
 
-        # 操作系统特定提示
-        if self._platform == "windows":
+        if shell_info.name == "bash":
             parts.append(
-                "On Windows: Use backslash (\\) as path separator. "
-                "Commands run in cmd.exe."
+                "Commands run in bash. Use POSIX syntax: forward slashes for paths, "
+                "single quotes for strings, && for chaining."
+            )
+        elif shell_info.name == "powershell":
+            parts.append(
+                "Commands run in PowerShell. Use PowerShell syntax: "
+                "Get-ChildItem instead of ls, semicolons for chaining, "
+                "backtick for line continuation."
+            )
+        elif shell_info.name == "cmd":
+            parts.append(
+                "Commands run in Windows CMD. Use CMD syntax: backslashes for paths, "
+                "&& for chaining, %VAR% for environment variables."
+            )
+        elif shell_info.name == "zsh":
+            parts.append(
+                "Commands run in zsh. Compatible with bash syntax."
             )
         else:
             parts.append(
-                "On Unix/Linux/macOS: Use forward slash (/) as path separator. "
-                "Commands run in sh/bash."
+                "Commands run in sh. Use basic POSIX syntax."
             )
 
-        # 安全限制提示
+        if shell_info.is_stateful:
+            parts.append(
+                "This is a stateful session: cd, environment variables, "
+                "and aliases persist across commands."
+            )
+        else:
+            parts.append(
+                "Each command runs in a fresh process: cd and environment "
+                "changes do NOT persist."
+            )
+
         if self.enable_safety_guard:
             parts.append("Safety guard is enabled.")
-        else:
-            parts.append("WARNING: Safety guard is disabled.")
 
         return " ".join(parts)
 
@@ -119,55 +278,11 @@ class ShellTool(Tool):
         }
 
     async def execute(self, command: str, working_dir: str | None = None, **kwargs: Any) -> str:
-        cwd = working_dir or os.getcwd()
-
-        # 安全校验（如果启用）
         if self.enable_safety_guard:
             guard_error = self._guard_command(command)
             if guard_error:
                 return guard_error
-
-        try:
-            process = await asyncio.create_subprocess_shell(
-                command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=cwd,
-            )
-
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(),
-                    timeout=self.timeout
-                )
-            except TimeoutError:
-                process.kill()
-                return f"Error: Command timed out after {self.timeout} seconds"
-
-            output_parts = []
-
-            if stdout:
-                output_parts.append(stdout.decode("utf-8", errors="replace"))
-
-            if stderr:
-                stderr_text = stderr.decode("utf-8", errors="replace")
-                if stderr_text.strip():
-                    output_parts.append(f"STDERR:\n{stderr_text}")
-
-            if process.returncode != 0:
-                output_parts.append(f"\nExit code: {process.returncode}")
-
-            result = "\n".join(output_parts) if output_parts else "(no output)"
-
-            # 截断过长输出
-            max_len = 10000
-            if len(result) > max_len:
-                result = result[:max_len] + f"\n... (truncated, {len(result) - max_len} more chars)"
-
-            return result
-
-        except Exception as e:
-            return f"Error executing command: {str(e)}"
+        return await self._executor.execute(command, working_dir, timeout=self.timeout)
 
     def _guard_command(self, command: str) -> str | None:
         """安全检查，防止危险命令."""
