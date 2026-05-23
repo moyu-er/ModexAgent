@@ -53,9 +53,21 @@ def _make_file_tools() -> list[Tool]:
     return [ReadFileTool(), WriteFileTool(), EditFileTool(), ListDirTool()]
 
 
-def _make_shell_tool(timeout: int = 60, enable_safety_guard: bool = True) -> Tool:
-    from framework.tools.standard import ShellTool
-    return ShellTool(timeout=timeout, enable_safety_guard=enable_safety_guard)
+def _make_shell_tool(
+    terminal_manager: Any | None = None,
+    timeout: int = 60,
+    enable_safety_guard: bool = True,
+) -> Tool:
+    from framework.tools.standard import ShellTool, SubprocessExecutor, TerminalSessionExecutor
+
+    if terminal_manager is not None:
+        executor = TerminalSessionExecutor(
+            terminal_manager=terminal_manager,
+            default_terminal="default",
+        )
+    else:
+        executor = SubprocessExecutor()
+    return ShellTool(executor=executor, timeout=timeout, enable_safety_guard=enable_safety_guard)
 
 
 def _make_search_tools() -> list[Tool]:
@@ -119,13 +131,25 @@ class AgentBuilderMixin:
 
     # ── Tool Registration (code-driven, no config dict) ──
 
-    async def _register_tools(self) -> None:
+    async def _register_tools(self, terminal_manager: Any | None = None) -> None:
         if self.tool_manager is None:
             return
 
-        for tool in _make_standard_tools():
+        for tool in _make_file_tools():
+            self.tool_manager.register(tool)
+
+        shell_tool = _make_shell_tool(terminal_manager=terminal_manager, timeout=60)
+        self.tool_manager.register(shell_tool)
+
+        for tool in _make_search_tools():
             self.tool_manager.register(tool)
         print("   [OK] Standard tools registered (file + shell + search)")
+
+        # Register TerminalTool if TerminalManager is available
+        if terminal_manager is not None:
+            from framework.tools.terminal import TerminalTool
+            self.tool_manager.register(TerminalTool(terminal_manager))
+            print("   [OK] terminal_manager registered")
 
         from bot.tools.custom import SendFileToUserTool
         self.tool_manager.register(SendFileToUserTool(output_adapter=self.output_adapter))

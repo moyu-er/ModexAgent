@@ -135,6 +135,9 @@ class BotService(AgentBuilderMixin):
         self.inbox_producer: InboxProducer | None = None
         self.inbox_consumer: InboxConsumer | None = None
 
+        # Terminal management
+        self.terminal_manager: Any | None = None
+
         # Runtime components
         self.provider: Any | None = None
         self.plugin_integration: Any | None = None
@@ -236,7 +239,25 @@ class BotService(AgentBuilderMixin):
         )
         self.tool_manager = InMemoryToolManager(config=tm_config)
 
-        await self._register_tools()
+        # 3a. Create TerminalManager (with fallback)
+        try:
+            from framework.tools.terminal import TerminalManager
+
+            data_dir = self._resolve_path("data_dir", "data")
+            terminals_dir = self._resolve_path("terminals_dir", str(Path(data_dir) / "terminals"))
+            self.terminal_manager = TerminalManager(
+                storage_dir=terminals_dir,
+                max_terminals=getattr(self._app_config, 'terminal', {}).get('max_terminals', 5),
+                history_count=5,
+                history_truncate=200,
+            )
+            await self.terminal_manager.load_state()
+            print(f"[OK] TerminalManager initialized ({len(self.terminal_manager.list_names())} sessions restored)")
+        except Exception as e:
+            logger.warning("TerminalManager initialization failed: %s. ShellTool will use SubprocessExecutor.", e)
+            self.terminal_manager = None
+
+        await self._register_tools(terminal_manager=self.terminal_manager)
         await self._register_mcp_tools()
         print(f"[OK] ToolManager initialized, {len(self.tool_manager.list_tools())} tools registered")
 
