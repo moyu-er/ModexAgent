@@ -23,7 +23,7 @@ class TestSkillsConfig:
         assert cfg.allowed is None
 
     def test_with_roots(self) -> None:
-        cfg = SkillsConfig(roots=["skills/main", "skills/peers"])
+        cfg = SkillsConfig(roots=["skills/main", "skills/subagents"])
         assert len(cfg.roots) == 2
 
 

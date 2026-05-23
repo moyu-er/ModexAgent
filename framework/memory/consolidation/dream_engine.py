@@ -153,7 +153,7 @@ class DreamEngine(ConsolidationEngine):
     async def scan_all(self) -> list[MemoryContext]:
         """扫描 history 层 scope records，返回处理过的 MemoryContext 列表。
 
-        只处理 main agent 的 scope；peer/subagent 被过滤掉。
+        只处理 main agent 的 scope；subagent 被过滤掉。
         每个 scope 调用 run() 处理未处理的 history 条目。
         """
         processed: list[MemoryContext] = []

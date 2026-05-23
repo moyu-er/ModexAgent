@@ -125,15 +125,15 @@ class TestDetect:
         renderer = ApprovalRenderer(approval_workspace=Path("/tmp/ar"))
         snapshot = _pending_snapshot()
         msg = InputMessage(
-            content="peer update",
+            content="subagent update",
             session_id="s1",
-            metadata={"source_agent": "peer-a"},
+            metadata={"source_agent": "subagent-a"},
         )
         is_cmd, state = asyncio.run(
             renderer.detect(
                 msg,
                 "s1",
-                {"source_agent": "peer-a"},
+                {"source_agent": "subagent-a"},
                 pending_snapshot=snapshot,
             )
         )

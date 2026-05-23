@@ -13,12 +13,12 @@
   and then runs paired cleanup while retaining the configured recent consumed
   pairs.
 
-- Main memory uses full session/archive/knowledge layers. Peer and subagent
-  memory use session-only storage by configuring `archive=None` and
+- Main memory uses full session/archive/knowledge layers. Subagent
+  memory uses session-only storage by configuring `archive=None` and
   `knowledge=None`.
-- Peer/subagent compression reuses the standard
+- Subagent compression reuses the standard
   `DefaultMemoryCompressionCoordinator` and `DefaultCommitPolicy`; there is no
-  peer/subagent-specific truncation or commit strategy.
+  subagent-specific truncation or commit strategy.
 - With `archive=None`, compression still applies the same trigger, retention
   priority, planner, and keep-ratio hard caps as main memory. It replaces
   session messages only and skips archive writes/summary generation.
@@ -282,7 +282,7 @@ Priority  30: Auto-compact summary  │ 空闲压缩摘要
 ## Bot Project Defaults
 
 The bot project uses `compaction.boundary: priority_input`. Human user messages
-are the highest task anchors. `role=agent` messages from peer/subagent
+are the highest task anchors. `role=agent` messages from subagent
 communication are also anchors, but rank below human user input.
 
 Agent messages are stored with their source prefix, for example:
@@ -360,8 +360,6 @@ memory:
       keep_recent_messages: 8
     dream_engine:
       interval: 300
-  peers:
-    short_term: {max_messages: 50, auto_llm_compression: false}
   subagents:
     short_term: {max_messages: 20, max_tokens: 4000, auto_llm_compression: false}
 ```

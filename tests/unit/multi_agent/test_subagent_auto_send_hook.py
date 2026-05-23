@@ -230,16 +230,16 @@ class TestSubagentAutoSendHook:
         assert "Final answer." in content
 
     # ------------------------------------------------------------------
-    # 10. Peer session: agent_session_id routes to main's user session
+    # 10. Subagent session: agent_session_id routes to main's user session
     # ------------------------------------------------------------------
 
-    async def test_peer_session_preserves_agent_session_id(self):
-        """Peer session → agent_session_id = main_session(conv) (routes to main's user session)."""
+    async def test_subagent_session_preserves_agent_session_id(self):
+        """Subagent session → agent_session_id = main_session(conv) (routes to main's user session)."""
         bus = self._make_bus()
         hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
-        peer_session = "conv_001:office-expert"
-        ctx = self._make_ctx([], session_id=peer_session)
-        result = AgentResult(content="Peer task done.")
+        subagent_session = "conv_001:office-expert"
+        ctx = self._make_ctx([], session_id=subagent_session)
+        result = AgentResult(content="Subagent task done.")
 
         await hook.after_turn(ctx, result)
 
@@ -249,10 +249,10 @@ class TestSubagentAutoSendHook:
         assert envelope.agent_session_id == "conv_001:main"
 
     # ------------------------------------------------------------------
-    # 11. Peer session: inbox_key is main's user session (2-part)
+    # 11. Subagent session: inbox_key is main's user session (2-part)
     # ------------------------------------------------------------------
 
-    async def test_peer_session_inbox_key_is_two_part(self):
+    async def test_subagent_session_inbox_key_is_two_part(self):
         """inbox_key for inbox delivery is always {cid}:main (2-part)."""
         bus = self._make_bus()
         hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
@@ -268,10 +268,10 @@ class TestSubagentAutoSendHook:
         assert inbox_key.count(":") == 1
 
     # ------------------------------------------------------------------
-    # 12. Peer session: conversation_id extracted correctly
+    # 12. Subagent session: conversation_id extracted correctly
     # ------------------------------------------------------------------
 
-    async def test_peer_session_conversation_id_extracted(self):
+    async def test_subagent_session_conversation_id_extracted(self):
         """conversation_id is extracted from the session via strategy.parse()."""
         bus = self._make_bus()
         hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")

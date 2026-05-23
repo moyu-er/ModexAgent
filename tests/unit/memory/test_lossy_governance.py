@@ -13,7 +13,7 @@ from framework.memory.context_governance import (
 
 async def test_lossy_compaction_truncates_tool_result() -> None:
     messages = [
-        {"role": MessageRole.AGENT, "source_agent": "peer", "content": "[From Agent peer]\n" + "a" * 200},
+        {"role": MessageRole.AGENT, "source_agent": "subagent", "content": "[From Agent subagent]\n" + "a" * 200},
         {"role": MessageRole.TOOL, "tool_call_id": "t1", "name": "search", "content": "t" * 500},
     ]
     gov = LossyContentCompactionGovernance(
@@ -32,7 +32,7 @@ async def test_lossy_compaction_truncates_tool_result() -> None:
     assert tool[META_CONTEXT_LOSSY] is True
     assert tool[META_CONTEXT_REDUCTION] == ContextReductionType.TOOL_RESULT_TRUNCATED
     assert len(str(tool["content"])) < len("t" * 500)
-    assert agent["content"].startswith("[From Agent peer]\n")
+    assert agent["content"].startswith("[From Agent subagent]\n")
 
 
 async def test_lossy_does_not_mutate_input() -> None:

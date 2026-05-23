@@ -75,7 +75,7 @@ async def test_pending_manager_deduplicates_and_moves_duplicate_to_latest() -> N
         pruned_at=time.time(),
     )
     second = PendingPrunedInputEntry.from_message(
-        {"role": "agent", "source_agent": "peer", "content": "[From Agent peer]\nsend"},
+        {"role": "agent", "source_agent": "subagent", "content": "[From Agent subagent]\nsend"},
         pruned_at=time.time(),
     )
     duplicate = PendingPrunedInputEntry.from_message(
@@ -86,7 +86,7 @@ async def test_pending_manager_deduplicates_and_moves_duplicate_to_latest() -> N
     await manager.append_entries(ctx, [first, second, duplicate])
 
     entries = await manager.get_entries(ctx)
-    assert [entry.content for entry in entries] == ["[From Agent peer]\nsend", "same"]
+    assert [entry.content for entry in entries] == ["[From Agent subagent]\nsend", "same"]
 
 
 @pytest.mark.asyncio

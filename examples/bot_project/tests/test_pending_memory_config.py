@@ -43,7 +43,7 @@ def test_pending_config_can_be_disabled_for_main_memory() -> None:
     assert config.pending is None
 
 
-def test_peer_compression_uses_generic_pending_config_defaults() -> None:
+def test_subagent_compression_uses_generic_pending_config_defaults() -> None:
     service = _service()
     memory_config = service._session_only_memory_config({"short_term": {"max_messages": 10}})
     assert memory_config.pending is not None

@@ -57,12 +57,12 @@ class TestMemoryAppendRecorderDedup:
         assert recorder._providers[0].add.call_count == 1
 
 
-class TestMemoryAppendRecorderPeerSubagent:
+class TestMemoryAppendRecorderSubagent:
     @pytest.mark.asyncio
-    async def test_peer_skips_provider(self):
+    async def test_subagent_skips_provider(self):
         provider = FakeProvider()
         recorder = MemoryAppendRecorder([provider])
-        ctx = MemoryContext(session_id="s1", agent_id="peer_a")
+        ctx = MemoryContext(session_id="s1", agent_id="subagent_a")
         await recorder.record([{"role": "user", "content": "hello"}], ctx)
         await recorder.flush()
         provider.add.assert_not_called()

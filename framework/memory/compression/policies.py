@@ -230,7 +230,7 @@ class DefaultCommitPolicy(CommitPolicy):
     3. Write archive entry when an archive layer is configured.
     4. Replace session messages with keep_messages.
 
-    archive=None is the session-only mode used by peer/subagent memory:
+    archive=None is the session-only mode used by subagent memory:
     the same trigger, planner, and hard keep constraints still apply, but
     commit only replaces the session and does not create an archive entry.
     """

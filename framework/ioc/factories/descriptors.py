@@ -1,5 +1,5 @@
 """Descriptor factory — builds AgentDescriptor + tool_manager + skill_manager
-for peers and subagents from AppConfig.
+for subagents from AppConfig.
 
 This replaces the hand-rolled descriptor assembly in builders.py.
 """
@@ -78,7 +78,7 @@ def _build_session_only_memory(
     agent_role: MemoryAgentRole,
     system_prompt: str = "",
 ) -> MemorySystemContextManager:
-    """Create a session-only memory system for a peer or subagent."""
+    """Create a session-only memory system for a subagent."""
     max_messages = 50
     if cfg is not None:
         max_messages = cfg.short_term.max_messages
@@ -143,58 +143,6 @@ def _build_skill_manager(
 
 # ── Descriptor building ──
 
-async def build_peer_descriptor(
-    agent_cfg: AgentConfig,
-    app_cfg: AppConfig,
-    project_dir: Path,
-    workspace: Path,
-    safety: Any,
-    llm: Any,
-) -> tuple[AgentDescriptor, InMemoryToolManager, Any | None, Any]:
-    """Build a peer agent: descriptor + tool_manager + skill_manager + memory_context.
-
-    Tool selection is config-driven via AgentConfig fields:
-      - standard_tools: bool  → register file/shell/search tools
-      - mcp_filter: list[str] → which MCP servers to use (applied by caller)
-    """
-    peer_name = agent_cfg.name
-
-    # Standard tools
-    peer_tools: list[Tool] = list(_make_standard_tools()) if agent_cfg.standard_tools else []
-    tool_manager = _build_tool_manager(peer_tools)
-
-    # Skills
-    skill_roots = agent_cfg.skills.roots if agent_cfg.skills else []
-    skill_manager = _build_skill_manager(peer_name, skill_roots, project_dir)
-
-    # Memory
-    system_prompt = agent_cfg.system_prompt or DEFAULT_SYSTEM_PROMPT
-    memory_ctx = _build_session_only_memory(
-        agent_cfg.memory, workspace, peer_name,
-        MemoryAgentRole.SUBAGENT, system_prompt,
-    )
-
-    _ = llm  # reserved for future per-peer LLM override
-    descriptor = AgentDescriptor(
-        address=AgentAddress(name=peer_name),
-        llm_config=AgentLLMConfig(
-            model=app_cfg.llm.model,
-            temperature=app_cfg.llm.temperature,
-            max_tokens=app_cfg.llm.max_tokens,
-        ),
-        system_prompt_template=system_prompt,
-        max_iterations=agent_cfg.max_steps,
-        max_tools_per_turn=10,
-        execution_strategy="react",
-        context_strategy="persistent",
-        safety_policy=safety,
-        comm_kind=AgentCommKind.SUBAGENT
-        if agent_cfg.role == "subagent"
-        else AgentCommKind.NORMAL,
-    )
-    return descriptor, tool_manager, skill_manager, memory_ctx
-
-
 async def build_subagent_descriptor(
     agent_cfg: AgentConfig,
     app_cfg: AppConfig,
@@ -205,24 +153,30 @@ async def build_subagent_descriptor(
 ) -> tuple[AgentDescriptor, InMemoryToolManager, Any | None, Any]:
     """Build a subagent: descriptor + tool_manager + skill_manager + memory_context.
 
-    Subagents get standard tools only; communication tools are denied.
+    Tool selection is config-driven via AgentConfig fields:
+      - standard_tools: bool  → register file/shell/search tools
+      - mcp_filter: list[str] → which MCP servers to use (applied by caller)
     """
-    sub_name = agent_cfg.name
+    subagent_name = agent_cfg.name
 
-    tool_manager = _build_tool_manager(list(_make_standard_tools()))
+    # Standard tools
+    subagent_tools: list[Tool] = list(_make_standard_tools()) if agent_cfg.standard_tools else []
+    tool_manager = _build_tool_manager(subagent_tools)
 
+    # Skills
     skill_roots = agent_cfg.skills.roots if agent_cfg.skills else []
-    skill_manager = _build_skill_manager(sub_name, skill_roots, project_dir)
+    skill_manager = _build_skill_manager(subagent_name, skill_roots, project_dir)
 
+    # Memory
     system_prompt = agent_cfg.system_prompt or DEFAULT_SYSTEM_PROMPT
     memory_ctx = _build_session_only_memory(
-        agent_cfg.memory, workspace, sub_name,
+        agent_cfg.memory, workspace, subagent_name,
         MemoryAgentRole.SUBAGENT, system_prompt,
     )
 
     _ = llm  # reserved for future per-subagent LLM override
     descriptor = AgentDescriptor(
-        address=AgentAddress(name=sub_name),
+        address=AgentAddress(name=subagent_name),
         llm_config=AgentLLMConfig(
             model=app_cfg.llm.model,
             temperature=app_cfg.llm.temperature,
@@ -232,9 +186,7 @@ async def build_subagent_descriptor(
         max_iterations=agent_cfg.max_steps,
         max_tools_per_turn=10,
         execution_strategy="react",
-        context_strategy="ephemeral",
-        streaming_to_user=False,
-        internal_streaming=False,
+        context_strategy="persistent",
         safety_policy=safety,
         comm_kind=AgentCommKind.SUBAGENT,
     )

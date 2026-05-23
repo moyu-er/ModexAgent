@@ -40,7 +40,7 @@ def test_planner_keeps_latest_user_when_it_fits() -> None:
 
 def test_planner_prefers_user_over_agent_under_hard_cap() -> None:
     messages = [
-        {"role": MessageRole.AGENT, "source_agent": "peer", "content": "[From Agent peer]\nagent task"},
+        {"role": MessageRole.AGENT, "source_agent": "subagent", "content": "[From Agent subagent]\nagent task"},
         {"role": MessageRole.ASSISTANT, "content": "agent answer"},
         {"role": MessageRole.USER, "content": "human task"},
     ]
@@ -62,7 +62,7 @@ def test_planner_prefers_user_over_agent_under_hard_cap() -> None:
 def test_planner_keeps_agent_when_no_user_anchor_fits() -> None:
     messages = [
         {"role": MessageRole.ASSISTANT, "content": "old"},
-        {"role": MessageRole.AGENT, "source_agent": "peer", "content": "[From Agent peer]\nagent task"},
+        {"role": MessageRole.AGENT, "source_agent": "subagent", "content": "[From Agent subagent]\nagent task"},
     ]
     policy = DefaultMessageRetentionPolicy()
     retention = [policy.decide(m, index=i, messages=messages) for i, m in enumerate(messages)]

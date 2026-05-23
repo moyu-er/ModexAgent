@@ -48,7 +48,7 @@ def format_approval_prompt(req: object) -> str:
 
 
 class ApprovalRenderer:
-    """Approval prompt rendering and peer-message buffering.
+    """Approval prompt rendering and agent-message buffering.
 
     Approval state is owned by ``TurnStateStore`` and represented by
     ``ApprovalTransaction`` inside ``TurnSnapshot``. This helper never loads or

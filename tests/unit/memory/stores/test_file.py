@@ -261,20 +261,20 @@ class TestFileStorage:
             agent_id="main",
         )
         await storage.ensure_scope_metadata(
-            "peer-session",
+            "subagent-session",
             layer="short_term",
-            context=MemoryContext(session_id="peer-session", agent_id="peer-a"),
-            agent_role="peer",
-            agent_id="peer-a",
+            context=MemoryContext(session_id="subagent-session", agent_id="subagent-a"),
+            agent_role="subagent",
+            agent_id="subagent-a",
         )
 
         default_records = await storage.list_scope_records(layer="short_term")
         all_records = await storage.list_scope_records(layer="short_term", agent_roles=None)
-        peer_records = await storage.list_scope_records(layer="short_term", agent_roles={"peer"})
+        subagent_records = await storage.list_scope_records(layer="short_term", agent_roles={"subagent"})
 
         assert [r.scope_key for r in default_records] == ["main-session"]
-        assert {r.scope_key for r in all_records} == {"main-session", "peer-session"}
-        assert [r.scope_key for r in peer_records] == ["peer-session"]
+        assert {r.scope_key for r in all_records} == {"main-session", "subagent-session"}
+        assert [r.scope_key for r in subagent_records] == ["subagent-session"]
 
     async def test_scope_record_filters_by_layer_and_file(self, storage):
         await storage.ensure_scope_metadata(

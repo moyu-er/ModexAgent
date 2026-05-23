@@ -2,7 +2,7 @@
 
 Verifies that:
 - Main agent always uses factory emitter (regardless of source_agent)
-- Peer agents (no emitter_factory) always use StreamingAwareEmitter
+- Subagent agents (no emitter_factory) always use StreamingAwareEmitter
 """
 
 from unittest.mock import MagicMock
@@ -111,7 +111,7 @@ class TestPipelineEmitterSelection:
         return pipeline, agent
 
     async def test_main_with_source_agent_uses_factory_emitter(self):
-        """Main agent + peer message → factory emitter (NOT BufferingEmitter).
+        """Main agent + subagent message → factory emitter (NOT BufferingEmitter).
 
         Main agent should always use factory emitter so the LLM's assistant
         response (including tool outputs like SendFileToUser) reaches the user.
@@ -119,7 +119,7 @@ class TestPipelineEmitterSelection:
         factory_emitter = MagicMock()
         pipeline, agent = self._make_pipeline(emitter_factory=lambda sid: factory_emitter)
         msg = InputMessage(
-            content="peer result",
+            content="subagent result",
             session_id="conv_001:main",
             metadata={"source_agent": "office-expert"},
         )
@@ -138,8 +138,8 @@ class TestPipelineEmitterSelection:
 
         assert agent.received_emitter is factory_emitter
 
-    async def test_peer_with_source_agent_uses_streaming_emitter(self):
-        """Peer agent (no emitter_factory) + main message → StreamingAwareEmitter."""
+    async def test_subagent_with_source_agent_uses_streaming_emitter(self):
+        """Subagent agent (no emitter_factory) + main message → StreamingAwareEmitter."""
         pipeline, agent = self._make_pipeline(emitter_factory=None)
         msg = InputMessage(
             content="please help",
@@ -151,8 +151,8 @@ class TestPipelineEmitterSelection:
 
         assert isinstance(agent.received_emitter, StreamingAwareEmitter)
 
-    async def test_peer_without_source_agent_uses_streaming_emitter(self):
-        """Peer agent (no emitter_factory) + user message → StreamingAwareEmitter."""
+    async def test_subagent_without_source_agent_uses_streaming_emitter(self):
+        """Subagent agent (no emitter_factory) + user message → StreamingAwareEmitter."""
         pipeline, agent = self._make_pipeline(emitter_factory=None)
         msg = InputMessage(content="hello", session_id="conv_001:main:office-expert")
 

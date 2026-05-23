@@ -9,13 +9,10 @@ from framework.ioc.configs.agent import AgentConfig
 from framework.ioc.configs.app import AppConfig
 from framework.ioc.configs.llm import LLMConfig
 from framework.ioc.configs.skills import SkillsConfig
-from framework.ioc.factories.descriptors import (
-    build_peer_descriptor,
-    build_subagent_descriptor,
-)
+from framework.ioc.factories.descriptors import build_subagent_descriptor
 
 
-class TestBuildPeerDescriptor:
+class TestBuildSubagentDescriptorQuery12306:
     @pytest.mark.anyio
     async def test_query_12306_mcp_only(self) -> None:
         app_cfg = AppConfig(llm=LLMConfig())
@@ -23,7 +20,7 @@ class TestBuildPeerDescriptor:
         project_dir = Path("/tmp")
         workspace = Path("/tmp/memory")
 
-        desc, tm, sm, mem = await build_peer_descriptor(
+        desc, tm, sm, mem = await build_subagent_descriptor(
             agent_cfg, app_cfg, project_dir, workspace,
             safety=None, llm=None,
         )
@@ -36,12 +33,12 @@ class TestBuildPeerDescriptor:
         app_cfg = AppConfig(llm=LLMConfig())
         agent_cfg = AgentConfig(
             name="office-expert",
-            skills=SkillsConfig(roots=["skills/peers/docx"]),
+            skills=SkillsConfig(roots=["skills/subagents/docx"]),
         )
         project_dir = Path("/tmp")
         workspace = Path("/tmp/memory")
 
-        desc, tm, sm, mem = await build_peer_descriptor(
+        desc, tm, sm, mem = await build_subagent_descriptor(
             agent_cfg, app_cfg, project_dir, workspace,
             safety=None, llm=None,
         )
@@ -69,5 +66,5 @@ class TestBuildSubagentDescriptor:
         assert "read_file" in tools
         assert "spawn_subagent" not in tools  # denied
         assert "send_message" not in tools  # denied
-        assert desc.context_strategy == "ephemeral"
-        assert desc.streaming_to_user is False
+        assert desc.context_strategy == "persistent"
+        assert desc.streaming_to_user is True

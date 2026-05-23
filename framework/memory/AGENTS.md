@@ -36,11 +36,11 @@ Three-layer memory system with scope isolation. Layers: Session (short-term), Ar
 - Two-phase compaction: trigger → plan → summary → commit (tool-chain-aware)
 - `BoundaryPolicy` ensures tool-call chains are not broken by truncation
 - Governance mutates only LLM input copy, never persisted session data
-- `archive=None` = session-only mode (standard for peer/subagent)
+- `archive=None` = session-only mode (standard for subagent)
 - `RestrictedInjectionPolicy` is default for subagents — limits session messages to prevent context overflow
 
 ### Subagent Memory Lifecycle
-1. Each peer gets its own `MemorySystemContextManager` with isolated workspace
+1. Each subagent gets its own `MemorySystemContextManager` with isolated workspace
 2. `MemoryAgentRole.SUBAGENT` scope — session-only by default, no knowledge layer
 3. `DefaultMemoryLifecyclePolicy` with subagent compression coordinator
 4. `AgentPool` session eviction (TTL + LRU cap) triggers context cleanup

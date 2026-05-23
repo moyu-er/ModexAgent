@@ -16,12 +16,12 @@
 #   │              │ send_to_agent_async spawn_subagent                   │                              │                                          │
 #   │              │ + MCP tools from server_filter                      │                              │                                          │
 #   ├──────────────┼─────────────────────────────────────────────────────┼──────────────────────────────┼──────────────────────────────────────────┤
-#   │ office-expert│ read_file write_file edit_file list_dir             │ —                            │ skills/peers/docx pdf pptx xlsx          │
-#   │   (peer)     │ shell search_files find_files                       │                              │                                          │
+#   │ office-expert│ read_file write_file edit_file list_dir             │ —                            │ skills/subagents/docx pdf pptx xlsx      │
+#   │   (subagent) │ shell search_files find_files                       │                              │                                          │
 #   │              │ send_to_agent_async spawn_subagent                   │                              │                                          │
 #   ├──────────────┼─────────────────────────────────────────────────────┼──────────────────────────────┼──────────────────────────────────────────┤
 #   │ query-12306  │ send_to_agent_async                                  │ 12306-mcp                    │ —                                        │
-#   │   (peer)     │ + MCP tools from server_filter                      │                              │                                          │
+#   │   (subagent) │ + MCP tools from server_filter                      │                              │                                          │
 #   │              │ (standard_tools: false)                             │                              │                                          │
 #   ├──────────────┼─────────────────────────────────────────────────────┼──────────────────────────────┼──────────────────────────────────────────┤
 #   │ helper-sync  │ read_file write_file edit_file list_dir             │ —                            │ —                                        │
@@ -29,7 +29,7 @@
 #   │              │ (communication tools denied)                        │                              │                                          │
 #   └──────────────┴─────────────────────────────────────────────────────┴──────────────────────────────┴──────────────────────────────────────────┘
 #
-#   Communication: star topology — peers only message main via send_to_agent_async.
+#   Communication: star topology — subagents only message main via send_to_agent_async.
 #   Subagent memory: session-only, cleared after each execution.
 #   Approval: main only — shell/write_file/edit_file (listed below).
 #
@@ -153,7 +153,7 @@ agents:
     max_steps: 30
     memory:
       short_term: {max_messages: 80, max_tokens: 30000, keep_ratio_for_messages: 0.5, keep_ratio_for_token: 0.5}
-      # Governance: tool_chain_repair only (no lossy compaction for peers).
+      # Governance: tool_chain_repair only (no lossy compaction for subagents).
       # ToolChainRepair ensures orphan tool results are cleaned up before
       # each LLM call, preventing API 400 errors.
       governance: {}

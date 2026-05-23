@@ -11,7 +11,7 @@ from framework.memory.retention import (
 def test_user_has_higher_priority_than_agent() -> None:
     policy = DefaultMessageRetentionPolicy()
     messages = [
-        {"role": MessageRole.AGENT, "source_agent": "peer", "content": "agent task"},
+        {"role": MessageRole.AGENT, "source_agent": "subagent", "content": "agent task"},
         {"role": MessageRole.USER, "content": "human task"},
     ]
 
@@ -74,7 +74,7 @@ def test_config_can_override_priority_order() -> None:
         ]
     })
     messages = [
-        {"role": MessageRole.AGENT, "source_agent": "peer", "content": "agent task"},
+        {"role": MessageRole.AGENT, "source_agent": "subagent", "content": "agent task"},
         {"role": MessageRole.USER, "content": "human task"},
     ]
 

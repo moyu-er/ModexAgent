@@ -70,7 +70,7 @@ class AgentDescriptor:
     allowed_callers: list[str] | None = None
     role_description: str = ""
     specialties: list[str] = field(default_factory=list)
-    exposed_to_peers: bool = True
+    exposed_to_agents: bool = True
     safety_policy: RuntimeSafetyPolicy | None = None
     comm_kind: AgentCommKind = AgentCommKind.NORMAL
 

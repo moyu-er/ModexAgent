@@ -160,9 +160,9 @@ async def test_source_agent_message_during_pending_approval_is_buffered_not_writ
 
     await pipeline._process_message_locked(
         InputMessage(
-            content="peer update",
+            content="subagent update",
             session_id="s1",
-            metadata={"source_agent": "peer"},
+            metadata={"source_agent": "subagent"},
         ),
         "s1",
     )

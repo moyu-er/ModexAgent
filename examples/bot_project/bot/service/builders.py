@@ -264,7 +264,6 @@ class AgentBuilderMixin:
 
         default_dirs = [
             project_dir / "skills" / "subagents" / name,
-            project_dir / "skills" / "peers" / name,
         ]
         found_default = [d for d in default_dirs if d.exists()]
         if found_default:
@@ -353,38 +352,6 @@ class AgentBuilderMixin:
             injection_policy=RestrictedInjectionPolicy(max_session_messages=20),
         )
 
-    async def _create_subagent_memory_context(self, peer_name: str, peer_cfg: Any) -> ContextManager:
-        from framework.ioc.factories.compression import create_subagent_compression_coordinator
-        from framework.memory.core.scope import MemoryAgentRole
-
-        system_prompt = peer_cfg.system_prompt if peer_cfg else ""
-        peer_memory_cfg = peer_cfg.memory if peer_cfg else None
-        if peer_memory_cfg is None:
-            from framework.core.context import InMemoryContextManager
-            return InMemoryContextManager(base_system_prompt=system_prompt)
-
-        peer_dir = self._resolve_path("memory_dir", "data/memory") / "peers" / peer_name
-        peer_dir.mkdir(parents=True, exist_ok=True)
-
-        coordinator = create_subagent_compression_coordinator(peer_memory_cfg)
-        memory_system = create_memory_system(
-            workspace=peer_dir, config=self._session_only_memory_config(peer_memory_cfg),
-            session_only=False,
-            lifecycle_policy=DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator),
-        )
-        await memory_system.initialize()
-        if self.plugin_integration:
-            self.plugin_integration.inject_memory_system_modifiers(memory_system)
-        self._additional_subagent_memory_systems[peer_name] = memory_system
-        max_messages = 50
-        if peer_memory_cfg is not None and hasattr(peer_memory_cfg, "short_term"):
-            max_messages = peer_memory_cfg.short_term.max_messages
-        return MemorySystemContextManager(
-            memory_system=memory_system, default_agent_id=peer_name,
-            default_agent_role=MemoryAgentRole.SUBAGENT, base_system_prompt=system_prompt,
-            injection_policy=RestrictedInjectionPolicy(max_session_messages=max_messages),
-        )
-
     # ── Context Routing ──
 
     def _get_context_manager(self, session_id: str) -> ContextManager:
@@ -418,7 +385,7 @@ class AgentBuilderMixin:
     async def _initialize_additional_subagents(self) -> None:
         from framework.hook import HookErrorPolicy, HookSpec
         from framework.hook.builtin import SubagentAutoSendHook
-        from framework.ioc.factories.descriptors import build_peer_descriptor
+        from framework.ioc.factories.descriptors import build_subagent_descriptor
 
         if self.agent_pool is None or self.broker is None or self.subagent_service is None:
             return
@@ -439,7 +406,7 @@ class AgentBuilderMixin:
             sub_name = sub_cfg.name
             print(f"[INIT] Initializing subagent: {sub_name}")
 
-            descriptor, tool_manager, skill_manager, memory_ctx = await build_peer_descriptor(
+            descriptor, tool_manager, skill_manager, memory_ctx = await build_subagent_descriptor(
                 sub_cfg, self._app_config, self._project_dir,
                 memory_dir, self.safety_policy, self.provider,
             )
