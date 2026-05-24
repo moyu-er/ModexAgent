@@ -20,6 +20,9 @@ memory:
   short_term:
     max_messages: 500
     max_tokens: 150000
+    keep_ratio_for_messages: 0.3
+    keep_ratio_for_token: 0.3
+  long_term: {enabled: true}
   governance:
     lossy_compaction:
       tool_result_head_chars: 2000
@@ -37,12 +40,19 @@ agents:
     role: subagent
     max_steps: 80
     standard_tools: true
+    memory:
+      short_term: {max_messages: 80, max_tokens: 80000}
+      long_term: {enabled: true}
+      governance: {}
     skills:
-      roots: ["skills/subagents/reviewer"]
+      roots: ["skills/coding/reviewer"]
 
   - name: planner
     role: subagent
     max_steps: 50
     standard_tools: true
+    memory:
+      short_term: {max_messages: 50, max_tokens: 50000}
+      governance: {}
     skills:
-      roots: ["skills/subagents/planner"]
+      roots: ["skills/coding/planner"]
