@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
-    from framework.hook.notification import AgentNotificationService
     from framework.multi_agent.bus import AgentMessageBus
 
 logger = logging.getLogger(__name__)
@@ -45,11 +44,15 @@ class SubagentAutoSendHook:
         self._self_name = self_name
         self._parent_name = parent_name
         self._svc = notification_service
+        # Track sessions where the subagent has already sent a message
+        # via send_to_agent / send_to_agent_async.  Once communication has
+        # happened in a session, subsequent turns should not auto-forward.
+        self._communicated: set[str] = set()
 
-    async def before_turn(self, ctx: AgentContext[Any]) -> None:
+    async def before_turn(self, ctx: AgentContext) -> None:
         pass
 
-    async def after_turn(self, ctx: AgentContext[Any], result: Any = None) -> None:
+    async def after_turn(self, ctx: AgentContext, result: Any = None) -> None:
         if not result or not getattr(result, "content", None):
             return
 
@@ -68,11 +71,20 @@ class SubagentAutoSendHook:
             calls = await rc.get_tool_calls()
             sent_tools = {"send_to_agent", "send_to_agent_async"}
             if any(c.tool_name in sent_tools for c in calls):
+                self._communicated.add(ctx.session_id)
                 logger.debug(
                     "SubagentAutoSendHook: skipped, message already sent via tool (agent=%s)",
                     self._self_name,
                 )
                 return
+
+        # Already communicated in this session — skip auto-forward
+        if ctx.session_id in self._communicated:
+            logger.debug(
+                "SubagentAutoSendHook: skipped, already communicated (agent=%s)",
+                self._self_name,
+            )
+            return
 
         logger.info(
             "SubagentAutoSendHook: auto-forwarding subagent %s content to %s (len=%d)",

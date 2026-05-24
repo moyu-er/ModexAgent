@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from framework.control.runtime import ControlRuntime
 from framework.core.llm_struct import RuntimeSafetyPolicy
 from framework.core.tool_manager import InMemoryToolManager, ToolManagerConfig
 from framework.hook import HookErrorPolicy, HookRunner, HookSpec
@@ -126,7 +127,7 @@ async def create_pool(
     # 6. Per-pool SkillManager (convention: skills/{pool_name}/{agent_name}/)
     skill_manager = _build_pool_skill_manager(main_cfg, project_dir, pool_name)
 
-    # 7. AgentFactory
+    # 7. AgentFactory (creates RuntimeContextManager internally for tool-call tracking)
     factory = DefaultAgentFactory(
         default_llm_provider=provider,
         default_tool_manager=tool_manager,
@@ -292,6 +293,10 @@ async def create_pool(
         main_instance.pipeline.governance = create_governance(
             pool_cfg.memory, pool_cfg.llm.max_tokens,
         )
+        # Wire slash-command processor so /skill_name commands resolve
+        # through SkillManager and are injected as context.
+        from framework.commands.processor import SlashCommandProcessor
+        main_instance.pipeline.command_processor = SlashCommandProcessor.default()
 
     # 13. BrokerBridgeService (output routes only — input handled by PoolRouter)
     bridge = BrokerBridgeService(

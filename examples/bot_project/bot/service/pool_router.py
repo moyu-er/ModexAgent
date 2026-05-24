@@ -97,7 +97,7 @@ class PoolRouter:
     async def _handle_switch(self, session_id: str, pool_name: str) -> None:
         self._session_store.set(session_id, pool_name)
         await self._output_adapter.send(
-            OutputMessage(content=f"已切换到 {pool_name} Agent 体系"),
+            OutputMessage(content=f"switch to \"{pool_name}\" pool"),
             session_id,
         )
         logger.info("Session %s switched to pool '%s'", session_id, pool_name)

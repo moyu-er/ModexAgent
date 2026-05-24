@@ -5,7 +5,7 @@ Unified management of MCP connections, supporting stdio, sse, and streamable_htt
 
 import asyncio
 import logging
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, suppress
 from typing import Any
 
 from mcp import ClientSession
@@ -308,10 +308,17 @@ class MCPClientManager:
         return False
 
     async def disconnect_all(self) -> None:
-        """Disconnect from all MCP servers in parallel."""
-        tasks = [self.disconnect(name) for name in list(self.clients.keys())]
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        """Disconnect from all MCP servers sequentially.
+
+        Each AsyncExitStack (which wraps stdio_client / streamable_http_client)
+        must be closed in the same asyncio Task that created it — anyio's cancel
+        scope tracking enforces this.  Using ``asyncio.gather`` would spawn each
+        disconnect in a separate Task, triggering
+        ``RuntimeError: Attempted to exit cancel scope in a different task``.
+        """
+        for name in list(self.clients.keys()):
+            with suppress(Exception):
+                await self.disconnect(name)
         self._initialized = False
 
     async def reconnect_with_retry(

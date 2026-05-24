@@ -11,7 +11,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Literal
 
-from framework import InMemoryToolManager, ToolManagerConfig
+from bot.plugins.integration import PluginIntegration
+from framework import InMemoryToolManager, ToolManagerConfig, LLMProvider
 from framework.core.context import ContextManager
 from framework.core.skills import (
     CompositeSkillSource,
@@ -38,11 +39,12 @@ from framework.multi_agent import (
     AgentAddress,
     AgentPool,
     CommunicationTracker,
-    SubagentService,
+    SubagentService, AgentMessageBus,
 )
 from framework.multi_agent.session_id import DefaultSessionIdStrategy
 from framework.multi_agent.tools import ListCommunicationTargetsTool, SendToAgentAsyncTool
 from framework.pipeline.adapters import NullOutputAdapter, OutputAdapter
+from framework.tools import MCPClientManager
 
 logger = logging.getLogger(__name__)
 
@@ -125,13 +127,13 @@ class AgentBuilderMixin:
     output_adapter: OutputAdapter
     agent_pool: AgentPool | None
     broker: InMemoryMessageBroker | None
-    agent_bus: Any | None
+    agent_bus: AgentMessageBus | None
     subagent_service: SubagentService | None
     communication_tracker: CommunicationTracker | None
-    mcp_manager: Any | None
-    context_manager: Any | None
-    provider: Any | None
-    plugin_integration: Any | None
+    mcp_manager: MCPClientManager | None
+    context_manager: ContextManager | None
+    provider: LLMProvider | None
+    plugin_integration: PluginIntegration | None
 
     # Subagent caches
     _subagent_skill_managers: dict[str, SkillManager]

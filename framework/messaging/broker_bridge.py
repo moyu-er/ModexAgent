@@ -199,6 +199,7 @@ class BrokerBridgeService:
         self._bridge_specs: dict[str, Callable[[], Coroutine[Any, Any, None]]] = {}
         self._restart_counts: dict[str, int] = {}
         self._restart_first_fail_time: dict[str, float] = {}
+        self._stopping = False
 
     def _bridge_done_callback(self, task: asyncio.Task, name: str) -> None:
         """Record exception from completed bridge task; optionally schedule restart."""
@@ -213,6 +214,8 @@ class BrokerBridgeService:
             self._schedule_restart(name)
 
     def _schedule_restart(self, name: str) -> None:
+        if self._stopping:
+            return
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -241,10 +244,15 @@ class BrokerBridgeService:
             self._restart_counts[name],
             self._restart_max_retries,
         )
-        loop.create_task(self._restart_bridge_after_delay(name, delay))
+        restart_task = loop.create_task(self._restart_bridge_after_delay(name, delay))
+        self._tasks.append(restart_task)
 
     async def _restart_bridge_after_delay(self, name: str, delay: float) -> None:
-        await asyncio.sleep(delay)
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            logger.debug("Restart for bridge task %s cancelled during delay", name)
+            return
         spec = self._bridge_specs.get(name)
         if spec is None:
             logger.warning("No bridge spec found for %s, cannot restart", name)
@@ -277,6 +285,7 @@ class BrokerBridgeService:
                 )
 
     async def stop(self) -> None:
+        self._stopping = True
         for t in self._tasks:
             t.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)

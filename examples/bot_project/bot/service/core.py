@@ -807,6 +807,7 @@ class BotService(AgentBuilderMixin):
             await pool.broker_bridge.start()
         self._router_task = asyncio.create_task(self.pool_router.run())
         print(f"[OK] PoolRouter running, {len(self._pools)} pools active")
+        await self._shutdown_event.wait()
 
     # ------------------------------------------------------------------ #
     # Runtime assembly
@@ -1009,19 +1010,30 @@ class BotService(AgentBuilderMixin):
                 logger.exception("DreamEngine background loop error")
 
     async def stop(self) -> None:
+        self._shutdown_event.set()
+        if self._auto_compact_task is not None:
+            self._auto_compact_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._auto_compact_task
         if hasattr(self, '_router_task') and self._router_task:
             self._router_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._router_task
-        # Shut down MCP managers first (must close async generators in original task)
+        if self.mcp_manager is not None:
+            with contextlib.suppress(BaseException):
+                await self.mcp_manager.disconnect_all()
         for pool in self._pools.values():
             if pool.mcp_manager is not None:
-                try:
+                with contextlib.suppress(BaseException):
                     await pool.mcp_manager.disconnect_all()
-                except Exception:
-                    logger.debug("MCP shutdown error for pool '%s'", pool.name, exc_info=True)
         for pool in self._pools.values():
-            await pool.broker_bridge.stop()
-        await self.input_adapter.stop()
+            with contextlib.suppress(BaseException):
+                await pool.pool.shutdown_all()
+        for pool in self._pools.values():
+            with contextlib.suppress(BaseException):
+                await pool.broker_bridge.stop()
+        with contextlib.suppress(BaseException):
+            await self.input_adapter.stop()
         if self.broker:
-            await self.broker.stop()
+            with contextlib.suppress(BaseException):
+                await self.broker.stop()

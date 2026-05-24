@@ -29,6 +29,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _is_raw_channel(obj: Any) -> bool:
+    """Return True if obj is a raw ControlChannel, not a ControlRuntime wrapper.
+
+    ``ControlChannel`` is a Protocol (not runtime_checkable), so we detect
+    the wrapper type instead: a raw channel is NOT a ControlRuntime.
+    """
+    from framework.control.runtime import ControlRuntime
+    return not isinstance(obj, ControlRuntime)
+
+
 class ControlDrainInterceptor:
     """控制命令消费拦截器。
 
@@ -60,11 +70,11 @@ class ControlDrainInterceptor:
 
     async def around_turn(
         self,
-        ctx: AgentContext[Any],
+        ctx: AgentContext,
         next_call: TurnNext,
     ) -> AgentResult:
         runtime = ctx.runtime if hasattr(ctx, 'runtime') and ctx.runtime else None
-        if runtime and runtime.control:
+        if runtime and runtime.control and not _is_raw_channel(runtime.control):
             from framework.control.runtime import ControlPhase
             await runtime.control.drain(ctx, phase=ControlPhase.BEFORE_TURN)
         else:
@@ -74,12 +84,12 @@ class ControlDrainInterceptor:
 
     async def around_iteration(
         self,
-        ctx: AgentContext[Any],
+        ctx: AgentContext,
         call: IterationContext,
         next_call: IterationNext,
     ) -> None:
         runtime = ctx.runtime if hasattr(ctx, 'runtime') and ctx.runtime else None
-        if runtime and runtime.control:
+        if runtime and runtime.control and not _is_raw_channel(runtime.control):
             from framework.control.runtime import ControlPhase
             await runtime.control.drain(ctx, phase=ControlPhase.BEFORE_ITERATION)
         else:
@@ -89,7 +99,7 @@ class ControlDrainInterceptor:
 
     async def _drain_and_handle(
         self,
-        ctx: AgentContext[Any],
+        ctx: AgentContext,
         scope: ControlScope,
     ) -> None:
         logger.debug(

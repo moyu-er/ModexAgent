@@ -609,6 +609,22 @@ class AgentPipeline:
                 agent_kind=AgentKind.REACT,
                 phase=RTurnPhase.CREATED,
             )
+            control = base_services.control if base_services is not None else None
+            # In pool mode, base_services may be None. If the interceptor chain
+            # carries a ControlDrainInterceptor, build a ControlRuntime from its
+            # channel so that AgentRuntime.validate() does not raise PolicyViolation.
+            if control is None and self.interceptor_chain is not None:
+                from framework.interceptor.builtin import ControlDrainInterceptor
+                for ci in self.interceptor_chain.interceptors:
+                    if isinstance(ci, ControlDrainInterceptor):
+                        from framework.control.runtime import ControlRuntime
+                        from framework.control.store import InMemoryControlStore
+                        control = ControlRuntime(
+                            channel=ci._channel,
+                            store=InMemoryControlStore(),
+                            registry=ci._registry,
+                        )
+                        break
             services = AgentRuntimeServices(
                 hooks=base_services.hooks if base_services is not None else self.hook_runner,
                 interceptors=(
@@ -616,7 +632,7 @@ class AgentPipeline:
                     if base_services is not None
                     else self.interceptor_chain
                 ),
-                control=base_services.control if base_services is not None else None,
+                control=control,
                 approval=base_services.approval if base_services is not None else None,
                 governance=governance,
                 turn_store=(
@@ -645,8 +661,21 @@ class AgentPipeline:
             from framework.runtime.enums import AgentKind
             from framework.runtime.enums import TurnPhase as RTurnPhase
             from framework.runtime.services import AgentRuntime
+            control = None
+            if self.interceptor_chain is not None:
+                from framework.interceptor.builtin import ControlDrainInterceptor
+                for ci in self.interceptor_chain.interceptors:
+                    if isinstance(ci, ControlDrainInterceptor):
+                        from framework.control.runtime import ControlRuntime
+                        from framework.control.store import InMemoryControlStore
+                        control = ControlRuntime(
+                            channel=ci._channel,
+                            store=InMemoryControlStore(),
+                            registry=ci._registry,
+                        )
+                        break
             agent_context.runtime = AgentRuntime(
-                services=AgentRuntimeServices(governance=governance),
+                services=AgentRuntimeServices(governance=governance, control=control),
                 state=ReActTurnState(
                     identity=turn_identity,
                     agent_kind=AgentKind.REACT,

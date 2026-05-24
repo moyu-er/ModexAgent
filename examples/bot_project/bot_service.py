@@ -104,8 +104,20 @@ async def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     config_dir = Path(__file__).parent / "config"
     service = create_qq_service(config_dir, mode=args.mode)
-    await service.initialize()
-    await service.start()
+
+    loop = asyncio.get_running_loop()
+    import signal as signal_mod
+    try:
+        for _sig in (signal_mod.SIGINT, signal_mod.SIGTERM):
+            loop.add_signal_handler(_sig, service._shutdown_event.set)
+    except NotImplementedError:
+        pass
+
+    try:
+        await service.initialize()
+        await service.start()
+    finally:
+        await service.stop()
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 from framework.agents.react.state import get_react_state
 from framework.control.exceptions import AgentControlError
-from framework.control.runtime import ControlPhase
+from framework.control.runtime import ControlPhase, ControlRuntime
 from framework.hook import HookPayload, HookPoint
 from framework.interceptor.abc import (
     LLMStreamChunk,

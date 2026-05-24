@@ -62,8 +62,11 @@ class InMemoryMessageBroker(MessageBroker):
         for subs in self._topic_subscriptions.values():
             subs.discard(address)
 
-    async def consume(self, address: Address) -> BrokerMessage:
-        return await self._ensure_mailbox(address).get()
+    async def consume(self, address: Address) -> BrokerMessage | None:
+        msg = await self._ensure_mailbox(address).get()
+        if msg is _SENTINEL:
+            return None
+        return msg
 
     async def consume_stream(self, address: Address) -> AsyncIterator[BrokerMessage]:
         while self._running:
