@@ -114,8 +114,8 @@ async def create_pool(
     )
     logger.info("Pool '%s': ToolManager ready (%d tools)", pool_name, len(tool_manager.list_tools()))
 
-    # 6. Per-pool SkillManager
-    skill_manager = _build_pool_skill_manager(main_cfg, project_dir)
+    # 6. Per-pool SkillManager (convention: skills/{pool_name}/{agent_name}/)
+    skill_manager = _build_pool_skill_manager(main_cfg, project_dir, pool_name)
 
     # 7. AgentFactory
     factory = DefaultAgentFactory(
@@ -374,12 +374,20 @@ async def _build_pool_tool_manager(
     return tm, mcp_manager
 
 
-def _build_pool_skill_manager(main_cfg: Any, project_dir: Path) -> Any | None:
+def _build_pool_skill_manager(main_cfg: Any, project_dir: Path, pool_name: str) -> Any | None:
+    # Default convention: skills/{pool_name}/{agent_name}/
+    # Falls back to explicit skills.roots if configured in YAML
     skill_roots = getattr(main_cfg, "skills", None)
-    if skill_roots is None:
-        return None
-    roots = getattr(skill_roots, "roots", None) or []
-    if not roots:
+    explicit_roots: list[str] = getattr(skill_roots, "roots", None) or []
+
+    if explicit_roots:
+        directories = [project_dir / r for r in explicit_roots]
+    else:
+        # Convention: skills/{pool_name}/{agent_name}/
+        directories = [project_dir / "skills" / pool_name / main_cfg.name]
+
+    found = [d for d in directories if d.exists()]
+    if not found:
         return None
 
     from framework.core.skills import (
@@ -388,10 +396,6 @@ def _build_pool_skill_manager(main_cfg: Any, project_dir: Path) -> Any | None:
         ProgressiveBuilder,
         SkillManager,
     )
-    directories = [project_dir / r for r in roots]
-    found = [d for d in directories if d.exists()]
-    if not found:
-        return None
     source = FileSkillSource(
         directories=found, cache=True, layout="directory",
         skill_filename="SKILL.md",

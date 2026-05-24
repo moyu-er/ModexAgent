@@ -88,8 +88,7 @@ agents:
           assistant_head_chars: 1200
           agent_head_chars: 2000
           user_head_chars: 4000
-    skills:
-      roots: ["skills/main"]
+    # skills auto-discovered from skills/main/main/ by convention
     approval:
       tools:
         shell: {allowed_paths: ["*"]}
