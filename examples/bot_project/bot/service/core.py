@@ -74,6 +74,7 @@ from framework.multi_agent import (
     SessionRetentionPolicy,
     SubagentService,
 )
+from framework.multi_agent.bus import LocalAgentMessageBus
 from framework.multi_agent.descriptor import AgentLLMConfig
 from framework.multi_agent.inbox.consumer import InboxConsumer
 from framework.multi_agent.inbox.producer import InboxProducer
