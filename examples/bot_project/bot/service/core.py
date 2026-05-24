@@ -82,6 +82,9 @@ from framework.pipeline.adapters import InputAdapter, OutputAdapter
 from framework.tools.overflow.cleaner import OverflowCleaner
 
 from .builders import AgentBuilderMixin
+from .pool_builder import create_pool
+from .pool_instance import PoolInstance
+from .pool_router import PoolRouter, PoolSessionStore
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +120,7 @@ class BotService(AgentBuilderMixin):
         self.mode = mode
         self._app_config = app_config
 
-        # Components
+        # Components (single-pool fields for pipeline mode)
         self.pipeline: AgentPipeline | None = None
         self.agent_pool: AgentPool | None = None
         self.broker_bridge: BrokerBridgeService | None = None
@@ -141,6 +144,10 @@ class BotService(AgentBuilderMixin):
 
         # Runtime components
         self.provider: Any | None = None
+
+        # Multi-pool (for pool mode)
+        self._pools: dict[str, PoolInstance] = {}
+        self.pool_router: PoolRouter | None = None
         self.plugin_integration: Any | None = None
         self.dream_engine: Any | None = None
 
@@ -171,22 +178,11 @@ class BotService(AgentBuilderMixin):
         self._tasks: list[asyncio.Task] = []
 
     @property
-    def _main_agent_cfg(self) -> IOCAgentConfig | None:
-        """Find main agent by role, not by index."""
-        if not self._app_config or not self._app_config.agents:
-            return None
-        for a in self._app_config.agents:
-            if a.role == "main":
-                return a
-        # Fallback: first agent if no role="main" found
-        return self._app_config.agents[0]
-
-    @property
-    def _main_memory_cfg(self) -> IOCMemoryConfig | None:
-        """Memory config for the first agent."""
-        if self._main_agent_cfg is None:
-            return None
-        return self._main_agent_cfg.memory
+    def _default_pool_name(self) -> str:
+        """Default pool name from config."""
+        if self._app_config is not None:
+            return self._app_config.multi_agent.default_pool
+        return "main"
 
     def _load_app_config(self) -> AppConfig:
         """Load IOC AppConfig from bot_config.yml."""
@@ -426,7 +422,10 @@ class BotService(AgentBuilderMixin):
         if self.mode == "pipeline":
             await self._initialize_pipeline(main_skill_manager)
         elif self.mode == "pool":
-            await self._initialize_pool(main_skill_manager)
+            if self._app_config.pools:
+                await self._initialize_pool_v2()
+            else:
+                await self._initialize_pool(main_skill_manager)
         else:
             raise ValueError(f"Unsupported mode: {self.mode}")
 
@@ -690,6 +689,104 @@ class BotService(AgentBuilderMixin):
         print(f"   Input bridge: {self.input_adapter.name} -> {main_address}")
         print(f"   Output route: agent:{parent_agent_name}:out -> {self.output_adapter.name}")
 
+    async def _initialize_pool_v2(self) -> None:
+        """Initialize pool-mode with multiple pools."""
+        pool_configs = self._app_config.pools
+        if not pool_configs:
+            raise RuntimeError("No pools defined. Add .yml files to config/pools/")
+
+        # 1. Shared infra: Inbox + AgentMessageBus
+        inbox_dir = self._resolve_path("inbox_dir", "data/inbox")
+        self.inbox_server = LocalFileInboxServer(workspace=inbox_dir)
+        self.inbox_producer = InboxProducer(server=self.inbox_server)
+        self.inbox_consumer = InboxConsumer(server=self.inbox_server)
+        self.agent_bus = LocalAgentMessageBus(
+            producer=self.inbox_producer,
+            consumer=self.inbox_consumer,
+            broker=self.broker,
+        )
+        print(f"[OK] Inbox + AgentMessageBus initialized ({inbox_dir})")
+
+        # 2. Shared infra: Runtime stores
+        from framework.agents.react.state import ReActRuntimeStateCodec
+        from framework.runtime.codec import RuntimeStateCodecRegistry
+        from framework.runtime.enums import AgentKind
+        from framework.runtime.store import JsonFileRuntimeCommandStore, JsonFileTurnStateStore
+        runtime_data_dir = self._project_dir / "data" / "runtime_state"
+        codec_registry = RuntimeStateCodecRegistry({AgentKind.REACT: ReActRuntimeStateCodec()})
+        self._turn_store = JsonFileTurnStateStore(runtime_data_dir / "turns", codec_registry)
+        self._command_store = JsonFileRuntimeCommandStore(runtime_data_dir / "commands")
+        print("[OK] Typed runtime stores initialized (data/runtime_state/)")
+
+        # 3. Shared infra: Approval
+        self._approval_workspace = self._project_dir / "data/approval"
+        self._im_ui = IMUserInterface(
+            output_adapter=self.output_adapter,
+            channel=self.control_channel,
+        )
+
+        # 4. Shared infra: Hooks & Interceptors
+        shared_hooks = self._collect_run_hooks()
+        shared_hook_runner = self._build_hook_runner(shared_hooks)
+        shared_interceptor_chain = self._build_interceptor_chain()
+
+        # 5. Shared infra: Retention & CommunicationTracker
+        retention_cfg = self._app_config.multi_agent.session_retention
+        retention = SessionRetentionPolicy(
+            max_sessions_per_subagent=retention_cfg.max_sessions_per_subagent,
+            max_sessions_global=retention_cfg.max_sessions_global,
+            ttl_seconds=retention_cfg.ttl_seconds,
+            cleanup_interval_seconds=retention_cfg.cleanup_interval_seconds,
+        )
+        self.communication_tracker = CommunicationTracker()
+
+        # 6. Create all pools
+        self._pools = {}
+        for pool_name, pool_cfg in pool_configs.items():
+            print(f"\n[POOL] Creating pool '{pool_name}'...")
+            self._pools[pool_name] = await create_pool(
+                pool_name=pool_name,
+                pool_cfg=pool_cfg,
+                project_dir=self._project_dir,
+                broker=self.broker,
+                inbox_server=self.inbox_server,
+                inbox_producer=self.inbox_producer,
+                inbox_consumer=self.inbox_consumer,
+                agent_bus=self.agent_bus,
+                output_adapter=self.output_adapter,
+                safety=self.safety_policy,
+                retention=retention,
+                comm_tracker=self.communication_tracker,
+                turn_store=self._turn_store,
+                command_store=self._command_store,
+                approval_workspace=self._approval_workspace,
+                im_ui=self._im_ui,
+                shared_hooks=shared_hooks,
+                shared_hook_runner=shared_hook_runner,
+                shared_interceptor_chain=shared_interceptor_chain,
+            )
+            print(f"[OK] Pool '{pool_name}' created")
+
+        # 7. PoolRouter
+        data_dir = self._resolve_path("data_dir", "data")
+        session_store = PoolSessionStore(data_dir=data_dir)
+        self.pool_router = PoolRouter(
+            input_adapter=self.input_adapter,
+            output_adapter=self.output_adapter,
+            broker=self.broker,
+            pools=self._pools,
+            session_store=session_store,
+            default_pool=self._app_config.multi_agent.default_pool,
+        )
+
+        # 8. Display info
+        print(f"\n[INFO] Pools: {list(self._pools.keys())}")
+        for name, pi in self._pools.items():
+            subagent_count = len(pi.config.subagent_configs)
+            print(f"   {name}: {pi.main_agent_name} + {subagent_count} subagents")
+        print(f"[INFO] Switch commands: /{' /'.join(self._pools.keys())}")
+        print(f"[INFO] Default pool: {self._app_config.multi_agent.default_pool}")
+
     def _find_subagent_cfg(self) -> IOCAgentConfig | None:
         """Find the first subagent config by role."""
         if not self._app_config or not self._app_config.agents:
@@ -851,18 +948,18 @@ class BotService(AgentBuilderMixin):
             pipeline_task = asyncio.create_task(self.pipeline.run())
             self._tasks.append(pipeline_task)
         elif self.mode == "pool":
-            if self.agent_pool is None or self.broker_bridge is None:
-                print("[WARN] AgentPool or BrokerBridge not initialized, cannot start")
+            if self._pools:
+                await self.input_adapter.start()
+                for pool in self._pools.values():
+                    await pool.broker_bridge.start()
+                self._router_task = asyncio.create_task(self.pool_router.run())
+                print(f"[OK] PoolRouter running, {len(self._pools)} pools active")
+            elif self.agent_pool is not None and self.broker_bridge is not None:
+                await self.broker_bridge.start()
+                print("[OK] BrokerBridgeService started (legacy single-pool)")
+            else:
+                print("[WARN] No pools configured, cannot start")
                 return
-            await self.broker_bridge.start()
-            print("[OK] BrokerBridgeService started")
-            # Start DreamEngine background loop for pool mode
-            if self.dream_engine is not None:
-                de_cfg = self._main_memory_cfg.dream_engine if self._main_memory_cfg else None
-                dream_interval = de_cfg.interval if de_cfg else 300
-                dream_task = asyncio.create_task(self._dream_background_loop(dream_interval))
-                self._tasks.append(dream_task)
-                print(f"[OK] DreamEngine background loop started (interval={dream_interval}s)")
         else:
             print(f"[WARN] Unknown mode: {self.mode}")
             return
