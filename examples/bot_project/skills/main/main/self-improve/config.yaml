@@ -1,0 +1,122 @@
+# Self-Improve 系统配置
+# 版本：2.2.0
+# 注意：请先填写 user-config.yaml
+
+version: "2.2.0"
+updated: "2026-03-29"
+
+# ─── 存储位置（从 user-config.yaml 读取）───
+# 安装时会自动填充
+
+storage:
+  root: ""                    # 由 setup.mjs 从 user-config.yaml 填充
+  knowledge_root: ""          # 由 setup.mjs 从 user-config.yaml 填充
+  last_success_ts: ""         # 上次成功运行时间
+
+# ─── 定时触发 ───
+
+schedule:
+  cron: "0 4 */3 * *"         # 每 3 天凌晨 4 点
+  model: "bailian/qwen3.5-plus"  # 可在 user-config.yaml 覆盖
+
+# ─── 模块注册表（按执行顺序）───
+
+modules:
+
+  feedback-collector:
+    enabled: true
+    version: "1.1.0"
+    order: 1
+    description: "扫描对话，提取信号（语义理解）"
+    prompt: "prompts/feedback-collector.md"
+    data_dirs: ["data/feedback"]
+    inputs: ["memory/*.md", "data/reflections.md"]
+
+  distill-classifier:
+    enabled: true
+    version: "1.0.0"
+    order: 2
+    description: "提炼三层次规则 + 分类 + 价值密度标注"
+    prompt: "prompts/distill-classifier.md"
+    data_dirs: ["data/themes"]
+    inputs: ["data/feedback/*.jsonl"]
+
+  memory-layer:
+    enabled: true
+    version: "3.2.0"
+    order: 3
+    description: "分层记忆管理（HOT/WARM/COLD）"
+    prompt: "prompts/memory-layer.md"
+    data_dirs: ["data/hot.md", "data/themes", "data/archive"]
+    params:
+      hot_limit: 100
+      promote_threshold: 3
+      demote_days: 30
+      archive_days: 90
+
+  proposer:
+    enabled: true
+    version: "1.1.0"
+    order: 4
+    description: "判断产出通道，生成固化建议"
+    prompt: "prompts/proposer.md"
+    data_dirs: ["proposals/PENDING.md", "drafts", "data/errors", "data/lessons", "data/high-value"]
+    inputs: ["data/themes/", "data/hot.md", "data/errors/", "data/lessons/"]
+
+  reflector:
+    enabled: true
+    version: "1.0.0"
+    order: 5
+    description: "自反思，产出喂给下轮"
+    prompt: "prompts/reflector.md"
+    data_dirs: ["data/reflections.md"]
+
+  profiler:
+    enabled: true
+    version: "1.2.0"
+    order: 6
+    description: "团队能力画像（每3次执行）"
+    prompt: "prompts/profiler.md"
+    data_dirs: ["data/profile.md"]
+    params:
+      run_every: 3
+
+  notify:
+    enabled: true
+    version: "1.0.0"
+    order: 7
+    description: "通知 owner 待审批建议"
+    prompt: "prompts/notify.md"
+    inputs: ["proposals/PENDING.md"]
+
+  execution:
+    enabled: true
+    version: "1.0.0"
+    order: 99
+    description: "审批后执行写入（独立触发）"
+    prompt: "prompts/execution.md"
+    trigger: "manual"
+
+# ─── 审批规则 ───
+
+approval:
+  required_files:
+    - "AGENTS.md"
+    - "SOUL.md"
+    - "TOOLS.md"
+    - "MEMORY.md"
+    - "HEARTBEAT.md"
+    - "openclaw.json"
+    - "SKILL.md"
+  
+  # 自动文件路径在运行时由 storage.root 填充
+  auto_files_pattern:
+    - "{root}/data/*"
+    - "{knowledge_root}/*"
+
+# ─── 全局参数 ───
+
+global:
+  learning_from_silence: false
+  auto_delete: false
+  confirm_before_promote: false
