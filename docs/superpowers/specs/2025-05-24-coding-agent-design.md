@@ -6,17 +6,17 @@
 
 ## 2. 核心设计决策
 
-| 决策              | 选择                                                                          |
-| ----------------- | ----------------------------------------------------------------------------- |
+| 决策              | 选择                                                                         |
+| ----------------- | ---------------------------------------------------------------------------- |
 | **体系关系**      | `main` 和 `coding` 完全独立,各自有独立的 AgentPool、session、memory、context |
 | **切换命令**      | `/coding` 切换到 coding 体系,`/main` 切换回 main 体系                        |
 | **切换行为**      | 切换不中断任何 agent 的执行,只改变后续用户消息的接收方                       |
 | **配置格式**      | `config/coding_config.yml`,与 `bot_config.yml` 同格式                        |
 | **LLM 配置**      | 共享 `.env`,各自 YAML 引用 `${VAR}`                                          |
 | **system prompt** | `agents/*.md` 文件,YAML 中通过 `system_prompt_file` 引用                     |
-| **skills**        | `skills/coding/`(coding 体系专属)                                           |
+| **skills**        | `skills/coding/`(coding 体系专属)                                            |
 | **subagent 兜底** | `SubagentAutoSendHook`,parent 指向 `coding`                                  |
-| **输出方式**      | coding 直接回复用户(不经过 main)                                            |
+| **输出方式**      | coding 直接回复用户(不经过 main)                                             |
 | **AST/LSP 工具**  | 本次不实现,记为 TODO                                                         |
 
 ## 3. 架构
@@ -93,9 +93,9 @@ SubagentAutoSendHook(
 
 当 agent 因为**达到 max_iterations**或**漏发通信消息**而退出时,需要向其"调用方"发送结构化通知:
 
-| Agent 类型                   | 调用方             | 通知方式                         |
-| ---------------------------- | ------------------ | -------------------------------- |
-| NORMAL(main/coding)        | 用户               | 通过 `output_adapter` 直接发送   |
+| Agent 类型                 | 调用方           | 通知方式                         |
+| -------------------------- | ---------------- | -------------------------------- |
+| NORMAL(main/coding)        | 用户             | 通过 `output_adapter` 直接发送   |
 | SUBAGENT(reviewer/planner) | 父 agent(coding) | 通过 `agent_bus` 发送 inbox 消息 |
 
 **不硬编码 parent_name**:每个 hook 实例在构造时接收 `parent_name`,由初始化代码根据 agent 体系决定。
@@ -129,13 +129,13 @@ SubagentAutoSendHook(
 ```python
 class AgentNotificationService:
     """Unified notification service.
-    
+
     Hook 完全无感知：调用方不需要知道自己是 NORMAL 还是 SUBAGENT。
     Service 内部根据 ctx.session_meta.comm_kind 自动路由：
     - NORMAL → output_adapter (用户)
     - SUBAGENT → agent_bus inbox (父 agent)
     """
-    
+
     def __init__(
         self,
         output_adapter: OutputAdapter,
@@ -147,7 +147,7 @@ class AgentNotificationService:
         self._agent_bus = agent_bus
         self._session_strategy = session_strategy
         self._parent_map = parent_map or {}
-    
+
     async def notify(
         self,
         ctx: AgentContext,
@@ -158,16 +158,16 @@ class AgentNotificationService:
     ) -> None:
         """Hook 调用的唯一入口。自动根据 comm_kind 路由。"""
         xml = self._build_xml(notification_type, reason, details, content)
-        
-        if (ctx.session_meta 
+
+        if (ctx.session_meta
                 and ctx.session_meta.comm_kind == AgentCommKind.SUBAGENT):
             parent_name = self._parent_map.get(ctx.session_meta.agent_name)
             await self._notify_parent(ctx, xml, parent_name)
         else:
             await self._notify_user(ctx, xml)
-    
+
     def _build_xml(
-        self, notification_type: str, reason: str, 
+        self, notification_type: str, reason: str,
         details: str, content: str | None,
     ) -> str:
         lines = [
@@ -183,13 +183,13 @@ class AgentNotificationService:
             )
         lines.append("</agent_notification>")
         return "\n".join(lines)
-    
+
     async def _notify_user(self, ctx: AgentContext, xml: str) -> None:
         from framework.core.types import OutputMessage
         await self._output_adapter.send(
             OutputMessage(content=xml), ctx.session_id,
         )
-    
+
     async def _notify_parent(
         self, ctx: AgentContext, xml: str, parent_name: str | None,
     ) -> None:
@@ -199,17 +199,17 @@ class AgentNotificationService:
                 ctx.session_meta.agent_name if ctx.session_meta else "unknown",
             )
             return
-        
+
         session_id = ctx.session_id or ""
         parts = self._session_strategy.parse(session_id)
         inbox_key = self._session_strategy.format(
             conversation_id=parts.conversation_id,
             agent_name=parent_name,
         )
-        
+
         from framework.multi_agent.address import AgentAddress
         from framework.multi_agent.envelope import AgentMessageEnvelope
-        
+
         envelope = AgentMessageEnvelope(
             payload={"content": xml, "message_type": "agent_notification"},
             source=AgentAddress(name=ctx.session_meta.agent_name),
@@ -228,11 +228,11 @@ class AgentNotificationService:
 ```python
 class MaxIterationNotifyHook:
     """Hook 完全无感知：不区分 NORMAL/SUBAGENT。
-    
+
     所有 agent（main/coding/reviewer/planner）共用同一个实例。
     路由逻辑封装在 AgentNotificationService 内部。
     """
-    
+
     def __init__(
         self,
         notification_service: AgentNotificationService,
@@ -240,17 +240,17 @@ class MaxIterationNotifyHook:
     ):
         self._svc = notification_service
         self._content_max_chars = content_max_chars
-    
+
     async def after_turn(self, ctx: AgentContext, result: AgentResult) -> None:
         if result.stop_reason != "max_iterations":
             return
-        
+
         truncated = None
         if result.content:
             truncated = result.content[:self._content_max_chars]
             if len(result.content) > self._content_max_chars:
                 truncated += "\n... (truncated)"
-        
+
         agent_name = ctx.session_meta.agent_name if ctx.session_meta else "unknown"
         await self._svc.notify(
             ctx=ctx,
@@ -279,18 +279,18 @@ class SubagentAutoSendHook:
         self._self_name = self_name
         self._parent_name = parent_name
         self._svc = notification_service  # ← 新增
-    
+
     async def after_turn(self, ctx: AgentContext, result: AgentResult) -> None:
         # ...existing check logic...
-        
+
         if any(c.tool_name in sent_tools for c in calls):
             return  # 已发送，无需兜底
-        
+
         sanitized = self._sanitize_forward_content(result.content or "")
-        
+
         # 1. 自动转发内容给父 agent（保持原有行为）
         await self._forward_content(ctx, sanitized)
-        
+
         # 2. 发送 XML 通知（新增）
         if self._svc:
             await self._svc.notify(
@@ -350,6 +350,7 @@ planner_runner.add(HookSpec(hook=max_iter_hook, on_error=HookErrorPolicy.LOG))
 ```
 
 **关键点**：
+
 1. `MaxIterationNotifyHook` **完全无感知**：不接收 `parent_name`，不区分 NORMAL/SUBAGENT
 2. `AgentNotificationService` 内部通过 `ctx.session_meta.comm_kind` 自动路由
 3. `parent_map` 由业务初始化代码配置，框架不硬编码任何 agent 名称
@@ -458,13 +459,13 @@ multi_agent:
 
 ### 7.2 修改文件
 
-| 文件                                           | 修改内容                                                                                                                                            |
-| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `framework/ioc/configs/app.py`                 | `from_yaml` 支持加载 `system_prompt_file` 内容                                                                                                      |
-| `framework/hook/builtin/subagent_auto_send.py` | 集成 `AgentNotificationService`,漏发消息时发送 XML 通知                                                                                            |
+| 文件                                           | 修改内容                                                                                                                                        |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `framework/ioc/configs/app.py`                 | `from_yaml` 支持加载 `system_prompt_file` 内容                                                                                                  |
+| `framework/hook/builtin/subagent_auto_send.py` | 集成 `AgentNotificationService`,漏发消息时发送 XML 通知                                                                                         |
 | `examples/bot_project/bot/service/core.py`     | 1. 加载 `coding_config.yml`;2. 初始化 `coding_pool`;3. 初始化 `SessionAgentRouter`;4. 创建 `AgentNotificationService`;5. 为所有 agent 注入 hook |
-| `examples/bot_project/bot/service/builders.py` | 1. 为 coding subagent 注册通信工具;2. 配置 `SubagentAutoSendHook`(parent="coding")+ `MaxIterationNotifyHook`                                     |
-| `examples/bot_project/bot_service.py`          | 启动时加载两个配置                                                                                                                                  |
+| `examples/bot_project/bot/service/builders.py` | 1. 为 coding subagent 注册通信工具;2. 配置 `SubagentAutoSendHook`(parent="coding")+ `MaxIterationNotifyHook`                                    |
+| `examples/bot_project/bot_service.py`          | 启动时加载两个配置                                                                                                                              |
 
 ## 8. 消息路由流程
 

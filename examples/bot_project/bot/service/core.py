@@ -421,17 +421,13 @@ class BotService(AgentBuilderMixin):
         # 9. Initialize runtime by mode
         if self.mode == "pipeline":
             await self._initialize_pipeline(main_skill_manager)
+            # 10. Register multi-agent tools
+            await self._register_multi_agent_tools()
+            print(f"[OK] Multi-agent tools registered, total: {len(self.tool_manager.list_tools())}")
         elif self.mode == "pool":
-            if self._app_config.pools:
-                await self._initialize_pool_v2()
-            else:
-                await self._initialize_pool(main_skill_manager)
+            await self._initialize_pool_v2()
         else:
             raise ValueError(f"Unsupported mode: {self.mode}")
-
-        # 10. Register multi-agent tools (must happen after subagent_manager creation)
-        await self._register_multi_agent_tools()
-        print(f"[OK] Multi-agent tools registered, total: {len(self.tool_manager.list_tools())}")
 
         # 11. Display LLM config
         print("\n[INFO] LLM config:")
@@ -936,57 +932,17 @@ class BotService(AgentBuilderMixin):
     # ------------------------------------------------------------------ #
 
     async def start(self) -> None:
-        """Start the service."""
-        print("\n" + "=" * 80)
-        print(">> Starting Bot Service")
-        print("=" * 80)
-
         if self.mode == "pipeline":
-            if self.pipeline is None:
-                print("[WARN] Pipeline not initialized, cannot start")
-                return
-            pipeline_task = asyncio.create_task(self.pipeline.run())
-            self._tasks.append(pipeline_task)
-        elif self.mode == "pool":
-            if self._pools:
-                await self.input_adapter.start()
-                for pool in self._pools.values():
-                    await pool.broker_bridge.start()
-                self._router_task = asyncio.create_task(self.pool_router.run())
-                print(f"[OK] PoolRouter running, {len(self._pools)} pools active")
-            elif self.agent_pool is not None and self.broker_bridge is not None:
-                await self.broker_bridge.start()
-                print("[OK] BrokerBridgeService started (legacy single-pool)")
-            else:
-                print("[WARN] No pools configured, cannot start")
-                return
-        else:
-            print(f"[WARN] Unknown mode: {self.mode}")
+            if self.pipeline:
+                await self.pipeline.run()
             return
 
-        print("\n" + "=" * 80)
-        print(f"[OK] Bot Service (Multi-Agent, mode={self.mode}) started!")
-        print(f"   Input: {self.input_adapter.name}")
-        print(f"   Output: {self.output_adapter.name}")
-        print(f"   Model: {self._app_config.llm.model}")
-        print("   Log: logs/bot.log")
-        print("=" * 80)
-        print("   Waiting for messages...\n")
-
-        def signal_handler(sig: int, _frame: Any) -> None:
-            print(f"\n[STOP] Received signal {sig}, shutting down...")
-            self._shutdown_event.set()
-
-        signal.signal(signal.SIGINT, signal_handler)
-        if hasattr(signal, "SIGTERM"):
-            signal.signal(signal.SIGTERM, signal_handler)
-
-        try:
-            await self._shutdown_event.wait()
-        except KeyboardInterrupt:
-            print("\n[STOP] Shutting down...")
-        finally:
-            await self.stop()
+        # Pool mode: start all pool bridges, then PoolRouter
+        await self.input_adapter.start()
+        for pool in self._pools.values():
+            await pool.broker_bridge.start()
+        self._router_task = asyncio.create_task(self.pool_router.run())
+        print(f"[OK] PoolRouter running, {len(self._pools)} pools active")
 
     # ------------------------------------------------------------------ #
     # Runtime assembly
