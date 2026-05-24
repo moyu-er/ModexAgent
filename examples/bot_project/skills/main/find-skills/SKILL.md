@@ -1,148 +1,142 @@
 ---
 name: find-skills
-description: "Search and discover OpenClaw skills from various sources. Use when: user wants to find available skills, search for specific functionality, or discover new skills to install."
-homepage: https://clawhub.com
-metadata: { "openclaw": { "emoji": "🔍", "requires": { "bins": [] } } }
+description: Helps users discover and install agent skills when they ask questions like "how do I do X", "find a skill for X", "is there a skill that can...", or express interest in extending capabilities. This skill should be used when the user is looking for functionality that might exist as an installable skill.
 ---
 
-# Find Skills Skill
+# Find Skills
 
-Search and discover OpenClaw skills from various sources.
+This skill helps you discover and install skills from the open agent skills ecosystem.
 
-## When to Use
+## When to Use This Skill
 
-✅ **USE this skill when:**
+Use this skill when the user:
 
-- "Find skills for [task]"
-- "Search for OpenClaw skills"
-- "What skills are available?"
-- "Discover new skills"
-- "Find skills by category"
+- Asks "how do I do X" where X might be a common task with an existing skill
+- Says "find a skill for X" or "is there a skill for X"
+- Asks "can you do X" where X is a specialized capability
+- Expresses interest in extending agent capabilities
+- Wants to search for tools, templates, or workflows
+- Mentions they wish they had help with a specific domain (design, testing, deployment, etc.)
 
-## When NOT to Use
+## What is the Skills CLI?
 
-❌ **DON'T use this skill when:**
+The Skills CLI (`npx skills`) is the package manager for the open agent skills ecosystem. Skills are modular packages that extend agent capabilities with specialized knowledge, workflows, and tools.
 
-- Installing skills → use `clawhub install`
-- Managing installed skills → use `openclaw skills list`
-- Creating new skills → use skill-creator skill
+**Key commands:**
 
-## Sources for Finding Skills
+- `npx skills find [query]` - Search for skills interactively or by keyword
+- `npx skills add <package>` - Install a skill from GitHub or other sources
+- `npx skills check` - Check for skill updates
+- `npx skills update` - Update all installed skills
 
-### 1. ClawHub (Primary)
+**Browse skills at:** https://skills.sh/
+
+## How to Help Users Find Skills
+
+### Step 1: Understand What They Need
+
+When a user asks for help with something, identify:
+
+1. The domain (e.g., React, testing, design, deployment)
+2. The specific task (e.g., writing tests, creating animations, reviewing PRs)
+3. Whether this is a common enough task that a skill likely exists
+
+### Step 2: Check the Leaderboard First
+
+Before running a CLI search, check the [skills.sh leaderboard](https://skills.sh/) to see if a well-known skill already exists for the domain. The leaderboard ranks skills by total installs, surfacing the most popular and battle-tested options.
+
+For example, top skills for web development include:
+- `vercel-labs/agent-skills` — React, Next.js, web design (100K+ installs each)
+- `anthropics/skills` — Frontend design, document processing (100K+ installs)
+
+### Step 3: Search for Skills
+
+If the leaderboard doesn't cover the user's need, run the find command:
+
 ```bash
-# Search skills
-npx clawhub search "keyword"
-
-# Browse categories
-npx clawhub browse
+npx skills find [query]
 ```
 
-### 2. OpenClaw Directory
-- Website: https://www.openclawdirectory.dev/skills
-- Browse by category, popularity, or search
+For example:
 
-### 3. LobeHub Skills Marketplace
-- Website: https://lobehub.com/skills
-- Community-contributed skills
+- User asks "how do I make my React app faster?" → `npx skills find react performance`
+- User asks "can you help me with PR reviews?" → `npx skills find pr review`
+- User asks "I need to create a changelog" → `npx skills find changelog`
 
-### 4. GitHub
-- Search: `openclaw skill` or `agent-skill`
-- Look for repositories with `SKILL.md` files
+### Step 4: Verify Quality Before Recommending
 
-### 5. Community Forums
-- SitePoint: https://www.sitepoint.com/community/
-- Discord: https://discord.com/invite/clawd
+**Do not recommend a skill based solely on search results.** Always verify:
 
-## Search Strategies
+1. **Install count** — Prefer skills with 1K+ installs. Be cautious with anything under 100.
+2. **Source reputation** — Official sources (`vercel-labs`, `anthropics`, `microsoft`) are more trustworthy than unknown authors.
+3. **GitHub stars** — Check the source repository. A skill from a repo with <100 stars should be treated with skepticism.
 
-### By Functionality
-```bash
-# Web search skills
-npx clawhub search "web search"
+### Step 5: Present Options to the User
 
-# Weather skills
-npx clawhub search "weather"
+When you find relevant skills, present them to the user with:
 
-# Document skills
-npx clawhub search "document"
+1. The skill name and what it does
+2. The install count and source
+3. The install command they can run
+4. A link to learn more at skills.sh
+
+Example response:
+
+```
+I found a skill that might help! The "react-best-practices" skill provides
+React and Next.js performance optimization guidelines from Vercel Engineering.
+(185K installs)
+
+To install it:
+npx skills add vercel-labs/agent-skills@react-best-practices
+
+Learn more: https://skills.sh/vercel-labs/agent-skills/react-best-practices
 ```
 
-### By Provider
+### Step 6: Offer to Install
+
+If the user wants to proceed, you can install the skill for them:
+
 ```bash
-# Tavily skills
-npx clawhub search "tavily"
-
-# GitHub skills
-npx clawhub search "github"
-
-# Calendar skills
-npx clawhub search "calendar"
+npx skills add <owner/repo@skill> -g -y
 ```
 
-### By Popularity
-```bash
-# Most installed skills
-npx clawhub search --sort installs
-
-# Most starred skills
-npx clawhub search --sort stars
-```
-
-## Installation Tips
-
-1. **Check requirements** before installing
-2. **Read SKILL.md** for usage instructions
-3. **Test in isolation** before production use
-4. **Check for updates** regularly
+The `-g` flag installs globally (user-level) and `-y` skips confirmation prompts.
 
 ## Common Skill Categories
 
-### Core Skills
-- `weather` - Weather forecasts
-- `skill-creator` - Create new skills
-- `healthcheck` - Security audits
+When searching, consider these common categories:
 
-### Integration Skills
-- `github` - GitHub operations
-- `feishu` - Feishu integration
-- `notion` - Notion API
+| Category        | Example Queries                          |
+| --------------- | ---------------------------------------- |
+| Web Development | react, nextjs, typescript, css, tailwind |
+| Testing         | testing, jest, playwright, e2e           |
+| DevOps          | deploy, docker, kubernetes, ci-cd        |
+| Documentation   | docs, readme, changelog, api-docs        |
+| Code Quality    | review, lint, refactor, best-practices   |
+| Design          | ui, ux, design-system, accessibility     |
+| Productivity    | workflow, automation, git                |
 
-### Search Skills
-- `tavily-search` - Web search via Tavily
-- `web-search-plus` - Enhanced web search
+## Tips for Effective Searches
 
-### Agent Skills
-- `proactive-agent` - Proactive automation
-- `coding-agent` - Code generation
+1. **Use specific keywords**: "react testing" is better than just "testing"
+2. **Try alternative terms**: If "deploy" doesn't work, try "deployment" or "ci-cd"
+3. **Check popular sources**: Many skills come from `vercel-labs/agent-skills` or `ComposioHQ/awesome-claude-skills`
 
-## Troubleshooting
+## When No Skills Are Found
 
-### Rate Limits
-If you hit rate limits with clawhub:
-1. Wait 1 hour before retrying
-2. Use alternative sources (websites)
-3. Search manually on GitHub
+If no relevant skills exist:
 
-### Installation Issues
-1. Check skill requirements
-2. Verify network connectivity
-3. Check OpenClaw version compatibility
+1. Acknowledge that no existing skill was found
+2. Offer to help with the task directly using your general capabilities
+3. Suggest the user could create their own skill with `npx skills init`
 
-## Best Practices
+Example:
 
-1. **Search before creating** - Don't reinvent the wheel
-2. **Read documentation** - Understand skill capabilities
-3. **Start simple** - Install one skill at a time
-4. **Test thoroughly** - Verify skill works as expected
-5. **Provide feedback** - Help improve skills
+```
+I searched for skills related to "xyz" but didn't find any matches.
+I can still help you with this task directly! Would you like me to proceed?
 
-## Related Skills
-
-- `clawhub` - ClawHub CLI tool
-- `skill-creator` - Create new skills
-- `healthcheck` - System health checks
-## Runtime Boundary
-
-This skill is runtime-agnostic. Hook, interceptor, control, approval, and
-runtime-state services are assembled by the bot runtime, not by skill content.
+If this is something you do often, you could create your own skill:
+npx skills init my-xyz-skill
+```

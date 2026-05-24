@@ -12,11 +12,11 @@ from framework.ioc.configs.memory import MemoryConfig
 def create_subagent_compression_coordinator(
     cfg: MemoryConfig | None,
 ) -> Any | None:
-    """Build a lightweight compression coordinator for peers/subagents.
+    """Build a lightweight compression coordinator for subagents.
 
-    Peers only get basic token/message thresholds; no LLM summarizer.
+    Subagents only get basic token/message thresholds; no LLM summarizer.
 
-    summary=None is intentional: peers operate session-only (no archive),
+    summary=None is intentional: subagents operate session-only (no archive),
     so archive writes are skipped and no summary is ever needed.
     """
     if cfg is None:

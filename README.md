@@ -10,7 +10,7 @@ ModexAgent 是一个用于搭建 AI Agent 应用的 Python 框架。它把模型
 - 接入不同的输入输出方式，例如 CLI、HTTP、QQ Bot 或自定义平台。
 - 给 Agent 增加短期记忆、历史记忆、长期记忆和上下文压缩。
 - 通过 hook、interceptor、plugin 扩展运行过程。
-- 组织多个 Agent 协作，包括主 Agent、子 Agent、peer Agent 和消息路由。
+- 组织多个 Agent 协作，包括主 Agent、子 Agent 和消息路由。
 - 在工具执行时加入安全策略、沙箱、审批和运行时控制。
 
 ## 核心概念
@@ -39,9 +39,9 @@ Agent 调用敏感工具时，框架暂停执行并渲染审批提示，用户�
 
 ### 多 Agent 协作
 
-主 Agent 将文档任务分发给 office-expert peer，peer 完成后异步回复：
+主 Agent 将文档任务分发给 office-expert subagent，subagent 完成后异步回复：
 
-<img src="assets/office_peer.jpg" alt="多 Agent 协作" width="800">
+<img src="assets/office_subagent.jpg" alt="多 Agent 协作" width="800">
 
 ## 快速开始
 

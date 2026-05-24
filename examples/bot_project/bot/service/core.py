@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import platform
 import signal
 from collections.abc import Callable
 from pathlib import Path
@@ -135,12 +136,15 @@ class BotService(AgentBuilderMixin):
         self.inbox_producer: InboxProducer | None = None
         self.inbox_consumer: InboxConsumer | None = None
 
+        # Terminal management
+        self.terminal_manager: Any | None = None
+
         # Runtime components
         self.provider: Any | None = None
         self.plugin_integration: Any | None = None
         self.dream_engine: Any | None = None
 
-        # Subagent/peer caches
+        # Subagent caches
         self._subagent_skill_managers: dict[str, SkillManager] = {}
         self._subagent_memory_systems: dict[str, Any] = {}
         self._additional_subagent_memory_systems: dict[str, Any] = {}
@@ -236,7 +240,35 @@ class BotService(AgentBuilderMixin):
         )
         self.tool_manager = InMemoryToolManager(config=tm_config)
 
-        await self._register_tools()
+        # 3a. Create TerminalManager — only if bash is available.
+        # Windows without bash falls back to SubprocessExecutor (stateless).
+        main_cfg = self._main_agent_cfg
+        if main_cfg and main_cfg.use_terminal:
+            from framework.tools.terminal.types import detect_platform_shell, ShellFamily
+
+            shell_info = detect_platform_shell()
+            if shell_info is not None and shell_info.family is ShellFamily.BASH:
+                try:
+                    from framework.tools.terminal import TerminalManager
+
+                    self.terminal_manager = TerminalManager(
+                        max_terminals=getattr(self._app_config, 'terminal', {}).get('max_terminals', 5),
+                        shell_info=shell_info,
+                    )
+                    print(f"[OK] TerminalManager initialized (bash: {shell_info.path})")
+                except Exception as e:
+                    logger.warning("TerminalManager initialization failed: %s", e)
+                    self.terminal_manager = None
+            else:
+                self.terminal_manager = None
+                print("[INFO] No bash found — TerminalTool disabled, ShellTool uses SubprocessExecutor")
+        else:
+            self.terminal_manager = None
+            print("[INFO] TerminalManager disabled (use_terminal=false)")
+
+        await self._register_tools(
+            terminal_manager=self.terminal_manager
+        )
         await self._register_mcp_tools()
         print(f"[OK] ToolManager initialized, {len(self.tool_manager.list_tools())} tools registered")
 
@@ -640,7 +672,7 @@ class BotService(AgentBuilderMixin):
 
                 print(f"[OK] Subagent '{descriptor.address.name}' registered as resident")
 
-        # Initialize peer agents
+        # Initialize additional subagents
         await self._initialize_additional_subagents()
 
         # Configure BrokerBridgeService
@@ -707,7 +739,7 @@ class BotService(AgentBuilderMixin):
                 turn=TurnTimeoutPolicy(
                     agent_run_timeout_seconds=180.0,
                     hook_timeout_seconds=10.0,
-                    tool_timeout_seconds=60.0,
+                    tool_timeout_seconds=120.0,
                 ),
             )
         self._safety_policy_cache = policy
@@ -1139,14 +1171,14 @@ class BotService(AgentBuilderMixin):
             except Exception as e:
                 print(f"   [WARN] Subagent memory system '{sub_name}' close error: {e}")
 
-        # Close peer memory systems
-        for peer_name, peer_ms in getattr(self, "_additional_subagent_memory_systems", {}).items():
+        # Close additional subagent memory systems
+        for sub_name, sub_ms in getattr(self, "_additional_subagent_memory_systems", {}).items():
             try:
-                print(f"   Closing peer memory system: {peer_name}...")
-                await peer_ms.close()
-                print(f"   [OK] Peer memory system '{peer_name}' closed")
+                print(f"   Closing subagent memory system: {sub_name}...")
+                await sub_ms.close()
+                print(f"   [OK] Subagent memory system '{sub_name}' closed")
             except Exception as e:
-                print(f"   [WARN] Peer memory system '{peer_name}' close error: {e}")
+                print(f"   [WARN] Subagent memory system '{sub_name}' close error: {e}")
 
         if self._overflow_cleaner is not None:
             try:
@@ -1163,6 +1195,23 @@ class BotService(AgentBuilderMixin):
                 print("   [OK] MemorySystem closed")
             except Exception as e:
                 print(f"   [WARN] MemorySystem close error: {e}")
+
+        if self.terminal_manager:
+            try:
+                terminal_cfg = (
+                    getattr(self._app_config, "terminal", {})
+                    if self._app_config
+                    else {}
+                )
+                close_on_exit = terminal_cfg.get("close_on_exit", True)
+                if close_on_exit:
+                    print("   Closing terminal sessions...")
+                    await self.terminal_manager.close_all()
+                    print("   [OK] Terminal sessions closed")
+                else:
+                    print("   [INFO] Terminal sessions left open (close_on_exit=false)")
+            except Exception as e:
+                print(f"   [WARN] Terminal shutdown error: {e}")
 
         if self.plugin_integration:
             try:

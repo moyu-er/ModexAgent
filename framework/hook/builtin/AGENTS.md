@@ -11,7 +11,7 @@
 | `logging.py` | `RunLoggingHook` | before/after_turn, before/after_iteration | Basic execution logging |
 | `runtime_context.py` | `RuntimeContextHook` | before_turn, after_tool_execution | Tracks tool calls per session via RuntimeContextManager |
 | `inbox_flush.py` | `InboxFlushHook` | before_turn | Flushes inbox messages at turn start |
-| `peer_auto_send.py` | `PeerAutoSendHook` | after_tool_execution | Auto-forwards to peers when LLM forgets send_message |
+| `subagent_auto_send.py` | `SubagentAutoSendHook` | after_tool_execution | Auto-forwards to subagents when LLM forgets send_message |
 | `subagent_cleanup.py` | `SubagentMemoryCleanupHook` | after_turn | Cleans up subagent resources |
 | `dynamic_tool_filter.py` | `DynamicToolFilterHook` | before/after_iteration | Per-iteration tool list management (token budgets, error downgrade, mutual exclusion) |
 | `llm_output_guard.py` | `LLMOutputGuardHook` | after_llm_response | LLM output sanitization + risk assessment |

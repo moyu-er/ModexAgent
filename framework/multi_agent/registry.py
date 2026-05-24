@@ -22,7 +22,7 @@ class AgentProfile:
     allowed_tools: list[str] | None = None
     allowed_skills: list[str] | None = None
     capabilities: list[str] | None = None
-    exposed_to_peers: bool = True
+    exposed_to_agents: bool = True
     comm_kind: AgentCommKind = AgentCommKind.NORMAL
 
 

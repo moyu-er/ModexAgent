@@ -7,7 +7,7 @@
 - `framework/core/`: ABCs — Agent[E], Emitter, Tool, ContextManager, graph engine, skills, types.
 - `framework/agents/react/`: graph-based ReAct runtime (4-node: START→LLM→TOOL→END).
 - `framework/memory/`: session/archive/knowledge memory, compression, governance.
-- `framework/multi_agent/`: star-topology peer/subagent coordination, inbox, communication tracker.
+- `framework/multi_agent/`: star-topology subagent coordination, inbox, communication tracker.
 - `framework/ioc/`: typed config (`AppConfig`) + factory layer.
 - `framework/runtime/`: `AgentRuntime`, `TurnStateStore`, `RuntimeCommandStore`.
 - `framework/pipeline/`: `AgentPipeline`, adapters, approval renderer.
@@ -43,20 +43,20 @@
 - Compression mutates persisted session/archive memory via lifecycle hooks.
 - Governance mutates only the LLM input copy before model calls. Never write governance output back to session.
 - Tool-call chains must stay structurally legal: don't split `assistant.tool_calls` from matching `tool` results.
-- `archive=None` is standard session-only mode for peer/subagent memory.
+- `archive=None` is standard session-only mode for subagent memory.
 - Subagent session memory is temporary; clear after subagent finishes.
-- Memory scopes: Session, User, Tenant, Agent, Channel, Chat, PeerPair, Composite, Global.
+- Memory scopes: Session, User, Tenant, Agent, Channel, Chat, Composite, Global.
 
 ## Multi-Agent Communication Rules
 
-- Star topology: peers communicate only through main agent. `peer_validator.py` enforces at registration.
-- Three communication tools: `send_message` (sync broker), `send_message_async` (inbox-based, deferred), `dispatch_task` (isolated invocation session).
+- Star topology: subagents communicate only through main agent. `subagent_validator.py` enforces at registration.
+- Three communication tools: `send_to_agent` (sync broker), `send_to_agent_async` (inbox-based, deferred), `spawn_subagent` (isolated invocation session).
 - `AgentMessageBus` is the primary async channel. `InboxProducer`/`InboxConsumer` wrap `InboxServer` with local-cache dedup.
 - `CommunicationTracker` provides sideband memory: send/acknowledge bracket matching prevents memory compression from silently dropping pending communications.
 - Session ID format: `{conversation_id}:{agent_name}` (via `DefaultSessionIdStrategy`). `dispatch_task` appends `:{invocation_id}` for isolated sessions.
 - `AgentPool` manages resident agent lifecycle: consumer loop, inbox wakeup polling, per-session locks, TTL + LRU session eviction.
 - `SubagentAutoSendHook` safety net: auto-forwards final output to parent if LLM forgets to use communication tools.
-- Each peer gets isolated Memory/ToolManager/SkillManager. Peer memory is `RestrictedInjectionPolicy` (session-only, limited context window).
+- Each subagent gets isolated Memory/ToolManager/SkillManager. Subagent memory is `RestrictedInjectionPolicy` (session-only, limited context window).
 
 ## Testing
 

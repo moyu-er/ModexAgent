@@ -4,7 +4,7 @@ Provides:
 - Stable message-hash deduplication (prevents double-add of the same message)
 - Scope-isolated dedup (same content in different scopes does not collide)
 - Non-blocking asyncio.Queue + worker task (does not block the agent turn)
-- peer/subagent auto-skip (only main agent writes to providers)
+- subagent auto-skip (only main agent writes to providers)
 - replace_all bypass (bulk replacement does not trigger provider adds)
 - Flush on close (awaits pending provider tasks before shutdown)
 """
@@ -85,8 +85,8 @@ class MemoryAppendRecorder:
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     @staticmethod
-    def _is_peer_or_subagent(context: MemoryContext) -> bool:
-        """Return True if context belongs to a peer or subagent."""
+    def _is_subagent(context: MemoryContext) -> bool:
+        """Return True if context belongs to a subagent."""
         candidates = [
             context.agent_id,
             context.sender_agent,
@@ -97,8 +97,6 @@ class MemoryAppendRecorder:
                 continue
             v = str(value).lower()
             if v == MemoryAgentRole.SUBAGENT.value or v.startswith(MemoryAgentRole.SUBAGENT.value):
-                return True
-            if v == "peer" or v.startswith("peer"):
                 return True
         return False
 
@@ -139,7 +137,7 @@ class MemoryAppendRecorder:
         to avoid blocking the agent turn.  Compaction-sourced messages are
         silently skipped because they represent already-processed history.
         """
-        if not self._providers or self._is_peer_or_subagent(context):
+        if not self._providers or self._is_subagent(context):
             return
 
         # Skip compaction-sourced messages: they are internal rewrites, not

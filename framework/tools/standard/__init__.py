@@ -32,7 +32,13 @@ from .file_tool import (
     WriteFileTool,
 )
 from .search_tool import FindFilesTool, SearchFilesTool
-from .shell_tool import ShellTool
+from .shell_tool import (
+    ShellExecutor,
+    ShellInfo,
+    ShellTool,
+    SubprocessExecutor,
+    TerminalSessionExecutor,
+)
 
 __all__ = [
     "ReadFileTool",
@@ -41,6 +47,10 @@ __all__ = [
     "ListDirTool",
     "FileTool",
     "ShellTool",
+    "ShellExecutor",
+    "ShellInfo",
+    "SubprocessExecutor",
+    "TerminalSessionExecutor",
     "SearchFilesTool",
     "FindFilesTool",
 ]

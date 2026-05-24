@@ -47,7 +47,7 @@ async def test_compression_keeps_latest_user_within_hard_message_ratio() -> None
     messages = [
         {"role": MessageRole.USER, "content": "old"},
         {"role": MessageRole.ASSISTANT, "content": "old answer"},
-        {"role": MessageRole.AGENT, "source_agent": "peer", "content": "[From Agent peer]\nagent"},
+        {"role": MessageRole.AGENT, "source_agent": "subagent", "content": "[From Agent subagent]\nagent"},
         {"role": MessageRole.USER, "content": "latest human"},
         {"role": MessageRole.ASSISTANT, "content": "working"},
     ]
@@ -74,7 +74,7 @@ async def test_compression_keeps_latest_user_within_hard_message_ratio() -> None
 
 async def test_compression_user_beats_agent_when_budget_allows_one() -> None:
     messages = [
-        {"role": MessageRole.AGENT, "source_agent": "peer", "content": "[From Agent peer]\nagent"},
+        {"role": MessageRole.AGENT, "source_agent": "subagent", "content": "[From Agent subagent]\nagent"},
         {"role": MessageRole.USER, "content": "human"},
     ]
     session = _Session(messages)

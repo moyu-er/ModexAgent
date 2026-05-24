@@ -1,9 +1,9 @@
 """Agent configuration.
 
 AgentConfig is the central piece — every agent in the system
-(main, peer, subagent) is configured with this same structure.
-The framework has no concept of "peer" or "subagent" — those are
-just Agents with different tools and configs passed in code.
+(main, subagent) is configured with this same structure.
+The framework has no concept of "subagent" as a distinct type —
+it is just an Agent with different tools and configs passed in code.
 """
 
 from __future__ import annotations
@@ -52,12 +52,14 @@ class AgentConfig(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
 
     name: str
-    role: Literal["main", "peer", "subagent"] = "peer"
+    role: Literal["main", "subagent"] = "subagent"
     llm: LLMConfig | None = None
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
     max_steps: int = 20
     tools: list[Tool] = Field(default_factory=list)  # code-passed only
     standard_tools: bool = True  # register read/write/edit/list/shell/search
+    use_terminal: bool = True  # use TerminalSessionExecutor + TerminalManager; false = SubprocessExecutor
+    visible_terminal: bool = False  # if use_terminal=true, launch visible OS terminal windows
     mcp_filter: list[str] | None = None  # which MCP servers to use (names from mcp.json)
     memory: MemoryConfig | None = None
     skills: SkillsConfig | None = None

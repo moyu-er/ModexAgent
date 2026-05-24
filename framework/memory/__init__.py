@@ -82,7 +82,6 @@ from framework.memory.core.scope import (
     GlobalScope,
     MemoryContext,
     MemoryScope,
-    PeerPairScope,
     SessionScope,
     TenantScope,
     UserScope,
@@ -155,7 +154,6 @@ __all__ = [
     "ChatScope",
     "CompositeScope",
     "GlobalScope",
-    "PeerPairScope",
     # Registry & storage
     "MemoryStoreRegistry",
     "DefaultMemoryStoreRegistry",

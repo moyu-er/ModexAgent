@@ -196,52 +196,6 @@ class GlobalScope(MemoryScope):
         return "global"
 
 
-class PeerPairScope(MemoryScope):
-    """按 (conversation_id, sender_agent, receiver_agent) 三元组隔离。
-
-    支持两种 key 构造方式：
-    1. 从 session_id 解析（约定格式 '{conversation_id}:{sender}:{receiver}' 三段式）
-    2. 从 MemoryContext 的独立字段构造
-    """
-
-    def __init__(self, separator: str = ":") -> None:
-        self._sep = separator
-
-    def get_scope_key(self, context: MemoryContext) -> str:
-        # 方式1：session_id 已包含完整三元组（推荐，最轻量）
-        if context.session_id:
-            parts = context.session_id.split(self._sep)
-            if len(parts) == 3:
-                return context.session_id
-
-        # 方式2：从独立字段构造
-        conv_id = context.session_id or "default"
-        # 如果 session_id 是两段格式（如 user↔main 的 "conv:main"），提取真正的 conversation_id
-        if conv_id and self._sep in conv_id:
-            parts = conv_id.split(self._sep)
-            if len(parts) == 2:
-                conv_id = parts[0]
-
-        sender = context.sender_agent or context.agent_id or "unknown"
-        receiver = context.receiver_agent or "unknown"
-        return f"{conv_id}{self._sep}{sender}{self._sep}{receiver}"
-
-    @property
-    def name(self) -> str:
-        return "peer_pair"
-
-    @classmethod
-    def create_key(
-        cls,
-        conversation_id: str,
-        sender_agent: str,
-        receiver_agent: str,
-        separator: str = ":",
-    ) -> str:
-        """便捷方法：直接构造 scope key，无需构造 MemoryContext。"""
-        return f"{conversation_id}{separator}{sender_agent}{separator}{receiver_agent}"
-
-
 class CompositeScope(MemoryScope):
     """组合多个 Scope，生成复合分组键。
 

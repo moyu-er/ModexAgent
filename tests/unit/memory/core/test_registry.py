@@ -40,7 +40,7 @@ async def test_in_memory_registry_resolves_one_storage_per_layer_scope() -> None
 async def test_in_memory_registry_lists_records_by_layer_role_and_file() -> None:
     registry = InMemoryStoreRegistry()
     main_context = MemoryContext(session_id="main", agent_id="main")
-    peer_context = MemoryContext(session_id="peer", agent_id="peer")
+    subagent_context = MemoryContext(session_id="subagent", agent_id="subagent")
 
     main_storage = await registry.resolve(
         layer=MemoryLayerName.SESSION,
@@ -51,7 +51,7 @@ async def test_in_memory_registry_lists_records_by_layer_role_and_file() -> None
     await registry.resolve(
         layer=MemoryLayerName.SESSION,
         scope=SessionScope(),
-        context=peer_context,
+        context=subagent_context,
     )
 
     default_records = await registry.list_records(layer=MemoryLayerName.SESSION)
@@ -63,7 +63,7 @@ async def test_in_memory_registry_lists_records_by_layer_role_and_file() -> None
     )
 
     assert [record.scope_key for record in default_records] == ["main"]
-    assert {record.scope_key for record in all_records} == {"main", "peer"}
+    assert {record.scope_key for record in all_records} == {"main", "subagent"}
     assert [record.scope_key for record in message_records] == ["main"]
 
 

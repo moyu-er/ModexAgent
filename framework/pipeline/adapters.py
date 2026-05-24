@@ -135,7 +135,7 @@ class OutputAdapter(ABC):
 class NullOutputAdapter(OutputAdapter):
     """空输出适配器 - 丢弃所有输出，不发送到任何外部平台。
 
-    适用于 peer agent 等内部 Agent，防止其原始 LLM 输出意外泄露到用户界面。
+    适用于 subagent 等内部 Agent，防止其原始 LLM 输出意外泄露到用户界面。
     """
 
     @property

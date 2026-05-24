@@ -67,7 +67,7 @@ class TestCreatePeerGovernance:
         assert gov is not None
         assert len(gov._strategies) == 2
 
-    def test_peer_minimal(self) -> None:
+    def test_subagent_minimal(self) -> None:
         cfg = MemoryConfig(governance=GovernanceConfig())
         gov = create_subagent_governance(cfg, llm_max_tokens=80000)
         assert gov is not None

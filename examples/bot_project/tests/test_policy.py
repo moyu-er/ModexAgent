@@ -67,7 +67,7 @@ class TestClean:
         policy = ToolCallCleanupPolicy()
         msgs = [
             _msg("user", content="hi"),
-            _msg("agent", content="msg from peer", source_agent="peer1"),
+            _msg("agent", content="msg from subagent", source_agent="subagent1"),
             _msg("assistant", content="got it"),
         ]
         result = policy.clean(msgs)

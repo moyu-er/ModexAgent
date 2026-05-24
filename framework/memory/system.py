@@ -43,7 +43,7 @@ def create_memory_system(
         workspace: Root directory for file-based storage.
         config: Optional layer configuration set.
         llm_provider: Optional LLM provider for compression/summarization.
-        session_only: If True, create session-only layers (peer/subagent — no archive, no knowledge).
+        session_only: If True, create session-only layers (subagent — no archive, no knowledge).
     """
     registry = DefaultMemoryStoreRegistry(workspace)
     if session_only:

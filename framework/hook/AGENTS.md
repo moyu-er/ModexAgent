@@ -17,7 +17,7 @@ Unlike Interceptors, hooks do NOT wrap execution -- they observe and optionally 
 ## Subdirectories
 | Directory | Purpose |
 |-----------|---------|
-| `builtin/` | 10 framework hooks -- logging, runtime_context, inbox_flush, peer_auto_send, subagent_cleanup, dynamic_tool_filter, llm_output_guard, tool_result_transform, progress_report |
+| `builtin/` | 10 framework hooks -- logging, runtime_context, inbox_flush, subagent_auto_send, subagent_cleanup, dynamic_tool_filter, llm_output_guard, tool_result_transform, progress_report |
 
 ## HookPoint Dispatch
 | HookPoint | Method | When | Common Use |

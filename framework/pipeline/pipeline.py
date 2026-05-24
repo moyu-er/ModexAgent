@@ -680,7 +680,7 @@ class AgentPipeline:
         Returns:
             AgentResult on successful turn, None if GraphInterrupt for approval.
         """
-        # 设置当前 conversation_id 上下文变量（供 peer 通信工具使用）
+        # 设置当前 conversation_id 上下文变量（供 subagent 通信工具使用）
         from ..multi_agent.session_id import DefaultSessionIdStrategy
         from ..multi_agent.context import current_conversation_id
 

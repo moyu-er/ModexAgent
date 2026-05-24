@@ -181,20 +181,20 @@ class TestHookCollaboration:
             runtime_context_manager=runtime_mgr,
         )
 
-    async def test_peer_auto_send_skips_when_runtime_context_records_send_to_agent_async(self):
+    async def test_subagent_auto_send_skips_when_runtime_context_records_send_to_agent_async(self):
         """Full flow: RuntimeContextHook records send_to_agent_async,
         SubagentAutoSendHook detects it and skips auto-forward."""
         bus = self._make_bus()
         runtime_mgr = RuntimeContextManager()
 
-        peer_hook = SubagentAutoSendHook(
+        subagent_hook = SubagentAutoSendHook(
             agent_bus=bus, self_name="doc-expert", parent_name="main"
         )
         # RuntimeContextHook must be explicitly added to hook_runner
         # (framework no longer auto-injects it into pipeline.hooks).
         hook_runner = HookRunner()
         hook_runner.add(HookSpec(hook=RuntimeContextHook(), on_error=HookErrorPolicy.LOG))
-        hook_runner.add(HookSpec(hook=peer_hook, on_error=HookErrorPolicy.LOG))
+        hook_runner.add(HookSpec(hook=subagent_hook, on_error=HookErrorPolicy.LOG))
 
         # Run the agent
         from framework.memory.history import ListMessageHistory
@@ -261,7 +261,7 @@ class TestHookCollaboration:
         custom_hook.after_tool_execution = AsyncMock()
         custom_hook.after_turn = AsyncMock()
 
-        peer_hook = SubagentAutoSendHook(
+        subagent_hook = SubagentAutoSendHook(
             agent_bus=bus, self_name="doc-expert", parent_name="main"
         )
 
@@ -269,7 +269,7 @@ class TestHookCollaboration:
         hook_runner = HookRunner()
         hook_runner.add(HookSpec(hook=RuntimeContextHook(), on_error=HookErrorPolicy.LOG))
         hook_runner.add(HookSpec(hook=custom_hook, on_error=HookErrorPolicy.LOG))
-        hook_runner.add(HookSpec(hook=peer_hook, on_error=HookErrorPolicy.LOG))
+        hook_runner.add(HookSpec(hook=subagent_hook, on_error=HookErrorPolicy.LOG))
 
         from framework.memory.history import ListMessageHistory
         runtime, identity = _make_runtime(hook_runner=hook_runner, runtime_mgr=runtime_mgr)
@@ -292,7 +292,7 @@ class TestHookCollaboration:
         # SubagentAutoSendHook should auto-forward (no tool calls)
         bus.send.assert_awaited_once()
 
-    async def test_runtime_context_hook_must_be_in_hook_runner_for_peer_agents(self):
+    async def test_runtime_context_hook_must_be_in_hook_runner_for_subagent_agents(self):
         """Regression: RuntimeContextHook must be in hook_runner (not just
         pipeline.hooks) for SubagentAutoSendHook to detect communication tool calls.
         ReActAgent._call_hooks() prefers hook_runner and never falls back to
@@ -302,14 +302,14 @@ class TestHookCollaboration:
         bus = self._make_bus()
         runtime_mgr = RuntimeContextManager()
 
-        peer_hook = SubagentAutoSendHook(
+        subagent_hook = SubagentAutoSendHook(
             agent_bus=bus, self_name="doc-expert", parent_name="main"
         )
 
         # Simulate the bug: hook_runner lacks RuntimeContextHook.
         # Framework no longer auto-injects it anywhere.
         hook_runner = HookRunner()
-        hook_runner.add(HookSpec(hook=peer_hook, on_error=HookErrorPolicy.LOG))
+        hook_runner.add(HookSpec(hook=subagent_hook, on_error=HookErrorPolicy.LOG))
 
         from framework.memory.history import ListMessageHistory
         runtime, identity = _make_runtime(hook_runner=hook_runner, runtime_mgr=runtime_mgr)
@@ -330,7 +330,7 @@ class TestHookCollaboration:
         ]).run(ctx, MagicMock(spec=ContentEmitter))
         bus.send.assert_awaited_once()  # BUG: forwarded even though tool sent msg
 
-        # Apply the fix (mirrors builders.py _initialize_peer_agents)
+        # Apply the fix (mirrors builders.py _initialize_additional_subagents)
         has_runtime_ctx = any(
             isinstance(spec.hook, RuntimeContextHook)
             for spec in hook_runner.hook_specs

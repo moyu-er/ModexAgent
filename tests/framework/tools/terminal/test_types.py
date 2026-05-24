@@ -1,0 +1,118 @@
+from __future__ import annotations
+
+import pytest
+
+from framework.tools.terminal.types import Platform, ShellFamily, ShellInfo
+
+
+class TestPlatform:
+    """Tests for the Platform enum."""
+
+    def test_members(self) -> None:
+        assert Platform.WINDOWS.value == "windows"
+        assert Platform.LINUX.value == "linux"
+        assert Platform.DARWIN.value == "darwin"
+
+    def test_is_str_enum(self) -> None:
+        assert issubclass(Platform, str)
+
+
+class TestShellFamily:
+    """Tests for the ShellFamily enum and its methods."""
+
+    def test_members(self) -> None:
+        assert ShellFamily.BASH.value == "bash"
+        assert ShellFamily.CMD.value == "cmd"
+        assert ShellFamily.ZSH.value == "zsh"
+        assert ShellFamily.SH.value == "sh"
+
+    def test_uses_readline(self) -> None:
+        assert ShellFamily.BASH.uses_readline() is True
+        assert ShellFamily.ZSH.uses_readline() is True
+        assert ShellFamily.SH.uses_readline() is True
+        assert ShellFamily.CMD.uses_readline() is False
+
+    def test_command_ending(self) -> None:
+        assert ShellFamily.BASH.command_ending() == "\n"
+        assert ShellFamily.ZSH.command_ending() == "\n"
+        assert ShellFamily.SH.command_ending() == "\n"
+        assert ShellFamily.CMD.command_ending() == "\r\n"
+
+    def test_needs_pager_suppression(self) -> None:
+        assert ShellFamily.BASH.needs_pager_suppression() is True
+        assert ShellFamily.ZSH.needs_pager_suppression() is True
+        assert ShellFamily.SH.needs_pager_suppression() is True
+        assert ShellFamily.CMD.needs_pager_suppression() is False
+
+    def test_agent_setup_env_readline_shells(self) -> None:
+        expected = {"GIT_PAGER": "cat", "PAGER": "cat", "LESS": "FRX"}
+        assert ShellFamily.BASH.agent_setup_env() == expected
+        assert ShellFamily.ZSH.agent_setup_env() == expected
+        assert ShellFamily.SH.agent_setup_env() == expected
+
+    def test_agent_setup_env_cmd(self) -> None:
+        assert ShellFamily.CMD.agent_setup_env() is None
+
+
+class TestShellInfo:
+    """Tests for the ShellInfo frozen dataclass."""
+
+    def test_creation(self) -> None:
+        info = ShellInfo(
+            family=ShellFamily.BASH,
+            path="/bin/bash",
+            platform=Platform.LINUX,
+        )
+        assert info.family == ShellFamily.BASH
+        assert info.path == "/bin/bash"
+        assert info.platform == Platform.LINUX
+
+    def test_frozen(self) -> None:
+        info = ShellInfo(
+            family=ShellFamily.BASH,
+            path="/bin/bash",
+            platform=Platform.LINUX,
+        )
+        with pytest.raises(AttributeError):
+            info.path = "/usr/bin/bash"
+
+    def test_name_property(self) -> None:
+        bash_info = ShellInfo(
+            family=ShellFamily.BASH,
+            path="/bin/bash",
+            platform=Platform.LINUX,
+        )
+        assert bash_info.name == "bash"
+
+        cmd_info = ShellInfo(
+            family=ShellFamily.CMD,
+            path="cmd.exe",
+            platform=Platform.WINDOWS,
+        )
+        assert cmd_info.name == "cmd"
+
+    def test_equality(self) -> None:
+        info_a = ShellInfo(
+            family=ShellFamily.ZSH,
+            path="/bin/zsh",
+            platform=Platform.DARWIN,
+        )
+        info_b = ShellInfo(
+            family=ShellFamily.ZSH,
+            path="/bin/zsh",
+            platform=Platform.DARWIN,
+        )
+        assert info_a == info_b
+
+    def test_inequality(self) -> None:
+        info_a = ShellInfo(
+            family=ShellFamily.BASH,
+            path="/bin/bash",
+            platform=Platform.LINUX,
+        )
+        info_b = ShellInfo(
+            family=ShellFamily.ZSH,
+            path="/bin/zsh",
+            platform=Platform.DARWIN,
+        )
+        assert info_a != info_b

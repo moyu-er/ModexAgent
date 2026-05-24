@@ -36,7 +36,7 @@ bot_project/
 │   └── mcp.json               # MCP 服务器配置
 ├── skills/
 │   ├── main/                  # 主 Agent 的技能（自动发现）
-│   ├── peers/                 # Peer Agent 的技能（按 agent name 自动发现）
+│   ├── subagents/             # Subagent 的技能（按 agent name 自动发现）
 │   └── subagents/             # 通用子 Agent 技能（通过 skill_dirs 引用）
 ├── plugins/                   # 本地插件目录
 │   ├── mem0_memory/           # Mem0 语义记忆插件
@@ -193,9 +193,9 @@ BotService 支持两种运行时模式，可通过 `mode="pipeline"` 或 `mode="
 
 ### 多 Agent 协作
 
-主 Agent 通过 `send_message` 将文档生成任务分发给 office-expert peer，peer 完成后通过 `send_message_async` 将结果回复到主 Agent 的 inbox：
+主 Agent 通过 `send_to_agent` 将文档生成任务分发给 office-expert subagent，subagent 完成后通过 `send_to_agent_async` 将结果回复到主 Agent 的 inbox：
 
-<img src="../../assets/office_peer.jpg" alt="多 Agent Peer 协作" width="800">
+<img src="../../assets/office_subagent.jpg" alt="多 Agent Subagent 协作" width="800">
 
 ## 快速开始
 
@@ -272,7 +272,7 @@ tools:
       - "fetch"
 ```
 
-`config/mcp.json` 也需要按你的 MCP server 自行配置，当前文件只是示例；`bot_config.yml` 中通过 `mcp.enabled` 和 `mcp.config_file: "mcp.json"` 启用 MCP，并让 `tools.mcp_tools.server_filter` 或 peer 的 `tools.mcp_tools.server_filter` 匹配 `mcp.json` 里的 server key。
+`config/mcp.json` 也需要按你的 MCP server 自行配置，当前文件只是示例；`bot_config.yml` 中通过 `mcp.enabled` 和 `mcp.config_file: "mcp.json"` 启用 MCP，并让 `tools.mcp_tools.server_filter` 或 subagent 的 `tools.mcp_tools.server_filter` 匹配 `mcp.json` 里的 server key。
 
 ### 4. 运行
 
@@ -526,35 +526,30 @@ plugins:
 Pool 模式下可配置多个常驻平级 Agent，各自拥有独立的记忆和工具集。示例配置：
 
 ```yaml
-multi_agent:
-  enabled: true
-  parent_agent_name: "main"
-  peers:
-    - name: "office-expert"
-      role: "document"
-      capabilities: ["document", "office"]
-      system_prompt: "..."
-      skill_dirs:
-        - "skills/peers/docx"
-        - "skills/peers/pdf"
-        - "skills/peers/pptx"
-        - "skills/peers/xlsx"
-      tools:
-        file_tools:
-          enabled: true
-        shell_tools:
-          enabled: true
-          timeout: 60
+agents:
+  - name: "office-expert"
+    role: subagent
+    system_prompt: "..."
+    skills:
+      roots:
+        - "skills/subagents/docx"
+        - "skills/subagents/pdf"
+        - "skills/subagents/pptx"
+        - "skills/subagents/xlsx"
+    tools:
+      file_tools:
+        enabled: true
+      shell_tools:
+        enabled: true
+        timeout: 60
 ```
 
 **关键概念**：
-- `send_message`：主动唤醒目标 peer 立即处理（同步）
-- `send_message_async`：将消息放入目标 peer 的 inbox，等待其下轮处理（异步）
-- `view_peer_history`：查看与指定 peer 的最近通信记录（默认最近 5 条），自动排除 tool-call 链
-  - `mode="bilateral"`（默认）：包含收发双边记录，适合主动调用 peer 后回顾完整上下文
-  - `mode="receiver_only"`：仅包含从 peer 接收到的消息，适合 peer 异步回复后快速查看 inbox
+- `send_to_agent`：主动唤醒目标 subagent 立即处理（同步）
+- `send_to_agent_async`：将消息放入目标 subagent 的 inbox，等待其下轮处理（异步）
+- `list_communication_targets`：列出当前可见的 subagent 列表，帮助 LLM 判断应该联系谁
 
-Peer 的 `send_message` 工具描述会**动态注入**当前可见的 peer 列表，帮助 LLM 判断应该联系谁。
+Subagent 的 `send_to_agent` 工具描述会**动态注入**当前可见的 subagent 列表，帮助 LLM 判断应该联系谁。
 
 ### Agent Tool/Skill 配置指南
 
@@ -562,14 +557,14 @@ Peer 的 `send_message` 工具描述会**动态注入**当前可见的 peer 列�
 
 | Agent | 文件 | Shell | MCP | 通信工具 | Skills |
 |-------|:----:|:-----:|:---:|----------|--------|
-| **main** | ✅ | ✅ | ✅ (全部) | send_message, view_peer_history | skills/main/* (11个) |
-| **office-expert** | ✅ | ✅ | — | send_message_async(→main), view_peer_history | skills/peers/docx,pdf,pptx,xlsx |
-| **query-12306** | ✅ | ✅ | ✅ (12306-mcp, fetch) | send_message_async(→main), view_peer_history | — |
+| **main** | ✅ | ✅ | ✅ (全部) | send_to_agent, send_to_agent_async, list_communication_targets | skills/main/* (11个) |
+| **office-expert** | ✅ | ✅ | — | send_to_agent_async(→main), list_communication_targets | skills/subagents/docx,pdf,pptx,xlsx |
+| **query-12306** | ✅ | ✅ | ✅ (12306-mcp, fetch) | send_to_agent_async(→main), list_communication_targets | — |
 | **helper-sync** | ✅ | ✅ | — | — (spawn 同步返回) | skills/subagents/* |
 
 #### 如何配置 Agent 的工具
 
-每个 agent（peer / subagent）通过 `tools` 字段独立配置工具集：
+每个 agent（subagent）通过 `tools` 字段独立配置工具集：
 
 ```yaml
 tools:
@@ -602,12 +597,12 @@ tools:
 ```yaml
 # 方式 1：引用多个技能目录
 skill_dirs:
-  - "skills/peers/docx"
-  - "skills/peers/pdf"
+  - "skills/subagents/docx"
+  - "skills/subagents/pdf"
 
 # 方式 2：自动发现（无需配置 skill_dirs）
-# 系统会自动搜索 skills/peers/{agent_name}/ 和 skills/subagents/{agent_name}/
-# 例如 query-12306 → 自动搜索 skills/peers/query-12306/
+# 系统会自动搜索 skills/subagents/{agent_name}/
+# 例如 query-12306 → 自动搜索 skills/subagents/query-12306/
 ```
 
 **技能目录结构**：
@@ -618,7 +613,7 @@ skills/
 │   ├── weather/SKILL.md
 │   ├── github/SKILL.md
 │   └── ...
-├── peers/                 # Peer Agent 的技能（按 agent name 自动发现）
+├── subagents/             # Subagent 的技能（按 agent name 自动发现）
 │   └── query-12306/
 │       └── travel/SKILL.md
 └── subagents/             # 通用技能（通过 skill_dirs 引用）
@@ -634,9 +629,9 @@ skills/
 
 | 通信工具 | 谁拥有 | 说明 |
 |----------|--------|------|
-| `send_message` | main | 同步唤醒指定 peer，等待其处理完并返回结果 |
-| `send_message_async` | 所有 peer | 异步发送到 main 的 inbox，不唤醒 main |
-| `view_peer_history` | main + 所有 peer | 查看与指定 agent 的最近通信记录 |
+| `send_to_agent` | main | 同步唤醒指定 subagent，等待其处理完并返回结果 |
+| `send_to_agent_async` | 所有 subagent | 异步发送到 main 的 inbox，不唤醒 main |
+| `list_communication_targets` | main + 所有 subagent | 列出当前可见的 subagent 列表 |
 
 **控制通信权限**：
 
@@ -645,25 +640,24 @@ multi_agent:
   # send_message 的允许调用者（null = 允许所有）
   allowed_callers: null
 
-  peers:
+  subagents:
     - name: "query-12306"
-      # 限制此 peer 的工具访问
+      # 限制此 subagent 的工具访问
       denied_tools:
         - "spawn_subagent_sync"
 ```
 
-#### 添加新 Peer Agent 的步骤
+#### 添加新 Subagent 的步骤
 
-1. 在 `bot_config.yml` 的 `multi_agent.peers` 中添加配置：
+1. 在 `bot_config.yml` 的 `agents` 中添加配置：
 
 ```yaml
-peers:
+agents:
   - name: "my-new-agent"
-    role: "custom"
-    capabilities: ["capability1"]
+    role: subagent
     system_prompt: |
       你是一个...的 Agent。
-      完成后必须通过 send_message_async 将结果回复给主 Agent（target_agent="main"）
+      完成后必须通过 send_to_agent_async 将结果回复给主 Agent（target_agent="main"）
     tools:
       file_tools:
         enabled: true
@@ -671,13 +665,14 @@ peers:
         enabled: false
       mcp_tools:
         enabled: false
-    skill_dirs:
+    skills:
+      roots:
       - "skills/subagents/pdf"
 ```
 
-2. （可选）创建专属技能目录 `skills/peers/my-new-agent/`，放入 SKILL.md
+2. （可选）创建专属技能目录 `skills/subagents/my-new-agent/`，放入 SKILL.md
 
-3. 重启服务，新 peer 会自动注册到 AgentPool
+3. 重启服务，新 subagent 会自动注册到 AgentPool
 
 ## 工具系统
 
@@ -745,7 +740,7 @@ MCP 工具通过 `MCPTool` 动态加载，支持：
 - ✅ 多平台抽象适配（可扩展 Discord / 飞书 / 钉钉 / Telegram / CLI 等）
 - ✅ Skill 系统动态加载
 - ✅ 平级 Agent (Peer) 协作与动态发现
-- ✅ Peer 通信历史查看 (`view_peer_history`)
+- ✅ Subagent 列表查看 (`list_communication_targets`)
 - ✅ 自动记忆压缩 (Auto Compact)
 - ✅ 离线记忆整合 (Dream Engine)
 - ✅ 上下文治理 (Governance)

@@ -60,7 +60,7 @@ async def test_agent_pool_dispatches_inbox_wakeup_to_pipeline():
     # 直接通过 bus 发送一条普通 agent_message
     envelope = AgentMessageEnvelope(
         payload={"content": "hello worker"},
-        source=AgentAddress(kind="agent", name="peer"),
+        source=AgentAddress(kind="agent", name="subagent"),
         target=AgentAddress(kind="agent", name="worker"),
         message_type="agent_message",
         conversation_id="conv1",

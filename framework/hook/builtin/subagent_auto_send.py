@@ -66,7 +66,7 @@ class SubagentAutoSendHook:
             sent_tools = {"send_to_agent", "send_to_agent_async"}
             if any(c.tool_name in sent_tools for c in calls):
                 logger.debug(
-                    "SubagentAutoSendHook: skipped, message already sent via tool (peer=%s)",
+                    "SubagentAutoSendHook: skipped, message already sent via tool (agent=%s)",
                     self._self_name,
                 )
                 return

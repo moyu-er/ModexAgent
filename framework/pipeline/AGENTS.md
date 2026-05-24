@@ -14,7 +14,7 @@ busy-input-mode routing, slash commands, approval snapshot recovery, and session
 |------|-------------|
 | `pipeline.py` | `AgentPipeline` -- main orchestrator: receive loop, dedup, busy handling, slash commands, `_process_message`, `_execute_turn`. |
 | `adapters.py` | `InputAdapter` / `OutputAdapter` ABCs. OutputAdapter supports `send()` (complete) + `send_delta()` (streaming). |
-| `approval_renderer.py` | `ApprovalRenderer` -- detects approval state, parses legacy `/approve` `/deny`, handles peer message buffering. |
+| `approval_renderer.py` | `ApprovalRenderer` -- detects approval state, parses legacy `/approve` `/deny`, handles agent-message buffering. |
 | `context_assembler.py` | `assemble_context()` -- loads history, writes user message, builds system prompt, runs multi-agent context builder. |
 | `filters.py` | `ContentFilter` chain: `ChainedContentFilter`, `ReasoningContentFilter` (strip/keep). |
 

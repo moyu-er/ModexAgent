@@ -49,3 +49,23 @@ def test_default_interceptor_chain_keeps_only_effective_defaults() -> None:
     assert not any(isinstance(item, TurnTimeoutInterceptor) for item in interceptors)
     # TurnTimeoutInterceptor 已从默认导出中移除——Agent 通过 max_iterations 自然结束
     assert not any(isinstance(item, ToolTimeoutInterceptor) for item in interceptors)
+
+
+def test_tool_timeout_exceeds_shell_internal_timeout() -> None:
+    """Outer tool timeout must strictly exceed ShellTool.timeout so the shell
+    can return structured timeout XML with partial output instead of being
+    cancelled by the ReAct-level asyncio.wait_for."""
+    from framework.tools.standard.shell_tool import ShellTool
+
+    service = BotService(
+        config_dir=Path("examples/bot_project/config"),
+        input_adapter=_InputAdapter(),
+        output_adapter=NullOutputAdapter(),
+        emitter_factory=lambda _session_id: None,
+    )
+    safety = service.safety_policy
+    shell_timeout = ShellTool().timeout
+    assert safety.turn.tool_timeout_seconds > shell_timeout, (
+        f"tool_timeout_seconds ({safety.turn.tool_timeout_seconds}) must be > "
+        f"ShellTool.timeout ({shell_timeout})"
+    )

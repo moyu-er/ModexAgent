@@ -162,7 +162,7 @@ def test_persistent_mode_preserves_agent_messages_interleaved_with_tool_chain() 
     messages = [
         {"role": str(MessageRole.USER), "content": "start"},
         _assistant_tool_call("a", "b"),
-        _agent("peer1", "forwarded from peer"),
+        _agent("subagent1", "forwarded from subagent"),
         _tool("a", "result_a"),
         _tool("b", "result_b"),
         {"role": str(MessageRole.ASSISTANT), "content": "done"},
