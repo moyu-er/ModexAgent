@@ -1,0 +1,137 @@
+from __future__ import annotations
+
+import os
+import platform as _platform
+import shutil
+import subprocess
+from dataclasses import dataclass
+from enum import StrEnum
+from pathlib import Path
+
+
+class Platform(StrEnum):
+    """Supported operating system platforms."""
+
+    WINDOWS = "windows"
+    LINUX = "linux"
+    DARWIN = "darwin"
+
+
+class ShellFamily(StrEnum):
+    """Supported shell families with platform-specific behavior."""
+
+    BASH = "bash"
+    CMD = "cmd"
+    ZSH = "zsh"
+    SH = "sh"
+
+    def uses_readline(self) -> bool:
+        """Return True if the shell uses readline for line editing."""
+        return self in (ShellFamily.BASH, ShellFamily.ZSH, ShellFamily.SH)
+
+    def command_ending(self) -> str:
+        """Return the command terminator for this shell family."""
+        return "\n" if self.uses_readline() else "\r\n"
+
+    def needs_pager_suppression(self) -> bool:
+        """Return True if pager suppression env vars should be injected."""
+        return self.uses_readline()
+
+    def agent_setup_env(self) -> dict[str, str] | None:
+        """Return environment variables to disable pagers, or None for non-readline shells."""
+        if self.uses_readline():
+            return {"GIT_PAGER": "cat", "PAGER": "cat", "LESS": "FRX"}
+        return None
+
+
+@dataclass(frozen=True)
+class ShellInfo:
+    """Immutable description of a discovered shell."""
+
+    family: ShellFamily
+    path: str
+    platform: Platform
+
+    @property
+    def name(self) -> str:
+        """Return the shell family name for backward compatibility."""
+        return self.family.value
+
+
+def _parse_platform(name: str) -> Platform:
+    """Map platform.system() string to Platform enum."""
+    mapping: dict[str, Platform] = {
+        "windows": Platform.WINDOWS,
+        "linux": Platform.LINUX,
+        "darwin": Platform.DARWIN,
+    }
+    return mapping.get(name, Platform.LINUX)
+
+
+def _family_from_path(shell_path: str) -> ShellFamily:
+    """Infer ShellFamily from executable path or name."""
+    name = Path(shell_path).name.lower()
+    mapping: dict[str, ShellFamily] = {
+        "bash": ShellFamily.BASH,
+        "zsh": ShellFamily.ZSH,
+        "sh": ShellFamily.SH,
+        "cmd": ShellFamily.CMD,
+        "cmd.exe": ShellFamily.CMD,
+    }
+    return mapping.get(name, ShellFamily.SH)
+
+
+def detect_platform_shell() -> ShellInfo | None:
+    """Detect the best available shell for the current platform.
+
+    Windows: bash (Git Bash / MSYS2) > cmd.exe.
+    Linux priority: bash > sh
+    macOS priority: bash > zsh > sh
+    """
+    plat = _parse_platform(_platform.system().lower())
+
+    if plat is Platform.WINDOWS:
+        # On Windows we use the bash inside the Windows directory (WSL)
+        # rather than Git Bash or MSYS2. Verify the which() result points
+        # into a Windows path; otherwise fall back to cmd.exe.
+        bash_path = shutil.which("bash")
+        if bash_path and "windows" in bash_path.lower():
+            try:
+                result = subprocess.run(
+                    [bash_path, "--version"],
+                    capture_output=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    text=True,
+                    timeout=5,
+                )
+                if result.returncode == 0 and "bash" in result.stdout.lower():
+                    return ShellInfo(
+                        family=ShellFamily.BASH,
+                        path=bash_path,
+                        platform=plat,
+                    )
+            except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+                pass
+        return ShellInfo(
+            family=ShellFamily.CMD,
+            path="cmd.exe",
+            platform=plat,
+        )
+
+    env_shell = os.environ.get("SHELL", "")
+    if env_shell and shutil.which(env_shell):
+        family = _family_from_path(env_shell)
+        return ShellInfo(family=family, path=env_shell, platform=plat)
+
+    bash_path = shutil.which("bash")
+    if bash_path:
+        return ShellInfo(family=ShellFamily.BASH, path=bash_path, platform=plat)
+
+    if plat is Platform.DARWIN:
+        zsh_path = shutil.which("zsh")
+        if zsh_path:
+            return ShellInfo(family=ShellFamily.ZSH, path=zsh_path, platform=plat)
+
+    sh_path = shutil.which("sh") or "/bin/sh"
+    return ShellInfo(family=ShellFamily.SH, path=sh_path, platform=plat)

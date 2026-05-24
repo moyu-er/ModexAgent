@@ -19,12 +19,12 @@ class JsonTerminalStateStore:
 
     def __init__(self, storage_dir: Path, filename: str = "state.json"):
         self._storage_dir = Path(storage_dir)
-        self._storage_dir.mkdir(parents=True, exist_ok=True)
         self._file_path = self._storage_dir / filename
 
     def save(self, state: dict[str, Any]) -> None:
         """Save state to JSON file."""
         try:
+            self._storage_dir.mkdir(parents=True, exist_ok=True)
             with open(self._file_path, "w", encoding="utf-8") as f:
                 json.dump(state, f, ensure_ascii=False, indent=2)
         except Exception:

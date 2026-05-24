@@ -1,7 +1,8 @@
 """TerminalBackend abstract base class.
 
-EXTENSION: Phase 2+ visible windows do not need a new ABC.
-  Add `visible: bool` parameter to PtyBackend subclasses.
+Implementations:
+- VisibleWindowsPtyBackend: Windows subprocess with CREATE_NEW_CONSOLE
+- TmuxPtyBackend: Unix tmux + libtmux
 """
 
 from __future__ import annotations
@@ -10,16 +11,7 @@ from abc import ABC, abstractmethod
 
 
 class TerminalBackend(ABC):
-    """Abstract terminal backend — wraps mature PTY libraries.
-
-    Implementations:
-    - WindowsPtyBackend: pywinpty wrapper
-    - UnixPtyBackend: pexpect wrapper
-
-    EXTENSION: Phase 2+
-      - TmuxBackend(TerminalBackend): reuse tmux sessions
-      - WindowBackend via visible=True on PtyBackend subclasses
-    """
+    """Abstract terminal backend — wraps platform-specific PTY libraries."""
 
     @abstractmethod
     async def start(
@@ -49,3 +41,24 @@ class TerminalBackend(ABC):
     @abstractmethod
     async def kill(self) -> None:
         """Force kill (SIGKILL equivalent)."""
+
+    @abstractmethod
+    async def drain_startup(self) -> None:
+        """Wait until the terminal is ready for input (prompt visible).
+
+        Called after start().  Default is a no-op; subclasses override
+        to consume startup banners, ANSI sequences, etc.
+        """
+
+    @abstractmethod
+    async def clear_input_line(self) -> None:
+        """Clear the current input line without interrupting jobs.
+
+        For readline shells this sends Ctrl+A Ctrl+K.
+        For non-readline shells this is a no-op.
+        """
+
+    @property
+    def window_title(self) -> str | None:
+        """Human-readable OS window title when the backend has one."""
+        return None

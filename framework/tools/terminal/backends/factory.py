@@ -1,4 +1,4 @@
-"""Cross-platform PTY backend factory."""
+"""Factory for creating platform-appropriate PTY backends."""
 
 from __future__ import annotations
 
@@ -11,22 +11,14 @@ logger = logging.getLogger(__name__)
 
 
 def create_pty_backend() -> TerminalBackend:
-    """Create the appropriate PTY backend for the current platform.
+    """Create a visible PTY backend for the current platform.
 
     Raises:
         ImportError: If the required platform library is not installed.
     """
     if sys.platform == "win32":
-        try:
-            from .windows_pty import WindowsPtyBackend
-            return WindowsPtyBackend()
-        except ImportError as e:
-            logger.error("pywinpty not installed. Install with: pip install pywinpty")
-            raise
-    else:
-        try:
-            from .unix_pty import UnixPtyBackend
-            return UnixPtyBackend()
-        except ImportError as e:
-            logger.error("pexpect not installed. Install with: pip install pexpect")
-            raise
+        from .visible_windows import VisibleWindowsPtyBackend
+        return VisibleWindowsPtyBackend()
+
+    from .tmux_pty import TmuxPtyBackend
+    return TmuxPtyBackend()
