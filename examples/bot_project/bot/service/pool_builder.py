@@ -70,8 +70,6 @@ async def create_pool(
     safety: RuntimeSafetyPolicy,
     retention: SessionRetentionPolicy,
     comm_tracker: CommunicationTracker,
-    turn_store: Any,
-    command_store: Any,
     approval_workspace: Path,
     im_ui: Any,
     shared_hooks: list,
@@ -113,6 +111,17 @@ async def create_pool(
         pool_cfg, main_cfg, terminal_manager, project_dir, output_adapter,
     )
     logger.info("Pool '%s': ToolManager ready (%d tools)", pool_name, len(tool_manager.list_tools()))
+
+    # 5.5. Per-pool runtime stores (TurnStateStore + RuntimeCommandStore)
+    from framework.agents.react.state import ReActRuntimeStateCodec
+    from framework.runtime.codec import RuntimeStateCodecRegistry
+    from framework.runtime.enums import AgentKind
+    from framework.runtime.store import JsonFileRuntimeCommandStore, JsonFileTurnStateStore
+    runtime_data_dir = project_dir / "data" / "runtime_state" / pool_name
+    codec_registry = RuntimeStateCodecRegistry({AgentKind.REACT: ReActRuntimeStateCodec()})
+    turn_store = JsonFileTurnStateStore(runtime_data_dir / "turns", codec_registry)
+    command_store = JsonFileRuntimeCommandStore(runtime_data_dir / "commands")
+    logger.info("Pool '%s': runtime stores initialized (%s)", pool_name, runtime_data_dir)
 
     # 6. Per-pool SkillManager (convention: skills/{pool_name}/{agent_name}/)
     skill_manager = _build_pool_skill_manager(main_cfg, project_dir, pool_name)
@@ -163,6 +172,24 @@ async def create_pool(
     )
     await pool.register_resident(main_descriptor)
     logger.info("Pool '%s': main agent '%s' registered as resident", pool_name, main_agent_name)
+
+    # 9.5 Register communication tools for the main agent
+    # (subagents get their own in step 11 below)
+    main_address = AgentAddress(name=main_agent_name)
+    main_service = AgentCommunicationService(
+        source=main_address, broker=broker, registry=pool,
+        agent_bus=agent_bus, session_strategy=session_strategy,
+        comm_tracker=comm_tracker,
+    )
+    tool_manager.register(SendToAgentAsyncTool(
+        source=main_address, broker=broker, registry=pool,
+        agent_bus=agent_bus, service=main_service,
+        comm_tracker=comm_tracker,
+    ))
+    tool_manager.register(ListCommunicationTargetsTool(
+        self_address=main_address, registry=pool,
+    ))
+    logger.info("Pool '%s': communication tools registered for main agent", pool_name)
 
     # 10. Per-pool notification service + hooks
     parent_map = {

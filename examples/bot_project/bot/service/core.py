@@ -188,6 +188,23 @@ class BotService(AgentBuilderMixin):
             return self._app_config.multi_agent.default_pool
         return "main"
 
+    @property
+    def _main_agent_cfg(self) -> IOCAgentConfig | None:
+        """Find main agent by role, not by index."""
+        if not self._app_config or not self._app_config.agents:
+            return None
+        for a in self._app_config.agents:
+            if a.role == "main":
+                return a
+        return self._app_config.agents[0]
+
+    @property
+    def _main_memory_cfg(self) -> IOCMemoryConfig | None:
+        """Memory config for the main agent."""
+        if self._main_agent_cfg is None:
+            return None
+        return self._main_agent_cfg.memory
+
     def _load_app_config(self) -> AppConfig:
         """Load IOC AppConfig from bot_config.yml."""
         import os
@@ -231,6 +248,23 @@ class BotService(AgentBuilderMixin):
         self.broker = InMemoryMessageBroker()
         await self.broker.start()
         print("[OK] Broker initialized")
+
+        # 2.5 Build shared interceptor chain (used by both modes)
+        self.interceptor_chain = self._build_interceptor_chain()
+
+        # 2.6 Build shared control channel
+        self.control_channel = self._build_control_channel()
+
+        # ── Pool mode: dispatch early, skip pipeline-specific setup ──
+        if self.mode == "pool":
+            # Plugins are OFF by default in pool mode.
+            from bot.plugins.integration import PluginIntegration as _PI
+            self.plugin_integration = _PI(config={"enabled": False})
+            await self._initialize_pool()
+            self._print_pool_info()
+            return
+
+        # ── Pipeline mode continues below ──
 
         # 3. Create ToolManager
         tm_config = ToolManagerConfig(
@@ -422,16 +456,11 @@ class BotService(AgentBuilderMixin):
         self.agent = ReActAgent(provider=self.provider, mode="full")
         print("[OK] ReActAgent initialized")
 
-        # 9. Initialize runtime by mode
-        if self.mode == "pipeline":
-            await self._initialize_pipeline(main_skill_manager)
-            # 10. Register multi-agent tools
-            await self._register_multi_agent_tools()
-            print(f"[OK] Multi-agent tools registered, total: {len(self.tool_manager.list_tools())}")
-        elif self.mode == "pool":
-            await self._initialize_pool()
-        else:
-            raise ValueError(f"Unsupported mode: {self.mode}")
+        # 9. Initialize pipeline runtime
+        await self._initialize_pipeline(main_skill_manager)
+        # 10. Register multi-agent tools
+        await self._register_multi_agent_tools()
+        print(f"[OK] Multi-agent tools registered, total: {len(self.tool_manager.list_tools())}")
 
         # 11. Display LLM config
         print("\n[INFO] LLM config:")
@@ -550,18 +579,7 @@ class BotService(AgentBuilderMixin):
         )
         print(f"[OK] Inbox + AgentMessageBus initialized ({inbox_dir})")
 
-        # 2. Shared infra: Runtime stores
-        from framework.agents.react.state import ReActRuntimeStateCodec
-        from framework.runtime.codec import RuntimeStateCodecRegistry
-        from framework.runtime.enums import AgentKind
-        from framework.runtime.store import JsonFileRuntimeCommandStore, JsonFileTurnStateStore
-        runtime_data_dir = self._project_dir / "data" / "runtime_state"
-        codec_registry = RuntimeStateCodecRegistry({AgentKind.REACT: ReActRuntimeStateCodec()})
-        self._turn_store = JsonFileTurnStateStore(runtime_data_dir / "turns", codec_registry)
-        self._command_store = JsonFileRuntimeCommandStore(runtime_data_dir / "commands")
-        print("[OK] Typed runtime stores initialized (data/runtime_state/)")
-
-        # 3. Shared infra: Approval
+        # 2. Shared infra: Approval
         self._approval_workspace = self._project_dir / "data/approval"
         self._im_ui = IMUserInterface(
             output_adapter=self.output_adapter,
@@ -600,8 +618,6 @@ class BotService(AgentBuilderMixin):
                 safety=self.safety_policy,
                 retention=retention,
                 comm_tracker=self.communication_tracker,
-                turn_store=self._turn_store,
-                command_store=self._command_store,
                 approval_workspace=self._approval_workspace,
                 im_ui=self._im_ui,
                 shared_hooks=shared_hooks,
@@ -622,7 +638,8 @@ class BotService(AgentBuilderMixin):
             default_pool=self._app_config.multi_agent.default_pool,
         )
 
-        # 8. Display info
+    def _print_pool_info(self) -> None:
+        """Display pool configuration summary."""
         print(f"\n[INFO] Pools: {list(self._pools.keys())}")
         for name, pi in self._pools.items():
             subagent_count = len(pi.config.subagent_configs)
@@ -996,6 +1013,13 @@ class BotService(AgentBuilderMixin):
             self._router_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._router_task
+        # Shut down MCP managers first (must close async generators in original task)
+        for pool in self._pools.values():
+            if pool.mcp_manager is not None:
+                try:
+                    await pool.mcp_manager.disconnect_all()
+                except Exception:
+                    logger.debug("MCP shutdown error for pool '%s'", pool.name, exc_info=True)
         for pool in self._pools.values():
             await pool.broker_bridge.stop()
         await self.input_adapter.stop()
