@@ -1,0 +1,435 @@
+"""create_pool() factory — builds one PoolInstance from PoolConfig."""
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Any
+
+from framework.core.llm_struct import RuntimeSafetyPolicy
+from framework.core.tool_manager import InMemoryToolManager, ToolManagerConfig
+from framework.hook import HookErrorPolicy, HookRunner, HookSpec
+from framework.hook.builtin import InboxFlushHook, SubagentAutoSendHook
+from framework.hook.notification import AgentNotificationService, MaxIterationNotifyHook
+from framework.ioc.configs.pool import PoolConfig
+from framework.ioc.factories.descriptors import build_subagent_descriptor
+from framework.ioc.factories.governance import create_governance, create_subagent_governance
+from framework.ioc.factories.llm import create_llm_provider
+from framework.ioc.factories.memory import create_memory
+from framework.memory.injection import FullInjectionPolicy
+from framework.memory.system import MemorySystemContextManager
+from framework.messaging.broker_bridge import BrokerBridgeService, OutputRoute
+from framework.multi_agent import (
+    AgentAddress,
+    AgentDescriptor,
+    AgentPool,
+    CommunicationTracker,
+    DefaultAgentFactory,
+    SessionRetentionPolicy,
+)
+from framework.multi_agent.bus import AgentMessageBus
+from framework.multi_agent.communication import AgentCommunicationService
+from framework.multi_agent.descriptor import AgentLLMConfig
+from framework.multi_agent.inbox.consumer import InboxConsumer
+from framework.multi_agent.inbox.producer import InboxProducer
+from framework.multi_agent.inbox.server import InboxServer
+from framework.multi_agent.session_id import DefaultSessionIdStrategy
+from framework.multi_agent.tools import (
+    ListCommunicationTargetsTool,
+    SendToAgentAsyncTool,
+)
+from framework.pipeline.adapters import NullOutputAdapter, OutputAdapter
+from framework.tools.standard import (
+    EditFileTool,
+    FindFilesTool,
+    ListDirTool,
+    ReadFileTool,
+    SearchFilesTool,
+    ShellTool,
+    SubprocessExecutor,
+    TerminalSessionExecutor,
+    WriteFileTool,
+)
+
+from .builders import _make_file_tools, _mcp_tools_for_agent, resolve_system_prompt
+from .pool_instance import PoolInstance
+
+logger = logging.getLogger(__name__)
+
+
+async def create_pool(
+    pool_name: str,
+    pool_cfg: PoolConfig,
+    *,
+    project_dir: Path,
+    broker: Any,
+    inbox_server: InboxServer,
+    inbox_producer: InboxProducer,
+    inbox_consumer: InboxConsumer,
+    agent_bus: AgentMessageBus,
+    output_adapter: OutputAdapter,
+    safety: RuntimeSafetyPolicy,
+    retention: SessionRetentionPolicy,
+    comm_tracker: CommunicationTracker,
+    turn_store: Any,
+    command_store: Any,
+    approval_workspace: Path,
+    im_ui: Any,
+    shared_hooks: list,
+    shared_hook_runner: HookRunner,
+    shared_interceptor_chain: Any,
+) -> PoolInstance:
+
+    main_cfg = next(a for a in pool_cfg.agents if a.role == "main")
+    main_agent_name = main_cfg.name
+
+    # 1. Per-pool LLM provider
+    provider = create_llm_provider(pool_cfg.llm)
+    logger.info("Pool '%s': LLM provider created (%s)", pool_name, pool_cfg.llm.model)
+
+    # 2. Per-pool TerminalManager (isolated shell sessions)
+    terminal_manager = _create_terminal_manager(pool_cfg, project_dir)
+    if terminal_manager is not None:
+        logger.info("Pool '%s': TerminalManager created", pool_name)
+
+    # 3. Per-pool MemorySystem
+    memory_dir = project_dir / "data" / "memory" / pool_name
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    memory_system = create_memory(pool_cfg.memory, provider, memory_dir)
+    await memory_system.initialize()
+    logger.info("Pool '%s': MemorySystem initialized (%s)", pool_name, memory_dir)
+
+    # 4. Per-pool ContextManager
+    system_prompt = resolve_system_prompt(main_cfg, project_dir)
+    context_manager = MemorySystemContextManager(
+        memory_system=memory_system,
+        default_agent_id=main_agent_name,
+        default_agent_role="main",
+        base_system_prompt=system_prompt,
+        injection_policy=FullInjectionPolicy(),
+    )
+
+    # 5. Per-pool ToolManager (+ MCP)
+    tool_manager, mcp_manager = await _build_pool_tool_manager(
+        pool_cfg, main_cfg, terminal_manager, project_dir, output_adapter,
+    )
+    logger.info("Pool '%s': ToolManager ready (%d tools)", pool_name, len(tool_manager.list_tools()))
+
+    # 6. Per-pool SkillManager
+    skill_manager = _build_pool_skill_manager(main_cfg, project_dir)
+
+    # 7. AgentFactory
+    factory = DefaultAgentFactory(
+        default_llm_provider=provider,
+        default_tool_manager=tool_manager,
+        skill_manager=skill_manager,
+        inbox_server=inbox_server,
+        default_hooks=shared_hooks,
+        default_hook_runner=shared_hook_runner,
+        default_interceptor_chain=shared_interceptor_chain,
+        default_turn_store=turn_store,
+    )
+
+    # 8. AgentPool
+    session_strategy = DefaultSessionIdStrategy(main_agent_name=main_agent_name)
+    pool = AgentPool(
+        broker=broker,
+        agent_factory=factory,
+        default_context_manager=context_manager,
+        agent_bus=agent_bus,
+        inbox_consumer=inbox_consumer,
+        enable_inbox_polling=True,
+        inbox_poll_interval=10.0,
+        default_context_manager_factory=None,
+        session_strategy=session_strategy,
+        safety=safety,
+        retention=retention,
+        comm_tracker=comm_tracker,
+    )
+    logger.info("Pool '%s': AgentPool created", pool_name)
+
+    # 9. Register main agent as resident
+    main_descriptor = AgentDescriptor(
+        address=AgentAddress(kind="agent", name=main_agent_name),
+        llm_config=AgentLLMConfig(
+            model=pool_cfg.llm.model,
+            temperature=pool_cfg.llm.temperature,
+            max_tokens=pool_cfg.llm.max_tokens,
+        ),
+        system_prompt_template=system_prompt,
+        context_strategy="persistent",
+        max_iterations=main_cfg.max_steps,
+        execution_strategy="react",
+        safety_policy=safety,
+    )
+    await pool.register_resident(main_descriptor)
+    logger.info("Pool '%s': main agent '%s' registered as resident", pool_name, main_agent_name)
+
+    # 10. Per-pool notification service + hooks
+    parent_map = {
+        sub.name: main_agent_name
+        for sub in pool_cfg.subagent_configs
+    }
+    notification_service = AgentNotificationService(
+        output_adapter=output_adapter,
+        agent_bus=agent_bus,
+        session_strategy=session_strategy,
+        parent_map=parent_map,
+    )
+    max_iter_hook = MaxIterationNotifyHook(notification_service=notification_service)
+
+    # Wire hooks on main agent's pipeline
+    main_instance = pool._agents.get(main_agent_name)
+    if main_instance is not None and main_instance.pipeline is not None:
+        main_pipeline = main_instance.pipeline
+        _add_hook(main_pipeline, InboxFlushHook(
+            consumer=inbox_consumer, agent_name=main_agent_name,
+        ))
+        _add_hook(main_pipeline, max_iter_hook)
+
+    # 11. Register subagents
+    subagent_service = None
+    try:
+        from framework.multi_agent.subagent_service import SubagentService
+        subagent_service = SubagentService(
+            pool=pool, factory=factory, broker=broker, agent_bus=agent_bus,
+        )
+    except Exception:
+        pass
+
+    app_config_stub = _build_app_config_stub(pool_cfg)
+    for sub_cfg in pool_cfg.subagent_configs:
+        sub_name = sub_cfg.name
+        sub_system_prompt = resolve_system_prompt(sub_cfg, project_dir)
+        # Override system prompt on config copy for descriptor builder
+        sub_cfg.system_prompt = sub_system_prompt
+
+        descriptor, sub_tm, sub_sm, memory_ctx = await build_subagent_descriptor(
+            sub_cfg, app_config_stub, project_dir, memory_dir, safety, provider,
+        )
+
+        # Per-subagent MCP tool injection
+        if sub_cfg.mcp_filter and mcp_manager:
+            mcp_tools = await _mcp_tools_for_agent(mcp_manager, sub_cfg.mcp_filter)
+            for tool in mcp_tools:
+                sub_tm.register(tool)
+
+        # Communication tools for subagent (star topology)
+        sub_address = AgentAddress(name=sub_name)
+        sub_service = AgentCommunicationService(
+            source=sub_address, broker=broker, registry=pool,
+            agent_bus=agent_bus, session_strategy=session_strategy,
+            comm_tracker=comm_tracker,
+        )
+        sub_tm.register(SendToAgentAsyncTool(
+            source=sub_address, broker=broker, registry=pool,
+            agent_bus=agent_bus, service=sub_service,
+            comm_tracker=comm_tracker,
+        ))
+        sub_tm.register(ListCommunicationTargetsTool(
+            self_address=sub_address, registry=pool,
+        ))
+
+        await pool.register_resident(
+            descriptor,
+            context_manager=memory_ctx,
+            tool_manager=sub_tm,
+            skill_manager=sub_sm,
+            output_adapter=NullOutputAdapter(),
+        )
+
+        sub_instance = pool.get(sub_name)
+        if sub_instance and sub_instance.pipeline:
+            sub_instance.pipeline.governance = create_subagent_governance(
+                sub_cfg.memory, pool_cfg.llm.max_tokens,
+            )
+            _add_hook(sub_instance.pipeline, InboxFlushHook(
+                consumer=inbox_consumer, agent_name=sub_name,
+            ))
+            _add_hook(sub_instance.pipeline, SubagentAutoSendHook(
+                agent_bus=agent_bus,
+                self_name=sub_name,
+                parent_name=main_agent_name,
+                notification_service=notification_service,
+            ))
+            _add_hook(sub_instance.pipeline, max_iter_hook)
+
+        logger.info("Pool '%s': subagent '%s' registered as resident", pool_name, sub_name)
+
+    # 12. Wire main agent runtime
+    main_instance = pool._agents.get(main_agent_name)
+    if main_instance is not None and main_instance.pipeline is not None:
+        main_instance.pipeline.interceptor_chain = shared_interceptor_chain
+        main_instance.pipeline.turn_store = turn_store
+        main_instance.pipeline._approval_workspace = approval_workspace
+        main_instance.pipeline._user_interface = im_ui
+        main_instance.pipeline.governance = create_governance(
+            pool_cfg.memory, pool_cfg.llm.max_tokens,
+        )
+
+    # 13. BrokerBridgeService (output routes only — input handled by PoolRouter)
+    bridge = BrokerBridgeService(
+        broker=broker,
+        input_bindings={},
+        output_routes=[
+            OutputRoute(
+                adapter=output_adapter,
+                match_topic=f"agent:{main_agent_name}:out",
+            ),
+        ],
+    )
+
+    return PoolInstance(
+        name=pool_name,
+        config=pool_cfg,
+        pool=pool,
+        broker_bridge=bridge,
+        memory_system=memory_system,
+        context_manager=context_manager,
+        tool_manager=tool_manager,
+        skill_manager=skill_manager,
+        mcp_manager=mcp_manager,
+        terminal_manager=terminal_manager,
+        main_agent_name=main_agent_name,
+        provider=provider,
+        notification_service=notification_service,
+    )
+
+
+# ── internal helpers ──
+
+def _create_terminal_manager(pool_cfg: PoolConfig, project_dir: Path) -> Any | None:
+    use_terminal = any(
+        getattr(a, "use_terminal", False) for a in pool_cfg.agents
+    )
+    if not use_terminal:
+        return None
+    from framework.tools.terminal.types import ShellFamily, detect_platform_shell
+    from framework.tools.terminal.manager import TerminalManager
+
+    shell_info = detect_platform_shell()
+    if shell_info is None or shell_info.family is not ShellFamily.BASH:
+        return None
+    terminal_cfg = pool_cfg.terminal
+    return TerminalManager(
+        storage_dir=project_dir / terminal_cfg.storage_dir,
+        max_terminals=terminal_cfg.max_terminals,
+    )
+
+
+async def _build_pool_tool_manager(
+    pool_cfg: PoolConfig,
+    main_cfg: Any,
+    terminal_manager: Any | None,
+    project_dir: Path,
+    output_adapter: OutputAdapter,
+) -> tuple[InMemoryToolManager, Any | None]:
+    tm = InMemoryToolManager(config=ToolManagerConfig(
+        max_workers=10, enable_parallel=True, parallel_max_workers=5,
+    ))
+    for tool in _make_file_tools():
+        tm.register(tool)
+
+    if terminal_manager is not None:
+        executor = TerminalSessionExecutor(
+            terminal_manager=terminal_manager, default_terminal="default",
+        )
+        shell_tool = ShellTool(executor=executor, timeout=60)
+        from framework.tools.terminal import TerminalTool
+        tm.register(TerminalTool(terminal_manager))
+    else:
+        shell_tool = ShellTool(executor=SubprocessExecutor(), timeout=60)
+    tm.register(shell_tool)
+
+    for tool in [SearchFilesTool(), FindFilesTool()]:
+        tm.register(tool)
+
+    from bot.tools.custom import SendFileToUserTool
+    tm.register(SendFileToUserTool(output_adapter=output_adapter))
+
+    # MCP
+    mcp_cfg = pool_cfg.mcp
+    mcp_manager = None
+    if mcp_cfg is not None and getattr(mcp_cfg, "enabled", False):
+        try:
+            from framework.tools.mcp import MCPClientManager
+            import json
+            mcp_json_path = project_dir / "config" / mcp_cfg.config_file
+            if mcp_json_path.exists():
+                with open(mcp_json_path, encoding="utf-8") as f:
+                    raw = json.load(f)
+                servers = raw.get("mcpServers", {}) or raw.get("servers", {})
+                if servers:
+                    from framework.ioc.configs.app import _resolve_env_in
+                    servers = _resolve_env_in(servers)
+                    mcp_manager = MCPClientManager(config=servers)
+                    await mcp_manager.initialize()
+        except Exception as e:
+            logger.warning("MCP init failed for pool '%s': %s", pool_cfg.main_agent_name, e)
+
+    if mcp_manager and main_cfg.mcp_filter:
+        mcp_tools = await _mcp_tools_for_agent(mcp_manager, main_cfg.mcp_filter)
+        for tool in mcp_tools:
+            tm.register(tool)
+
+    return tm, mcp_manager
+
+
+def _build_pool_skill_manager(main_cfg: Any, project_dir: Path) -> Any | None:
+    skill_roots = getattr(main_cfg, "skills", None)
+    if skill_roots is None:
+        return None
+    roots = getattr(skill_roots, "roots", None) or []
+    if not roots:
+        return None
+
+    from framework.core.skills import (
+        DirectorySkillCache,
+        FileSkillSource,
+        ProgressiveBuilder,
+        SkillManager,
+    )
+    directories = [project_dir / r for r in roots]
+    found = [d for d in directories if d.exists()]
+    if not found:
+        return None
+    source = FileSkillSource(
+        directories=found, cache=True, layout="directory",
+        skill_filename="SKILL.md",
+    )
+    cache = DirectorySkillCache(directories=found, layout="directory")
+    builder = ProgressiveBuilder(base_path=project_dir)
+    return SkillManager(source=source, builder=builder, cache=cache)
+
+
+def _add_hook(pipeline: Any, hook: Any) -> None:
+    if pipeline.hook_runner is not None:
+        pipeline.hook_runner.add(HookSpec(hook=hook, on_error=HookErrorPolicy.LOG))
+    else:
+        pipeline.hooks.append(hook)
+
+
+def _build_app_config_stub(pool_cfg: PoolConfig) -> Any:
+    from dataclasses import dataclass, field
+
+    @dataclass
+    class _Stub:
+        llm: Any = None
+        agents: list = field(default_factory=list)
+        mcp: Any = None
+        memory: Any = None
+        skills: Any = None
+        safety: Any = None
+        plugins: Any = None
+        observability: Any = None
+        paths: Any = None
+        multi_agent: Any = None
+        pools: dict = field(default_factory=dict)
+
+    return _Stub(
+        llm=pool_cfg.llm,
+        agents=pool_cfg.agents,
+        mcp=pool_cfg.mcp,
+        memory=pool_cfg.memory,
+        skills=pool_cfg.skills,
+        pools={pool_cfg.main_agent_name: pool_cfg},
+    )

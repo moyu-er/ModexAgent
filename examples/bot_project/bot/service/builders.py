@@ -46,6 +46,15 @@ from framework.pipeline.adapters import NullOutputAdapter, OutputAdapter
 
 logger = logging.getLogger(__name__)
 
+
+def resolve_system_prompt(agent_cfg: Any, project_dir: Path) -> str:
+    """Resolve system prompt: agents/{name}.md if exists, else YAML value."""
+    md_path = project_dir / "agents" / f"{agent_cfg.name}.md"
+    if md_path.exists():
+        return md_path.read_text(encoding="utf-8")
+    return getattr(agent_cfg, "system_prompt", "")
+
+
 # ── Standard tool builders (code objects, no config) ──
 
 def _make_file_tools() -> list[Tool]:
