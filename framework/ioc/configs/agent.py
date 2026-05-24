@@ -58,6 +58,8 @@ class AgentConfig(BaseModel):
     max_steps: int = 20
     tools: list[Tool] = Field(default_factory=list)  # code-passed only
     standard_tools: bool = True  # register read/write/edit/list/shell/search
+    use_terminal: bool = True  # use TerminalSessionExecutor + TerminalManager; false = SubprocessExecutor
+    visible_terminal: bool = False  # if use_terminal=true, launch visible OS terminal windows
     mcp_filter: list[str] | None = None  # which MCP servers to use (names from mcp.json)
     memory: MemoryConfig | None = None
     skills: SkillsConfig | None = None

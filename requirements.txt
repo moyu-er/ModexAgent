@@ -34,7 +34,7 @@ mem0ai>=0.1.0
 sqlalchemy[asyncio]>=2.0.0
 
 # ---- Terminal backends (platform-specific) ----
-pywinpty>=3.0.3  # Windows only; Unix uses pexpect below
+pywinpty>=3.0  # Windows only; Unix uses pexpect below
 pexpect>=4.0     # Unix/Linux/macOS only; Windows uses pywinpty above
 
 # ---- Sandbox backends ----

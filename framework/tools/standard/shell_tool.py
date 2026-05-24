@@ -9,31 +9,21 @@ import asyncio
 import os
 import platform
 import re
-import shutil
-import subprocess
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ...core.tool_manager import Tool
 
+from framework.tools.terminal.types import (
+    Platform,
+    ShellFamily,
+    ShellInfo,
+    _parse_platform,
+    detect_platform_shell,
+)
+
 if TYPE_CHECKING:
     from framework.tools.terminal.manager import TerminalManager
-
-
-@dataclass(frozen=True)
-class ShellInfo:
-    """Information about the detected shell.
-
-    Used to generate dynamic tool descriptions so the LLM knows
-    which shell syntax to use.
-    """
-
-    name: str
-    path: str
-    platform: str
-    is_stateful: bool
 
 
 class ShellExecutor(ABC):
@@ -59,8 +49,13 @@ class SubprocessExecutor(ShellExecutor):
     This is the fallback when TerminalManager is unavailable.
     """
 
-    def __init__(self, shell_info: ShellInfo | None = None):
-        self._shell_info = shell_info or detect_platform_shell()
+    def __init__(self, shell_info: ShellInfo | None = None) -> None:
+        detected = detect_platform_shell()
+        self._shell_info = shell_info or detected or ShellInfo(
+            family=ShellFamily.CMD,
+            path="cmd.exe",
+            platform=_parse_platform(platform.system().lower()),
+        )
 
     async def execute(self, command: str, working_dir: str | None = None, timeout: int = 60) -> str:
         cwd = working_dir or os.getcwd()
@@ -108,88 +103,51 @@ class TerminalSessionExecutor(ShellExecutor):
         self,
         terminal_manager: TerminalManager,
         default_terminal: str | None = None,
-    ):
+    ) -> None:
         self._tm = terminal_manager
         self._default_terminal = default_terminal
 
+    _INTERRUPT_COMMANDS: frozenset[str] = frozenset({"^c", "\x03", "ctrl+c", "ctrl-c"})
+
     async def execute(self, command: str, working_dir: str | None = None, timeout: int = 60) -> str:
-        session = self._tm.get_default_session()
+        session = await self._tm.get_default_session()
         if session is None:
+            # Create a fresh default session rather than silently switching
+            # to an unrelated existing tab.
             name = self._default_terminal or "default"
             session = await self._tm.get_or_create(name, cwd=working_dir)
         elif working_dir is not None:
-            await session.execute(f"cd {working_dir}", timeout=10)
+            quoted = f'"{working_dir}"' if " " in working_dir else working_dir
+            await session.execute(f"cd {quoted}", timeout=10)
+
+        # Allow the agent to interrupt a timed-out command via the shell tool
+        # itself (e.g. shell.execute("^C")) without switching to the terminal tool.
+        if command.strip().lower() in self._INTERRUPT_COMMANDS:
+            await session.send_interrupt()
+            return "Sent Ctrl+C to interrupt the running command."
+
         return await session.execute(command, timeout=timeout)
 
     def shell_info(self) -> ShellInfo:
-        session = self._tm.get_default_session()
-        if session is not None:
+        # shell_info is sync; look up the default tab name directly without
+        # awaiting get_default_session().  Metadata is valid even if the
+        # session happens to be dead.
+        if self._tm._default_terminal and self._tm._default_terminal in self._tm._sessions:
+            session = self._tm._sessions[self._tm._default_terminal]
             info = session.shell_info
             return ShellInfo(
-                name=info.name,
+                family=info.family,
                 path=info.path,
                 platform=info.platform,
-                is_stateful=True,
             )
         info = detect_platform_shell()
+        if info is not None:
+            return info
+        # Fallback — should never happen in practice because
+        # TerminalSessionExecutor is only created when a shell is available.
         return ShellInfo(
-            name=info.name,
-            path=info.path,
-            platform=info.platform,
-            is_stateful=True,
+            family=ShellFamily.BASH, path="bash", platform=Platform.LINUX,
         )
-
-
-def detect_platform_shell() -> ShellInfo:
-    """Detect the best available shell for the current platform.
-
-    Windows priority: bash > powershell > cmd
-    Linux priority: bash > sh
-    macOS priority: bash > zsh > sh
-    """
-    plat = platform.system().lower()
-
-    if plat == "windows":
-        bash_path = shutil.which("bash")
-        if bash_path:
-            try:
-                result = subprocess.run(
-                    [bash_path, "--version"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                )
-                if result.returncode == 0 and "bash" in result.stdout.lower():
-                    return ShellInfo(name="bash", path=bash_path, platform="windows", is_stateful=False)
-            except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-                pass
-
-        ps_path = shutil.which("powershell") or shutil.which("pwsh")
-        if ps_path:
-            return ShellInfo(name="powershell", path=ps_path, platform="windows", is_stateful=False)
-
-        cmd_path = shutil.which("cmd") or shutil.which("cmd.exe")
-        if cmd_path:
-            return ShellInfo(name="cmd", path=cmd_path, platform="windows", is_stateful=False)
-
-        return ShellInfo(name="cmd", path="cmd.exe", platform="windows", is_stateful=False)
-
-    env_shell = os.environ.get("SHELL", "")
-    if env_shell and shutil.which(env_shell):
-        shell_name = Path(env_shell).name
-        return ShellInfo(name=shell_name, path=env_shell, platform=plat, is_stateful=False)
-
-    bash_path = shutil.which("bash")
-    if bash_path:
-        return ShellInfo(name="bash", path=bash_path, platform=plat, is_stateful=False)
-
-    if plat == "darwin":
-        zsh_path = shutil.which("zsh")
-        if zsh_path:
-            return ShellInfo(name="zsh", path=zsh_path, platform="darwin", is_stateful=False)
-
-    sh_path = shutil.which("sh") or "/bin/sh"
-    return ShellInfo(name="sh", path=sh_path, platform=plat, is_stateful=False)
 
 
 class ShellTool(Tool):
@@ -229,7 +187,7 @@ class ShellTool(Tool):
         enable_safety_guard: bool = True,
         deny_patterns: list[str] | None = None,
         allow_patterns: list[str] | None = None,
-    ):
+    ) -> None:
         """Initialize Shell tool.
 
         Args:
@@ -242,6 +200,9 @@ class ShellTool(Tool):
         super().__init__()
         self._executor = executor or SubprocessExecutor()
         self.timeout = timeout
+        # Ensure ToolManager's outer asyncio.wait_for never preempts our own
+        # timeout handling (which returns partial output + timeout marker).
+        self.config.timeout = timeout + 10
         self.enable_safety_guard = enable_safety_guard
         self._platform = platform.system().lower()
 
@@ -258,6 +219,23 @@ class ShellTool(Tool):
     def name(self) -> str:
         return "shell"
 
+    _FAMILY_DESCRIPTIONS: dict[ShellFamily, str] = {
+        ShellFamily.BASH: (
+            "Commands run in bash. Use POSIX syntax: forward slashes for paths, "
+            "single quotes for strings, && for chaining."
+        ),
+        ShellFamily.CMD: (
+            "Commands run in Windows CMD. Use CMD syntax: backslashes for paths, "
+            "&& for chaining, %VAR% for environment variables."
+        ),
+        ShellFamily.ZSH: (
+            "Commands run in zsh. Compatible with bash syntax."
+        ),
+        ShellFamily.SH: (
+            "Commands run in sh. Use basic POSIX syntax."
+        ),
+    }
+
     @property
     def description(self) -> str:
         """Dynamically generate description based on actual shell type."""
@@ -266,35 +244,21 @@ class ShellTool(Tool):
             f"Execute a shell command using {shell_info.name} and return its output."
         ]
 
-        if shell_info.name == "bash":
-            parts.append(
-                "Commands run in bash. Use POSIX syntax: forward slashes for paths, "
-                "single quotes for strings, && for chaining."
-            )
-        elif shell_info.name == "powershell":
-            parts.append(
-                "Commands run in PowerShell. Use PowerShell syntax: "
-                "Get-ChildItem instead of ls, semicolons for chaining, "
-                "backtick for line continuation."
-            )
-        elif shell_info.name == "cmd":
-            parts.append(
-                "Commands run in Windows CMD. Use CMD syntax: backslashes for paths, "
-                "&& for chaining, %VAR% for environment variables."
-            )
-        elif shell_info.name == "zsh":
-            parts.append(
-                "Commands run in zsh. Compatible with bash syntax."
-            )
-        else:
-            parts.append(
-                "Commands run in sh. Use basic POSIX syntax."
-            )
+        family_desc = self._FAMILY_DESCRIPTIONS.get(shell_info.family)
+        if family_desc:
+            parts.append(family_desc)
 
-        if shell_info.is_stateful:
+        is_stateful = isinstance(self._executor, TerminalSessionExecutor)
+        if is_stateful:
             parts.append(
                 "This is a stateful session: cd, environment variables, "
-                "and aliases persist across commands."
+                "and aliases persist across commands. "
+                "The terminal session is created automatically on first use — "
+                "do NOT call any other tool to create a terminal before running commands."
+            )
+            parts.append(
+                "Commands run in a visible terminal window — "
+                "you can watch execution and the user can intervene directly."
             )
         else:
             parts.append(
@@ -324,7 +288,7 @@ class ShellTool(Tool):
             "required": ["command"]
         }
 
-    async def execute(self, command: str, working_dir: str | None = None, **kwargs: Any) -> str:
+    async def execute(self, command: str, working_dir: str | None = None, **kwargs: object) -> str:
         if self.enable_safety_guard:
             guard_error = self._guard_command(command)
             if guard_error:

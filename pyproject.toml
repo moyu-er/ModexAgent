@@ -63,7 +63,7 @@ skills = [
   "pdfplumber>=0.10.0",
 ]
 terminal = [
-  "pywinpty>=3.0.3; sys_platform == 'win32'",
+  "pywinpty>=3.0; sys_platform == 'win32'",
   "pexpect>=4.0; sys_platform != 'win32'",
 ]
 all = ["ModexAgent[llm,storage,session,sandbox,gateway,skills,terminal]"]
