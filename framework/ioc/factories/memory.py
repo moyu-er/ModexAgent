@@ -69,39 +69,38 @@ def create_memory(
 
     layer_config = _build_memory_layer_config(cfg)
 
-    compression_coordinator = None
-    if cfg.short_term.auto_llm_compression:
+    from framework.memory.compaction.boundary import (
+        BoundaryPolicyName,
+        create_boundary_policy,
+    )
+    from framework.memory.compaction.policy import ConservativeCompactionPolicy
+    from framework.memory.compression.policies import (
+        DefaultMemoryCompressionCoordinator,
+    )
+    from framework.memory.retention import DefaultMessageRetentionPolicy
+
+    st = cfg.short_term
+
+    archive_generation = None
+    if st.auto_compact:
         from framework.agents.summarizer import SummarizerAgent
         from framework.memory.archive_generation import DualLLMArchiveGenerationStrategy
-        from framework.memory.compaction.boundary import (
-            BoundaryPolicyName,
-            create_boundary_policy,
-        )
-        from framework.memory.compaction.policy import ConservativeCompactionPolicy
-        from framework.memory.compression.policies import (
-            DefaultMemoryCompressionCoordinator,
-        )
-        from framework.memory.retention import DefaultMessageRetentionPolicy
 
         summarizer = SummarizerAgent(llm_provider)
         archive_generation = DualLLMArchiveGenerationStrategy(summarizer=summarizer)
 
-        compression_coordinator = DefaultMemoryCompressionCoordinator(
-            archive_generation=archive_generation,
-            compaction=ConservativeCompactionPolicy(),
-            retention=DefaultMessageRetentionPolicy.from_config({}),
-            boundary=create_boundary_policy(BoundaryPolicyName.TOOL_CHAIN),
-            max_messages=cfg.short_term.max_messages,
-            max_tokens=cfg.short_term.max_tokens,
-            keep_ratio_for_messages=cfg.short_term.keep_ratio_for_messages,
-            keep_ratio_for_token=cfg.short_term.keep_ratio_for_token,
-        )
-
-    lifecycle = (
-        DefaultMemoryLifecyclePolicy(compression_coordinator=compression_coordinator)
-        if compression_coordinator
-        else None
+    compression_coordinator = DefaultMemoryCompressionCoordinator(
+        archive_generation=archive_generation,
+        compaction=ConservativeCompactionPolicy(),
+        retention=DefaultMessageRetentionPolicy.from_config({}),
+        boundary=create_boundary_policy(BoundaryPolicyName.TOOL_CHAIN),
+        max_messages=st.max_messages,
+        max_tokens=st.max_tokens,
+        keep_ratio_for_messages=st.keep_ratio_for_messages,
+        keep_ratio_for_token=st.keep_ratio_for_token,
     )
+
+    lifecycle = DefaultMemoryLifecyclePolicy(compression_coordinator=compression_coordinator)
 
     return create_memory_system(
         workspace=workspace,

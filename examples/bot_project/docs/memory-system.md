@@ -321,7 +321,7 @@ memory:
   main:
     short_term:
       max_messages: 50           # 超过此值触发压缩
-      auto_llm_compression: true # DualLLMArchiveGenerationStrategy (LLM) 生成 Archive 摘要
+      auto_compact: true # DualLLMArchiveGenerationStrategy (LLM) 生成 Archive 摘要
     retention:
       priority_order:
         - system_critical
@@ -361,5 +361,5 @@ memory:
     dream_engine:
       interval: 300
   subagents:
-    short_term: {max_messages: 20, max_tokens: 4000, auto_llm_compression: false}
+    short_term: {max_messages: 20, max_tokens: 4000, auto_compact: false}
 ```
