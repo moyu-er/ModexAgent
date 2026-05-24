@@ -173,6 +173,9 @@ class BotService(AgentBuilderMixin):
         self._turn_store: Any | None = None
         self._command_store: Any | None = None
 
+        # Router task
+        self._router_task: asyncio.Task | None = None
+
         # Runtime control
         self._shutdown_event = asyncio.Event()
         self._tasks: list[asyncio.Task] = []
@@ -1145,147 +1148,12 @@ class BotService(AgentBuilderMixin):
                 logger.exception("DreamEngine background loop error")
 
     async def stop(self) -> None:
-        """Stop the service."""
-        print("\n[STOP] Shutting down service...")
-        self._shutdown_event.set()
-
-        if self.pipeline:
-            try:
-                print("   Stopping Pipeline...")
-                await self.pipeline.stop()
-                print("   [OK] Pipeline stopped")
-            except Exception as e:
-                print(f"   [WARN] Pipeline stop error: {e}")
-
-        if self.mcp_manager:
-            try:
-                print("   Closing MCP connections...")
-                await self.mcp_manager.disconnect_all()
-                print("   [OK] MCP connections closed")
-            except Exception as e:
-                print(f"   [WARN] MCP disconnect error: {e}")
-
-        if self.agent_pool:
-            try:
-                print("   Stopping AgentPool...")
-                await self.agent_pool.shutdown_all()
-                print("   [OK] AgentPool stopped")
-            except Exception as e:
-                print(f"   [WARN] AgentPool stop error: {e}")
-
-        if self.broker_bridge:
-            try:
-                print("   Stopping BrokerBridge...")
-                await self.broker_bridge.stop()
-                print("   [OK] BrokerBridge stopped")
-            except Exception as e:
-                print(f"   [WARN] BrokerBridge stop error: {e}")
-
-        if self.subagent_service:
-            try:
-                print("   Stopping SubagentService...")
-                await self.subagent_service.stop()
-                print("   [OK] SubagentService stopped")
-            except Exception as e:
-                print(f"   [WARN] SubagentService stop error: {e}")
-
-        if self.agent_bus:
-            try:
-                print("   Closing AgentMessageBus...")
-                await self.agent_bus.close()
-                print("   [OK] AgentMessageBus closed")
-            except Exception as e:
-                print(f"   [WARN] AgentMessageBus close error: {e}")
-
+        if hasattr(self, '_router_task') and self._router_task:
+            self._router_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._router_task
+        for pool in self._pools.values():
+            await pool.broker_bridge.stop()
+        await self.input_adapter.stop()
         if self.broker:
-            try:
-                print("   Stopping Broker...")
-                await self.broker.stop()
-                print("   [OK] Broker stopped")
-            except Exception as e:
-                print(f"   [WARN] Broker stop error: {e}")
-
-        if self._auto_compact_task is not None:
-            try:
-                print("   Stopping AutoCompactService...")
-                self._auto_compact_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await self._auto_compact_task
-                print("   [OK] AutoCompactService stopped")
-            except Exception as e:
-                print(f"   [WARN] AutoCompactService stop error: {e}")
-
-        # Close subagent memory systems
-        for sub_name, sub_ms in getattr(self, "_subagent_memory_systems", {}).items():
-            try:
-                print(f"   Closing subagent memory system: {sub_name}...")
-                await sub_ms.close()
-                print(f"   [OK] Subagent memory system '{sub_name}' closed")
-            except Exception as e:
-                print(f"   [WARN] Subagent memory system '{sub_name}' close error: {e}")
-
-        # Close additional subagent memory systems
-        for sub_name, sub_ms in getattr(self, "_additional_subagent_memory_systems", {}).items():
-            try:
-                print(f"   Closing subagent memory system: {sub_name}...")
-                await sub_ms.close()
-                print(f"   [OK] Subagent memory system '{sub_name}' closed")
-            except Exception as e:
-                print(f"   [WARN] Subagent memory system '{sub_name}' close error: {e}")
-
-        if self._overflow_cleaner is not None:
-            try:
-                print("   Stopping OverflowCleaner...")
-                await self._overflow_cleaner.stop()
-                print("   [OK] OverflowCleaner stopped")
-            except Exception as e:
-                print(f"   [WARN] OverflowCleaner stop error: {e}")
-
-        if self.memory_system:
-            try:
-                print("   Closing MemorySystem...")
-                await self.memory_system.close()
-                print("   [OK] MemorySystem closed")
-            except Exception as e:
-                print(f"   [WARN] MemorySystem close error: {e}")
-
-        if self.terminal_manager:
-            try:
-                terminal_cfg = (
-                    getattr(self._app_config, "terminal", {})
-                    if self._app_config
-                    else {}
-                )
-                close_on_exit = terminal_cfg.get("close_on_exit", True)
-                if close_on_exit:
-                    print("   Closing terminal sessions...")
-                    await self.terminal_manager.close_all()
-                    print("   [OK] Terminal sessions closed")
-                else:
-                    print("   [INFO] Terminal sessions left open (close_on_exit=false)")
-            except Exception as e:
-                print(f"   [WARN] Terminal shutdown error: {e}")
-
-        if self.plugin_integration:
-            try:
-                print("   Shutting down plugin providers...")
-                await self.plugin_integration.shutdown()
-                print("   [OK] Plugin providers shut down")
-            except Exception as e:
-                print(f"   [WARN] Plugin shutdown error: {e}")
-
-        if self._tasks:
-            print(f"   Cancelling {len(self._tasks)} tasks...")
-            for task in self._tasks:
-                if not task.done():
-                    task.cancel()
-            try:
-                await asyncio.wait_for(
-                    asyncio.gather(*self._tasks, return_exceptions=True), timeout=5.0
-                )
-            except TimeoutError:
-                print("   [WARN] Some tasks did not stop in time")
-            except asyncio.CancelledError:
-                pass
-
-        print("[OK] Bot Service stopped")
+            await self.broker.stop()
