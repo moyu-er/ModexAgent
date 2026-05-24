@@ -17,14 +17,15 @@ class TerminalAction(StrEnum):
     LIST = "list"
     SELECT = "select"
     HISTORY = "history"
+    INTERRUPT = "interrupt"
 
 
 class TerminalTool(Tool):
     """Tool for managing named terminal sessions.
 
     Parameters:
-        action: One of open, close, list, select, history.
-        name: Terminal name (optional for open, required otherwise).
+        action: One of open, close, list, select, history, interrupt.
+        name: Terminal name (optional for open/interrupt, required for others).
         cwd: Initial working directory (only for open).
     """
 
@@ -34,15 +35,17 @@ class TerminalTool(Tool):
 
     @property
     def name(self) -> str:
-        return "terminal_manager"
+        return "terminal"
 
     @property
     def description(self) -> str:
         return (
-            "Manage persistent terminal sessions. "
-            "Actions: open (create), close (terminate), list (show all), "
-            "select (set default), history (show recent commands). "
-            "After opening/selecting a terminal, use the shell tool to execute commands in it."
+            "Manage terminal tabs/sessions. "
+            "Actions: open (create a new tab), close (terminate a tab), list (show all tabs), "
+            "select (switch default tab), history (show recent output of a tab), "
+            "interrupt (send Ctrl+C to the current default tab). "
+            "IMPORTANT: This tool does NOT execute commands — use the shell tool for that. "
+            "You generally do NOT need to open a terminal before using the shell tool."
         )
 
     @property
@@ -58,12 +61,13 @@ class TerminalTool(Tool):
                         TerminalAction.LIST,
                         TerminalAction.SELECT,
                         TerminalAction.HISTORY,
+                        TerminalAction.INTERRUPT,
                     ],
                     "description": "Action to perform",
                 },
                 "name": {
                     "type": "string",
-                    "description": "Terminal name (optional for open, required for others)",
+                    "description": "Terminal name (optional for open/interrupt, required for close/select/history)",
                 },
                 "cwd": {
                     "type": "string",
@@ -89,6 +93,7 @@ class TerminalTool(Tool):
         if action_enum == TerminalAction.OPEN:
             target_name = name or self._auto_name()
             session = await self._manager.get_or_create(target_name, cwd=cwd)
+            await session.ensure_started()
             return f"Opened terminal '{target_name}' ({session.shell_info.name})."
 
         if action_enum == TerminalAction.CLOSE:
@@ -115,7 +120,7 @@ class TerminalTool(Tool):
             if not name:
                 return "Error: 'name' is required for select action"
             try:
-                self._manager.select_default(name)
+                await self._manager.select_default(name)
                 return f"Selected '{name}' as default terminal."
             except ValueError as e:
                 return f"Error: {e}"
@@ -123,15 +128,23 @@ class TerminalTool(Tool):
         if action_enum == TerminalAction.HISTORY:
             if not name:
                 return "Error: 'name' is required for history action"
-            history = self._manager.get_history(name)
-            if not history:
-                return f"No history for terminal '{name}'."
-            lines = [f"History for '{name}':"]
-            for rec in history:
-                lines.append(f"  > {rec.command}")
-                if rec.output:
-                    lines.append(f"    {rec.output[:80]}")
-            return "\n".join(lines)
+            session = self._manager.get(name)
+            if session is None:
+                return f"Error: Terminal '{name}' not found."
+            records = session.get_history()
+            if not records:
+                return f"No output for terminal '{name}'."
+            last = records[-1]
+            lines = last.output.splitlines()
+            recent = "\n".join(lines[-20:])
+            return f"Recent output for '{name}':\n{recent}"
+
+        if action_enum == TerminalAction.INTERRUPT:
+            session = await self._manager.get_default_session()
+            if session is None:
+                return "Error: No default terminal is active."
+            await session.send_interrupt()
+            return f"Sent Ctrl+C to terminal '{session.name}'."
 
         return f"Error: Unhandled action '{action}'"
 

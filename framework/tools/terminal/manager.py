@@ -8,12 +8,23 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from framework.tools.standard.shell_tool import ShellInfo, detect_platform_shell
 from framework.tools.terminal.backends.factory import create_pty_backend
 from framework.tools.terminal.session import CommandRecord, TerminalInfo, TerminalSession
 from framework.tools.terminal.state_store import JsonTerminalStateStore
+from framework.tools.terminal.types import Platform, ShellFamily, ShellInfo, detect_platform_shell
 
 logger = logging.getLogger(__name__)
+
+
+def _family_from_name(name: str) -> ShellFamily:
+    """Map a shell name string to ShellFamily enum."""
+    mapping: dict[str, ShellFamily] = {
+        "bash": ShellFamily.BASH,
+        "zsh": ShellFamily.ZSH,
+        "sh": ShellFamily.SH,
+        "cmd": ShellFamily.CMD,
+    }
+    return mapping.get(name.lower(), ShellFamily.SH)
 
 
 class TerminalManager:
@@ -35,6 +46,7 @@ class TerminalManager:
         history_truncate: int = 200,
         default_timeout: float = 60.0,
         backend_factory: Callable[[], Any] | None = None,
+        shell_info: ShellInfo | None = None,
     ):
         self._storage_dir = Path(storage_dir)
         self._max_terminals = max_terminals
@@ -44,10 +56,16 @@ class TerminalManager:
         self._sessions: dict[str, TerminalSession] = {}
         self._default_terminal: str | None = None
         self._store = JsonTerminalStateStore(self._storage_dir)
-        self._shell_info = detect_platform_shell()
-        self._backend_factory: Callable[[], Any] = backend_factory or create_pty_backend
+        self._shell_info = shell_info or detect_platform_shell() or ShellInfo(
+            family=ShellFamily.BASH,
+            path="bash",
+            platform=Platform.LINUX,
+        )
+        self._backend_factory: Callable[..., Any] = backend_factory or create_pty_backend
 
-    async def get_or_create(self, name: str, cwd: str | None = None) -> TerminalSession:
+    async def get_or_create(
+        self, name: str, cwd: str | None = None
+    ) -> TerminalSession:
         """Get existing session or create a new one. Evicts LRU if at capacity."""
         if name in self._sessions:
             session = self._sessions[name]
@@ -89,9 +107,28 @@ class TerminalManager:
         return True
 
     async def list_sessions(self) -> list[TerminalInfo]:
-        """List all sessions with metadata."""
+        """List all sessions with metadata.
+
+        Only purges sessions whose backend was explicitly started and then
+        died. A session whose backend has never been started is kept alive
+        so that OPEN → LIST shows the tab before the first command runs.
+        """
+        alive_names: list[str] = []
+        for name, session in list(self._sessions.items()):
+            if await session._backend.is_alive():
+                alive_names.append(name)
+            elif getattr(session, "_backend_started", False):
+                # Backend was started but has since died — purge it.
+                self._sessions.pop(name, None)
+                if self._default_terminal == name:
+                    self._default_terminal = None
+            else:
+                # Backend never started — keep the session.
+                alive_names.append(name)
+
         result: list[TerminalInfo] = []
-        for name, session in self._sessions.items():
+        for name in alive_names:
+            session = self._sessions[name]
             info = await session.to_info(is_default=(name == self._default_terminal))
             result.append(info)
         return result
@@ -100,19 +137,38 @@ class TerminalManager:
         """Return just the session names."""
         return list(self._sessions.keys())
 
-    def select_default(self, name: str) -> None:
+    async def select_default(self, name: str) -> None:
         """Select the default terminal for ShellTool."""
-        if name not in self._sessions:
+        session = self._sessions.get(name)
+        if session is None:
             raise ValueError(f"Terminal '{name}' does not exist")
+        if (
+            getattr(session, "_backend_started", False)
+            and not await session._backend.is_alive()
+        ):
+            raise ValueError(f"Terminal '{name}' has been closed")
         self._default_terminal = name
 
-    def get_default_session(self) -> TerminalSession | None:
-        """Get the default session, or the only session, or None."""
-        if self._default_terminal and self._default_terminal in self._sessions:
-            return self._sessions[self._default_terminal]
-        if len(self._sessions) == 1:
-            return next(iter(self._sessions.values()))
-        return None
+    async def get_default_session(self) -> TerminalSession | None:
+        """Get the explicitly-set default session.
+
+        Returns None if no default is set or the default has been explicitly
+        closed (backend started then died).  An unstarted session is kept so
+        that callers can lazily start it on first execute().
+        """
+        if not self._default_terminal:
+            return None
+        session = self._sessions.get(self._default_terminal)
+        if session is None:
+            self._default_terminal = None
+            return None
+        if (
+            getattr(session, "_backend_started", False)
+            and not await session._backend.is_alive()
+        ):
+            self._default_terminal = None
+            return None
+        return session
 
     def get_history(self, name: str) -> list[CommandRecord]:
         """Get command history for a session."""
@@ -142,14 +198,14 @@ class TerminalManager:
             shell_type = sess_data.get("shell_type", self._shell_info.name)
             shell_path = sess_data.get("shell_path", self._shell_info.path)
             backend = self._backend_factory()
+            family = _family_from_name(shell_type)
             session = TerminalSession(
                 name=name,
                 backend=backend,
                 shell_info=ShellInfo(
-                    name=shell_type,
+                    family=family,
                     path=shell_path,
                     platform=self._shell_info.platform,
-                    is_stateful=True,
                 ),
                 cwd=sess_data.get("cwd"),
                 env=sess_data.get("env"),
