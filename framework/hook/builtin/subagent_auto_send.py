@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
+    from framework.hook.notification import AgentNotificationService
     from framework.multi_agent.bus import AgentMessageBus
 
 logger = logging.getLogger(__name__)
@@ -38,10 +39,12 @@ class SubagentAutoSendHook:
         agent_bus: AgentMessageBus,
         self_name: str,
         parent_name: str = "main",
+        notification_service: Any | None = None,
     ) -> None:
         self._agent_bus = agent_bus
         self._self_name = self_name
         self._parent_name = parent_name
+        self._svc = notification_service
 
     async def before_turn(self, ctx: AgentContext[Any]) -> None:
         pass
@@ -100,8 +103,10 @@ class SubagentAutoSendHook:
             invocation_id=parts.invocation_id,
         )
 
+        forwarded = False
         try:
             await self._agent_bus.send(inbox_key, envelope)
+            forwarded = True
             logger.info(
                 "Auto-forwarded subagent %s content to %s (session=%s)",
                 self._self_name,
@@ -114,6 +119,26 @@ class SubagentAutoSendHook:
                 self._self_name,
                 self._parent_name,
             )
+
+        # Send XML notification if notification_service is configured
+        if self._svc is not None and forwarded:
+            try:
+                await self._svc.notify(
+                    ctx=ctx,
+                    notification_type="missed_communication",
+                    reason="subagent 未通过通信工具发送消息",
+                    details=(
+                        f"agent '{self._self_name}' 已完成但未调用 "
+                        f"send_to_agent_async，内容已自动转发给 "
+                        f"'{self._parent_name}'"
+                    ),
+                    content=sanitized[:2000] if sanitized else None,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to send missed_communication notification for %s",
+                    self._self_name,
+                )
 
     @classmethod
     def _sanitize_forward_content(cls, content: str) -> str:
