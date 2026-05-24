@@ -44,5 +44,7 @@ class MCPServerEntry(BaseModel):
 class MCPConfig(BaseModel):
     """MCP configuration. None = no MCP servers connected."""
 
+    enabled: bool = True
+    config_file: str = "mcp.json"
     servers: dict[str, MCPServerEntry] = Field(default_factory=dict)
     tool_prefix: str = "mcp"
