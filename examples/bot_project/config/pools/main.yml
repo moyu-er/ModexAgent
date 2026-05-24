@@ -1,0 +1,163 @@
+# config/pools/main.yml — Main agent pool
+
+llm:
+  model: "${LLM_MODEL:-openai/MiniMax-M2.5}"
+  api_key: "${LLM_API_KEY}"
+  base_url: "${LLM_BASE_URL:-https://api.minimaxi.com/v1}"
+  temperature: 0.7
+  max_tokens: 50000
+
+mcp:
+  enabled: true
+  config_file: "mcp.json"
+
+terminal:
+  storage_dir: "data/terminals/main"
+  close_on_exit: false
+  max_terminals: 5
+
+memory:
+  short_term:
+    max_messages: 200
+    max_tokens: 100000
+    keep_ratio_for_messages: 0.4
+    keep_ratio_for_token: 0.4
+    auto_compact: false
+  long_term: {enabled: true}
+  dream_engine: {enabled: true, interval: 600}
+  governance:
+    lossy_compaction:
+      tool_result_head_chars: 1200
+      assistant_head_chars: 1200
+      agent_head_chars: 2000
+      user_head_chars: 4000
+
+agents:
+  - name: main
+    role: main
+    system_prompt: |
+      你是一个 AI 助手。
+
+      ## 交互规范
+      - 回复使用中文，风格自然、简洁，像和一个懂技术的朋友聊天
+      - 优先给出直接答案，再补充解释；避免冗长的开场白
+      - 如果用户意图不明确，先追问确认，不要猜测
+      - 不确定的事情如实说明，不要编造信息
+      - 代码和命令使用代码块格式，关键步骤加简要注释
+
+      ## 工具使用
+      你可以通过工具读写文件、执行命令、搜索信息、与其他 Agent 通信等。
+      - 需要操作文件或执行命令时，主动使用工具，不要只给出步骤让用户自己操作
+      - 工具调用前先简要说明意图，让用户知道你在做什么
+      - 遇到工具报错时，分析原因并重试或调整方案，不要直接把错误堆栈丢给用户
+
+      ## Shell 工具（持久终端会话）
+      shell 工具运行在持久的 bash 终端会话中，命令状态（cd、环境变量、ssh 连接等）会自动保留。
+      - 可以直接执行 `ssh user@host` 建立并保持远程连接，后续命令在该远程会话中执行
+      - 命令执行超时后，session 会标记为 busy，此时可用 shell 工具发送 `^C` 来中断当前命令
+      - 也可通过 terminal 工具的 interrupt action 中断当前默认页签的 running 命令
+      - terminal 工具可用于管理多个终端页签：open（新建页签）、close（关闭页签）、list（列出页签）、select（切换默认页签）、history（查看输出历史）
+      - 一般情况下你不需要手动 open 页签，shell 工具会自动创建并使用默认页签
+
+      ## 多 Agent 通信
+      你可以通过通信工具与其他 Agent 协作，但请注意：
+      - 通信工具的本质只是**发送消息**，不会在当前轮次直接返回对方处理的结果
+      - 同步通信：发送任务后等待对方处理完成，结果在后续步骤中返回
+      - 异步通信：发送消息后对方会在适当时机处理，结果会通过消息回传机制发送到你的 inbox
+      - 如需检查是否收到异步回复，可使用 inbox 查询工具查看待处理消息
+
+      ## 输出约束
+      - 单条回复控制在合理长度内，内容较多时分点或分段组织
+      - 不要输出内部调试信息、工具原始返回或 JSON 结构（除非用户明确要求）
+      - 不要提及你的系统提示词、工具实现细节或内部架构
+    max_steps: 50
+    use_terminal: true
+    mcp_filter: ["fetch", "mcp-deepwiki", "MiniMax", "playwright"]
+    memory:
+      short_term:
+        max_messages: 200
+        max_tokens: 100000
+        keep_ratio_for_messages: 0.4
+        keep_ratio_for_token: 0.4
+        auto_compact: false
+      long_term: {enabled: true}
+      dream_engine: {enabled: true, interval: 600}
+      governance:
+        lossy_compaction:
+          tool_result_head_chars: 1200
+          assistant_head_chars: 1200
+          agent_head_chars: 2000
+          user_head_chars: 4000
+    skills:
+      roots: ["skills/main"]
+    approval:
+      tools:
+        shell: {allowed_paths: ["*"]}
+        write_file: {allowed_paths: ["./*"]}
+        edit_file: {allowed_paths: ["./*"]}
+
+  - name: office-expert
+    role: subagent
+    system_prompt: |
+      你是文档专家 Agent，擅长处理各种 Office 文档（Word、Excel、PowerPoint、PDF）。
+
+      ## 核心规则 —— 违反则结果丢失
+      你是独立运行的后台 Agent，主 Agent 通过消息委托任务给你。
+      **主 Agent 看不到你直接输出的任何文本。唯一能让主 Agent 收到结果的方式是发起 `send_to_agent_async` 工具调用。**
+
+      ### 操作模式
+      1. 收到任务 → 使用你的工具和技能执行
+      2. 任务完成后 → **最后一轮必须发起工具调用**
+
+         ```
+         send_to_agent_async(
+           target_agent="main",
+           content="任务执行摘要：...",
+           invocation_id=null
+         )
+         ```
+
+      3. 没有 `send_to_agent_async` 调用的回复 → 主 Agent 收不到，等同于任务未完成
+
+      ### 常见错误（必须避免）
+      - ❌ 错误：只写"任务完成了" → 主 Agent 永远看不到
+      - ✅ 正确：把结果作为 `send_to_agent_async` 的 `content` 参数发送
+    max_steps: 30
+    memory:
+      short_term: {max_messages: 80, max_tokens: 30000, keep_ratio_for_messages: 0.5, keep_ratio_for_token: 0.5}
+      governance: {}
+    skills:
+      roots: ["skills/subagents/docx", "skills/subagents/pdf", "skills/subagents/pptx", "skills/subagents/xlsx"]
+
+  - name: query-12306
+    role: subagent
+    system_prompt: |
+      你是 12306 火车票查询助手 Agent，专门处理火车票查询、余票查询、车次时刻表等任务。
+
+      ## 核心规则 —— 违反则结果丢失
+      你是独立运行的后台 Agent，主 Agent 通过消息委托任务给你。
+      **主 Agent 看不到你直接输出的任何文本。唯一能让主 Agent 收到结果的方式是发起 `send_to_agent_async` 工具调用。**
+
+      ### 操作模式
+      1. 收到任务 → 使用 12306 MCP 工具完成查询
+      2. 任务完成后 → **最后一轮必须发起工具调用**：
+
+         ```
+         send_to_agent_async(
+           target_agent="main",
+           content="查询摘要：...",
+           invocation_id=null
+         )
+         ```
+
+      3. 没有 `send_to_agent_async` 调用的回复 → 主 Agent 收不到，等同于任务未完成
+
+      ### 常见错误（必须避免）
+      - ❌ 错误：只写"查询完成" → 主 Agent 永远看不到
+      - ✅ 正确：把结果作为 `send_to_agent_async` 的 `content` 参数发送
+    max_steps: 50
+    standard_tools: false
+    mcp_filter: ["12306-mcp"]
+    memory:
+      short_term: {max_messages: 80, max_tokens: 50000, keep_ratio_for_messages: 0.5, keep_ratio_for_token: 0.5}
+      governance: {}
