@@ -131,25 +131,31 @@ class AgentBuilderMixin:
 
     # ── Tool Registration (code-driven, no config dict) ──
 
-    async def _register_tools(self, terminal_manager: Any | None = None) -> None:
+    async def _register_tools(
+        self, terminal_manager: Any | None = None
+    ) -> None:
         if self.tool_manager is None:
             return
 
         for tool in _make_file_tools():
             self.tool_manager.register(tool)
 
-        shell_tool = _make_shell_tool(terminal_manager=terminal_manager, timeout=60)
+        shell_tool = _make_shell_tool(
+            terminal_manager=terminal_manager, timeout=60
+        )
         self.tool_manager.register(shell_tool)
 
         for tool in _make_search_tools():
             self.tool_manager.register(tool)
         print("   [OK] Standard tools registered (file + shell + search)")
 
-        # Register TerminalTool if TerminalManager is available
+        # Register TerminalTool only when a stateful TerminalManager exists.
+        # On Windows without bash we fall back to SubprocessExecutor,
+        # so TerminalTool (which manages persistent tabs) has no backend.
         if terminal_manager is not None:
             from framework.tools.terminal import TerminalTool
             self.tool_manager.register(TerminalTool(terminal_manager))
-            print("   [OK] terminal_manager registered")
+            print("   [OK] terminal registered")
 
         from bot.tools.custom import SendFileToUserTool
         self.tool_manager.register(SendFileToUserTool(output_adapter=self.output_adapter))

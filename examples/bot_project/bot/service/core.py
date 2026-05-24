@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import platform
 import signal
 from collections.abc import Callable
 from pathlib import Path
@@ -239,25 +240,35 @@ class BotService(AgentBuilderMixin):
         )
         self.tool_manager = InMemoryToolManager(config=tm_config)
 
-        # 3a. Create TerminalManager (with fallback)
-        try:
-            from framework.tools.terminal import TerminalManager
+        # 3a. Create TerminalManager — only if bash is available.
+        # Windows without bash falls back to SubprocessExecutor (stateless).
+        main_cfg = self._main_agent_cfg
+        if main_cfg and main_cfg.use_terminal:
+            from framework.tools.terminal.types import detect_platform_shell, ShellFamily
 
-            data_dir = self._resolve_path("data_dir", "data")
-            terminals_dir = self._resolve_path("terminals_dir", str(Path(data_dir) / "terminals"))
-            self.terminal_manager = TerminalManager(
-                storage_dir=terminals_dir,
-                max_terminals=getattr(self._app_config, 'terminal', {}).get('max_terminals', 5),
-                history_count=5,
-                history_truncate=200,
-            )
-            await self.terminal_manager.load_state()
-            print(f"[OK] TerminalManager initialized ({len(self.terminal_manager.list_names())} sessions restored)")
-        except Exception as e:
-            logger.warning("TerminalManager initialization failed: %s. ShellTool will use SubprocessExecutor.", e)
+            shell_info = detect_platform_shell()
+            if shell_info is not None and shell_info.family is ShellFamily.BASH:
+                try:
+                    from framework.tools.terminal import TerminalManager
+
+                    self.terminal_manager = TerminalManager(
+                        max_terminals=getattr(self._app_config, 'terminal', {}).get('max_terminals', 5),
+                        shell_info=shell_info,
+                    )
+                    print(f"[OK] TerminalManager initialized (bash: {shell_info.path})")
+                except Exception as e:
+                    logger.warning("TerminalManager initialization failed: %s", e)
+                    self.terminal_manager = None
+            else:
+                self.terminal_manager = None
+                print("[INFO] No bash found — TerminalTool disabled, ShellTool uses SubprocessExecutor")
+        else:
             self.terminal_manager = None
+            print("[INFO] TerminalManager disabled (use_terminal=false)")
 
-        await self._register_tools(terminal_manager=self.terminal_manager)
+        await self._register_tools(
+            terminal_manager=self.terminal_manager
+        )
         await self._register_mcp_tools()
         print(f"[OK] ToolManager initialized, {len(self.tool_manager.list_tools())} tools registered")
 
@@ -728,7 +739,7 @@ class BotService(AgentBuilderMixin):
                 turn=TurnTimeoutPolicy(
                     agent_run_timeout_seconds=180.0,
                     hook_timeout_seconds=10.0,
-                    tool_timeout_seconds=60.0,
+                    tool_timeout_seconds=120.0,
                 ),
             )
         self._safety_policy_cache = policy
@@ -1184,6 +1195,23 @@ class BotService(AgentBuilderMixin):
                 print("   [OK] MemorySystem closed")
             except Exception as e:
                 print(f"   [WARN] MemorySystem close error: {e}")
+
+        if self.terminal_manager:
+            try:
+                terminal_cfg = (
+                    getattr(self._app_config, "terminal", {})
+                    if self._app_config
+                    else {}
+                )
+                close_on_exit = terminal_cfg.get("close_on_exit", True)
+                if close_on_exit:
+                    print("   Closing terminal sessions...")
+                    await self.terminal_manager.close_all()
+                    print("   [OK] Terminal sessions closed")
+                else:
+                    print("   [INFO] Terminal sessions left open (close_on_exit=false)")
+            except Exception as e:
+                print(f"   [WARN] Terminal shutdown error: {e}")
 
         if self.plugin_integration:
             try:
