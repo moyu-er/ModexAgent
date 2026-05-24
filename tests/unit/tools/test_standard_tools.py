@@ -1,7 +1,7 @@
 """Unit tests for standard tools: file tools and shell tool.
 
 TDD: verify ReadFileTool, WriteFileTool, EditFileTool, ListDirTool,
-and ShellTool behaviors including safety guards and edge cases.
+and ShellTool behaviors including fuzzy matching, replace_all, and safety guards.
 Permission checks are delegated to the interceptor AOP layer.
 """
 
@@ -16,6 +16,10 @@ from framework.tools.standard.file_tool import (
     WriteFileTool,
     EditFileTool,
     ListDirTool,
+    _find_actual_string,
+    _map_whitespace_back,
+    _normalize_quotes,
+    _preserve_quote_style,
 )
 from framework.tools.standard.shell_tool import ShellTool
 
@@ -59,7 +63,6 @@ class TestReadFileTool:
         tool = ReadFileTool()
         result = await tool.execute(path=str(file_path), start_line=2, end_line=4)
         lines = result.splitlines()
-        # Should contain lines b, c, d plus the more-lines marker
         assert "b" in lines
         assert "c" in lines
         assert "d" in lines
@@ -97,9 +100,8 @@ class TestWriteFileTool:
         assert file_path.read_text(encoding="utf-8") == "data"
 
 
-
 # ---------------------------------------------------------------------------
-# EditFileTool
+# EditFileTool — basic
 # ---------------------------------------------------------------------------
 
 class TestEditFileTool:
@@ -108,26 +110,251 @@ class TestEditFileTool:
         file_path = tmp_workspace / "edit.txt"
         file_path.write_text("hello world", encoding="utf-8")
         tool = EditFileTool()
-        result = await tool.execute(path=str(file_path), old_text="world", new_text="universe")
+        result = await tool.execute(path=str(file_path), old_string="world", new_string="universe")
         assert "successfully edited" in result.lower()
         assert file_path.read_text(encoding="utf-8") == "hello universe"
 
     @pytest.mark.asyncio
-    async def test_edit_missing_old_text(self, tmp_workspace):
+    async def test_edit_missing_old_string(self, tmp_workspace):
         file_path = tmp_workspace / "edit.txt"
         file_path.write_text("hello world", encoding="utf-8")
         tool = EditFileTool()
-        result = await tool.execute(path=str(file_path), old_text="missing", new_text="x")
+        result = await tool.execute(path=str(file_path), old_string="missing", new_string="x")
         assert "not found" in result.lower()
 
     @pytest.mark.asyncio
-    async def test_edit_ambiguous_old_text(self, tmp_workspace):
+    async def test_edit_ambiguous_old_string(self, tmp_workspace):
         file_path = tmp_workspace / "edit.txt"
         file_path.write_text("abc abc", encoding="utf-8")
         tool = EditFileTool()
-        result = await tool.execute(path=str(file_path), old_text="abc", new_text="x")
-        assert "appears 2 times" in result.lower()
+        result = await tool.execute(path=str(file_path), old_string="abc", new_string="x")
+        assert "found 2 matches" in result.lower()
 
+    @pytest.mark.asyncio
+    async def test_edit_replace_all(self, tmp_workspace):
+        file_path = tmp_workspace / "edit.txt"
+        file_path.write_text("abc abc abc", encoding="utf-8")
+        tool = EditFileTool()
+        result = await tool.execute(
+            path=str(file_path), old_string="abc", new_string="x", replace_all=True
+        )
+        assert "all 3 occurrences replaced" in result.lower()
+        assert file_path.read_text(encoding="utf-8") == "x x x"
+
+    @pytest.mark.asyncio
+    async def test_edit_delete_text(self, tmp_workspace):
+        file_path = tmp_workspace / "edit.txt"
+        file_path.write_text("hello cruel world", encoding="utf-8")
+        tool = EditFileTool()
+        result = await tool.execute(
+            path=str(file_path), old_string=" cruel", new_string=""
+        )
+        assert "successfully edited" in result.lower()
+        assert file_path.read_text(encoding="utf-8") == "hello world"
+
+    @pytest.mark.asyncio
+    async def test_edit_no_change_same_strings(self, tmp_workspace):
+        file_path = tmp_workspace / "edit.txt"
+        file_path.write_text("hello world", encoding="utf-8")
+        tool = EditFileTool()
+        result = await tool.execute(
+            path=str(file_path), old_string="world", new_string="world"
+        )
+        assert "no changes to make" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_edit_create_new_file_empty_old_string(self, tmp_workspace):
+        file_path = tmp_workspace / "new_file.txt"
+        tool = EditFileTool()
+        result = await tool.execute(
+            path=str(file_path), old_string="", new_string="new content"
+        )
+        assert "successfully created" in result.lower()
+        assert file_path.read_text(encoding="utf-8") == "new content"
+
+    @pytest.mark.asyncio
+    async def test_edit_empty_old_string_on_nonempty_file(self, tmp_workspace):
+        file_path = tmp_workspace / "edit.txt"
+        file_path.write_text("existing content", encoding="utf-8")
+        tool = EditFileTool()
+        result = await tool.execute(
+            path=str(file_path), old_string="", new_string="new content"
+        )
+        assert "file already exists and is not empty" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_edit_file_not_found(self, tmp_workspace):
+        file_path = tmp_workspace / "missing.txt"
+        tool = EditFileTool()
+        result = await tool.execute(
+            path=str(file_path), old_string="x", new_string="y"
+        )
+        assert "file not found" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_edit_preserves_crlf(self, tmp_workspace):
+        file_path = tmp_workspace / "edit.txt"
+        file_path.write_bytes(b"hello\r\nworld\r\n")
+        tool = EditFileTool()
+        result = await tool.execute(
+            path=str(file_path), old_string="world", new_string="universe"
+        )
+        assert "successfully edited" in result.lower()
+        raw = file_path.read_bytes()
+        assert b"\r\n" in raw
+        assert raw == b"hello\r\nuniverse\r\n"
+
+
+# ---------------------------------------------------------------------------
+# EditFileTool — fuzzy matching
+# ---------------------------------------------------------------------------
+
+class TestEditFileToolFuzzyMatching:
+    @pytest.mark.asyncio
+    async def test_edit_fuzzy_curly_quotes(self, tmp_workspace):
+        """弯引号在 old_string 中被归一化匹配。"""
+        file_path = tmp_workspace / "edit.txt"
+        file_path.write_text('say "hello" to the world', encoding="utf-8")
+        tool = EditFileTool()
+        # LLM 输出直引号，但文件中有弯引号
+        result = await tool.execute(
+            path=str(file_path), old_string='say "hello" to the', new_string='tell the'
+        )
+        assert "successfully edited" in result.lower()
+        assert 'tell the world' in file_path.read_text(encoding="utf-8")
+
+    @pytest.mark.asyncio
+    async def test_edit_fuzzy_tab_to_spaces(self, tmp_workspace):
+        """tab 在 old_string 中被空格归一化匹配；new_string 中的空格忠实地替换了原 tab 位置。"""
+        file_path = tmp_workspace / "edit.txt"
+        file_path.write_text("def foo():\n\treturn 1", encoding="utf-8")
+        tool = EditFileTool()
+        # LLM 输出 4 个空格，但文件中是 tab
+        result = await tool.execute(
+            path=str(file_path), old_string="    return 1", new_string="    return 2"
+        )
+        assert "successfully edited" in result.lower()
+        content = file_path.read_text(encoding="utf-8")
+        # new_string 提供的是空格，所以替换后文件中使用空格而非 tab
+        assert "    return 2" in content
+
+    @pytest.mark.asyncio
+    async def test_edit_fuzzy_quote_and_whitespace(self, tmp_workspace):
+        """同时处理引号和空白差异；new_string 中的空格忠实地替换了原 tab 位置，且引号风格被保留。"""
+        file_path = tmp_workspace / "edit.py"
+        file_path.write_text('x = \t\u201chello\u201d', encoding="utf-8")
+        tool = EditFileTool()
+        # LLM 从 read_file 看到 'x =     "hello"'（5 空格，因为 tab 被渲染为 4 空格）
+        result = await tool.execute(
+            path=str(file_path), old_string='x =     "hello"', new_string='x =     "world"'
+        )
+        assert "successfully edited" in result.lower()
+        content = file_path.read_text(encoding="utf-8")
+        # 弯引号风格被保留，空格替换了 tab
+        assert 'x =     \u201cworld\u201d' in content
+
+    @pytest.mark.asyncio
+    async def test_edit_preserves_curly_quotes_in_new_string(self, tmp_workspace):
+        """通过引号归一化匹配时，new_string 中的直引号应转为弯引号。"""
+        file_path = tmp_workspace / "edit.txt"
+        file_path.write_text('print("hello")', encoding="utf-8")
+        tool = EditFileTool()
+        result = await tool.execute(
+            path=str(file_path), old_string='"hello"', new_string='"world"'
+        )
+        assert "successfully edited" in result.lower()
+        content = file_path.read_text(encoding="utf-8")
+        assert '"world"' in content
+
+
+# ---------------------------------------------------------------------------
+# _find_actual_string
+# ---------------------------------------------------------------------------
+
+class TestFindActualString:
+    def test_exact_match(self):
+        assert _find_actual_string("hello world", "world") == "world"
+
+    def test_no_match(self):
+        assert _find_actual_string("hello world", "missing") is None
+
+    def test_quote_normalization(self):
+        file_content = 'say \u201chello\u201d to you'
+        search = '"hello"'
+        actual = _find_actual_string(file_content, search)
+        assert actual == '\u201chello\u201d'
+
+    def test_whitespace_normalization(self):
+        file_content = "def foo():\n\treturn 1"
+        search = "    return 1"
+        actual = _find_actual_string(file_content, search)
+        assert actual == "\treturn 1"
+
+    def test_combined_normalization(self):
+        # file: x = <tab><curly-left>hello<curly-right>
+        # read_file renders tab as 4 spaces, so LLM sees: x =     "hello"
+        file_content = 'x = \t\u201chello\u201d'
+        search = 'x =     "hello"'
+        actual = _find_actual_string(file_content, search)
+        assert actual == 'x = \t\u201chello\u201d'
+
+    def test_empty_search(self):
+        assert _find_actual_string("anything", "") == ""
+
+
+# ---------------------------------------------------------------------------
+# _map_whitespace_back
+# ---------------------------------------------------------------------------
+
+class TestMapWhitespaceBack:
+    def test_basic_tab(self):
+        original = "a\tb"
+        ws = "a    b"
+        assert _map_whitespace_back(original, ws, 0, 6) == "a\tb"
+
+    def test_tab_in_middle(self):
+        original = "foo\tbar\tbaz"
+        ws = "foo    bar    baz"
+        assert _map_whitespace_back(original, ws, 7, 10) == "bar\tbaz"
+
+    def test_multiple_leading_tabs(self):
+        original = "\t\ta"
+        ws = "        a"
+        assert _map_whitespace_back(original, ws, 0, 9) == "\t\ta"
+
+    def test_snap_inside_tab(self):
+        """匹配范围落在 tab 扩展中间时 snap 到 tab 边界。"""
+        original = "a\t"
+        ws = "a    "
+        assert _map_whitespace_back(original, ws, 1, 3) == "\t"
+
+
+# ---------------------------------------------------------------------------
+# _preserve_quote_style
+# ---------------------------------------------------------------------------
+
+class TestPreserveQuoteStyle:
+    def test_no_change_when_exact_match(self):
+        assert _preserve_quote_style('"hello"', '"hello"', '"world"') == '"world"'
+
+    def test_double_curly_quotes(self):
+        old_model = '"hello"'
+        old_actual = '\u201chello\u201d'
+        result = _preserve_quote_style(old_model, old_actual, '"world"')
+        assert '\u201cworld\u201d' == result
+
+    def test_single_curly_quotes(self):
+        old_model = "'hello'"
+        old_actual = '\u2018hello\u2019'
+        result = _preserve_quote_style(old_model, old_actual, "'world'")
+        assert '\u2018world\u2019' == result
+
+    def test_apostrophe_in_contraction(self):
+        old_model = "don't"
+        old_actual = "don\u2019t"
+        result = _preserve_quote_style(old_model, old_actual, "can't")
+        # contraction apostrophe → right single curly quote
+        assert "can\u2019t" == result
 
 
 # ---------------------------------------------------------------------------
