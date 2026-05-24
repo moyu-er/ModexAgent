@@ -14,6 +14,8 @@ class MockBackend:
         self.alive = True
         self.buffer = ""
         self._started = False
+        self.window_title = None
+        self._backend_started = True
 
     async def start(self, shell=None, cwd=None, env=None):
         self._started = True
@@ -32,6 +34,12 @@ class MockBackend:
 
     async def kill(self):
         self.alive = False
+
+    async def drain_startup(self):
+        pass
+
+    async def clear_input_line(self):
+        pass
 
 
 @pytest.fixture
@@ -71,12 +79,32 @@ class TestTerminalTool:
         assert "Selected" in result
 
     @pytest.mark.asyncio
-    async def test_history_action(self, tool):
+    async def test_history_action_shows_recent_output(self, tool):
+        """history action should show the last command's recent output."""
         session = await tool._manager.get_or_create("tab-1")
         from framework.tools.terminal.session import CommandRecord
-        session._history.append(CommandRecord(command="ls", output="file.txt"))
+        session._history.append(
+            CommandRecord(command="ls", output="file1\nfile2\nfile3\n")
+        )
         result = await tool.execute(action="history", name="tab-1")
-        assert "ls" in result
+        assert "Recent output" in result
+        assert "file3" in result
+
+    @pytest.mark.asyncio
+    async def test_interrupt_on_default_terminal(self, tool):
+        """interrupt without name should target the current default terminal."""
+        await tool._manager.get_or_create("tab-1")
+        await tool._manager.select_default("tab-1")
+        result = await tool.execute(action="interrupt")
+        assert "Ctrl+C" in result
+        assert "tab-1" in result
+
+    @pytest.mark.asyncio
+    async def test_interrupt_without_default_terminal(self, tool):
+        """interrupt when no default terminal exists should return an error."""
+        result = await tool.execute(action="interrupt")
+        assert "Error" in result
+        assert "No default terminal" in result
 
     @pytest.mark.asyncio
     async def test_invalid_action(self, tool):
