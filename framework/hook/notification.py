@@ -133,7 +133,7 @@ class MaxIterationNotifyHook:
             else "unknown"
         )
         truncated = None
-        content = getattr(result, "content", None)
+        content = result.content
         if content:
             truncated = content[:2000]
             if len(content) > 2000:
@@ -142,9 +142,9 @@ class MaxIterationNotifyHook:
         await self._svc.notify(
             ctx=ctx,
             notification_type="max_iterations_exceeded",
-            reason="迭代次数达到上限而退出",
+            reason="Exited after reaching the maximum number of iterations",
             details=(
-                f"agent '{agent_name}' 已达到最大迭代次数 "
+                f"agent '{agent_name}' has reached the maximum number of iterations "
                 f"(max_iterations={ctx.max_iterations})"
             ),
             content=truncated,

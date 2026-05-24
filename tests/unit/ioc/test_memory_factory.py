@@ -81,13 +81,13 @@ class TestCreateMemoryAutoCompact:
         assert coordinator is not None
         assert coordinator._archive_generation is not None
 
-    def test_auto_compact_true_default(self, tmp_path: Path) -> None:
-        """Default ShortTermConfig has auto_compact=True."""
+    def test_auto_compact_false_default(self, tmp_path: Path) -> None:
+        """Default ShortTermConfig has auto_compact=False, no archive generation."""
         cfg = MemoryConfig()
         system = create_memory(cfg, _make_provider(), tmp_path)
         coordinator = system.compression_coordinator
         assert coordinator is not None
-        assert coordinator._archive_generation is not None
+        assert coordinator._archive_generation is None
 
     def test_lifecycle_created_when_auto_compact_false(self, tmp_path: Path) -> None:
         """Lifecycle policy must exist even when auto_compact=False."""
