@@ -9,7 +9,7 @@ llm:
 
 mcp:
   enabled: true
-  config_file: "mcp.json"
+  config_file: "mcp/main_mcp.json"
 
 terminal:
   storage_dir: "data/terminals/main"
