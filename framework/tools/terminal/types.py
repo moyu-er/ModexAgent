@@ -22,6 +22,7 @@ class ShellFamily(StrEnum):
 
     BASH = "bash"
     CMD = "cmd"
+    POWERSHELL = "powershell"
     ZSH = "zsh"
     SH = "sh"
 
@@ -56,6 +57,19 @@ class ShellInfo:
     def name(self) -> str:
         """Return the shell family name for backward compatibility."""
         return self.family.value
+
+
+class TerminalVisibility(StrEnum):
+    VISIBLE = "visible"
+    HIDDEN = "hidden"
+
+
+class ProcessStatus(StrEnum):
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    KILLED = "killed"
+    TIMED_OUT = "timed_out"
 
 
 def _parse_platform(name: str) -> Platform:
