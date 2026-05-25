@@ -65,13 +65,17 @@ Result details:
 
 ```python
 {
-    "status": "completed | running | failed | killed",
+    "status": "completed | running | failed | killed | timed_out",
     "session_id": "string | None",
     "terminal": "string",
     "pid": "int | None",
     "cwd": "string | None",
     "exit_code": "int | None",
     "exit_signal": "string | int | None",
+    "timed_out": "bool",
+    "duration_ms": "int | None",
+    "failure_kind": "string | None",
+    "message": "string | None",
     "started_at": "float | None",
     "ended_at": "float | None",
     "output": "string",
@@ -87,8 +91,23 @@ Behavior:
 
 - If the command exits before `yield_ms` or the default foreground window, return `completed` or `failed`.
 - If `background=true` or the foreground window expires while the process is still running, return `running` with `session_id`.
-- If `timeout` expires, terminate the process tree and return `failed` with timeout context.
+- If `timeout` expires, terminate the process tree and return `timed_out` with timeout context and the terminal output captured up to the timeout. Do not collapse this to a generic error string.
 - If no output arrives for the input idle threshold while stdin is writable, return a running result with `waiting_for_input=true`; the model must decide whether to call `process write`, `process submit`, `process send_keys`, or wait/poll again.
+- `yield_ms` and `timeout` are different controls. `yield_ms` controls how long the tool waits before returning a running session; it does not kill the command. `timeout` controls the hard maximum runtime; it kills the command/session when exceeded.
+
+Default resolution should follow OpenClaw's pattern: parameters are optional at the tool boundary, then normalized through manager/tool defaults with min/max clamps. Recommended first-phase defaults:
+
+| Setting | Default | Range / Clamp | Notes |
+| --- | ---: | ---: | --- |
+| `yield_ms` | `10000` ms | `10..120000` ms | Same shape as OpenClaw's default foreground yield window. |
+| `timeout` | `1800` s | positive seconds | Hard kill timeout. Matches OpenClaw's default command timeout direction. |
+| `input_wait_idle_ms` | `15000` ms | `1000..600000` ms | Input-wait hint threshold. |
+| `process.poll timeout` | `0` ms | `0..30000` ms | Optional wait before draining pending output. |
+| `max_output_chars` | `200000` | `1000..200000` | Aggregated output cap. |
+| `pending_max_output_chars` | `30000` | `1000..200000` | Pending output cap drained by `poll`. |
+| `finished_ttl_ms` | `1800000` ms | `60000..10800000` ms | Finished session cleanup window. |
+
+The defaults should be configurable on the manager/tool config, not repeated in model-facing prompts. Tool descriptions should explain behavior, not ask the model to manually supply default values.
 
 ### `process`
 
@@ -133,6 +152,7 @@ Parameters:
 - If the process has exited, moves it to finished state and returns final status.
 - If still running and no new output is available, returns `(no new output)` plus a running status.
 - Adds input-wait hints when `stdin_writable=true` and `idle_ms >= input_wait_idle_ms`.
+- If a command timed out before or during poll-visible lifecycle handling, return `status=timed_out`, `timed_out=true`, and include the captured pending output plus a message explaining that the process was terminated after the configured timeout.
 
 ### `terminal`
 
