@@ -31,7 +31,6 @@ class SendKeysParams:
 @dataclass(frozen=True)
 class PasteParams:
     text: str = ""
-    bracketed: bool = False
 
 
 @dataclass(frozen=True)
@@ -136,10 +135,6 @@ class ProcessTool(Tool):
                     "enum": [a.value for a in ProcessAction],
                     "description": "Action to perform on the process session.",
                 },
-                "session_id": {
-                    "type": "string",
-                    "description": "Process session ID (not required for list).",
-                },
                 "data": {
                     "type": "string",
                     "description": "Raw data to write (for write action).",
@@ -168,10 +163,6 @@ class ProcessTool(Tool):
                     "type": "string",
                     "description": "Text to paste (for paste action).",
                 },
-                "bracketed": {
-                    "type": "boolean",
-                    "description": "Wrap paste in bracketed-paste mode (for paste action).",
-                },
                 "eof": {
                     "type": "boolean",
                     "description": "Close stdin after writing (for write action).",
@@ -184,10 +175,6 @@ class ProcessTool(Tool):
                     "type": "integer",
                     "description": "Max lines for log paging.",
                 },
-                "timeout": {
-                    "type": "integer",
-                    "description": "For poll: wait up to this many milliseconds before returning.",
-                },
             },
             "required": ["action"],
         }
@@ -199,32 +186,27 @@ class ProcessTool(Tool):
         except ValueError:
             return f"[Error] Unknown action: {action_raw}"
 
-        session_id: str = kwargs.get("session_id", "")
-
         match action:
             case ProcessAction.LIST:
                 return await self._do_list()
             case ProcessAction.POLL:
-                return await self._do_poll(session_id)
+                return await self._do_poll()
             case ProcessAction.LOG:
                 return await self._do_log(
-                    session_id,
                     offset=int(kwargs.get("offset") or 0),
                     limit=int(kwargs.get("limit") or _DEFAULT_LOG_TAIL_LINES),
                 )
             case ProcessAction.WRITE:
                 return await self._do_write(
-                    session_id,
                     WriteParams(
                         data=kwargs.get("data", ""),
                         eof=kwargs.get("eof", False),
                     ),
                 )
             case ProcessAction.SUBMIT:
-                return await self._do_submit(session_id)
+                return await self._do_submit()
             case ProcessAction.SEND_KEYS:
                 return await self._do_send_keys(
-                    session_id,
                     SendKeysParams(
                         keys=kwargs.get("keys"),
                         hex_bytes=kwargs.get("hex"),
@@ -233,29 +215,32 @@ class ProcessTool(Tool):
                 )
             case ProcessAction.PASTE:
                 return await self._do_paste(
-                    session_id,
                     PasteParams(
                         text=kwargs.get("text", ""),
-                        bracketed=kwargs.get("bracketed", False),
                     ),
                 )
             case ProcessAction.INTERRUPT:
-                return await self._do_interrupt(session_id)
+                return await self._do_interrupt()
             case ProcessAction.KILL:
-                return await self._do_kill(session_id)
+                return await self._do_kill()
             case ProcessAction.CLEAR:
-                return await self._do_clear(session_id)
+                return await self._do_clear()
             case ProcessAction.REMOVE:
-                return await self._do_remove(session_id)
+                return await self._do_remove()
 
-    async def _resolve_terminal(self, terminal_name: str) -> TerminalSession:
-        return await self._manager.get_or_create(terminal_name)
+    async def _resolve_terminal(self) -> tuple[TerminalSession, ProcessSession | None, ProcessSession | None]:
+        """Resolve the default terminal and its running/finished process sessions.
 
-    def _require_running(self, session_id: str) -> ProcessSession | str:
-        session = self._registry.get_running(session_id)
-        if session is None:
-            return f"[Error] No active session found for {session_id}"
-        return session
+        Returns (terminal_session, running_process, finished_process).
+        The running/finished entries may be None.
+        """
+        terminal_session = await self._manager.get_default_session()
+        if terminal_session is None:
+            raise ValueError("No default terminal session available")
+        name = terminal_session.name
+        running = self._registry.get_running_by_terminal(name)
+        finished = self._registry.get_finished_by_terminal(name)
+        return terminal_session, running, finished
 
     async def _do_list(self) -> str:
         running = self._registry.list_running()
@@ -271,21 +256,21 @@ class ProcessTool(Tool):
             lines.append(_format_list_line(s))
         return "\n".join(lines)
 
-    async def _do_poll(self, session_id: str) -> str:
-        session = self._registry.get_running(session_id)
-        if session is not None:
-            pending = self._registry.drain_pending(session_id)
+    async def _do_poll(self) -> str:
+        terminal_session, running, finished = await self._resolve_terminal()
+
+        if running is not None:
+            pending = self._registry.drain_pending(running.id)
             output = (pending.stdout + pending.stderr).rstrip() or "(no new output)"
-            runtime = self._registry.running_runtime(session_id)
+            runtime = self._registry.running_runtime(running.id)
             hint = _build_input_wait_hint(runtime) or _build_output_velocity_hint(runtime)
             if not hint:
                 hint = "\n\nProcess still running."
 
             # Screen snapshot for TUI programs
             screen_section = ""
-            terminal = await self._resolve_terminal(session.terminal)
-            if terminal.cursor_key_mode == CursorKeyMode.APPLICATION:
-                segment = await terminal.current_segment()
+            if terminal_session.cursor_key_mode == CursorKeyMode.APPLICATION:
+                segment = await terminal_session.current_segment()
                 if segment and segment.text.strip():
                     screen_section = (
                         f"\n\n[Screen]\n{segment.text.rstrip()}"
@@ -294,7 +279,6 @@ class ProcessTool(Tool):
 
             return output + hint + screen_section
 
-        finished = self._registry.get_finished(session_id)
         if finished is not None:
             tail = finished.tail or "(no output recorded)"
             exit_info = (
@@ -304,14 +288,16 @@ class ProcessTool(Tool):
             )
             return f"{tail}\n\nProcess exited with {exit_info}."
 
-        return f"[Error] No session found for {session_id}"
+        return "[Error] No process session found for default terminal"
 
     async def _do_log(
-        self, session_id: str, offset: int = 0, limit: int = _DEFAULT_LOG_TAIL_LINES
+        self, offset: int = 0, limit: int = _DEFAULT_LOG_TAIL_LINES
     ) -> str:
-        session = self._registry.get_running(session_id) or self._registry.get_finished(session_id)
+        _terminal, running, finished = await self._resolve_terminal()
+
+        session = running or finished
         if session is None:
-            return f"[Error] No session found for {session_id}"
+            return "[Error] No process session found for default terminal"
 
         all_lines = session.aggregated.splitlines()
         total = len(all_lines)
@@ -324,7 +310,7 @@ class ProcessTool(Tool):
             tail_note = f"\n\n[showing last {_DEFAULT_LOG_TAIL_LINES} of {total} lines; pass offset/limit to page]"
 
         runtime = (
-            self._registry.running_runtime(session_id)
+            self._registry.running_runtime(session.id)
             if session.status == ProcessStatus.RUNNING
             else None
         )
@@ -332,37 +318,33 @@ class ProcessTool(Tool):
 
         return output + tail_note + hint
 
-    async def _do_write(self, session_id: str, params: WriteParams) -> str:
-        result = self._require_running(session_id)
-        if isinstance(result, str):
-            return result
-        session = result
+    async def _do_write(self, params: WriteParams) -> str:
+        terminal_session, running, _finished = await self._resolve_terminal()
+        if running is None:
+            return "[Error] No running process session found for default terminal"
 
-        terminal = await self._resolve_terminal(session.terminal)
-        await terminal.write(params.data)
+        await terminal_session.write(params.data)
         eof_note = " (stdin closed)" if params.eof else ""
-        return f"Wrote {len(params.data)} bytes to session {session_id}{eof_note}."
+        return f"Wrote {len(params.data)} bytes to session {running.id}{eof_note}."
 
-    async def _do_submit(self, session_id: str) -> str:
-        result = self._require_running(session_id)
-        if isinstance(result, str):
-            return result
+    async def _do_submit(self) -> str:
+        terminal_session, running, _finished = await self._resolve_terminal()
+        if running is None:
+            return "[Error] No running process session found for default terminal"
 
-        terminal = await self._resolve_terminal(result.terminal)
-        await terminal.write("\r")
-        return f"Submitted session {session_id} (sent CR)."
+        await terminal_session.write("\r")
+        return f"Submitted session {running.id} (sent CR)."
 
-    async def _do_send_keys(self, session_id: str, params: SendKeysParams) -> str:
-        result = self._require_running(session_id)
-        if isinstance(result, str):
-            return result
-        session = result
+    async def _do_send_keys(self, params: SendKeysParams) -> str:
+        terminal_session, running, _finished = await self._resolve_terminal()
+        if running is None:
+            return "[Error] No running process session found for default terminal"
 
-        cursor_mode = session.cursor_key_mode
+        cursor_mode = running.cursor_key_mode
 
         if params.keys and needs_cursor_mode(params.keys) and cursor_mode == CursorKeyMode.UNKNOWN:
             return (
-                f"Session {session_id} cursor key mode is not known yet. "
+                f"Session {running.id} cursor key mode is not known yet. "
                 "Poll or log until startup output appears, then retry send_keys."
             )
 
@@ -385,73 +367,67 @@ class ProcessTool(Tool):
         if not combined:
             return "[Error] No key data provided."
 
-        terminal = await self._resolve_terminal(session.terminal)
-        await terminal.write(combined.decode("utf-8", errors="surrogateescape"))
+        await terminal_session.write(combined.decode("utf-8", errors="surrogateescape"))
 
-        result_text = f"Sent {len(combined)} bytes to session {session_id}."
+        result_text = f"Sent {len(combined)} bytes to session {running.id}."
         if warnings:
             result_text += "\nWarnings:\n- " + "\n- ".join(warnings)
         return result_text
 
-    async def _do_paste(self, session_id: str, params: PasteParams) -> str:
-        result = self._require_running(session_id)
-        if isinstance(result, str):
-            return result
+    async def _do_paste(self, params: PasteParams) -> str:
+        terminal_session, running, _finished = await self._resolve_terminal()
+        if running is None:
+            return "[Error] No running process session found for default terminal"
 
-        payload = encode_paste(params.text, bracketed=params.bracketed)
-        terminal = await self._resolve_terminal(result.terminal)
-        await terminal.write(payload.decode("utf-8", errors="surrogateescape"))
-        return f"Pasted {len(params.text)} chars to session {session_id}."
+        payload = encode_paste(params.text, bracketed=terminal_session.bracketed_paste_enabled)
+        await terminal_session.write(payload.decode("utf-8", errors="surrogateescape"))
+        return f"Pasted {len(params.text)} chars to session {running.id}."
 
-    async def _do_interrupt(self, session_id: str) -> str:
-        result = self._require_running(session_id)
-        if isinstance(result, str):
-            return result
+    async def _do_interrupt(self) -> str:
+        terminal_session, running, _finished = await self._resolve_terminal()
+        if running is None:
+            return "[Error] No running process session found for default terminal"
 
-        terminal = await self._resolve_terminal(result.terminal)
-        await terminal.interrupt()
-        return f"Sent interrupt (Ctrl+C) to session {session_id}."
+        await terminal_session.interrupt()
+        return f"Sent interrupt (Ctrl+C) to session {running.id}."
 
-    async def _do_kill(self, session_id: str) -> str:
-        result = self._require_running(session_id)
-        if isinstance(result, str):
-            return result
-        session = result
+    async def _do_kill(self) -> str:
+        terminal_session, running, _finished = await self._resolve_terminal()
+        if running is None:
+            return "[Error] No running process session found for default terminal"
 
-        terminal = await self._resolve_terminal(session.terminal)
-        await terminal.terminate()
+        await terminal_session.terminate()
         self._registry.mark_exited(
-            session_id,
+            running.id,
             exit_code=None,
             exit_signal="KILLED",
             status=ProcessStatus.KILLED,
         )
-        return f"Killed session {session_id}."
+        return f"Killed session {running.id}."
 
-    async def _do_clear(self, session_id: str) -> str:
-        session = self._registry.get_finished(session_id)
-        if session is None:
-            return f"[Error] Session not found or not finished: {session_id}"
-        self._registry.delete(session_id)
-        return f"Cleared finished session {session_id}."
+    async def _do_clear(self) -> str:
+        _terminal, _running, finished = await self._resolve_terminal()
+        if finished is None:
+            return "[Error] No finished process session found for default terminal"
+        self._registry.delete(finished.id)
+        return f"Cleared finished session {finished.id}."
 
-    async def _do_remove(self, session_id: str) -> str:
-        running = self._registry.get_running(session_id)
+    async def _do_remove(self) -> str:
+        terminal_session, running, finished = await self._resolve_terminal()
+
         if running is not None:
-            terminal = await self._resolve_terminal(running.terminal)
-            await terminal.terminate()
+            await terminal_session.terminate()
             self._registry.mark_exited(
-                session_id,
+                running.id,
                 exit_code=None,
                 exit_signal="KILLED",
                 status=ProcessStatus.KILLED,
             )
-            self._registry.delete(session_id)
-            return f"Killed and removed session {session_id}."
+            self._registry.delete(running.id)
+            return f"Killed and removed session {running.id}."
 
-        finished = self._registry.get_finished(session_id)
         if finished is not None:
-            self._registry.delete(session_id)
-            return f"Removed finished session {session_id}."
+            self._registry.delete(finished.id)
+            return f"Removed finished session {finished.id}."
 
-        return f"[Error] No session found for {session_id}"
+        return "[Error] No process session found for default terminal"

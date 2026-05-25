@@ -187,6 +187,11 @@ def detect_bracketed_paste_mode(raw: bytes) -> bool | None:
     return last_enable > last_disable
 
 
+def strip_bracketed_paste_mode(data: bytes) -> bytes:
+    """Strip bracketed-paste enable/disable sequences from output bytes."""
+    return data.replace(_BRACKETED_PASTE_ENABLE, b"").replace(_BRACKETED_PASTE_DISABLE, b"")
+
+
 def encode_paste(text: str, bracketed: bool = True) -> bytes:
     data = text.encode("utf-8")
     if bracketed:

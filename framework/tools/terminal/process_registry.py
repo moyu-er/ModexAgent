@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from framework.tools.terminal.config import TerminalRuntimeConfig
+from framework.tools.terminal.pty_keys import CursorKeyMode
 from framework.tools.terminal.results import TerminalRead
 from framework.tools.terminal.types import ProcessStatus
 
@@ -51,6 +52,7 @@ class ProcessSession:
     exit_signal: str | int | None = None
     timed_out: bool = False
     failure_kind: str | None = None
+    cursor_key_mode: CursorKeyMode = CursorKeyMode.UNKNOWN
     _output_timestamps: list[float] = field(default_factory=list)
 
 
@@ -60,7 +62,9 @@ class ProcessRegistry:
         self._running: dict[str, ProcessSession] = {}
         self._finished: dict[str, ProcessSession] = {}
 
-    def create(self, *, command: str, terminal: str, cwd: str | None, pid: int | None) -> ProcessSession:
+    def create(
+        self, *, command: str, terminal: str, cwd: str | None, pid: int | None
+    ) -> ProcessSession:
         session_id = self._new_id()
         session = ProcessSession(
             id=session_id,
@@ -80,6 +84,20 @@ class ProcessRegistry:
 
     def get_finished(self, session_id: str) -> ProcessSession | None:
         return self._finished.get(session_id)
+
+    def get_running_by_terminal(self, terminal_name: str) -> ProcessSession | None:
+        """Find the most recent running session for a terminal."""
+        for session in reversed(list(self._running.values())):
+            if session.terminal == terminal_name:
+                return session
+        return None
+
+    def get_finished_by_terminal(self, terminal_name: str) -> ProcessSession | None:
+        """Find the most recent finished session for a terminal."""
+        for session in reversed(list(self._finished.values())):
+            if session.terminal == terminal_name:
+                return session
+        return None
 
     def list_running(self) -> list[ProcessSession]:
         return sorted(self._running.values(), key=lambda item: item.started_at, reverse=True)

@@ -15,7 +15,9 @@ from framework.tools.terminal.prompt import (
 )
 from framework.tools.terminal.pty_keys import (
     CursorKeyMode,
+    detect_bracketed_paste_mode,
     detect_cursor_key_mode,
+    strip_bracketed_paste_mode,
     strip_dsr_and_respond,
     strip_smkx_rmkx,
 )
@@ -82,6 +84,7 @@ class TerminalSession:
         self._backend_started = False
         self._last_status: str | None = None
         self.cursor_key_mode: CursorKeyMode = CursorKeyMode.UNKNOWN
+        self.bracketed_paste_enabled: bool = False
 
     async def ensure_started(self) -> None:
         """Start the backend immediately if not already started.
@@ -425,12 +428,13 @@ class TerminalSession:
         await self._backend.write(data)
 
     async def poll_once(self, timeout: float = 0.1, max_size: int = 65536) -> TerminalRead:
-        """Read pending output, stripping DECCKM/DSR control sequences.
+        """Read pending output, stripping DECCKM/DSR/bracketed-paste sequences.
 
         DECCKM (smkx/rmkx) sequences update ``cursor_key_mode`` and are
         removed from the returned output.  DSR (Device Status Report)
         queries are stripped and an automatic CPR response is written back
-        to stdin so TUI programs don't hang.
+        to stdin so TUI programs don't hang.  Bracketed-paste mode sequences
+        update ``bracketed_paste_enabled`` and are stripped from output.
         """
         read = await self._backend.read_pending(timeout=timeout, max_size=max_size)
         if not read.raw:
@@ -443,8 +447,16 @@ class TerminalSession:
         if new_mode is not None:
             self.cursor_key_mode = new_mode
 
+        # Detect and update bracketed paste mode
+        bp_mode = detect_bracketed_paste_mode(raw_bytes)
+        if bp_mode is not None:
+            self.bracketed_paste_enabled = bp_mode
+
         # Strip smkx/rmkx from output
         cleaned = strip_smkx_rmkx(raw_bytes)
+
+        # Strip bracketed-paste enable/disable from output
+        cleaned = strip_bracketed_paste_mode(cleaned)
 
         # Strip DSR queries and auto-respond with cursor position.
         # Pass None for the writer; we issue the response ourselves
