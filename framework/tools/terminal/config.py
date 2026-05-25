@@ -15,13 +15,21 @@ class TerminalRuntimeConfig:
     max_yield_ms: int = 120_000
     default_command_timeout_seconds: int = 60
     command_tool_outer_timeout_seconds: int = 70
-    input_wait_idle_ms: int = 15_000
+    input_wait_idle_ms: int = 10_000
     min_input_wait_idle_ms: int = 1_000
     max_input_wait_idle_ms: int = 600_000
     poll_max_wait_ms: int = 30_000
     max_output_chars: int = 200_000
     pending_max_output_chars: int = 30_000
     finished_ttl_ms: int = 1_800_000
+    # Solution A: prompt stabilization window for auxiliary completion detection
+    prompt_stabilize_ms: int = 100
+    # Solution C: early input-wait detection via consecutive empty reads
+    empty_read_threshold: int = 5
+    empty_read_interval_ms: int = 50
+    input_wait_early_min_elapsed_ms: int = 2_000
+    output_velocity_window_s: int = 5
+    output_velocity_active_threshold: int = 2
 
 
 def resolve_yield_ms(value: int | None, config: TerminalRuntimeConfig) -> int:

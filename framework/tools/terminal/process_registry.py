@@ -13,11 +13,18 @@ StreamName = Literal["stdout", "stderr"]
 
 
 @dataclass
+class OutputVelocity:
+    chunks_in_window: int = 0
+    is_active: bool = False
+
+
+@dataclass
 class RunningSessionRuntime:
     stdin_writable: bool
     waiting_for_input: bool
     idle_ms: int
     last_output_at: float
+    output_velocity: OutputVelocity = field(default_factory=OutputVelocity)
 
 
 @dataclass
@@ -44,6 +51,7 @@ class ProcessSession:
     exit_signal: str | int | None = None
     timed_out: bool = False
     failure_kind: str | None = None
+    _output_timestamps: list[float] = field(default_factory=list)
 
 
 class ProcessRegistry:
@@ -87,7 +95,9 @@ class ProcessRegistry:
 
     def append_output(self, session_id: str, stream: StreamName, chunk: str) -> None:
         session = self._running[session_id]
-        session.last_output_at = time.time()
+        now = time.time()
+        session.last_output_at = now
+        session._output_timestamps.append(now)
         session.total_output_chars += len(chunk)
         pending = session.pending_stdout if stream == "stdout" else session.pending_stderr
         pending.append(chunk)
@@ -135,13 +145,39 @@ class ProcessRegistry:
         session = self._running.get(session_id)
         if session is None:
             return None
-        idle_ms = max(0, int((time.time() - session.last_output_at) * 1000))
+        now = time.time()
+        idle_ms = max(0, int((now - session.last_output_at) * 1000))
+        velocity = self._compute_velocity(session, now)
+
+        # Formal idle threshold detection
+        formal_waiting = session.stdin_writable and idle_ms >= self._config.input_wait_idle_ms
+
+        # Early detection: consecutive empty-read equivalent via elapsed time + velocity
+        elapsed_since_output_ms = idle_ms
+        early_waiting = (
+            session.stdin_writable
+            and not velocity.is_active
+            and elapsed_since_output_ms >= self._config.input_wait_early_min_elapsed_ms
+        )
+
         return RunningSessionRuntime(
             stdin_writable=session.stdin_writable,
-            waiting_for_input=session.stdin_writable and idle_ms >= self._config.input_wait_idle_ms,
+            waiting_for_input=formal_waiting or early_waiting,
             idle_ms=idle_ms,
             last_output_at=session.last_output_at,
+            output_velocity=velocity,
         )
+
+    def _compute_velocity(self, session: ProcessSession, now: float) -> OutputVelocity:
+        window = self._config.output_velocity_window_s
+        cutoff = now - window
+        timestamps = [t for t in session._output_timestamps if t >= cutoff]
+        count = len(timestamps)
+        is_active = count >= self._config.output_velocity_active_threshold
+        # Prune old timestamps to avoid unbounded growth
+        if len(session._output_timestamps) > 100:
+            session._output_timestamps = timestamps
+        return OutputVelocity(chunks_in_window=count, is_active=is_active)
 
     def prune_finished(self) -> None:
         cutoff = time.time() - (self._config.finished_ttl_ms / 1000)
