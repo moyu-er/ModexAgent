@@ -18,6 +18,7 @@ class TerminalAction(StrEnum):
     SELECT = "select"
     HISTORY = "history"
     INTERRUPT = "interrupt"
+    CURRENT = "current"
 
 
 class TerminalTool(Tool):
@@ -62,6 +63,7 @@ class TerminalTool(Tool):
                         TerminalAction.SELECT,
                         TerminalAction.HISTORY,
                         TerminalAction.INTERRUPT,
+                        TerminalAction.CURRENT,
                     ],
                     "description": "Action to perform",
                 },
@@ -145,6 +147,20 @@ class TerminalTool(Tool):
                 return "Error: No default terminal is active."
             await session.send_interrupt()
             return f"Sent Ctrl+C to terminal '{session.name}'."
+
+        if action_enum == TerminalAction.CURRENT:
+            if name:
+                session = await self._manager.get_or_create(name)
+            else:
+                session = await self._manager.get_default_session()
+            if session is None:
+                return "Error: No terminal is active."
+            segment = await session.current_segment()
+            return (
+                f"Current terminal segment:\n"
+                f"{segment.text}\n"
+                f"empty_prompt={segment.is_empty_prompt}"
+            )
 
         return f"Error: Unhandled action '{action}'"
 
