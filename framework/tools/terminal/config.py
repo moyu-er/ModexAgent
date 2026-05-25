@@ -14,6 +14,7 @@ class TerminalRuntimeConfig:
     min_yield_ms: int = 10
     max_yield_ms: int = 120_000
     default_command_timeout_seconds: int = 60
+    long_running_timeout_seconds: int = 300
     command_tool_outer_timeout_seconds: int = 70
     input_wait_idle_ms: int = 10_000
     min_input_wait_idle_ms: int = 1_000

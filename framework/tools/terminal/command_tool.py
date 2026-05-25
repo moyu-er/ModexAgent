@@ -13,11 +13,7 @@ import time
 from typing import Any
 
 from framework.core.tool_manager import Tool
-from framework.tools.terminal.config import (
-    TerminalRuntimeConfig,
-    resolve_command_timeout,
-    resolve_yield_ms,
-)
+from framework.tools.terminal.config import TerminalRuntimeConfig
 from framework.tools.terminal.managers import TerminalManagerProtocol
 from framework.tools.terminal.process_registry import ProcessRegistry
 from framework.tools.terminal.pty_keys import CursorKeyMode
@@ -69,34 +65,13 @@ class CommandTool(Tool):
                     "type": "string",
                     "description": "The command to execute",
                 },
-                "terminal": {
-                    "type": "string",
-                    "description": "Named terminal tab (default: manager default)",
-                },
-                "workdir": {
-                    "type": "string",
-                    "description": "Working directory",
-                },
-                "env": {
-                    "type": "object",
-                    "additionalProperties": {"type": "string"},
-                    "description": "Environment overrides",
-                },
-                "timeout": {
-                    "type": "number",
-                    "description": "Hard timeout in seconds",
-                },
-                "yield_ms": {
-                    "type": "number",
-                    "description": "Foreground wait window in ms before returning running",
-                },
                 "background": {
                     "type": "boolean",
                     "description": "Return running immediately",
                 },
-                "pty": {
+                "long_running": {
                     "type": "boolean",
-                    "description": "Use PTY (always true for now)",
+                    "description": "Use extended timeout for long-running commands",
                 },
             },
             "required": ["command"],
@@ -105,30 +80,29 @@ class CommandTool(Tool):
     async def execute(
         self,
         command: str,
-        terminal: str | None = None,
-        workdir: str | None = None,
-        env: dict[str, str] | None = None,
-        timeout: int | None = None,
-        yield_ms: int | None = None,
         background: bool = False,
-        pty: bool = True,
+        long_running: bool = False,
         **_kwargs: object,
     ) -> str:
-        session = await self._manager.get_or_create(terminal, workdir=workdir)
+        session = await self._manager.get_default()
         await session.ensure_started()
 
         proc = self._registry.create(
             command=command,
             terminal=session.name,
-            cwd=workdir,
+            cwd=None,
             pid=None,
         )
 
         # Use readline-style ending (\r) — the shell translates to \n internally.
         await session.write(command + "\r")
 
-        inner_timeout = resolve_command_timeout(timeout, self._config)
-        yield_window_ms = 0 if background else resolve_yield_ms(yield_ms, self._config)
+        timeout_seconds = (
+            self._config.long_running_timeout_seconds
+            if long_running
+            else self._config.default_command_timeout_seconds
+        )
+        yield_window_ms = 0 if background else self._config.default_yield_ms
 
         start = time.monotonic()
         output_parts: list[str] = []
@@ -185,7 +159,7 @@ class CommandTool(Tool):
                     prompt_stable_since = None
 
             # 3. Timeout (kills process)
-            if elapsed_ms >= inner_timeout * 1000:
+            if elapsed_ms >= timeout_seconds * 1000:
                 await session.terminate()
                 self._registry.mark_exited(
                     proc.id,
@@ -197,7 +171,7 @@ class CommandTool(Tool):
                 )
                 duration_ms = int((time.monotonic() - start) * 1000)
                 return self._format_timed_out(
-                    proc.id, session.name, output_parts, duration_ms, inner_timeout
+                    proc.id, session.name, output_parts, duration_ms, timeout_seconds
                 )
 
             # 4. waiting_for_input hint

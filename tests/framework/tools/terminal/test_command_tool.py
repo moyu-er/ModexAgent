@@ -103,7 +103,7 @@ def make_tool(
 async def test_command_returns_completed_when_prompt_detected() -> None:
     """Solution A: prompt detection returns completed for fast commands."""
     tool, manager, _registry = make_tool()
-    session = await manager.get_or_create("default")
+    session = await manager.get_default()
     backend: FakeBackend = session._backend
 
     # Queue reads in preread buffer — released after command write
@@ -113,7 +113,7 @@ async def test_command_returns_completed_when_prompt_detected() -> None:
     ]
     backend._segment = TerminalSegment(text="$ ", cursor_line="$ ", is_empty_prompt=True)
 
-    result = await tool.execute(command="echo done", terminal="default", yield_ms=10000, timeout=10)
+    result = await tool.execute(command="echo done")
 
     assert "status: completed" in result
     assert "done" in result
@@ -124,7 +124,7 @@ async def test_command_background_returns_running_session_id() -> None:
     """background=True returns immediately with status running."""
     tool, _manager, registry = make_tool()
 
-    result = await tool.execute(command="npm run dev", terminal="web", background=True)
+    result = await tool.execute(command="npm run dev", background=True)
 
     running = registry.list_running()
     assert "status: running" in result
@@ -137,18 +137,19 @@ async def test_command_timeout_returns_timed_out_with_captured_output() -> None:
     """timeout fires before yield_ms, returns partial output."""
     cfg = TerminalRuntimeConfig(
         default_command_timeout_seconds=1,
+        long_running_timeout_seconds=5,
         command_tool_outer_timeout_seconds=3,
         prompt_stabilize_ms=0,
     )
     tool, manager, _registry = make_tool(cfg)
-    session = await manager.get_or_create("default")
+    session = await manager.get_default()
     backend: FakeBackend = session._backend
 
     # Backend stays alive but we give it one chunk of partial output
     backend._preread_buffer = [TerminalRead(stdout="partial\n", raw="partial\n")]
     backend._segment = TerminalSegment(text="...", cursor_line="...", is_empty_prompt=False)
 
-    result = await tool.execute(command="slow", terminal="default", timeout=1, yield_ms=120000)
+    result = await tool.execute(command="slow")
 
     assert "status: timed_out" in result
     assert "partial" in result
@@ -162,7 +163,7 @@ async def test_command_returns_running_with_waiting_for_input_hint() -> None:
         input_wait_early_min_elapsed_ms=50,
     )
     tool, manager, registry = make_tool(cfg)
-    session = await manager.get_or_create("default")
+    session = await manager.get_default()
     backend: FakeBackend = session._backend
 
     # Output then silence — alive stays True
@@ -170,7 +171,7 @@ async def test_command_returns_running_with_waiting_for_input_hint() -> None:
     backend._segment = TerminalSegment(text="password:", cursor_line="password:", is_empty_prompt=False)
     backend.alive = True
 
-    result = await tool.execute(command="ssh host", terminal="default", yield_ms=500, timeout=10)
+    result = await tool.execute(command="ssh host")
 
     assert "status: running" in result
 
@@ -179,13 +180,13 @@ async def test_command_returns_running_with_waiting_for_input_hint() -> None:
 async def test_command_format_completed_structure() -> None:
     """Verify the completed result has the right section headers."""
     tool, manager, _registry = make_tool()
-    session = await manager.get_or_create("default")
+    session = await manager.get_default()
     backend: FakeBackend = session._backend
 
     backend._preread_buffer = [TerminalRead(stdout="hello\n", raw="hello\n"), TerminalRead()]
     backend._segment = TerminalSegment(text="$ ", cursor_line="$ ", is_empty_prompt=True)
 
-    result = await tool.execute(command="echo hello", terminal="default", yield_ms=10000, timeout=10)
+    result = await tool.execute(command="echo hello")
 
     assert "[Command Result]" in result
     assert "session_id: ps-" in result
@@ -199,17 +200,18 @@ async def test_command_format_timed_out_structure() -> None:
     """Verify the timed-out result has the right fields."""
     cfg = TerminalRuntimeConfig(
         default_command_timeout_seconds=1,
+        long_running_timeout_seconds=5,
         command_tool_outer_timeout_seconds=3,
         prompt_stabilize_ms=0,
     )
     tool, manager, _registry = make_tool(cfg)
-    session = await manager.get_or_create("default")
+    session = await manager.get_default()
     backend: FakeBackend = session._backend
 
     backend._preread_buffer = [TerminalRead(stdout="build...\n", raw="build...\n")]
     backend._segment = TerminalSegment(text="...", cursor_line="...", is_empty_prompt=False)
 
-    result = await tool.execute(command="build", terminal="default", timeout=1, yield_ms=120000)
+    result = await tool.execute(command="build")
 
     assert "[Command Result]" in result
     assert "status: timed_out" in result
@@ -223,7 +225,7 @@ async def test_command_registry_tracks_process() -> None:
     """Registry has the process recorded after execute."""
     tool, _manager, registry = make_tool()
 
-    await tool.execute(command="echo hi", terminal="default", background=True)
+    await tool.execute(command="echo hi", background=True)
 
     running = registry.list_running()
     assert len(running) == 1
@@ -235,7 +237,7 @@ async def test_command_registry_tracks_process() -> None:
 async def test_command_process_exits_authoritative() -> None:
     """Process exit (is_alive=False) is the authoritative completion signal."""
     tool, manager, _registry = make_tool()
-    session = await manager.get_or_create("default")
+    session = await manager.get_default()
     backend: FakeBackend = session._backend
 
     # Backend dies immediately after one read
@@ -248,7 +250,7 @@ async def test_command_process_exits_authoritative() -> None:
 
     backend.is_alive = always_dead  # type: ignore[assignment]
 
-    result = await tool.execute(command="exit", terminal="default", yield_ms=10000, timeout=10)
+    result = await tool.execute(command="exit")
 
     assert "status: completed" in result
 
@@ -257,13 +259,13 @@ async def test_command_process_exits_authoritative() -> None:
 async def test_command_writes_newline_to_session() -> None:
     """Verify the command is written with \\r (readline ending)."""
     tool, manager, _registry = make_tool()
-    session = await manager.get_or_create("default")
+    session = await manager.get_default()
     backend: FakeBackend = session._backend
 
     backend.reads = [TerminalRead()]
     backend._segment = TerminalSegment(text="$ ", cursor_line="$ ", is_empty_prompt=True)
 
-    await tool.execute(command="ls", terminal="default", yield_ms=100, timeout=10)
+    await tool.execute(command="ls")
 
     # Should have written "ls\r"
     assert any("ls\r" in w for w in backend.writes)
@@ -278,4 +280,36 @@ async def test_command_tool_properties() -> None:
     assert "command" in tool.description.lower() or "terminal" in tool.description.lower()
     params = tool.parameters
     assert "command" in params["properties"]
+    assert "background" in params["properties"]
+    assert "long_running" in params["properties"]
     assert params["required"] == ["command"]
+    # Removed parameters must not be present
+    for removed in ("terminal", "workdir", "env", "timeout", "yield_ms", "pty"):
+        assert removed not in params["properties"]
+
+
+@pytest.mark.asyncio
+async def test_command_long_running_uses_extended_timeout() -> None:
+    """long_running=True uses the extended timeout from config."""
+    cfg = TerminalRuntimeConfig(
+        default_command_timeout_seconds=1,
+        long_running_timeout_seconds=3,
+        command_tool_outer_timeout_seconds=5,
+        prompt_stabilize_ms=0,
+        # Prevent input-wait detection from firing before the 3s timeout
+        input_wait_early_min_elapsed_ms=60_000,
+    )
+    tool, manager, _registry = make_tool(cfg)
+    session = await manager.get_default()
+    backend: FakeBackend = session._backend
+
+    # With default timeout (1s), this would time out quickly.
+    # With long_running (3s), it should also time out but report the longer timeout.
+    backend._preread_buffer = [TerminalRead(stdout="partial\n", raw="partial\n")]
+    backend._segment = TerminalSegment(text="...", cursor_line="...", is_empty_prompt=False)
+
+    result = await tool.execute(command="long-build", long_running=True)
+
+    assert "status: timed_out" in result
+    # The message should reference the long_running timeout (3s), not default (1s)
+    assert "Timed out after 3s" in result
