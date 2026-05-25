@@ -18,7 +18,10 @@ from framework.tools.terminal.config import (
     resolve_command_timeout,
     resolve_yield_ms,
 )
+from framework.tools.terminal.managers import TerminalManagerProtocol
 from framework.tools.terminal.process_registry import ProcessRegistry
+from framework.tools.terminal.pty_keys import CursorKeyMode
+from framework.tools.terminal.session import TerminalSession
 from framework.tools.terminal.types import ProcessStatus
 
 
@@ -33,7 +36,7 @@ class CommandTool(Tool):
 
     def __init__(
         self,
-        manager: Any,
+        manager: TerminalManagerProtocol,
         registry: ProcessRegistry,
         config: TerminalRuntimeConfig | None = None,
     ) -> None:
@@ -201,15 +204,15 @@ class CommandTool(Tool):
             runtime = self._registry.running_runtime(proc.id)
             if runtime is not None and runtime.waiting_for_input:
                 duration_ms = int((time.monotonic() - start) * 1000)
-                return self._format_running(
-                    proc.id, session.name, output_parts, duration_ms, runtime
+                return await self._format_running(
+                    proc.id, session, output_parts, duration_ms, runtime
                 )
 
             # 5. yield_ms elapsed
             if not background and elapsed_ms >= yield_window_ms:
                 duration_ms = int((time.monotonic() - start) * 1000)
-                return self._format_running(
-                    proc.id, session.name, output_parts, duration_ms, None
+                return await self._format_running(
+                    proc.id, session, output_parts, duration_ms, None
                 )
 
     # ------------------------------------------------------------------
@@ -235,10 +238,10 @@ class CommandTool(Tool):
             lines.extend(["", "[Output]", output])
         return "\n".join(lines)
 
-    def _format_running(
+    async def _format_running(
         self,
         session_id: str,
-        terminal: str,
+        terminal_session: TerminalSession,
         output_parts: list[str],
         duration_ms: int,
         runtime: Any | None,
@@ -248,7 +251,7 @@ class CommandTool(Tool):
             "[Command Result]",
             "status: running",
             f"session_id: {session_id}",
-            f"terminal: {terminal}",
+            f"terminal: {terminal_session.name}",
             f"duration_ms: {duration_ms}",
         ]
         if output:
@@ -266,6 +269,15 @@ class CommandTool(Tool):
                 state_lines.append("output_velocity: active")
                 state_lines.append("hint: Output is still being produced. Poll again in a few seconds.")
         lines.extend(state_lines)
+
+        # Screen snapshot for TUI programs
+        if terminal_session.cursor_key_mode == CursorKeyMode.APPLICATION:
+            segment = await terminal_session.current_segment()
+            if segment and segment.text.strip():
+                lines.extend(["", "[Screen]"])
+                lines.append(segment.text.rstrip())
+                lines.append("hint: TUI program detected. Use send_keys for interaction.")
+
         return "\n".join(lines)
 
     def _format_timed_out(

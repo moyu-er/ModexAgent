@@ -13,6 +13,8 @@ class FakeTerminal:
         self.interrupted = False
         self.killed = False
         self.name = "default"
+        self.cursor_key_mode = "unknown"
+        self._segment = None
 
     async def write(self, data: str) -> None:
         self.writes.append(data)
@@ -25,6 +27,9 @@ class FakeTerminal:
 
     async def is_alive(self) -> bool:
         return not self.killed
+
+    async def current_segment(self):
+        return self._segment
 
 
 class FakeManager:
