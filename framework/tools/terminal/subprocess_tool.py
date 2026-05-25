@@ -1,6 +1,8 @@
-"""Shell 执行工具.
+"""Subprocess-based shell execution tool.
 
-提供简洁的命令执行功能，支持动态描述生成和可配置的安全校验。
+Provides stateless shell command execution via asyncio subprocess.
+Each command runs in a fresh process -- no terminal state is preserved.
+Used by subagents for simple command execution.
 """
 
 from __future__ import annotations
@@ -10,10 +12,9 @@ import os
 import platform
 import re
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from ...core.tool_manager import Tool
-
+from framework.core.tool_manager import Tool
 from framework.tools.terminal.types import (
     Platform,
     ShellFamily,
@@ -22,17 +23,9 @@ from framework.tools.terminal.types import (
     detect_platform_shell,
 )
 
-if TYPE_CHECKING:
-    from framework.tools.terminal.manager import TerminalManager
-
 
 class ShellExecutor(ABC):
-    """Abstract strategy for executing shell commands.
-
-    EXTENSION: Phase 2+ can add:
-      - RemoteExecutor (asyncssh/paramiko)
-      - DockerExecutor (docker exec)
-    """
+    """Abstract strategy for executing shell commands."""
 
     @abstractmethod
     async def execute(self, command: str, working_dir: str | None = None, timeout: int = 60) -> str:
@@ -91,73 +84,13 @@ class SubprocessExecutor(ShellExecutor):
         return self._shell_info
 
 
-class TerminalSessionExecutor(ShellExecutor):
-    """Stateful executor: commands run in a persistent terminal session.
+class SubprocessTool(Tool):
+    """Execute shell commands in a fresh subprocess (stateless).
 
-    EXTENSION: Phase 2+ can add:
-      - RemoteExecutor: asyncssh/paramiko remote execution
-      - DockerExecutor: docker exec
+    For subagent use -- each command runs in a new process, no terminal state.
     """
 
-    def __init__(
-        self,
-        terminal_manager: TerminalManager,
-        default_terminal: str | None = None,
-    ) -> None:
-        self._tm = terminal_manager
-        self._default_terminal = default_terminal
-
-    _INTERRUPT_COMMANDS: frozenset[str] = frozenset({"^c", "\x03", "ctrl+c", "ctrl-c"})
-
-    async def execute(self, command: str, working_dir: str | None = None, timeout: int = 60) -> str:
-        session = await self._tm.get_default_session()
-        if session is None:
-            # Create a fresh default session rather than silently switching
-            # to an unrelated existing tab.
-            name = self._default_terminal or "default"
-            session = await self._tm.get_or_create(name, cwd=working_dir)
-        elif working_dir is not None:
-            quoted = f'"{working_dir}"' if " " in working_dir else working_dir
-            await session.execute(f"cd {quoted}", timeout=10)
-
-        # Allow the agent to interrupt a timed-out command via the shell tool
-        # itself (e.g. shell.execute("^C")) without switching to the terminal tool.
-        if command.strip().lower() in self._INTERRUPT_COMMANDS:
-            await session.send_interrupt()
-            return "Sent Ctrl+C to interrupt the running command."
-
-        return await session.execute(command, timeout=timeout)
-
-    def shell_info(self) -> ShellInfo:
-        # shell_info is sync; look up the default tab name directly without
-        # awaiting get_default_session().  Metadata is valid even if the
-        # session happens to be dead.
-        if self._tm._default_terminal and self._tm._default_terminal in self._tm._sessions:
-            session = self._tm._sessions[self._tm._default_terminal]
-            info = session.shell_info
-            return ShellInfo(
-                family=info.family,
-                path=info.path,
-                platform=info.platform,
-            )
-        info = detect_platform_shell()
-        if info is not None:
-            return info
-        # Fallback — should never happen in practice because
-        # TerminalSessionExecutor is only created when a shell is available.
-        return ShellInfo(
-            family=ShellFamily.BASH, path="bash", platform=Platform.LINUX,
-        )
-
-
-class ShellTool(Tool):
-    """执行 shell 命令的工具.
-
-    支持动态描述生成，根据操作系统提供相关提示。
-    安全校验可配置，默认启用。
-    """
-
-    # Windows 危险命令模式
+    # Windows dangerous command patterns
     WINDOWS_DENY_PATTERNS = [
         r"\bdel\s+/[fq]\b",              # del /f, del /q
         r"\brmdir\s+/s\b",               # rmdir /s
@@ -168,13 +101,13 @@ class ShellTool(Tool):
         r"\bpoweroff\b",                 # poweroff
     ]
 
-    # POSIX (Linux/macOS) 危险命令模式
+    # POSIX (Linux/macOS) dangerous command patterns
     POSIX_DENY_PATTERNS = [
         r"\brm\s+-[rf]{1,2}\b",          # rm -r, rm -rf, rm -fr
         r"\bmkfs\.",                     # mkfs
         r"\bdd\s+if=",                   # dd
-        r">\s*/dev/sd",                  # 写入磁盘
-        r"\b(shutdown|reboot|poweroff)\b",  # 系统电源
+        r">\s*/dev/sd",                  # write to disk
+        r"\b(shutdown|reboot|poweroff)\b",  # system power
         r":\(\)\s*\{.*\};\s*:",          # fork bomb
         r"\brm\s+-rf\s+/\b",             # rm -rf /
         r"\bdd\s+if=.*of=/dev/[sh]d",    # dd to disk
@@ -188,7 +121,7 @@ class ShellTool(Tool):
         deny_patterns: list[str] | None = None,
         allow_patterns: list[str] | None = None,
     ) -> None:
-        """Initialize Shell tool.
+        """Initialize SubprocessTool.
 
         Args:
             executor: Shell execution strategy (defaults to SubprocessExecutor).
@@ -248,23 +181,10 @@ class ShellTool(Tool):
         if family_desc:
             parts.append(family_desc)
 
-        is_stateful = isinstance(self._executor, TerminalSessionExecutor)
-        if is_stateful:
-            parts.append(
-                "This is a stateful session: cd, environment variables, "
-                "and aliases persist across commands. "
-                "The terminal session is created automatically on first use — "
-                "do NOT call any other tool to create a terminal before running commands."
-            )
-            parts.append(
-                "Commands run in a visible terminal window — "
-                "you can watch execution and the user can intervene directly."
-            )
-        else:
-            parts.append(
-                "Each command runs in a fresh process: cd and environment "
-                "changes do NOT persist."
-            )
+        parts.append(
+            "Each command runs in a fresh process: cd and environment "
+            "changes do NOT persist."
+        )
 
         if self.enable_safety_guard:
             parts.append("Safety guard is enabled.")
@@ -296,16 +216,16 @@ class ShellTool(Tool):
         return await self._executor.execute(command, working_dir, timeout=self.timeout)
 
     def _guard_command(self, command: str) -> str | None:
-        """安全检查，防止危险命令."""
+        """Safety check to prevent dangerous commands."""
         cmd = command.strip()
         lower = cmd.lower()
 
-        # 检查禁止模式
+        # Check deny patterns
         for pattern in self.deny_patterns:
             if re.search(pattern, lower):
                 return f"Error: Command blocked by safety guard (dangerous pattern: {pattern})"
 
-        # 检查允许模式
+        # Check allow patterns
         if self.allow_patterns and not any(re.search(p, lower) for p in self.allow_patterns):
             return "Error: Command blocked by safety guard (not in allowlist)"
 

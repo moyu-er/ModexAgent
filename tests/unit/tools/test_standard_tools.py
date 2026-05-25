@@ -1,7 +1,7 @@
 """Unit tests for standard tools: file tools and shell tool.
 
 TDD: verify ReadFileTool, WriteFileTool, EditFileTool, ListDirTool,
-and ShellTool behaviors including fuzzy matching, replace_all, and safety guards.
+and CommandTool behaviors including fuzzy matching, replace_all, and safety guards.
 Permission checks are delegated to the interceptor AOP layer.
 """
 
@@ -21,7 +21,7 @@ from framework.tools.standard.file_tool import (
     _normalize_quotes,
     _preserve_quote_style,
 )
-from framework.tools.standard.shell_tool import ShellTool
+from framework.tools.terminal import SubprocessTool
 
 
 @pytest.fixture
@@ -393,13 +393,13 @@ class TestListDirTool:
 
 
 # ---------------------------------------------------------------------------
-# ShellTool
+# SubprocessTool
 # ---------------------------------------------------------------------------
 
-class TestShellTool:
+class TestSubprocessTool:
     @pytest.fixture
     def safe_shell(self):
-        return ShellTool(enable_safety_guard=True)
+        return SubprocessTool(enable_safety_guard=True)
 
     @pytest.mark.asyncio
     async def test_shell_echo(self, safe_shell):
@@ -408,14 +408,14 @@ class TestShellTool:
 
     @pytest.mark.asyncio
     async def test_shell_with_working_dir(self, tmp_workspace):
-        shell = ShellTool(enable_safety_guard=False)
+        shell = SubprocessTool(enable_safety_guard=False)
         result = await shell.execute(command="pwd" if os.name != "nt" else "cd", working_dir=str(tmp_workspace))
         # On Windows `cd` returns current dir; on Unix `pwd` returns it
         assert str(tmp_workspace.name) in result or "STDERR" not in result
 
     @pytest.mark.asyncio
     async def test_shell_timeout(self):
-        shell = ShellTool(timeout=1, enable_safety_guard=False)
+        shell = SubprocessTool(timeout=1, enable_safety_guard=False)
         # Use Python sleep for cross-platform timeout test
         result = await shell.execute(command='python -c "import time; time.sleep(5)"')
         assert "timed out" in result.lower()
@@ -440,14 +440,14 @@ class TestShellTool:
 
     @pytest.mark.asyncio
     async def test_shell_disabled_safety_guard(self):
-        shell = ShellTool(enable_safety_guard=False)
+        shell = SubprocessTool(enable_safety_guard=False)
         # Even dangerous-looking command should be allowed when guard is off
         result = await shell.execute(command="echo 'rm -rf /'")
         assert "rm -rf /" in result
 
     @pytest.mark.asyncio
     async def test_shell_allowlist_blocks_unmatched(self):
-        shell = ShellTool(
+        shell = SubprocessTool(
             enable_safety_guard=True,
             allow_patterns=[r"^echo\b"],
         )

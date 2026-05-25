@@ -102,8 +102,8 @@ class TmuxPtyBackend(TerminalBackend):
                 if self._shell:
                     name = self._shell.lower()
                     if any(name.endswith(s) for s in ("bash", "zsh", "sh")):
-                        await self.write("export GIT_PAGER=cat PAGER=cat LESS=FRX\n")
-                        await asyncio.sleep(0.3)
+                        # TODEL await self.write("export GIT_PAGER=cat PAGER=cat LESS=FRX\n")
+                        await asyncio.sleep(0.2)
                         for _ in range(5):
                             await self.read(timeout=0.2, max_size=65536)
                 return

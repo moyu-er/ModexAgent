@@ -8,6 +8,7 @@ stream.
 
 from __future__ import annotations
 
+import os
 import socket
 import sys
 import threading
@@ -146,18 +147,22 @@ def _stdin_to_pty(proc: WritablePty, stdin: TextIO) -> None:
             time.sleep(0.01)
 
 
-def _spawn_pty(shell: str) -> VisiblePtyProcess:
+def _spawn_pty(shell: str, cwd: str | None = None, env: dict[str, str] | None = None) -> VisiblePtyProcess:
     """Spawn the visible host PTY using pywinpty's WinPTY backend."""
     import winpty
 
-    return winpty.PtyProcess.spawn(
-        shell, dimensions=(30, 120), backend=winpty.Backend.WinPTY
-    )
+    kwargs: dict = {"dimensions": (30, 120), "backend": winpty.Backend.WinPTY}
+    if cwd:
+        kwargs["cwd"] = cwd
+    if env:
+        kwargs["env"] = env
+    return winpty.PtyProcess.spawn(shell, **kwargs)
 
 
 def main() -> None:
     shell = sys.argv[1] if len(sys.argv) > 1 else "cmd.exe"
     port = int(sys.argv[2]) if len(sys.argv) > 2 else 0
+    cwd = sys.argv[3] if len(sys.argv) > 3 else None
 
     _enable_vt_mode()
     _ignore_ctrl_c()
@@ -165,7 +170,7 @@ def main() -> None:
     # Use a generous default size so bash readline doesn't wrap prematurely
     # and corrupt the cursor position.  The real console window may be resized
     # by the user; pywinpty handles the mismatch gracefully.
-    proc = _spawn_pty(shell)
+    proc = _spawn_pty(shell, cwd=cwd, env=dict(os.environ))
 
     # Connect back to the parent process
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

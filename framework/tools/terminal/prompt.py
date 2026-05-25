@@ -112,6 +112,8 @@ async def drain_windows_startup(
     read_fn: Callable[[float, int], Awaitable[str]],
     write_fn: Callable[[str], Awaitable[None]],
     is_alive_fn: Callable[[], Awaitable[bool]],
+    *,
+    uses_readline: bool = True,
 ) -> None:
     """Block until terminal startup is fully complete, then clear the command line.
 
@@ -172,20 +174,22 @@ async def drain_windows_startup(
     # after the prompt but before we declare startup done.
     await _drain_until_quiet(max_empty_reads=3, read_timeout=0.3)
 
-    # Phase 3: clear anything that may be sitting on the command line
-    # without interrupting a foreground process.
-    await write_fn("\x01\x0b")
-    await asyncio.sleep(0.3)
+    if uses_readline:
+        # Phase 3: clear anything that may be sitting on the command line
+        # without interrupting a foreground process.  Readline-only: \x01\x0b
+        # is beginning-of-line + kill-line in bash/zsh but garbage in cmd.exe.
+        await write_fn("\x01\x0b")
+        await asyncio.sleep(0.3)
 
-    # Phase 4: consume any trailing sequences until quiet again
-    await _drain_until_quiet(max_empty_reads=3, read_timeout=0.3)
+        # Phase 4: consume any trailing sequences until quiet again
+        await _drain_until_quiet(max_empty_reads=3, read_timeout=0.3)
 
-    # Phase 5: handshake - send empty command to confirm bash is truly ready.
-    # After line clearing, bash may still have delayed bracketed-paste sequences
-    # or readline state transitions pending.  An empty command forces bash to
-    # process anything in its input buffer and emit a fresh prompt.  If there
-    # is still trailing pollution it gets consumed here, not mixed with the
-    # first real command.
-    await write_fn("\n")
+        # Phase 5: handshake - send empty command to confirm bash is truly ready.
+        # After line clearing, bash may still have delayed bracketed-paste sequences
+        # or readline state transitions pending.  An empty command forces bash to
+        # process anything in its input buffer and emit a fresh prompt.  If there
+        # is still trailing pollution it gets consumed here, not mixed with the
+        # first real command.
+        await write_fn("\n")
     await asyncio.sleep(0.2)
     await _drain_until_quiet(max_empty_reads=3, read_timeout=0.3)

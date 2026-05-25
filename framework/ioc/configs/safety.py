@@ -17,9 +17,9 @@ class TurnSafetyConfig(BaseModel):
 
     agent_run_timeout: float = 180.0
     hook_timeout: float = 10.0
-    tool_timeout: float = 180.0  # Must exceed ShellTool.timeout (60s) so outer
+    tool_timeout: float = 180.0  # Must exceed CommandTool.timeout (60s) so outer
                                   # interceptors never cancel the coroutine before
-                                  # ShellTool's own timeout handling can return
+                                  # CommandTool's own timeout handling can return
                                   # partial output.
 
 

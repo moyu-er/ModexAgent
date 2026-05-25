@@ -23,14 +23,23 @@ class FakeManager:
     async def get_default_session(self):
         return FakeSession()
 
-    async def get_or_create(self, name=None, workdir=None):
+    def get(self, name: str):
         return FakeSession()
+
+    async def get_or_create(self, name=None, cwd=None):
+        return FakeSession()
+
+    async def close(self, name: str) -> bool:
+        return True
 
     async def list_sessions(self):
         return []
 
     def list_names(self):
         return ["default"]
+
+    async def select_default(self, name: str) -> None:
+        pass
 
 
 @pytest.mark.asyncio

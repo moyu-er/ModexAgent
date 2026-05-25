@@ -13,7 +13,10 @@ class CursorKeyMode(StrEnum):
 
 class ProcessAction(StrEnum):
     LIST = "list"
-    POLL = "poll"
+    # POLL removed: poll drains pending output but cannot detect command completion
+    # reliably in PTY mode. After write+submit, use `terminal current` to see the
+    # terminal screen state instead.
+    # POLL = "poll"
     LOG = "log"
     WRITE = "write"
     SUBMIT = "submit"

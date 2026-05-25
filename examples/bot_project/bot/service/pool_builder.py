@@ -11,6 +11,7 @@ from framework.core.tool_manager import InMemoryToolManager, ToolManagerConfig
 from framework.hook import HookErrorPolicy, HookRunner, HookSpec
 from framework.hook.builtin import InboxFlushHook, SubagentAutoSendHook
 from framework.hook.notification import AgentNotificationService, MaxIterationNotifyHook
+from framework.ioc.configs.agent import AgentConfig
 from framework.ioc.configs.pool import PoolConfig
 from framework.ioc.factories.descriptors import build_subagent_descriptor
 from framework.ioc.factories.governance import create_governance, create_subagent_governance
@@ -48,6 +49,7 @@ from framework.tools.standard import (
     WriteFileTool,
 )
 from framework.tools.terminal import SubprocessTool, SubprocessExecutor
+from framework.tools.terminal.managers import TerminalManagerBase
 
 from .builders import _make_file_tools, _mcp_tools_for_agent, resolve_system_prompt
 from .pool_instance import PoolInstance
@@ -86,7 +88,11 @@ async def create_pool(
     # 2. Per-pool TerminalManager (isolated shell sessions)
     terminal_manager = _create_terminal_manager(pool_cfg, project_dir)
     if terminal_manager is not None:
-        logger.info("Pool '%s': TerminalManager created", pool_name)
+        logger.info("Pool '%s': TerminalManager created (%s)", pool_name, terminal_manager.visibility.value)
+        # Pre-start the default terminal session so visible windows appear immediately
+        session = await terminal_manager.get_default()
+        await session.ensure_started()
+        logger.info("Pool '%s': default terminal session started (%s)", pool_name, session.shell_info.name)
 
     # 3. Per-pool MemorySystem
     memory_dir = project_dir / "data" / "memory" / pool_name
@@ -328,28 +334,28 @@ async def create_pool(
 # ── internal helpers ──
 
 def _create_terminal_manager(pool_cfg: PoolConfig, project_dir: Path) -> Any | None:
+    """Create terminal manager with degradation chain.
+
+    Priority: visible terminal > hidden terminal > None (subprocess fallback).
+    """
     use_terminal = any(
         getattr(a, "use_terminal", False) for a in pool_cfg.agents
     )
     if not use_terminal:
         return None
-    from framework.tools.terminal.types import ShellFamily, detect_platform_shell
-    from framework.tools.terminal.manager import TerminalManager
+    from framework.tools.terminal.managers import create_terminal_manager
 
-    shell_info = detect_platform_shell()
-    if shell_info is None or shell_info.family is not ShellFamily.BASH:
-        return None
-    terminal_cfg = pool_cfg.terminal
-    return TerminalManager(
-        storage_dir=project_dir / terminal_cfg.storage_dir,
-        max_terminals=terminal_cfg.max_terminals,
-    )
+    # Try visible terminal first; fall back to hidden
+    try:
+        return create_terminal_manager(manager_kind="windows_visible")
+    except Exception:
+        return create_terminal_manager(manager_kind="windows_hidden")
 
 
 async def _build_pool_tool_manager(
     pool_cfg: PoolConfig,
-    main_cfg: Any,
-    terminal_manager: Any | None,
+    main_cfg: AgentConfig,
+    terminal_manager: TerminalManagerBase | None,
     project_dir: Path,
     output_adapter: OutputAdapter,
 ) -> tuple[InMemoryToolManager, Any | None]:
@@ -370,9 +376,10 @@ async def _build_pool_tool_manager(
         tm.register(CommandTool(manager=terminal_manager, registry=registry, config=cfg))
         tm.register(ProcessTool(registry=registry, manager=terminal_manager))
         tm.register(TerminalTool(terminal_manager))
-
-    shell_tool = SubprocessTool(executor=SubprocessExecutor(), timeout=60)
-    tm.register(shell_tool)
+    else:
+        # No terminal backend — fall back to stateless subprocess for main agent
+        shell_tool = SubprocessTool(executor=SubprocessExecutor(), timeout=60)
+        tm.register(shell_tool)
 
     for tool in [SearchFilesTool(), FindFilesTool()]:
         tm.register(tool)

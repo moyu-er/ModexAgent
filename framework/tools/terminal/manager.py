@@ -27,12 +27,14 @@ def _family_from_name(name: str) -> ShellFamily:
     return mapping.get(name.lower(), ShellFamily.SH)
 
 
-class TerminalManager:
+from framework.tools.terminal.managers import TerminalManagerBase
+
+class TerminalManager(TerminalManagerBase):
     """Manages named terminal sessions with LRU eviction and JSON persistence.
 
     Responsibilities:
     - Named session collection (name -> TerminalSession)
-    - Default terminal for ShellTool
+    - Default terminal for CommandTool
     - LRU eviction when max_terminals exceeded
     - Lazy alive detection (check only on use)
     - Persist/restore session metadata and history
@@ -138,7 +140,7 @@ class TerminalManager:
         return list(self._sessions.keys())
 
     async def select_default(self, name: str) -> None:
-        """Select the default terminal for ShellTool."""
+        """Select the default terminal for CommandTool."""
         session = self._sessions.get(name)
         if session is None:
             raise ValueError(f"Terminal '{name}' does not exist")
@@ -168,6 +170,16 @@ class TerminalManager:
         ):
             self._default_terminal = None
             return None
+        return session
+
+    async def get_default(self) -> TerminalSession:
+        """Return the default session, creating one if needed.
+
+        Compatible with TerminalManagerProtocol for CommandTool/ProcessTool.
+        """
+        session = await self.get_default_session()
+        if session is None:
+            return await self.get_or_create("default")
         return session
 
     def get_history(self, name: str) -> list[CommandRecord]:

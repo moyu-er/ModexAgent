@@ -32,28 +32,31 @@ class FakeTerminal:
     async def current_segment(self):
         return self._segment
 
+    async def poll_once(self, timeout: float = 0.1, max_size: int = 65536):
+        from framework.tools.terminal.results import TerminalRead
+        return TerminalRead()
+
 
 class FakeManager:
     def __init__(self, terminal: FakeTerminal) -> None:
         self.terminal = terminal
 
-    async def get_default_session(self):
+    async def get_default(self):
         return self.terminal
 
 
 @pytest.mark.asyncio
-async def test_process_poll_drains_pending_once() -> None:
+async def test_process_log_reads_from_registry() -> None:
+    """log reads aggregated output from running or finished session."""
     registry = ProcessRegistry()
     session = registry.create(command="server", terminal="default", cwd=None, pid=1)
     registry.append_output(session.id, "stdout", "ready\n")
     terminal = FakeTerminal()
     tool = ProcessTool(registry=registry, manager=FakeManager(terminal))
 
-    first = await tool.execute(action="poll")
-    second = await tool.execute(action="poll")
+    text = await tool.execute(action="log")
 
-    assert "ready" in first
-    assert "(no new output)" in second
+    assert "ready" in text
 
 
 
@@ -157,17 +160,17 @@ async def test_process_clear_removes_finished() -> None:
 
 
 @pytest.mark.asyncio
-async def test_process_poll_finished_session() -> None:
+async def test_process_log_finished_session() -> None:
+    """log reads finished session output."""
     registry = ProcessRegistry()
     session = registry.create(command="echo hi", terminal="default", cwd=None, pid=30)
     registry.append_output(session.id, "stdout", "hello\n")
     registry.mark_exited(session.id, exit_code=0, exit_signal=None, status=ProcessStatus.COMPLETED)
     tool = ProcessTool(registry=registry, manager=FakeManager(FakeTerminal()))
 
-    text = await tool.execute(action="poll")
+    text = await tool.execute(action="log")
 
     assert "hello" in text
-    assert "exited" in text
 
 
 @pytest.mark.asyncio
@@ -201,13 +204,13 @@ async def test_process_error_no_session() -> None:
     registry = ProcessRegistry()
     tool = ProcessTool(registry=registry, manager=FakeManager(FakeTerminal()))
 
-    text = await tool.execute(action="poll")
+    text = await tool.execute(action="log")
 
     assert "[Error]" in text
 
 
 @pytest.mark.asyncio
-async def test_process_poll_with_tui_screen_snapshot() -> None:
+async def test_process_log_with_tui_context() -> None:
     registry = ProcessRegistry()
     session = registry.create(command="vim file", terminal="default", cwd=None, pid=50)
     registry.append_output(session.id, "stdout", "opened\n")
@@ -220,8 +223,6 @@ async def test_process_poll_with_tui_screen_snapshot() -> None:
     terminal._segment = FakeSegment()
 
     tool = ProcessTool(registry=registry, manager=FakeManager(terminal))
-    text = await tool.execute(action="poll")
+    text = await tool.execute(action="log")
 
     assert "opened" in text
-    assert "[Screen]" in text
-    assert "file contents here" in text

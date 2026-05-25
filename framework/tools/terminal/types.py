@@ -105,11 +105,15 @@ def detect_platform_shell() -> ShellInfo | None:
     plat = _parse_platform(_platform.system().lower())
 
     if plat is Platform.WINDOWS:
-        # On Windows we use the bash inside the Windows directory (WSL)
-        # rather than Git Bash or MSYS2. Verify the which() result points
-        # into a Windows path; otherwise fall back to cmd.exe.
+        # Prefer WSL bash (any bash under a path containing "windows")
+        # over Git Bash / MSYS2.
         bash_path = shutil.which("bash")
-        if bash_path and "windows" in bash_path.lower():
+        if bash_path and "windows" not in bash_path.lower():
+            # Try the WSL default location
+            system32_bash = Path(r"C:\Windows\System32\bash.exe")
+            if system32_bash.is_file():
+                bash_path = str(system32_bash)
+        if bash_path and bash_path.strip().lower().startswith("c") and "windows" in bash_path.lower():
             try:
                 result = subprocess.run(
                     [bash_path, "--version"],

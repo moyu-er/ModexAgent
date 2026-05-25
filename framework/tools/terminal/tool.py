@@ -6,7 +6,7 @@ from enum import StrEnum
 from typing import Any
 
 from framework.core.tool_manager import Tool
-from framework.tools.terminal.manager import TerminalManager
+from framework.tools.terminal.managers import TerminalManagerBase
 
 
 class TerminalAction(StrEnum):
@@ -30,7 +30,7 @@ class TerminalTool(Tool):
         cwd: Initial working directory (only for open).
     """
 
-    def __init__(self, manager: TerminalManager):
+    def __init__(self, manager: TerminalManagerBase):
         super().__init__()
         self._manager = manager
 
@@ -41,12 +41,16 @@ class TerminalTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Manage terminal tabs/sessions. "
-            "Actions: open (create a new tab), close (terminate a tab), list (show all tabs), "
-            "select (switch default tab), history (show recent output of a tab), "
-            "interrupt (send Ctrl+C to the current default tab). "
-            "IMPORTANT: This tool does NOT execute commands — use the shell tool for that. "
-            "You generally do NOT need to open a terminal before using the shell tool."
+            "Manage persistent terminal tabs. Actions:\n"
+            "  open     -- create a named tab (optional: cwd for initial directory)\n"
+            "  close    -- terminate a tab\n"
+            "  list     -- show all tabs with status\n"
+            "  select   -- switch which tab 'command' and 'process' tools target\n"
+            "  current  -- show what is visible in the active tab\n"
+            "  interrupt-- send Ctrl+C to the current tab\n\n"
+            "Each tab has its own independent shell session (separate cd, env, etc.). "
+            "The default tab is created automatically; you only need 'open' to create "
+            "additional named tabs for parallel work. Use 'select' to switch between them."
         )
 
     @property
@@ -65,15 +69,15 @@ class TerminalTool(Tool):
                         TerminalAction.INTERRUPT,
                         TerminalAction.CURRENT,
                     ],
-                    "description": "Action to perform",
+                    "description": "open | close | list | select | history | interrupt | current",
                 },
                 "name": {
                     "type": "string",
-                    "description": "Terminal name (optional for open/interrupt, required for close/select/history)",
+                    "description": "Tab name. Required for close/select. Optional for open (default name if omitted).",
                 },
                 "cwd": {
                     "type": "string",
-                    "description": "Initial working directory (only for open)",
+                    "description": "Initial working directory for new tab (open action only)",
                 },
             },
             "required": ["action"],
@@ -154,13 +158,13 @@ class TerminalTool(Tool):
             else:
                 session = await self._manager.get_default_session()
             if session is None:
-                return "Error: No terminal is active."
+                return "No terminal is active. Use terminal open to create one."
+            from framework.tools.terminal.prompt import sanitize_terminal_output
             segment = await session.current_segment()
-            return (
-                f"Current terminal segment:\n"
-                f"{segment.text}\n"
-                f"empty_prompt={segment.is_empty_prompt}"
-            )
+            cleaned = sanitize_terminal_output(segment.text).rstrip()
+            if not cleaned.strip():
+                return "(terminal is idle — no output yet)"
+            return cleaned
 
         return f"Error: Unhandled action '{action}'"
 

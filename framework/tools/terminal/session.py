@@ -106,11 +106,8 @@ class TerminalSession:
 
     @property
     def visible(self) -> bool:
-        """Whether this session is backed by a visible OS terminal window.
-
-        All backends are visible after the invisible backend deletion.
-        """
-        return True
+        """Whether this session is backed by a visible OS terminal window."""
+        return self._backend.visibility == "visible"
 
     @property
     def window_title(self) -> str | None:
@@ -476,6 +473,10 @@ class TerminalSession:
     async def interrupt(self) -> None:
         """Send Ctrl+C to the terminal."""
         await self._backend.interrupt()
+
+    async def is_alive(self) -> bool:
+        """Return True if the backend is alive."""
+        return await self._backend.is_alive()
 
     async def terminate(self) -> None:
         """Terminate the terminal session."""

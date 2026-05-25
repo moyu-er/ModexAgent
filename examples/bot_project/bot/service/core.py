@@ -274,14 +274,13 @@ class BotService(AgentBuilderMixin):
         )
         self.tool_manager = InMemoryToolManager(config=tm_config)
 
-        # 3a. Create TerminalManager — only if bash is available.
-        # Windows without bash falls back to SubprocessExecutor (stateless).
+        # 3a. Create TerminalManager — degrade to subprocess only when no shell at all.
         main_cfg = self._main_agent_cfg
         if main_cfg and main_cfg.use_terminal:
-            from framework.tools.terminal.types import detect_platform_shell, ShellFamily
+            from framework.tools.terminal.types import detect_platform_shell
 
             shell_info = detect_platform_shell()
-            if shell_info is not None and shell_info.family is ShellFamily.BASH:
+            if shell_info is not None:
                 try:
                     from framework.tools.terminal import TerminalManager
 
@@ -289,13 +288,17 @@ class BotService(AgentBuilderMixin):
                         max_terminals=getattr(self._app_config, 'terminal', {}).get('max_terminals', 5),
                         shell_info=shell_info,
                     )
-                    print(f"[OK] TerminalManager initialized (bash: {shell_info.path})")
+                    print(f"[OK] TerminalManager initialized ({shell_info.family.value}: {shell_info.path})")
+                    # Pre-start default terminal so visible window appears immediately
+                    session = await self.terminal_manager.get_default()
+                    await session.ensure_started()
+                    print(f"[OK] Default terminal session started ({session.shell_info.name})")
                 except Exception as e:
                     logger.warning("TerminalManager initialization failed: %s", e)
                     self.terminal_manager = None
             else:
                 self.terminal_manager = None
-                print("[INFO] No bash found — TerminalTool disabled, ShellTool uses SubprocessExecutor")
+                print("[INFO] No shell found — terminal tools disabled, subprocess only")
         else:
             self.terminal_manager = None
             print("[INFO] TerminalManager disabled (use_terminal=false)")

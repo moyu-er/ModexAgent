@@ -14,7 +14,7 @@ import sys
 
 from framework.tools.terminal.prompt import drain_windows_startup
 from framework.tools.terminal.results import TerminalRead, TerminalSegment
-from framework.tools.terminal.types import Platform, TerminalVisibility
+from framework.tools.terminal.types import Platform, TerminalVisibility, _family_from_path
 
 from .base import TerminalBackend
 
@@ -96,7 +96,8 @@ class WindowsHiddenPtyBackend(TerminalBackend):
             return TerminalRead(stdout="", raw="")
 
     async def current_segment(self) -> TerminalSegment:
-        return TerminalSegment(text=self._output_buffer)
+        from framework.tools.terminal.backends.visible_windows import extract_current_segment_from_buffer
+        return extract_current_segment_from_buffer(self._output_buffer)
 
     async def interrupt(self) -> None:
         if self._proc is None:
@@ -130,15 +131,21 @@ class WindowsHiddenPtyBackend(TerminalBackend):
                 pass
             self._proc = None
 
+    def _uses_readline(self) -> bool:
+        if not self._shell:
+            return True  # safe default for unknown shell
+        return _family_from_path(self._shell).uses_readline()
+
     async def drain_startup(self) -> None:
-        """Consume startup output then suppress pagers for readline shells."""
+        """Consume startup output; clear readline line only for bash/zsh."""
         await drain_windows_startup(
             read_fn=self.read,
             write_fn=self.write,
             is_alive_fn=self.is_alive,
+            uses_readline=self._uses_readline(),
         )
 
     async def clear_input_line(self) -> None:
         """Clear current input line for readline shells; no-op for cmd."""
-        if self._shell and "bash" in self._shell.lower():
+        if self._uses_readline():
             await self.write("\x01\x0b")

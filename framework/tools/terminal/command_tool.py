@@ -1,38 +1,31 @@
-"""CommandTool — execute commands in named terminal sessions.
+"""CommandTool — execute commands in terminal sessions.
 
-Replaces ShellTool with a structured result format and three-tier
-completion detection:
+Three-tier completion detection:
   1. Process exit (authoritative)
   2. Prompt detection (Solution A — auxiliary completion for persistent shells)
-  3. Timeout (kills process)
+  3. Timeout (kills process, returns partial output)
 """
 
 from __future__ import annotations
 
 import time
-from typing import Any
 
 from framework.core.tool_manager import Tool
 from framework.tools.terminal.config import TerminalRuntimeConfig
-from framework.tools.terminal.managers import TerminalManagerProtocol
-from framework.tools.terminal.process_registry import ProcessRegistry
+from framework.tools.terminal.managers import TerminalManagerBase
+from framework.tools.terminal.process_registry import ProcessRegistry, RunningSessionRuntime
+from framework.tools.terminal.prompt import sanitize_terminal_output
 from framework.tools.terminal.pty_keys import CursorKeyMode
 from framework.tools.terminal.session import TerminalSession
 from framework.tools.terminal.types import ProcessStatus
 
 
 class CommandTool(Tool):
-    """Start a command in a named terminal session.
-
-    If the command finishes before the yield window, returns
-    status=completed with output.  If still running after yield_ms,
-    returns status=running with a session_id for follow-up via the
-    process tool.
-    """
+    """Execute a command in the default terminal session."""
 
     def __init__(
         self,
-        manager: TerminalManagerProtocol,
+        manager: TerminalManagerBase,
         registry: ProcessRegistry,
         config: TerminalRuntimeConfig | None = None,
     ) -> None:
@@ -49,29 +42,25 @@ class CommandTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Start a command in a named terminal session. If the command finishes "
-            "before the yield window, returns status=completed with output. If still "
-            "running after yield_ms, returns status=running with a session_id for "
-            "follow-up via the process tool. "
-            "Use process poll/log/write/submit/send_keys/paste/interrupt/kill for follow-up."
+            "Execute a command in a persistent terminal session. "
+            "The shell is stateful: cd, environment variables, venv/nvm activations, "
+            "and SSH connections persist across commands. Do NOT re-run setup commands "
+            "(cd, source, export, etc.) that were already executed in this session.\n"
+            "IMPORTANT: If a command asks for a password, STOP and ask the user. "
+            "NEVER guess or invent passwords. Use 'process write submit=true' only "
+            "after the user provides the password.\n"
+            "If the command completes quickly you get output directly. "
+            "If it keeps running, use the process tool for follow-up."
         )
 
     @property
-    def parameters(self) -> dict[str, Any]:
+    def parameters(self) -> dict[str, object]:
         return {
             "type": "object",
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": "The command to execute",
-                },
-                "background": {
-                    "type": "boolean",
-                    "description": "Return running immediately",
-                },
-                "long_running": {
-                    "type": "boolean",
-                    "description": "Use extended timeout for long-running commands",
+                    "description": "The shell command to execute in the persistent terminal session",
                 },
             },
             "required": ["command"],
@@ -80,8 +69,6 @@ class CommandTool(Tool):
     async def execute(
         self,
         command: str,
-        background: bool = False,
-        long_running: bool = False,
         **_kwargs: object,
     ) -> str:
         session = await self._manager.get_default()
@@ -94,15 +81,10 @@ class CommandTool(Tool):
             pid=None,
         )
 
-        # Use readline-style ending (\r) — the shell translates to \n internally.
         await session.write(command + "\r")
 
-        timeout_seconds = (
-            self._config.long_running_timeout_seconds
-            if long_running
-            else self._config.default_command_timeout_seconds
-        )
-        yield_window_ms = 0 if background else self._config.default_yield_ms
+        timeout_seconds = self._config.default_command_timeout_seconds
+        yield_window_ms = self._config.default_yield_ms
 
         start = time.monotonic()
         output_parts: list[str] = []
@@ -124,16 +106,14 @@ class CommandTool(Tool):
                 output_parts.append(read.stderr)
 
             # 1. Process exit (authoritative)
-            alive = await session._backend.is_alive()
-            if not alive:
+            if not await session.is_alive():
                 self._registry.mark_exited(
                     proc.id,
-                    exit_code=0,
+                    exit_code=None,
                     exit_signal=None,
                     status=ProcessStatus.COMPLETED,
                 )
-                duration_ms = int((time.monotonic() - start) * 1000)
-                return self._format_completed(proc.id, session.name, output_parts, duration_ms)
+                return self._format_completed(output_parts)
 
             # 2. Prompt detection (Solution A — auxiliary completion)
             if output_received:
@@ -147,14 +127,11 @@ class CommandTool(Tool):
                     ):
                         self._registry.mark_exited(
                             proc.id,
-                            exit_code=0,
+                            exit_code=None,
                             exit_signal=None,
                             status=ProcessStatus.COMPLETED,
                         )
-                        duration_ms = int((time.monotonic() - start) * 1000)
-                        return self._format_completed(
-                            proc.id, session.name, output_parts, duration_ms
-                        )
+                        return self._format_completed(output_parts)
                 else:
                     prompt_stable_since = None
 
@@ -167,119 +144,70 @@ class CommandTool(Tool):
                     exit_signal="TIMEOUT",
                     status=ProcessStatus.TIMED_OUT,
                     timed_out=True,
-                    failure_kind="overall-timeout",
                 )
-                duration_ms = int((time.monotonic() - start) * 1000)
-                return self._format_timed_out(
-                    proc.id, session.name, output_parts, duration_ms, timeout_seconds
-                )
+                return self._format_timed_out(output_parts, timeout_seconds)
 
             # 4. waiting_for_input hint
             runtime = self._registry.running_runtime(proc.id)
             if runtime is not None and runtime.waiting_for_input:
-                duration_ms = int((time.monotonic() - start) * 1000)
-                return await self._format_running(
-                    proc.id, session, output_parts, duration_ms, runtime
-                )
+                return await self._format_running(session, output_parts, runtime)
 
             # 5. yield_ms elapsed
-            if not background and elapsed_ms >= yield_window_ms:
-                duration_ms = int((time.monotonic() - start) * 1000)
-                return await self._format_running(
-                    proc.id, session, output_parts, duration_ms, None
-                )
+            if elapsed_ms >= yield_window_ms:
+                return await self._format_running(session, output_parts, None)
 
     # ------------------------------------------------------------------
-    # Formatting helpers
+    # Formatting — natural language, no structured headers
     # ------------------------------------------------------------------
 
-    def _format_completed(
-        self,
-        session_id: str,
-        terminal: str,
-        output_parts: list[str],
-        duration_ms: int,
-    ) -> str:
-        output = "".join(output_parts).rstrip()
-        lines = [
-            "[Command Result]",
-            "status: completed",
-            f"session_id: {session_id}",
-            f"terminal: {terminal}",
-            f"duration_ms: {duration_ms}",
-        ]
-        if output:
-            lines.extend(["", "[Output]", output])
-        return "\n".join(lines)
+    @staticmethod
+    def _format_completed(output_parts: list[str]) -> str:
+        raw = "".join(output_parts)
+        output = sanitize_terminal_output(raw).rstrip()
+        return output or "(no output)"
 
+    @staticmethod
     async def _format_running(
-        self,
-        session_id: str,
         terminal_session: TerminalSession,
         output_parts: list[str],
-        duration_ms: int,
-        runtime: Any | None,
+        runtime: RunningSessionRuntime | None,
     ) -> str:
-        output = "".join(output_parts).rstrip()
-        lines = [
-            "[Command Result]",
-            "status: running",
-            f"session_id: {session_id}",
-            f"terminal: {terminal_session.name}",
-            f"duration_ms: {duration_ms}",
-        ]
+        parts: list[str] = []
+        raw = "".join(output_parts)
+        output = sanitize_terminal_output(raw).rstrip()
         if output:
-            lines.extend(["", "[Output]", output])
-        state_lines = ["", "[State]"]
-        if runtime is not None:
-            state_lines.append(f"stdin_writable: {str(runtime.stdin_writable).lower()}")
-            state_lines.append(f"waiting_for_input: {str(runtime.waiting_for_input).lower()}")
-            state_lines.append(f"idle_ms: {runtime.idle_ms}")
-            if runtime.waiting_for_input:
-                state_lines.append(
-                    "hint: Process appears to be waiting for input. Use process write/submit to respond."
-                )
-            elif runtime.output_velocity.is_active:
-                state_lines.append("output_velocity: active")
-                state_lines.append("hint: Output is still being produced. Poll again in a few seconds.")
-        lines.extend(state_lines)
+            parts.append(output)
 
-        # Screen snapshot for TUI programs
+        if runtime is not None and runtime.waiting_for_input:
+            parts.append(
+                "\nNo new output for {}s; this session may be waiting for input. "
+                "Use process write, send_keys, submit, or paste to provide input.".format(
+                    runtime.idle_ms // 1000
+                )
+            )
+        else:
+            parts.append(
+                "\nCommand still running. Use process poll/log for status, "
+                "process write/send_keys/paste for input."
+            )
+
         if terminal_session.cursor_key_mode == CursorKeyMode.APPLICATION:
             segment = await terminal_session.current_segment()
             if segment and segment.text.strip():
-                lines.extend(["", "[Screen]"])
-                lines.append(segment.text.rstrip())
-                lines.append("hint: TUI program detected. Use send_keys for interaction.")
+                parts.append("\n" + segment.text.rstrip())
+                parts.append("TUI program detected. Use process send_keys for interaction.")
 
-        return "\n".join(lines)
+        return "\n".join(parts)
 
-    def _format_timed_out(
-        self,
-        session_id: str,
-        terminal: str,
-        output_parts: list[str],
-        duration_ms: int,
-        timeout_seconds: int,
-    ) -> str:
-        output = "".join(output_parts).rstrip()
-        lines = [
-            "[Command Result]",
-            "status: timed_out",
-            f"session_id: {session_id}",
-            f"terminal: {terminal}",
-            f"duration_ms: {duration_ms}",
-            "timed_out: true",
-            "",
-            "[Output]",
-        ]
+    @staticmethod
+    def _format_timed_out(output_parts: list[str], timeout_seconds: int) -> str:
+        parts: list[str] = []
+        raw = "".join(output_parts)
+        output = sanitize_terminal_output(raw).rstrip()
         if output:
-            lines.append(output)
-        lines.extend([
-            "",
-            "[State]",
-            "message: Timed out after {}s; process terminated. Partial output captured above.".format(
-                timeout_seconds
-            ),
-        ])
-        return "\n".join(lines)
+            parts.append(output)
+        parts.append(
+            f"\nCommand timed out after {timeout_seconds}s and was terminated. "
+            "Partial output captured above."
+        )
+        return "\n".join(parts)

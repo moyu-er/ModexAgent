@@ -19,7 +19,7 @@ from typing import Any
 
 from framework.tools.terminal.prompt import drain_windows_startup
 from framework.tools.terminal.results import TerminalRead, TerminalSegment
-from framework.tools.terminal.types import Platform, TerminalVisibility
+from framework.tools.terminal.types import Platform, TerminalVisibility, _family_from_path
 
 from .base import TerminalBackend
 
@@ -28,8 +28,16 @@ _READ_TIMEOUT = 0.5
 
 
 def extract_current_segment_from_buffer(text: str) -> TerminalSegment:
-    """Extract the last terminal segment from buffered PTY output."""
-    lines = text.splitlines()
+    """Extract the last terminal segment from buffered PTY output.
+
+    Strips ANSI/CSI sequences before checking for prompt endings so that
+    terminal control codes (e.g. \\x1b[0K, \\x1b[?25h) after the prompt
+    do not prevent empty-prompt detection.
+    """
+    from framework.tools.terminal.prompt import _strip_ansi_and_da1
+
+    clean = _strip_ansi_and_da1(text)
+    lines = clean.splitlines()
     if not lines:
         return TerminalSegment(text="", cursor_line="", is_empty_prompt=True)
     cursor_line = lines[-1]
@@ -91,8 +99,11 @@ class VisibleWindowsPtyBackend(TerminalBackend):
         server.settimeout(10.0)
 
         host_script = Path(__file__).parent / "visible_windows_host.py"
+        cmd = [sys.executable, str(host_script), self._shell, str(port)]
+        if cwd:
+            cmd.append(cwd)
         self._proc = subprocess.Popen(
-            [sys.executable, str(host_script), self._shell, str(port)],
+            cmd,
             creationflags=subprocess.CREATE_NEW_CONSOLE,
             cwd=cwd,
             env=env,
@@ -169,14 +180,16 @@ class VisibleWindowsPtyBackend(TerminalBackend):
 
     async def drain_startup(self) -> None:
         """Consume startup output then suppress pagers for readline shells."""
+        is_bash = self._shell and "bash" in self._shell.lower()
         await drain_windows_startup(
             read_fn=self.read,
             write_fn=self.write,
             is_alive_fn=self.is_alive,
+            uses_readline=bool(is_bash),
         )
         # Suppress interactive pagers for bash
-        if self._shell and "bash" in self._shell.lower():
-            await self.write("export GIT_PAGER=cat PAGER=cat LESS=FRX\n")
+        if is_bash:
+            # TODEL await self.write("export GIT_PAGER=cat PAGER=cat LESS=FRX\n")
             await asyncio.sleep(0.3)
             for _ in range(5):
                 await self.read(timeout=0.2, max_size=65536)
