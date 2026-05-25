@@ -57,7 +57,7 @@ agents:
     # skills auto-discovered from skills/main/main/ by convention
     approval:
       tools:
-        shell: {allowed_paths: ["*"]}
+        command: {allowed_paths: ["*"]}
         write_file: {allowed_paths: ["./*"]}
         edit_file: {allowed_paths: ["./*"]}
 

@@ -45,11 +45,9 @@ from framework.tools.standard import (
     ListDirTool,
     ReadFileTool,
     SearchFilesTool,
-    ShellTool,
-    SubprocessExecutor,
-    TerminalSessionExecutor,
     WriteFileTool,
 )
+from framework.tools.terminal import SubprocessTool, SubprocessExecutor
 
 from .builders import _make_file_tools, _mcp_tools_for_agent, resolve_system_prompt
 from .pool_instance import PoolInstance
@@ -362,14 +360,18 @@ async def _build_pool_tool_manager(
         tm.register(tool)
 
     if terminal_manager is not None:
-        executor = TerminalSessionExecutor(
-            terminal_manager=terminal_manager, default_terminal="default",
-        )
-        shell_tool = ShellTool(executor=executor, timeout=60)
-        from framework.tools.terminal import TerminalTool
+        from framework.tools.terminal import CommandTool, ProcessTool, TerminalTool
+        from framework.tools.terminal.config import TerminalRuntimeConfig
+        from framework.tools.terminal import ProcessRegistry
+
+        cfg = TerminalRuntimeConfig()
+        registry = ProcessRegistry(config=cfg)
+
+        tm.register(CommandTool(manager=terminal_manager, registry=registry, config=cfg))
+        tm.register(ProcessTool(registry=registry, manager=terminal_manager))
         tm.register(TerminalTool(terminal_manager))
-    else:
-        shell_tool = ShellTool(executor=SubprocessExecutor(), timeout=60)
+
+    shell_tool = SubprocessTool(executor=SubprocessExecutor(), timeout=60)
     tm.register(shell_tool)
 
     for tool in [SearchFilesTool(), FindFilesTool()]:
