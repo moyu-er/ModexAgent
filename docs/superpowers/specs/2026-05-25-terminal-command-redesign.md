@@ -100,7 +100,7 @@ Default resolution should follow OpenClaw's pattern: parameters are optional at 
 | Setting | Default | Range / Clamp | Notes |
 | --- | ---: | ---: | --- |
 | `yield_ms` | `10000` ms | `10..120000` ms | Same shape as OpenClaw's default foreground yield window. |
-| `timeout` | `1800` s | positive seconds | Hard kill timeout. Matches OpenClaw's default command timeout direction. |
+| `timeout` | `60` s | `1..(tool_outer_timeout - 5)` s | Hard kill timeout owned by `command`. Must be lower than the framework/tool-manager outer timeout so the tool can return `timed_out` with captured output. |
 | `input_wait_idle_ms` | `15000` ms | `1000..600000` ms | Input-wait hint threshold. |
 | `process.poll timeout` | `0` ms | `0..30000` ms | Optional wait before draining pending output. |
 | `max_output_chars` | `200000` | `1000..200000` | Aggregated output cap. |
@@ -108,6 +108,14 @@ Default resolution should follow OpenClaw's pattern: parameters are optional at 
 | `finished_ttl_ms` | `1800000` ms | `60000..10800000` ms | Finished session cleanup window. |
 
 The defaults should be configurable on the manager/tool config, not repeated in model-facing prompts. Tool descriptions should explain behavior, not ask the model to manually supply default values.
+
+Framework timeout ordering is mandatory:
+
+```text
+yield_ms < command.timeout < command_tool_outer_timeout <= turn/tool runtime timeout
+```
+
+`command.timeout` is the semantic timeout that kills the running process and returns a structured `timed_out` result with captured terminal output. The framework/tool-manager outer timeout is only an envelope to prevent implementation hangs. It must be configured larger than `command.timeout` by a safety margin, recommended `command.timeout + 10s`. If the outer timeout fires first, the framework will lose the chance to return the terminal output and timeout details, which is a correctness bug.
 
 ### `process`
 
