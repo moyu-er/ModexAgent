@@ -22,6 +22,7 @@ Replace the current weak interactive shell execution model with an OpenClaw-insp
 3. **OS and shell are layered concerns.** The design must separate OS platform, shell family, manager type, and backend implementation so later macOS/Linux and bash/cmd/sh support can be added without changing tool APIs.
 4. **Process follow-up is explicit.** Long-running or interactive commands return a `session_id`; follow-up interaction uses the `process` tool.
 5. **No prompt-only completion model.** Process exit state is authoritative. Prompt detection and terminal-screen heuristics are auxiliary diagnostics, especially for persistent shell tabs.
+6. **The active terminal may stop matching the launch shell.** After `ssh`, `sudo -i`, `cmd`, `powershell`, `bash`, REPLs, text UIs, or nested shells, the original local `ShellInfo` is only launch metadata. I/O correctness must rely on the PTY byte stream, process/session state, stdin writability, idle timing, and explicit follow-up actions.
 
 ## Reference Model From OpenClaw
 
@@ -303,6 +304,31 @@ class ProcessSession:
 - Visible terminal output remains visually faithful in the user window.
 - `waiting_for_input` is not a terminal status. It is a runtime hint attached to running sessions.
 - A command can be `running` and `waiting_for_input=true` at the same time.
+- Input handling must be byte-oriented. `process write`, `submit`, `send_keys`, and `paste` write to the active PTY/session without assuming the current program is the launch shell.
+- Results must not be split by local shell prompts alone. Prompt detection can improve `terminal current`, but `command/process` status must continue to work when the session is inside SSH, nested shells, password prompts, pagers, REPLs, editors, or interactive installers.
+
+## Remote, Nested Shell, and Interactive Input Semantics
+
+Terminal sessions are stateful streams. A command can change the active environment without changing the manager abstraction:
+
+- `ssh user@host` moves the visible/hidden tab into a remote OS.
+- `sudo -i`, `su`, `cmd`, `powershell`, `bash`, `python`, `node`, and similar commands can enter nested shells or REPLs.
+- `git diff`, `less`, package managers, installers, and CLIs may open pagers or prompt for confirmation.
+- Password prompts often do not echo input; output may remain idle while stdin is writable.
+
+The tool layer must therefore preserve these invariants:
+
+1. `ShellInfo` describes the shell used to launch the session. It does not claim to describe the currently active remote shell or foreground program.
+2. `process write` sends bytes exactly as requested.
+3. `process submit` sends the backend's configured Enter sequence, not a shell command.
+4. `process send_keys` is for control keys such as arrows, Escape, Ctrl+C, Ctrl+D, PageUp/PageDown, and function keys.
+5. `process paste` is for larger text payloads; use bracketed paste when supported, but fall back to raw paste when the backend cannot confirm support.
+6. `waiting_for_input=true` means "stdin is writable and no output has arrived for the idle threshold." It does not assert that the process definitely needs input.
+7. Tool descriptions must teach the model to inspect the latest output before sending sensitive or destructive input. For yes/no prompts, the model should answer only when the prompt text is visible or the user explicitly instructed the answer.
+8. Password/passphrase/token prompts should be surfaced as input-wait hints. The framework should not invent secrets. If the model does not have the credential, it should ask the user or let the user type directly in a visible tab.
+9. Hidden and visible managers must return the same result shapes for SSH/nested shell scenarios. The only difference is that a visible tab also allows direct human intervention.
+
+`terminal current` is especially important for these cases. It should show the latest active prompt, partial command line, pager screen, password prompt, REPL prompt, SSH banner, or confirmation question even when no command has completed.
 
 ## Approval and Safety
 
@@ -381,4 +407,3 @@ Bot project tests:
 - macOS and Linux managers can later implement the same `TerminalManager` protocol.
 - Additional shell families can be added by extending `ShellInfo`, shell launch policies, command terminators, and key encoding.
 - Remote execution and sandbox execution should be separate manager/backend implementations, not special cases inside tools.
-
