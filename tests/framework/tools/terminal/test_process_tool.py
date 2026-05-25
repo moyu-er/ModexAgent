@@ -87,7 +87,7 @@ async def test_process_send_keys_encodes_named_keys() -> None:
     terminal = FakeTerminal()
     tool = ProcessTool(registry=registry, manager=FakeManager(terminal))
 
-    await tool.execute(action="send_keys", session_id=session.id, keys=["escape", "enter", "ctrl+c"])
+    await tool.execute(action="send_keys", session_id=session.id, keys=["escape", "enter", "c-c"])
 
     assert terminal.writes == ["\x1b\r\x03"]
 
