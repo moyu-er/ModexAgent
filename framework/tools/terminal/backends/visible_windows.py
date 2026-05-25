@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any
 
 from framework.tools.terminal.prompt import drain_windows_startup
+from framework.tools.terminal.results import TerminalRead, TerminalSegment
+from framework.tools.terminal.types import Platform, TerminalVisibility
 
 from .base import TerminalBackend
 
@@ -33,6 +35,9 @@ class VisibleWindowsPtyBackend(TerminalBackend):
     by the parent (TerminalSession) is identical to what appears in the
     visible window.
     """
+
+    platform = Platform.WINDOWS
+    visibility = TerminalVisibility.VISIBLE
 
     def __init__(self) -> None:
         self._proc: subprocess.Popen | None = None
@@ -104,6 +109,22 @@ class VisibleWindowsPtyBackend(TerminalBackend):
             return raw.decode("utf-8", errors="replace")
         except socket.timeout:
             return ""
+
+    async def read_pending(
+        self, timeout: float = 5.0, max_size: int = 65536
+    ) -> TerminalRead:
+        raw = await self.read(timeout=timeout, max_size=max_size)
+        return TerminalRead(stdout=raw, raw=raw)
+
+    async def current_segment(self) -> TerminalSegment:
+        # TODO: implement real segment snapshot in Task 9
+        return TerminalSegment(text="")
+
+    async def interrupt(self) -> None:
+        await self.write("\x03")
+
+    def stdin_writable(self) -> bool:
+        return self._sock is not None
 
     async def is_alive(self) -> bool:
         if self._proc is None:

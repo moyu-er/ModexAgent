@@ -9,6 +9,8 @@ from typing import Any
 
 from framework.tools.terminal.backends.base import TerminalBackend
 from framework.tools.terminal.prompt import is_prompt_ready
+from framework.tools.terminal.results import TerminalRead, TerminalSegment
+from framework.tools.terminal.types import Platform, TerminalVisibility
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +25,9 @@ class TmuxPtyBackend(TerminalBackend):
     Users attach via ``tmux attach -t <session>`` to see and interact
     with the same terminal the agent controls.
     """
+
+    platform = Platform.LINUX
+    visibility = TerminalVisibility.HIDDEN
 
     def __init__(self) -> None:
         try:
@@ -184,3 +189,24 @@ class TmuxPtyBackend(TerminalBackend):
             name = self._shell.lower()
             if any(name.endswith(s) for s in ("bash", "zsh", "sh")):
                 await self.write("\x01\x0b")
+
+    async def read_pending(
+        self, timeout: float = 5.0, max_size: int = 65536
+    ) -> TerminalRead:
+        raw = await self.read(timeout=timeout, max_size=max_size)
+        return TerminalRead(stdout=raw, raw=raw)
+
+    async def current_segment(self) -> TerminalSegment:
+        if self._pane is None:
+            return TerminalSegment(text="")
+        loop = asyncio.get_running_loop()
+        text = await loop.run_in_executor(
+            None, lambda: "\n".join(self._pane.capture_pane())
+        )
+        return TerminalSegment(text=text)
+
+    async def interrupt(self) -> None:
+        await self.write("\x03")
+
+    def stdin_writable(self) -> bool:
+        return self._pane is not None
