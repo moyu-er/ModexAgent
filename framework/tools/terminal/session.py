@@ -13,6 +13,12 @@ from framework.tools.terminal.prompt import (
     is_prompt_ready,
     sanitize_terminal_output,
 )
+from framework.tools.terminal.pty_keys import (
+    CursorKeyMode,
+    detect_cursor_key_mode,
+    strip_dsr_and_respond,
+    strip_smkx_rmkx,
+)
 from framework.tools.terminal.results import TerminalRead, TerminalSegment
 
 if TYPE_CHECKING:
@@ -75,6 +81,7 @@ class TerminalSession:
         self._busy_after_timeout = False
         self._backend_started = False
         self._last_status: str | None = None
+        self.cursor_key_mode: CursorKeyMode = CursorKeyMode.UNKNOWN
 
     async def ensure_started(self) -> None:
         """Start the backend immediately if not already started.
@@ -418,8 +425,37 @@ class TerminalSession:
         await self._backend.write(data)
 
     async def poll_once(self, timeout: float = 0.1, max_size: int = 65536) -> TerminalRead:
-        """Read pending output from the backend."""
-        return await self._backend.read_pending(timeout=timeout, max_size=max_size)
+        """Read pending output, stripping DECCKM/DSR control sequences.
+
+        DECCKM (smkx/rmkx) sequences update ``cursor_key_mode`` and are
+        removed from the returned output.  DSR (Device Status Report)
+        queries are stripped and an automatic CPR response is written back
+        to stdin so TUI programs don't hang.
+        """
+        read = await self._backend.read_pending(timeout=timeout, max_size=max_size)
+        if not read.raw:
+            return read
+
+        raw_bytes = read.raw.encode("utf-8", errors="replace")
+
+        # Detect and update cursor key mode
+        new_mode = detect_cursor_key_mode(raw_bytes)
+        if new_mode is not None:
+            self.cursor_key_mode = new_mode
+
+        # Strip smkx/rmkx from output
+        cleaned = strip_smkx_rmkx(raw_bytes)
+
+        # Strip DSR queries and auto-respond with cursor position.
+        # Pass None for the writer; we issue the response ourselves
+        # so we stay in the async context (backend.write is async).
+        cleaned, dsr_count = strip_dsr_and_respond(cleaned, None)
+        if dsr_count > 0 and self._backend.stdin_writable():
+            response = "\x1b[1;1R" * dsr_count
+            await self._backend.write(response)
+
+        clean_str = cleaned.decode("utf-8", errors="replace")
+        return TerminalRead(stdout=clean_str, stderr=read.stderr, raw=clean_str)
 
     async def current_segment(self) -> TerminalSegment:
         """Get the current visible terminal segment."""
