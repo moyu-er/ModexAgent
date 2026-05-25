@@ -13,6 +13,7 @@ from framework.tools.terminal.prompt import (
     is_prompt_ready,
     sanitize_terminal_output,
 )
+from framework.tools.terminal.results import TerminalRead, TerminalSegment
 
 if TYPE_CHECKING:
     from framework.tools.terminal.backends.base import TerminalBackend
@@ -409,6 +410,39 @@ class TerminalSession:
             command_count=len(self._history),
             is_default=is_default,
         )
+
+    async def write(self, data: str) -> None:
+        """Write raw data to the terminal backend."""
+        if not await self._backend.is_alive():
+            await self._ensure_backend_alive()
+        await self._backend.write(data)
+
+    async def poll_once(self, timeout: float = 0.1, max_size: int = 65536) -> TerminalRead:
+        """Read pending output from the backend."""
+        return await self._backend.read_pending(timeout=timeout, max_size=max_size)
+
+    async def current_segment(self) -> TerminalSegment:
+        """Get the current visible terminal segment."""
+        return await self._backend.current_segment()
+
+    async def interrupt(self) -> None:
+        """Send Ctrl+C to the terminal."""
+        await self._backend.interrupt()
+
+    async def terminate(self) -> None:
+        """Terminate the terminal session."""
+        await self._backend.terminate()
+
+    async def _ensure_backend_alive(self) -> None:
+        """Start the backend if it is not alive."""
+        await self._backend.start(
+            shell=self.shell_info.path,
+            cwd=self._cwd,
+            env=self._startup_env(),
+        )
+        self._backend_started = True
+        self._needs_restart = False
+        self._busy_after_timeout = False
 
     async def send_interrupt(self) -> None:
         """Send Ctrl-C (\\x03) to the backend and clear busy state.
