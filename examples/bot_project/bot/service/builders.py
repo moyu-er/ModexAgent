@@ -23,7 +23,6 @@ from framework.core.skills import (
 )
 from framework.core.tool_manager import Tool
 from framework.ioc.configs.app import AppConfig
-from framework.ioc.factories.governance import create_subagent_governance
 from framework.memory.core.scope import MemoryAgentRole, MemoryContext, SessionScope
 from framework.memory.injection import RestrictedInjectionPolicy
 from framework.memory.layers.config import (
@@ -42,8 +41,8 @@ from framework.multi_agent import (
     SubagentService, AgentMessageBus,
 )
 from framework.multi_agent.session_id import DefaultSessionIdStrategy
-from framework.multi_agent.tools import ListCommunicationTargetsTool, SendToAgentAsyncTool
-from framework.pipeline.adapters import NullOutputAdapter, OutputAdapter
+from framework.multi_agent.tools import ListCommunicationTargetsTool, SendToAgentTool
+from framework.pipeline.adapters import OutputAdapter
 from framework.tools import MCPClientManager
 
 logger = logging.getLogger(__name__)
@@ -227,16 +226,17 @@ class AgentBuilderMixin:
                 session_strategy=strategy,
                 comm_tracker=self.communication_tracker,
             )
-            self.tool_manager.register(SendToAgentAsyncTool(
+            self.tool_manager.register(SendToAgentTool(
                 source=parent_address, broker=self.broker, registry=self.agent_pool,
                 agent_bus=self.agent_bus, service=service,
                 comm_tracker=self.communication_tracker,
             ))
-            print("   [OK] send_to_agent_async registered")
+            print("   [OK] send_to_agent registered")
 
             self.tool_manager.register(ListCommunicationTargetsTool(
                 self_address=parent_address,
                 registry=self.agent_pool,
+                # template_registry and pool_name not available in old mode
             ))
             print("   [OK] list_communication_targets registered")
 
@@ -390,85 +390,3 @@ class AgentBuilderMixin:
         except Exception:
             logger.exception("Failed to clean up subagent memory for session: %s", session_id)
 
-    # ── Additional Subagent Initialization ──
-
-    async def _initialize_additional_subagents(self) -> None:
-        from framework.hook import HookErrorPolicy, HookSpec
-        from framework.hook.builtin import SubagentAutoSendHook
-        from framework.ioc.factories.descriptors import build_subagent_descriptor
-
-        if self.agent_pool is None or self.broker is None or self.subagent_service is None:
-            return
-
-        subagent_cfgs = self._find_additional_subagent_cfgs()
-        main_cfg = self._main_agent_cfg
-        parent_name = main_cfg.name if main_cfg else "main"
-
-        if not subagent_cfgs:
-            return
-        if self.mode != "pool":
-            print(f"   [WARN] {len(subagent_cfgs)} subagents require pool mode")
-            return
-
-        print(f"\n[INIT] Initializing {len(subagent_cfgs)} subagents...")
-        memory_dir = self._resolve_path("memory_dir", "data/memory")
-        for sub_cfg in subagent_cfgs:
-            sub_name = sub_cfg.name
-            print(f"[INIT] Initializing subagent: {sub_name}")
-
-            descriptor, tool_manager, skill_manager, memory_ctx = await build_subagent_descriptor(
-                sub_cfg, self._app_config, self._project_dir,
-                memory_dir, self.safety_policy, self.provider,
-            )
-
-            # Per-agent MCP tool injection (config-driven, no name checks)
-            if sub_cfg.mcp_filter and self.mcp_manager:
-                mcp_tools = await _mcp_tools_for_agent(self.mcp_manager, sub_cfg.mcp_filter)
-                for tool in mcp_tools:
-                    tool_manager.register(tool)
-
-            from framework.multi_agent.subagent_validator import SubagentAgentValidator
-            SubagentAgentValidator.validate(descriptor, parent_name)
-
-            context_manager = memory_ctx
-
-            # register send_to_agent_async (star topology)
-            sub_address = AgentAddress(name=sub_name)
-            strategy = DefaultSessionIdStrategy(main_agent_name=parent_name)
-            from framework.multi_agent.communication import AgentCommunicationService
-            sub_service = AgentCommunicationService(
-                source=sub_address, broker=self.broker, registry=self.agent_pool,
-                agent_bus=self.agent_bus, session_strategy=strategy,
-                comm_tracker=self.communication_tracker,
-            )
-            tool_manager.register(SendToAgentAsyncTool(
-                source=sub_address, broker=self.broker, registry=self.agent_pool,
-                agent_bus=self.agent_bus, service=sub_service,
-                comm_tracker=self.communication_tracker,
-            ))
-            tool_manager.register(ListCommunicationTargetsTool(
-                self_address=sub_address,
-                registry=self.agent_pool,
-            ))
-
-            await self.agent_pool.register_resident(
-                descriptor, context_manager=context_manager, tool_manager=tool_manager,
-                skill_manager=skill_manager, output_adapter=NullOutputAdapter(),
-            )
-
-            instance = self.agent_pool.get(sub_name)
-            if instance and instance.pipeline:
-                instance.pipeline.governance = create_subagent_governance(
-                    sub_cfg.memory, self._app_config.llm.max_tokens,
-                )
-                instance.pipeline.context_manager_factory = None
-
-            if self.agent_bus is not None and instance and instance.pipeline:
-                hook = SubagentAutoSendHook(agent_bus=self.agent_bus, self_name=sub_name, parent_name=parent_name)
-                if instance.pipeline.hook_runner is not None:
-                    instance.pipeline.hook_runner.add(HookSpec(hook=hook, on_error=HookErrorPolicy.LOG))
-                else:
-                    instance.pipeline.hooks.append(hook)
-
-            print(f"[OK] Subagent '{sub_name}' registered as resident")
-        print(f"[OK] {len(subagent_cfgs)} subagents initialized\n")

@@ -39,6 +39,3 @@ class PoolConfig(BaseModel):
                 return a.name
         raise ValueError("Pool must have exactly one agent with role='main'")
 
-    @property
-    def subagent_configs(self) -> list[AgentConfig]:
-        return [a for a in self.agents if a.role == "subagent"]

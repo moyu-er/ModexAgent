@@ -90,18 +90,18 @@ class SubagentService:
         3. Track session with TTL for cleanup
         4. Return session_id for tracking
 
-        The subagent is now addressable via ``send_to_agent_async`` like any
+        The subagent is now addressable via ``send_to_agent`` like any
         resident subagent.
         """
         template_name = descriptor.address.name
-        name = f"dyn.{template_name}.{uuid.uuid4().hex[:8]}"
+        name = template_name
         descriptor = dataclasses.replace(
             descriptor,
             address=dataclasses.replace(descriptor.address, name=name),
         )
         await self._pool.register_resident(descriptor)
 
-        conversation_id = f"dyn.{name}"
+        conversation_id = name
         session_id = self._session_strategy.format(conversation_id=conversation_id, agent_name=name)
 
         envelope = AgentMessageEnvelope(

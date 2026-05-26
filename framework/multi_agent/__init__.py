@@ -39,7 +39,6 @@ from framework.multi_agent.state import AgentState
 from framework.multi_agent.subagent_service import SubagentService
 from framework.multi_agent.tools import (
     ListCommunicationTargetsTool,
-    SendToAgentAsyncTool,
     SendToAgentTool,
 )
 
@@ -77,7 +76,6 @@ __all__ = [
     "RouteResult",
     "SessionMeta",
     "SessionRetentionPolicy",
-    "SendToAgentAsyncTool",
     "SendToAgentTool",
     "SingleTurnStrategy",
     "SubagentService",

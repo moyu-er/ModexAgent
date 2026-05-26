@@ -23,11 +23,11 @@ class TestAccumulatingToolCallPartialFallback:
 
     def test_valid_json_args_parsed_correctly(self) -> None:
         acc = AccumulatingToolCall(
-            index=0, id="call-1", name="send_to_agent_async",
+            index=0, id="call-1", name="send_to_agent",
             args='{"target_agent":"reviewer","content":"hello","invocation_id":""}',
         )
         tc = acc.to_partial_tool_call(index=0)
-        assert tc.tool_name == "send_to_agent_async"
+        assert tc.tool_name == "send_to_agent"
         assert tc.arguments["target_agent"] == "reviewer"
         assert tc.arguments["content"] == "hello"
         assert "_partial" not in tc.arguments
@@ -35,11 +35,11 @@ class TestAccumulatingToolCallPartialFallback:
     def test_truncated_json_falls_back_to_empty_dict(self) -> None:
         """When JSON is genuinely incomplete and unrepairable, returns empty dict."""
         acc = AccumulatingToolCall(
-            index=0, id="call-2", name="send_to_agent_async",
+            index=0, id="call-2", name="send_to_agent",
             args='{"target_agent":"reviewer","content":"hel',
         )
         tc = acc.to_partial_tool_call(index=0)
-        assert tc.tool_name == "send_to_agent_async"
+        assert tc.tool_name == "send_to_agent"
         # Repair will close the bracket and parse what it can
         assert isinstance(tc.arguments, dict)
         assert "_partial" not in tc.arguments
@@ -47,7 +47,7 @@ class TestAccumulatingToolCallPartialFallback:
     def test_json_with_trailing_comma_repaired(self) -> None:
         """Trailing commas are a common streaming artifact — should be repaired."""
         acc = AccumulatingToolCall(
-            index=0, id="call-3", name="send_to_agent_async",
+            index=0, id="call-3", name="send_to_agent",
             args='{"target_agent":"reviewer","content":"hello",}',
         )
         tc = acc.to_partial_tool_call(index=0)
@@ -57,7 +57,7 @@ class TestAccumulatingToolCallPartialFallback:
     def test_json_with_unescaped_newlines_repaired(self) -> None:
         """Literal newlines in JSON string values should be escaped."""
         acc = AccumulatingToolCall(
-            index=0, id="call-4", name="send_to_agent_async",
+            index=0, id="call-4", name="send_to_agent",
             args='{"target_agent":"reviewer","content":"line1\nline2","invocation_id":""}',
         )
         # The args string contains a literal newline, not the JSON escape \n
@@ -71,7 +71,7 @@ class TestAccumulatingToolCallPartialFallback:
         accumulator = ToolCallAccumulator()
         # Two chunks producing args with a trailing comma
         accumulator.add_chunk(ToolCallChunk(
-            index=0, id="call-5", name="send_to_agent_async",
+            index=0, id="call-5", name="send_to_agent",
             args='{"target_agent":"planner","content":"review this",',
         ))
         # Final chunk closes with trailing comma artifact
@@ -86,7 +86,7 @@ class TestAccumulatingToolCallPartialFallback:
 
         results = accumulator.flush_pending()
         assert len(results) == 1
-        assert results[0].tool_name == "send_to_agent_async"
+        assert results[0].tool_name == "send_to_agent"
         assert results[0].arguments.get("target_agent") == "planner"
         assert "_partial" not in results[0].arguments
 
@@ -100,7 +100,7 @@ class TestToolCallAccumulatorEndToEnd:
 
         # Chunk 1: tool name + start of args
         completed = acc.add_chunk(ToolCallChunk(
-            index=0, id="call-10", name="send_to_agent_async",
+            index=0, id="call-10", name="send_to_agent",
             args='{"target_agent":"reviewer",',
         ))
         assert completed == []

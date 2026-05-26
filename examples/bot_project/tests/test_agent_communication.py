@@ -9,7 +9,6 @@ from framework.ioc.factories.descriptors import build_subagent_descriptor
 from framework.multi_agent.comm_kind import AgentCommKind
 from framework.multi_agent.tools import (
     ListCommunicationTargetsTool,
-    SendToAgentAsyncTool,
     SendToAgentTool,
 )
 
@@ -27,7 +26,6 @@ def test_bot_project_subagents_are_configured_as_subagents() -> None:
 def test_bot_project_new_tool_names_are_available_and_old_names_removed() -> None:
     import framework.multi_agent.tools as tools
 
-    assert SendToAgentAsyncTool.__name__ == "SendToAgentAsyncTool"
     assert SendToAgentTool.__name__ == "SendToAgentTool"
     assert not hasattr(tools, "SendMessageTool")
     assert not hasattr(tools, "SendMessageAsyncTool")
@@ -66,7 +64,6 @@ async def test_bot_project_subagent_descriptor_does_not_deny_communication_tools
 
     denied = descriptor.denied_tools or []
     assert "send_to_agent" not in denied
-    assert "send_to_agent_async" not in denied
 
 
 async def test_bot_project_subagent_builder_does_not_register_target_listing_without_runtime(tmp_path) -> None:

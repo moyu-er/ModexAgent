@@ -1,0 +1,12 @@
+agent_type: reviewer
+description: "Expert code reviewer — analyzes code for correctness, security, and style issues"
+max_steps: 80
+standard_tools: true
+use_terminal: false
+mcp_filter: []
+memory:
+  short_term: {max_messages: 80, max_tokens: 80000}
+  long_term: {enabled: true}
+  governance: {}
+skills:
+  roots: ["skills/coding/reviewer"]

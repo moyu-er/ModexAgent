@@ -71,7 +71,7 @@ def _build_tool_manager(tools: list[Tool]) -> InMemoryToolManager:
 
 # ── Memory building ──
 
-def _build_session_only_memory(
+def build_session_only_memory(
     cfg: MemoryConfig | None,
     workspace: Path,
     agent_id: str,
@@ -169,7 +169,7 @@ async def build_subagent_descriptor(
 
     # Memory
     system_prompt = agent_cfg.system_prompt or DEFAULT_SYSTEM_PROMPT
-    memory_ctx = _build_session_only_memory(
+    memory_ctx = build_session_only_memory(
         agent_cfg.memory, workspace, subagent_name,
         MemoryAgentRole.SUBAGENT, system_prompt,
     )

@@ -731,7 +731,7 @@ mcp:
             await service.initialize()
 
             tool_names = service.tool_manager.list_tools()
-            assert "send_to_agent_async" in tool_names
+            assert "send_to_agent" in tool_names
             assert "list_communication_targets" in tool_names
             assert "send_message" not in tool_names
             assert "send_message_async" not in tool_names
@@ -825,7 +825,7 @@ mcp:
             assert "helper" in resident_names
             helper = service.agent_pool.get("helper")
             assert helper is not None
-            assert "send_to_agent_async" in helper.tool_manager.list_tools()
+            assert "send_to_agent" in helper.tool_manager.list_tools()
             assert "list_communication_targets" in helper.tool_manager.list_tools()
 
             await service.stop()

@@ -48,18 +48,6 @@ class TestPoolConfigValidation:
         with pytest.raises(ValueError, match="Pool must have exactly one agent"):
             _ = cfg.main_agent_name
 
-    def test_subagent_configs_filters_correctly(self):
-        cfg = PoolConfig(
-            llm=LLMConfig(model="gpt-4", api_key="k"),
-            agents=[
-                AgentConfig(name="main", role="main"),
-                AgentConfig(name="sub1", role="subagent"),
-                AgentConfig(name="sub2", role="subagent"),
-            ],
-        )
-        subs = cfg.subagent_configs
-        assert len(subs) == 2
-        assert {s.name for s in subs} == {"sub1", "sub2"}
 
 
 class TestPerPoolTerminalIsolation:

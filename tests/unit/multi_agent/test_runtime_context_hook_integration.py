@@ -3,7 +3,7 @@
 Verifies:
 - RuntimeContextHook auto-injection in AgentPipeline / AgentSession
 - Correct hook ordering (RuntimeContextHook first)
-- SubagentAutoSendHook detects send_to_agent_async via RuntimeContext
+- SubagentAutoSendHook detects send_to_agent via RuntimeContext
 - Multiple hooks do not conflict
 """
 
@@ -41,7 +41,7 @@ from framework.session.agent_session import AgentSession
 
 
 class FakeAgent:
-    """Agent that optionally calls send_to_agent_async via tool."""
+    """Agent that optionally calls send_to_agent via tool."""
 
     event_enum = None
 
@@ -181,8 +181,8 @@ class TestHookCollaboration:
             runtime_context_manager=runtime_mgr,
         )
 
-    async def test_subagent_auto_send_skips_when_runtime_context_records_send_to_agent_async(self):
-        """Full flow: RuntimeContextHook records send_to_agent_async,
+    async def test_subagent_auto_send_skips_when_runtime_context_records_send_to_agent(self):
+        """Full flow: RuntimeContextHook records send_to_agent,
         SubagentAutoSendHook detects it and skips auto-forward."""
         bus = self._make_bus()
         runtime_mgr = RuntimeContextManager()
@@ -326,7 +326,7 @@ class TestHookCollaboration:
         # Without the fix: hook_runner has no RuntimeContextHook �?
         # SubagentAutoSendHook sees empty tool_calls �?auto-forwards �?duplicate.
         await FakeAgent(tool_calls=[
-            FakeToolCall("send_to_agent_async", "tc_1", {"target_agent": "main"})
+            FakeToolCall("send_to_agent", "tc_1", {"target_agent": "main"})
         ]).run(ctx, MagicMock(spec=ContentEmitter))
         bus.send.assert_awaited_once()  # BUG: forwarded even though tool sent msg
 
@@ -350,7 +350,7 @@ class TestHookCollaboration:
             identity=identity,
         )
         await FakeAgent(tool_calls=[
-            FakeToolCall("send_to_agent_async", "tc_1", {"target_agent": "main"})
+            FakeToolCall("send_to_agent", "tc_1", {"target_agent": "main"})
         ]).run(ctx2, MagicMock(spec=ContentEmitter))
         bus.send.assert_not_awaited()  # FIX: correctly skipped
 

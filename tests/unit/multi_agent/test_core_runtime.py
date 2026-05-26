@@ -648,9 +648,9 @@ async def test_subagent_service_admit_dynamic_namespaces_descriptor(any_broker):
             descriptor=descriptor,
             initial_task="do work",
         )
-        dynamic_names = [name for name in pool._agents if name.startswith("dyn.worker.")]
+        dynamic_names = [name for name in pool._agents if name == "worker"]
         assert len(dynamic_names) == 1
-        assert "worker" not in pool._agents
+        assert "worker" in pool._agents
         assert dynamic_names[0] in session_id
     finally:
         await pool.shutdown_all()
