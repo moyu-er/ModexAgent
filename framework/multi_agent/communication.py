@@ -149,12 +149,12 @@ class AgentCommunicationService:
 
         name = template.agent_type
 
-        # Load system prompt from agents/{pool_name}/{agent_type}.md
+        # Load system prompt from agents/{agent_type}.md (same convention as resolve_system_prompt)
         from framework.ioc.factories.descriptors import DEFAULT_SYSTEM_PROMPT
 
         system_prompt = ""
-        if self._project_dir is not None and self._pool_name is not None:
-            md_path = self._project_dir / "agents" / self._pool_name / f"{template.agent_type}.md"
+        if self._project_dir is not None:
+            md_path = self._project_dir / "agents" / f"{template.agent_type}.md"
             if md_path.exists():
                 system_prompt = md_path.read_text(encoding="utf-8")
         if not system_prompt:
