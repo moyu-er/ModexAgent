@@ -227,6 +227,9 @@ class AgentCommunicationService:
             output_adapter=NullOutputAdapter(),
         )
 
+        # ── Mark as dynamic (eligible for idle cleanup) ──
+        self._pool._mark_dynamic(name)
+
         # ── Wire hooks ──
         self._wire_subagent_hooks(name)
 
@@ -493,9 +496,10 @@ class AgentCommunicationService:
                 error=f"Target agent '{target_agent}' not found",
             )
 
-        # If SUBAGENT + template matched + empty invocation_id → create new
+        # If SUBAGENT + template matched → create or resume
         if target_kind == AgentCommKind.SUBAGENT and template is not None:
             if invocation_id is None or invocation_id.strip() == "":
+                # New task → create subagent with fresh UUID
                 new_invocation_id = _uuid_mod.uuid4().hex[:_TASK_ID_BYTES]
                 return await self._create_dynamic_subagent(
                     template=template,
@@ -504,6 +508,18 @@ class AgentCommunicationService:
                     content=content,
                     source=effective_source,
                 )
+            # Concrete invocation_id → check if agent is still alive
+            if self._pool is None or self._pool.get(target_agent) is None:
+                # Agent was destroyed (completed or bot restarted)
+                # Re-create with the same invocation_id to resume session
+                return await self._create_dynamic_subagent(
+                    template=template,
+                    conversation_id=conversation_id,
+                    invocation_id=invocation_id,
+                    content=content,
+                    source=effective_source,
+                )
+            # Agent exists → fall through to normal inbox delivery
 
         # 3. Validate invocation_id
         if session_meta.comm_kind == AgentCommKind.SUBAGENT and target_kind == AgentCommKind.SUBAGENT:

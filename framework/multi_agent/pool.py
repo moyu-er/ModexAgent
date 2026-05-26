@@ -258,6 +258,7 @@ class AgentPool(AgentRegistry):
         consumer 循环快速 create_task，实际处理在后台执行，
         通过 per-session lock 保证同 session 串行，但不同 session 可以并发。
         """
+        self._cancel_cleanup(agent_name)
         async with self._get_dispatch_lock(agent_name):
             self._active_session_counts[agent_name] = (
                 self._active_session_counts.get(agent_name, 0) + 1
@@ -323,6 +324,7 @@ class AgentPool(AgentRegistry):
                     AgentState.SHUTDOWN,
                 ):
                     self._transition(agent_name, AgentState.IDLE, reason="dispatch_idle")
+                    self._schedule_idle_cleanup(agent_name)
 
     async def _consume_messages(self, instance: AgentInstance, descriptor: AgentDescriptor) -> None:
         """常驻 Agent 的消息消费循环（基于消息类型的分发器）。"""
@@ -984,6 +986,65 @@ class AgentPool(AgentRegistry):
             except Exception:
                 logger.exception("Error in inbox polling loop")
                 await asyncio.sleep(self._inbox_poll_interval)
+
+    # ── Idle cleanup for dynamic subagents ──
+
+    _SUbagent_IDLE_CLEANUP_DELAY: float = 30.0
+
+    def _mark_dynamic(self, agent_name: str) -> None:
+        """Track this agent as dynamically created (eligible for idle cleanup)."""
+        if not hasattr(self, "_dynamic_agents"):
+            self._dynamic_agents: set[str] = set()
+        self._dynamic_agents.add(agent_name)
+        if not hasattr(self, "_cleanup_timers"):
+            self._cleanup_timers: dict[str, asyncio.Task[None]] = {}
+
+    def _cancel_cleanup(self, agent_name: str) -> None:
+        """Cancel pending idle cleanup for this agent (it's being used again)."""
+        timers = getattr(self, "_cleanup_timers", {})
+        task = timers.pop(agent_name, None)
+        if task is not None and not task.done():
+            task.cancel()
+
+    def _schedule_idle_cleanup(self, agent_name: str) -> None:
+        """Schedule delayed shutdown for a dynamic subagent that just went IDLE.
+
+        If the agent is picked up for another task before the delay expires,
+        the cleanup is cancelled via _cancel_cleanup().
+        """
+        dynamic = getattr(self, "_dynamic_agents", set())
+        if agent_name not in dynamic:
+            return
+        self._cancel_cleanup(agent_name)
+
+        async def _cleanup_after_delay() -> None:
+            await asyncio.sleep(self._SUbagent_IDLE_CLEANUP_DELAY)
+            if self._status.get(agent_name) == AgentState.IDLE:
+                await self._shutdown_agent(agent_name)
+
+        timers = getattr(self, "_cleanup_timers", {})
+        timers[agent_name] = asyncio.create_task(_cleanup_after_delay())
+
+    async def _shutdown_agent(self, agent_name: str) -> None:
+        """Shut down a single agent and release its resources."""
+        self._transition(agent_name, AgentState.SHUTTING_DOWN, reason="idle_cleanup")
+        consumer_task = self._consumers.pop(agent_name, None)
+        if consumer_task is not None and not consumer_task.done():
+            consumer_task.cancel()
+            try:
+                await consumer_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        instance = self._agents.pop(agent_name, None)
+        if instance is not None:
+            try:
+                await instance.stop()
+            except Exception:
+                pass
+        self._transition(agent_name, AgentState.SHUTDOWN, reason="idle_cleanup")
+        self._dynamic_agents.discard(agent_name)
+        self._cleanup_timers.pop(agent_name, None)
+        logger.info("Dynamic subagent %s shut down (idle cleanup)", agent_name)
 
     async def shutdown_all(self, timeout: float = 10.0) -> None:
         if self._inbox_poll_task is not None:
