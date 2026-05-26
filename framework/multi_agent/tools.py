@@ -114,7 +114,13 @@ class SendToAgentTool(Tool):
         target_agent = str(kwargs.get("target_agent", ""))
         content = str(kwargs.get("content", ""))
         invocation_id_value = kwargs.get("invocation_id")
-        invocation_id: str | None = None if invocation_id_value is None else str(invocation_id_value)
+        # Normalize: None (JSON null), "null"/"Null"/"NULL" string → None
+        if invocation_id_value is None:
+            invocation_id: str | None = None
+        elif isinstance(invocation_id_value, str) and invocation_id_value.strip().lower() == "null":
+            invocation_id = None
+        else:
+            invocation_id = str(invocation_id_value)
 
         context = self._get_context()
         if context is None:

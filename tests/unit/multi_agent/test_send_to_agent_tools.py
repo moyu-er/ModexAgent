@@ -131,3 +131,65 @@ class TestToolInvocationIdForwarding:
 
         assert result == "ok"
         assert service.async_invocation_id == ""
+
+
+class TestToolInvocationIdNullStringNormalization:
+    """LLMs may pass invocation_id as literal "null" / "Null" / "NULL" string.
+
+    These must be treated as None (no invocation_id), matching the
+    behavior when JSON null (Python None) is passed.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("null_value", ["null", "Null", "NULL", "nUlL"])
+    async def test_string_null_treated_as_none(self, null_value: str) -> None:
+        service = _RecordingService()
+        tool = SendToAgentTool(
+            source=AgentAddress(name="main"),
+            broker=object(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            agent_bus=object(),  # type: ignore[arg-type]
+            service=service,  # type: ignore[arg-type]
+        )
+
+        token = current_agent_context.set(_context())
+        try:
+            result = await tool.execute(
+                target_agent="office-expert",
+                content="start task",
+                invocation_id=null_value,  # string "null"
+            )
+        finally:
+            current_agent_context.reset(token)
+
+        assert result == "ok"
+        # "null" string must be treated the same as JSON null → forwarded as None
+        assert service.async_invocation_id is None, (
+            f"String {null_value!r} should be normalized to None, "
+            f"got {service.async_invocation_id!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_none_python_null_still_works(self) -> None:
+        """Python None (from JSON null) must still work as before."""
+        service = _RecordingService()
+        tool = SendToAgentTool(
+            source=AgentAddress(name="main"),
+            broker=object(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            agent_bus=object(),  # type: ignore[arg-type]
+            service=service,  # type: ignore[arg-type]
+        )
+
+        token = current_agent_context.set(_context())
+        try:
+            result = await tool.execute(
+                target_agent="office-expert",
+                content="start task",
+                invocation_id=None,
+            )
+        finally:
+            current_agent_context.reset(token)
+
+        assert result == "ok"
+        assert service.async_invocation_id is None
