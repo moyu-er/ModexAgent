@@ -179,6 +179,24 @@ class AgentCommunicationService:
         # ── Tool manager: standard + MCP + communication ──
         subagent_tm = await self._build_subagent_tool_manager(template, agent_name=name)
 
+        # ── Skill manager ──
+        subagent_sm = None
+        if template.skills is not None and template.skills.roots and self._project_dir is not None:
+            skill_roots = [self._project_dir / r for r in template.skills.roots]
+            existing = [d for d in skill_roots if d.exists()]
+            if existing:
+                from framework.core.skills import (
+                    FileSkillSource,
+                    ProgressiveBuilder,
+                    SkillManager,
+                )
+                source = FileSkillSource(
+                    directories=existing, cache=True, layout="directory",
+                    skill_filename="SKILL.md",
+                )
+                builder = ProgressiveBuilder(base_path=self._project_dir)
+                subagent_sm = SkillManager(source=source, builder=builder)
+
         # ── Descriptor ──
         from framework.multi_agent.descriptor import AgentDescriptor, AgentLLMConfig
 
@@ -205,6 +223,7 @@ class AgentCommunicationService:
             descriptor,
             context_manager=subagent_ctx,
             tool_manager=subagent_tm,
+            skill_manager=subagent_sm,
             output_adapter=NullOutputAdapter(),
         )
 
@@ -290,6 +309,7 @@ class AgentCommunicationService:
 
         Includes:
         - Standard tools (file + shell + search) if template.standard_tools
+        - Terminal tools if template.use_terminal
         - MCP tools filtered by template.mcp_filter
         - Communication tools (send_to_agent, list_communication_targets) — always
         """
@@ -304,29 +324,43 @@ class AgentCommunicationService:
             max_workers=10, enable_parallel=True, parallel_max_workers=5,
         ))
 
-        # Standard tools (file + shell + search)
+        # Standard file tools
         if template.standard_tools:
             from framework.tools.standard import (
                 EditFileTool, FindFilesTool, ListDirTool,
                 ReadFileTool, SearchFilesTool, WriteFileTool,
             )
-            from framework.tools.terminal import SubprocessTool
             for tool in [
                 ReadFileTool(), WriteFileTool(), EditFileTool(),
                 ListDirTool(), SearchFilesTool(), FindFilesTool(),
-                SubprocessTool(timeout=60),
             ]:
                 tm.register(tool)
+
+        # Terminal tools (independent of standard_tools)
+        if template.use_terminal:
+            from framework.tools.terminal import SubprocessTool
+            tm.register(SubprocessTool(timeout=60))
 
         # MCP tools from template.mcp_filter
         if template.mcp_filter and self._mcp_manager is not None:
             try:
-                for server_name in template.mcp_filter:
-                    client = self._mcp_manager.get_client(server_name)
-                    if client is not None:
-                        server_tools = await client.list_tools()
-                        for tool in server_tools:
-                            tm.register(tool)
+                from framework.tools.mcp_adapter import MCPToolAdapter
+                from framework.tools.registry import ToolRegistry
+
+                adapter = MCPToolAdapter(
+                    mcp_manager=self._mcp_manager,
+                    default_prefix=True,
+                    tool_timeout=60,
+                )
+                registry = ToolRegistry()
+                await adapter.register_tools(
+                    registry=registry,
+                    server_filter=template.mcp_filter,
+                )
+                for name in registry.list_tools():
+                    tool = registry.get(name)
+                    if tool is not None:
+                        tm.register(tool)
             except Exception:
                 logger.exception(
                     "Failed to load MCP tools for subagent %s (filter=%s)",
