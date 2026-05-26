@@ -154,10 +154,10 @@ class LocalSecureToolWrapper:
     包装一个 Tool，在执行前自动进行安全校验和审批。
     
     Example:
-        from framework.tools.standard import ShellTool
-        
+        from framework.tools.terminal import SubprocessTool
+
         # 创建基础工具
-        shell_tool = ShellTool()
+        shell_tool = SubprocessTool()
         
         # 包装为安全工具
         secure_shell = LocalSecureToolWrapper(

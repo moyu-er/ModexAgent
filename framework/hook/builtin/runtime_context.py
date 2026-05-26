@@ -50,17 +50,19 @@ class RuntimeContextHook:
         if ctx.runtime is None:
             return
         rc = ctx.runtime._runtime_context
-        if rc is None or results is None:
+        if rc is None:
             return
         pending = await rc.get(self._PENDING_KEY, [])
         if not pending:
             return
 
-        result_map: dict[str | None, str] = {
-            msg.get("tool_call_id"): msg.get("content", "")
-            for msg in results
-            if isinstance(msg, dict) and msg.get("role") == "tool"
-        }
+        result_map: dict[str | None, str] = {}
+        if results:
+            result_map = {
+                msg.get("tool_call_id"): msg.get("content", "")
+                for msg in results
+                if isinstance(msg, dict) and msg.get("role") == "tool"
+            }
 
         for tool_call in pending:
             call_id = getattr(tool_call, "call_id", None)

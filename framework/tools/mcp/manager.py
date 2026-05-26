@@ -5,7 +5,7 @@ Unified management of MCP connections, supporting stdio, sse, and streamable_htt
 
 import asyncio
 import logging
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, suppress
 from typing import Any
 
 from mcp import ClientSession
@@ -61,28 +61,21 @@ class MCPClientManager:
 
         servers = self._custom_config.items()
 
-        tasks: list[asyncio.Task] = []
-        server_names = list(self._custom_config.keys())
-
         for name, server_config in servers:
             enabled = server_config.get("enabled", True) if isinstance(server_config, dict) else True
 
-            if enabled:
-                task = asyncio.create_task(self._connect_single(name, server_config))
-                tasks.append(task)
-            else:
+            if not enabled:
                 _logger.info("[MCP Manager] Skipping disabled server: %s", name)
+                continue
 
-        if tasks:
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            try:
+                result = await self._connect_single(name, server_config)
+            except Exception as e:
+                _logger.error("[MCP Manager] Failed to connect to %s: %s", name, e)
+                continue
 
-            for i, result in enumerate(results):
-                name = server_names[i]
-                if isinstance(result, BaseException):
-                    if not isinstance(result, asyncio.CancelledError):
-                        _logger.error("[MCP Manager] Failed to connect to %s: %s", name, result)
-                elif result is not None and result[1] is not None:
-                    self.clients[result[0]] = result[1]
+            if result is not None and result[1] is not None:
+                self.clients[result[0]] = result[1]
 
         self._initialized = True
         _logger.info("[MCP Manager] Initialized %d MCP servers", len(self.clients))
@@ -297,20 +290,16 @@ class MCPClientManager:
             client = self.clients[name]
             try:
                 await client.close()
-            except (RuntimeError, BaseExceptionGroup):
+            except BaseException:
                 _logger.debug("MCP client '%s' close error (expected during shutdown)", name)
-            except Exception as e:
-                _logger.warning("MCP client '%s' close error: %s", name, e)
             finally:
                 del self.clients[name]
 
             if name in self._server_stacks:
                 try:
                     await self._server_stacks[name].aclose()
-                except (RuntimeError, BaseExceptionGroup):
+                except BaseException:
                     _logger.debug("MCP stack '%s' close error (expected during shutdown)", name)
-                except Exception:
-                    pass
                 finally:
                     del self._server_stacks[name]
 
@@ -319,10 +308,17 @@ class MCPClientManager:
         return False
 
     async def disconnect_all(self) -> None:
-        """Disconnect from all MCP servers in parallel."""
-        tasks = [self.disconnect(name) for name in list(self.clients.keys())]
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        """Disconnect from all MCP servers sequentially.
+
+        Each AsyncExitStack (which wraps stdio_client / streamable_http_client)
+        must be closed in the same asyncio Task that created it — anyio's cancel
+        scope tracking enforces this.  Using ``asyncio.gather`` would spawn each
+        disconnect in a separate Task, triggering
+        ``RuntimeError: Attempted to exit cancel scope in a different task``.
+        """
+        for name in list(self.clients.keys()):
+            with suppress(Exception):
+                await self.disconnect(name)
         self._initialized = False
 
     async def reconnect_with_retry(

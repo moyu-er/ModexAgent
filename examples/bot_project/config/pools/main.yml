@@ -1,0 +1,127 @@
+# config/pools/main.yml — Main agent pool
+
+llm:
+  model: "${LLM_MODEL:-openai/MiniMax-M2.5}"
+  api_key: "${LLM_API_KEY}"
+  base_url: "${LLM_BASE_URL:-https://api.minimaxi.com/v1}"
+  temperature: 0.7
+  max_tokens: 50000
+
+mcp:
+  enabled: true
+  config_file: "mcp/main_mcp.json"
+
+terminal:
+  storage_dir: "data/terminals/main"
+  max_terminals: 5
+
+memory:
+  short_term:
+    max_messages: 200
+    max_tokens: 100000
+    keep_ratio_for_messages: 0.4
+    keep_ratio_for_token: 0.4
+    auto_compact: false
+  long_term: {enabled: true}
+  dream_engine: {enabled: true, interval: 600}
+  governance:
+    lossy_compaction:
+      tool_result_head_chars: 1200
+      assistant_head_chars: 1200
+      agent_head_chars: 2000
+      user_head_chars: 4000
+
+agents:
+  - name: main
+    role: main
+    # system_prompt loaded from agents/main.md by convention
+    max_steps: 50
+    use_terminal: true
+    mcp_filter: ["fetch", "mcp-deepwiki", "MiniMax", "playwright"]
+    memory:
+      short_term:
+        max_messages: 200
+        max_tokens: 100000
+        keep_ratio_for_messages: 0.4
+        keep_ratio_for_token: 0.4
+        auto_compact: false
+      long_term: {enabled: true}
+      dream_engine: {enabled: true, interval: 600}
+      governance:
+        lossy_compaction:
+          tool_result_head_chars: 1200
+          assistant_head_chars: 1200
+          agent_head_chars: 2000
+          user_head_chars: 4000
+    # skills auto-discovered from skills/main/main/ by convention
+    approval:
+      tools:
+        command: {allowed_paths: ["*"]}
+        write_file: {allowed_paths: ["./*"]}
+        edit_file: {allowed_paths: ["./*"]}
+
+  - name: office-expert
+    role: subagent
+    system_prompt: |
+      你是文档专家 Agent，擅长处理各种 Office 文档（Word、Excel、PowerPoint、PDF）。
+
+      ## 核心规则 —— 违反则结果丢失
+      你是独立运行的后台 Agent，主 Agent 通过消息委托任务给你。
+      **主 Agent 看不到你直接输出的任何文本。唯一能让主 Agent 收到结果的方式是发起 `send_to_agent_async` 工具调用。**
+
+      ### 操作模式
+      1. 收到任务 → 使用你的工具和技能执行
+      2. 任务完成后 → **最后一轮必须发起工具调用**
+
+         ```
+         send_to_agent_async(
+           target_agent="main",
+           content="任务执行摘要：...",
+           invocation_id=null
+         )
+         ```
+
+      3. 没有 `send_to_agent_async` 调用的回复 → 主 Agent 收不到，等同于任务未完成
+
+      ### 常见错误（必须避免）
+      - ❌ 错误：只写"任务完成了" → 主 Agent 永远看不到
+      - ✅ 正确：把结果作为 `send_to_agent_async` 的 `content` 参数发送
+    max_steps: 30
+    memory:
+      short_term: {max_messages: 80, max_tokens: 30000, keep_ratio_for_messages: 0.5, keep_ratio_for_token: 0.5}
+      governance: {}
+    skills:
+      roots: ["skills/main/office-expert"]
+
+  - name: query-12306
+    role: subagent
+    system_prompt: |
+      你是 12306 火车票查询助手 Agent，专门处理火车票查询、余票查询、车次时刻表等任务。
+
+      ## 核心规则 —— 违反则结果丢失
+      你是独立运行的后台 Agent，主 Agent 通过消息委托任务给你。
+      **主 Agent 看不到你直接输出的任何文本。唯一能让主 Agent 收到结果的方式是发起 `send_to_agent_async` 工具调用。**
+
+      ### 操作模式
+      1. 收到任务 → 使用 12306 MCP 工具完成查询
+      2. 任务完成后 → **最后一轮必须发起工具调用**：
+
+         ```
+         send_to_agent_async(
+           target_agent="main",
+           content="查询摘要：...",
+           invocation_id=null
+         )
+         ```
+
+      3. 没有 `send_to_agent_async` 调用的回复 → 主 Agent 收不到，等同于任务未完成
+
+      ### 常见错误（必须避免）
+      - ❌ 错误：只写"查询完成" → 主 Agent 永远看不到
+      - ✅ 正确：把结果作为 `send_to_agent_async` 的 `content` 参数发送
+    max_steps: 50
+    standard_tools: false
+    mcp_filter: ["12306-mcp"]
+    memory:
+      short_term: {max_messages: 80, max_tokens: 50000, keep_ratio_for_messages: 0.5, keep_ratio_for_token: 0.5}
+      governance: {}

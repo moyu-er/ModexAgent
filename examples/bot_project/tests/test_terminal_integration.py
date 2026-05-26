@@ -1,7 +1,7 @@
 """Tests for bot_project terminal integration.
 
 Verifies that BotService correctly initializes TerminalManager when bash is
-available, and falls back to SubprocessExecutor when bash is missing.
+available, and SubprocessTool always uses SubprocessExecutor.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import pytest
 from bot.service.core import BotService
 from framework.core.types import InputMessage
 from framework.pipeline.adapters import InputAdapter, NullOutputAdapter
-from framework.tools.standard.shell_tool import ShellTool, TerminalSessionExecutor
+from framework.tools.terminal.subprocess_tool import SubprocessTool, SubprocessExecutor
 from framework.tools.terminal.tool import TerminalTool
 
 
@@ -61,59 +61,43 @@ class TestTerminalManagerInitialization:
         bash_path = shutil.which("bash")
         assert bash_path is not None, "bash should be on PATH"
 
-        # Verify that _make_shell_tool wires TerminalSessionExecutor when a
-        # TerminalManager is provided.
+        # Verify that _make_shell_tool always uses SubprocessTool with SubprocessExecutor.
         from bot.service.builders import _make_shell_tool
-        from framework.tools.terminal.manager import TerminalManager
-        tm = TerminalManager(backend_factory=lambda: object())
-        shell_tool = _make_shell_tool(terminal_manager=tm)
-        assert isinstance(shell_tool._executor, TerminalSessionExecutor)
+        shell_tool = _make_shell_tool()
+        assert isinstance(shell_tool, SubprocessTool)
 
-    def test_shell_tool_uses_terminal_session_executor_when_terminal_manager_exists(self, service) -> None:
-        """ShellTool must use TerminalSessionExecutor when terminal_manager is available."""
+    def test_shell_tool_always_uses_subprocess_executor(self, service) -> None:
+        """SubprocessTool must use SubprocessExecutor regardless of terminal_manager."""
         from bot.service.builders import _make_shell_tool
         from framework.tools.terminal.manager import TerminalManager
 
+        # Even with a TerminalManager, SubprocessTool still uses SubprocessExecutor
         tm = TerminalManager(backend_factory=lambda: object())
         shell_tool = _make_shell_tool(terminal_manager=tm)
-        assert isinstance(shell_tool._executor, TerminalSessionExecutor)
+        assert isinstance(shell_tool, SubprocessTool)
 
     def test_shell_tool_uses_subprocess_executor_when_no_terminal_manager(self, service) -> None:
-        """ShellTool must fall back to SubprocessExecutor when terminal_manager is None."""
+        """SubprocessTool must fall back to SubprocessExecutor when terminal_manager is None."""
         from bot.service.builders import _make_shell_tool
-        from framework.tools.standard.shell_tool import SubprocessExecutor
 
         shell_tool = _make_shell_tool(terminal_manager=None)
-        assert isinstance(shell_tool._executor, SubprocessExecutor)
+        assert isinstance(shell_tool, SubprocessTool)
 
     def test_terminal_tool_registered_when_terminal_manager_exists(self, service) -> None:
         """TerminalTool should be registered when a TerminalManager exists."""
-        from bot.service.builders import _make_shell_tool
         from framework.tools.terminal.manager import TerminalManager
 
         tm = TerminalManager(backend_factory=lambda: object())
-        shell_tool = _make_shell_tool(terminal_manager=tm)
 
         # Verify TerminalTool can be instantiated with the same manager
         terminal_tool = TerminalTool(tm)
         assert terminal_tool.name == "terminal"
 
-    def test_shell_tool_description_is_stateful_when_terminal_session_executor(self, service) -> None:
-        """When using TerminalSessionExecutor, ShellTool description must mention stateful session."""
-        from bot.service.builders import _make_shell_tool
-        from framework.tools.terminal.manager import TerminalManager
-
-        tm = TerminalManager(backend_factory=lambda: object())
-        shell_tool = _make_shell_tool(terminal_manager=tm)
-        desc = shell_tool.description
-        assert "stateful" in desc.lower(), f"Description should mention stateful session: {desc}"
-        assert "persist" in desc.lower(), f"Description should mention persistence: {desc}"
-
-    def test_shell_tool_description_is_stateless_when_subprocess_executor(self, service) -> None:
-        """When using SubprocessExecutor, ShellTool description must mention fresh process."""
+    def test_shell_tool_description_is_stateless(self, service) -> None:
+        """SubprocessTool description must mention fresh process."""
         from bot.service.builders import _make_shell_tool
 
-        shell_tool = _make_shell_tool(terminal_manager=None)
+        shell_tool = _make_shell_tool()
         desc = shell_tool.description
         assert "fresh process" in desc.lower(), f"Description should mention fresh process: {desc}"
 

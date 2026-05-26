@@ -74,6 +74,7 @@ from framework.multi_agent import (
     SessionRetentionPolicy,
     SubagentService,
 )
+from framework.multi_agent.bus import LocalAgentMessageBus
 from framework.multi_agent.descriptor import AgentLLMConfig
 from framework.multi_agent.inbox.consumer import InboxConsumer
 from framework.multi_agent.inbox.producer import InboxProducer
@@ -82,6 +83,9 @@ from framework.pipeline.adapters import InputAdapter, OutputAdapter
 from framework.tools.overflow.cleaner import OverflowCleaner
 
 from .builders import AgentBuilderMixin
+from .pool_builder import create_pool
+from .pool_instance import PoolInstance
+from .pool_router import PoolRouter, PoolSessionStore
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +121,7 @@ class BotService(AgentBuilderMixin):
         self.mode = mode
         self._app_config = app_config
 
-        # Components
+        # Components (single-pool fields for pipeline mode)
         self.pipeline: AgentPipeline | None = None
         self.agent_pool: AgentPool | None = None
         self.broker_bridge: BrokerBridgeService | None = None
@@ -141,6 +145,10 @@ class BotService(AgentBuilderMixin):
 
         # Runtime components
         self.provider: Any | None = None
+
+        # Multi-pool (for pool mode)
+        self._pools: dict[str, PoolInstance] = {}
+        self.pool_router: PoolRouter | None = None
         self.plugin_integration: Any | None = None
         self.dream_engine: Any | None = None
 
@@ -166,9 +174,19 @@ class BotService(AgentBuilderMixin):
         self._turn_store: Any | None = None
         self._command_store: Any | None = None
 
+        # Router task
+        self._router_task: asyncio.Task | None = None
+
         # Runtime control
         self._shutdown_event = asyncio.Event()
         self._tasks: list[asyncio.Task] = []
+
+    @property
+    def _default_pool_name(self) -> str:
+        """Default pool name from config."""
+        if self._app_config is not None:
+            return self._app_config.multi_agent.default_pool
+        return "main"
 
     @property
     def _main_agent_cfg(self) -> IOCAgentConfig | None:
@@ -178,12 +196,11 @@ class BotService(AgentBuilderMixin):
         for a in self._app_config.agents:
             if a.role == "main":
                 return a
-        # Fallback: first agent if no role="main" found
         return self._app_config.agents[0]
 
     @property
     def _main_memory_cfg(self) -> IOCMemoryConfig | None:
-        """Memory config for the first agent."""
+        """Memory config for the main agent."""
         if self._main_agent_cfg is None:
             return None
         return self._main_agent_cfg.memory
@@ -232,6 +249,23 @@ class BotService(AgentBuilderMixin):
         await self.broker.start()
         print("[OK] Broker initialized")
 
+        # 2.5 Build shared interceptor chain (used by both modes)
+        self.interceptor_chain = self._build_interceptor_chain()
+
+        # 2.6 Build shared control channel
+        self.control_channel = self._build_control_channel()
+
+        # ── Pool mode: dispatch early, skip pipeline-specific setup ──
+        if self.mode == "pool":
+            # Plugins are OFF by default in pool mode.
+            from bot.plugins.integration import PluginIntegration as _PI
+            self.plugin_integration = _PI(config={"enabled": False})
+            await self._initialize_pool()
+            self._print_pool_info()
+            return
+
+        # ── Pipeline mode continues below ──
+
         # 3. Create ToolManager
         tm_config = ToolManagerConfig(
             max_workers=10,
@@ -240,14 +274,13 @@ class BotService(AgentBuilderMixin):
         )
         self.tool_manager = InMemoryToolManager(config=tm_config)
 
-        # 3a. Create TerminalManager — only if bash is available.
-        # Windows without bash falls back to SubprocessExecutor (stateless).
+        # 3a. Create TerminalManager — degrade to subprocess only when no shell at all.
         main_cfg = self._main_agent_cfg
         if main_cfg and main_cfg.use_terminal:
-            from framework.tools.terminal.types import detect_platform_shell, ShellFamily
+            from framework.tools.terminal.types import detect_platform_shell
 
             shell_info = detect_platform_shell()
-            if shell_info is not None and shell_info.family is ShellFamily.BASH:
+            if shell_info is not None:
                 try:
                     from framework.tools.terminal import TerminalManager
 
@@ -255,13 +288,13 @@ class BotService(AgentBuilderMixin):
                         max_terminals=getattr(self._app_config, 'terminal', {}).get('max_terminals', 5),
                         shell_info=shell_info,
                     )
-                    print(f"[OK] TerminalManager initialized (bash: {shell_info.path})")
+                    print(f"[OK] TerminalManager initialized ({shell_info.family.value}: {shell_info.path}, lazy)")
                 except Exception as e:
                     logger.warning("TerminalManager initialization failed: %s", e)
                     self.terminal_manager = None
             else:
                 self.terminal_manager = None
-                print("[INFO] No bash found — TerminalTool disabled, ShellTool uses SubprocessExecutor")
+                print("[INFO] No shell found — terminal tools disabled, subprocess only")
         else:
             self.terminal_manager = None
             print("[INFO] TerminalManager disabled (use_terminal=false)")
@@ -422,15 +455,9 @@ class BotService(AgentBuilderMixin):
         self.agent = ReActAgent(provider=self.provider, mode="full")
         print("[OK] ReActAgent initialized")
 
-        # 9. Initialize runtime by mode
-        if self.mode == "pipeline":
-            await self._initialize_pipeline(main_skill_manager)
-        elif self.mode == "pool":
-            await self._initialize_pool(main_skill_manager)
-        else:
-            raise ValueError(f"Unsupported mode: {self.mode}")
-
-        # 10. Register multi-agent tools (must happen after subagent_manager creation)
+        # 9. Initialize pipeline runtime
+        await self._initialize_pipeline(main_skill_manager)
+        # 10. Register multi-agent tools
         await self._register_multi_agent_tools()
         print(f"[OK] Multi-agent tools registered, total: {len(self.tool_manager.list_tools())}")
 
@@ -533,37 +560,37 @@ class BotService(AgentBuilderMixin):
         print(f"   Input: {self.input_adapter.name}")
         print(f"   Output: {self.output_adapter.name}")
 
-    async def _initialize_pool(self, _main_skill_manager: SkillManager | None) -> None:
-        """Initialize pool-mode runtime."""
-        from framework.ioc.factories.descriptors import (
-            build_subagent_descriptor,
-        )
-        from framework.multi_agent.bus import LocalAgentMessageBus
+    async def _initialize_pool(self) -> None:
+        """Initialize pool-mode with multiple pools."""
+        pool_configs = self._app_config.pools
+        if not pool_configs:
+            raise RuntimeError("No pools defined. Add .yml files to config/pools/")
 
-        if self.broker is None:
-            raise RuntimeError("Broker is not initialized")
-        if self.agent_factory is None:
-            raise RuntimeError("AgentFactory is not initialized")
-        if self.inbox_producer is None:
-            raise RuntimeError("InboxProducer is not initialized")
-        if self.inbox_consumer is None:
-            raise RuntimeError("InboxConsumer is not initialized")
-
-        main_cfg = self._main_agent_cfg
-        parent_agent_name = main_cfg.name if main_cfg else "main"
-        main_address = AgentAddress(kind="agent", name=parent_agent_name)
-
-        # Create AgentMessageBus
+        # 1. Shared infra: Inbox + AgentMessageBus
+        inbox_dir = self._resolve_path("inbox_dir", "data/inbox")
+        self.inbox_server = LocalFileInboxServer(workspace=inbox_dir)
+        self.inbox_producer = InboxProducer(server=self.inbox_server)
+        self.inbox_consumer = InboxConsumer(server=self.inbox_server)
         self.agent_bus = LocalAgentMessageBus(
             producer=self.inbox_producer,
             consumer=self.inbox_consumer,
             broker=self.broker,
         )
-        print("[OK] LocalAgentMessageBus initialized")
+        print(f"[OK] Inbox + AgentMessageBus initialized ({inbox_dir})")
 
-        # Create AgentPool BEFORE SubagentService (pool is required by SubagentService)
-        from framework.multi_agent.session_id import DefaultSessionIdStrategy
+        # 2. Shared infra: Approval
+        self._approval_workspace = self._project_dir / "data/approval"
+        self._im_ui = IMUserInterface(
+            output_adapter=self.output_adapter,
+            channel=self.control_channel,
+        )
 
+        # 4. Shared infra: Hooks & Interceptors
+        shared_hooks = self._collect_run_hooks()
+        shared_hook_runner = self._build_hook_runner(shared_hooks)
+        shared_interceptor_chain = self._build_interceptor_chain()
+
+        # 5. Shared infra: Retention & CommunicationTracker
         retention_cfg = self._app_config.multi_agent.session_retention
         retention = SessionRetentionPolicy(
             max_sessions_per_subagent=retention_cfg.max_sessions_per_subagent,
@@ -573,122 +600,51 @@ class BotService(AgentBuilderMixin):
         )
         self.communication_tracker = CommunicationTracker()
 
-        self.agent_pool = AgentPool(
-            broker=self.broker,
-            agent_factory=self.agent_factory,
-            default_context_manager=self.context_manager,
-            agent_bus=self.agent_bus,
-            inbox_consumer=self.inbox_consumer,
-            enable_inbox_polling=True,
-            inbox_poll_interval=10.0,
-            default_context_manager_factory=self._get_context_manager,
-            session_strategy=DefaultSessionIdStrategy(main_agent_name=parent_agent_name),
-            safety=self.safety_policy,
-            retention=retention,
-            comm_tracker=self.communication_tracker,
-        )
-
-        # SubagentService wraps AgentPool for subagent lifecycle management
-        self.subagent_service = SubagentService(
-            pool=self.agent_pool,
-            factory=self.agent_factory,
-            broker=self.broker,
-            agent_bus=self.agent_bus,
-        )
-        print("[OK] SubagentService initialized")
-
-        # Register main agent as resident
-        main_descriptor = AgentDescriptor(
-            address=main_address,
-            llm_config=AgentLLMConfig(
-                model=self._app_config.llm.model,
-                temperature=self._app_config.llm.temperature,
-                max_tokens=self._app_config.llm.max_tokens,
-            ),
-            system_prompt_template=main_cfg.system_prompt if main_cfg else "",
-            context_strategy="persistent",
-            max_iterations=main_cfg.max_steps if main_cfg else 20,
-            execution_strategy="react",
-            safety_policy=self.safety_policy,
-        )
-        await self.agent_pool.register_resident(main_descriptor)
-        print(f"[OK] AgentPool initialized, main agent '{parent_agent_name}' registered as resident")
-
-        # Wire AgentRuntime services into main agent's pool pipeline
-        main_instance = self.agent_pool._agents.get(parent_agent_name)
-        if main_instance is not None and main_instance.pipeline is not None:
-            # Build AgentRuntime via framework RuntimeAssembler
-            runtime = await self._assemble_runtime(hooks=main_instance.pipeline.hook_runner)
-
-            main_instance.pipeline.interceptor_chain = runtime.interceptors
-            main_instance.pipeline.runtime_services = runtime.services
-            main_instance.pipeline.turn_store = self._turn_store
-            main_instance.pipeline._approval_workspace = self._approval_workspace
-            main_instance.pipeline._user_interface = self._im_ui
-            main_instance.pipeline.command_processor = self._build_main_command_processor(
-                main_instance.pipeline.skill_manager
+        # 6. Create all pools
+        self._pools = {}
+        for pool_name, pool_cfg in pool_configs.items():
+            print(f"\n[POOL] Creating pool '{pool_name}'...")
+            self._pools[pool_name] = await create_pool(
+                pool_name=pool_name,
+                pool_cfg=pool_cfg,
+                project_dir=self._project_dir,
+                broker=self.broker,
+                inbox_server=self.inbox_server,
+                inbox_producer=self.inbox_producer,
+                inbox_consumer=self.inbox_consumer,
+                agent_bus=self.agent_bus,
+                output_adapter=self.output_adapter,
+                safety=self.safety_policy,
+                retention=retention,
+                comm_tracker=self.communication_tracker,
+                approval_workspace=self._approval_workspace,
+                im_ui=self._im_ui,
+                shared_hooks=shared_hooks,
+                shared_hook_runner=shared_hook_runner,
+                shared_interceptor_chain=shared_interceptor_chain,
             )
-            print("[OK] Main agent pool pipeline wired with AgentRuntime services")
+            print(f"[OK] Pool '{pool_name}' created")
 
-        # Register subagents as residents (pool mode requires all targets to be resident)
-        _memory_dir = self._resolve_path("memory_dir", "data/memory")
-        subagent_cfg = self._find_subagent_cfg()
-        if subagent_cfg is not None:
-            descriptor, sub_tool_manager, sub_skill_manager, _memory_ctx = await build_subagent_descriptor(
-                subagent_cfg, self._app_config, self._project_dir,
-                _memory_dir, self.safety_policy, self.provider,
-            )
-            if descriptor.address.name != parent_agent_name:
-                await self.agent_pool.register_resident(
-                    descriptor,
-                    tool_manager=sub_tool_manager,
-                    skill_manager=sub_skill_manager,
-                )
-                # Inject lightweight governance into subagent pipeline
-                sub_instance = self.agent_pool.get(descriptor.address.name)
-                if sub_instance and sub_instance.pipeline:
-                    sub_instance.pipeline.governance = create_subagent_governance(
-                        subagent_cfg.memory, self._app_config.llm.max_tokens,
-                    )
-                    # Register send_to_agent_async so subagent can reply to parent
-                    from framework.multi_agent.communication import AgentCommunicationService
-                    from framework.multi_agent.tools import ListCommunicationTargetsTool, SendToAgentAsyncTool
-                    sub_address = AgentAddress(name=descriptor.address.name)
-                    strategy = DefaultSessionIdStrategy(main_agent_name=parent_agent_name)
-                    sub_service = AgentCommunicationService(
-                        source=sub_address, broker=self.broker, registry=self.agent_pool,
-                        agent_bus=self.agent_bus, session_strategy=strategy,
-                        comm_tracker=self.communication_tracker,
-                    )
-                    sub_tool_manager.register(SendToAgentAsyncTool(
-                        source=sub_address, broker=self.broker, registry=self.agent_pool,
-                        agent_bus=self.agent_bus, service=sub_service,
-                        comm_tracker=self.communication_tracker,
-                    ))
-                    sub_tool_manager.register(ListCommunicationTargetsTool(
-                        self_address=sub_address,
-                        registry=self.agent_pool,
-                    ))
-
-                print(f"[OK] Subagent '{descriptor.address.name}' registered as resident")
-
-        # Initialize additional subagents
-        await self._initialize_additional_subagents()
-
-        # Configure BrokerBridgeService
-        self.broker_bridge = BrokerBridgeService(
+        # 7. PoolRouter
+        data_dir = self._resolve_path("data_dir", "data")
+        session_store = PoolSessionStore(data_dir=data_dir)
+        self.pool_router = PoolRouter(
+            input_adapter=self.input_adapter,
+            output_adapter=self.output_adapter,
             broker=self.broker,
-            input_bindings={self.input_adapter: main_address},
-            output_routes=[
-                OutputRoute(
-                    adapter=self.output_adapter,
-                    match_topic=f"agent:{parent_agent_name}:out",
-                ),
-            ],
+            pools=self._pools,
+            session_store=session_store,
+            default_pool=self._app_config.multi_agent.default_pool,
         )
-        print("[OK] BrokerBridgeService initialized")
-        print(f"   Input bridge: {self.input_adapter.name} -> {main_address}")
-        print(f"   Output route: agent:{parent_agent_name}:out -> {self.output_adapter.name}")
+
+    def _print_pool_info(self) -> None:
+        """Display pool configuration summary."""
+        print(f"\n[INFO] Pools: {list(self._pools.keys())}")
+        for name, pi in self._pools.items():
+            subagent_count = len(pi.config.subagent_configs)
+            print(f"   {name}: {pi.main_agent_name} + {subagent_count} subagents")
+        print(f"[INFO] Switch commands: /{' /'.join(self._pools.keys())}")
+        print(f"[INFO] Default pool: {self._app_config.multi_agent.default_pool}")
 
     def _find_subagent_cfg(self) -> IOCAgentConfig | None:
         """Find the first subagent config by role."""
@@ -839,57 +795,18 @@ class BotService(AgentBuilderMixin):
     # ------------------------------------------------------------------ #
 
     async def start(self) -> None:
-        """Start the service."""
-        print("\n" + "=" * 80)
-        print(">> Starting Bot Service")
-        print("=" * 80)
-
         if self.mode == "pipeline":
-            if self.pipeline is None:
-                print("[WARN] Pipeline not initialized, cannot start")
-                return
-            pipeline_task = asyncio.create_task(self.pipeline.run())
-            self._tasks.append(pipeline_task)
-        elif self.mode == "pool":
-            if self.agent_pool is None or self.broker_bridge is None:
-                print("[WARN] AgentPool or BrokerBridge not initialized, cannot start")
-                return
-            await self.broker_bridge.start()
-            print("[OK] BrokerBridgeService started")
-            # Start DreamEngine background loop for pool mode
-            if self.dream_engine is not None:
-                de_cfg = self._main_memory_cfg.dream_engine if self._main_memory_cfg else None
-                dream_interval = de_cfg.interval if de_cfg else 300
-                dream_task = asyncio.create_task(self._dream_background_loop(dream_interval))
-                self._tasks.append(dream_task)
-                print(f"[OK] DreamEngine background loop started (interval={dream_interval}s)")
-        else:
-            print(f"[WARN] Unknown mode: {self.mode}")
+            if self.pipeline:
+                await self.pipeline.run()
             return
 
-        print("\n" + "=" * 80)
-        print(f"[OK] Bot Service (Multi-Agent, mode={self.mode}) started!")
-        print(f"   Input: {self.input_adapter.name}")
-        print(f"   Output: {self.output_adapter.name}")
-        print(f"   Model: {self._app_config.llm.model}")
-        print("   Log: logs/bot.log")
-        print("=" * 80)
-        print("   Waiting for messages...\n")
-
-        def signal_handler(sig: int, _frame: Any) -> None:
-            print(f"\n[STOP] Received signal {sig}, shutting down...")
-            self._shutdown_event.set()
-
-        signal.signal(signal.SIGINT, signal_handler)
-        if hasattr(signal, "SIGTERM"):
-            signal.signal(signal.SIGTERM, signal_handler)
-
-        try:
-            await self._shutdown_event.wait()
-        except KeyboardInterrupt:
-            print("\n[STOP] Shutting down...")
-        finally:
-            await self.stop()
+        # Pool mode: start all pool bridges, then PoolRouter
+        await self.input_adapter.start()
+        for pool in self._pools.values():
+            await pool.broker_bridge.start()
+        self._router_task = asyncio.create_task(self.pool_router.run())
+        print(f"[OK] PoolRouter running, {len(self._pools)} pools active")
+        await self._shutdown_event.wait()
 
     # ------------------------------------------------------------------ #
     # Runtime assembly
@@ -1092,147 +1009,40 @@ class BotService(AgentBuilderMixin):
                 logger.exception("DreamEngine background loop error")
 
     async def stop(self) -> None:
-        """Stop the service."""
-        print("\n[STOP] Shutting down service...")
         self._shutdown_event.set()
-
-        if self.pipeline:
-            try:
-                print("   Stopping Pipeline...")
-                await self.pipeline.stop()
-                print("   [OK] Pipeline stopped")
-            except Exception as e:
-                print(f"   [WARN] Pipeline stop error: {e}")
-
-        if self.mcp_manager:
-            try:
-                print("   Closing MCP connections...")
-                await self.mcp_manager.disconnect_all()
-                print("   [OK] MCP connections closed")
-            except Exception as e:
-                print(f"   [WARN] MCP disconnect error: {e}")
-
-        if self.agent_pool:
-            try:
-                print("   Stopping AgentPool...")
-                await self.agent_pool.shutdown_all()
-                print("   [OK] AgentPool stopped")
-            except Exception as e:
-                print(f"   [WARN] AgentPool stop error: {e}")
-
-        if self.broker_bridge:
-            try:
-                print("   Stopping BrokerBridge...")
-                await self.broker_bridge.stop()
-                print("   [OK] BrokerBridge stopped")
-            except Exception as e:
-                print(f"   [WARN] BrokerBridge stop error: {e}")
-
-        if self.subagent_service:
-            try:
-                print("   Stopping SubagentService...")
-                await self.subagent_service.stop()
-                print("   [OK] SubagentService stopped")
-            except Exception as e:
-                print(f"   [WARN] SubagentService stop error: {e}")
-
-        if self.agent_bus:
-            try:
-                print("   Closing AgentMessageBus...")
-                await self.agent_bus.close()
-                print("   [OK] AgentMessageBus closed")
-            except Exception as e:
-                print(f"   [WARN] AgentMessageBus close error: {e}")
-
-        if self.broker:
-            try:
-                print("   Stopping Broker...")
-                await self.broker.stop()
-                print("   [OK] Broker stopped")
-            except Exception as e:
-                print(f"   [WARN] Broker stop error: {e}")
-
         if self._auto_compact_task is not None:
-            try:
-                print("   Stopping AutoCompactService...")
-                self._auto_compact_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await self._auto_compact_task
-                print("   [OK] AutoCompactService stopped")
-            except Exception as e:
-                print(f"   [WARN] AutoCompactService stop error: {e}")
-
-        # Close subagent memory systems
-        for sub_name, sub_ms in getattr(self, "_subagent_memory_systems", {}).items():
-            try:
-                print(f"   Closing subagent memory system: {sub_name}...")
-                await sub_ms.close()
-                print(f"   [OK] Subagent memory system '{sub_name}' closed")
-            except Exception as e:
-                print(f"   [WARN] Subagent memory system '{sub_name}' close error: {e}")
-
-        # Close additional subagent memory systems
-        for sub_name, sub_ms in getattr(self, "_additional_subagent_memory_systems", {}).items():
-            try:
-                print(f"   Closing subagent memory system: {sub_name}...")
-                await sub_ms.close()
-                print(f"   [OK] Subagent memory system '{sub_name}' closed")
-            except Exception as e:
-                print(f"   [WARN] Subagent memory system '{sub_name}' close error: {e}")
-
-        if self._overflow_cleaner is not None:
-            try:
-                print("   Stopping OverflowCleaner...")
-                await self._overflow_cleaner.stop()
-                print("   [OK] OverflowCleaner stopped")
-            except Exception as e:
-                print(f"   [WARN] OverflowCleaner stop error: {e}")
-
-        if self.memory_system:
-            try:
-                print("   Closing MemorySystem...")
-                await self.memory_system.close()
-                print("   [OK] MemorySystem closed")
-            except Exception as e:
-                print(f"   [WARN] MemorySystem close error: {e}")
-
-        if self.terminal_manager:
-            try:
-                terminal_cfg = (
-                    getattr(self._app_config, "terminal", {})
-                    if self._app_config
-                    else {}
-                )
-                close_on_exit = terminal_cfg.get("close_on_exit", True)
-                if close_on_exit:
-                    print("   Closing terminal sessions...")
-                    await self.terminal_manager.close_all()
-                    print("   [OK] Terminal sessions closed")
-                else:
-                    print("   [INFO] Terminal sessions left open (close_on_exit=false)")
-            except Exception as e:
-                print(f"   [WARN] Terminal shutdown error: {e}")
-
-        if self.plugin_integration:
-            try:
-                print("   Shutting down plugin providers...")
-                await self.plugin_integration.shutdown()
-                print("   [OK] Plugin providers shut down")
-            except Exception as e:
-                print(f"   [WARN] Plugin shutdown error: {e}")
-
-        if self._tasks:
-            print(f"   Cancelling {len(self._tasks)} tasks...")
-            for task in self._tasks:
-                if not task.done():
-                    task.cancel()
-            try:
-                await asyncio.wait_for(
-                    asyncio.gather(*self._tasks, return_exceptions=True), timeout=5.0
-                )
-            except TimeoutError:
-                print("   [WARN] Some tasks did not stop in time")
-            except asyncio.CancelledError:
-                pass
-
-        print("[OK] Bot Service stopped")
+            self._auto_compact_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._auto_compact_task
+        if hasattr(self, '_router_task') and self._router_task:
+            self._router_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._router_task
+        if self.mcp_manager is not None:
+            with contextlib.suppress(BaseException):
+                await self.mcp_manager.disconnect_all()
+        for pool in self._pools.values():
+            if pool.mcp_manager is not None:
+                with contextlib.suppress(BaseException):
+                    await pool.mcp_manager.disconnect_all()
+        for pool in self._pools.values():
+            with contextlib.suppress(BaseException):
+                await pool.pool.shutdown_all()
+        for pool in self._pools.values():
+            with contextlib.suppress(BaseException):
+                await pool.broker_bridge.stop()
+        # Close all terminal sessions (pool mode + pipeline mode)
+        for pool in self._pools.values():
+            if pool.terminal_manager is not None:
+                for name in pool.terminal_manager.list_names():
+                    with contextlib.suppress(BaseException):
+                        await pool.terminal_manager.close(name)
+        if self.terminal_manager is not None:
+            for name in self.terminal_manager.list_names():
+                with contextlib.suppress(BaseException):
+                    await self.terminal_manager.close(name)
+        with contextlib.suppress(BaseException):
+            await self.input_adapter.stop()
+        if self.broker:
+            with contextlib.suppress(BaseException):
+                await self.broker.stop()

@@ -38,15 +38,21 @@ class SubagentAutoSendHook:
         agent_bus: AgentMessageBus,
         self_name: str,
         parent_name: str = "main",
+        notification_service: Any | None = None,
     ) -> None:
         self._agent_bus = agent_bus
         self._self_name = self_name
         self._parent_name = parent_name
+        self._svc = notification_service
+        # Track sessions where the subagent has already sent a message
+        # via send_to_agent / send_to_agent_async.  Once communication has
+        # happened in a session, subsequent turns should not auto-forward.
+        self._communicated: set[str] = set()
 
-    async def before_turn(self, ctx: AgentContext[Any]) -> None:
+    async def before_turn(self, ctx: AgentContext) -> None:
         pass
 
-    async def after_turn(self, ctx: AgentContext[Any], result: Any = None) -> None:
+    async def after_turn(self, ctx: AgentContext, result: Any = None) -> None:
         if not result or not getattr(result, "content", None):
             return
 
@@ -65,11 +71,20 @@ class SubagentAutoSendHook:
             calls = await rc.get_tool_calls()
             sent_tools = {"send_to_agent", "send_to_agent_async"}
             if any(c.tool_name in sent_tools for c in calls):
+                self._communicated.add(ctx.session_id)
                 logger.debug(
                     "SubagentAutoSendHook: skipped, message already sent via tool (agent=%s)",
                     self._self_name,
                 )
                 return
+
+        # Already communicated in this session — skip auto-forward
+        if ctx.session_id in self._communicated:
+            logger.debug(
+                "SubagentAutoSendHook: skipped, already communicated (agent=%s)",
+                self._self_name,
+            )
+            return
 
         logger.info(
             "SubagentAutoSendHook: auto-forwarding subagent %s content to %s (len=%d)",
@@ -100,8 +115,10 @@ class SubagentAutoSendHook:
             invocation_id=parts.invocation_id,
         )
 
+        forwarded = False
         try:
             await self._agent_bus.send(inbox_key, envelope)
+            forwarded = True
             logger.info(
                 "Auto-forwarded subagent %s content to %s (session=%s)",
                 self._self_name,
@@ -114,6 +131,26 @@ class SubagentAutoSendHook:
                 self._self_name,
                 self._parent_name,
             )
+
+        # Send XML notification if notification_service is configured
+        if self._svc is not None and forwarded:
+            try:
+                await self._svc.notify(
+                    ctx=ctx,
+                    notification_type="missed_communication",
+                    reason="subagent 未通过通信工具发送消息",
+                    details=(
+                        f"agent '{self._self_name}' 已完成但未调用 "
+                        f"send_to_agent_async，内容已自动转发给 "
+                        f"'{self._parent_name}'"
+                    ),
+                    content=sanitized[:2000] if sanitized else None,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to send missed_communication notification for %s",
+                    self._self_name,
+                )
 
     @classmethod
     def _sanitize_forward_content(cls, content: str) -> str:

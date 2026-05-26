@@ -40,8 +40,8 @@ def _make_file_tools() -> list[Tool]:
 
 
 def _make_shell_tool(timeout: int = 60, enable_safety_guard: bool = True) -> Tool:
-    from framework.tools.standard import ShellTool
-    return ShellTool(timeout=timeout, enable_safety_guard=enable_safety_guard)
+    from framework.tools.terminal import SubprocessTool
+    return SubprocessTool(timeout=timeout, enable_safety_guard=enable_safety_guard)
 
 
 def _make_search_tools() -> list[Tool]:

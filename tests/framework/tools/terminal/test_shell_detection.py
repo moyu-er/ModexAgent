@@ -27,15 +27,35 @@ class TestShellInfo:
 
 
 class TestDetectPlatformShell:
-    def test_detect_wsl_bash_on_windows(self) -> None:
-        """Windows: use WSL bash from Windows directory."""
+    def test_wsl_bash_priority_1(self) -> None:
+        """WSL bash (from System32) is priority 1."""
         with (
             patch("shutil.which") as mock_which,
             patch("subprocess.run") as mock_run,
             patch("platform.system", return_value="Windows"),
+            patch.object(Path, "is_file", return_value=True),
+        ):
+            mock_which.return_value = None  # Git bash not in PATH
+            mock_run.return_value = type(
+                "Result", (), {"returncode": 0, "stdout": "GNU bash, version 5.2.0", "stderr": ""}
+            )()
+
+            info = detect_platform_shell()
+            assert info is not None
+            assert info.family == ShellFamily.BASH
+            assert info.platform == Platform.WINDOWS
+            assert info.path.endswith("bash.exe")
+
+    def test_git_bash_priority_2(self) -> None:
+        """Git bash is priority 2 when WSL bash is absent."""
+        with (
+            patch("shutil.which") as mock_which,
+            patch("subprocess.run") as mock_run,
+            patch("platform.system", return_value="Windows"),
+            patch.object(Path, "is_file", return_value=False),  # WSL bash not found
         ):
             mock_which.side_effect = lambda x: {
-                "bash": r"C:\Windows\System32\bash.exe",
+                "bash": r"D:\git\usr\bin\bash.EXE",
             }.get(x)
             mock_run.return_value = type(
                 "Result", (), {"returncode": 0, "stdout": "GNU bash, version 5.2.0", "stderr": ""}
@@ -43,43 +63,27 @@ class TestDetectPlatformShell:
 
             info = detect_platform_shell()
             assert info is not None
-            assert info.name == "bash"
-            assert info.platform == "windows"
-            assert r"C:\Windows\System32\bash.exe" == info.path
-            assert isinstance(info.family, ShellFamily)
-            assert isinstance(info.platform, Platform)
+            assert info.family == ShellFamily.BASH
+            assert info.platform == Platform.WINDOWS
+            assert "git" in info.path.lower()
 
-    def test_windows_git_bash_ignored(self) -> None:
-        """Windows: Git Bash outside Windows directory must not be selected."""
+    def test_powershell_priority_3(self) -> None:
+        """PowerShell is priority 3 when no bash is available."""
         with (
             patch("shutil.which") as mock_which,
             patch("platform.system", return_value="Windows"),
+            patch.object(Path, "is_file", return_value=False),  # WSL bash not found
         ):
             mock_which.side_effect = lambda x: {
-                "bash": r"C:\Program Files\Git\bin\bash.exe",
+                "bash": None,
+                "powershell.exe": r"C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe",
             }.get(x)
 
             info = detect_platform_shell()
             assert info is not None
-            assert info.name == "cmd"
-            assert info.platform == "windows"
-            assert info.path == "cmd.exe"
-            assert isinstance(info.family, ShellFamily)
-            assert isinstance(info.platform, Platform)
-
-    def test_windows_returns_cmd_when_bash_missing(self) -> None:
-        """Windows without bash: fallback to cmd.exe."""
-        with (
-            patch("shutil.which", return_value=None),
-            patch("platform.system", return_value="Windows"),
-        ):
-            info = detect_platform_shell()
-            assert info is not None
-            assert info.name == "cmd"
-            assert info.platform == "windows"
-            assert info.path == "cmd.exe"
-            assert isinstance(info.family, ShellFamily)
-            assert isinstance(info.platform, Platform)
+            assert info.family == ShellFamily.POWERSHELL
+            assert info.platform == Platform.WINDOWS
+            assert "powershell" in info.path.lower()
 
     def test_detect_bash_on_linux(self) -> None:
         with (

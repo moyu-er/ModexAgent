@@ -9,7 +9,7 @@ from framework.agents.react.agent import ReActEvent
 from framework.agents.react.constants import ReActNode, ReActReason
 from framework.agents.react.state import ReActSnapshotPolicy, get_react_state
 from framework.approval.constants import ApprovalDecision, ApprovalTier
-from framework.control.runtime import ControlPhase
+from framework.control.runtime import ControlPhase, ControlRuntime
 from framework.core.agent import AgentContext
 from framework.core.emitter import ToolCall
 from framework.core.graph.interrupt import interrupt
@@ -241,7 +241,7 @@ class ToolNode(Node):
     ) -> NodeTransition:
         decisions = self._normalize_batch_decisions(decisions)
         state = get_react_state(ctx)
-        if ctx.runtime and ctx.runtime.control:
+        if ctx.runtime and ctx.runtime.control and isinstance(ctx.runtime.control, ControlRuntime):
             await ctx.runtime.control.drain(ctx, phase=ControlPhase.BEFORE_TOOL_BATCH)
         if ctx.emitter is not None:
             await ctx.emitter.emit(
@@ -304,7 +304,20 @@ class ToolNode(Node):
             batch.status = ToolBatchStatus.FAILED if denied_encountered else ToolBatchStatus.COMPLETED
 
         if ctx.runtime and ctx.runtime.hooks:
-            await ctx.runtime.hooks.dispatch(HookPoint.AFTER_TOOL_EXECUTION, ctx)
+            # Collect tool messages for RuntimeContextHook to record tool calls.
+            # Without this payload, after_tool_execution(results=None) returns early
+            # and SubagentAutoSendHook cannot detect send_to_agent_async calls.
+            tool_msgs: list[dict[str, Any]] = []
+            for tc in tool_calls:
+                if tc.call_id and hasattr(ctx, 'history'):
+                    for msg in reversed(list(getattr(ctx.history, '_messages', []))):
+                        if isinstance(msg, dict) and msg.get('tool_call_id') == tc.call_id:
+                            tool_msgs.append(msg)
+                            break
+            await ctx.runtime.hooks.dispatch(
+                HookPoint.AFTER_TOOL_EXECUTION, ctx,
+                payload=HookPayload(data={"results": tool_msgs}),
+            )
 
         if ctx.emitter is not None:
             await ctx.emitter.emit(

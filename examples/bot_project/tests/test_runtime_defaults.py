@@ -52,10 +52,10 @@ def test_default_interceptor_chain_keeps_only_effective_defaults() -> None:
 
 
 def test_tool_timeout_exceeds_shell_internal_timeout() -> None:
-    """Outer tool timeout must strictly exceed ShellTool.timeout so the shell
+    """Outer tool timeout must strictly exceed CommandTool.timeout so the shell
     can return structured timeout XML with partial output instead of being
     cancelled by the ReAct-level asyncio.wait_for."""
-    from framework.tools.standard.shell_tool import ShellTool
+    from framework.tools.terminal import SubprocessTool
 
     service = BotService(
         config_dir=Path("examples/bot_project/config"),
@@ -64,8 +64,8 @@ def test_tool_timeout_exceeds_shell_internal_timeout() -> None:
         emitter_factory=lambda _session_id: None,
     )
     safety = service.safety_policy
-    shell_timeout = ShellTool().timeout
+    shell_timeout = SubprocessTool().timeout
     assert safety.turn.tool_timeout_seconds > shell_timeout, (
         f"tool_timeout_seconds ({safety.turn.tool_timeout_seconds}) must be > "
-        f"ShellTool.timeout ({shell_timeout})"
+        f"SubprocessTool.timeout ({shell_timeout})"
     )

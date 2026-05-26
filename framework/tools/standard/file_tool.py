@@ -1,17 +1,246 @@
 """文件系统工具: read, write, edit, list.
 
-提供简洁独立的文件操作工具。
-"""
+提供简洁独立的文件操作工具。"""
 
+from __future__ import annotations
+
+import logging
 from pathlib import Path
 from typing import Any
 
 from ...core.tool_manager import Tool
 
+logger = logging.getLogger(__name__)
+
+
+# -- 路径解析 ---------------------------------------------------------------
+
 
 def _resolve_path(path: str) -> Path:
     """Resolve path. No permission check — that's the interceptor's job."""
     return Path(path).expanduser().resolve()
+
+
+# -- 引号归一化与保留 -------------------------------------------------------
+
+_LEFT_SINGLE_CURLY = "\u2018"   # '
+_RIGHT_SINGLE_CURLY = "\u2019"  # '
+_LEFT_DOUBLE_CURLY = "\u201c"   # "
+_RIGHT_DOUBLE_CURLY = "\u201d"  # "
+
+
+def _normalize_quotes(s: str) -> str:
+    """将弯引号归一化为直引号。"""
+    return (
+        s.replace(_LEFT_SINGLE_CURLY, "'")
+        .replace(_RIGHT_SINGLE_CURLY, "'")
+        .replace(_LEFT_DOUBLE_CURLY, '"')
+        .replace(_RIGHT_DOUBLE_CURLY, '"')
+    )
+
+
+def _preserve_quote_style(old_model: str, old_actual: str, new_model: str) -> str:
+    """当 old_string 通过引号归一化匹配时，将 new_string 中的直引号替换为文件中的弯引号风格。
+
+    简化策略：检测 actual_old 中使用的弯引号类型，对 new_string 中
+    对应的直引号统一应用 opening/closing 启发式替换。
+    """
+    if old_model == old_actual:
+        return new_model
+
+    has_double = _LEFT_DOUBLE_CURLY in old_actual or _RIGHT_DOUBLE_CURLY in old_actual
+    has_single = _LEFT_SINGLE_CURLY in old_actual or _RIGHT_SINGLE_CURLY in old_actual
+
+    if not has_double and not has_single:
+        return new_model
+
+    result = new_model
+    if has_double:
+        result = _apply_curly_double_quotes(result)
+    if has_single:
+        result = _apply_curly_single_quotes(result)
+    return result
+
+
+def _is_opening_context(chars: list[str], index: int) -> bool:
+    """判断引号位置是否为 opening context。"""
+    if index == 0:
+        return True
+    prev = chars[index - 1]
+    return prev in (" ", "\t", "\n", "\r", "(", "[", "{", "\u2014", "\u2013")
+
+
+def _apply_curly_double_quotes(s: str) -> str:
+    """将直双引号替换为弯双引号（opening/closing 启发式）。"""
+    chars = list(s)
+    out: list[str] = []
+    for i, ch in enumerate(chars):
+        if ch == '"':
+            out.append(_LEFT_DOUBLE_CURLY if _is_opening_context(chars, i) else _RIGHT_DOUBLE_CURLY)
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def _apply_curly_single_quotes(s: str) -> str:
+    """将直单引号替换为弯单引号（跳过缩写中的撇号）。"""
+    chars = list(s)
+    out: list[str] = []
+    for i, ch in enumerate(chars):
+        if ch == "'":
+            prev = chars[i - 1] if i > 0 else None
+            nxt = chars[i + 1] if i < len(chars) - 1 else None
+            if prev and nxt and prev.isalpha() and nxt.isalpha():
+                out.append(_RIGHT_SINGLE_CURLY)
+            else:
+                out.append(_LEFT_SINGLE_CURLY if _is_opening_context(chars, i) else _RIGHT_SINGLE_CURLY)
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+# -- 空白归一化与位置映射 ---------------------------------------------------
+
+
+def _normalize_whitespace(s: str) -> str:
+    """将 tabs 归一化为 4 个空格（处理 Read tool 渲染导致的差异）。"""
+    return s.replace("\t", "    ")
+
+
+def _map_whitespace_back(
+    original: str,
+    ws_normalized: str,
+    ws_start: int,
+    ws_len: int,
+) -> str:
+    """将 whitespace 归一化后的匹配位置映射回原始内容。
+
+    逐字符遍历原始内容，同时追踪归一化位置。tab 在归一化中扩展为 4 个空格。
+    如果目标位置落在 tab 扩展的中间，snap 到 tab 的边界。
+    """
+    orig_i = 0
+    norm_i = 0
+    start_orig: int | None = None
+    end_orig: int | None = None
+
+    while orig_i < len(original) and norm_i <= ws_start + ws_len:
+        if norm_i == ws_start:
+            start_orig = orig_i
+        if norm_i == ws_start + ws_len:
+            end_orig = orig_i
+            break
+
+        ch = original[orig_i]
+        if ch == "\t":
+            next_norm = norm_i + 4
+            if norm_i < ws_start < next_norm and start_orig is None:
+                start_orig = orig_i
+            if norm_i < ws_start + ws_len < next_norm and end_orig is None:
+                end_orig = orig_i + 1
+                break
+            norm_i = next_norm
+        else:
+            norm_i += 1
+        orig_i += 1
+
+    if start_orig is None:
+        start_orig = 0
+    if end_orig is None:
+        end_orig = len(original)
+
+    return original[start_orig:end_orig]
+
+
+# -- 文件 I/O（保留编码和换行符）-------------------------------------------
+
+
+def _read_file(path: Path) -> tuple[str, str, str]:
+    """读取文件，返回 (内容, 编码, 换行符风格)。
+
+    内容中的换行符统一归一化为 \n（便于后续处理），
+    但会记录原始换行符风格以便写入时恢复。
+    """
+    raw = path.read_bytes()
+    has_crlf = b"\r\n" in raw
+
+    if raw.startswith(b"\xff\xfe"):
+        encoding = "utf-16-le"
+        content = raw[2:].decode("utf-16-le").replace("\r\n", "\n")
+    elif raw.startswith(b"\xef\xbb\xbf"):
+        encoding = "utf-8-sig"
+        content = raw.decode("utf-8-sig").replace("\r\n", "\n")
+    else:
+        encoding = "utf-8"
+        try:
+            content = raw.decode("utf-8").replace("\r\n", "\n")
+        except UnicodeDecodeError:
+            encoding = "utf-16-le"
+            content = raw.decode("utf-16-le").replace("\r\n", "\n")
+
+    line_endings = "CRLF" if has_crlf else "LF"
+    return content, encoding, line_endings
+
+
+def _write_file(path: Path, content: str, encoding: str, line_endings: str) -> None:
+    """写入文件，恢复原始编码和换行符风格。"""
+    if line_endings == "CRLF":
+        content = content.replace("\n", "\r\n")
+
+    if encoding == "utf-16-le":
+        raw = b"\xff\xfe" + content.encode("utf-16-le")
+    elif encoding == "utf-8-sig":
+        raw = b"\xef\xbb\xbf" + content.encode("utf-8")
+    else:
+        raw = content.encode("utf-8")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(raw)
+
+
+# -- 核心查找逻辑 -----------------------------------------------------------
+
+
+def _find_actual_string(file_content: str, search_string: str) -> str | None:
+    """四级级联匹配，返回文件中实际存在的字符串。
+
+    匹配级联：
+    1. 精确匹配
+    2. 引号归一化（弯引号 → 直引号）
+    3. Tab/空格归一化（tabs ↔ 4 spaces）
+    4. 引号 + 空白组合归一化
+    """
+    if not search_string:
+        return ""
+
+    # 1. 精确匹配
+    if search_string in file_content:
+        return search_string
+
+    # 2. 引号归一化
+    norm_search = _normalize_quotes(search_string)
+    norm_file = _normalize_quotes(file_content)
+    idx = norm_file.find(norm_search)
+    if idx != -1:
+        return file_content[idx : idx + len(search_string)]
+
+    # 3. Tab/空格归一化
+    ws_search = _normalize_whitespace(search_string)
+    ws_file = _normalize_whitespace(file_content)
+    idx = ws_file.find(ws_search)
+    if idx != -1:
+        return _map_whitespace_back(file_content, ws_file, idx, len(ws_search))
+
+    # 4. 组合归一化
+    combined_search = _normalize_whitespace(norm_search)
+    combined_file = _normalize_whitespace(norm_file)
+    idx = combined_file.find(combined_search)
+    if idx != -1:
+        return _map_whitespace_back(file_content, combined_file, idx, len(combined_search))
+
+    return None
+
+
+# -- 工具类 -----------------------------------------------------------------
 
 
 class ReadFileTool(Tool):
@@ -143,7 +372,14 @@ class WriteFileTool(Tool):
 
 
 class EditFileTool(Tool):
-    """通过替换文本编辑文件的工具."""
+    """通过精确字符串替换编辑文件的工具。
+
+    核心能力：
+    - 四级模糊匹配：精确、引号归一化、tab/空格归一化、组合归一化
+    - replace_all：批量替换所有出现
+    - 空 old_string：文件不存在时创建新文件，文件存在且非空时报错
+    - 保留原始编码和换行符风格
+    """
 
     def __init__(self):
         super().__init__()
@@ -154,7 +390,16 @@ class EditFileTool(Tool):
 
     @property
     def description(self) -> str:
-        return "Edit a file by replacing old_text with new_text. The old_text must exist exactly in the file."
+        return (
+            "Perform exact string replacements in files. "
+            "The edit will FAIL if old_string is not found in the file. "
+            "Either provide a larger string with more surrounding context to make it unique, "
+            "or use replace_all=true to change every occurrence. "
+            "When editing text from read_file output, preserve the exact indentation "
+            "(tabs/spaces) as it appears in the file content — never include line-number prefixes. "
+            "To delete text, set new_string to an empty string. "
+            "To create a new file, set old_string to an empty string on a nonexistent file."
+        )
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -165,39 +410,117 @@ class EditFileTool(Tool):
                     "type": "string",
                     "description": "The file path to edit"
                 },
-                "old_text": {
+                "old_string": {
                     "type": "string",
-                    "description": "The exact text to find and replace"
+                    "description": (
+                        "The text to find and replace. Must match exactly in the file "
+                        "(supports quote and whitespace normalization). "
+                        "Empty string means create new file or write to an empty existing file."
+                    )
                 },
-                "new_text": {
+                "new_string": {
                     "type": "string",
-                    "description": "The text to replace with"
+                    "description": "The text to replace with. Empty string means delete old_string."
+                },
+                "replace_all": {
+                    "type": "boolean",
+                    "description": (
+                        "Replace all occurrences of old_string (default false). "
+                        "Useful for renaming variables across the file."
+                    ),
+                    "default": False
                 }
             },
-            "required": ["path", "old_text", "new_text"]
+            "required": ["path", "old_string", "new_string"]
         }
 
-    async def execute(self, path: str, old_text: str, new_text: str, **kwargs: Any) -> str:
+    async def execute(
+        self,
+        path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+        **kwargs: Any,
+    ) -> str:
         try:
             file_path = _resolve_path(path)
-            if not file_path.exists():
+
+            # 无变化检查
+            if old_string == new_string:
+                return "Error: No changes to make — old_string and new_string are identical."
+
+            # 读取或初始化文件
+            if file_path.exists():
+                content, encoding, line_endings = _read_file(file_path)
+                file_exists = True
+            else:
+                content, encoding, line_endings = "", "utf-8", "LF"
+                file_exists = False
+
+            # 空 old_string 语义
+            if old_string == "":
+                if not file_exists:
+                    _write_file(file_path, new_string, encoding, line_endings)
+                    return f"Successfully created {path} with {len(new_string)} bytes."
+                if content.strip() == "":
+                    _write_file(file_path, new_string, encoding, line_endings)
+                    return f"Successfully wrote {len(new_string)} bytes to {path}."
+                return (
+                    "Error: Cannot create new file — file already exists and is not empty. "
+                    "Use write_file to overwrite, or provide old_string to edit."
+                )
+
+            # 非空 old_string 且文件不存在
+            if not file_exists:
                 return f"Error: File not found: {path}"
 
-            content = file_path.read_text(encoding="utf-8")
+            # 查找实际匹配字符串（四级模糊匹配）
+            actual_old = _find_actual_string(content, old_string)
 
-            if old_text not in content:
-                return "Error: old_text not found in file. Make sure it matches exactly."
+            # 最后 fallback：尝试去掉 trailing whitespace 再匹配
+            if actual_old is None:
+                stripped = old_string.rstrip()
+                if stripped != old_string:
+                    actual_old = _find_actual_string(content, stripped)
 
-            # 统计出现次数
-            count = content.count(old_text)
-            if count > 1:
-                return f"Warning: old_text appears {count} times. Please provide more context to make it unique."
+            if actual_old is None:
+                preview = old_string[:200]
+                if len(old_string) > 200:
+                    preview += "..."
+                return f"Error: String to replace not found in file.\nString: {preview}"
 
-            new_content = content.replace(old_text, new_text, 1)
-            file_path.write_text(new_content, encoding="utf-8")
+            # 检查匹配次数
+            matches = content.count(actual_old)
+            if matches > 1 and not replace_all:
+                preview = old_string[:200]
+                if len(old_string) > 200:
+                    preview += "..."
+                return (
+                    f"Error: Found {matches} matches of the string to replace, "
+                    f"but replace_all is false. To replace all occurrences, set replace_all=true. "
+                    f"To replace only one occurrence, provide more context to uniquely identify the instance.\n"
+                    f"String: {preview}"
+                )
 
-            return f"Successfully edited {path}"
+            # 引号风格保留
+            actual_new = _preserve_quote_style(old_string, actual_old, new_string)
+
+            # 应用替换
+            updated = content.replace(actual_old, actual_new) if replace_all else content.replace(actual_old, actual_new, 1)
+
+            # 验证替换确实发生了
+            if updated == content:
+                return "Error: Edit produced no changes."
+
+            # 写入文件
+            _write_file(file_path, updated, encoding, line_endings)
+
+            if replace_all:
+                return f"Successfully edited {path}. All {matches} occurrences replaced."
+            return f"Successfully edited {path}."
+
         except Exception as e:
+            logger.exception("EditFileTool error")
             return f"Error editing file: {str(e)}"
 
 

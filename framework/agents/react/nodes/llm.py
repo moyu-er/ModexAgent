@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from framework.agents.react.agent import ReActEvent
 from framework.agents.react.constants import ReActNode, ReActReason
 from framework.agents.react.state import get_react_state
-from framework.control.runtime import ControlPhase
+from framework.control.runtime import ControlPhase, ControlRuntime
 from framework.core.agent import AgentContext
 from framework.core.constants import FinishReason
 from framework.core.graph.node import Node, NodeTransition
@@ -126,7 +126,7 @@ class LLMNode(Node):
     async def _call_llm(
         self, messages: list[dict[str, object]], ctx: AgentContext,
     ) -> LLMResponse:
-        if ctx.runtime and ctx.runtime.control:
+        if ctx.runtime and ctx.runtime.control and isinstance(ctx.runtime.control, ControlRuntime):
             await ctx.runtime.control.drain(ctx, phase=ControlPhase.BEFORE_LLM)
         emitter = ctx.emitter
         if emitter is not None and emitter.wants_streaming() and isinstance(

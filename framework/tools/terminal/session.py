@@ -13,6 +13,15 @@ from framework.tools.terminal.prompt import (
     is_prompt_ready,
     sanitize_terminal_output,
 )
+from framework.tools.terminal.pty_keys import (
+    CursorKeyMode,
+    detect_bracketed_paste_mode,
+    detect_cursor_key_mode,
+    strip_bracketed_paste_mode,
+    strip_dsr_and_respond,
+    strip_smkx_rmkx,
+)
+from framework.tools.terminal.results import TerminalRead, TerminalSegment
 
 if TYPE_CHECKING:
     from framework.tools.terminal.backends.base import TerminalBackend
@@ -74,6 +83,8 @@ class TerminalSession:
         self._busy_after_timeout = False
         self._backend_started = False
         self._last_status: str | None = None
+        self.cursor_key_mode: CursorKeyMode = CursorKeyMode.UNKNOWN
+        self.bracketed_paste_enabled: bool = False
 
     async def ensure_started(self) -> None:
         """Start the backend immediately if not already started.
@@ -95,11 +106,8 @@ class TerminalSession:
 
     @property
     def visible(self) -> bool:
-        """Whether this session is backed by a visible OS terminal window.
-
-        All backends are visible after the invisible backend deletion.
-        """
-        return True
+        """Whether this session is backed by a visible OS terminal window."""
+        return self._backend.visibility == "visible"
 
     @property
     def window_title(self) -> str | None:
@@ -409,6 +417,81 @@ class TerminalSession:
             command_count=len(self._history),
             is_default=is_default,
         )
+
+    async def write(self, data: str) -> None:
+        """Write raw data to the terminal backend."""
+        if not await self._backend.is_alive():
+            await self._ensure_backend_alive()
+        await self._backend.write(data)
+
+    async def poll_once(self, timeout: float = 0.1, max_size: int = 65536) -> TerminalRead:
+        """Read pending output, stripping DECCKM/DSR/bracketed-paste sequences.
+
+        DECCKM (smkx/rmkx) sequences update ``cursor_key_mode`` and are
+        removed from the returned output.  DSR (Device Status Report)
+        queries are stripped and an automatic CPR response is written back
+        to stdin so TUI programs don't hang.  Bracketed-paste mode sequences
+        update ``bracketed_paste_enabled`` and are stripped from output.
+        """
+        read = await self._backend.read_pending(timeout=timeout, max_size=max_size)
+        if not read.raw:
+            return read
+
+        raw_bytes = read.raw.encode("utf-8", errors="replace")
+
+        # Detect and update cursor key mode
+        new_mode = detect_cursor_key_mode(raw_bytes)
+        if new_mode is not None:
+            self.cursor_key_mode = new_mode
+
+        # Detect and update bracketed paste mode
+        bp_mode = detect_bracketed_paste_mode(raw_bytes)
+        if bp_mode is not None:
+            self.bracketed_paste_enabled = bp_mode
+
+        # Strip smkx/rmkx from output
+        cleaned = strip_smkx_rmkx(raw_bytes)
+
+        # Strip bracketed-paste enable/disable from output
+        cleaned = strip_bracketed_paste_mode(cleaned)
+
+        # Strip DSR queries and auto-respond with cursor position.
+        # Pass None for the writer; we issue the response ourselves
+        # so we stay in the async context (backend.write is async).
+        cleaned, dsr_count = strip_dsr_and_respond(cleaned, None)
+        if dsr_count > 0 and self._backend.stdin_writable():
+            response = "\x1b[1;1R" * dsr_count
+            await self._backend.write(response)
+
+        clean_str = cleaned.decode("utf-8", errors="replace")
+        return TerminalRead(stdout=clean_str, stderr=read.stderr, raw=clean_str)
+
+    async def current_segment(self) -> TerminalSegment:
+        """Get the current visible terminal segment."""
+        return await self._backend.current_segment()
+
+    async def interrupt(self) -> None:
+        """Send Ctrl+C to the terminal."""
+        await self._backend.interrupt()
+
+    async def is_alive(self) -> bool:
+        """Return True if the backend is alive."""
+        return await self._backend.is_alive()
+
+    async def terminate(self) -> None:
+        """Terminate the terminal session."""
+        await self._backend.terminate()
+
+    async def _ensure_backend_alive(self) -> None:
+        """Start the backend if it is not alive."""
+        await self._backend.start(
+            shell=self.shell_info.path,
+            cwd=self._cwd,
+            env=self._startup_env(),
+        )
+        self._backend_started = True
+        self._needs_restart = False
+        self._busy_after_timeout = False
 
     async def send_interrupt(self) -> None:
         """Send Ctrl-C (\\x03) to the backend and clear busy state.

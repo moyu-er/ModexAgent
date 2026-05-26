@@ -145,8 +145,8 @@ class MessageBroker(ABC):
 
     # ── 消费接口 ──
     @abstractmethod
-    async def consume(self, address: Address) -> BrokerMessage:
-        """从 Address 的 Mailbox 阻塞消费单条消息。"""
+    async def consume(self, address: Address) -> BrokerMessage | None:
+        """从 Address 的 Mailbox 阻塞消费单条消息。Returns None on shutdown."""
         ...
 
     @abstractmethod

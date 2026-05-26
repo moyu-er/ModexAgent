@@ -11,7 +11,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Literal
 
-from framework import InMemoryToolManager, ToolManagerConfig
+from bot.plugins.integration import PluginIntegration
+from framework import InMemoryToolManager, ToolManagerConfig, LLMProvider
 from framework.core.context import ContextManager
 from framework.core.skills import (
     CompositeSkillSource,
@@ -38,13 +39,23 @@ from framework.multi_agent import (
     AgentAddress,
     AgentPool,
     CommunicationTracker,
-    SubagentService,
+    SubagentService, AgentMessageBus,
 )
 from framework.multi_agent.session_id import DefaultSessionIdStrategy
 from framework.multi_agent.tools import ListCommunicationTargetsTool, SendToAgentAsyncTool
 from framework.pipeline.adapters import NullOutputAdapter, OutputAdapter
+from framework.tools import MCPClientManager
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_system_prompt(agent_cfg: Any, project_dir: Path) -> str:
+    """Resolve system prompt: agents/{name}.md if exists, else YAML value."""
+    md_path = project_dir / "agents" / f"{agent_cfg.name}.md"
+    if md_path.exists():
+        return md_path.read_text(encoding="utf-8")
+    return getattr(agent_cfg, "system_prompt", "")
+
 
 # ── Standard tool builders (code objects, no config) ──
 
@@ -58,16 +69,8 @@ def _make_shell_tool(
     timeout: int = 60,
     enable_safety_guard: bool = True,
 ) -> Tool:
-    from framework.tools.standard import ShellTool, SubprocessExecutor, TerminalSessionExecutor
-
-    if terminal_manager is not None:
-        executor = TerminalSessionExecutor(
-            terminal_manager=terminal_manager,
-            default_terminal="default",
-        )
-    else:
-        executor = SubprocessExecutor()
-    return ShellTool(executor=executor, timeout=timeout, enable_safety_guard=enable_safety_guard)
+    from framework.tools.terminal import SubprocessTool, SubprocessExecutor
+    return SubprocessTool(executor=SubprocessExecutor(), timeout=timeout, enable_safety_guard=enable_safety_guard)
 
 
 def _make_search_tools() -> list[Tool]:
@@ -116,13 +119,13 @@ class AgentBuilderMixin:
     output_adapter: OutputAdapter
     agent_pool: AgentPool | None
     broker: InMemoryMessageBroker | None
-    agent_bus: Any | None
+    agent_bus: AgentMessageBus | None
     subagent_service: SubagentService | None
     communication_tracker: CommunicationTracker | None
-    mcp_manager: Any | None
-    context_manager: Any | None
-    provider: Any | None
-    plugin_integration: Any | None
+    mcp_manager: MCPClientManager | None
+    context_manager: ContextManager | None
+    provider: LLMProvider | None
+    plugin_integration: PluginIntegration | None
 
     # Subagent caches
     _subagent_skill_managers: dict[str, SkillManager]
@@ -140,22 +143,23 @@ class AgentBuilderMixin:
         for tool in _make_file_tools():
             self.tool_manager.register(tool)
 
-        shell_tool = _make_shell_tool(
-            terminal_manager=terminal_manager, timeout=60
-        )
-        self.tool_manager.register(shell_tool)
+        if terminal_manager is not None:
+            from framework.tools.terminal import TerminalTool, CommandTool, ProcessTool, ProcessRegistry
+            from framework.tools.terminal.config import TerminalRuntimeConfig
+
+            cfg = TerminalRuntimeConfig()
+            registry = ProcessRegistry(config=cfg)
+            self.tool_manager.register(CommandTool(manager=terminal_manager, registry=registry, config=cfg))
+            self.tool_manager.register(ProcessTool(registry=registry, manager=terminal_manager))
+            self.tool_manager.register(TerminalTool(terminal_manager))
+        else:
+            # No terminal backend — fall back to stateless subprocess
+            shell_tool = _make_shell_tool(timeout=60)
+            self.tool_manager.register(shell_tool)
 
         for tool in _make_search_tools():
             self.tool_manager.register(tool)
-        print("   [OK] Standard tools registered (file + shell + search)")
-
-        # Register TerminalTool only when a stateful TerminalManager exists.
-        # On Windows without bash we fall back to SubprocessExecutor,
-        # so TerminalTool (which manages persistent tabs) has no backend.
-        if terminal_manager is not None:
-            from framework.tools.terminal import TerminalTool
-            self.tool_manager.register(TerminalTool(terminal_manager))
-            print("   [OK] terminal registered")
+        print("   [OK] Standard tools registered (file + search)")
 
         from bot.tools.custom import SendFileToUserTool
         self.tool_manager.register(SendFileToUserTool(output_adapter=self.output_adapter))
