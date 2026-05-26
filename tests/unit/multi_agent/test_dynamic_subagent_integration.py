@@ -107,6 +107,14 @@ def test_template_not_found_returns_none():
         assert registry.get_template("main", "nonexistent") is None
 
 
+def _make_mock_pool():
+    """Create a mock AgentPool that supports register_resident (async) + get (sync)."""
+    pool = MagicMock()
+    pool.register_resident = AsyncMock()
+    pool.get = MagicMock(return_value=MagicMock(pipeline=MagicMock()))
+    return pool
+
+
 class TestDynamicCreationAgentAddressBug:
     """Bug: _create_dynamic_subagent passes comm_kind to AgentAddress which doesn't accept it.
 
@@ -127,8 +135,7 @@ class TestDynamicCreationAgentAddressBug:
             from framework.multi_agent.communication import AgentCommunicationService
             from framework.multi_agent.address import AgentAddress
 
-            mock_pool = AsyncMock()
-            mock_pool.register_resident = AsyncMock()
+            mock_pool = _make_mock_pool()
             mock_broker = AsyncMock()
 
             service = AgentCommunicationService(
@@ -226,8 +233,7 @@ class TestInvocationIdNullCreatesNewSubagent:
             from framework.multi_agent.address import AgentAddress
             from framework.core.agent import AgentContext, AgentSessionMeta
 
-            mock_pool = AsyncMock()
-            mock_pool.register_resident = AsyncMock()
+            mock_pool = _make_mock_pool()
             mock_broker = AsyncMock()
             mock_registry = MagicMock()
             mock_registry.get_descriptor.return_value = None
@@ -531,8 +537,7 @@ class TestSubagentIsolation:
 
             main_ctx = InMemoryContextManager(base_system_prompt="Main system prompt")
 
-            mock_pool = AsyncMock()
-            mock_pool.register_resident = AsyncMock()
+            mock_pool = _make_mock_pool()
             mock_pool._agents = {}
             mock_broker = AsyncMock()
 
@@ -579,8 +584,7 @@ class TestSubagentIsolation:
             template = registry.get_template("main", "helper")
             assert template is not None
 
-            mock_pool = AsyncMock()
-            mock_pool.register_resident = AsyncMock()
+            mock_pool = _make_mock_pool()
             mock_broker = AsyncMock()
 
             service = AgentCommunicationService(
@@ -658,6 +662,72 @@ class TestSubagentIsolation:
             )
 
 
+class TestSubagentMemoryCorrectness:
+    """Dynamic subagent must get a real MemorySystemContextManager with
+    session-scoped memory (no knowledge layer), not bare InMemoryContextManager.
+
+    Verifies the subagent's context_manager is a MemorySystemContextManager
+    wrapping a MemorySystem with session+archive layers (no knowledge).
+    """
+
+    async def test_subagent_gets_memory_system_context_manager(self):
+        """Subagent must use MemorySystemContextManager, not InMemoryContextManager."""
+        from framework.memory.system import MemorySystemContextManager
+        from framework.core.context import InMemoryContextManager
+        from framework.multi_agent.address import AgentAddress
+        from framework.multi_agent.communication import AgentCommunicationService
+        from framework.memory.core.scope import MemoryAgentRole
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            _write_files(project, "main", "helper",
+                "agent_type: helper\ndescription: Test\nmax_steps: 10\n"
+                "memory:\n  short_term:\n    max_messages: 20\n    max_tokens: 10000\n",
+                "You are a helper.")
+
+            registry = AgentTemplateRegistry(project)
+            template = registry.get_template("main", "helper")
+            assert template is not None
+
+            mock_pool = _make_mock_pool()
+            mock_pool._agents = {}
+            mock_broker = AsyncMock()
+
+            service = AgentCommunicationService(
+                source=AgentAddress(name="main"),
+                broker=mock_broker,
+                registry=MagicMock(),
+                pool=mock_pool,
+                pool_name="main",
+                project_dir=project,
+            )
+
+            result = await service._create_dynamic_subagent(
+                template=template,
+                conversation_id="conv-1",
+                invocation_id="test0001",
+                content="Do something",
+            )
+
+            assert result.error is None
+            call_kwargs = mock_pool.register_resident.call_args
+            passed_ctx = call_kwargs[1].get("context_manager")
+
+            # Must be MemorySystemContextManager (has real memory persistence)
+            assert passed_ctx is not None
+            assert isinstance(passed_ctx, MemorySystemContextManager), (
+                f"Expected MemorySystemContextManager, got {type(passed_ctx).__name__}"
+            )
+            assert not isinstance(passed_ctx, InMemoryContextManager), (
+                "Must not use bare InMemoryContextManager (no memory persistence)"
+            )
+
+            # Memory system must exist and be initialized
+            assert passed_ctx.memory_system is not None
+            assert passed_ctx.default_agent_id == "helper"
+            assert passed_ctx.default_agent_role == MemoryAgentRole.SUBAGENT
+
+
 class TestSessionRoutingSameAgentDifferentInvocation:
     """Same agent name + different invocation_ids → different sessions.
 
@@ -731,8 +801,7 @@ class TestSessionRoutingSameAgentDifferentInvocation:
             template = registry.get_template("main", "helper")
             assert template is not None
 
-            mock_pool = AsyncMock()
-            mock_pool.register_resident = AsyncMock()
+            mock_pool = _make_mock_pool()
             mock_broker = AsyncMock()
             mock_registry = MagicMock()
 

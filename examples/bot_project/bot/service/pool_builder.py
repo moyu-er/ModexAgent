@@ -180,6 +180,13 @@ async def create_pool(
     templates = template_registry.list_templates(pool_name)
     logger.info("Pool '%s': %d templates available for dynamic creation", pool_name, len(templates))
 
+    # 9.6 Per-pool notification service (must be before main_service for subagent hooks)
+    notification_service = AgentNotificationService(
+        output_adapter=output_adapter,
+        agent_bus=agent_bus,
+        session_strategy=session_strategy,
+    )
+
     main_address = AgentAddress(name=main_agent_name)
     main_service = AgentCommunicationService(
         source=main_address, broker=broker, registry=pool,
@@ -189,6 +196,16 @@ async def create_pool(
         pool=pool,
         pool_name=pool_name,
         project_dir=project_dir,
+        # Subagent creation dependencies
+        memory_dir=memory_dir,
+        safety=safety,
+        pool_llm_model=pool_cfg.llm.model,
+        pool_llm_temperature=pool_cfg.llm.temperature,
+        pool_llm_max_tokens=pool_cfg.llm.max_tokens,
+        mcp_manager=mcp_manager,
+        inbox_consumer=inbox_consumer,
+        notification_service=notification_service,
+        main_agent_name=main_agent_name,
     )
     tool_manager.register(SendToAgentTool(
         source=main_address, broker=broker, registry=pool,
@@ -202,12 +219,7 @@ async def create_pool(
     ))
     logger.info("Pool '%s': communication tools registered for main agent", pool_name)
 
-    # 10. Per-pool notification service + hooks
-    notification_service = AgentNotificationService(
-        output_adapter=output_adapter,
-        agent_bus=agent_bus,
-        session_strategy=session_strategy,
-    )
+    # 10. Hooks
     max_iter_hook = MaxIterationNotifyHook(notification_service=notification_service)
 
     # Wire hooks on main agent's pipeline

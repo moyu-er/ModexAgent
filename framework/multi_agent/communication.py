@@ -10,7 +10,7 @@ import logging
 import uuid as _uuid_mod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from framework.multi_agent.address import AgentAddress
 from framework.multi_agent.comm_kind import AgentCommKind
@@ -66,6 +66,16 @@ class AgentCommunicationService:
         pool: AgentPool | None = None,
         pool_name: str | None = None,
         project_dir: Path | None = None,
+        # Subagent-creation dependencies
+        memory_dir: Path | None = None,
+        safety: Any = None,
+        pool_llm_model: str | None = None,
+        pool_llm_temperature: float = 0.7,
+        pool_llm_max_tokens: int | None = None,
+        mcp_manager: Any | None = None,
+        inbox_consumer: Any | None = None,
+        notification_service: Any | None = None,
+        main_agent_name: str | None = None,
     ) -> None:
         self._source = source
         self._broker = broker
@@ -77,6 +87,15 @@ class AgentCommunicationService:
         self._pool = pool
         self._pool_name = pool_name
         self._project_dir = project_dir
+        self._memory_dir = memory_dir
+        self._safety = safety
+        self._pool_llm_model = pool_llm_model
+        self._pool_llm_temperature = pool_llm_temperature
+        self._pool_llm_max_tokens = pool_llm_max_tokens
+        self._mcp_manager = mcp_manager
+        self._inbox_consumer = inbox_consumer
+        self._notification_service = notification_service
+        self._main_agent_name = main_agent_name
 
     def _resolve_source(self, context: AgentContext) -> AgentAddress:
         """Resolve effective source address from context, fallback to constructor default."""
@@ -112,7 +131,12 @@ class AgentCommunicationService:
         content: str,
         source: AgentAddress | None = None,
     ) -> AgentSendResult:
-        """Create a dynamic subagent from template and send initial task."""
+        """Create a dynamic subagent from template and send initial task.
+
+        Builds a proper MemorySystemContextManager with session-scoped memory
+        (no knowledge layer), standard tools, MCP tools, communication tools,
+        and wires SubagentAutoSendHook + InboxFlushHook on the pipeline.
+        """
         if self._pool is None:
             return AgentSendResult(
                 target_agent=template.agent_type,
@@ -126,48 +150,74 @@ class AgentCommunicationService:
         name = template.agent_type
 
         # Load system prompt from agents/{pool_name}/{agent_type}.md
+        from framework.ioc.factories.descriptors import DEFAULT_SYSTEM_PROMPT
+
         system_prompt = ""
         if self._project_dir is not None and self._pool_name is not None:
             md_path = self._project_dir / "agents" / self._pool_name / f"{template.agent_type}.md"
             if md_path.exists():
                 system_prompt = md_path.read_text(encoding="utf-8")
+        if not system_prompt:
+            system_prompt = DEFAULT_SYSTEM_PROMPT
 
-        # Build AgentDescriptor from template
+        # ── Memory: session-scoped, no knowledge layer ──
+        from framework.ioc.factories.descriptors import build_session_only_memory
+        from framework.memory.core.scope import MemoryAgentRole
+
+        memory_workspace = self._memory_dir or (
+            self._project_dir / "data" / "memory" / self._pool_name
+            if self._project_dir and self._pool_name else Path(".")
+        )
+        subagent_ctx = build_session_only_memory(
+            cfg=template.memory,
+            workspace=memory_workspace,
+            agent_id=name,
+            agent_role=MemoryAgentRole.SUBAGENT,
+            system_prompt=system_prompt,
+        )
+
+        # ── Tool manager: standard + MCP + communication ──
+        subagent_tm = await self._build_subagent_tool_manager(template, agent_name=name)
+
+        # ── Descriptor ──
         from framework.multi_agent.descriptor import AgentDescriptor, AgentLLMConfig
 
         descriptor = AgentDescriptor(
             address=AgentAddress(name=name),
-            llm_config=AgentLLMConfig(),
+            llm_config=AgentLLMConfig(
+                model=self._pool_llm_model or "",
+                temperature=self._pool_llm_temperature,
+                max_tokens=self._pool_llm_max_tokens,
+            ),
             system_prompt_template=system_prompt,
             max_iterations=template.max_steps,
+            max_tools_per_turn=10,
             execution_strategy="react",
             context_strategy="persistent",
+            safety_policy=self._safety,
             comm_kind=AgentCommKind.SUBAGENT,
         )
 
-        # Dedicated context manager — so subagent uses its own system prompt,
-        # not the pool's default (which belongs to main agent).
-        from framework.core.context import InMemoryContextManager
-        subagent_ctx = InMemoryContextManager(base_system_prompt=system_prompt)
+        # ── Register ──
+        from framework.pipeline.adapters import NullOutputAdapter
 
-        # Dedicated tool manager — subagent must NOT inherit main's MCP tools.
-        subagent_tm = self._build_subagent_tool_manager(template, agent_name=name)
-
-        # Register in pool with isolated context and tools
         await self._pool.register_resident(
             descriptor,
             context_manager=subagent_ctx,
             tool_manager=subagent_tm,
+            output_adapter=NullOutputAdapter(),
         )
 
-        # Build session ID for the new subagent
+        # ── Wire hooks ──
+        self._wire_subagent_hooks(name)
+
+        # ── Send initial task ──
         session_id = self._session_strategy.format(
             conversation_id=conversation_id,
             agent_name=name,
             invocation_id=invocation_id,
         )
 
-        # Send initial task via broker
         effective_source = source or self._source
         envelope = AgentMessageEnvelope(
             payload={"content": content, "message_type": "task_request"},
@@ -193,13 +243,43 @@ class AgentCommunicationService:
             created_new_task=True,
         )
 
-    def _build_subagent_tool_manager(self, template: AgentTemplate, agent_name: str):
-        """Build a minimal tool set for a dynamic subagent.
+    def _wire_subagent_hooks(self, agent_name: str) -> None:
+        """Wire standard subagent hooks on the registered agent's pipeline."""
+        if self._pool is None:
+            return
+        sub_instance = self._pool.get(agent_name)
+        if sub_instance is None or sub_instance.pipeline is None:
+            return
 
-        Subagent tools are isolated from the main agent's tool manager. The set includes:
+        from framework.hook import HookErrorPolicy, HookSpec
+        from framework.hook.builtin import InboxFlushHook, SubagentAutoSendHook
+
+        def _add_hook(pipeline: Any, hook: Any) -> None:
+            if pipeline.hook_runner is not None:
+                pipeline.hook_runner.add(HookSpec(hook=hook, on_error=HookErrorPolicy.LOG))
+            else:
+                pipeline.hooks.append(hook)
+
+        if self._inbox_consumer is not None:
+            _add_hook(sub_instance.pipeline, InboxFlushHook(
+                consumer=self._inbox_consumer, agent_name=agent_name,
+            ))
+
+        if self._agent_bus is not None:
+            _add_hook(sub_instance.pipeline, SubagentAutoSendHook(
+                agent_bus=self._agent_bus,
+                self_name=agent_name,
+                parent_name=self._main_agent_name or "main",
+                notification_service=self._notification_service,
+            ))
+
+    async def _build_subagent_tool_manager(self, template: AgentTemplate, agent_name: str):
+        """Build the subagent tool manager from template configuration.
+
+        Includes:
+        - Standard tools (file + shell + search) if template.standard_tools
+        - MCP tools filtered by template.mcp_filter
         - Communication tools (send_to_agent, list_communication_targets) — always
-        - Standard file tools — if template.standard_tools is True
-        - Terminal tools — if template.use_terminal is True
         """
         from framework.core.tool_manager import InMemoryToolManager, ToolManagerConfig
         from framework.multi_agent.tools import (
@@ -209,12 +289,40 @@ class AgentCommunicationService:
         from framework.multi_agent.address import AgentAddress
 
         tm = InMemoryToolManager(config=ToolManagerConfig(
-            max_workers=5, enable_parallel=True, parallel_max_workers=3,
+            max_workers=10, enable_parallel=True, parallel_max_workers=5,
         ))
 
-        subagent_address = AgentAddress(name=agent_name)
+        # Standard tools (file + shell + search)
+        if template.standard_tools:
+            from framework.tools.standard import (
+                EditFileTool, FindFilesTool, ListDirTool,
+                ReadFileTool, SearchFilesTool, WriteFileTool,
+            )
+            from framework.tools.terminal import SubprocessTool
+            for tool in [
+                ReadFileTool(), WriteFileTool(), EditFileTool(),
+                ListDirTool(), SearchFilesTool(), FindFilesTool(),
+                SubprocessTool(timeout=60),
+            ]:
+                tm.register(tool)
 
-        # Communication tools — always included so subagent can reply
+        # MCP tools from template.mcp_filter
+        if template.mcp_filter and self._mcp_manager is not None:
+            try:
+                for server_name in template.mcp_filter:
+                    client = self._mcp_manager.get_client(server_name)
+                    if client is not None:
+                        server_tools = await client.list_tools()
+                        for tool in server_tools:
+                            tm.register(tool)
+            except Exception:
+                logger.exception(
+                    "Failed to load MCP tools for subagent %s (filter=%s)",
+                    agent_name, template.mcp_filter,
+                )
+
+        # Communication tools — always included so subagent can reply to parent
+        subagent_address = AgentAddress(name=agent_name)
         tm.register(SendToAgentTool(
             source=subagent_address,
             broker=self._broker,
@@ -229,21 +337,6 @@ class AgentCommunicationService:
             template_registry=self._template_registry,
             pool_name=self._pool_name,
         ))
-
-        # Standard file tools
-        if template.standard_tools:
-            from framework.tools.standard import (
-                EditFileTool, FindFilesTool, ListDirTool,
-                ReadFileTool, SearchFilesTool, WriteFileTool,
-            )
-            for tool in [ReadFileTool(), WriteFileTool(), EditFileTool(),
-                         ListDirTool(), SearchFilesTool(), FindFilesTool()]:
-                tm.register(tool)
-
-        # Terminal tools
-        if template.use_terminal:
-            from framework.tools.terminal import SubprocessTool, SubprocessExecutor
-            tm.register(SubprocessTool(executor=SubprocessExecutor(), timeout=60))
 
         return tm
 
