@@ -728,6 +728,123 @@ class TestSubagentMemoryCorrectness:
             assert passed_ctx.default_agent_role == MemoryAgentRole.SUBAGENT
 
 
+class TestAgentMessageXmlWrapping:
+    """Outgoing agent messages must be wrapped in <agent_message> XML.
+
+    Per spec Section 4.1: Framework fills source and invocation_id;
+    LLM only provides content. The XML wrapping happens at send time.
+    The receiving agent stores it in memory as-is via InboxFlushHook.
+    """
+
+    async def test_task_request_wraps_content_in_agent_message_xml(self):
+        """First message (task_request) must be XML-wrapped."""
+        from framework.multi_agent.address import AgentAddress
+        from framework.multi_agent.communication import AgentCommunicationService
+        from framework.multi_agent.message_xml import build_agent_message
+
+        sent_payloads: list = []
+        mock_broker = AsyncMock()
+
+        async def capture_send(target, msg):
+            sent_payloads.append(msg.payload)
+
+        mock_broker.send_to = capture_send
+        mock_pool = _make_mock_pool()
+        mock_registry = MagicMock()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            _write_files(project, "main", "helper",
+                "agent_type: helper\ndescription: Test\nmax_steps: 10\n",
+                "You are a helper.")
+
+            registry = AgentTemplateRegistry(project)
+            template = registry.get_template("main", "helper")
+
+            service = AgentCommunicationService(
+                source=AgentAddress(name="main"),
+                broker=mock_broker,
+                registry=mock_registry,
+                pool=mock_pool,
+                pool_name="main",
+                project_dir=project,
+                template_registry=registry,
+            )
+
+            result = await service._create_dynamic_subagent(
+                template=template,
+                conversation_id="conv-1",
+                invocation_id="test0001",
+                content="Hello from main",
+            )
+
+            assert result.error is None
+            assert len(sent_payloads) == 1
+            payload = sent_payloads[0]
+            content = payload.get("content", "")
+
+            # Must be XML-wrapped
+            assert "<agent_message" in content, (
+                f"Content must be XML-wrapped, got: {content[:100]}"
+            )
+            assert 'source="main"' in content
+            assert 'invocation_id="test0001"' in content
+            assert "Hello from main" in content
+
+    async def test_agent_message_wraps_content_in_xml(self):
+        """Normal agent_message must also be XML-wrapped."""
+        from framework.core.agent import AgentContext, AgentSessionMeta
+        from framework.multi_agent.address import AgentAddress
+        from framework.multi_agent.communication import AgentCommunicationService
+        from framework.multi_agent.descriptor import AgentDescriptor
+
+        sent_payloads: list = []
+        mock_broker = AsyncMock()
+
+        async def capture_send(target, msg):
+            sent_payloads.append(msg.payload)
+
+        mock_broker.send_to = capture_send
+        mock_registry = MagicMock()
+        mock_registry.get_descriptor.return_value = AgentDescriptor(
+            address=AgentAddress(name="helper"),
+            comm_kind=AgentCommKind.SUBAGENT,
+        )
+
+        service = AgentCommunicationService(
+            source=AgentAddress(name="main"),
+            broker=mock_broker,
+            registry=mock_registry,
+        )
+
+        ctx = AgentContext(
+            system_prompt="",
+            history=MagicMock(),
+            tool_manager=MagicMock(),
+            session_meta=AgentSessionMeta(
+                conversation_id="conv-1",
+                agent_name="main",
+                comm_kind=AgentCommKind.NORMAL,
+            ),
+        )
+
+        result = await service.send_async(
+            target_agent="helper", content="Follow-up question",
+            invocation_id="existing123", context=ctx,
+        )
+
+        assert "Error" not in str(result)
+        assert len(sent_payloads) >= 1
+        payload = sent_payloads[0]
+        content = payload.get("content", "")
+
+        assert "<agent_message" in content, (
+            f"Agent messages must be XML-wrapped, got: {content[:100]}"
+        )
+        assert 'invocation_id="existing123"' in content
+        assert "Follow-up question" in content
+
+
 class TestSessionRoutingSameAgentDifferentInvocation:
     """Same agent name + different invocation_ids → different sessions.
 

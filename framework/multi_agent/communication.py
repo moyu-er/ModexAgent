@@ -211,7 +211,7 @@ class AgentCommunicationService:
         # ── Wire hooks ──
         self._wire_subagent_hooks(name)
 
-        # ── Send initial task ──
+        # ── Send initial task (XML-wrapped per spec Section 4.1) ──
         session_id = self._session_strategy.format(
             conversation_id=conversation_id,
             agent_name=name,
@@ -219,8 +219,14 @@ class AgentCommunicationService:
         )
 
         effective_source = source or self._source
+        from framework.multi_agent.message_xml import build_agent_message
+        xml_content = build_agent_message(
+            source=effective_source.name,
+            invocation_id=invocation_id,
+            content=content,
+        )
         envelope = AgentMessageEnvelope(
-            payload={"content": content, "message_type": "task_request"},
+            payload={"content": xml_content, "message_type": "task_request"},
             source=effective_source,
             target=AgentAddress(name=name),
             message_type="task_request",
@@ -484,14 +490,21 @@ class AgentCommunicationService:
             invocation_id=normalized_invocation_id,
         )
 
-        # 5. Build envelope
+        # 5. Build envelope (XML-wrapped per spec Section 4.1)
         # For subagent replying to normal parent: preserve caller's invocation_id on envelope
         envelope_invocation_id = normalized_invocation_id
         if target_kind == AgentCommKind.NORMAL and session_meta.comm_kind == AgentCommKind.SUBAGENT:
             envelope_invocation_id = session_meta.invocation_id
 
+        from framework.multi_agent.message_xml import build_agent_message
+        effective_source_name = effective_source.name
+        xml_content = build_agent_message(
+            source=effective_source_name,
+            invocation_id=envelope_invocation_id,
+            content=content,
+        )
         envelope = AgentMessageEnvelope(
-            payload={"content": content, "message_type": "agent_message"},
+            payload={"content": xml_content, "message_type": "agent_message"},
             source=effective_source,
             target=AgentAddress(kind="agent", name=target_agent),
             message_type="agent_message",
