@@ -5,16 +5,14 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from framework.control.runtime import ControlRuntime
 from framework.core.llm_struct import RuntimeSafetyPolicy
 from framework.core.tool_manager import InMemoryToolManager, ToolManagerConfig
 from framework.hook import HookErrorPolicy, HookRunner, HookSpec
-from framework.hook.builtin import InboxFlushHook, SubagentAutoSendHook
+from framework.hook.builtin import InboxFlushHook
 from framework.hook.notification import AgentNotificationService, MaxIterationNotifyHook
 from framework.ioc.configs.agent import AgentConfig
 from framework.ioc.configs.pool import PoolConfig
-from framework.ioc.factories.descriptors import build_subagent_descriptor
-from framework.ioc.factories.governance import create_governance, create_subagent_governance
+from framework.ioc.factories.governance import create_governance
 from framework.ioc.factories.llm import create_llm_provider
 from framework.ioc.factories.memory import create_memory
 from framework.memory.injection import FullInjectionPolicy
@@ -37,9 +35,9 @@ from framework.multi_agent.inbox.server import InboxServer
 from framework.multi_agent.session_id import DefaultSessionIdStrategy
 from framework.multi_agent.tools import (
     ListCommunicationTargetsTool,
-    SendToAgentAsyncTool,
+    SendToAgentTool,
 )
-from framework.pipeline.adapters import NullOutputAdapter, OutputAdapter
+from framework.pipeline.adapters import OutputAdapter
 from framework.tools.standard import (
     EditFileTool,
     FindFilesTool,
@@ -175,33 +173,40 @@ async def create_pool(
     logger.info("Pool '%s': main agent '%s' registered as resident", pool_name, main_agent_name)
 
     # 9.5 Register communication tools for the main agent
-    # (subagents get their own in step 11 below)
+
+    # Load templates for communication target discovery
+    from framework.multi_agent.template_registry import AgentTemplateRegistry
+    template_registry = AgentTemplateRegistry(project_dir)
+    templates = template_registry.list_templates(pool_name)
+    logger.info("Pool '%s': %d templates available for dynamic creation", pool_name, len(templates))
+
     main_address = AgentAddress(name=main_agent_name)
     main_service = AgentCommunicationService(
         source=main_address, broker=broker, registry=pool,
         agent_bus=agent_bus, session_strategy=session_strategy,
         comm_tracker=comm_tracker,
+        template_registry=template_registry,
+        pool=pool,
+        pool_name=pool_name,
+        project_dir=project_dir,
     )
-    tool_manager.register(SendToAgentAsyncTool(
+    tool_manager.register(SendToAgentTool(
         source=main_address, broker=broker, registry=pool,
         agent_bus=agent_bus, service=main_service,
         comm_tracker=comm_tracker,
     ))
     tool_manager.register(ListCommunicationTargetsTool(
         self_address=main_address, registry=pool,
+        template_registry=template_registry,
+        pool_name=pool_name,
     ))
     logger.info("Pool '%s': communication tools registered for main agent", pool_name)
 
     # 10. Per-pool notification service + hooks
-    parent_map = {
-        sub.name: main_agent_name
-        for sub in pool_cfg.subagent_configs
-    }
     notification_service = AgentNotificationService(
         output_adapter=output_adapter,
         agent_bus=agent_bus,
         session_strategy=session_strategy,
-        parent_map=parent_map,
     )
     max_iter_hook = MaxIterationNotifyHook(notification_service=notification_service)
 
@@ -213,75 +218,6 @@ async def create_pool(
             consumer=inbox_consumer, agent_name=main_agent_name,
         ))
         _add_hook(main_pipeline, max_iter_hook)
-
-    # 11. Register subagents
-    subagent_service = None
-    try:
-        from framework.multi_agent.subagent_service import SubagentService
-        subagent_service = SubagentService(
-            pool=pool, factory=factory, broker=broker, agent_bus=agent_bus,
-        )
-    except Exception:
-        pass
-
-    app_config_stub = _build_app_config_stub(pool_cfg)
-    for sub_cfg in pool_cfg.subagent_configs:
-        sub_name = sub_cfg.name
-        sub_system_prompt = resolve_system_prompt(sub_cfg, project_dir)
-        # Override system prompt on config copy for descriptor builder
-        sub_cfg.system_prompt = sub_system_prompt
-
-        descriptor, sub_tm, sub_sm, memory_ctx = await build_subagent_descriptor(
-            sub_cfg, app_config_stub, project_dir, memory_dir, safety, provider,
-        )
-
-        # Per-subagent MCP tool injection
-        if sub_cfg.mcp_filter and mcp_manager:
-            mcp_tools = await _mcp_tools_for_agent(mcp_manager, sub_cfg.mcp_filter)
-            for tool in mcp_tools:
-                sub_tm.register(tool)
-
-        # Communication tools for subagent (star topology)
-        sub_address = AgentAddress(name=sub_name)
-        sub_service = AgentCommunicationService(
-            source=sub_address, broker=broker, registry=pool,
-            agent_bus=agent_bus, session_strategy=session_strategy,
-            comm_tracker=comm_tracker,
-        )
-        sub_tm.register(SendToAgentAsyncTool(
-            source=sub_address, broker=broker, registry=pool,
-            agent_bus=agent_bus, service=sub_service,
-            comm_tracker=comm_tracker,
-        ))
-        sub_tm.register(ListCommunicationTargetsTool(
-            self_address=sub_address, registry=pool,
-        ))
-
-        await pool.register_resident(
-            descriptor,
-            context_manager=memory_ctx,
-            tool_manager=sub_tm,
-            skill_manager=sub_sm,
-            output_adapter=NullOutputAdapter(),
-        )
-
-        sub_instance = pool.get(sub_name)
-        if sub_instance and sub_instance.pipeline:
-            sub_instance.pipeline.governance = create_subagent_governance(
-                sub_cfg.memory, pool_cfg.llm.max_tokens,
-            )
-            _add_hook(sub_instance.pipeline, InboxFlushHook(
-                consumer=inbox_consumer, agent_name=sub_name,
-            ))
-            _add_hook(sub_instance.pipeline, SubagentAutoSendHook(
-                agent_bus=agent_bus,
-                self_name=sub_name,
-                parent_name=main_agent_name,
-                notification_service=notification_service,
-            ))
-            _add_hook(sub_instance.pipeline, max_iter_hook)
-
-        logger.info("Pool '%s': subagent '%s' registered as resident", pool_name, sub_name)
 
     # 12. Wire main agent runtime
     main_instance = pool._agents.get(main_agent_name)
@@ -447,30 +383,3 @@ def _add_hook(pipeline: Any, hook: Any) -> None:
         pipeline.hook_runner.add(HookSpec(hook=hook, on_error=HookErrorPolicy.LOG))
     else:
         pipeline.hooks.append(hook)
-
-
-def _build_app_config_stub(pool_cfg: PoolConfig) -> Any:
-    from dataclasses import dataclass, field
-
-    @dataclass
-    class _Stub:
-        llm: Any = None
-        agents: list = field(default_factory=list)
-        mcp: Any = None
-        memory: Any = None
-        skills: Any = None
-        safety: Any = None
-        plugins: Any = None
-        observability: Any = None
-        paths: Any = None
-        multi_agent: Any = None
-        pools: dict = field(default_factory=dict)
-
-    return _Stub(
-        llm=pool_cfg.llm,
-        agents=pool_cfg.agents,
-        mcp=pool_cfg.mcp,
-        memory=pool_cfg.memory,
-        skills=pool_cfg.skills,
-        pools={pool_cfg.main_agent_name: pool_cfg},
-    )

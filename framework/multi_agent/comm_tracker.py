@@ -242,7 +242,7 @@ class CommunicationTracker:
                 f"- **[SENT] To: {record.target_agent}** "
                 f"(invocation_id: {record.invocation_id or 'N/A'})\n"
                 f"  Content: {record.content_summary}\n"
-                f"  Status: awaiting reply - use this invocation_id in send_to_agent_async responses"
+                f"  Status: awaiting reply - use this invocation_id in send_to_agent responses"
             )
 
         for record in digest.pending_received:

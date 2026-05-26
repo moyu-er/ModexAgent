@@ -1,0 +1,53 @@
+# tests/unit/multi_agent/test_template_registry.py
+"""Tests for AgentTemplateRegistry."""
+
+import tempfile
+from pathlib import Path
+
+from framework.multi_agent.template_registry import AgentTemplateRegistry
+
+
+def _write_yml(dir_path: Path, name: str, content: str) -> None:
+    dir_path.mkdir(parents=True, exist_ok=True)
+    (dir_path / f"{name}.yml").write_text(content, encoding="utf-8")
+
+
+def test_registry_loads_templates():
+    with tempfile.TemporaryDirectory() as tmp:
+        project = Path(tmp)
+        templates_dir = project / "config" / "pools" / "main" / "templates"
+        _write_yml(templates_dir, "helper", """\
+agent_type: helper
+description: A helper agent
+max_steps: 10
+standard_tools: false
+""")
+
+        registry = AgentTemplateRegistry(project)
+        templates = registry.list_templates("main")
+        assert len(templates) == 1
+        assert templates[0].agent_type == "helper"
+        assert templates[0].max_steps == 10
+        assert templates[0].standard_tools is False
+
+
+def test_registry_pool_isolation():
+    with tempfile.TemporaryDirectory() as tmp:
+        project = Path(tmp)
+        _write_yml(project / "config" / "pools" / "main" / "templates", "a",
+                   "agent_type: a\ndescription: ''")
+        _write_yml(project / "config" / "pools" / "coding" / "templates", "b",
+                   "agent_type: b\ndescription: ''")
+
+        registry = AgentTemplateRegistry(project)
+        assert len(registry.list_templates("main")) == 1
+        assert len(registry.list_templates("coding")) == 1
+        assert registry.get_template("main", "a") is not None
+        assert registry.get_template("main", "b") is None
+
+
+def test_registry_empty_when_no_templates():
+    with tempfile.TemporaryDirectory() as tmp:
+        registry = AgentTemplateRegistry(Path(tmp))
+        assert registry.list_templates("nonexistent") == []
+        assert registry.get_template("nonexistent", "x") is None

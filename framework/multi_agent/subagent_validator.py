@@ -31,9 +31,9 @@ class SubagentAgentValidator:
             )
 
         denied = set(descriptor.denied_tools or [])
-        if "send_to_agent_async" in denied:
+        if "send_to_agent" in denied:
             raise ValueError(
-                f"Subagent '{sub_name}' must not deny 'send_to_agent_async' (needed to reply to main)"
+                f"Subagent '{sub_name}' must not deny 'send_to_agent' (needed to reply to main)"
             )
 
         if descriptor.execution_strategy == "pipeline":

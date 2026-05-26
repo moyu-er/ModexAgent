@@ -306,7 +306,7 @@ class ToolNode(Node):
         if ctx.runtime and ctx.runtime.hooks:
             # Collect tool messages for RuntimeContextHook to record tool calls.
             # Without this payload, after_tool_execution(results=None) returns early
-            # and SubagentAutoSendHook cannot detect send_to_agent_async calls.
+            # and SubagentAutoSendHook cannot detect send_to_agent calls.
             tool_msgs: list[dict[str, Any]] = []
             for tc in tool_calls:
                 if tc.call_id and hasattr(ctx, 'history'):

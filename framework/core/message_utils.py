@@ -8,7 +8,6 @@
 - 系统提示词中声明 agent 消息来源，帮助 LLM 区分人类用户与其他 Agent
 """
 
-import copy
 from collections.abc import Sequence
 from typing import Any
 
@@ -17,36 +16,11 @@ from framework.memory.core.message import ChatMessage
 
 AGENT_COMMUNICATION_SYSTEM_NOTE = (
     "\n\n## Agent Messages\n"
-    "Messages prefixed with `[From Agent <name>]` are from other agents, not the human user. "
+    "Messages in <agent_message> or <agent_result> XML format are from other agents, not the human user. "
     "Treat them as input from collaborators. If a response is needed, use your available "
-    "communication tool (`send_to_agent` or `send_to_agent_async`) with `target_agent` set to the sender name."
+    "communication tool (`send_to_agent`) with `target_agent` set to the sender name."
 )
 
-
-def agent_source_prefix(source_agent: str) -> str:
-    return f"[From Agent {source_agent}]\n"
-
-
-def ensure_agent_source_prefix(
-    content: str | list[dict[str, Any]] | None,
-    source_agent: str,
-) -> str | list[dict[str, Any]]:
-    prefix = agent_source_prefix(source_agent)
-    if content is None:
-        return prefix
-    if isinstance(content, list):
-        new_content = copy.deepcopy(content)
-        for block in new_content:
-            if block.get("type") == "text":
-                text = str(block.get("text", ""))
-                if not text.startswith(prefix):
-                    block["text"] = prefix + text
-                return new_content
-        new_content.insert(0, {"type": "text", "text": prefix})
-        return new_content
-    if isinstance(content, str) and content.startswith(prefix):
-        return content
-    return prefix + str(content)
 
 
 def _msg_to_dict(msg: ChatMessage | dict[str, Any]) -> dict[str, Any]:

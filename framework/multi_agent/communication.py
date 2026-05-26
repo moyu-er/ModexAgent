@@ -9,12 +9,15 @@ from __future__ import annotations
 import logging
 import uuid as _uuid_mod
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from framework.multi_agent.address import AgentAddress
 from framework.multi_agent.comm_kind import AgentCommKind
 from framework.multi_agent.envelope import AgentMessageEnvelope
 from framework.multi_agent.session_id import DefaultSessionIdStrategy
+from framework.multi_agent.template import AgentTemplate
+from framework.multi_agent.template_registry import AgentTemplateRegistry
 
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
@@ -22,6 +25,7 @@ if TYPE_CHECKING:
     from framework.multi_agent.address import AgentAddress
     from framework.multi_agent.bus import AgentMessageBus
     from framework.multi_agent.comm_tracker import CommunicationTracker
+    from framework.multi_agent.pool import AgentPool
     from framework.multi_agent.registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
@@ -58,6 +62,10 @@ class AgentCommunicationService:
         agent_bus: AgentMessageBus | None = None,
         session_strategy: DefaultSessionIdStrategy | None = None,
         comm_tracker: CommunicationTracker | None = None,
+        template_registry: AgentTemplateRegistry | None = None,
+        pool: AgentPool | None = None,
+        pool_name: str | None = None,
+        project_dir: Path | None = None,
     ) -> None:
         self._source = source
         self._broker = broker
@@ -65,16 +73,103 @@ class AgentCommunicationService:
         self._agent_bus = agent_bus
         self._session_strategy = session_strategy or DefaultSessionIdStrategy()
         self._comm_tracker = comm_tracker
+        self._template_registry = template_registry
+        self._pool = pool
+        self._pool_name = pool_name
+        self._project_dir = project_dir
 
-    def _resolve_target_kind(self, target_agent: str) -> AgentCommKind | None:
-        """Look up target's AgentCommKind from the registry."""
+    def _resolve_target(self, target_agent: str) -> tuple[AgentCommKind | None, AgentTemplate | None]:
+        """Resolve target_agent to comm_kind + optional template."""
+        # 1. Check if registered in registry (AgentPool or AgentDirectory)
         descriptor = self._registry.get_descriptor(target_agent)
         if descriptor is not None:
-            return descriptor.comm_kind
+            return descriptor.comm_kind, None
+
         profile = self._registry.get_profile(target_agent)
         if profile is not None:
-            return profile.comm_kind
-        return None
+            return profile.comm_kind, None
+
+        # 2. Check if it's a template type name
+        if self._template_registry is not None and self._pool_name is not None:
+            template = self._template_registry.get_template(self._pool_name, target_agent)
+            if template is not None:
+                return AgentCommKind.SUBAGENT, template
+
+        return None, None
+
+    async def _create_dynamic_subagent(
+        self,
+        template: AgentTemplate,
+        conversation_id: str,
+        invocation_id: str,
+        content: str,
+    ) -> AgentSendResult:
+        """Create a dynamic subagent from template and send initial task."""
+        if self._pool is None:
+            return AgentSendResult(
+                target_agent=template.agent_type,
+                target_kind=AgentCommKind.SUBAGENT,
+                session_id="",
+                invocation_id=None,
+                created_new_task=False,
+                error="AgentPool not available for dynamic creation",
+            )
+
+        name = f"dyn.{template.agent_type}.{_uuid_mod.uuid4().hex[:8]}"
+
+        # Load system prompt from agents/{pool_name}/{agent_type}.md
+        system_prompt = ""
+        if self._project_dir is not None and self._pool_name is not None:
+            md_path = self._project_dir / "agents" / self._pool_name / f"{template.agent_type}.md"
+            if md_path.exists():
+                system_prompt = md_path.read_text(encoding="utf-8")
+
+        # Build AgentDescriptor from template
+        from framework.multi_agent.descriptor import AgentDescriptor, AgentLLMConfig
+
+        descriptor = AgentDescriptor(
+            address=AgentAddress(name=name, comm_kind=AgentCommKind.SUBAGENT),
+            llm_config=AgentLLMConfig(),
+            system_prompt_template=system_prompt,
+            max_iterations=template.max_steps,
+            execution_strategy="react",
+            context_strategy="persistent",
+        )
+
+        # Register in pool (pool handles memory, tool manager, etc.)
+        await self._pool.register_resident(descriptor)
+
+        # Build session ID for the new subagent
+        session_id = self._session_strategy.format(
+            conversation_id=conversation_id,
+            agent_name=name,
+            invocation_id=invocation_id,
+        )
+
+        # Send initial task via broker
+        envelope = AgentMessageEnvelope(
+            payload={"content": content, "message_type": "task_request"},
+            source=self._source,
+            target=AgentAddress(name=name),
+            message_type="task_request",
+            conversation_id=conversation_id,
+            agent_session_id=session_id,
+            invocation_id=invocation_id,
+        )
+        await self._broker.send_to(envelope.target, envelope.to_broker_message())
+
+        logger.info(
+            "Dynamic subagent created: %s (template=%s, invocation_id=%s)",
+            name, template.agent_type, invocation_id,
+        )
+
+        return AgentSendResult(
+            target_agent=name,
+            target_kind=AgentCommKind.SUBAGENT,
+            session_id=session_id,
+            invocation_id=invocation_id,
+            created_new_task=True,
+        )
 
     def _validate_invocation_id(
         self,
@@ -174,16 +269,24 @@ class AgentCommunicationService:
         conversation_id = session_meta.conversation_id
 
         # 2. Look up target
-        target_kind = self._resolve_target_kind(target_agent)
+        target_kind, template = self._resolve_target(target_agent)
         if target_kind is None:
-            available = [p.name for p in self._registry.list_profiles()]
-            if target_agent not in available:
-                return AgentSendResult(
-                    target_agent=target_agent, target_kind=AgentCommKind.NORMAL,
-                    session_id="", invocation_id=None, created_new_task=False,
-                    error=f"Target agent '{target_agent}' not found",
+            return AgentSendResult(
+                target_agent=target_agent, target_kind=AgentCommKind.NORMAL,
+                session_id="", invocation_id=None, created_new_task=False,
+                error=f"Target agent '{target_agent}' not found",
+            )
+
+        # If SUBAGENT + template matched + empty invocation_id → create new
+        if target_kind == AgentCommKind.SUBAGENT and template is not None:
+            if invocation_id is None or invocation_id.strip() == "":
+                new_invocation_id = _uuid_mod.uuid4().hex[:_TASK_ID_BYTES]
+                return await self._create_dynamic_subagent(
+                    template=template,
+                    conversation_id=conversation_id,
+                    invocation_id=new_invocation_id,
+                    content=content,
                 )
-            target_kind = AgentCommKind.NORMAL
 
         # 3. Validate invocation_id
         warning = None

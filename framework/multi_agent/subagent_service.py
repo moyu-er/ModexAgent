@@ -90,7 +90,7 @@ class SubagentService:
         3. Track session with TTL for cleanup
         4. Return session_id for tracking
 
-        The subagent is now addressable via ``send_to_agent_async`` like any
+        The subagent is now addressable via ``send_to_agent`` like any
         resident subagent.
         """
         template_name = descriptor.address.name

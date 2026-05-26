@@ -1,7 +1,7 @@
 """Tests for SubagentAutoSendHook.
 
 Covers:
-- Auto-forwarding when agent forgets to call send_to_agent_async
+- Auto-forwarding when agent forgets to call send_to_agent
 - Skipping when RuntimeContext records a communication tool call
 - Skipping when content is empty
 - before_turn is a no-op (clearing is done by ReActAgent)
@@ -63,7 +63,10 @@ class TestSubagentAutoSendHook:
         args, _ = bus.send.await_args
         inbox_key, envelope = args
         assert inbox_key == "conv_001:main"
-        assert envelope.payload["content"] == "Task completed successfully."
+        assert "<agent_result" in envelope.payload["content"]
+        assert 'source="office-expert"' in envelope.payload["content"]
+        assert 'status="completed"' in envelope.payload["content"]
+        assert "Task completed successfully." in envelope.payload["content"]
         assert envelope.source.name == "office-expert"
         assert envelope.target.name == "main"
 
@@ -72,7 +75,7 @@ class TestSubagentAutoSendHook:
     # ------------------------------------------------------------------
 
     async def test_skips_when_send_to_agent_async_recorded(self):
-        """send_to_agent_async was recorded → bus.send is NOT called."""
+        """send_to_agent was recorded → bus.send is NOT called (legacy name compat)."""
         bus = self._make_bus()
         hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
         mgr = RuntimeContextManager()
@@ -80,7 +83,7 @@ class TestSubagentAutoSendHook:
         result = AgentResult(content="Already sent via tool.")
 
         rc = await mgr.get_context("conv_001:main")
-        await rc.record_tool_call("send_to_agent_async", {"target_agent": "main"}, "ok")
+        await rc.record_tool_call("send_to_agent", {"target_agent": "main"}, "ok")
 
         await hook.after_turn(ctx, result)
         bus.send.assert_not_awaited()
@@ -170,13 +173,15 @@ class TestSubagentAutoSendHook:
 
         # Turn 1: tool sends
         rc = await mgr.get_context("conv_001:main")
-        await rc.record_tool_call("send_to_agent_async", {"to": "main"}, "ok")
+        await rc.record_tool_call("send_to_agent", {"to": "main"}, "ok")
         result1 = AgentResult(content="Sent via tool.")
         await hook.after_turn(ctx, result1)
         bus.send.assert_not_awaited()
 
         # Turn 2: context cleared (simulating ReActAgent._clear_runtime_context)
+        # Also clear _communicated so the hook treats this as a fresh cycle.
         await rc.clear()
+        hook._communicated.discard(ctx.session_id)
         result2 = AgentResult(content="No tool this turn.")
         await hook.after_turn(ctx, result2)
         bus.send.assert_awaited_once()
@@ -186,7 +191,7 @@ class TestSubagentAutoSendHook:
     # ------------------------------------------------------------------
 
     async def test_sanitizes_think_tags(self):
-        """Auto-forwarded content has <think/> tags stripped."""
+        """Auto-forwarded content has <think/> tags stripped inside XML wrapper."""
         bus = self._make_bus()
         hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
         ctx = self._make_ctx([])
@@ -199,16 +204,18 @@ class TestSubagentAutoSendHook:
         bus.send.assert_awaited_once()
         args, _ = bus.send.await_args
         _, envelope = args
-        assert "<think" not in envelope.payload["content"]
-        assert "LLM reasoning here" not in envelope.payload["content"]
-        assert "任务完成了！文档已创建。" in envelope.payload["content"]
+        content = envelope.payload["content"]
+        assert "<think" not in content
+        assert "LLM reasoning here" not in content
+        assert "任务完成了！文档已创建。" in content
+        assert "<agent_result" in content
 
     # ------------------------------------------------------------------
     # 9. Content sanitization strips multiple tag types
     # ------------------------------------------------------------------
 
     async def test_sanitizes_multiple_tag_types(self):
-        """Strip <think/>, <reasoning/>, <reflection/> tags."""
+        """Strip <think/>, <reasoning/>, <reflection/> tags inside XML wrapper."""
         bus = self._make_bus()
         hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
         ctx = self._make_ctx([])
@@ -228,6 +235,7 @@ class TestSubagentAutoSendHook:
         assert "step 1" not in content
         assert "depth analysis" not in content
         assert "Final answer." in content
+        assert "<agent_result" in content
 
     # ------------------------------------------------------------------
     # 10. Subagent session: agent_session_id routes to main's user session

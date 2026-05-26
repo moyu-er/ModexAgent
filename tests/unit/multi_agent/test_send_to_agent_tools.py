@@ -1,4 +1,4 @@
-"""Tests for SendToAgentTool and SendToAgentAsyncTool."""
+"""Tests for SendToAgentTool and ListCommunicationTargetsTool."""
 
 from __future__ import annotations
 
@@ -10,27 +10,13 @@ from framework.multi_agent.comm_kind import AgentCommKind
 from framework.multi_agent.registry import AgentProfile
 from framework.multi_agent.tools import (
     ListCommunicationTargetsTool,
-    SendToAgentAsyncTool,
     SendToAgentTool,
 )
 
 
 class _RecordingService:
     def __init__(self) -> None:
-        self.sync_invocation_id: str | None = None
         self.async_invocation_id: str | None = None
-
-    async def send_sync(
-        self,
-        *,
-        target_agent: str,
-        content: str,
-        invocation_id: str | None,
-        context: AgentContext,
-    ) -> str:
-        _ = target_agent, content, context
-        self.sync_invocation_id = invocation_id
-        return "ok"
 
     async def send_async(
         self,
@@ -81,16 +67,10 @@ class TestNewToolExports:
 
         assert SendToAgentTool.__name__ == "SendToAgentTool"
 
-    def test_send_to_agent_async_tool_importable(self) -> None:
-        from framework.multi_agent.tools import SendToAgentAsyncTool
-
-        assert SendToAgentAsyncTool.__name__ == "SendToAgentAsyncTool"
-
     def test_new_tools_exported_from_multi_agent(self) -> None:
-        from framework.multi_agent import SendToAgentAsyncTool, SendToAgentTool
+        from framework.multi_agent import SendToAgentTool
 
         assert SendToAgentTool is not None
-        assert SendToAgentAsyncTool is not None
 
 
 class TestListCommunicationTargetsTool:
@@ -113,21 +93,9 @@ class TestListCommunicationTargetsTool:
 
 
 class TestSchema:
-    def test_sync_tool_has_required_invocation_id(self) -> None:
+    def test_tool_has_required_invocation_id(self) -> None:
         service = _RecordingService()
         tool = SendToAgentTool(
-            source=AgentAddress(name="main"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            service=service,  # type: ignore[arg-type]
-        )
-
-        assert "invocation_id" in tool.parameters["properties"]
-        assert "invocation_id" in tool.parameters["required"]
-
-    def test_async_tool_has_required_invocation_id(self) -> None:
-        service = _RecordingService()
-        tool = SendToAgentAsyncTool(
             source=AgentAddress(name="main"),
             broker=object(),  # type: ignore[arg-type]
             registry=object(),  # type: ignore[arg-type]
@@ -141,32 +109,9 @@ class TestSchema:
 
 class TestToolInvocationIdForwarding:
     @pytest.mark.asyncio
-    async def test_sync_tool_forwards_invocation_id_to_service(self) -> None:
+    async def test_tool_forwards_invocation_id_to_service(self) -> None:
         service = _RecordingService()
         tool = SendToAgentTool(
-            source=AgentAddress(name="main"),
-            broker=object(),  # type: ignore[arg-type]
-            registry=object(),  # type: ignore[arg-type]
-            service=service,  # type: ignore[arg-type]
-        )
-
-        token = current_agent_context.set(_context())
-        try:
-            result = await tool.execute(
-                target_agent="office-expert",
-                content="continue task",
-                invocation_id="task-123",
-            )
-        finally:
-            current_agent_context.reset(token)
-
-        assert result == "ok"
-        assert service.sync_invocation_id == "task-123"
-
-    @pytest.mark.asyncio
-    async def test_async_tool_forwards_invocation_id_to_service(self) -> None:
-        service = _RecordingService()
-        tool = SendToAgentAsyncTool(
             source=AgentAddress(name="main"),
             broker=object(),  # type: ignore[arg-type]
             registry=object(),  # type: ignore[arg-type]

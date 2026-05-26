@@ -1,0 +1,8 @@
+agent_type: query-12306
+description: "查询 12306 火车票，余票、车次时刻表"
+max_steps: 50
+standard_tools: false
+use_terminal: false
+mcp_filter: ["12306-mcp"]
+memory:
+  short_term: {max_messages: 80, max_tokens: 50000}

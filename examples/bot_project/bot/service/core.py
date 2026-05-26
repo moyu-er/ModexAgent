@@ -641,7 +641,7 @@ class BotService(AgentBuilderMixin):
         """Display pool configuration summary."""
         print(f"\n[INFO] Pools: {list(self._pools.keys())}")
         for name, pi in self._pools.items():
-            subagent_count = len(pi.config.subagent_configs)
+            subagent_count = sum(1 for a in pi.config.agents if a.role == "subagent")
             print(f"   {name}: {pi.main_agent_name} + {subagent_count} subagents")
         print(f"[INFO] Switch commands: /{' /'.join(self._pools.keys())}")
         print(f"[INFO] Default pool: {self._app_config.multi_agent.default_pool}")

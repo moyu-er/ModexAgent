@@ -1,6 +1,6 @@
 """SubagentAutoSendHook — agent 自动转发 Hook。
 
-确保 agent 内容总是转发给父 agent（main），即使 LLM 忘记调用 send_to_agent_async。
+确保 agent 内容总是转发给父 agent（main），即使 LLM 忘记调用 send_to_agent。
 这是一个安全网，不替代系统提示词指引。
 """
 
@@ -45,7 +45,7 @@ class SubagentAutoSendHook:
         self._parent_name = parent_name
         self._svc = notification_service
         # Track sessions where the subagent has already sent a message
-        # via send_to_agent / send_to_agent_async.  Once communication has
+        # via send_to_agent (send_to_agent_async kept for transition compat).
         # happened in a session, subsequent turns should not auto-forward.
         self._communicated: set[str] = set()
 
@@ -86,30 +86,47 @@ class SubagentAutoSendHook:
             )
             return
 
-        logger.info(
-            "SubagentAutoSendHook: auto-forwarding subagent %s content to %s (len=%d)",
-            self._self_name,
-            self._parent_name,
-            len(result.content),
-        )
+        # Derive reply target from session_meta, fallback to parent_name
+        reply_target = self._parent_name
+        invocation_id: str | None = None
+
+        if ctx.session_meta is not None:
+            invocation_id = ctx.session_meta.invocation_id if hasattr(ctx.session_meta, 'invocation_id') else None
 
         session_id = ctx.session_id or ""
         from framework.multi_agent.address import AgentAddress
         from framework.multi_agent.envelope import AgentMessageEnvelope
+        from framework.multi_agent.message_xml import build_agent_result
         from framework.multi_agent.session_id import DefaultSessionIdStrategy
 
         strategy = DefaultSessionIdStrategy(main_agent_name=self._parent_name)
         parts = strategy.parse(session_id)
         conversation_id = parts.conversation_id
-        inbox_key = strategy.format(conversation_id=conversation_id, agent_name=self._parent_name)
+        invocation_id = parts.invocation_id
+        inbox_key = strategy.format(conversation_id=conversation_id, agent_name=reply_target)
+
+        logger.info(
+            "SubagentAutoSendHook: auto-forwarding subagent %s content to %s (len=%d)",
+            self._self_name,
+            reply_target,
+            len(result.content),
+        )
 
         sanitized = self._sanitize_forward_content(result.content)
 
+        xml_content = build_agent_result(
+            source=self._self_name,
+            invocation_id=invocation_id,
+            status="completed",
+            stop_reason="missed_communication",
+            content=sanitized,
+        )
+
         envelope = AgentMessageEnvelope(
-            payload={"content": sanitized, "message_type": "agent_message"},
+            payload={"content": xml_content, "message_type": "agent_result"},
             source=AgentAddress(name=self._self_name),
-            target=AgentAddress(name=self._parent_name),
-            message_type="agent_message",
+            target=AgentAddress(name=reply_target),
+            message_type="agent_result",
             conversation_id=conversation_id,
             agent_session_id=inbox_key,
             invocation_id=parts.invocation_id,
@@ -135,17 +152,14 @@ class SubagentAutoSendHook:
         # Send XML notification if notification_service is configured
         if self._svc is not None and forwarded:
             try:
-                await self._svc.notify(
-                    ctx=ctx,
-                    notification_type="missed_communication",
-                    reason="subagent 未通过通信工具发送消息",
-                    details=(
-                        f"agent '{self._self_name}' 已完成但未调用 "
-                        f"send_to_agent_async，内容已自动转发给 "
-                        f"'{self._parent_name}'"
-                    ),
-                    content=sanitized[:2000] if sanitized else None,
+                notification_xml = build_agent_result(
+                    source=self._self_name,
+                    invocation_id=invocation_id,
+                    status="missed_communication",
+                    stop_reason="missed_communication",
+                    content=sanitized[:2000] if sanitized else "",
                 )
+                await self._svc.notify(ctx=ctx, xml_content=notification_xml)
             except Exception:
                 logger.exception(
                     "Failed to send missed_communication notification for %s",

@@ -8,7 +8,6 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any
 
-from framework.core.message_utils import ensure_agent_source_prefix
 from framework.core.types import MessageRole
 
 if TYPE_CHECKING:
@@ -67,7 +66,7 @@ class InboxFlushHook:
                 {
                     "role": MessageRole.AGENT,
                     "source_agent": safe_name,
-                    "content": ensure_agent_source_prefix(sanitized, safe_name),
+                    "content": sanitized,
                     "meta_inbox": True,
                     "meta_source": msg.source,
                     "meta_target_agent": self._agent_name,

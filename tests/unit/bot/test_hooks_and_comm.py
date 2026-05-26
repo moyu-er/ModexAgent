@@ -4,7 +4,7 @@ Verifies:
 1. MaxIterationNotifyHook + SubagentAutoSendHook are correctly wired per agent
 2. Communication tools are properly scoped (subagent can only see parent)
 3. Subagent memory includes archive layer (session scope)
-4. NotificationService parent_map is correct per pool
+4. AgentNotificationService routes by comm_kind (no parent_map)
 5. Hook instances are shared where appropriate (MaxIterationNotifyHook)
 """
 from __future__ import annotations
@@ -48,17 +48,16 @@ class TestHookConfiguration:
         assert hook._parent_name == "coding"
         assert hook._svc == "mock_svc"
 
-    def test_notification_service_parent_map(self):
-        """parent_map maps subagent names to their parent."""
+    def test_notification_service_no_parent_map(self):
+        """AgentNotificationService no longer uses parent_map — derives parent from session_meta."""
         from framework.hook.notification import AgentNotificationService
 
         svc = AgentNotificationService.__new__(AgentNotificationService)
         svc._output_adapter = None
         svc._agent_bus = None
         svc._session_strategy = None
-        svc._parent_map = {"reviewer": "coding", "planner": "coding"}
-        assert svc._parent_map["reviewer"] == "coding"
-        assert svc._parent_map["planner"] == "coding"
+        # No _parent_map attribute should exist
+        assert not hasattr(svc, "_parent_map")
 
     def test_notification_service_routing_decision(self):
         """NORMAL agent → _notify_user; SUBAGENT agent → _notify_parent."""
@@ -66,7 +65,6 @@ class TestHookConfiguration:
         from framework.multi_agent.comm_kind import AgentCommKind
 
         svc = AgentNotificationService.__new__(AgentNotificationService)
-        svc._parent_map = {}
 
         # NORMAL: should route to user
         # SUBAGENT: should route to parent
@@ -75,23 +73,22 @@ class TestHookConfiguration:
         assert AgentCommKind.SUBAGENT.value == "subagent"
 
     def test_xml_notification_format(self):
-        """XML notification has correct structure with type, reason, details, content."""
-        from framework.hook.notification import AgentNotificationService
+        """MaxIterationNotifyHook uses build_agent_result for XML format."""
+        from framework.multi_agent.message_xml import build_agent_result
 
-        svc = AgentNotificationService.__new__(AgentNotificationService)
-        xml = svc._build_xml(
-            notification_type="max_iterations_exceeded",
-            reason="迭代次数达到上限而退出",
-            details="agent 'test' 已达到最大迭代次数 (max_iterations=80)",
+        xml = build_agent_result(
+            source="test_agent",
+            invocation_id="inv-123",
+            status="max_iterations",
+            stop_reason="max_iterations",
             content="some output",
-            max_chars=2000,
         )
-        assert "<agent_notification type=" in xml
-        assert "max_iterations_exceeded" in xml
-        assert "<reason>" in xml
-        assert "<details>" in xml
-        assert "<truncated_content>" in xml
-        assert "迭代次数达到上限" in xml
+        assert "<agent_result" in xml
+        assert 'source="test_agent"' in xml
+        assert "max_iterations" in xml
+        assert "<stop_reason>" in xml
+        assert "<content>" in xml
+        assert "some output" in xml
 
 
 # ── Communication Tool Scoping Tests ──
@@ -164,8 +161,8 @@ class TestCommunicationToolScoping:
         assert "planner" in result
 
     def test_send_tool_dynamic_description_includes_targets(self):
-        """SendToAgentAsyncTool builds dynamic description with available targets."""
-        from framework.multi_agent.tools import SendToAgentAsyncTool, _build_dynamic_description
+        """SendToAgentTool builds dynamic description with available targets."""
+        from framework.multi_agent.tools import SendToAgentTool, _build_dynamic_description
         from framework.multi_agent.address import AgentAddress
         from framework.multi_agent.comm_kind import AgentCommKind
         from dataclasses import dataclass

@@ -1,0 +1,11 @@
+agent_type: office-expert
+description: "处理 Office 文档（Word/Excel/PPT/PDF），支持格式转换、内容提取、编辑批注"
+max_steps: 30
+standard_tools: true
+use_terminal: false
+mcp_filter: []
+memory:
+  short_term: {max_messages: 80, max_tokens: 30000, keep_ratio_for_messages: 0.5, keep_ratio_for_token: 0.5}
+  governance: {}
+skills:
+  roots: ["skills/main/office-expert"]
