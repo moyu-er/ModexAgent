@@ -95,47 +95,64 @@ def _family_from_path(shell_path: str) -> ShellFamily:
     return mapping.get(name, ShellFamily.SH)
 
 
+def _verify_bash(path: str) -> ShellInfo | None:
+    """Return ShellInfo if *path* is a working bash, else None."""
+    try:
+        result = subprocess.run(
+            [path, "--version"],
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0 and "bash" in result.stdout.lower():
+            return ShellInfo(
+                family=ShellFamily.BASH,
+                path=path,
+                platform=Platform.WINDOWS,
+            )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+    return None
+
+
 def detect_platform_shell() -> ShellInfo | None:
     """Detect the best available shell for the current platform.
 
-    Windows: bash (Git Bash / MSYS2) > cmd.exe.
+    Windows priority: WSL bash > Git bash / MSYS2 > PowerShell.
     Linux priority: bash > sh
     macOS priority: bash > zsh > sh
     """
     plat = _parse_platform(_platform.system().lower())
 
     if plat is Platform.WINDOWS:
-        # Prefer WSL bash (any bash under a path containing "windows")
-        # over Git Bash / MSYS2.
+        # Priority 1: WSL bash
+        system_root = os.environ.get("SystemRoot", r"C:\Windows")
+        wsl_bash = Path(system_root) / "System32" / "bash.exe"
+        if wsl_bash.is_file():
+            info = _verify_bash(str(wsl_bash))
+            if info is not None:
+                return info
+
+        # Priority 2: Git bash / MSYS2 (any bash in PATH)
         bash_path = shutil.which("bash")
-        if bash_path and "windows" not in bash_path.lower():
-            # Try the WSL default location
-            system32_bash = Path(r"C:\Windows\System32\bash.exe")
-            if system32_bash.is_file():
-                bash_path = str(system32_bash)
-        if bash_path and bash_path.strip().lower().startswith("c") and "windows" in bash_path.lower():
-            try:
-                result = subprocess.run(
-                    [bash_path, "--version"],
-                    capture_output=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    text=True,
-                    timeout=5,
-                )
-                if result.returncode == 0 and "bash" in result.stdout.lower():
-                    return ShellInfo(
-                        family=ShellFamily.BASH,
-                        path=bash_path,
-                        platform=plat,
-                    )
-            except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-                pass
-        return ShellInfo(
-            family=ShellFamily.CMD,
-            path="cmd.exe",
-            platform=plat,
-        )
+        if bash_path:
+            info = _verify_bash(bash_path)
+            if info is not None:
+                return info
+
+        # Priority 3: PowerShell
+        ps_path = shutil.which("powershell.exe")
+        if ps_path:
+            return ShellInfo(
+                family=ShellFamily.POWERSHELL,
+                path=ps_path,
+                platform=plat,
+            )
+
+        # Should never happen on Windows
+        return None
 
     env_shell = os.environ.get("SHELL", "")
     if env_shell and shutil.which(env_shell):

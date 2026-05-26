@@ -10,7 +10,7 @@ from framework.tools.terminal.backends.visible_windows import VisibleWindowsPtyB
 from framework.tools.terminal.backends.windows_hidden import WindowsHiddenPtyBackend
 from framework.tools.terminal.config import TerminalRuntimeConfig
 from framework.tools.terminal.session import TerminalInfo, TerminalSession
-from framework.tools.terminal.types import Platform, ShellFamily, ShellInfo, TerminalVisibility, detect_platform_shell
+from framework.tools.terminal.types import ShellFamily, ShellInfo, TerminalVisibility, detect_platform_shell
 
 
 class TerminalManagerBase(ABC):
@@ -150,7 +150,11 @@ class WindowsHiddenTerminalManager(BaseTerminalManager):
 
 
 class WindowsVisibleTerminalManager(BaseTerminalManager):
-    """Terminal manager for visible Windows PTY sessions."""
+    """Terminal manager for visible Windows PTY sessions.
+
+    Uses WSL bash > Git bash > PowerShell.  Raises RuntimeError if
+    no supported shell is available.
+    """
 
     def __init__(self, config: TerminalRuntimeConfig | None = None) -> None:
         shell_info = _require_windows_shell()
@@ -163,15 +167,19 @@ class WindowsVisibleTerminalManager(BaseTerminalManager):
 
 
 def _require_windows_shell() -> ShellInfo:
-    """Detect shell, falling back to cmd.exe on Windows."""
+    """Detect shell: WSL bash > Git bash > PowerShell."""
     info = detect_platform_shell()
     if info is not None:
         return info
-    return ShellInfo(
-        family=ShellFamily.CMD,
-        path="cmd.exe",
-        platform=Platform.WINDOWS,
-    )
+    raise RuntimeError("No supported shell found on Windows")
+
+
+def _require_bash_shell() -> ShellInfo | None:
+    """Detect a bash shell (WSL or Git).  Returns None if unavailable."""
+    info = detect_platform_shell()
+    if info is not None and info.family == ShellFamily.BASH:
+        return info
+    return None
 
 
 def create_terminal_manager(

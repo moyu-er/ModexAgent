@@ -85,14 +85,10 @@ async def create_pool(
     provider = create_llm_provider(pool_cfg.llm)
     logger.info("Pool '%s': LLM provider created (%s)", pool_name, pool_cfg.llm.model)
 
-    # 2. Per-pool TerminalManager (isolated shell sessions)
+    # 2. Per-pool TerminalManager (lazy — sessions created on first use)
     terminal_manager = _create_terminal_manager(pool_cfg, project_dir)
     if terminal_manager is not None:
-        logger.info("Pool '%s': TerminalManager created (%s)", pool_name, terminal_manager.visibility.value)
-        # Pre-start the default terminal session so visible windows appear immediately
-        session = await terminal_manager.get_default()
-        await session.ensure_started()
-        logger.info("Pool '%s': default terminal session started (%s)", pool_name, session.shell_info.name)
+        logger.info("Pool '%s': TerminalManager created (%s, lazy)", pool_name, terminal_manager.visibility.value)
 
     # 3. Per-pool MemorySystem
     memory_dir = project_dir / "data" / "memory" / pool_name

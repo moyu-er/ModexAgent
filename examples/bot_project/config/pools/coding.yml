@@ -13,7 +13,6 @@ mcp:
 
 terminal:
   storage_dir: "data/terminals/coding"
-  close_on_exit: false
   max_terminals: 5
 
 memory:

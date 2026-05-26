@@ -14,7 +14,6 @@ from framework.ioc.configs.skills import SkillsConfig
 class TerminalConfig(BaseModel):
     """Per-pool terminal settings."""
     storage_dir: str = "data/terminals"
-    close_on_exit: bool = False
     max_terminals: int = 5
 
 

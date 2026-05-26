@@ -288,11 +288,7 @@ class BotService(AgentBuilderMixin):
                         max_terminals=getattr(self._app_config, 'terminal', {}).get('max_terminals', 5),
                         shell_info=shell_info,
                     )
-                    print(f"[OK] TerminalManager initialized ({shell_info.family.value}: {shell_info.path})")
-                    # Pre-start default terminal so visible window appears immediately
-                    session = await self.terminal_manager.get_default()
-                    await session.ensure_started()
-                    print(f"[OK] Default terminal session started ({session.shell_info.name})")
+                    print(f"[OK] TerminalManager initialized ({shell_info.family.value}: {shell_info.path}, lazy)")
                 except Exception as e:
                     logger.warning("TerminalManager initialization failed: %s", e)
                     self.terminal_manager = None
@@ -1035,6 +1031,16 @@ class BotService(AgentBuilderMixin):
         for pool in self._pools.values():
             with contextlib.suppress(BaseException):
                 await pool.broker_bridge.stop()
+        # Close all terminal sessions (pool mode + pipeline mode)
+        for pool in self._pools.values():
+            if pool.terminal_manager is not None:
+                for name in pool.terminal_manager.list_names():
+                    with contextlib.suppress(BaseException):
+                        await pool.terminal_manager.close(name)
+        if self.terminal_manager is not None:
+            for name in self.terminal_manager.list_names():
+                with contextlib.suppress(BaseException):
+                    await self.terminal_manager.close(name)
         with contextlib.suppress(BaseException):
             await self.input_adapter.stop()
         if self.broker:

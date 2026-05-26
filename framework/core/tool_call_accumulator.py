@@ -24,6 +24,39 @@ class ToolCallChunk:
     args: str | None = None     # 参数JSON字符串(可能不完整)
 
 
+def _try_repair_json(raw: str) -> dict[str, Any]:
+    """Attempt to repair common streaming JSON artifacts.
+
+    Handles: trailing commas, unescaped control characters in string values.
+    Returns empty dict if repair fails.
+    """
+    import re
+
+    s = raw.strip()
+    if not s:
+        return {}
+
+    # 1. Trailing comma before closing } or ]
+    s = re.sub(r',\s*([}\]])', r'\1', s)
+
+    # 2. Unescaped literal newlines / tabs inside string values
+    s = s.replace('\r\n', '\\n').replace('\r', '\\n').replace('\n', '\\n').replace('\t', '\\t')
+
+    # 3. Truncated — try closing open brackets
+    open_curly = s.count('{') - s.count('}')
+    open_square = s.count('[') - s.count(']')
+    if open_curly > 0:
+        s += '}' * open_curly
+    if open_square > 0:
+        s += ']' * open_square
+
+    try:
+        result = json.loads(s)
+        return result if isinstance(result, dict) else {}
+    except json.JSONDecodeError:
+        return {}
+
+
 @dataclass
 class AccumulatingToolCall:
     """累积中的工具调用"""
@@ -112,8 +145,7 @@ class AccumulatingToolCall:
             try:
                 args = json.loads(self.args)
             except json.JSONDecodeError:
-                # 参数不完整,保存原始字符串
-                args = {"_partial": self.args}
+                args = _try_repair_json(self.args)
 
         # 检查 call_id 是否存在
         if not self.id:
