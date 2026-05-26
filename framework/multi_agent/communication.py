@@ -273,6 +273,12 @@ class AgentCommunicationService:
                 notification_service=self._notification_service,
             ))
 
+        if self._notification_service is not None:
+            from framework.hook.notification import MaxIterationNotifyHook
+            _add_hook(sub_instance.pipeline, MaxIterationNotifyHook(
+                notification_service=self._notification_service,
+            ))
+
     async def _build_subagent_tool_manager(self, template: AgentTemplate, agent_name: str):
         """Build the subagent tool manager from template configuration.
 

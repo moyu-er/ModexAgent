@@ -856,3 +856,80 @@ class TestSessionRoutingSameAgentDifferentInvocation:
             inv1 = result1.split("invocation_id: ")[1] if "invocation_id:" in result1 else ""
             inv2 = result2.split("invocation_id: ")[1] if "invocation_id:" in result2 else ""
             assert inv1 != inv2, "Different tasks must have different invocation_ids"
+
+
+class TestSubagentSafetyHooks:
+    """Subagent pipeline must have safety hooks wired for communication edge cases.
+
+    Two guard hooks:
+    - SubagentAutoSendHook: catches "LLM forgot to call send_to_agent"
+    - MaxIterationNotifyHook: catches "max_iterations reached"
+    """
+
+    async def test_max_iteration_notify_hook_is_wired(self):
+        """MaxIterationNotifyHook must be wired on the subagent pipeline."""
+        from framework.hook import HookRunner, HookErrorPolicy, HookSpec
+        from framework.hook.builtin import SubagentAutoSendHook
+        from framework.hook.notification import MaxIterationNotifyHook
+
+        # Simulate a pipeline with hook_runner that records hooks
+        recorded_hooks: list = []
+
+        class _RecordingRunner:
+            def __init__(self):
+                self._specs: list = []
+
+            def add(self, spec):
+                recorded_hooks.append(spec.hook)
+
+        pipeline = MagicMock()
+        pipeline.hook_runner = _RecordingRunner()
+
+        mock_pool = _make_mock_pool()
+        mock_pool.get.return_value = MagicMock(pipeline=pipeline)
+
+        from framework.multi_agent.address import AgentAddress
+        from framework.multi_agent.communication import AgentCommunicationService
+
+        mock_broker = AsyncMock()
+        mock_registry = MagicMock()
+        mock_notification = MagicMock()
+
+        service = AgentCommunicationService(
+            source=AgentAddress(name="main"),
+            broker=mock_broker,
+            registry=mock_registry,
+            pool=mock_pool,
+            notification_service=mock_notification,
+            inbox_consumer=MagicMock(),
+            agent_bus=MagicMock(),
+        )
+
+        service._wire_subagent_hooks("worker")
+
+        hook_types = {type(h) for h in recorded_hooks}
+        assert SubagentAutoSendHook in hook_types, (
+            "SubagentAutoSendHook must be wired"
+        )
+        assert MaxIterationNotifyHook in hook_types, (
+            "MaxIterationNotifyHook must be wired for max_iterations guard"
+        )
+
+    async def test_hooks_not_wired_without_pipeline(self):
+        """_wire_subagent_hooks must be safe when pipeline is None."""
+        from framework.multi_agent.address import AgentAddress
+        from framework.multi_agent.communication import AgentCommunicationService
+
+        mock_pool = _make_mock_pool()
+        mock_pool.get.return_value = None  # No agent found
+
+        mock_broker = AsyncMock()
+        service = AgentCommunicationService(
+            source=AgentAddress(name="main"),
+            broker=mock_broker,
+            registry=MagicMock(),
+            pool=mock_pool,
+        )
+
+        # Should not raise
+        service._wire_subagent_hooks("worker")
