@@ -190,12 +190,12 @@ class AgentCommunicationService:
                     ProgressiveBuilder,
                     SkillManager,
                 )
-                source = FileSkillSource(
+                skill_source = FileSkillSource(
                     directories=existing, cache=True, layout="directory",
                     skill_filename="SKILL.md",
                 )
                 builder = ProgressiveBuilder(base_path=self._project_dir)
-                subagent_sm = SkillManager(source=source, builder=builder)
+                subagent_sm = SkillManager(source=skill_source, builder=builder)
 
         # ── Descriptor ──
         from framework.multi_agent.descriptor import AgentDescriptor, AgentLLMConfig
