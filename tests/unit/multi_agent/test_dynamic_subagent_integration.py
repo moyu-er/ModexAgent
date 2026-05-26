@@ -656,3 +656,134 @@ class TestSubagentIsolation:
             assert "[template]" not in result, (
                 "Subagent must not see template creation section"
             )
+
+
+class TestSessionRoutingSameAgentDifferentInvocation:
+    """Same agent name + different invocation_ids → different sessions.
+
+    Session isolation is driven by invocation_id via DefaultSessionIdStrategy.
+    Same invocation_id = same session (memory inheritance).
+    Different invocation_id = different session (fresh context).
+    """
+
+    def test_same_agent_different_invocation_produces_different_sessions(self):
+        from framework.multi_agent.session_id import DefaultSessionIdStrategy
+
+        strategy = DefaultSessionIdStrategy()
+
+        sid_a = strategy.format(
+            conversation_id="conv-1", agent_name="query-12306", invocation_id="abc123",
+        )
+        sid_b = strategy.format(
+            conversation_id="conv-1", agent_name="query-12306", invocation_id="def456",
+        )
+
+        # Different invocation_ids must produce different session IDs
+        assert sid_a != sid_b
+        assert sid_a == "conv-1:query-12306:abc123"
+        assert sid_b == "conv-1:query-12306:def456"
+
+    def test_same_invocation_produces_same_session(self):
+        from framework.multi_agent.session_id import DefaultSessionIdStrategy
+
+        strategy = DefaultSessionIdStrategy()
+
+        sid_1 = strategy.format(
+            conversation_id="conv-1", agent_name="query-12306", invocation_id="abc123",
+        )
+        sid_2 = strategy.format(
+            conversation_id="conv-1", agent_name="query-12306", invocation_id="abc123",
+        )
+
+        # Same invocation_id → same session (memory inheritance / continuation)
+        assert sid_1 == sid_2
+
+    def test_different_agent_same_invocation_different_sessions(self):
+        from framework.multi_agent.session_id import DefaultSessionIdStrategy
+
+        strategy = DefaultSessionIdStrategy()
+
+        sid_a = strategy.format(
+            conversation_id="conv-1", agent_name="query-12306", invocation_id="abc123",
+        )
+        sid_b = strategy.format(
+            conversation_id="conv-1", agent_name="office-expert", invocation_id="abc123",
+        )
+
+        # Different agent names → different sessions even with same invocation_id
+        assert sid_a != sid_b
+
+    async def test_second_empty_invocation_id_does_not_recreate_agent(self):
+        """Second invocation_id="" on same template must NOT call
+        _create_dynamic_subagent again — the agent is already registered."""
+        from framework.core.agent import AgentContext, AgentSessionMeta
+        from framework.multi_agent.address import AgentAddress
+        from framework.multi_agent.communication import AgentCommunicationService
+        from framework.multi_agent.descriptor import AgentDescriptor
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            _write_files(project, "main", "helper",
+                "agent_type: helper\ndescription: Test\nmax_steps: 10\n",
+                "You are a helper.")
+
+            registry = AgentTemplateRegistry(project)
+            template = registry.get_template("main", "helper")
+            assert template is not None
+
+            mock_pool = AsyncMock()
+            mock_pool.register_resident = AsyncMock()
+            mock_broker = AsyncMock()
+            mock_registry = MagicMock()
+
+            service = AgentCommunicationService(
+                source=AgentAddress(name="main"),
+                broker=mock_broker,
+                registry=mock_registry,
+                pool=mock_pool,
+                pool_name="main",
+                project_dir=project,
+                template_registry=registry,
+            )
+
+            # ---- First call: invocation_id="" → creates subagent ----
+            mock_registry.get_descriptor.return_value = None
+            mock_registry.get_profile.return_value = None
+
+            ctx = AgentContext(
+                system_prompt="",
+                history=MagicMock(),
+                tool_manager=MagicMock(),
+                session_meta=AgentSessionMeta(
+                    conversation_id="conv-1", agent_name="main",
+                    comm_kind=AgentCommKind.NORMAL,
+                ),
+            )
+
+            result1 = await service.send_async(
+                target_agent="helper", content="first task",
+                invocation_id="", context=ctx,
+            )
+            assert "Error" not in str(result1)
+            assert mock_pool.register_resident.call_count == 1
+
+            # ---- Second call: invocation_id="" again → agent already registered ----
+            # Simulate: helper is now registered in registry
+            mock_registry.get_descriptor.return_value = AgentDescriptor(
+                address=AgentAddress(name="helper"),
+                comm_kind=AgentCommKind.SUBAGENT,
+            )
+
+            result2 = await service.send_async(
+                target_agent="helper", content="second task",
+                invocation_id="", context=ctx,
+            )
+            assert "Error" not in str(result2)
+            # Must NOT call register_resident again
+            assert mock_pool.register_resident.call_count == 1, (
+                "Second invocation_id='' must not re-create already-registered agent"
+            )
+            # The two calls must have different invocation_ids
+            inv1 = result1.split("invocation_id: ")[1] if "invocation_id:" in result1 else ""
+            inv2 = result2.split("invocation_id: ")[1] if "invocation_id:" in result2 else ""
+            assert inv1 != inv2, "Different tasks must have different invocation_ids"
