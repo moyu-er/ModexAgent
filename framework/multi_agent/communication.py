@@ -227,6 +227,9 @@ class AgentCommunicationService:
             output_adapter=NullOutputAdapter(),
         )
 
+        # ── Mark as dynamic (eligible for idle cleanup) ──
+        self._pool._mark_dynamic(name)
+
         # ── Wire hooks ──
         self._wire_subagent_hooks(name)
 
