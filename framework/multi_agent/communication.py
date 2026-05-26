@@ -323,22 +323,22 @@ class AgentCommunicationService:
             max_workers=10, enable_parallel=True, parallel_max_workers=5,
         ))
 
-        # Standard file tools
+        # Standard tools: file + shell + search (matching _make_standard_tools)
         if template.standard_tools:
             from framework.tools.standard import (
                 EditFileTool, FindFilesTool, ListDirTool,
                 ReadFileTool, SearchFilesTool, WriteFileTool,
             )
+            from framework.tools.terminal import SubprocessTool
             for tool in [
                 ReadFileTool(), WriteFileTool(), EditFileTool(),
                 ListDirTool(), SearchFilesTool(), FindFilesTool(),
+                SubprocessTool(timeout=60),
             ]:
                 tm.register(tool)
 
-        # Terminal tools (independent of standard_tools)
-        if template.use_terminal:
-            from framework.tools.terminal import SubprocessTool
-            tm.register(SubprocessTool(timeout=60))
+        # Persistent terminal tools (CommandTool etc.) — separate from standard_tools
+        # use_terminal is reserved for future persistent terminal manager integration
 
         # MCP tools from template.mcp_filter
         if template.mcp_filter and self._mcp_manager is not None:
@@ -356,10 +356,19 @@ class AgentCommunicationService:
                     registry=registry,
                     server_filter=template.mcp_filter,
                 )
+                mcp_count = 0
                 for name in registry.list_tools():
                     tool = registry.get(name)
                     if tool is not None:
                         tm.register(tool)
+                        mcp_count += 1
+                if mcp_count == 0:
+                    logger.warning(
+                        "Subagent %s: mcp_filter=%s matched no tools "
+                        "(connected servers: %s)",
+                        agent_name, template.mcp_filter,
+                        self._mcp_manager.connected_servers,
+                    )
             except Exception:
                 logger.exception(
                     "Failed to load MCP tools for subagent %s (filter=%s)",
