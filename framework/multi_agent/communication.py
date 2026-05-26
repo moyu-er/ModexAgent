@@ -295,7 +295,6 @@ class AgentCommunicationService:
                 agent_bus=self._agent_bus,
                 self_name=agent_name,
                 parent_name=self._main_agent_name or "main",
-                notification_service=self._notification_service,
             ))
 
         if self._notification_service is not None:
