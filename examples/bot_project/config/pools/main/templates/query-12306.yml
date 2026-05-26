@@ -5,4 +5,6 @@ standard_tools: false
 use_terminal: false
 mcp_filter: ["12306-mcp"]
 memory:
-  short_term: {max_messages: 80, max_tokens: 50000}
+  short_term: {max_messages: 80, max_tokens: 80000}
+  long_term: {enabled: true}
+  governance: {}

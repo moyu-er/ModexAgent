@@ -5,7 +5,8 @@ standard_tools: true
 use_terminal: false
 mcp_filter: []
 memory:
-  short_term: {max_messages: 80, max_tokens: 30000, keep_ratio_for_messages: 0.5, keep_ratio_for_token: 0.5}
+  short_term: {max_messages: 80, max_tokens: 80000, keep_ratio_for_messages: 0.5, keep_ratio_for_token: 0.5}
+  long_term: { enabled: true }
   governance: {}
 skills:
   roots: ["skills/main/office-expert"]
