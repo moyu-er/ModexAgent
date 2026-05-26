@@ -78,6 +78,13 @@ class AgentCommunicationService:
         self._pool_name = pool_name
         self._project_dir = project_dir
 
+    def _resolve_source(self, context: AgentContext) -> AgentAddress:
+        """Resolve effective source address from context, fallback to constructor default."""
+        meta = context.session_meta
+        if meta is not None and meta.agent_name:
+            return AgentAddress(name=meta.agent_name)
+        return self._source
+
     def _resolve_target(self, target_agent: str) -> tuple[AgentCommKind | None, AgentTemplate | None]:
         """Resolve target_agent to comm_kind + optional template."""
         # 1. Check if registered in registry (AgentPool or AgentDirectory)
@@ -103,6 +110,7 @@ class AgentCommunicationService:
         conversation_id: str,
         invocation_id: str,
         content: str,
+        source: AgentAddress | None = None,
     ) -> AgentSendResult:
         """Create a dynamic subagent from template and send initial task."""
         if self._pool is None:
@@ -115,7 +123,7 @@ class AgentCommunicationService:
                 error="AgentPool not available for dynamic creation",
             )
 
-        name = f"dyn.{template.agent_type}.{_uuid_mod.uuid4().hex[:8]}"
+        name = template.agent_type
 
         # Load system prompt from agents/{pool_name}/{agent_type}.md
         system_prompt = ""
@@ -128,16 +136,29 @@ class AgentCommunicationService:
         from framework.multi_agent.descriptor import AgentDescriptor, AgentLLMConfig
 
         descriptor = AgentDescriptor(
-            address=AgentAddress(name=name, comm_kind=AgentCommKind.SUBAGENT),
+            address=AgentAddress(name=name),
             llm_config=AgentLLMConfig(),
             system_prompt_template=system_prompt,
             max_iterations=template.max_steps,
             execution_strategy="react",
             context_strategy="persistent",
+            comm_kind=AgentCommKind.SUBAGENT,
         )
 
-        # Register in pool (pool handles memory, tool manager, etc.)
-        await self._pool.register_resident(descriptor)
+        # Dedicated context manager — so subagent uses its own system prompt,
+        # not the pool's default (which belongs to main agent).
+        from framework.core.context import InMemoryContextManager
+        subagent_ctx = InMemoryContextManager(base_system_prompt=system_prompt)
+
+        # Dedicated tool manager — subagent must NOT inherit main's MCP tools.
+        subagent_tm = self._build_subagent_tool_manager(template, agent_name=name)
+
+        # Register in pool with isolated context and tools
+        await self._pool.register_resident(
+            descriptor,
+            context_manager=subagent_ctx,
+            tool_manager=subagent_tm,
+        )
 
         # Build session ID for the new subagent
         session_id = self._session_strategy.format(
@@ -147,9 +168,10 @@ class AgentCommunicationService:
         )
 
         # Send initial task via broker
+        effective_source = source or self._source
         envelope = AgentMessageEnvelope(
             payload={"content": content, "message_type": "task_request"},
-            source=self._source,
+            source=effective_source,
             target=AgentAddress(name=name),
             message_type="task_request",
             conversation_id=conversation_id,
@@ -171,6 +193,60 @@ class AgentCommunicationService:
             created_new_task=True,
         )
 
+    def _build_subagent_tool_manager(self, template: AgentTemplate, agent_name: str):
+        """Build a minimal tool set for a dynamic subagent.
+
+        Subagent tools are isolated from the main agent's tool manager. The set includes:
+        - Communication tools (send_to_agent, list_communication_targets) — always
+        - Standard file tools — if template.standard_tools is True
+        - Terminal tools — if template.use_terminal is True
+        """
+        from framework.core.tool_manager import InMemoryToolManager, ToolManagerConfig
+        from framework.multi_agent.tools import (
+            ListCommunicationTargetsTool,
+            SendToAgentTool,
+        )
+        from framework.multi_agent.address import AgentAddress
+
+        tm = InMemoryToolManager(config=ToolManagerConfig(
+            max_workers=5, enable_parallel=True, parallel_max_workers=3,
+        ))
+
+        subagent_address = AgentAddress(name=agent_name)
+
+        # Communication tools — always included so subagent can reply
+        tm.register(SendToAgentTool(
+            source=subagent_address,
+            broker=self._broker,
+            registry=self._registry,
+            agent_bus=self._agent_bus,
+            service=self,
+            comm_tracker=self._comm_tracker,
+        ))
+        tm.register(ListCommunicationTargetsTool(
+            self_address=subagent_address,
+            registry=self._registry,
+            template_registry=self._template_registry,
+            pool_name=self._pool_name,
+        ))
+
+        # Standard file tools
+        if template.standard_tools:
+            from framework.tools.standard import (
+                EditFileTool, FindFilesTool, ListDirTool,
+                ReadFileTool, SearchFilesTool, WriteFileTool,
+            )
+            for tool in [ReadFileTool(), WriteFileTool(), EditFileTool(),
+                         ListDirTool(), SearchFilesTool(), FindFilesTool()]:
+                tm.register(tool)
+
+        # Terminal tools
+        if template.use_terminal:
+            from framework.tools.terminal import SubprocessTool, SubprocessExecutor
+            tm.register(SubprocessTool(executor=SubprocessExecutor(), timeout=60))
+
+        return tm
+
     def _validate_invocation_id(
         self,
         invocation_id_in: str | None,
@@ -179,18 +255,14 @@ class AgentCommunicationService:
         """Validate invocation_id against target kind. Returns (normalized_invocation_id, error).
 
         Rules:
-        - NORMAL target: invocation_id must be None.
-        - SUBAGENT target: invocation_id must not be None. "" generates a new id.
+        - NORMAL target: invocation_id is always ignored (returns None).
+        - SUBAGENT target: None/empty → auto-generate; concrete value → continue session.
         """
         if target_kind == AgentCommKind.NORMAL:
-            if invocation_id_in is not None:
-                return None, f"Cannot send with invocation_id to a normal agent ({target_kind.value})"
             return None, None
 
         if target_kind == AgentCommKind.SUBAGENT:
-            if invocation_id_in is None:
-                return None, "invocation_id is required for subagent targets"
-            if invocation_id_in == "":
+            if invocation_id_in is None or invocation_id_in.strip() == "":
                 new_invocation_id = _uuid_mod.uuid4().hex[:_TASK_ID_BYTES]
                 return new_invocation_id, None
             return invocation_id_in, None
@@ -213,13 +285,11 @@ class AgentCommunicationService:
             context=context,
             async_mode=False,
         )
-        if result.error:
-            return f"Error: {result.error}"
-        text = f"Message sent to {result.target_agent}." + (
+        if result is None or result.error:
+            return f"Error: {result.error if result else 'unknown'}"
+        text = f"Message sent to {target_agent}." + (
             f" invocation_id: {result.invocation_id}" if result.invocation_id else ""
         )
-        if result.warning:
-            text = f"{text} {result.warning}"
         return text
 
     async def send_async(
@@ -238,13 +308,11 @@ class AgentCommunicationService:
             context=context,
             async_mode=True,
         )
-        if result.error:
-            return f"Error: {result.error}"
-        text = f"Message sent to {result.target_agent}." + (
+        if result is None or result.error:
+            return f"Error: {result.error if result else 'unknown'}"
+        text = f"Message sent to {target_agent}." + (
             f" invocation_id: {result.invocation_id}" if result.invocation_id else ""
         )
-        if result.warning:
-            text = f"{text} {result.warning}"
         return text
 
     async def _send(
@@ -267,6 +335,7 @@ class AgentCommunicationService:
             )
 
         conversation_id = session_meta.conversation_id
+        effective_source = self._resolve_source(context)
 
         # 2. Look up target
         target_kind, template = self._resolve_target(target_agent)
@@ -286,10 +355,10 @@ class AgentCommunicationService:
                     conversation_id=conversation_id,
                     invocation_id=new_invocation_id,
                     content=content,
+                    source=effective_source,
                 )
 
         # 3. Validate invocation_id
-        warning = None
         if session_meta.comm_kind == AgentCommKind.SUBAGENT and target_kind == AgentCommKind.SUBAGENT:
             return AgentSendResult(
                 target_agent=target_agent,
@@ -299,9 +368,6 @@ class AgentCommunicationService:
                 created_new_task=False,
                 error="Subagents can only reply to normal agents; send subagent-to-subagent requests through a normal agent.",
             )
-        if target_kind == AgentCommKind.NORMAL and invocation_id is not None:
-            warning = "invocation_id was ignored for normal-agent delivery; do not pass invocation_id when targeting normal agents."
-            invocation_id = None
         normalized_invocation_id, error = self._validate_invocation_id(invocation_id, target_kind)
         if error is not None:
             return AgentSendResult(
@@ -327,7 +393,7 @@ class AgentCommunicationService:
 
         envelope = AgentMessageEnvelope(
             payload={"content": content, "message_type": "agent_message"},
-            source=self._source,
+            source=effective_source,
             target=AgentAddress(kind="agent", name=target_agent),
             message_type="agent_message",
             conversation_id=conversation_id,
@@ -340,18 +406,18 @@ class AgentCommunicationService:
             if target_kind == AgentCommKind.NORMAL and session_meta.comm_kind == AgentCommKind.SUBAGENT:
                 self._comm_tracker.acknowledge(
                     invocation_id=envelope.invocation_id,
-                    reply_from=self._source.name,
+                    reply_from=effective_source.name,
                     reply_summary=content[:500],
                 )
                 self._comm_tracker.acknowledge_received(
                     invocation_id=envelope.invocation_id,
-                    owner_agent=self._source.name,
+                    owner_agent=effective_source.name,
                     reply_to=target_agent,
                     reply_summary=content[:500],
                 )
             else:
                 self._comm_tracker.record_send(
-                    agent_name=self._source.name,
+                    agent_name=effective_source.name,
                     target_agent=target_agent,
                     invocation_id=envelope.invocation_id,
                     session_id=session_id,
@@ -377,7 +443,6 @@ class AgentCommunicationService:
             session_id=session_id,
             invocation_id=normalized_invocation_id,
             created_new_task=created_new_task,
-            warning=warning,
         )
 
     def build_targets_description(self) -> str:

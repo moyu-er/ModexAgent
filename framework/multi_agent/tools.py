@@ -33,9 +33,8 @@ logger = logging.getLogger(__name__)
 _INVOCATION_ID_PARAM = {
     "type": ["string", "null"],
     "description": (
-        "Routing selector. Use null for normal-agent delivery. "
-        "Use an empty string to start a new subagent task. "
-        "Use a concrete invocation_id to continue an existing subagent task."
+        "Session identifier. Use null for a new task. "
+        "Use a concrete invocation_id from a previous reply to continue an existing session."
     ),
 }
 
@@ -89,14 +88,9 @@ class SendToAgentTool(Tool):
             name="send_to_agent",
             description=(
                 "Send a message to another agent asynchronously. "
-                "The agent processes the message and results arrive via inbox — "
-                "this tool does NOT return the actual result directly. "
-                "For subagent targets: if invocation_id is null/empty, a NEW subagent "
-                "instance is created from the matching template. If invocation_id has a "
-                "value, the message is routed to that existing session. "
-                "For normal targets: invocation_id is ignored. "
-                "Call list_communication_targets FIRST to see available targets "
-                "and their invocation_id requirements."
+                "Results arrive via inbox — this tool does NOT return the actual result directly. "
+                "Use invocation_id=null for a new task, or pass a previous invocation_id to continue a session. "
+                "Call list_communication_targets FIRST to see available targets."
             ),
             parameters={
                 "type": "object",
@@ -176,67 +170,68 @@ class ListCommunicationTargetsTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         _ = kwargs  # unused
-        profiles = self._registry.list_profiles()
-        current_name = self._self_address.name
-        current_profile = next((p for p in profiles if p.name == current_name), None)
 
+        # Resolve current agent identity from context (not hardcoded constructor param)
+        from framework.core.agent import current_agent_context
+        ctx = current_agent_context.get(None)
+        current_name = self._self_address.name
+        current_comm_kind: AgentCommKind | None = None
+        if ctx is not None and ctx.session_meta is not None:
+            current_name = ctx.session_meta.agent_name
+            current_comm_kind = ctx.session_meta.comm_kind
+
+        profiles = self._registry.list_profiles()
+        current_profile = next((p for p in profiles if p.name == current_name), None)
+        if current_comm_kind is None and current_profile is not None:
+            current_comm_kind = current_profile.comm_kind
+
+        # Filter targets: exclude self only
         targets = [p for p in profiles if p.name != current_name]
-        if current_profile is not None and current_profile.comm_kind == AgentCommKind.SUBAGENT:
+
+        # Subagents can only see NORMAL targets
+        if current_comm_kind == AgentCommKind.SUBAGENT:
             targets = [p for p in targets if p.comm_kind == AgentCommKind.NORMAL]
-        if not targets:
+
+        # Check if templates exist (needed for both early return and summary)
+        templates: list = []
+        if self._template_registry is not None and self._pool_name is not None:
+            templates = self._template_registry.list_templates(self._pool_name)
+
+        if not targets and not templates:
             return "No other agents are currently available for communication."
 
         lines = ["# Available Communication Targets", ""]
-        lines.append("Call this tool FIRST before sending messages. The send tools")
-        lines.append("require exact invocation_id values shown below for each target.")
-        lines.append("")
 
         for p in targets:
-            kind_label = p.comm_kind.value.upper()
             lines.append(f"## {p.name}")
-            lines.append(f"  Kind: {kind_label}")
-
             if p.role_description:
                 lines.append(f"  Description: {p.role_description}")
-
-            if p.comm_kind == AgentCommKind.NORMAL:
-                lines.append("  invocation_id: MUST be null")
-                lines.append(f'    Example: send_to_agent(target_agent="{p.name}", content="...", invocation_id=null)')
-            else:
-                lines.append('  invocation_id: "" (new task) OR "<existing>" (continue task)')
-                lines.append(f'    New task: send_to_agent(target_agent="{p.name}", content="...", invocation_id="")')
-                lines.append(f'    Continue: send_to_agent(target_agent="{p.name}", content="...", invocation_id="<from previous reply>")')
+            lines.append(f'  Send: send_to_agent(target_agent="{p.name}", content="...", invocation_id=null)')
             lines.append("")
 
-        # Show template types for dynamic creation
-        if self._template_registry is not None and self._pool_name is not None:
-            templates = self._template_registry.list_templates(self._pool_name)
+        # Show template types for dynamic creation (only for normal agents)
+        is_subagent = current_profile is not None and current_profile.comm_kind == AgentCommKind.SUBAGENT
+        if templates and not is_subagent:
             existing_names = {p.name for p in targets}
             for t in templates:
                 if t.agent_type not in existing_names:
-                    lines.append(f"## [template] {t.agent_type}")
-                    lines.append("  Kind: SUBAGENT (dynamically created)")
+                    lines.append(f"## {t.agent_type}")
                     if t.description:
                         lines.append(f"  Description: {t.description}")
-                    lines.append('  invocation_id: "" (creates new instance) OR "<existing>" (continue session)')
-                    lines.append(f'    Create: send_to_agent(target_agent="{t.agent_type}", content="...", invocation_id="")')
+                    lines.append(f'  New task: send_to_agent(target_agent="{t.agent_type}", content="...", invocation_id=null)')
+                    lines.append(f'  Continue: send_to_agent(target_agent="{t.agent_type}", content="...", invocation_id="<from previous reply>")')
                     lines.append("")
 
         # Summary table
         lines.append("## Summary")
-        lines.append("| Agent | Kind | invocation_id |")
-        lines.append("|-------|------|---------------|")
+        lines.append("| Agent | invocation_id |")
+        lines.append("|-------|---------------|")
         for p in targets:
-            if p.comm_kind == AgentCommKind.NORMAL:
-                lines.append(f"| {p.name} | NORMAL | null |")
-            else:
-                lines.append(f'| {p.name} | SUBAGENT | "" (new) or existing |')
-
-        if self._template_registry is not None and self._pool_name is not None:
-            templates = self._template_registry.list_templates(self._pool_name)
+            lines.append(f"| {p.name} | null |")
+        if templates and not is_subagent:
             existing_names = {p.name for p in targets}
             for t in templates:
                 if t.agent_type not in existing_names:
-                    lines.append(f'| [template] {t.agent_type} | SUBAGENT | "" (creates new) |')
+                    lines.append(f"| {t.agent_type} | null (new) or existing |")
 
         return "\n".join(lines)

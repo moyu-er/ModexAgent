@@ -158,8 +158,6 @@ class TestCommunicationService:
             target_agent="reviewer", content="hello", invocation_id="", context=ctx,
         )
         assert "Message sent to reviewer" in result
-        assert "ignored" in result
-        assert "do not pass invocation_id" in result
 
     @pytest.mark.asyncio
     async def test_normal_target_with_concrete_uuid_errors(self) -> None:
@@ -172,8 +170,6 @@ class TestCommunicationService:
             target_agent="reviewer", content="hello", invocation_id="abc123", context=ctx,
         )
         assert "Message sent to reviewer" in result
-        assert "ignored" in result
-        assert "do not pass invocation_id" in result
 
     @pytest.mark.asyncio
     async def test_subagent_empty_uuid_creates_task(self) -> None:
