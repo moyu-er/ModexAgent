@@ -50,7 +50,10 @@ class DreamEngineConfig(BaseModel):
     """Offline archive-to-knowledge consolidation."""
 
     enabled: bool = False
-    interval: int = 600
+    interval: int = 1200
+    min_archive_count: int = 5       # skip consolidation if fewer archives
+    max_archive_count: int = 30      # trigger immediately if exceeded
+    max_batch_size: int = 20         # process up to N archives per run
 
 
 class LossyConfig(BaseModel):
