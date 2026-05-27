@@ -117,7 +117,12 @@ class DefaultMemoryStoreRegistry(MemoryStoreRegistry):
         cache_key = (layer, scope_key)
         storage = self._stores.get(cache_key)
         if storage is None:
-            storage = DefaultScopedStorage(self._scope_dir(layer, scope_key), layer=layer)
+            scope_dir = self._scope_dir(layer, scope_key)
+            if layer == MemoryLayerName.KNOWLEDGE:
+                from framework.memory.stores.markdown_knowledge import MarkdownKnowledgeStorage
+                storage = MarkdownKnowledgeStorage(scope_dir, layer=layer)
+            else:
+                storage = DefaultScopedStorage(scope_dir, layer=layer)
             await storage.initialize()
             self._stores[cache_key] = storage
         self._write_scope_metadata(
