@@ -103,10 +103,6 @@ class InjectableMemorySystem(Protocol):
 
     async def prefetch_memories(self, query: str, context: MemoryContext) -> str | None: ...
 
-    async def get_compression_summary(self, context: MemoryContext) -> str | None: ...
-
-    async def get_auto_compact_summary(self, context: MemoryContext) -> str | None: ...
-
 
 class CheckpointMemorySystem(Protocol):
     """Checkpoint capability used by the context-manager bridge."""
