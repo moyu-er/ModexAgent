@@ -63,6 +63,8 @@ class DreamEngine(ConsolidationEngine):
         schedule_mode: str = "manual",
         idle_threshold_entries: int = 5,
         summarizer: SummarizerAgent | None = None,
+        min_archive_count: int = 5,
+        max_archive_count: int = 30,
     ):
         self.history_manager = history_manager
         self.long_term_manager = long_term_manager
@@ -72,6 +74,8 @@ class DreamEngine(ConsolidationEngine):
         self.registry = registry
         self.schedule_mode = schedule_mode
         self.idle_threshold_entries = idle_threshold_entries
+        self.min_archive_count = min_archive_count
+        self.max_archive_count = max_archive_count
         # Always use SummarizerAgent — auto-construct from llm_provider if needed
         self._summarizer: SummarizerAgent = summarizer or SummarizerAgent(llm_provider)
 
@@ -89,6 +93,29 @@ class DreamEngine(ConsolidationEngine):
         entries = unprocessed.entries
         if not entries:
             return False
+
+        archive_count = len(entries)
+
+        # Dual trigger: skip if below minimum threshold
+        if archive_count < self.min_archive_count:
+            logger.debug(
+                "DreamEngine: skipping consolidation, archive_count=%d < min=%d",
+                archive_count,
+                self.min_archive_count,
+            )
+            final_cursor = max(
+                (e.entry_id or 0 for e in entries), default=unprocessed.cursor
+            )
+            await self._commit_knowledge_cursor(context, final_cursor)
+            return False
+
+        # Dual trigger: force trigger if above maximum threshold
+        if archive_count > self.max_archive_count:
+            logger.info(
+                "DreamEngine: triggering consolidation, archive_count=%d > max=%d",
+                archive_count,
+                self.max_archive_count,
+            )
 
         batch = entries[: self.max_batch_size]
         batch_payload = [self._archive_entry_to_dict(entry) for entry in batch]
