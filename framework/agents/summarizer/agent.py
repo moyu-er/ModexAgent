@@ -66,7 +66,7 @@ Task: Analyze the conversation summaries below and extract facts worth rememberi
 
 Long-term memory files:
 - SOUL.md: bot behavior, tone, personality, communication style
-- USER.md: user identity, preferences, habits, recurring patterns
+- USER.md: user profile with structured fields (replace (unknown) placeholders when you learn the actual value)
 - MEMORY.md: knowledge, project context, decisions, solutions
 
 Output one line per finding using this format:
@@ -80,6 +80,7 @@ Rules:
 - Only NEW or CONFLICTING information — skip anything already in current files
 - Use atomic facts: "prefers dark mode" not "discussed theme settings"
 - Corrections: [USER] location is Tokyo, not Osaka
+- When a user fact matches a USER.md field (name, timezone, role, etc.), note the field name
 - Skip: code patterns, git history, tool invocation details, anything already in current files
 - Skip: trivial pleasantries, greetings, acknowledgments
 - Keep output concise — under 500 tokens
@@ -99,16 +100,18 @@ Each update must be a JSON object with:
 
 Rules:
 1. Use "replace_text" when modifying existing information (most precise)
-2. Use "append" for adding new facts at the end
-3. Use "section_replace" only when rewriting a whole section
-4. Use "incremental" for small additions when no exact text can be matched
-5. Do not duplicate existing content
-6. Keep total output under 1000 tokens — be concise, use atomic facts
-7. Return ONLY a valid JSON array. No markdown code blocks, no extra text.
-8. Do NOT include any thinking/reasoning tags in output
+2. Use "replace_text" to fill in (unknown) placeholders in USER.md fields — match the full line including the placeholder
+3. Use "append" for adding new facts at the end
+4. Use "section_replace" only when rewriting a whole section
+5. Use "incremental" for small additions when no exact text can be matched
+6. Do not duplicate existing content
+7. Keep total output under 1000 tokens — be concise, use atomic facts
+8. Return ONLY a valid JSON array. No markdown code blocks, no extra text.
+9. Do NOT include any thinking/reasoning tags in output
 
 Example output:
 [
+  {"file_name": "USER.md", "mode": "replace_text", "search_text": "- **Name**: (unknown)", "content": "- **Name**: John", "reason": "learned user name"},
   {"file_name": "MEMORY.md", "mode": "append", "content": "- User prefers dark mode\\n", "reason": "new preference"},
   {"file_name": "USER.md", "mode": "replace_text", "search_text": "- Location: Tokyo\\n", "content": "- Location: Osaka\\n", "reason": "location corrected"}
 ]"""
