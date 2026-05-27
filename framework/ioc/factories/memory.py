@@ -13,7 +13,12 @@ if TYPE_CHECKING:
 
 
 def _build_memory_layer_config(cfg: MemoryConfig) -> MemoryLayerConfigSet:
-    """Convert MemoryConfig to framework MemoryLayerConfigSet."""
+    """Convert MemoryConfig to framework MemoryLayerConfigSet.
+
+    Supports both old (short_term/long_term) and new (session/archive/knowledge) config.
+    Migration happens in MemoryConfig.model_post_init, so this function
+    only reads from the new fields.
+    """
     from framework.memory.layers.config import (
         MemoryLayerConfigSet,
         PendingPrunedInputMemoryConfig,
@@ -27,20 +32,26 @@ def _build_memory_layer_config(cfg: MemoryConfig) -> MemoryLayerConfigSet:
     )
 
     session_config = SessionMemoryConfig(
-        max_messages=cfg.short_term.max_messages,
+        max_messages=cfg.session.max_messages,
     )
 
+    # Archive config (new field, migrated from long_term if old config used)
     archive_config = None
-    knowledge_config = None
-    if cfg.long_term is not None and cfg.long_term.enabled:
-        from framework.memory.layers.config import (
-            ArchiveMemoryConfig,
-            KnowledgeMemoryConfig,
+    if cfg.archive is not None and cfg.archive.enabled:
+        from framework.memory.layers.config import ArchiveMemoryConfig
+
+        archive_config = ArchiveMemoryConfig(
+            max_entries=cfg.archive.max_entries,
+            retained_consumed_archive_pairs=cfg.archive.retained_consumed_pairs,
         )
 
-        archive_config = ArchiveMemoryConfig()
+    # Knowledge config (new field, migrated from long_term if old config used)
+    knowledge_config = None
+    if cfg.knowledge is not None and cfg.knowledge.enabled:
+        from framework.memory.layers.config import KnowledgeMemoryConfig
+
         knowledge_config = KnowledgeMemoryConfig(
-            default_templates_dir=cfg.long_term.default_templates_dir,
+            default_templates_dir=cfg.knowledge.default_templates_dir,
         )
 
     return MemoryLayerConfigSet(
@@ -78,7 +89,7 @@ def create_memory(
         summarizer = SummarizerAgent(llm_provider)
         archive_strategy = DualLLMArchiveGenerationStrategy(summarizer=summarizer)
 
-    st = cfg.short_term
+    st = cfg.session
     cleanup_config: dict[str, int | float] = {
         "max_messages": st.max_messages,
         "max_tokens": st.max_tokens,

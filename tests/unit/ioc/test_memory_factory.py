@@ -9,7 +9,7 @@ from framework.ioc.configs.memory import (
     MemoryConfig,
     ShortTermConfig,
 )
-from framework.ioc.factories.memory import create_memory
+from framework.ioc.factories.memory import create_memory, _build_memory_layer_config
 
 
 def _make_provider():
@@ -55,3 +55,54 @@ class TestCreateMemoryCleanupConfig:
         cfg = MemoryConfig()
         system = create_memory(cfg, _make_provider(), tmp_path)
         assert system._archive_strategy is not None
+
+
+class TestBuildMemoryLayerConfigNewSchema:
+    def test_build_memory_layer_config_uses_new_config(self) -> None:
+        """Should use new config fields (session, archive, knowledge)."""
+        from framework.ioc.configs.memory import (
+            MemoryConfig,
+            SessionConfig,
+            ArchiveConfig,
+            KnowledgeConfig,
+        )
+
+        cfg = MemoryConfig(
+            session=SessionConfig(max_messages=250),
+            archive=ArchiveConfig(enabled=True, max_entries=800),
+            knowledge=KnowledgeConfig(
+                enabled=True,
+                default_templates_dir="templates/knowledge",
+            ),
+        )
+
+        layer_config = _build_memory_layer_config(cfg)
+
+        assert layer_config.session.max_messages == 250
+        assert layer_config.archive is not None
+        assert layer_config.knowledge is not None
+        assert layer_config.knowledge.default_templates_dir == "templates/knowledge"
+
+    def test_build_memory_layer_config_handles_disabled_archive(self) -> None:
+        """archive.enabled=False should result in no archive layer."""
+        from framework.ioc.configs.memory import MemoryConfig, ArchiveConfig
+
+        cfg = MemoryConfig(
+            archive=ArchiveConfig(enabled=False),
+        )
+
+        layer_config = _build_memory_layer_config(cfg)
+
+        assert layer_config.archive is None
+
+    def test_build_memory_layer_config_handles_disabled_knowledge(self) -> None:
+        """knowledge.enabled=False should result in no knowledge layer."""
+        from framework.ioc.configs.memory import MemoryConfig, KnowledgeConfig
+
+        cfg = MemoryConfig(
+            knowledge=KnowledgeConfig(enabled=False),
+        )
+
+        layer_config = _build_memory_layer_config(cfg)
+
+        assert layer_config.knowledge is None
