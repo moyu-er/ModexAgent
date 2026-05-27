@@ -12,11 +12,11 @@ from framework.memory.core.message import ChatMessage
 
 
 def _is_tool_call(msg: ChatMessage) -> bool:
-    return msg.role == MessageRole.TOOL_CALL
+    return msg.role == MessageRole.ASSISTANT and bool(msg.tool_calls)
 
 
 def _is_tool_result(msg: ChatMessage) -> bool:
-    return msg.role == MessageRole.TOOL_RESULT
+    return msg.role == MessageRole.TOOL
 
 
 class InjectionFilterStrategy(ABC):
