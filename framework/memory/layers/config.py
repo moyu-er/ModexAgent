@@ -54,6 +54,7 @@ class KnowledgeMemoryConfig:
         }
     )
     max_changelog_entries: int | None = 1000
+    default_templates_dir: str | None = None
 
 
 @dataclass(frozen=True)

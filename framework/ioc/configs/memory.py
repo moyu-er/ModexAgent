@@ -44,6 +44,7 @@ class LongTermConfig(BaseModel):
 
     enabled: bool = False
     init_defaults: bool = True
+    default_templates_dir: str | None = None
 
 
 class DreamEngineConfig(BaseModel):
