@@ -970,14 +970,17 @@ class BotService(AgentBuilderMixin):
 
         from framework.memory.consolidation.dream_engine import DreamEngine
 
+        dream_cfg = self._main_memory_cfg.dream_engine
         self.dream_engine = DreamEngine(
             llm_provider=self.provider,
             history_manager=self.memory_system.archive_manager,
             long_term_manager=self.memory_system.knowledge_manager,
             registry=self.memory_system.store_registry,
-            max_batch_size=20,
+            max_batch_size=dream_cfg.max_batch_size,
             max_iterations=10,
             summarizer=getattr(self, "_summarizer_agent", None),
+            min_archive_count=dream_cfg.min_archive_count,
+            max_archive_count=dream_cfg.max_archive_count,
         )
         print("   [OK] DreamEngine initialized")
 
