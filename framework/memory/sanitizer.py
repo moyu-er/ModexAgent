@@ -1,11 +1,16 @@
-"""Session and model-visible tool-chain sanitization."""
+"""Tool-chain sanitization for session storage and model-visible context.
+
+Moved from framework/memory/compression/tool_chain_sanitizer.py.
+The Protocol class SessionToolChainSanitizer has been removed;
+DefaultSessionToolChainSanitizer is now a standalone concrete class.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Protocol
+from typing import Any
 
 from framework.core.types import MessageRole
 
@@ -49,19 +54,6 @@ class ToolChainSanitizationResult:
     open_tail_assistant_index: int | None = None
 
 
-class SessionToolChainSanitizer(Protocol):
-    """Analyze and sanitize assistant/tool structural relationships."""
-
-    def sanitize(
-        self,
-        messages: Sequence[dict[str, Any]],
-        *,
-        mode: ToolChainSanitizationMode,
-    ) -> ToolChainSanitizationResult:
-        """Return a sanitized copy of ``messages`` and issue metadata."""
-        ...
-
-
 @dataclass
 class _AssistantGroup:
     assistant_index: int
@@ -82,7 +74,7 @@ class _AssistantGroup:
         )
 
 
-class DefaultSessionToolChainSanitizer(SessionToolChainSanitizer):
+class DefaultSessionToolChainSanitizer:
     """Default full-sequence sanitizer for session storage and LLM input."""
 
     def sanitize(
@@ -197,9 +189,6 @@ class DefaultSessionToolChainSanitizer(SessionToolChainSanitizer):
     def _has_plain_assistant_after(
         messages: Sequence[dict[str, Any]], tool_assistant_index: int,
     ) -> bool:
-        """Return True if a plain assistant (no tool_calls) appears after the
-        tool-call assistant. Such an assistant closes the ReAct turn, making
-        the tool-call chain stale rather than an active open tail."""
         for msg in messages[tool_assistant_index + 1:]:
             role = msg.get("role")
             if role == str(MessageRole.ASSISTANT) and not msg.get("tool_calls"):

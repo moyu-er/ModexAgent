@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any
 
 from framework.memory.core.lock import AioRWLock, StorageLock
@@ -18,6 +19,11 @@ class MemoryStorage(ABC):
     def get_lock(self) -> StorageLock:
         """Return this scoped storage instance's read/write lock."""
         return self._lock
+
+    @property
+    def base_path(self) -> Path | None:
+        """Return the filesystem directory for this storage, or None if not file-backed."""
+        return None
 
     @abstractmethod
     async def initialize(self) -> None:

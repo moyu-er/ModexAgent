@@ -65,9 +65,9 @@ If the conversation contains no meaningful content, output exactly: (nothing)"""
 Task: Analyze the conversation summaries below and extract facts worth remembering.
 
 Long-term memory files:
-- SOUL.md: bot behavior, tone, personality, communication style
-- USER.md: user identity, preferences, habits, recurring patterns
-- MEMORY.md: knowledge, project context, decisions, solutions
+- SOUL.md: bot name, identity, core principles, execution rules
+- USER.md: user profile with structured fields and checkbox preferences
+- MEMORY.md: long-term notes, project context, decisions, solutions
 
 Output one line per finding using this format:
 [FILE] atomic fact description
@@ -80,6 +80,8 @@ Rules:
 - Only NEW or CONFLICTING information — skip anything already in current files
 - Use atomic facts: "prefers dark mode" not "discussed theme settings"
 - Corrections: [USER] location is Tokyo, not Osaka
+- For USER.md fields: note the field name (name, timezone, role, etc.)
+- For USER.md checkboxes: note which option applies (e.g. "prefers brief responses")
 - Skip: code patterns, git history, tool invocation details, anything already in current files
 - Skip: trivial pleasantries, greetings, acknowledgments
 - Keep output concise — under 500 tokens
@@ -88,29 +90,31 @@ Rules:
 
     PROMPT_MEMORY_UPDATE = """You are a memory editing assistant.
 
-Task: Based on the analysis below, produce a JSON array of update instructions for the long-term memory files.
+Task: Based on the analysis below, produce updated versions of the long-term memory files.
 
-Each update must be a JSON object with:
+For each file that needs changes, output the COMPLETE new content.
+Do NOT output patch instructions — output the full file content that replaces the old version.
+
+Output format — a JSON array where each element has:
 - "file_name": one of "SOUL.md", "USER.md", "MEMORY.md"
-- "mode": one of "incremental", "append", "section_replace", "replace_text"
-- "content": the new or updated content to write
-- "reason": brief explanation of why this update is needed
-- "search_text": (only for "replace_text" mode) the exact existing text to find and replace
+- "content": the COMPLETE new content for this file
+- "reason": brief explanation of what changed
 
 Rules:
-1. Use "replace_text" when modifying existing information (most precise)
-2. Use "append" for adding new facts at the end
-3. Use "section_replace" only when rewriting a whole section
-4. Use "incremental" for small additions when no exact text can be matched
-5. Do not duplicate existing content
-6. Keep total output under 1000 tokens — be concise, use atomic facts
-7. Return ONLY a valid JSON array. No markdown code blocks, no extra text.
-8. Do NOT include any thinking/reasoning tags in output
+1. Start from the current file content and integrate the new facts
+2. Preserve all existing information unless explicitly contradicted by new facts
+3. Fill in placeholder values (e.g. "(user name)", "(your role)") with actual learned values
+4. For checkbox preferences in USER.md: mark confirmed choice as [x], keep others as [ ]
+5. Remove outdated or contradicted information
+6. Keep the same structure and format as the current file
+7. Do NOT include any file that doesn't need changes
+8. Keep output concise — under 1000 tokens total
+9. Return ONLY a valid JSON array. No markdown code blocks, no extra text.
+10. Do NOT include any thinking/reasoning tags in output
 
 Example output:
 [
-  {"file_name": "MEMORY.md", "mode": "append", "content": "- User prefers dark mode\\n", "reason": "new preference"},
-  {"file_name": "USER.md", "mode": "replace_text", "search_text": "- Location: Tokyo\\n", "content": "- Location: Osaka\\n", "reason": "location corrected"}
+  {"file_name": "USER.md", "content": "# User Profile\\n\\n## Basic Information\\n- **Name**: John\\n- **Timezone**: UTC+8\\n", "reason": "learned user name and timezone"}
 ]"""
 
     PROMPT_MEMORY_COMPRESSION = """Summarize the pruned conversation as reference context for a future agent turn.

@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Iterator, Sequence
+from pathlib import Path
 from typing import Any
 
+from framework.memory.archive_generation import ArchiveGenerationStrategy
 from framework.memory.archive_models import ArchiveChannel
-from framework.memory.compression.policies import MemoryCompressionCoordinator
-from framework.memory.core.layers import MemoryLayerSet
+from framework.memory.core.layers import ArchiveMemoryManager, MemoryLayerSet, SessionMemoryManager
 from framework.memory.core.message import ChatMessage
 from framework.memory.core.models import LongTermMemory
 from framework.memory.core.scope import (
@@ -19,7 +20,7 @@ from framework.memory.core.scope import (
 )
 from framework.memory.core.system import MemorySystem
 from framework.memory.history import MessageHistory
-from framework.memory.lifecycle import MemoryLifecyclePolicy
+from framework.memory.lifecycle import MemoryMaintenancePolicy
 from framework.memory.recorder import MemoryAppendRecorder
 from framework.memory.registry.base import MemoryStoreRegistry
 
@@ -29,24 +30,26 @@ logger = logging.getLogger(__name__)
 class ScopedMessageHistory(MessageHistory):
     """MessageHistory backed by a registry-scoped SessionMemoryManager.
 
-    Accepts an optional *on_messages_added* callback that is invoked after
-    every ``append`` / ``extend`` so lifecycle hooks (compression, etc.)
-    are triggered on the ReAct-turn hot path — not just on the explicit
-    ``DefaultMemorySystem.add_messages()`` path.
+    Runs ``cleanup_session()`` after every ``append`` / ``extend`` so that
+    session pruning and optional archival happen on the ReAct-turn hot path.
     """
 
     def __init__(
         self,
-        manager: Any,  # SessionMemoryManager
+        manager: SessionMemoryManager,
         context: MemoryContext,
         initial_messages: Sequence[ChatMessage | dict[str, Any]] | None = None,
         recorder: MemoryAppendRecorder | None = None,
-        on_messages_added: Any = None,  # callable(context, layer_set)
+        archive_manager: ArchiveMemoryManager | None = None,
+        archive_strategy: ArchiveGenerationStrategy | None = None,
+        cleanup_config: dict[str, int | float] | None = None,
     ) -> None:
         self._manager = manager
         self._context = context
         self._recorder = recorder
-        self._on_messages_added = on_messages_added
+        self._archive_manager = archive_manager
+        self._archive_strategy = archive_strategy
+        self._cleanup_config: dict[str, int | float] = cleanup_config or {}
         self._cache: list[ChatMessage] | None = (
             [ChatMessage.coerce(m) for m in initial_messages]
             if initial_messages is not None
@@ -54,23 +57,32 @@ class ScopedMessageHistory(MessageHistory):
         )
         self._cache_lock = asyncio.Lock()
 
+    async def _run_cleanup(self) -> None:
+        from framework.memory.cleanup import cleanup_session
+
+        await cleanup_session(
+            session=self._manager,
+            archive=self._archive_manager,
+            context=self._context,
+            archive_strategy=self._archive_strategy,
+            **self._cleanup_config,
+        )
+
     async def append(self, message: ChatMessage | dict[str, Any]) -> None:
-        revision = await self._manager.add_messages(self._context, [message])
+        await self._manager.add_messages(self._context, [message])
         if self._recorder is not None:
             await self._recorder.record([message], self._context)
-        if self._on_messages_added is not None:
-            await self._on_messages_added(self._context, revision)
+        await self._run_cleanup()
         async with self._cache_lock:
             self._cache = None
 
     async def extend(self, messages: Sequence[ChatMessage | dict[str, Any]]) -> None:
         if not messages:
             return
-        revision = await self._manager.add_messages(self._context, list(messages))
+        await self._manager.add_messages(self._context, list(messages))
         if self._recorder is not None:
             await self._recorder.record(list(messages), self._context)
-        if self._on_messages_added is not None:
-            await self._on_messages_added(self._context, revision)
+        await self._run_cleanup()
         async with self._cache_lock:
             self._cache = None
 
@@ -127,23 +139,20 @@ class DefaultMemorySystem(MemorySystem):
         layer_set: MemoryLayerSet,
         store_registry: MemoryStoreRegistry,
         providers: Any | None = None,  # MemoryProviderRegistry
-        lifecycle_policy: MemoryLifecyclePolicy | None = None,
+        archive_strategy: ArchiveGenerationStrategy | None = None,
+        cleanup_config: dict[str, int | float] | None = None,
+        maintenance_policy: MemoryMaintenancePolicy | None = None,
     ) -> None:
         self._layers = layer_set
         self._registry = store_registry
         self._providers = providers
-        self._lifecycle = lifecycle_policy
+        self._archive_strategy = archive_strategy
+        self._cleanup_config: dict[str, int | float] = cleanup_config or {}
+        self._maintenance_policy = maintenance_policy
         self._recorder = MemoryAppendRecorder()
         if providers is not None:
             for provider in providers.all():
                 self._recorder.add_provider(provider)
-
-    @property
-    def compression_coordinator(self) -> MemoryCompressionCoordinator | None:
-        """Expose the embedded compression coordinator for shared use (e.g. background auto-compact)."""
-        if self._lifecycle is not None:
-            return self._lifecycle.compression_coordinator
-        return None
 
     # -- MemorySystem ABC ------------------------------------------------
 
@@ -161,22 +170,14 @@ class DefaultMemorySystem(MemorySystem):
         context: MemoryContext,
         initial_messages: Sequence[ChatMessage | dict[str, Any]] | None = None,
     ) -> MessageHistory:
-        on_added: Any = None
-        if self._lifecycle is not None:
-            layers = self._layers
-
-            async def _on_added(ctx: MemoryContext, revision: Any) -> None:
-                if self._lifecycle is not None:
-                    await self._lifecycle.on_messages_added(ctx, layers, revision)
-
-            on_added = _on_added
-
         return ScopedMessageHistory(
             manager=self._layers.session,
             context=context,
             initial_messages=initial_messages,
             recorder=self._recorder,
-            on_messages_added=on_added,
+            archive_manager=self._layers.archive,
+            archive_strategy=self._archive_strategy,
+            cleanup_config=self._cleanup_config,
         )
 
     async def add_messages(
@@ -186,10 +187,9 @@ class DefaultMemorySystem(MemorySystem):
     ) -> None:
         if not messages:
             return
-        revision = await self._layers.session.add_messages(context, messages)
+        await self._layers.session.add_messages(context, messages)
         await self._recorder.record(list(messages), context)
-        if self._lifecycle is not None:
-            await self._lifecycle.on_messages_added(context, self._layers, revision)
+        # No lifecycle callback — cleanup happens in ScopedMessageHistory
 
     async def get_history(
         self,
@@ -256,24 +256,6 @@ class DefaultMemorySystem(MemorySystem):
         return self._registry
 
     # -- Session convenience --------------------------------------------
-
-    async def get_compression_summary(self, context: MemoryContext) -> str | None:
-        storage = await self._registry.resolve(
-            layer=MemoryLayerName.SESSION,
-            scope=SessionScope(),
-            context=context,
-        )
-        result = await storage.get(".compression_summary")
-        return result if isinstance(result, str) else None
-
-    async def get_auto_compact_summary(self, context: MemoryContext) -> str | None:
-        storage = await self._registry.resolve(
-            layer=MemoryLayerName.SESSION,
-            scope=SessionScope(),
-            context=context,
-        )
-        result = await storage.get(".auto_compact_summary")
-        return result if isinstance(result, str) else None
 
     async def set_pending_user_turn(
         self, context: MemoryContext, message_id: str, created_at: float
@@ -397,6 +379,16 @@ class DefaultMemorySystem(MemorySystem):
         if knowledge is None:
             return LongTermMemory()
         return await knowledge.retrieve(context, query=query)
+
+    async def get_knowledge_directory(self, context: MemoryContext) -> Path | None:
+        """Return the absolute path to the knowledge storage directory."""
+        if self._layers.knowledge is None:
+            return None
+        try:
+            return await self._layers.knowledge.get_storage_path(context)
+        except Exception:
+            logger.debug("Failed to resolve knowledge directory", exc_info=True)
+            return None
 
     @property
     def knowledge_manager(self) -> Any | None:

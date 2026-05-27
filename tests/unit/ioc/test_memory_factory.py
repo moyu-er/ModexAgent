@@ -1,98 +1,108 @@
-"""Tests for framework.ioc.factories.memory — create_memory behavior."""
-
+"""Tests for framework.ioc.factories.memory -- create_memory behavior."""
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 import pytest
 
 from framework.ioc.configs.memory import (
-    LongTermConfig,
     MemoryConfig,
     ShortTermConfig,
 )
-from framework.ioc.factories.memory import create_memory
+from framework.ioc.factories.memory import create_memory, _build_memory_layer_config
 
 
-def _make_provider() -> AsyncMock:
+def _make_provider():
     """Create a mock LLMProvider with get_default_model()."""
+    from unittest.mock import AsyncMock
     provider = AsyncMock()
     provider.get_default_model.return_value = "test-model"
     return provider
 
 
-class TestCreateMemoryAutoCompact:
-    def test_auto_compact_false_creates_compression_coordinator(self, tmp_path: Path) -> None:
-        """When auto_compact=False, compression coordinator must still exist.
-
-        Regression: the old auto_llm_compression flag used to skip the entire
-        coordinator when set to False, meaning session memory would grow past
-        max_messages without any pruning.
-        """
-        cfg = MemoryConfig(
-            short_term=ShortTermConfig(
-                max_messages=50,
-                auto_compact=False,
-            ),
-        )
-        system = create_memory(cfg, _make_provider(), tmp_path)
-        coordinator = system.compression_coordinator
-        assert coordinator is not None, (
-            "auto_compact=False must still create a compression coordinator "
-            "so that max_messages is enforced. Only the LLM archive generation is skipped."
-        )
-
-    def test_auto_compact_false_uses_max_messages(self, tmp_path: Path) -> None:
-        """Compression trigger must use the configured max_messages."""
+class TestCreateMemoryCleanupConfig:
+    def test_cleanup_config_uses_max_messages(self, tmp_path: Path) -> None:
+        """cleanup_config must use the configured max_messages."""
         cfg = MemoryConfig(
             short_term=ShortTermConfig(
                 max_messages=200,
-                auto_compact=False,
             ),
         )
         system = create_memory(cfg, _make_provider(), tmp_path)
-        coordinator = system.compression_coordinator
-        assert coordinator._trigger.max_messages == 200
+        assert system._cleanup_config["max_messages"] == 200
 
-    def test_auto_compact_false_no_llm_archive_generation(self, tmp_path: Path) -> None:
-        """When auto_compact=False, LLM archive generation must be skipped."""
-        cfg = MemoryConfig(
-            short_term=ShortTermConfig(
-                max_messages=50,
-                auto_compact=False,
-            ),
-        )
-        system = create_memory(cfg, _make_provider(), tmp_path)
-        coordinator = system.compression_coordinator
-        assert coordinator._archive_generation is None
-
-    def test_auto_compact_true_creates_llm_archive_generation(self, tmp_path: Path) -> None:
-        """When auto_compact=True (default), LLM archive generation is created."""
-        cfg = MemoryConfig(
-            short_term=ShortTermConfig(
-                max_messages=50,
-                auto_compact=True,
-            ),
-            long_term=LongTermConfig(enabled=True),
-        )
-        system = create_memory(cfg, _make_provider(), tmp_path)
-        coordinator = system.compression_coordinator
-        assert coordinator is not None
-        assert coordinator._archive_generation is not None
-
-    def test_auto_compact_false_default(self, tmp_path: Path) -> None:
-        """Default ShortTermConfig has auto_compact=False, no archive generation."""
+    def test_cleanup_config_present_by_default(self, tmp_path: Path) -> None:
+        """Default ShortTermConfig must have cleanup_config with max_messages."""
         cfg = MemoryConfig()
         system = create_memory(cfg, _make_provider(), tmp_path)
-        coordinator = system.compression_coordinator
-        assert coordinator is not None
-        assert coordinator._archive_generation is None
+        assert "max_messages" in system._cleanup_config
+        assert system._cleanup_config["max_messages"] == 100
 
-    def test_lifecycle_created_when_auto_compact_false(self, tmp_path: Path) -> None:
-        """Lifecycle policy must exist even when auto_compact=False."""
-        cfg = MemoryConfig(
-            short_term=ShortTermConfig(auto_compact=False),
-        )
+    def test_no_compression_coordinator_attribute(self, tmp_path: Path) -> None:
+        """The old compression_coordinator attribute must not exist."""
+        cfg = MemoryConfig()
         system = create_memory(cfg, _make_provider(), tmp_path)
-        assert system._lifecycle is not None
+        assert not hasattr(system, "compression_coordinator")
+
+    def test_archive_strategy_none_when_no_llm(self, tmp_path: Path) -> None:
+        """When llm_provider is None, archive_strategy should be None."""
+        cfg = MemoryConfig()
+        system = create_memory(cfg, None, tmp_path)
+        assert system._archive_strategy is None
+
+    def test_archive_strategy_created_with_llm(self, tmp_path: Path) -> None:
+        """When llm_provider is provided, archive_strategy should be created."""
+        cfg = MemoryConfig()
+        system = create_memory(cfg, _make_provider(), tmp_path)
+        assert system._archive_strategy is not None
+
+
+class TestBuildMemoryLayerConfigNewSchema:
+    def test_build_memory_layer_config_uses_new_config(self) -> None:
+        """Should use new config fields (session, archive, knowledge)."""
+        from framework.ioc.configs.memory import (
+            MemoryConfig,
+            SessionConfig,
+            ArchiveConfig,
+            KnowledgeConfig,
+        )
+
+        cfg = MemoryConfig(
+            session=SessionConfig(max_messages=250),
+            archive=ArchiveConfig(enabled=True, max_entries=800),
+            knowledge=KnowledgeConfig(
+                enabled=True,
+                default_templates_dir="templates/knowledge",
+            ),
+        )
+
+        layer_config = _build_memory_layer_config(cfg)
+
+        assert layer_config.session.max_messages == 250
+        assert layer_config.archive is not None
+        assert layer_config.knowledge is not None
+        assert layer_config.knowledge.default_templates_dir == "templates/knowledge"
+
+    def test_build_memory_layer_config_handles_disabled_archive(self) -> None:
+        """archive.enabled=False should result in no archive layer."""
+        from framework.ioc.configs.memory import MemoryConfig, ArchiveConfig
+
+        cfg = MemoryConfig(
+            archive=ArchiveConfig(enabled=False),
+        )
+
+        layer_config = _build_memory_layer_config(cfg)
+
+        assert layer_config.archive is None
+
+    def test_build_memory_layer_config_handles_disabled_knowledge(self) -> None:
+        """knowledge.enabled=False should result in no knowledge layer."""
+        from framework.ioc.configs.memory import MemoryConfig, KnowledgeConfig
+
+        cfg = MemoryConfig(
+            knowledge=KnowledgeConfig(enabled=False),
+        )
+
+        layer_config = _build_memory_layer_config(cfg)
+
+        assert layer_config.knowledge is None

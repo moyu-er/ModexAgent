@@ -18,12 +18,22 @@ class DummyArchiveManager:
         self.pruned_contexts = []
         self.unprocessed_channels = []
 
+    def __init__(self, entry_count: int = 6):
+        self.seen_contexts = []
+        self.committed = []
+        self.pruned_contexts = []
+        self.unprocessed_channels = []
+        self._entry_count = entry_count
+
     async def get_unprocessed(self, context, cursor_name, limit=100, *, channel=ArchiveChannel.KNOWLEDGE):
         self.seen_contexts.append(context)
         self.unprocessed_channels.append(channel)
         return UnprocessedResult(
-            cursor=1,
-            entries=[ArchiveEntry(summary="summary", entry_id=1)],
+            cursor=self._entry_count,
+            entries=[
+                ArchiveEntry(summary=f"summary {i}", entry_id=i + 1)
+                for i in range(self._entry_count)
+            ],
         )
 
     async def commit_cursor(self, context, cursor_name, cursor, *, channel=ArchiveChannel.KNOWLEDGE):
@@ -83,5 +93,5 @@ async def test_dream_engine_scan_all_uses_registry_records() -> None:
         }
     ]
     assert archive.unprocessed_channels == [ArchiveChannel.KNOWLEDGE]
-    assert archive.committed == [(context, "dream", 1, ArchiveChannel.KNOWLEDGE)]
+    assert archive.committed == [(context, "dream", 6, ArchiveChannel.KNOWLEDGE)]
     assert archive.pruned_contexts == [context]

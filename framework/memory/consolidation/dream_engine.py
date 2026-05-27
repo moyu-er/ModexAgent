@@ -21,6 +21,7 @@ from framework.memory.core.consolidation import (
     ConsolidationEngine,
     ConsolidationResult,
     MemoryUpdate,
+    MemoryUpdateMode,
 )
 from framework.memory.core.layers import ArchiveMemoryManager, KnowledgeMemoryManager
 from framework.memory.core.message import ChatMessage
@@ -63,6 +64,8 @@ class DreamEngine(ConsolidationEngine):
         schedule_mode: str = "manual",
         idle_threshold_entries: int = 5,
         summarizer: SummarizerAgent | None = None,
+        min_archive_count: int = 5,
+        max_archive_count: int = 30,
     ):
         self.history_manager = history_manager
         self.long_term_manager = long_term_manager
@@ -72,6 +75,8 @@ class DreamEngine(ConsolidationEngine):
         self.registry = registry
         self.schedule_mode = schedule_mode
         self.idle_threshold_entries = idle_threshold_entries
+        self.min_archive_count = min_archive_count
+        self.max_archive_count = max_archive_count
         # Always use SummarizerAgent — auto-construct from llm_provider if needed
         self._summarizer: SummarizerAgent = summarizer or SummarizerAgent(llm_provider)
 
@@ -89,6 +94,25 @@ class DreamEngine(ConsolidationEngine):
         entries = unprocessed.entries
         if not entries:
             return False
+
+        archive_count = len(entries)
+
+        # Dual trigger: skip if below minimum threshold
+        if archive_count < self.min_archive_count:
+            logger.debug(
+                "DreamEngine: skipping consolidation, archive_count=%d < min=%d",
+                archive_count,
+                self.min_archive_count,
+            )
+            return False
+
+        # Dual trigger: force trigger if above maximum threshold
+        if archive_count > self.max_archive_count:
+            logger.info(
+                "DreamEngine: triggering consolidation, archive_count=%d > max=%d",
+                archive_count,
+                self.max_archive_count,
+            )
 
         batch = entries[: self.max_batch_size]
         batch_payload = [self._archive_entry_to_dict(entry) for entry in batch]
@@ -328,7 +352,7 @@ class DreamEngine(ConsolidationEngine):
                     MemoryUpdate(
                         file_name=item.get("file_name", "MEMORY.md"),
                         content=item.get("content", ""),
-                        mode=item.get("mode", "append"),
+                        mode=item.get("mode", str(MemoryUpdateMode.SECTION_REPLACE)),
                         reason=item.get("reason", ""),
                         search_text=item.get("search_text", ""),
                     )

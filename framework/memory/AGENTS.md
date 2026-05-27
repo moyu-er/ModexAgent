@@ -13,7 +13,9 @@ Three-layer memory system with scope isolation. Layers: Session (short-term), Ar
 | `default_system.py` | `DefaultMemorySystem` — standard implementation wiring all layers |
 | `history.py` | `MessageHistory`, `ListMessageHistory`, `inject_attachments_to_history` |
 | `context_governance.py` | `ContextGovernance` ABC — `CompositeGovernance`, `TokenBudgetGovernance`, `MicrocompactGovernance`, `ToolChainRepairGovernance` |
-| `archive_generation.py` | `ArchiveGenerationStrategy`, `DualLLMArchiveGenerationStrategy` |
+| `archive_generation.py` | `ArchiveGenerationStrategy` (ABC), `DualLLMArchiveGenerationStrategy`, `ArchiveInputMessage`, `SummarizerLike` |
+| `cleanup.py` | `cleanup_session()`, `CleanupResult` — main entry point for session cleanup + archive |
+| `sanitizer.py` | `DefaultSessionToolChainSanitizer` — removes invalid tool-chain records |
 | `pending.py` | `PendingPrunedInputExtractor`/`Injector` — handles messages pruned from session but not yet delivered |
 | `recorder.py` | `MemoryAppendRecorder` — records what gets appended and from where |
 
@@ -23,8 +25,6 @@ Three-layer memory system with scope isolation. Layers: Session (short-term), Ar
 |-----------|---------|
 | `core/` | ABCs — `MemoryScope`, `MemoryStorage`, `ChatMessage`, `MemoryContext`, scope metadata, layer managers |
 | `layers/` | Concrete layer managers — Session, Archive, Knowledge, Pending + `MemoryLayerFactory` + config |
-| `compaction/` | `MessageCompactionPolicy`, `BoundaryPolicy` — per-message compaction decisions |
-| `compression/` | Compression coordinator, planners, policies, semantic filter, tool-chain sanitizer |
 | `consolidation/` | `DreamEngine` (offline background consolidation) |
 | `injection/` | `MemoryInjectionPolicy` → `ContextState` assembly (`FullInjectionPolicy`, `RestrictedInjectionPolicy`, `ToolMessageFilterStrategy`) |
 | `registry/` | `MemoryStoreRegistry` — storage provider registry |
@@ -33,8 +33,8 @@ Three-layer memory system with scope isolation. Layers: Session (short-term), Ar
 
 ### Working In This Directory
 - Memory scopes: Session, User, Tenant, Agent, Channel, Chat, PeerPair, Composite, Global
-- Two-phase compaction: trigger → plan → summary → commit (tool-chain-aware)
-- `BoundaryPolicy` ensures tool-call chains are not broken by truncation
+- `cleanup_session()` runs after every message append — sanitize → keep/prune boundary → optional archive
+- Tool-chain-aware boundary: never split an assistant tool_call from its tool results
 - Governance mutates only LLM input copy, never persisted session data
 - `archive=None` = session-only mode (standard for subagent)
 - `RestrictedInjectionPolicy` is default for subagents — limits session messages to prevent context overflow
@@ -42,9 +42,9 @@ Three-layer memory system with scope isolation. Layers: Session (short-term), Ar
 ### Subagent Memory Lifecycle
 1. Each subagent gets its own `MemorySystemContextManager` with isolated workspace
 2. `MemoryAgentRole.SUBAGENT` scope — session-only by default, no knowledge layer
-3. `DefaultMemoryLifecyclePolicy` with subagent compression coordinator
+3. `cleanup_session()` runs directly from `ScopedMessageHistory` after every message append
 4. `AgentPool` session eviction (TTL + LRU cap) triggers context cleanup
-5. `_cleanup_subagent_memory()` called on session end via `on_session_end` callback
+5. `_cleanup_subagent_memory()` called on session end via explicit cleanup
 
 ### Common Patterns
 - `MemoryScope` resolves to scope keys via `MemoryContext`

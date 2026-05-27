@@ -21,7 +21,8 @@ from framework.memory.core.system import (
 from framework.memory.default_system import DefaultMemorySystem
 from framework.memory.layers.config import MemoryLayerConfigSet
 from framework.memory.layers.factory import MemoryLayerFactory
-from framework.memory.lifecycle import MemoryLifecyclePolicy
+from framework.memory.archive_generation import ArchiveGenerationStrategy
+from framework.memory.lifecycle import MemoryMaintenancePolicy
 from framework.memory.pending import DefaultPendingPrunedInputInjector
 from framework.memory.registry.file import DefaultMemoryStoreRegistry
 
@@ -35,7 +36,9 @@ def create_memory_system(
     config: MemoryLayerConfigSet | None = None,
     llm_provider: Any | None = None,
     session_only: bool = False,
-    lifecycle_policy: MemoryLifecyclePolicy | None = None,
+    archive_strategy: ArchiveGenerationStrategy | None = None,
+    cleanup_config: dict[str, int | float] | None = None,
+    maintenance_policy: MemoryMaintenancePolicy | None = None,
 ) -> DefaultMemorySystem:
     """Create a production-ready memory system with default local-file registry.
 
@@ -63,7 +66,9 @@ def create_memory_system(
     return DefaultMemorySystem(
         layer_set=layer_set,
         store_registry=registry,
-        lifecycle_policy=lifecycle_policy,
+        archive_strategy=archive_strategy,
+        cleanup_config=cleanup_config,
+        maintenance_policy=maintenance_policy,
     )
 
 

@@ -7,8 +7,16 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from framework.memory.compression.tool_chain import _is_tool_call, _is_tool_result
+from framework.core.types import MessageRole
 from framework.memory.core.message import ChatMessage
+
+
+def _is_tool_call(msg: ChatMessage) -> bool:
+    return msg.role == MessageRole.ASSISTANT and bool(msg.tool_calls)
+
+
+def _is_tool_result(msg: ChatMessage) -> bool:
+    return msg.role == MessageRole.TOOL
 
 
 class InjectionFilterStrategy(ABC):

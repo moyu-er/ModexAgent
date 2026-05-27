@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable, Mapping
+from pathlib import Path
 
 from framework.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
 from framework.memory.core.layers import KnowledgeMemoryManager
@@ -43,6 +44,11 @@ class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
     def get_scope(self) -> MemoryScope:
         return self._config.scope
 
+    async def get_storage_path(self, context: MemoryContext) -> Path | None:
+        """Return the absolute path to knowledge storage, if file-backed."""
+        storage = await self._storage_factory(context)
+        return storage.base_path
+
     async def ensure_defaults(
         self,
         context: MemoryContext,
@@ -51,8 +57,24 @@ class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
         storage = await self._storage_factory(context)
         defaults = defaults or {}
         for key, file_name in self._config.default_files.items():
-            if await storage.get(file_name) is None:
-                await storage.set(file_name, defaults.get(key, ""))
+            existing = await storage.get(file_name)
+            if existing is not None and (isinstance(existing, str) and existing.strip()):
+                continue  # Don't overwrite existing non-empty content
+
+            # Try to load from template
+            content = ""
+            if self._config.default_templates_dir:
+                from pathlib import Path
+
+                template_path = Path(self._config.default_templates_dir) / file_name
+                if template_path.exists():
+                    content = template_path.read_text(encoding="utf-8")
+
+            # Fallback to defaults dict
+            if not content and key in defaults:
+                content = defaults[key]
+
+            await storage.set(file_name, content)
 
     async def retrieve(
         self, context: MemoryContext, query: str = ""

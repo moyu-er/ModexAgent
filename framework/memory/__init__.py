@@ -9,36 +9,16 @@ Key abstractions:
 - MemorySystem: unified entry point
 - MemoryContext: scope dimensions (session, user, tenant, etc.)
 - MemoryScope: isolation strategy per layer
-- MemoryCompressionCoordinator: unified session-to-archive compaction
 - ArchiveGenerationStrategy: how pruned messages become archive channel records
 - MemoryInjectionPolicy: maps memory layers to LLM ContextState
 """
 
 from framework.memory.archive_generation import (
     ArchiveGenerationStrategy,
+    ArchiveInputMessage,
     DualLLMArchiveGenerationStrategy,
 )
-from framework.memory.compaction.boundary import (
-    BoundaryPolicy,
-    ToolChainBoundaryPolicy,
-    UserTurnToolChainBoundaryPolicy,
-)
-from framework.memory.compaction.policy import (
-    ConservativeCompactionPolicy,
-    KeepAllCompactionPolicy,
-    MessageCompactionDecision,
-    MessageCompactionPolicy,
-    SemanticToolCompactionPolicy,
-)
-from framework.memory.compression.importance import HeuristicImportanceScorer, ImportanceScorer
-from framework.memory.compression.tool_chain_sanitizer import (
-    DefaultSessionToolChainSanitizer,
-    SessionToolChainSanitizer,
-    ToolChainSanitizationIssue,
-    ToolChainSanitizationMode,
-    ToolChainSanitizationReason,
-    ToolChainSanitizationResult,
-)
+from framework.memory.cleanup import CleanupResult, cleanup_session
 from framework.memory.context_governance import (
     CompositeGovernance,
     ContextGovernance,
@@ -123,6 +103,13 @@ from framework.memory.registry import (
     InMemoryStoreRegistry,
     MemoryStoreRegistry,
 )
+from framework.memory.sanitizer import (
+    DefaultSessionToolChainSanitizer,
+    ToolChainSanitizationIssue,
+    ToolChainSanitizationMode,
+    ToolChainSanitizationReason,
+    ToolChainSanitizationResult,
+)
 from framework.memory.system import (
     MemorySystemContextManager,
     create_memory_system,
@@ -185,12 +172,8 @@ __all__ = [
     # Recorder
     "MemoryAppendRecorder",
     "MemoryAppendSource",
-    # Compression (strategies live in compression sub-package)
-    "ImportanceScorer",
-    "HeuristicImportanceScorer",
     # Tool-chain sanitizer
     "DefaultSessionToolChainSanitizer",
-    "SessionToolChainSanitizer",
     "ToolChainSanitizationIssue",
     "ToolChainSanitizationMode",
     "ToolChainSanitizationReason",
@@ -202,6 +185,7 @@ __all__ = [
     "MemoryUpdateMode",
     # Archiving
     "ArchiveGenerationStrategy",
+    "ArchiveInputMessage",
     "DualLLMArchiveGenerationStrategy",
     # Injection
     "MemoryInjectionPolicy",
@@ -222,14 +206,7 @@ __all__ = [
     "DefaultPendingPrunedInputInjector",
     "PendingPrunedInputExtractor",
     "PendingPrunedInputInjector",
-    # Auto compact (removed; use DefaultMemoryMaintenancePolicy directly)
-    # Compaction policy / boundary (pipeline removed; workflow unified under coordinator)
-    "MessageCompactionPolicy",
-    "MessageCompactionDecision",
-    "ConservativeCompactionPolicy",
-    "KeepAllCompactionPolicy",
-    "SemanticToolCompactionPolicy",
-    "BoundaryPolicy",
-    "ToolChainBoundaryPolicy",
-    "UserTurnToolChainBoundaryPolicy",
+    # Cleanup
+    "cleanup_session",
+    "CleanupResult",
 ]

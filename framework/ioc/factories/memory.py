@@ -13,7 +13,12 @@ if TYPE_CHECKING:
 
 
 def _build_memory_layer_config(cfg: MemoryConfig) -> MemoryLayerConfigSet:
-    """Convert MemoryConfig to framework MemoryLayerConfigSet."""
+    """Convert MemoryConfig to framework MemoryLayerConfigSet.
+
+    Supports both old (short_term/long_term) and new (session/archive/knowledge) config.
+    Migration happens in MemoryConfig.model_post_init, so this function
+    only reads from the new fields.
+    """
     from framework.memory.layers.config import (
         MemoryLayerConfigSet,
         PendingPrunedInputMemoryConfig,
@@ -27,19 +32,27 @@ def _build_memory_layer_config(cfg: MemoryConfig) -> MemoryLayerConfigSet:
     )
 
     session_config = SessionMemoryConfig(
-        max_messages=cfg.short_term.max_messages,
+        max_messages=cfg.session.max_messages,
     )
 
+    # Archive config (new field, migrated from long_term if old config used)
     archive_config = None
-    knowledge_config = None
-    if cfg.long_term is not None and cfg.long_term.enabled:
-        from framework.memory.layers.config import (
-            ArchiveMemoryConfig,
-            KnowledgeMemoryConfig,
+    if cfg.archive is not None and cfg.archive.enabled:
+        from framework.memory.layers.config import ArchiveMemoryConfig
+
+        archive_config = ArchiveMemoryConfig(
+            max_entries=cfg.archive.max_entries,
+            retained_consumed_archive_pairs=cfg.archive.retained_consumed_pairs,
         )
 
-        archive_config = ArchiveMemoryConfig()
-        knowledge_config = KnowledgeMemoryConfig()
+    # Knowledge config (new field, migrated from long_term if old config used)
+    knowledge_config = None
+    if cfg.knowledge is not None and cfg.knowledge.enabled:
+        from framework.memory.layers.config import KnowledgeMemoryConfig
+
+        knowledge_config = KnowledgeMemoryConfig(
+            default_templates_dir=cfg.knowledge.default_templates_dir,
+        )
 
     return MemoryLayerConfigSet(
         session=session_config,
@@ -64,47 +77,29 @@ def create_memory(
     Returns:
         Initialized MemorySystem.
     """
-    from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
     from framework.memory.system import create_memory_system
 
     layer_config = _build_memory_layer_config(cfg)
 
-    from framework.memory.compaction.boundary import (
-        BoundaryPolicyName,
-        create_boundary_policy,
-    )
-    from framework.memory.compaction.policy import ConservativeCompactionPolicy
-    from framework.memory.compression.policies import (
-        DefaultMemoryCompressionCoordinator,
-    )
-    from framework.memory.retention import DefaultMessageRetentionPolicy
-
-    st = cfg.short_term
-
-    archive_generation = None
-    if st.auto_compact:
+    archive_strategy = None
+    if llm_provider is not None:
         from framework.agents.summarizer import SummarizerAgent
         from framework.memory.archive_generation import DualLLMArchiveGenerationStrategy
 
         summarizer = SummarizerAgent(llm_provider)
-        archive_generation = DualLLMArchiveGenerationStrategy(summarizer=summarizer)
+        archive_strategy = DualLLMArchiveGenerationStrategy(summarizer=summarizer)
 
-    compression_coordinator = DefaultMemoryCompressionCoordinator(
-        archive_generation=archive_generation,
-        compaction=ConservativeCompactionPolicy(),
-        retention=DefaultMessageRetentionPolicy.from_config({}),
-        boundary=create_boundary_policy(BoundaryPolicyName.TOOL_CHAIN),
-        max_messages=st.max_messages,
-        max_tokens=st.max_tokens,
-        keep_ratio_for_messages=st.keep_ratio_for_messages,
-        keep_ratio_for_token=st.keep_ratio_for_token,
-    )
-
-    lifecycle = DefaultMemoryLifecyclePolicy(compression_coordinator=compression_coordinator)
+    st = cfg.session
+    cleanup_config: dict[str, int | float] = {
+        "max_messages": st.max_messages,
+        "max_tokens": st.max_tokens,
+        "keep_ratio": st.keep_ratio_for_messages,
+    }
 
     return create_memory_system(
         workspace=workspace,
         config=layer_config,
         llm_provider=llm_provider,
-        lifecycle_policy=lifecycle,
+        archive_strategy=archive_strategy,
+        cleanup_config=cleanup_config,
     )

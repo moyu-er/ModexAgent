@@ -15,7 +15,7 @@ from enum import StrEnum
 from typing import Any
 
 from framework.core.types import MessageRole
-from framework.memory.compression.tool_chain_sanitizer import (
+from framework.memory.sanitizer import (
     DefaultSessionToolChainSanitizer,
     ToolChainSanitizationMode,
 )

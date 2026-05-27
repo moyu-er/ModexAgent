@@ -53,6 +53,10 @@ class DefaultScopedStorage(MemoryStorage):
         self._version = 0
         self._updated_at = datetime.now(UTC)
 
+    @property
+    def base_path(self) -> Path | None:
+        return self.directory.resolve()
+
     async def initialize(self) -> None:
         self.directory.mkdir(parents=True, exist_ok=True)
         for tmp_file in self.directory.glob("*.tmp"):

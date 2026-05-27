@@ -18,7 +18,6 @@ from framework.memory.core.scope import MemoryContext
 from framework.memory.injection import FullInjectionPolicy
 from framework.memory.layers.factory import MemoryLayerFactory
 from framework.memory.layers.pending import PendingPrunedInputEntry
-from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
 from framework.memory.pending import DefaultPendingPrunedInputInjector
 from framework.memory.registry.in_memory import InMemoryStoreRegistry
 from framework.memory.system import MemorySystemContextManager, create_memory_system
@@ -55,7 +54,7 @@ async def test_pending_not_injected_during_load() -> None:
 
     memory_system = create_memory_system(
         workspace=Path("./test_load"),
-        lifecycle_policy=DefaultMemoryLifecyclePolicy(),
+        cleanup_config={"max_messages": 100, "keep_ratio": 0.5},
     )
     memory_system._layers = layer_set
     memory_system._registry = registry
@@ -95,7 +94,7 @@ async def test_pending_injected_via_governance_chain() -> None:
 
     memory_system = create_memory_system(
         workspace=Path("./test_gov"),
-        lifecycle_policy=DefaultMemoryLifecyclePolicy(),
+        cleanup_config={"max_messages": 100, "keep_ratio": 0.5},
     )
     memory_system._layers = layer_set
     memory_system._registry = registry
@@ -171,7 +170,6 @@ async def test_pending_survives_lossy_compaction() -> None:
 
     result = await governance.apply(messages)
 
-    # Pending messages survive lossy compaction unchanged
     assert len(_pending_msgs(result)) == 1
     assert _pending_msgs(result)[0]["content"] == "pending_content"
 
@@ -191,7 +189,7 @@ async def test_pending_not_duplicated_by_multiple_governance_apply() -> None:
 
     memory_system = create_memory_system(
         workspace=Path("./test_no_dup"),
-        lifecycle_policy=DefaultMemoryLifecyclePolicy(),
+        cleanup_config={"max_messages": 100, "keep_ratio": 0.5},
     )
     memory_system._layers = layer_set
     memory_system._registry = registry

@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any
 
 from framework.memory.archive_models import (
@@ -253,6 +254,10 @@ class KnowledgeMemoryManager(ABC):
         defaults: Mapping[str, str] | None = None,
     ) -> None:
         pass
+
+    async def get_storage_path(self, context: MemoryContext) -> Path | None:
+        """Return the absolute path to knowledge storage, if file-backed."""
+        return None
 
     @abstractmethod
     async def clear(self, context: MemoryContext) -> None:

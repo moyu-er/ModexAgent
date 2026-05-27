@@ -9,7 +9,7 @@ and multi-agent agent-message interleaving.
 from __future__ import annotations
 
 from framework.core.types import MessageRole
-from framework.memory.compression.tool_chain_sanitizer import (
+from framework.memory.sanitizer import (
     DefaultSessionToolChainSanitizer,
     ToolChainSanitizationMode,
     ToolChainSanitizationReason,

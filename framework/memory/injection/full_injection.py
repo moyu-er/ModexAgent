@@ -102,6 +102,23 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                     key="knowledge:memory", content=f"{knowledge.memory}",
                     priority=90, source="system",
                 ))
+
+            # Inject knowledge directory path
+            knowledge_dir = await memory_system.get_knowledge_directory(context)
+            if knowledge_dir is not None:
+                sections.append(PromptSection(
+                    key="knowledge:directory",
+                    content=(
+                        f"## Knowledge Directory\n\n"
+                        f"Path: `{knowledge_dir}`\n\n"
+                        f"Files:\n"
+                        f"- SOUL.md — your personality, principles, and behavioral rules\n"
+                        f"- USER.md — user profile (name, preferences, tech level, work context). "
+                        f"Update proactively as you learn about the user.\n"
+                        f"- MEMORY.md — persistent notes and facts across sessions\n"
+                    ),
+                    priority=95, source="system",
+                ))
         except Exception:
             logger.debug("Knowledge injection skipped", exc_info=True)
 

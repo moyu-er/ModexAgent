@@ -31,7 +31,6 @@ from framework.memory.layers.config import (
     PendingPrunedInputMemoryConfig,
     SessionMemoryConfig,
 )
-from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
 from framework.memory.system import MemorySystemContextManager, create_memory_system
 from framework.messaging.broker_memory import InMemoryMessageBroker
 from framework.multi_agent import (
@@ -325,11 +324,13 @@ class AgentBuilderMixin:
 
     def _session_only_memory_config(self, cfg: Any) -> MemoryLayerConfigSet:
         max_messages = 50
-        if cfg is not None and hasattr(cfg, "short_term"):
+        if cfg is not None and hasattr(cfg, "session"):
+            max_messages = cfg.session.max_messages
+        elif cfg is not None and hasattr(cfg, "short_term"):
             max_messages = cfg.short_term.max_messages
         elif isinstance(cfg, dict):
-            short_term = cfg.get("short_term", {})
-            max_messages = int(short_term.get("max_messages", max_messages))
+            session = cfg.get("session", cfg.get("short_term", {}))
+            max_messages = int(session.get("max_messages", max_messages))
         return MemoryLayerConfigSet(
             session=SessionMemoryConfig(max_messages=max_messages),
             archive=ArchiveMemoryConfig(scope=SessionScope()),
@@ -338,18 +339,31 @@ class AgentBuilderMixin:
         )
 
     async def _create_subagent_memory(self, sub_name: str, base_system_prompt: str = "") -> ContextManager:
-        from framework.ioc.factories.compression import create_subagent_compression_coordinator
         from framework.memory.core.scope import MemoryAgentRole
 
         subagent_cfg = self._find_subagent_cfg()
         sub_memory_cfg = subagent_cfg.memory if subagent_cfg else None
         sub_dir = self._resolve_path("memory_dir", "data/memory") / "subagents" / sub_name
         sub_dir.mkdir(parents=True, exist_ok=True)
-        coordinator = create_subagent_compression_coordinator(sub_memory_cfg)
+
+        # Support both old (short_term) and new (session) config
+        if sub_memory_cfg and hasattr(sub_memory_cfg, "session"):
+            st = sub_memory_cfg.session
+        elif sub_memory_cfg and hasattr(sub_memory_cfg, "short_term"):
+            st = sub_memory_cfg.short_term
+        else:
+            st = None
+        cleanup_config: dict[str, int | float] = {
+            "max_messages": st.max_messages if st else 50,
+            "max_tokens": st.max_tokens if st else 100000,
+            "keep_ratio": st.keep_ratio_for_messages if st else 0.4,
+        }
+
         memory_system = create_memory_system(
-            workspace=sub_dir, config=self._session_only_memory_config(sub_memory_cfg),
+            workspace=sub_dir,
+            config=self._session_only_memory_config(sub_memory_cfg),
             session_only=False,
-            lifecycle_policy=DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator),
+            cleanup_config=cleanup_config,
         )
         await memory_system.initialize()
         if self.plugin_integration:

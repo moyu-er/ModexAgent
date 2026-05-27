@@ -130,7 +130,6 @@ class BotService(AgentBuilderMixin):
         self.mcp_manager: Any | None = None
         self.memory_system: Any | None = None
         self.context_manager: Any | None = None
-        self.auto_compact_service: Any | None = None
         self.agent: ReActAgent | None = None
         self.agent_factory: AgentFactory | None = None
         self.subagent_service: SubagentService | None = None
@@ -157,8 +156,8 @@ class BotService(AgentBuilderMixin):
         self._subagent_memory_systems: dict[str, Any] = {}
         self._additional_subagent_memory_systems: dict[str, Any] = {}
 
-        # Auto-compact
-        self._auto_compact_task: asyncio.Task | None = None
+        # Maintenance
+        self._maintenance_task: asyncio.Task | None = None
 
         # Overflow cleaner
         self._overflow_cleaner: OverflowCleaner | None = None
@@ -365,9 +364,9 @@ class BotService(AgentBuilderMixin):
         # Inject plugin MemorySystem modifiers (e.g. tool_call_cleanup)
         self.plugin_integration.inject_memory_system_modifiers(self.memory_system)
 
-        # 5.5 Initialize long-term defaults, auto-compact, and dream engine
+        # 5.5 Initialize long-term defaults, maintenance, and dream engine
         await self._init_long_term_defaults(data_dir, main_memory_cfg)
-        await self._init_auto_compact(main_memory_cfg)
+        await self._init_maintenance_task(main_memory_cfg)
         self._init_dream()
 
         # 6. Create SkillManager (main agent has its own)
@@ -919,37 +918,29 @@ class BotService(AgentBuilderMixin):
 
         print("   [OK] Long-term memory defaults ensured")
 
-    async def _init_auto_compact(
+    async def _init_maintenance_task(
         self,
         main_memory_cfg: IOCMemoryConfig | None,
     ) -> None:
-        """Initialize and start background auto-compact via DefaultMemoryMaintenancePolicy."""
+        """Initialize and start background maintenance via DefaultMemoryMaintenancePolicy."""
         if self.memory_system is None:
-            return
-
-        compression_coordinator = self.memory_system.compression_coordinator
-        if compression_coordinator is None:
             return
 
         from framework.memory.lifecycle import DefaultMemoryMaintenancePolicy
 
-        self._maintenance_policy = DefaultMemoryMaintenancePolicy(
-            idle_threshold_seconds=1800,
-            keep_recent_messages=8,
-            compression_coordinator=compression_coordinator,
-        )
+        self._maintenance_policy = DefaultMemoryMaintenancePolicy()
 
         scan_interval = 300
-        self._auto_compact_task = asyncio.create_task(
-            self._auto_compact_loop(scan_interval)
+        self._maintenance_task = asyncio.create_task(
+            self._maintenance_loop(scan_interval)
         )
         print(
-            f"   [OK] AutoCompactService started "
-            f"(idle_threshold=1800s, scan_interval={scan_interval}s)"
+            f"   [OK] MaintenanceService started "
+            f"(scan_interval={scan_interval}s)"
         )
 
-    async def _auto_compact_loop(self, interval: float) -> None:
-        """Background loop for auto-compaction using maintenance policy."""
+    async def _maintenance_loop(self, interval: float) -> None:
+        """Background loop for memory maintenance using maintenance policy."""
         while not self._shutdown_event.is_set():
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._shutdown_event.wait(), timeout=interval)
@@ -962,9 +953,9 @@ class BotService(AgentBuilderMixin):
                 )
                 compacted = [r.scope_key for r in results if r.success]
                 if compacted:
-                    logger.info("Auto-compacted scopes: %s", compacted)
+                    logger.info("Maintenance scan completed scopes: %s", compacted)
             except Exception:
-                logger.exception("AutoCompact scan loop error")
+                logger.exception("Maintenance scan loop error")
 
     def _init_dream(self) -> None:
         """Initialize DreamEngine for offline memory consolidation."""
@@ -979,14 +970,17 @@ class BotService(AgentBuilderMixin):
 
         from framework.memory.consolidation.dream_engine import DreamEngine
 
+        dream_cfg = self._main_memory_cfg.dream_engine
         self.dream_engine = DreamEngine(
             llm_provider=self.provider,
             history_manager=self.memory_system.archive_manager,
             long_term_manager=self.memory_system.knowledge_manager,
             registry=self.memory_system.store_registry,
-            max_batch_size=20,
+            max_batch_size=dream_cfg.max_batch_size,
             max_iterations=10,
             summarizer=getattr(self, "_summarizer_agent", None),
+            min_archive_count=dream_cfg.min_archive_count,
+            max_archive_count=dream_cfg.max_archive_count,
         )
         print("   [OK] DreamEngine initialized")
 
@@ -1010,10 +1004,10 @@ class BotService(AgentBuilderMixin):
 
     async def stop(self) -> None:
         self._shutdown_event.set()
-        if self._auto_compact_task is not None:
-            self._auto_compact_task.cancel()
+        if self._maintenance_task is not None:
+            self._maintenance_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await self._auto_compact_task
+                await self._maintenance_task
         if hasattr(self, '_router_task') and self._router_task:
             self._router_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

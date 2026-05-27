@@ -19,7 +19,7 @@ from framework.memory.archive_models import (
     ArchiveState,
     ArchiveWrite,
 )
-from framework.memory.compression.tool_chain_sanitizer import ToolChainSanitizationIssue
+from framework.memory.sanitizer import ToolChainSanitizationIssue
 from framework.memory.core.message import ChatMessage
 
 
@@ -131,7 +131,6 @@ class MemoryContextBundle:
     system_sections: list[PromptSection]
     messages: list[ChatMessage]
     compression_summary: str | None = None
-    auto_compact_summary: str | None = None
     dropped_sections: list[dict[str, Any]] = field(default_factory=list)
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
