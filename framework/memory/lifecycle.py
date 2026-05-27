@@ -10,12 +10,9 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
-from framework.core.types import MessageRole
 from framework.memory.archive_models import ArchiveChannel, ArchiveChannelStorage
-from framework.memory.compression.policies import MemoryCompressionCoordinator
 from framework.memory.core.layers import MemoryLayerSet
 from framework.memory.core.scope import (
-    MemoryAgentRole,
     MemoryContext,
     MemoryLayerName,
     SessionScope,
@@ -23,136 +20,6 @@ from framework.memory.core.scope import (
 from framework.memory.registry.base import MemoryStoreRegistry
 
 logger = logging.getLogger(__name__)
-
-
-def _normalize_role(role: str | MemoryAgentRole | None) -> MemoryAgentRole:
-    """Normalize agent role string to MemoryAgentRole enum."""
-    if role is None:
-        return MemoryAgentRole.MAIN
-    if isinstance(role, MemoryAgentRole):
-        return role
-    try:
-        return MemoryAgentRole(role.lower())
-    except ValueError:
-        return MemoryAgentRole.MAIN
-
-
-# ── Lifecycle ───────────────────────────────────────────────────────────────
-
-
-class MemoryLifecyclePolicy(ABC):
-    """Turn and session lifecycle hooks called during normal request flow."""
-
-    @property
-    def compression_coordinator(self) -> MemoryCompressionCoordinator | None:
-        """Return the embedded compression coordinator, if any."""
-        return None
-
-    @abstractmethod
-    async def on_turn_start(self, context: MemoryContext, layers: MemoryLayerSet) -> None: ...
-
-    @abstractmethod
-    async def on_messages_added(
-        self, context: MemoryContext, layers: MemoryLayerSet, revision: Any = None,
-    ) -> None: ...
-
-    @abstractmethod
-    async def on_turn_end(self, context: MemoryContext, layers: MemoryLayerSet) -> None: ...
-
-    @abstractmethod
-    async def on_session_end(self, context: MemoryContext, layers: MemoryLayerSet) -> None: ...
-
-
-class DefaultMemoryLifecyclePolicy(MemoryLifecyclePolicy):
-    """Default lifecycle: trigger compression after messages, flush providers on turn end."""
-
-    def __init__(
-        self,
-        compression_coordinator: MemoryCompressionCoordinator | None = None,
-    ) -> None:
-        self._coordinator = compression_coordinator
-
-    @property
-    def compression_coordinator(self) -> MemoryCompressionCoordinator | None:
-        return self._coordinator
-
-    async def on_turn_start(self, context: MemoryContext, layers: MemoryLayerSet) -> None:
-        pass
-
-    async def on_messages_added(
-        self, context: MemoryContext, layers: MemoryLayerSet, revision: Any = None,
-    ) -> None:
-        """Trigger compression check after messages are added."""
-        _ = revision
-        await self._clear_pending_on_completed_assistant(context, layers)
-        if self._coordinator is not None:
-            try:
-                # Lifecycle is only the append-time trigger. The coordinator
-                # and keep planner own tool-chain legality: an active
-                # assistant(tool_calls) tail is protected as a suffix while
-                # older complete assistant/tool history can still be pruned.
-                result = await self._coordinator.maybe_compress(
-                    session=layers.session,
-                    archive=layers.archive,
-                    pending=layers.pending,
-                    context=context,
-                )
-                if not result.committed:
-                    logger.warning(
-                        "Compression returned committed=False for session=%s reason=%s — "
-                        "messages may exceed budget; next add will re-trigger",
-                        context.session_id,
-                        result.reason.value if result.reason else "unknown",
-                    )
-            except Exception:
-                logger.warning("Post-append compression check failed", exc_info=True)
-
-    async def _clear_pending_on_completed_assistant(
-        self,
-        context: MemoryContext,
-        layers: MemoryLayerSet,
-    ) -> None:
-        pending = layers.pending
-        if pending is None:
-            return
-        try:
-            raw_messages = await layers.session.get_all_messages(context)
-            messages = [
-                msg.to_dict() if hasattr(msg, "to_dict") else dict(msg)
-                for msg in raw_messages
-            ]
-        except Exception:
-            logger.debug("Unable to inspect session for pending clear", exc_info=True)
-            return
-        if any(
-            message.get("role") == MessageRole.ASSISTANT.value and not message.get("tool_calls")
-            for message in messages
-        ):
-            try:
-                await pending.clear(context)
-            except Exception:
-                logger.warning("Failed to clear pending pruned inputs", exc_info=True)
-
-    async def on_turn_end(self, context: MemoryContext, layers: MemoryLayerSet) -> None:
-        """Flush provider recorder, save checkpoint if configured."""
-        _ = context, layers
-
-    async def on_session_end(self, context: MemoryContext, layers: MemoryLayerSet) -> None:
-        """Role-aware session cleanup.
-
-        - Subagent: clear short-term memory on task completion.
-        - Main / Peer: persist by default; delayed cleanup is owned by
-          retention and maintenance policies.
-        """
-        role = _normalize_role(context.agent_role)
-        if role == MemoryAgentRole.SUBAGENT:
-            try:
-                await layers.session.clear(context)
-                if layers.pending is not None:
-                    await layers.pending.clear(context)
-                logger.debug("Cleared subagent session for %s", context.session_id)
-            except Exception:
-                logger.warning("Failed to clear subagent session", exc_info=True)
 
 
 # ── Maintenance ─────────────────────────────────────────────────────────────
@@ -183,21 +50,11 @@ class DefaultMemoryMaintenancePolicy(MemoryMaintenancePolicy):
 
     def __init__(
         self,
-        idle_threshold_seconds: float = 1800.0,
-        keep_recent_messages: int = 8,
-        compression_coordinator: MemoryCompressionCoordinator | None = None,
         archive_retention_policy: ArchiveRetentionPolicy | None = None,
         knowledge_retention_policy: KnowledgeRetentionPolicy | None = None,
     ) -> None:
-        self._idle_threshold = idle_threshold_seconds
-        self._keep_recent = keep_recent_messages
-        self._coordinator = compression_coordinator
         self._archive_retention = archive_retention_policy
         self._knowledge_retention = knowledge_retention_policy
-
-    @property
-    def compression_coordinator(self) -> MemoryCompressionCoordinator | None:
-        return self._coordinator
 
     async def scan_once(
         self,
@@ -208,53 +65,10 @@ class DefaultMemoryMaintenancePolicy(MemoryMaintenancePolicy):
         import time
         results: list[MaintenanceResult] = []
         has_work = (
-            self._coordinator is not None and layers.archive is not None
-        ) or self._archive_retention is not None or self._knowledge_retention is not None
+            self._archive_retention is not None or self._knowledge_retention is not None
+        )
         if not has_work:
             return results
-
-        # ── Idle compact (session layer) ──────────────────────────────────────
-        if self._coordinator is not None and layers.archive is not None:
-            try:
-                records = await registry.list_records(layer=MemoryLayerName.SESSION)
-            except Exception:
-                logger.warning("Maintenance scan failed to list records", exc_info=True)
-                records = []
-
-            for record in records:
-                ctx = record.context
-                if ctx is None:
-                    continue
-                try:
-                    storage = await registry.resolve(
-                        layer=MemoryLayerName(record.layer),
-                        scope=SessionScope(),
-                        context=ctx,
-                    )
-                    last = await storage.get(".last_activity")
-                    if isinstance(last, int | float):
-                        if time.time() - last <= self._idle_threshold:
-                            continue
-                    else:
-                        if record.updated_at and time.time() - record.updated_at <= self._idle_threshold:
-                            continue
-
-                    await self._coordinator.maybe_compress(
-                        session=layers.session,
-                        archive=layers.archive,
-                        pending=layers.pending,
-                        context=ctx,
-                        idle_threshold_seconds=self._idle_threshold,
-                    )
-                    await storage.set(".last_activity", time.time())
-                    results.append(MaintenanceResult(
-                        scope_key=record.scope_key, task="idle_compact", success=True,
-                    ))
-                except Exception as exc:
-                    logger.warning("Maintenance failed for %s: %s", record.scope_key, exc)
-                    results.append(MaintenanceResult(
-                        scope_key=record.scope_key, task="idle_compact", success=False, detail=str(exc),
-                    ))
 
         # ── Archive retention enforcement ─────────────────────────────────────
         if self._archive_retention is not None and layers.archive is not None:
