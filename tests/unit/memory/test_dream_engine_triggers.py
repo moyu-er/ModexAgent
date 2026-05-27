@@ -79,7 +79,11 @@ class TestDreamEngineDualTrigger:
 
     @pytest.mark.asyncio
     async def test_dream_engine_skips_below_min_threshold(self):
-        """When archive_count < min_archive_count, should return False and advance cursor."""
+        """When archive_count < min_archive_count, should return False WITHOUT advancing cursor or pruning.
+
+        The purpose of the min threshold is to accumulate enough data before consolidating.
+        Advancing the cursor would discard entries that were never processed.
+        """
         engine = _make_engine(min_archive_count=5, max_archive_count=30)
         entries = _make_entries(3)
         unprocessed = UnprocessedResult(cursor=3, entries=entries)
@@ -91,10 +95,9 @@ class TestDreamEngineDualTrigger:
         result = await engine.run(context)
 
         assert result is False
-        # Cursor should be advanced to max entry_id
-        engine.history_manager.commit_cursor.assert_awaited_once()
-        call_args = engine.history_manager.commit_cursor.call_args
-        assert call_args[0][2] == 3  # max entry_id among 3 entries: 1,2,3 → 3
+        # Cursor must NOT advance — entries should remain unprocessed for next run
+        engine.history_manager.commit_cursor.assert_not_awaited()
+        engine.history_manager.prune_consumed_pairs.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_dream_engine_triggers_above_max_threshold(self):

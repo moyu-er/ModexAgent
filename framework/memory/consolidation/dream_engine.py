@@ -103,10 +103,6 @@ class DreamEngine(ConsolidationEngine):
                 archive_count,
                 self.min_archive_count,
             )
-            final_cursor = max(
-                (e.entry_id or 0 for e in entries), default=unprocessed.cursor
-            )
-            await self._commit_knowledge_cursor(context, final_cursor)
             return False
 
         # Dual trigger: force trigger if above maximum threshold
