@@ -1,12 +1,35 @@
 from __future__ import annotations
 
-from framework.memory.archive_generation import DualLLMArchiveGenerationStrategy
-from framework.memory.archive_models import ArchiveChannel
+from abc import ABC
+from collections.abc import Sequence
+from dataclasses import dataclass
+
+import pytest
+
+from framework.memory.archive_generation import (
+    ArchiveGenerationStrategy,
+    ArchiveInputMessage,
+    DualLLMArchiveGenerationStrategy,
+    SummarizerLike,
+)
+from framework.memory.archive_models import (
+    ArchiveChannel,
+    ArchiveGenerationInputs,
+    ArchiveGenerationResult,
+    ArchiveInputStats,
+)
 from framework.memory.core.models import CompressionReason
 from framework.memory.core.scope import MemoryContext
 
 
-class FakeSummarizer:
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+class FakeSummarizer(SummarizerLike):
+    """Minimal async summarizer stub that records calls."""
+
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, int]] = []
 
@@ -25,12 +48,127 @@ class FakeSummarizer:
         return "## User Facts\n- knowledge summary"
 
 
+# ---------------------------------------------------------------------------
+# ArchiveGenerationStrategy ABC tests
+# ---------------------------------------------------------------------------
+
+
+def test_archive_generation_strategy_is_abc() -> None:
+    assert issubclass(ArchiveGenerationStrategy, ABC)
+
+
+def test_archive_generation_strategy_cannot_instantiate_directly() -> None:
+    with pytest.raises(TypeError):
+        ArchiveGenerationStrategy()  # type: ignore[abstract]
+
+
+def test_archive_generation_strategy_subclass_must_implement_generate() -> None:
+    class IncompleteStrategy(ArchiveGenerationStrategy):
+        pass
+
+    with pytest.raises(TypeError):
+        IncompleteStrategy()  # type: ignore[abstract]
+
+
+def test_archive_generation_strategy_subclass_works() -> None:
+    class CompleteStrategy(ArchiveGenerationStrategy):
+        async def generate(
+            self,
+            messages: Sequence[ArchiveInputMessage],
+            context: MemoryContext,
+            reason: CompressionReason,
+        ) -> ArchiveGenerationResult:
+            from framework.memory.archive_models import ArchiveGenerationInputs, ArchiveInputStats
+            return ArchiveGenerationResult(
+                writes=(),
+                inputs=ArchiveGenerationInputs(
+                    context_transcript="", knowledge_transcript="",
+                    stats=ArchiveInputStats(0, 0, 0, 0, 0),
+                ),
+            )
+
+    strategy = CompleteStrategy()
+    assert isinstance(strategy, ArchiveGenerationStrategy)
+
+
+# ---------------------------------------------------------------------------
+# SummarizerLike ABC tests
+# ---------------------------------------------------------------------------
+
+
+def test_summarizer_like_is_abc() -> None:
+    assert issubclass(SummarizerLike, ABC)
+
+
+def test_summarizer_like_cannot_instantiate_directly() -> None:
+    with pytest.raises(TypeError):
+        SummarizerLike()  # type: ignore[abstract]
+
+
+# ---------------------------------------------------------------------------
+# ArchiveInputMessage tests
+# ---------------------------------------------------------------------------
+
+
+def test_archive_input_message_from_chat_message_user() -> None:
+    msg = ArchiveInputMessage.from_dict({
+        "role": "user",
+        "content": "Hello world",
+        "metadata": {"timestamp": 123},
+    })
+    assert msg.role == "user"
+    assert msg.content == "Hello world"
+    assert msg.tool_call_id is None
+
+
+def test_archive_input_message_from_chat_message_assistant_strips_tool_calls() -> None:
+    msg = ArchiveInputMessage.from_dict({
+        "role": "assistant",
+        "content": "Let me check.",
+        "tool_calls": [{"id": "call_1", "function": {"name": "search", "arguments": "{}"}}],
+    })
+    assert msg.role == "assistant"
+    assert msg.content == "Let me check."
+    assert msg.tool_call_id is None
+    # tool_calls should not be a field on ArchiveInputMessage at all
+    assert not hasattr(msg, "tool_calls")
+
+
+def test_archive_input_message_from_chat_message_tool() -> None:
+    msg = ArchiveInputMessage.from_dict({
+        "role": "tool",
+        "content": "Result found",
+        "tool_call_id": "call_abc123",
+        "name": "search",
+    })
+    assert msg.role == "tool"
+    assert msg.content == "Result found"
+    assert msg.tool_call_id == "call_abc123"
+
+
+def test_archive_input_message_user_strips_metadata() -> None:
+    msg = ArchiveInputMessage.from_dict({
+        "role": "user",
+        "content": "hi",
+        "metadata": {"timestamp": 123},
+        "extra_field": "gone",
+    })
+    assert msg.role == "user"
+    assert msg.content == "hi"
+    assert msg.tool_call_id is None
+
+
+# ---------------------------------------------------------------------------
+# DualLLMArchiveGenerationStrategy — existing behaviour (backward compat)
+# ---------------------------------------------------------------------------
+
+
 async def test_dual_strategy_generates_context_and_knowledge_writes() -> None:
     summarizer = FakeSummarizer()
     strategy = DualLLMArchiveGenerationStrategy(summarizer=summarizer)
 
     result = await strategy.generate(
-        [{"role": "user", "content": "remember I prefer concise answers"}],
+        [ArchiveInputMessage(role="user", content="remember I prefer concise answers")],
         MemoryContext(session_id="s1"),
         CompressionReason.MESSAGE_COUNT,
     )
@@ -61,7 +199,7 @@ async def test_dual_strategy_skips_nothing_outputs() -> None:
     strategy = DualLLMArchiveGenerationStrategy(summarizer=NothingSummarizer())
 
     result = await strategy.generate(
-        [{"role": "user", "content": "hello"}],
+        [ArchiveInputMessage(role="user", content="hello")],
         MemoryContext(session_id="s1"),
         CompressionReason.MANUAL,
     )
@@ -87,9 +225,56 @@ async def test_dual_strategy_requires_complete_archive_pair() -> None:
     strategy = DualLLMArchiveGenerationStrategy(summarizer=PartialSummarizer())
 
     result = await strategy.generate(
-        [{"role": "user", "content": "remember this"}],
+        [ArchiveInputMessage(role="user", content="remember this")],
         MemoryContext(session_id="s1"),
         CompressionReason.MESSAGE_COUNT,
     )
 
     assert result.writes == ()
+
+
+# ---------------------------------------------------------------------------
+# Sliding window tests
+# ---------------------------------------------------------------------------
+
+
+def _make_messages(count: int, prefix: str = "msg") -> list[ArchiveInputMessage]:
+    """Generate a sequence of alternating user/assistant messages."""
+    result: list[ArchiveInputMessage] = []
+    for i in range(count):
+        role = "user" if i % 2 == 0 else "assistant"
+        # Each message is ~20 chars; with 4 chars/token ~5 tokens per message.
+        result.append(ArchiveInputMessage(role=role, content=f"{prefix}_{i} " * 4))
+    return result
+
+
+async def test_sliding_window_single_segment() -> None:
+    """When messages fit within budget, only one LLM call per channel (2 total)."""
+    summarizer = FakeSummarizer()
+    strategy = DualLLMArchiveGenerationStrategy(
+        summarizer=summarizer,
+        max_segment_tokens=50000,  # very large budget
+    )
+
+    msgs = _make_messages(4)
+    result = await strategy.generate(msgs, MemoryContext(), CompressionReason.MESSAGE_COUNT)
+
+    assert len(result.writes) == 2
+    # 2 summarizer calls: one for CONTEXT, one for KNOWLEDGE
+    assert len(summarizer.calls) == 2
+
+
+async def test_sliding_window_multiple_segments() -> None:
+    """When messages exceed budget, multiple segments produce joined results."""
+    summarizer = FakeSummarizer()
+    strategy = DualLLMArchiveGenerationStrategy(
+        summarizer=summarizer,
+        max_segment_tokens=5,  # tiny budget forces segmentation
+    )
+
+    msgs = _make_messages(10)
+    result = await strategy.generate(msgs, MemoryContext(), CompressionReason.MESSAGE_COUNT)
+
+    assert len(result.writes) == 2
+    # With 10 messages and tiny budget, should have more than 2 calls
+    assert len(summarizer.calls) > 2
