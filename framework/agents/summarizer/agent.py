@@ -89,31 +89,30 @@ Rules:
 
     PROMPT_MEMORY_UPDATE = """You are a memory editing assistant.
 
-Task: Based on the analysis below, produce a JSON array of update instructions for the long-term memory files.
+Task: Based on the analysis below, produce updated versions of the long-term memory files.
 
-Each update must be a JSON object with:
+For each file that needs changes, output the COMPLETE new content.
+Do NOT output patch instructions — output the full file content that replaces the old version.
+
+Output format — a JSON array where each element has:
 - "file_name": one of "SOUL.md", "USER.md", "MEMORY.md"
-- "mode": one of "incremental", "append", "section_replace", "replace_text"
-- "content": the new or updated content to write
-- "reason": brief explanation of why this update is needed
-- "search_text": (only for "replace_text" mode) the exact existing text to find and replace
+- "content": the COMPLETE new content for this file
+- "reason": brief explanation of what changed
 
 Rules:
-1. Use "replace_text" when modifying existing information (most precise)
-2. Use "replace_text" to fill in (unknown) placeholders in USER.md fields — match the full line including the placeholder
-3. Use "append" for adding new facts at the end
-4. Use "section_replace" only when rewriting a whole section
-5. Use "incremental" for small additions when no exact text can be matched
-6. Do not duplicate existing content
-7. Keep total output under 1000 tokens — be concise, use atomic facts
+1. Start from the current file content and integrate the new facts
+2. Preserve all existing information unless explicitly contradicted by new facts
+3. Fill in (unknown) placeholders with actual values learned from conversation
+4. Remove outdated or contradicted information
+5. Keep the same structure and format as the current file
+6. Do NOT include any file that doesn't need changes
+7. Keep output concise — under 1000 tokens total
 8. Return ONLY a valid JSON array. No markdown code blocks, no extra text.
 9. Do NOT include any thinking/reasoning tags in output
 
 Example output:
 [
-  {"file_name": "USER.md", "mode": "replace_text", "search_text": "- **Name**: (unknown)", "content": "- **Name**: John", "reason": "learned user name"},
-  {"file_name": "MEMORY.md", "mode": "append", "content": "- User prefers dark mode\\n", "reason": "new preference"},
-  {"file_name": "USER.md", "mode": "replace_text", "search_text": "- Location: Tokyo\\n", "content": "- Location: Osaka\\n", "reason": "location corrected"}
+  {"file_name": "USER.md", "content": "# User Profile\\n\\n## Basic Information\\n- **Name**: John\\n- **Timezone**: UTC+8\\n", "reason": "learned user name and timezone"}
 ]"""
 
     PROMPT_MEMORY_COMPRESSION = """Summarize the pruned conversation as reference context for a future agent turn.

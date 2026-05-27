@@ -21,6 +21,7 @@ from framework.memory.core.consolidation import (
     ConsolidationEngine,
     ConsolidationResult,
     MemoryUpdate,
+    MemoryUpdateMode,
 )
 from framework.memory.core.layers import ArchiveMemoryManager, KnowledgeMemoryManager
 from framework.memory.core.message import ChatMessage
@@ -351,7 +352,7 @@ class DreamEngine(ConsolidationEngine):
                     MemoryUpdate(
                         file_name=item.get("file_name", "MEMORY.md"),
                         content=item.get("content", ""),
-                        mode=item.get("mode", "append"),
+                        mode=item.get("mode", str(MemoryUpdateMode.SECTION_REPLACE)),
                         reason=item.get("reason", ""),
                         search_text=item.get("search_text", ""),
                     )
