@@ -21,7 +21,6 @@ memory:
     max_tokens: 100000
     keep_ratio_for_messages: 0.4
     keep_ratio_for_token: 0.4
-    auto_compact: false
   long_term: {enabled: true}
   dream_engine: {enabled: true, interval: 600}
   governance:
@@ -44,7 +43,6 @@ agents:
         max_tokens: 100000
         keep_ratio_for_messages: 0.4
         keep_ratio_for_token: 0.4
-        auto_compact: false
       long_term: {enabled: true}
       dream_engine: {enabled: true, interval: 600}
       governance:

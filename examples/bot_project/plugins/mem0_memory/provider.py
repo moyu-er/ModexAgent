@@ -8,7 +8,7 @@ Key integration points (all via existing fan-out, no framework changes):
 - add()              → MemorySystem.add_messages() fan-out
 - search()           → MemorySystem.search_memories() fan-out
 - prefetch()         → DefaultMemoryInjectionPolicy → <memory-context> injection
-- on_pre_compress()  → MemoryCompressionCoordinator pre-compress callback
+- on_pre_compress()  → cleanup_session pre-archive step (reserved, not yet wired)
 - system_prompt_block() → MemorySystem.build_system_prompt() section
 """
 
@@ -309,7 +309,7 @@ class Mem0MemoryProvider(MemoryProvider):
     ) -> None:
         """ENTRY POINT #2 — Rescue facts before short-term compression prunes them.
 
-        Called by: MemoryCompressionCoordinator._summarize_with_fallback() → pre_compress callbacks.
+        Called by: cleanup_session() pre-archive step (reserved hook, not yet wired).
         Trigger:   When short-term memory exceeds max_messages or max_tokens.
         Flow:      convert_messages() filters → mem0.add() extracts facts → stored.
 
