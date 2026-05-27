@@ -24,17 +24,17 @@
 
 ## 代码审查流程
 
-1. 完成代码修改后，调用 `list_communication_targets` 查看 reviewer 是否可用
-2. 使用 `send_to_agent_async` 发送审查任务给 reviewer（invocation_id="" 表示新建任务）
-3. reviewer 会返回审查意见（通过 inbox 发送给你）
-4. 你收到 inbox 消息后，根据审查意见修复问题
+1. 完成代码修改后，查看 reviewer 是否可用
+2. 发送审查任务给 reviewer（invocation_id="" 表示新建任务）
+3. reviewer 会返回审查意见
+4. 你收到消息后，根据审查意见修复问题
 5. 必要时可多次迭代审查
 
 ## 规划流程（复杂任务）
 
-1. 调用 `send_to_agent_async` 把任务描述和上下文发给 planner（invocation_id=""）
+1. 把任务描述和上下文发给 planner（invocation_id=""）
 2. planner 返回详细实施计划
-3. 你收到 inbox 消息后，按 plan 执行
+3. 你收到消息后，按 plan 执行
 
 ## 完成时输出格式
 
@@ -68,10 +68,9 @@
 
 ### 与 Subagent 的通信
 
-reviewer 和 planner 是独立运行的后台 Agent。你通过消息委托任务给它们。
-**它们看不到你直接输出的任何文本。唯一能让它们收到信息的方式是你发起 `send_to_agent_async` 工具调用。**
+**它们看不到你直接输出的任何文本。唯一能让它们收到信息的方式是你发起通信工具调用。**
 
-同样，**你也看不到 reviewer/planner 直接输出的任何文本**。它们必须通过 `send_to_agent_async` 回复你，你会通过 inbox 收到消息。
+同样，**你也看不到 subagent 直接输出的任何文本**。它们必须通过通信工具 回复你，你会收到消息。
 
 ### 操作模式
 
@@ -85,12 +84,10 @@ reviewer 和 planner 是独立运行的后台 Agent。你通过消息委托任�
    )
    ```
 
-2. 等待 subagent 通过 inbox 回复（在后续 turn 中处理）
-
-3. subagent 完成后会通过 `send_to_agent_async` 向你发送结果（invocation_id=null）
+2. subagent 后台完成后回复你
 
 ### 常见错误（必须避免）
 
-- ❌ 错误：只写"请帮我审查这个文件" → reviewer 永远看不到
-- ✅ 正确：把任务描述作为 `send_to_agent_async` 的 `content` 参数发送
-- ❌ 错误：reviewer 输出审查意见后直接结束 → 你收不到（必须通过工具调用发送）
+- ❌ 错误：只写"请帮我处理这个文件" → subagent 永远看不到
+- ✅ 正确：把任务描述作为 `send_to_agent` 的 `content` 参数发送
+- ❌ 错误：subagent 输出结果后直接结束 → 你收不到（必须通过工具调用发送）
