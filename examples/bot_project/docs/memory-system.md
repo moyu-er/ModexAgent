@@ -66,16 +66,12 @@
 | Session 层 | `SessionMemoryManager` | `ScopedSessionMemoryManager` | 手动构造 `MemoryLayerSet` |
 | Archive 层 | `ArchiveMemoryManager` | `ScopedArchiveMemoryManager` | 同上 |
 | Knowledge 层 | `KnowledgeMemoryManager` | `ScopedKnowledgeMemoryManager` | 同上 |
-| 压缩协调器 | `MemoryCompressionCoordinator` | `DefaultMemoryCompressionCoordinator` | `lifecycle_policy` 参数 |
-| 压缩触发 | `CompressionTriggerPolicy` | `DefaultCompressionTriggerPolicy` | `trigger=` 参数 |
-| 归档生成 | `ArchiveGenerationStrategy` | **`DualLLMArchiveGenerationStrategy`** (LLM) | `archive_generation=` 参数 |
-| 消息分类 | `MessageCompactionPolicy` | `ConservativeCompactionPolicy` | `compaction=` 参数 |
-| 边界策略 | `BoundaryPolicy` | `ToolChainBoundaryPolicy` | `boundary=` 参数 |
-| 提交策略 | `CommitPolicy` | `DefaultCommitPolicy` | `commit=` 参数 |
+| 会话清理 | `cleanup_session()` | 独立异步函数 | `cleanup_config` 参数 |
+| 归档生成 | `ArchiveGenerationStrategy` | **`DualLLMArchiveGenerationStrategy`** (LLM) | `archive_strategy=` 参数 |
 | 知识整合 | `ConsolidationEngine` | `DreamEngine` | 整个 engine 替换 |
 | 注入策略 | `MemoryInjectionPolicy` | Main:`FullInjectionPolicy` Peer/Sub:`RestrictedInjectionPolicy` | `injection_policy=` |
 | 注入过滤 | `InjectionFilterStrategy` | `ToolMessageFilterStrategy` | `filter_strategy=` |
-| 生命周期 | `MemoryLifecyclePolicy` | `DefaultMemoryLifecyclePolicy` | `lifecycle_policy=` |
+| 后台维护 | `MemoryMaintenancePolicy` | `DefaultMemoryMaintenancePolicy` | `maintenance_policy=` |
 | 上下文治理 | `ContextGovernance` | `CompositeGovernance` (4 个策略链) | `governance` 参数 |
 | 知识检索 | `KnowledgeSearchStrategy` | `FullDumpKnowledgeStrategy` | Knowledge 层 `search_strategy=` |
 | 历史检索 | `HistorySearchStrategy` | `RecentFirstHistorySearch` | Archive 层 `search_strategy=` |
@@ -281,9 +277,10 @@ Priority  30: Auto-compact summary  │ 空闲压缩摘要
 
 ## Bot Project Defaults
 
-The bot project uses `compaction.boundary: priority_input`. Human user messages
-are the highest task anchors. `role=agent` messages from subagent
-communication are also anchors, but rank below human user input.
+The bot project uses `cleanup_session()` with `keep_ratio` to determine how many
+messages to retain. Human user messages are the highest task anchors — the boundary
+computation always keeps the most recent user message. `role=agent` messages from
+subagent communication are also anchors, but rank below human user input.
 
 Agent messages are stored with their source prefix, for example:
 
@@ -296,8 +293,7 @@ the final LLM API boundary.
 
 | 层 | 机制 | 触发 |
 |----|------|------|
-| Session | 压缩后 `replace_messages_if_revision` 物理替换 | 消息数 > max_messages |
-| Session | 空闲压缩 (auto_compact) | 空闲 > idle_threshold_seconds |
+| Session | `cleanup_session()` 清理+归档 | 消息数 > max_messages 或 tokens > max_tokens |
 | Archive | `save_logs` 截断到 max_entries | maintenance.scan_once() 定时扫描 |
 | Archive | 按 max_age_days 删除过期条目 | 同上 |
 | Knowledge | `stale_days` 阈值 (MEMORY.md) | maintenance 扫描 |
@@ -320,26 +316,9 @@ the final LLM API boundary.
 memory:
   main:
     short_term:
-      max_messages: 50           # 超过此值触发压缩
-      auto_compact: true # DualLLMArchiveGenerationStrategy (LLM) 生成 Archive 摘要
+      max_messages: 50           # 超过此值触发清理
     retention:
-      priority_order:
-        - system_critical
-        - user_input
-        - agent_input
-        - assistant_final
-        - tool_chain_structure
-        - tool_result_recent
-        - assistant_intermediate
-        - tool_result_old
-        - low_value_noise
-      recent_tool_result_count: 3
-
-    compaction:
-      policy: "conservative"     # 消息分类: 全部 SUMMARIZE
-      boundary: "priority_input" # 优先保留用户/Agent 输入锚点
-      high_value_tools: [...]    # 高价值工具结果可纳入摘要
-    long_term:
+      min_recent_user_turns: 2
       enabled: true
       init_defaults: true        # 自动创建 SOUL/USER/MEMORY
     governance:                  # 上下文预处理链
@@ -355,11 +334,10 @@ memory:
         assistant_head_chars: 1200
         agent_head_chars: 2000
         user_head_chars: 4000
-    auto_compact:
-      idle_threshold_seconds: 1800
-      keep_recent_messages: 8
+    long_term:
+      enabled: true               # 启用 archive + knowledge
     dream_engine:
       interval: 300
   subagents:
-    short_term: {max_messages: 20, max_tokens: 4000, auto_compact: false}
+    short_term: {max_messages: 20, max_tokens: 4000}
 ```

@@ -29,8 +29,30 @@ from framework.memory.sanitizer import (
 
 logger = logging.getLogger(__name__)
 
-# Per-session in-memory failure counters.
+# Per-session in-memory archive failure counters.
+#
+# Keyed by context.session_id.  Each session has an independent counter so a
+# failing archive in one session never affects another.  The dictionary is
+# bounded in practice by the number of active sessions in the process.
 _archive_fail_counters: dict[str, int] = {}
+
+# Maximum entries before a compaction pass prunes counters for sessions that
+# have been reset (value 0).  This keeps the dictionary from growing without
+# bound in long-running processes with ephemeral session ids.
+_MAX_COUNTER_ENTRIES = 2000
+
+
+def _compact_counters() -> None:
+    """Drop counter entries with value 0 to bound dictionary growth.
+
+    Called after a counter is reset to 0, so stale entries for finished
+    sessions are eventually reclaimed without affecting active counters.
+    """
+    if len(_archive_fail_counters) <= _MAX_COUNTER_ENTRIES:
+        return
+    for key in list(_archive_fail_counters):
+        if _archive_fail_counters[key] == 0:
+            del _archive_fail_counters[key]
 
 
 @dataclass(frozen=True)
@@ -150,45 +172,51 @@ async def cleanup_session(
     )
 
     # ── Step 3: Archive (optional) ─────────────────────────────────────────
+    #
+    # Each session has an independent failure counter keyed by session_id so
+    # one session's archive failures never affect another session.
     archive_skipped = True
 
     if archive is not None and archive_strategy is not None and pruned_messages:
-        session_key = context.session_id or "default"
-        fail_count = _archive_fail_counters.get(session_key, 0)
-
-        # Check failure counter
-        if fail_count >= archive_fail_threshold:
-            logger.info(
-                "Archive skipped due to consecutive failures: session=%s fail_count=%d threshold=%d",
-                session_key, fail_count, archive_fail_threshold,
+        session_id = context.session_id
+        # Guard: a valid session_id is required for per-session counting.
+        # Sessions without an id use a one-shot attempt without counter tracking.
+        if not session_id:
+            logger.warning(
+                "Archive skipped: context.session_id is empty — cannot track "
+                "per-session failure counter",
             )
-            _archive_fail_counters[session_key] = 0
-            archive_skipped = True
         else:
-            # Try to generate and write archive
-            try:
-                archive_inputs = [
-                    ArchiveInputMessage.from_dict(m) for m in pruned_messages
-                ]
-                gen_result = await archive_strategy.generate(
-                    archive_inputs, context, trigger_reason,
+            fail_count = _archive_fail_counters.get(session_id, 0)
+
+            if fail_count >= archive_fail_threshold:
+                logger.info(
+                    "Archive skipped due to consecutive failures: session=%s "
+                    "fail_count=%d threshold=%d",
+                    session_id, fail_count, archive_fail_threshold,
                 )
-                if gen_result.writes:
-                    await archive.append_bundle(context, gen_result.writes)
-                _archive_fail_counters[session_key] = 0
-                archive_skipped = False
-            except Exception:
-                _archive_fail_counters[session_key] = fail_count + 1
-                logger.warning(
-                    "Archive generation failed: session=%s fail_count=%d",
-                    session_key,
-                    _archive_fail_counters[session_key],
-                    exc_info=True,
-                )
-    elif archive is None or archive_strategy is None:
-        archive_skipped = True
-    elif not pruned_messages:
-        archive_skipped = True
+                _archive_fail_counters[session_id] = 0
+                _compact_counters()
+            else:
+                try:
+                    archive_inputs = [
+                        ArchiveInputMessage.from_dict(m) for m in pruned_messages
+                    ]
+                    gen_result = await archive_strategy.generate(
+                        archive_inputs, context, trigger_reason,
+                    )
+                    if gen_result.writes:
+                        await archive.append_bundle(context, gen_result.writes)
+                    _archive_fail_counters[session_id] = 0
+                    archive_skipped = False
+                except Exception:
+                    _archive_fail_counters[session_id] = fail_count + 1
+                    logger.warning(
+                        "Archive generation failed: session=%s fail_count=%d",
+                        session_id,
+                        _archive_fail_counters[session_id],
+                        exc_info=True,
+                    )
 
     return CleanupResult(
         triggered=True,
@@ -221,9 +249,11 @@ def _estimate_tokens(messages: Sequence[Any]) -> int:
     """Estimate token count for a list of messages."""
     try:
         from framework.memory.utils import estimate_token_count
-        return estimate_token_count(messages)
-    except Exception:
+    except ImportError:
+        logger.debug("estimate_token_count not available, using heuristic")
         return sum(len(str(m)) // 4 for m in messages)
+    else:
+        return estimate_token_count(messages)
 
 
 def _compute_boundary(
@@ -244,6 +274,10 @@ def _compute_boundary(
     if total == 0:
         return [], []
 
+    if keep_target >= total:
+        # Keep everything — no pruning needed
+        return list(messages), []
+
     # Walk backward from end, counting messages
     accumulated = 0
     boundary = total  # exclusive start of keep region
@@ -253,6 +287,10 @@ def _compute_boundary(
         if accumulated >= keep_target:
             boundary = i
             break
+
+    # Guard: if the loop never set boundary (should not happen, but defensive)
+    if boundary >= total:
+        boundary = max(0, total - 1)
 
     # Ensure we don't split a tool chain
     boundary = _adjust_boundary_for_tool_chains(messages, boundary)

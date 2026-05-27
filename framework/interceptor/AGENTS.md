@@ -26,7 +26,7 @@ AOP onion-chain layer wrapping call boundaries. Interceptors form recursive clos
 | `ITERATION` | `around_iteration` | `around_iteration()` | Wrap single ReAct iteration |
 | `LLM_STREAM` | `around_llm_stream` | `around_llm_stream()` | Wrap LLM streaming response |
 
-Reserved (defined but not wired): AGENT_RUN, LLM_CALL, PIPELINE_STEP, POOL_TASK, MEMORY_OPERATION.
+Reserved (defined but not wired): AGENT_RUN, LLM_CALL, PIPELINE_STEP, POOL_TASK.
 
 ## Design Rules
 - Index 0 is outermost (enters first, exits last)

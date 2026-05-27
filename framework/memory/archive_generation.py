@@ -170,7 +170,7 @@ class DualLLMArchiveGenerationStrategy(ArchiveGenerationStrategy):
         messages the entire sequence forms a single segment.
         """
         if not messages:
-            return [[]]
+            return []
 
         segments: list[list[ArchiveInputMessage]] = []
         current: list[ArchiveInputMessage] = []
@@ -184,7 +184,7 @@ class DualLLMArchiveGenerationStrategy(ArchiveGenerationStrategy):
         if current:
             segments.append(current)
 
-        return segments if segments else [[]]
+        return segments
 
     def _sliding_window_merge_indexed(
         self,

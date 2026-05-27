@@ -428,18 +428,20 @@ memory_system = create_memory_system(workspace=Path("./data/memory"), layer_conf
 - `MemorySystem.default_single_user_layers(workspace)` — 单用户桌面场景
 - `MemorySystem.default_multi_tenant_layers(workspace)` — 多租户 SaaS 场景
 
-#### 自动压缩 (Auto Compact)
+#### 会话清理 (Session Cleanup)
 
-后台服务定期检查空闲会话，自动压缩过长的 short-term 记忆：
+每次消息追加后自动触发清理：当消息数超过 `max_messages` 或 token 数超过 `max_tokens`
+时，保留最近的消息（按 `keep_ratio` 比例），并可选地将旧消息归档到长期存储。
 
 ```yaml
 memory:
   main:
-    auto_compact:
-      enabled: true
-      idle_threshold_seconds: 1800    # 30 分钟无活动则触发
-      keep_recent_messages: 8         # 保留最近 8 条消息
-      scan_interval: 300              # 扫描间隔（秒）
+    short_term:
+      max_messages: 50
+      max_tokens: 100000
+      keep_ratio_for_messages: 0.4
+    long_term:
+      enabled: true   # 启用 archive 归档
 ```
 
 #### 梦境引擎 (Dream Engine)
@@ -741,7 +743,7 @@ MCP 工具通过 `MCPTool` 动态加载，支持：
 - ✅ Skill 系统动态加载
 - ✅ 平级 Agent (Peer) 协作与动态发现
 - ✅ Subagent 列表查看 (`list_communication_targets`)
-- ✅ 自动记忆压缩 (Auto Compact)
+- ✅ 会话记忆自动清理 (Session Cleanup)
 - ✅ 离线记忆整合 (Dream Engine)
 - ✅ 上下文治理 (Governance)
 - ✅ 插件系统 (Plugin System)

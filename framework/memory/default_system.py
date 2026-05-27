@@ -256,15 +256,6 @@ class DefaultMemorySystem(MemorySystem):
 
     # -- Session convenience --------------------------------------------
 
-    async def get_compression_summary(self, context: MemoryContext) -> str | None:
-        storage = await self._registry.resolve(
-            layer=MemoryLayerName.SESSION,
-            scope=SessionScope(),
-            context=context,
-        )
-        result = await storage.get(".compression_summary")
-        return result if isinstance(result, str) else None
-
     async def set_pending_user_turn(
         self, context: MemoryContext, message_id: str, created_at: float
     ) -> None:
