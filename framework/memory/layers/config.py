@@ -1,33 +1,18 @@
 """Configuration models for default memory layer construction.
 
-Default persistent session compression flow:
+Default session cleanup flow:
 
-1. Session writes go through ``DefaultMemorySystem.add_messages`` or
-   ``ScopedMessageHistory.append/extend``; both call
-   ``DefaultMemoryLifecyclePolicy.on_messages_added`` after the append.
-2. The lifecycle policy calls
-   ``DefaultMemoryCompressionCoordinator.maybe_compress``. It does not
-   inspect ReAct tool-call state itself.
-3. ``DefaultCompressionTriggerPolicy`` checks all stored session messages
-   against ``max_messages`` and ``max_tokens``. The trigger is strict:
-   compression starts when the stored count/token estimate is greater than
-   the configured limit.
-4. ``DefaultSessionToolChainSanitizer`` removes invalid stored tool-chain
-   records before planning: orphan ``tool`` messages, stale incomplete
-   ``assistant(tool_calls)`` groups, duplicate tool results, and partial
-   tools attached to stale groups. The final active incomplete
-   ``assistant(tool_calls)`` tail is preserved.
-5. ``PriorityCompressionKeepPlanner`` applies keep ratios and retention
-   priorities. It may prune/archive older complete ReAct chains while
-   protecting only the active open tail as an indivisible suffix.
-6. ``DefaultPendingPrunedInputExtractor`` records pruned unfinished
+1. Session writes go through ``ScopedMessageHistory.append/extend``;
+   both call ``cleanup_session()`` after the append.
+2. ``cleanup_session()`` (in ``framework/memory/cleanup.py``) checks
+   stored session messages against ``max_messages`` and ``max_tokens``.
+3. When thresholds are exceeded, messages are pruned using the configured
+   ``keep_ratio``. If an ``archive_strategy`` is provided, pruned messages
+   are archived before removal.
+4. ``DefaultPendingPrunedInputExtractor`` records pruned unfinished
    ``user``/``agent`` inputs so ``DefaultPendingPrunedInputInjector`` can
    restore them into the next model-visible context until a plain assistant
    completion clears the pending entries.
-7. ``DefaultCommitPolicy`` writes archive summaries first when an archive
-   layer exists, then replaces session messages with the keep set. When
-   ``archive=None`` the same planning path still trims session memory, but
-   no archive entry is written.
 """
 
 from __future__ import annotations

@@ -33,7 +33,6 @@ class InterceptorScope(str, Enum):
     TOOL_CALL = "tool_call"
     PIPELINE_STEP = "pipeline_step"
     POOL_TASK = "pool_task"
-    MEMORY_OPERATION = "memory_operation"
 
 
 # ---------------------------------------------------------------------------

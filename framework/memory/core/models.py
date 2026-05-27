@@ -131,7 +131,6 @@ class MemoryContextBundle:
     system_sections: list[PromptSection]
     messages: list[ChatMessage]
     compression_summary: str | None = None
-    auto_compact_summary: str | None = None
     dropped_sections: list[dict[str, Any]] = field(default_factory=list)
     metadata: Mapping[str, Any] = field(default_factory=dict)
 

@@ -21,7 +21,6 @@ from framework.memory.layers.config import (
     PendingPrunedInputMemoryConfig,
     SessionMemoryConfig,
 )
-from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
 from framework.memory.system import MemorySystemContextManager, create_memory_system
 from framework.multi_agent import AgentAddress, AgentDescriptor
 from framework.multi_agent.comm_kind import AgentCommKind
@@ -90,20 +89,20 @@ def build_session_only_memory(
         pending=PendingPrunedInputMemoryConfig(enabled=True),
     )
 
-    from framework.ioc.factories.compression import create_subagent_compression_coordinator
-
-    coordinator = create_subagent_compression_coordinator(cfg)
-    lifecycle = (
-        DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator)
-        if coordinator
-        else None
-    )
+    cleanup_config: dict[str, int | float] | None = None
+    if cfg is not None:
+        st = cfg.short_term
+        cleanup_config = {
+            "max_messages": st.max_messages,
+            "max_tokens": st.max_tokens,
+            "keep_ratio": st.keep_ratio_for_messages,
+        }
 
     memory_system = create_memory_system(
         workspace=workspace,
         config=layer_config,
         session_only=False,
-        lifecycle_policy=lifecycle,
+        cleanup_config=cleanup_config,
     )
 
     return MemorySystemContextManager(

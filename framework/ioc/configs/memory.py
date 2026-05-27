@@ -17,7 +17,6 @@ class ShortTermConfig(BaseModel):
     max_tokens: int = 100000
     keep_ratio_for_messages: float = 0.4
     keep_ratio_for_token: float = 0.4
-    auto_compact: bool = False
 
 
 class PendingConfig(BaseModel):

@@ -64,47 +64,29 @@ def create_memory(
     Returns:
         Initialized MemorySystem.
     """
-    from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
     from framework.memory.system import create_memory_system
 
     layer_config = _build_memory_layer_config(cfg)
 
-    from framework.memory.compaction.boundary import (
-        BoundaryPolicyName,
-        create_boundary_policy,
-    )
-    from framework.memory.compaction.policy import ConservativeCompactionPolicy
-    from framework.memory.compression.policies import (
-        DefaultMemoryCompressionCoordinator,
-    )
-    from framework.memory.retention import DefaultMessageRetentionPolicy
-
-    st = cfg.short_term
-
-    archive_generation = None
-    if st.auto_compact:
+    archive_strategy = None
+    if llm_provider is not None:
         from framework.agents.summarizer import SummarizerAgent
         from framework.memory.archive_generation import DualLLMArchiveGenerationStrategy
 
         summarizer = SummarizerAgent(llm_provider)
-        archive_generation = DualLLMArchiveGenerationStrategy(summarizer=summarizer)
+        archive_strategy = DualLLMArchiveGenerationStrategy(summarizer=summarizer)
 
-    compression_coordinator = DefaultMemoryCompressionCoordinator(
-        archive_generation=archive_generation,
-        compaction=ConservativeCompactionPolicy(),
-        retention=DefaultMessageRetentionPolicy.from_config({}),
-        boundary=create_boundary_policy(BoundaryPolicyName.TOOL_CHAIN),
-        max_messages=st.max_messages,
-        max_tokens=st.max_tokens,
-        keep_ratio_for_messages=st.keep_ratio_for_messages,
-        keep_ratio_for_token=st.keep_ratio_for_token,
-    )
-
-    lifecycle = DefaultMemoryLifecyclePolicy(compression_coordinator=compression_coordinator)
+    st = cfg.short_term
+    cleanup_config: dict[str, int | float] = {
+        "max_messages": st.max_messages,
+        "max_tokens": st.max_tokens,
+        "keep_ratio": st.keep_ratio_for_messages,
+    }
 
     return create_memory_system(
         workspace=workspace,
         config=layer_config,
         llm_provider=llm_provider,
-        lifecycle_policy=lifecycle,
+        archive_strategy=archive_strategy,
+        cleanup_config=cleanup_config,
     )
