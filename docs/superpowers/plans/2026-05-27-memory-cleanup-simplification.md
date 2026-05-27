@@ -1602,7 +1602,7 @@ git commit -m "refactor(ioc): remove auto_compact, always create archive strateg
 
 ---
 
-### Task 10: Update bot project
+### Task 10: Update bot project integration
 
 **Files:**
 - Modify: `examples/bot_project/bot/service/core.py`
@@ -1611,52 +1611,200 @@ git commit -m "refactor(ioc): remove auto_compact, always create archive strateg
 - Modify: `examples/bot_project/config/pools/coding.yml`
 - Modify: `examples/bot_project/plugins/mem0_memory/provider.py`
 
+The bot project integrates memory at two levels: pool-level and subagent-level.
+
+**Current integration chain:**
+
+```
+core.py:
+  create_memory()        → DefaultMemorySystem(lifecycle_policy=...)
+  _init_auto_compact()   → reads system.compression_coordinator → DefaultMemoryMaintenancePolicy
+
+builders.py:
+  _create_subagent_memory() → create_subagent_compression_coordinator()
+                           → DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator)
+                           → create_memory_system(lifecycle_policy=...)
+  _build_memory_layer_config() → reads auto_compact from IOCMemoryConfig
+```
+
+**New integration chain:**
+
+```
+core.py:
+  create_memory()        → DefaultMemorySystem(archive_strategy=..., cleanup_config={...})
+  _init_maintenance_task() → creates DefaultMemoryMaintenancePolicy directly
+
+builders.py:
+  _create_subagent_memory() → create_memory_system(cleanup_config={...})
+  _build_memory_layer_config() → no longer reads auto_compact
+```
+
 - [ ] **Step 1: Update config YAML — remove auto_compact**
 
 In `examples/bot_project/config/pools/main.yml`:
-- Remove `auto_compact: false` from pool-level `memory.short_term` (line ~24)
-- Remove `auto_compact: false` from agent-level `memory.short_term` (line ~47)
-
-In `examples/bot_project/config/pools/coding.yml`:
-- Add `auto_compact` to search, remove if present
-
-In any template `.yml` files: same.
-
-- [ ] **Step 2: Update core.py — rename _auto_compact_task**
-
-In `examples/bot_project/bot/service/core.py`:
-- Rename field `self._auto_compact_task` → `self._maintenance_task`
-- Rename method `_auto_compact_loop` → `_maintenance_loop`
-- Rename method `_init_auto_compact` → `_init_maintenance_task`
-- Update `stop()` to cancel `self._maintenance_task`
-- Update print messages: "AutoCompactService" → "MaintenanceService"
-- Remove any usage of `DefaultMemoryLifecyclePolicy` when creating the main agent memory — replace with `archive_strategy` + `cleanup_config` creation
-
-- [ ] **Step 3: Update builders.py**
-
-In `examples/bot_project/bot/service/builders.py`:
-- In `_create_subagent_memory`: remove `DefaultMemoryLifecyclePolicy` import and usage
-- Remove `from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy`
-- Replace `lifecycle_policy=DefaultMemoryLifecyclePolicy(compression_coordinator=coordinator)` with `cleanup_config={...}` and remove coordinator creation
-
-- [ ] **Step 4: Update mem0 provider**
-
-In `examples/bot_project/plugins/mem0_memory/provider.py`:
-- Remove `from framework.memory.compaction.policy import ...` import if present
-
-- [ ] **Step 5: Run bot tests**
-
-```bash
-python -m pytest tests/unit/bot/ -q --tb=short 2>&1 | tail -10
+```yaml
+# Remove line 24:     auto_compact: false
+# Remove line 47:     auto_compact: false
 ```
 
-Fix any failures.
+In `examples/bot_project/config/pools/coding.yml`: check for `auto_compact`, remove if present.
 
-- [ ] **Step 6: Commit**
+In all template `.yml` files under `config/pools/*/templates/`: same check.
+
+- [ ] **Step 2: Remove auto_compact from builders._build_memory_layer_config**
+
+In `examples/bot_project/bot/service/builders.py`, the `_build_memory_layer_config` method currently reads `auto_compact` from the config. The field no longer exists on `ShortTermConfig` (deleted in Task 9), so remove any code that reads it. The method should just build layer configs without checking `auto_compact`.
+
+- [ ] **Step 3: Rewrite _create_subagent_memory in builders.py**
+
+In `examples/bot_project/bot/service/builders.py`, replace the entire `_create_subagent_memory` method:
+
+```python
+async def _create_subagent_memory(self, sub_name: str, base_system_prompt: str = "") -> ContextManager:
+    from framework.memory.core.scope import MemoryAgentRole
+
+    subagent_cfg = self._find_subagent_cfg()
+    sub_memory_cfg = subagent_cfg.memory if subagent_cfg else None
+    sub_dir = self._resolve_path("memory_dir", "data/memory") / "subagents" / sub_name
+    sub_dir.mkdir(parents=True, exist_ok=True)
+
+    st = sub_memory_cfg.short_term if sub_memory_cfg else None
+    cleanup_config = {
+        "max_messages": st.max_messages if st else 50,
+        "max_tokens": st.max_tokens if st else 100000,
+        "keep_ratio": st.keep_ratio_for_messages if st else 0.4,
+    }
+
+    memory_system = create_memory_system(
+        workspace=sub_dir,
+        config=self._session_only_memory_config(sub_memory_cfg),
+        session_only=False,
+        cleanup_config=cleanup_config,
+    )
+    await memory_system.initialize()
+    if self.plugin_integration:
+        self.plugin_integration.inject_memory_system_modifiers(memory_system)
+    self._subagent_memory_systems[sub_name] = memory_system
+    return MemorySystemContextManager(
+        memory_system=memory_system, default_agent_id=sub_name,
+        default_agent_role=MemoryAgentRole.SUBAGENT,
+        base_system_prompt=base_system_prompt,
+        injection_policy=RestrictedInjectionPolicy(max_session_messages=20),
+    )
+```
+
+Remove the import at the top of builders.py:
+```python
+# REMOVE: from framework.memory.lifecycle import DefaultMemoryLifecyclePolicy
+```
+
+- [ ] **Step 4: Update core.py — rename _auto_compact_task + fix _init_auto_compact**
+
+In `examples/bot_project/bot/service/core.py`:
+
+**4a. Rename field** (line 133):
+```python
+# OLD: self.auto_compact_service: Any | None = None
+# REMOVE this line entirely (unused field)
+```
+
+**4b. Rename field** (line 161):
+```python
+# OLD: self._auto_compact_task: asyncio.Task | None = None
+self._maintenance_task: asyncio.Task | None = None
+```
+
+**4c. Rename call site** (line 370):
+```python
+# OLD: await self._init_auto_compact(main_memory_cfg)
+await self._init_maintenance_task(main_memory_cfg)
+```
+
+**4d. Rewrite _init_auto_compact → _init_maintenance_task** (lines 922-949):
+
+```python
+async def _init_maintenance_task(
+    self,
+    main_memory_cfg: IOCMemoryConfig | None,
+) -> None:
+    """Initialize and start background maintenance via DefaultMemoryMaintenancePolicy."""
+    if self.memory_system is None:
+        return
+
+    # Create maintenance policy directly — no longer reads compression_coordinator
+    from framework.memory.lifecycle import DefaultMemoryMaintenancePolicy
+
+    cleanup_cfg = (
+        main_memory_cfg.short_term
+        if main_memory_cfg and main_memory_cfg.short_term
+        else None
+    )
+    self._maintenance_policy = DefaultMemoryMaintenancePolicy(
+        idle_threshold_seconds=1800,
+        keep_recent_messages=8,
+    )
+
+    scan_interval = 300
+    self._maintenance_task = asyncio.create_task(
+        self._maintenance_loop(scan_interval)
+    )
+    print(
+        f"   [OK] MaintenanceService started "
+        f"(idle_threshold=1800s, scan_interval={scan_interval}s)"
+    )
+```
+
+**4e. Rename _auto_compact_loop → _maintenance_loop** (line 951):
+```python
+async def _maintenance_loop(self, interval: float) -> None:
+    """Background loop for memory maintenance using maintenance policy."""
+```
+
+**4f. Update stop() method** (lines 1013-1016):
+```python
+# OLD: if self._auto_compact_task is not None:
+# OLD:     self._auto_compact_task.cancel()
+# OLD:     with contextlib.suppress(asyncio.CancelledError):
+# OLD:         await self._auto_compact_task
+if self._maintenance_task is not None:
+    self._maintenance_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await self._maintenance_task
+```
+
+**4g. Update comment** (line 368):
+```python
+# OLD: # 5.5 Initialize long-term defaults, auto-compact, and dream engine
+# 5.5 Initialize long-term defaults, maintenance, and dream engine
+```
+
+- [ ] **Step 5: Update mem0 provider comments**
+
+In `examples/bot_project/plugins/mem0_memory/provider.py`, update docstring at top:
+```python
+# OLD: - on_pre_compress()  → MemoryCompressionCoordinator pre-compress callback
+# - on_pre_compress()  → cleanup_session pre-compress callback (reserved, not yet wired)
+```
+
+Update `on_pre_compress` docstring (line 312):
+```python
+# OLD: Called by: MemoryCompressionCoordinator._summarize_with_fallback() → pre_compress callbacks.
+# Called by: cleanup_session() pre-archive step (reserved hook, not yet wired).
+```
+
+- [ ] **Step 6: Run bot tests to verify no breakage**
+
+```bash
+python -m pytest tests/unit/bot/ -q --tb=short 2>&1 | tail -15
+```
+
+Fix any import or API mismatch errors.
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add examples/bot_project/
-git commit -m "refactor(bot): remove auto_compact config, rename _auto_compact_task to _maintenance_task"
+git commit -m "refactor(bot): integrate cleanup_session, remove auto_compact, rename maintenance task"
 ```
 
 ---
