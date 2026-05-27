@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from framework.memory.archive_models import ArchiveChannel
@@ -102,6 +103,8 @@ class InjectableMemorySystem(Protocol):
     def get_providers(self) -> list[Any]: ...
 
     async def prefetch_memories(self, query: str, context: MemoryContext) -> str | None: ...
+
+    async def get_knowledge_directory(self, context: MemoryContext) -> Path | None: ...
 
 
 class CheckpointMemorySystem(Protocol):
