@@ -10,9 +10,12 @@ It does NOT import from framework.memory.compression or framework.memory.compact
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from framework.memory.archive_generation import (
@@ -76,6 +79,7 @@ async def cleanup_session(
     keep_ratio: float = 0.5,
     archive_strategy: ArchiveGenerationStrategy | None = None,
     archive_fail_threshold: int = 3,
+    max_backups: int = 10,
 ) -> CleanupResult:
     """Clean up a session by pruning old messages and optionally archiving them.
 
@@ -100,6 +104,9 @@ async def cleanup_session(
         "Cleanup triggered: session=%s reason=%s total=%d",
         context.session_id, trigger_reason.value, total_count,
     )
+
+    # ── Step 1.5: Backup session before any mutation ────────────────────────
+    await _backup_session(session, context, all_messages, max_backups)
 
     # ── Step 2: Cleanup session ────────────────────────────────────────────
     # Convert to dicts for sanitizer
@@ -373,3 +380,61 @@ def _adjust_boundary_for_last_user(
         boundary = last_user_idx
 
     return boundary
+
+
+# ── Backup ───────────────────────────────────────────────────────────────────
+
+
+async def _backup_session(
+    session: SessionMemoryManager,
+    context: MemoryContext,
+    messages: Sequence[Any],
+    max_backups: int,
+) -> None:
+    """Deep-copy session messages to a timestamped backup before cleanup.
+
+    Resolves the underlying storage directory through duck typing so the
+    mechanism works with any file-based backend (``DefaultScopedStorage``,
+    future backends with a ``.directory`` attribute).  Non-file backends
+    (in-memory, remote) are silently skipped.
+
+    Backups land in ``<storage_dir>/backups/backup_<timestamp>.jsonl``.
+    When the backup count exceeds *max_backups* the oldest files are pruned.
+    """
+    try:
+        # Resolve the storage instance via the session's internal factory.
+        # Duck typing keeps this backend-agnostic — non-standard session
+        # managers without _storage_factory simply skip.
+        factory = getattr(session, "_storage_factory", None)
+        if factory is None:
+            return
+
+        storage = await factory(context)
+        directory: Path | None = getattr(storage, "directory", None)
+        if directory is None:
+            return  # Non-file backend — nothing to copy
+
+        backup_dir = directory / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+
+        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
+        backup_path = backup_dir / f"backup_{timestamp}.jsonl"
+
+        with backup_path.open("w", encoding="utf-8") as handle:
+            for msg in messages:
+                msg_dict = msg.to_dict() if hasattr(msg, "to_dict") else dict(msg)
+                handle.write(json.dumps(msg_dict, ensure_ascii=False) + "\n")
+
+        # Prune oldest backups when count exceeds limit
+        existing = sorted(backup_dir.glob("backup_*.jsonl"))
+        if len(existing) > max_backups:
+            for old_path in existing[: len(existing) - max_backups]:
+                old_path.unlink()
+
+        logger.info(
+            "Session backup created: session=%s path=%s total_backups=%d",
+            context.session_id, backup_path.name, min(len(existing), max_backups),
+        )
+    except Exception:
+        # Backup is a safety net — failure must never block cleanup.
+        logger.debug("Session backup failed (cleanup will proceed)", exc_info=True)
