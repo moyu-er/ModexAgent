@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Iterator, Sequence
+from pathlib import Path
 from typing import Any
 
 from framework.memory.archive_generation import ArchiveGenerationStrategy
@@ -378,6 +379,16 @@ class DefaultMemorySystem(MemorySystem):
         if knowledge is None:
             return LongTermMemory()
         return await knowledge.retrieve(context, query=query)
+
+    async def get_knowledge_directory(self, context: MemoryContext) -> Path | None:
+        """Return the absolute path to the knowledge storage directory."""
+        if self._layers.knowledge is None:
+            return None
+        try:
+            return await self._layers.knowledge.get_storage_path(context)
+        except Exception:
+            logger.debug("Failed to resolve knowledge directory", exc_info=True)
+            return None
 
     @property
     def knowledge_manager(self) -> Any | None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable, Mapping
+from pathlib import Path
 
 from framework.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
 from framework.memory.core.layers import KnowledgeMemoryManager
@@ -42,6 +43,11 @@ class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
 
     def get_scope(self) -> MemoryScope:
         return self._config.scope
+
+    async def get_storage_path(self, context: MemoryContext) -> Path | None:
+        """Return the absolute path to knowledge storage, if file-backed."""
+        storage = await self._storage_factory(context)
+        return storage.base_path
 
     async def ensure_defaults(
         self,
