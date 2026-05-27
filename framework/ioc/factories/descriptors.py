@@ -80,7 +80,7 @@ def build_session_only_memory(
     """Create a session-only memory system for a subagent."""
     max_messages = 50
     if cfg is not None:
-        max_messages = cfg.short_term.max_messages
+        max_messages = cfg.session.max_messages
 
     layer_config = MemoryLayerConfigSet(
         session=SessionMemoryConfig(max_messages=max_messages),
@@ -91,7 +91,7 @@ def build_session_only_memory(
 
     cleanup_config: dict[str, int | float] | None = None
     if cfg is not None:
-        st = cfg.short_term
+        st = cfg.session
         cleanup_config = {
             "max_messages": st.max_messages,
             "max_tokens": st.max_tokens,

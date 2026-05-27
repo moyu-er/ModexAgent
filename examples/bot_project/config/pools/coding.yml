@@ -16,12 +16,13 @@ terminal:
   max_terminals: 5
 
 memory:
-  short_term:
+  session:
     max_messages: 500
     max_tokens: 150000
     keep_ratio_for_messages: 0.3
     keep_ratio_for_token: 0.3
-  long_term: {enabled: true, default_templates_dir: "templates/knowledge"}
+  archive: {enabled: true}
+  knowledge: {enabled: true, default_templates_dir: "templates/knowledge"}
   dream_engine: {enabled: true, interval: 600, min_archive_count: 10, max_archive_count: 50, max_batch_size: 25}
   governance:
     lossy_compaction:

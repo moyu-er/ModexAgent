@@ -324,11 +324,13 @@ class AgentBuilderMixin:
 
     def _session_only_memory_config(self, cfg: Any) -> MemoryLayerConfigSet:
         max_messages = 50
-        if cfg is not None and hasattr(cfg, "short_term"):
+        if cfg is not None and hasattr(cfg, "session"):
+            max_messages = cfg.session.max_messages
+        elif cfg is not None and hasattr(cfg, "short_term"):
             max_messages = cfg.short_term.max_messages
         elif isinstance(cfg, dict):
-            short_term = cfg.get("short_term", {})
-            max_messages = int(short_term.get("max_messages", max_messages))
+            session = cfg.get("session", cfg.get("short_term", {}))
+            max_messages = int(session.get("max_messages", max_messages))
         return MemoryLayerConfigSet(
             session=SessionMemoryConfig(max_messages=max_messages),
             archive=ArchiveMemoryConfig(scope=SessionScope()),
@@ -344,7 +346,13 @@ class AgentBuilderMixin:
         sub_dir = self._resolve_path("memory_dir", "data/memory") / "subagents" / sub_name
         sub_dir.mkdir(parents=True, exist_ok=True)
 
-        st = sub_memory_cfg.short_term if sub_memory_cfg else None
+        # Support both old (short_term) and new (session) config
+        if sub_memory_cfg and hasattr(sub_memory_cfg, "session"):
+            st = sub_memory_cfg.session
+        elif sub_memory_cfg and hasattr(sub_memory_cfg, "short_term"):
+            st = sub_memory_cfg.short_term
+        else:
+            st = None
         cleanup_config: dict[str, int | float] = {
             "max_messages": st.max_messages if st else 50,
             "max_tokens": st.max_tokens if st else 100000,
