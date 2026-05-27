@@ -65,9 +65,9 @@ If the conversation contains no meaningful content, output exactly: (nothing)"""
 Task: Analyze the conversation summaries below and extract facts worth remembering.
 
 Long-term memory files:
-- SOUL.md: bot behavior, tone, personality, communication style
-- USER.md: user profile with structured fields (replace (unknown) placeholders when you learn the actual value)
-- MEMORY.md: knowledge, project context, decisions, solutions
+- SOUL.md: bot name, identity, core principles, execution rules
+- USER.md: user profile with structured fields and checkbox preferences
+- MEMORY.md: long-term notes, project context, decisions, solutions
 
 Output one line per finding using this format:
 [FILE] atomic fact description
@@ -80,7 +80,8 @@ Rules:
 - Only NEW or CONFLICTING information — skip anything already in current files
 - Use atomic facts: "prefers dark mode" not "discussed theme settings"
 - Corrections: [USER] location is Tokyo, not Osaka
-- When a user fact matches a USER.md field (name, timezone, role, etc.), note the field name
+- For USER.md fields: note the field name (name, timezone, role, etc.)
+- For USER.md checkboxes: note which option applies (e.g. "prefers brief responses")
 - Skip: code patterns, git history, tool invocation details, anything already in current files
 - Skip: trivial pleasantries, greetings, acknowledgments
 - Keep output concise — under 500 tokens
@@ -102,13 +103,14 @@ Output format — a JSON array where each element has:
 Rules:
 1. Start from the current file content and integrate the new facts
 2. Preserve all existing information unless explicitly contradicted by new facts
-3. Fill in (unknown) placeholders with actual values learned from conversation
-4. Remove outdated or contradicted information
-5. Keep the same structure and format as the current file
-6. Do NOT include any file that doesn't need changes
-7. Keep output concise — under 1000 tokens total
-8. Return ONLY a valid JSON array. No markdown code blocks, no extra text.
-9. Do NOT include any thinking/reasoning tags in output
+3. Fill in placeholder values (e.g. "(user name)", "(your role)") with actual learned values
+4. For checkbox preferences in USER.md: mark confirmed choice as [x], keep others as [ ]
+5. Remove outdated or contradicted information
+6. Keep the same structure and format as the current file
+7. Do NOT include any file that doesn't need changes
+8. Keep output concise — under 1000 tokens total
+9. Return ONLY a valid JSON array. No markdown code blocks, no extra text.
+10. Do NOT include any thinking/reasoning tags in output
 
 Example output:
 [
