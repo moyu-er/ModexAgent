@@ -206,7 +206,7 @@ class TestSubagentMemoryLayers:
 
     def test_build_session_only_memory_creates_context_manager(self, tmp_path):
         """_build_session_only_memory returns a MemorySystemContextManager."""
-        from framework.ioc.factories.descriptors import _build_session_only_memory
+        from framework.ioc.factories.descriptors import build_session_only_memory as _build_session_only_memory
         from framework.memory.core.scope import MemoryAgentRole
         from framework.ioc.configs.memory import MemoryConfig, ShortTermConfig
 
@@ -222,7 +222,7 @@ class TestSubagentMemoryLayers:
 
     def test_archive_config_created_with_session_scope(self, tmp_path):
         """_build_session_only_memory creates ArchiveMemoryConfig(scope=SessionScope())."""
-        from framework.ioc.factories.descriptors import _build_session_only_memory
+        from framework.ioc.factories.descriptors import build_session_only_memory as _build_session_only_memory
         from framework.memory.core.scope import MemoryAgentRole
         from framework.memory.core.scope import SessionScope
         from framework.memory.layers.config import ArchiveMemoryConfig
@@ -242,7 +242,7 @@ class TestSubagentMemoryLayers:
 
     def test_max_messages_respects_config(self, tmp_path):
         """Session layer max_messages comes from the MemoryConfig."""
-        from framework.ioc.factories.descriptors import _build_session_only_memory
+        from framework.ioc.factories.descriptors import build_session_only_memory as _build_session_only_memory
         from framework.memory.core.scope import MemoryAgentRole
         from framework.ioc.configs.memory import MemoryConfig, ShortTermConfig
 
@@ -256,7 +256,7 @@ class TestSubagentMemoryLayers:
 
     def test_default_max_messages_without_config(self, tmp_path):
         """Without MemoryConfig, subagent gets default 50 max_messages."""
-        from framework.ioc.factories.descriptors import _build_session_only_memory
+        from framework.ioc.factories.descriptors import build_session_only_memory as _build_session_only_memory
         from framework.memory.core.scope import MemoryAgentRole
 
         memory_ctx = _build_session_only_memory(
