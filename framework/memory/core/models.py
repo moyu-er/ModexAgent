@@ -19,7 +19,7 @@ from framework.memory.archive_models import (
     ArchiveState,
     ArchiveWrite,
 )
-from framework.memory.compression.tool_chain_sanitizer import ToolChainSanitizationIssue
+from framework.memory.sanitizer import ToolChainSanitizationIssue
 from framework.memory.core.message import ChatMessage
 
 
