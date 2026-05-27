@@ -39,7 +39,9 @@ def _build_memory_layer_config(cfg: MemoryConfig) -> MemoryLayerConfigSet:
         )
 
         archive_config = ArchiveMemoryConfig()
-        knowledge_config = KnowledgeMemoryConfig()
+        knowledge_config = KnowledgeMemoryConfig(
+            default_templates_dir=cfg.long_term.default_templates_dir,
+        )
 
     return MemoryLayerConfigSet(
         session=session_config,

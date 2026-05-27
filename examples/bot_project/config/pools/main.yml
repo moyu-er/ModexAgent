@@ -21,8 +21,13 @@ memory:
     max_tokens: 100000
     keep_ratio_for_messages: 0.4
     keep_ratio_for_token: 0.4
-  long_term: {enabled: true}
-  dream_engine: {enabled: true, interval: 600}
+  long_term: {enabled: true, default_templates_dir: "templates/knowledge"}
+  dream_engine:
+    enabled: true
+    interval: 600
+    min_archive_count: 5
+    max_archive_count: 30
+    max_batch_size: 20
   governance:
     lossy_compaction:
       tool_result_head_chars: 1200
@@ -43,8 +48,8 @@ agents:
         max_tokens: 100000
         keep_ratio_for_messages: 0.4
         keep_ratio_for_token: 0.4
-      long_term: {enabled: true}
-      dream_engine: {enabled: true, interval: 600}
+      long_term: {enabled: true, default_templates_dir: "templates/knowledge"}
+      dream_engine: {enabled: true, interval: 600, min_archive_count: 5, max_archive_count: 30, max_batch_size: 20}
       governance:
         lossy_compaction:
           tool_result_head_chars: 1200
