@@ -206,6 +206,7 @@ async def test_pending_injector_serializes_structured_content_stably() -> None:
     result = await injector.apply([], ctx)
 
     assert len(result) == 1
-    assert result[0]["role"] == "user"
-    assert '"type": "text"' in result[0]["content"]
-    assert "'type': 'text'" not in result[0]["content"]
+    assert result[0]["role"] == "system"
+    assert result[0].get("content_format") == "xml"
+    assert "<supplementary-context" in result[0]["content"]
+    assert "look at this" in result[0]["content"]

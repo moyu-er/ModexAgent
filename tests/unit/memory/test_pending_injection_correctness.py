@@ -118,17 +118,19 @@ async def test_pending_injected_via_governance_chain() -> None:
 
     pending = _pending_msgs(result)
     assert len(pending) == 1
-    assert pending[0]["content"] == "pending_msg"
+    assert "pending_msg" in pending[0]["content"]
+    assert pending[0].get("content_format") == "xml"
 
     system_indices = [i for i, m in enumerate(result) if m.get("role") == "system"]
     pending_indices = [i for i, m in enumerate(result) if m in pending]
     non_system_indices = [i for i, m in enumerate(result) if m.get("role") != "system"]
 
-    assert len(system_indices) > 0
+    assert len(system_indices) > 1  # main prompt + pending
     assert len(pending_indices) == 1
     pending_idx = pending_indices[0]
-    assert all(pending_idx > si for si in system_indices)
-    assert all(pending_idx < nsi for nsi in non_system_indices if nsi != pending_idx)
+    # Pending is a system message, after main prompt (system_indices[0])
+    assert pending_idx > system_indices[0]
+    assert all(pending_idx < nsi for nsi in non_system_indices)
 
     import shutil
     shutil.rmtree("./test_gov", ignore_errors=True)
