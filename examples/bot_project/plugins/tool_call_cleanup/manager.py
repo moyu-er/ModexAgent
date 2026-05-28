@@ -63,24 +63,8 @@ class ToolCallAwareSessionManager(SessionMemoryManager):
     async def get_all_messages(self, context: MemoryContext) -> list[ChatMessage]:
         return await self._inner.get_all_messages(context)
 
-    async def save_checkpoint(
-        self,
-        context: MemoryContext,
-        messages: Sequence[ChatMessage | dict[str, Any]],
-    ) -> None:
-        await self._inner.save_checkpoint(context, messages)
-
-    async def load_checkpoint(self, context: MemoryContext) -> list[ChatMessage] | None:
-        return await self._inner.load_checkpoint(context)
-
     async def clear(self, context: MemoryContext) -> None:
         await self._inner.clear(context)
-
-    async def get_checkpoint_id(self, context: MemoryContext) -> str | None:
-        return await self._inner.get_checkpoint_id(context)
-
-    async def clear_checkpoint(self, context: MemoryContext) -> None:
-        await self._inner.clear_checkpoint(context)
 
     async def replace_messages(
         self,
