@@ -107,8 +107,17 @@ class InjectableMemorySystem(Protocol):
     async def get_knowledge_directory(self, context: MemoryContext) -> Path | None: ...
 
 
-class CheckpointMemorySystem(Protocol):
-    """Checkpoint capability used by the context-manager bridge."""
+class BudgetManagedMemorySystem(Protocol):
+    """Optional pre-load budget hook used by the context-manager bridge."""
+
+    async def ensure_within_budget(self, context: MemoryContext) -> None: ...
+
+
+class ContextManagedMemorySystem(
+    BudgetManagedMemorySystem,
+    Protocol,
+):
+    """Full memory capability expected by MemorySystemContextManager."""
 
     def create_message_history(
         self,
@@ -129,43 +138,3 @@ class CheckpointMemorySystem(Protocol):
     ) -> list[ChatMessage]: ...
 
     async def clear(self, context: MemoryContext) -> None: ...
-
-    async def save_checkpoint(
-        self,
-        context: MemoryContext,
-        messages: Sequence[ChatMessage | dict[str, Any]],
-    ) -> None: ...
-
-    async def load_checkpoint(self, context: MemoryContext) -> list[ChatMessage] | None: ...
-
-    async def clear_checkpoint(self, context: MemoryContext) -> None: ...
-
-    async def get_checkpoint_id(self, context: MemoryContext) -> str | None: ...
-
-    async def get_last_recovered_checkpoint_id(self, context: MemoryContext) -> str | None: ...
-
-    async def set_last_recovered_checkpoint_id(
-        self,
-        context: MemoryContext,
-        checkpoint_id: str,
-    ) -> None: ...
-
-
-class BudgetManagedMemorySystem(Protocol):
-    """Optional pre-load budget hook used by the context-manager bridge."""
-
-    async def ensure_within_budget(self, context: MemoryContext) -> None: ...
-
-
-class ContextManagedMemorySystem(
-    CheckpointMemorySystem,
-    BudgetManagedMemorySystem,
-    Protocol,
-):
-    """Full memory capability expected by MemorySystemContextManager."""
-
-    async def set_pending_user_turn(
-        self, context: MemoryContext, message_id: str, created_at: float
-    ) -> None: ...
-
-    async def clear_pending_user_turn(self, context: MemoryContext) -> None: ...

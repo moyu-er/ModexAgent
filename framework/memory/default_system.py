@@ -255,69 +255,6 @@ class DefaultMemorySystem(MemorySystem):
     def store_registry(self) -> MemoryStoreRegistry:
         return self._registry
 
-    # -- Session convenience --------------------------------------------
-
-    async def set_pending_user_turn(
-        self, context: MemoryContext, message_id: str, created_at: float
-    ) -> None:
-        """Mark a pending user turn so it can be recovered after a crash."""
-        storage = await self._registry.resolve(
-            layer=MemoryLayerName.SESSION,
-            scope=SessionScope(),
-            context=context,
-        )
-        await storage.set(".pending_user_turn", {
-            "message_id": message_id,
-            "created_at": created_at,
-            "session_id": context.session_id,
-        })
-
-    async def clear_pending_user_turn(self, context: MemoryContext) -> None:
-        """Clear the pending user turn marker after successful processing."""
-        storage = await self._registry.resolve(
-            layer=MemoryLayerName.SESSION,
-            scope=SessionScope(),
-            context=context,
-        )
-        await storage.delete(".pending_user_turn")
-
-    async def get_pending_user_turn(self, context: MemoryContext) -> dict[str, Any] | None:
-        """Retrieve the pending user turn marker if present."""
-        storage = await self._registry.resolve(
-            layer=MemoryLayerName.SESSION,
-            scope=SessionScope(),
-            context=context,
-        )
-        result = await storage.get(".pending_user_turn")
-        return result if isinstance(result, dict) else None
-
-    async def save_checkpoint(
-        self, context: MemoryContext, messages: Sequence[ChatMessage | dict[str, Any]]
-    ) -> None:
-        await self._layers.session.save_checkpoint(context, messages)
-
-    async def load_checkpoint(self, context: MemoryContext) -> list[ChatMessage] | None:
-        return await self._layers.session.load_checkpoint(context)
-
-    async def get_checkpoint_id(self, context: MemoryContext) -> str | None:
-        return await self._layers.session.get_checkpoint_id(context)
-
-    async def get_last_recovered_checkpoint_id(self, context: MemoryContext) -> str | None:
-        return await self._layers.session.get_last_recovered_checkpoint_id(context)
-
-    async def set_last_recovered_checkpoint_id(
-        self, context: MemoryContext, checkpoint_id: str
-    ) -> None:
-        await self._layers.session.set_last_recovered_checkpoint_id(context, checkpoint_id)
-
-    async def clear_checkpoint(self, context: MemoryContext) -> None:
-        session_mgr = self._layers.session
-        if hasattr(session_mgr, "clear_checkpoint"):
-            await session_mgr.clear_checkpoint(context)
-        else:
-            # Fallback for implementations without clear_checkpoint
-            await session_mgr.clear(context)
-
     # -- Archive convenience --------------------------------------------
 
     async def get_history_entries(
