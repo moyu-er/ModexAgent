@@ -32,7 +32,7 @@ class _StubContextManager:
     async def load_with_metadata(self, session_id, metadata=None):
         return ContextState(system_prompt="test", history=[])
 
-    async def load(self, session_id):
+    async def load(self, session_id, **kwargs):
         return ContextState(system_prompt="test", history=[])
 
     async def save(self, **kwargs):

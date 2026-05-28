@@ -41,7 +41,7 @@ class FakeContextManager:
     ) -> FakeContextState:
         return self.state
 
-    async def load(self, session_id: str) -> FakeContextState:
+    async def load(self, session_id: str, **kwargs: Any) -> FakeContextState:
         return self.state
 
     async def save(
