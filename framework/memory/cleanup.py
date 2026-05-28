@@ -214,6 +214,16 @@ async def cleanup_session(
                     )
                     if gen_result.writes:
                         await archive.append_bundle(context, gen_result.writes)
+                        channels = [w.channel.value for w in gen_result.writes]
+                        logger.info(
+                            "Archive generated: session=%s entries=%d channels=%s input_messages=%d",
+                            session_id, len(gen_result.writes), channels, len(archive_inputs),
+                        )
+                    else:
+                        logger.warning(
+                            "Archive generation produced no writes: session=%s input_messages=%d",
+                            session_id, len(archive_inputs),
+                        )
                     _archive_fail_counters[session_id] = 0
                     archive_skipped = False
                 except Exception:

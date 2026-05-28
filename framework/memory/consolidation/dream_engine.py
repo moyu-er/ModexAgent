@@ -116,10 +116,11 @@ class DreamEngine(ConsolidationEngine):
 
         batch = entries[: self.max_batch_size]
         batch_payload = [self._archive_entry_to_dict(entry) for entry in batch]
-        logger.debug(
-            "DreamEngine: processing %s entries (cursor %s)",
+        logger.info(
+            "DreamEngine: consolidating %d entries into knowledge (cursor %s, total=%d)",
             len(batch),
             unprocessed.cursor,
+            archive_count,
         )
 
         # Filter out meaningless entries before processing
@@ -153,7 +154,13 @@ class DreamEngine(ConsolidationEngine):
                 await self.long_term_manager.apply_update(context, update)
                 applied += 1
             if applied:
-                logger.debug("DreamEngine applied %s updates", applied)
+                logger.info(
+                    "DreamEngine: knowledge consolidation complete, applied %d updates (soul=%d user=%d memory=%d)",
+                    applied,
+                    len(result.soul_updates),
+                    len(result.user_updates),
+                    len(result.memory_updates),
+                )
 
         # Always advance cursor to prevent re-processing (even on failure)
         await self._commit_knowledge_cursor(context, final_cursor)
