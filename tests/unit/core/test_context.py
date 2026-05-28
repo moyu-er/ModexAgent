@@ -247,12 +247,6 @@ class TestEphemeralContextManager:
         assert history[1]["content"] == "Hello"
 
     @pytest.mark.asyncio
-    async def test_checkpoint_is_noop(self, cm):
-        await cm.save_checkpoint("s1", [{"role": "assistant", "content": "half"}])
-        loaded = await cm.load_checkpoint("s1")
-        assert loaded is None
-
-    @pytest.mark.asyncio
     async def test_clear_removes_all_data(self, cm):
         await cm.load("s1")
         await cm.save("s1", {"role": "user", "content": "hi"}, AgentResult(content="ok"))

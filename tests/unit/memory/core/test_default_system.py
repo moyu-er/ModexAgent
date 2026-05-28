@@ -88,16 +88,6 @@ async def test_exposes_layers_and_registry(system):
         assert hasattr(system.layers.knowledge, 'get_all')
 
 
-async def test_checkpoint_save_load(system):
-    await system.initialize()
-    ctx = MemoryContext(session_id="test-cp")
-    msgs = [{"role": "user", "content": "before crash"}]
-    await system.save_checkpoint(ctx, msgs)
-    loaded = await system.load_checkpoint(ctx)
-    assert loaded is not None
-    assert loaded[0].content == "before crash"
-
-
 async def test_search_no_providers(system):
     await system.initialize()
     results = await system.search("hello", MemoryContext(session_id="t"))

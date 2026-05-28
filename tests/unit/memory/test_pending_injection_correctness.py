@@ -13,7 +13,7 @@ from framework.memory.context_governance import (
     PendingInjectionGovernance,
     ToolChainRepairGovernance,
 )
-from framework.memory.core.models import MemoryContextBundle
+from framework.memory.core.models import InjectionResult
 from framework.memory.core.scope import MemoryContext
 from framework.memory.injection import FullInjectionPolicy
 from framework.memory.layers.factory import MemoryLayerFactory
@@ -29,7 +29,7 @@ class _CountingInjectionPolicy:
 
     async def assemble(self, *, context, memory_system, query=""):
         self.assemble_count += 1
-        return MemoryContextBundle(system_sections=[], messages=[])
+        return InjectionResult(system_prompt="", messages=[])
 
 
 def _pending_msgs(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
