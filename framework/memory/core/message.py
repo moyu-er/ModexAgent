@@ -12,9 +12,22 @@ ChatMessage 封装了消息的核心字段（role、content、tool_calls 等）�
 
 from __future__ import annotations
 
+from datetime import datetime
+from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+class ContentFormat(StrEnum):
+    """内容格式枚举。
+
+    PLAIN  — 纯文本内容，可安全截断
+    XML    — XML 结构化内容，支持按路径定位截断
+    """
+
+    PLAIN = "plain"
+    XML = "xml"
 
 
 class ChatMessage(BaseModel):
@@ -39,6 +52,33 @@ class ChatMessage(BaseModel):
     name: str | None = Field(
         default=None, description="工具名称（OpenAI function calling）"
     )
+    created_at: datetime | None = Field(
+        default=None, description="消息创建时间戳"
+    )
+    content_format: ContentFormat = Field(
+        default=ContentFormat.PLAIN, description="内容格式：plain 或 xml"
+    )
+    truncatable_paths: list[str] | None = Field(
+        default=None, description="XML 内容中可截断的路径列表"
+    )
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def _parse_created_at(cls, v: Any) -> datetime | None:
+        """Parse created_at from string ("YYYY-MM-DD HH:MM:SS") or datetime."""
+        if v is None:
+            return None
+        if isinstance(v, datetime):
+            return v
+        if isinstance(v, str):
+            # Try "YYYY-MM-DD HH:MM:SS" format
+            try:
+                return datetime.strptime(v, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                pass
+            # Try ISO format
+            return datetime.fromisoformat(v)
+        return v
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ChatMessage:
@@ -82,12 +122,19 @@ class ChatMessage(BaseModel):
 
         对无法 JSON 序列化的嵌套对象，递归转换为 dict 以确保兼容性。
         自动排除 reasoning_content 字段，防止思维链内容泄漏到存储层。
+        content_format 为 PLAIN 时自动省略，created_at 格式化为本地时间字符串。
         """
         try:
             result = self.model_dump(mode="json", exclude_none=True)
         except Exception:
             result = self._to_dict_fallback()
         result.pop("reasoning_content", None)
+        # Omit content_format when it is the default (PLAIN)
+        if "content_format" in result and self.content_format == ContentFormat.PLAIN:
+            result.pop("content_format", None)
+        # Format created_at to "YYYY-MM-DD HH:MM:SS"
+        if "created_at" in result and self.created_at is not None:
+            result["created_at"] = self.created_at.strftime("%Y-%m-%d %H:%M:%S")
         return result
 
     def _to_dict_fallback(self) -> dict[str, Any]:
