@@ -43,6 +43,7 @@ class ScopedMessageHistory(MessageHistory):
         archive_manager: ArchiveMemoryManager | None = None,
         archive_strategy: ArchiveGenerationStrategy | None = None,
         cleanup_config: dict[str, int | float] | None = None,
+        pending_manager: Any | None = None,
     ) -> None:
         self._manager = manager
         self._context = context
@@ -50,6 +51,7 @@ class ScopedMessageHistory(MessageHistory):
         self._archive_manager = archive_manager
         self._archive_strategy = archive_strategy
         self._cleanup_config: dict[str, int | float] = cleanup_config or {}
+        self._pending_manager = pending_manager
         self._cache: list[ChatMessage] | None = (
             [ChatMessage.coerce(m) for m in initial_messages]
             if initial_messages is not None
@@ -65,6 +67,7 @@ class ScopedMessageHistory(MessageHistory):
             archive=self._archive_manager,
             context=self._context,
             archive_strategy=self._archive_strategy,
+            pending=self._pending_manager,
             **self._cleanup_config,
         )
 
@@ -178,6 +181,7 @@ class DefaultMemorySystem(MemorySystem):
             archive_manager=self._layers.archive,
             archive_strategy=self._archive_strategy,
             cleanup_config=self._cleanup_config,
+            pending_manager=self._layers.pending,
         )
 
     async def add_messages(
