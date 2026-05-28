@@ -351,18 +351,22 @@ class PendingInjectionGovernance(ContextGovernance):
 
 
 def _compact_xml_content(content: str, paths: list[str]) -> str:
-    """Replace text inside truncatable_paths elements with compaction notice."""
-    import re
-    result = content
-    for path in paths:
-        pattern = rf'(<{path}[^>]*>)(.*?)(</{path}>)'
-        result = re.sub(
-            pattern,
-            rf'\1[content compacted: {len(result)} chars]\3',
-            result,
-            flags=re.DOTALL,
-        )
-    return result
+    """Replace text inside truncatable_paths elements with compaction notice.
+
+    Uses xml.etree.ElementTree for correct nested-element handling.
+    Falls back to plain text marker on parse failure.
+    """
+    from xml.etree import ElementTree as ET
+
+    try:
+        root = ET.fromstring(content)
+        for path in paths:
+            for elem in root.iter(path):
+                if elem.text and len(elem.text) > 0:
+                    elem.text = f"[content compacted: {len(elem.text)} chars]"
+        return ET.tostring(root, encoding="unicode")
+    except ET.ParseError:
+        return f"[XML content omitted: {len(content)} chars]"
 
 
 class MicrocompactGovernance(ContextGovernance):
