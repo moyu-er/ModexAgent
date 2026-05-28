@@ -44,11 +44,10 @@ from framework.memory.core.models import (
     CompressionPlan,
     CompressionReason,
     CompressionTrigger,
+    InjectionResult,
     KnowledgeBudget,
     LongTermMemory,
     MemoryBudget,
-    MemoryContextBundle,
-    PromptSection,
     StorageRevision,
 )
 from framework.memory.core.models import (
@@ -162,10 +161,9 @@ __all__ = [
     "CompressionReason",
     "CompressionCommitResult",
     "CompressionTrigger",
+    "InjectionResult",
     "KnowledgeBudget",
     "MemoryBudget",
-    "MemoryContextBundle",
-    "PromptSection",
     "StorageRevision",
     # Shared models
     "LongTermMemory",
