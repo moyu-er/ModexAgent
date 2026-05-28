@@ -707,8 +707,14 @@ async def test_restricted_injection_session_only():
 
 
 @pytest.mark.asyncio
-async def test_injection_tool_messages_filtered_by_default():
-    """Default ToolMessageFilterStrategy strips tool_calls and tool results."""
+async def test_injection_preserves_tool_messages_by_default():
+    """Default NoopFilterStrategy preserves tool messages for governance to handle.
+
+    Previously ToolMessageFilterStrategy stripped tool messages during injection,
+    causing massive message loss in tool-heavy conversations. Now the default
+    is NoopFilterStrategy — governance (MicrocompactGovernance, ToolChainRepair)
+    handles tool message management at the LLM call boundary.
+    """
     from framework.memory.injection import FullInjectionPolicy
 
     registry = InMemoryStoreRegistry()
@@ -729,10 +735,16 @@ async def test_injection_tool_messages_filtered_by_default():
         context=ctx, memory_system=system, query="",
     )
 
-    for m in bundle.messages:
-        d = m.to_dict()
-        assert d.get("role") not in ("tool",)
-        assert not d.get("tool_calls")
+    # All 4 messages should survive injection; governance handles compaction
+    assert len(bundle.messages) == 4, (
+        f"Expected all 4 messages preserved, got {len(bundle.messages)}"
+    )
+
+    # Tool messages are present for governance to manage
+    roles = [m.to_dict().get("role") for m in bundle.messages]
+    assert "tool" in roles, "tool result should be preserved for governance"
+    has_tool_calls = any(m.to_dict().get("tool_calls") for m in bundle.messages)
+    assert has_tool_calls, "assistant tool_calls should be preserved for governance"
 
 
 @pytest.mark.asyncio

@@ -5,7 +5,7 @@ from framework.memory.core.scope import MemoryContext
 from framework.memory.core.system import MemorySystem
 from framework.memory.injection.filter import (
     InjectionFilterStrategy,
-    ToolMessageFilterStrategy,
+    NoopFilterStrategy,
 )
 from framework.memory.injection.policy import MemoryInjectionPolicy
 
@@ -19,7 +19,7 @@ class RestrictedInjectionPolicy(MemoryInjectionPolicy):
         filter_strategy: InjectionFilterStrategy | None = None,
     ) -> None:
         self._max_messages = max_session_messages
-        self._filter = filter_strategy or ToolMessageFilterStrategy()
+        self._filter = filter_strategy or NoopFilterStrategy()
 
     async def assemble(
         self,

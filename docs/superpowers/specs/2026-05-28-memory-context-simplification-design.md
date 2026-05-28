@@ -87,8 +87,10 @@ Everything else either deletes (filter, crash recovery) or is a different concer
 **Delete from `ToolCallAwareSessionManager` (bot_project):**
 - `save_checkpoint` / `load_checkpoint` / `get_checkpoint_id` / `clear_checkpoint` delegation methods (manager.py:66-83) — empty pass-through to inner session, no callers
 
-**Keep on `ContextManager` ABC:**
-- `save_checkpoint` / `load_checkpoint` / `clear_checkpoint` remain on the ABC (no-op defaults) for backward compatibility, but `MemorySystemContextManager` no longer overrides them.
+**Delete from `ContextManager` ABC (`core/context.py`):**
+- `save_checkpoint()` / `load_checkpoint()` / `clear_checkpoint()` — no-op defaults and abstract declarations entirely removed
+- `InMemoryContextManager` checkpoint overrides deleted
+- `EphemeralContextManager` checkpoint no-op overrides deleted
 
 ### 3. Eliminate MemoryContextBundle as Public Type
 
@@ -372,6 +374,7 @@ When compressing messages for archive:
 | `framework/memory/context_governance.py` | Add `truncate_xml_safe()`; LossyCompaction: content_format dispatch + system skip; Microcompact: XML tool compact; PendingInjectionGovernance: system role + XML format |
 | `framework/memory/pending.py` | DefaultPendingPrunedInputInjector: XML format + content_format metadata + system role |
 | `framework/memory/default_system.py` | Remove checkpoint delegations, remove pending_user_turn methods |
+| `framework/core/context.py` | ContextManager ABC: remove `save_checkpoint`/`load_checkpoint`/`clear_checkpoint`; InMemoryContextManager/EphemeralContextManager: remove overrides |
 | `framework/core/message_utils.py` | normalize_agent_messages_for_llm(): agent messages → XML `<agent_message>` format with truncatable_paths |
 | `framework/pipeline/context_assembler.py` | Remove first load, crash recovery block; single load with complete system_prompt |
 | `framework/pipeline/pipeline.py` | Remove on_checkpoint closure, _safe_clear_checkpoint, turn_clean variable, checkpoint clear block |
@@ -384,7 +387,6 @@ When compressing messages for archive:
 - Interceptors, Hooks, Control system (different concerns)
 - Three-layer memory (Session/Archive/Knowledge)
 - examples/bot_project/ business logic
-- ContextManager ABC: checkpoint no-op defaults kept for backward compat
 
 ## Extension Mechanism Summary (After Simplification)
 

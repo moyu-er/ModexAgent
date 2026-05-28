@@ -15,7 +15,7 @@ from framework.memory.core.scope import MemoryContext
 from framework.memory.core.system import InjectableMemorySystem, MemorySystem
 from framework.memory.injection.filter import (
     InjectionFilterStrategy,
-    ToolMessageFilterStrategy,
+    NoopFilterStrategy,
 )
 from framework.memory.injection.policy import MemoryInjectionPolicy
 from framework.memory.utils import estimate_text_tokens, normalize_memory_summary
@@ -42,7 +42,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
     ) -> None:
         self._budget = budget or MemoryBudget()
         self._max_history = max_history_entries
-        self._filter = filter_strategy or ToolMessageFilterStrategy()
+        self._filter = filter_strategy or NoopFilterStrategy()
 
     async def assemble(
         self,
