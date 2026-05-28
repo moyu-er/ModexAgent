@@ -9,6 +9,7 @@
 """
 
 from collections.abc import Sequence
+from datetime import datetime, timezone
 from typing import Any
 
 from framework.core.types import MessageRole
@@ -22,6 +23,11 @@ AGENT_COMMUNICATION_SYSTEM_NOTE = (
 )
 
 
+def _xml_escape(text: str) -> str:
+    """Escape special XML characters."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 
 def _msg_to_dict(msg: ChatMessage | dict[str, Any]) -> dict[str, Any]:
     """将 ChatMessage 或 dict 统一转换为 dict。"""
@@ -33,15 +39,13 @@ def _msg_to_dict(msg: ChatMessage | dict[str, Any]) -> dict[str, Any]:
 def normalize_agent_messages_for_llm(
     messages: Sequence[ChatMessage | dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], bool]:
-    """将内部 `role: "agent"` 消息转换为 LLM 可识别的格式。
+    """将内部 `role: "agent"` 消息转换为 LLM 可识别的 XML 格式。
 
     转换规则：
-    - `role: "agent"` → `role: "user"`
-    - Content prefix: `[From Agent {source_agent}]\n{original_content}`
-    - No `name` field is set, to avoid OpenAI API constraints requiring all user messages to have the same name
+    - `role: "agent"` → `role: "user"` with XML <agent_message> envelope
+    - Content wrapped in: <agent_message source="..."><content>...</content></agent_message>
+    - content_format set to "xml" for correct truncation handling
     - Other role messages are unaffected
-
-    支持多模态 content（list[dict]）：当 content 为列表时，在第一个 text block 前插入前缀。
 
     Args:
         messages: Raw message list (may contain role: "agent"), ChatMessage or dict
@@ -61,18 +65,27 @@ def normalize_agent_messages_for_llm(
             continue
 
         has_agent = True
+        source_agent = msg_dict.get("source_agent", "unknown")
         original_content = msg_dict.get("content", "")
+        ts = msg_dict.get("created_at", "")
 
-        converted_msg: dict[str, Any] = {
+        xml_content = (
+            f'<agent_message source="{_xml_escape(str(source_agent))}"'
+            + (f' timestamp="{ts}"' if ts else "")
+            + ">\n"
+            + f"  <content>{_xml_escape(str(original_content))}</content>\n"
+            + "</agent_message>"
+        )
+
+        converted.append({
             "role": MessageRole.USER,
-            "content": original_content,
-        }
-
-        # 保留 meta_* 字段用于溯源
-        for key, value in msg_dict.items():
-            if key.startswith("meta_"):
-                converted_msg[key] = value
-
-        converted.append(converted_msg)
+            "content": xml_content,
+            "content_format": "xml",
+            "truncatable_paths": ["content"],
+            "name": msg_dict.get("name"),
+            "tool_calls": msg_dict.get("tool_calls"),
+            "tool_call_id": msg_dict.get("tool_call_id"),
+            "metadata": msg_dict.get("metadata"),
+        })
 
     return converted, has_agent
