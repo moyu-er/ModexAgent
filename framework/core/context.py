@@ -9,7 +9,6 @@ import json
 import logging
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -125,20 +124,6 @@ class ContextManager(ABC):
         """Load with optional metadata. Default delegates to load()."""
         return await self.load(session_id)
 
-    async def save_checkpoint(
-        self, session_id: str, messages: Sequence[ChatMessage | dict[str, Any]]
-    ) -> None:
-        """Save crash-recovery checkpoint. No-op by default."""
-        pass
-
-    async def load_checkpoint(self, session_id: str) -> Sequence[ChatMessage] | None:
-        """Load crash-recovery checkpoint. No-op by default."""
-        return None
-
-    async def clear_checkpoint(self, session_id: str) -> None:
-        """Clear crash-recovery checkpoint. No-op by default."""
-        pass
-
     async def flush(self, session_id: str) -> None:
         """Flush working memory to short-term. No-op by default."""
         pass
@@ -157,7 +142,6 @@ class InMemoryContextManager(ContextManager):
     def __init__(self, base_system_prompt: str = ""):
         self.base_system_prompt = base_system_prompt
         self._sessions: dict[str, ContextState] = {}
-        self._checkpoints: dict[str, list[ChatMessage]] = {}
 
     async def load(self, session_id: str) -> ContextState:
         if session_id not in self._sessions:
@@ -214,22 +198,6 @@ class InMemoryContextManager(ContextManager):
 
     async def clear(self, session_id: str) -> None:
         self._sessions.pop(session_id, None)
-        self._checkpoints.pop(session_id, None)
-
-    async def save_checkpoint(
-        self, session_id: str, messages: Sequence[ChatMessage | dict[str, Any]]
-    ) -> None:
-        self._checkpoints[session_id] = [ChatMessage.coerce(m) for m in messages]
-
-    async def load_checkpoint(
-        self, session_id: str
-    ) -> list[ChatMessage] | None:
-        if session_id not in self._checkpoints:
-            return None
-        return self._checkpoints[session_id]
-
-    async def clear_checkpoint(self, session_id: str) -> None:
-        self._checkpoints.pop(session_id, None)
 
     def _format_runtime_info(self, info: dict[str, Any]) -> str:
         lines = ["## Runtime"]
@@ -246,18 +214,8 @@ class EphemeralContextManager(InMemoryContextManager):
     特点：
     - 只在单轮 ReAct 执行期间于内存中临时保存状态
     - 不写入任何文件或中长期记忆系统
-    - 不支持 checkpoint 持久化（crash recovery 不回放）
     - 流程结束后调用 clear() 即可完全丢弃
     """
-
-    async def save_checkpoint(self, session_id: str, messages: Sequence[ChatMessage | dict[str, Any]]) -> None:
-        pass
-
-    async def load_checkpoint(self, session_id: str) -> list[ChatMessage] | None:
-        return None
-
-    async def clear_checkpoint(self, session_id: str) -> None:
-        pass
 
 
 class FileContextManager(ContextManager):
