@@ -61,22 +61,31 @@ Everything else either deletes (filter, crash recovery) or is a different concer
 - `save_checkpoint()` / `load_checkpoint()` / `clear_checkpoint()` methods
 - `recover_checkpoint()` method
 - `add_assistant_placeholder()` method
+- `_ERROR_PLACEHOLDER` constant (line 31, only used by add_assistant_placeholder)
 - All `pending_user_turn` set/clear logic in `save()`
 
 **Delete from `assemble_context()` (`context_assembler.py`):**
 - All checkpoint recovery code (lines 57-84)
 - The first `load_with_metadata()` call (was only for recovery, then discarded)
 
-**Delete from pipeline:**
-- `on_checkpoint` closure in `pipeline.py` (dead code)
-- `_safe_clear_checkpoint` helper
-- Checkpoint-related code in `_execute_turn` finally block
+**Delete from `agent_session.py`:**
+- Checkpoint recovery block (lines 230-257)
+- `_sanitize_recovered_messages()` method (line 461+, only called from recovery block)
 
-**Delete from models:**
-- `CheckpointMemorySystem` protocol in `core/system.py`
+**Delete from `pipeline.py`:**
+- `on_checkpoint` closure (line 557, dead code)
+- `_safe_clear_checkpoint()` helper
+- `turn_clean` variable and all references (lines 724, 764, 788) — only used for checkpoint gate
+
+**Delete from models/protocols:**
+- `CheckpointMemorySystem` protocol in `core/system.py` — but inline its 4 core methods (`create_message_history`, `add_messages`, `get_history`, `clear`) into `ContextManagedMemorySystem`
 - `get/set_last_recovered_checkpoint_id` from `SessionMemoryManager` ABC
-- `save/load/clear_checkpoint` from `SessionMemoryManager` ABC
-- Related methods in `DefaultMemorySystem` and `ScopedSessionMemoryManager`
+- `save/load/clear_checkpoint` abstract methods from `SessionMemoryManager` ABC
+- Related implementations in `DefaultMemorySystem` and `ScopedSessionMemoryManager`
+- `checkpoint_key` and `last_recovered_key` config fields (become dead after method removal)
+
+**Delete from `ToolCallAwareSessionManager` (bot_project):**
+- `save_checkpoint` / `load_checkpoint` / `get_checkpoint_id` / `clear_checkpoint` delegation methods (manager.py:66-83) — empty pass-through to inner session, no callers
 
 **Keep on `ContextManager` ABC:**
 - `save_checkpoint` / `load_checkpoint` / `clear_checkpoint` remain on the ABC (no-op defaults) for backward compatibility, but `MemorySystemContextManager` no longer overrides them.
@@ -348,20 +357,26 @@ When compressing messages for archive:
 | File | Change |
 |------|--------|
 | `framework/memory/core/message.py` | ChatMessage: add `created_at`, `content_format`, `truncatable_paths`; add `ContentFormat` enum |
-| `framework/memory/core/models.py` | Delete MemoryContextBundle, PromptSection (move PromptSection internal) |
-| `framework/memory/injection/full_injection.py` | Remove filter, return InjectionResult, PromptSection becomes internal |
-| `framework/memory/injection/restricted_injection.py` | Remove filter, return InjectionResult |
-| `framework/memory/injection/__init__.py` | Remove filter exports, update exports |
-| `framework/memory/system.py` | Remove checkpoint/pending_user_turn methods, single assemble in load(), simplify build_system_prompt |
-| `framework/memory/context_governance.py` | Add `truncate_xml_safe()`, `LossyCompaction`: content_format dispatch + system skip, `Microcompact`: XML tool compact, `PendingInjectionGovernance`: system role + XML format |
-| `framework/memory/pending.py` | `DefaultPendingPrunedInputInjector`: XML format + content_format metadata + system role |
-| `framework/core/message_utils.py` | `normalize_agent_messages_for_llm()`: agent messages → XML `<agent_message>` format with truncatable_paths |
+| `framework/memory/core/models.py` | Delete MemoryContextBundle, PromptSection; add `InjectionResult` |
+| `framework/memory/core/__init__.py` | Remove MemoryContextBundle, PromptSection exports; add InjectionResult |
+| `framework/memory/core/system.py` | Delete `CheckpointMemorySystem` protocol; inline core methods into `ContextManagedMemorySystem`; remove pending_user_turn from ContextManagedMemorySystem |
+| `framework/memory/core/layers.py` | Remove `save/load/clear_checkpoint`, `get/set_last_recovered_checkpoint_id` from SessionMemoryManager ABC |
+| `framework/memory/layers/session.py` | Remove checkpoint method implementations; remove `checkpoint_key`/`last_recovered_key` config |
+| `framework/memory/layers/config.py` | Remove `checkpoint_key`/`last_recovered_key` from SessionMemoryConfig |
+| `framework/memory/__init__.py` | Remove MemoryContextBundle, PromptSection, filter class exports |
+| `framework/memory/injection/__init__.py` | Remove filter exports; add InjectionResult export |
+| `framework/memory/injection/policy.py` | Return type: MemoryContextBundle → InjectionResult |
+| `framework/memory/injection/full_injection.py` | Remove filter param/logic; PromptSection → internal; return InjectionResult; delete bundle_to_context_state() |
+| `framework/memory/injection/restricted_injection.py` | Remove filter param/logic; return InjectionResult |
+| `framework/memory/system.py` | Remove checkpoint methods, recover_checkpoint, add_assistant_placeholder, _ERROR_PLACEHOLDER, pending_user_turn; single assemble in load(); _bundle_to_state → InjectionResult |
+| `framework/memory/context_governance.py` | Add `truncate_xml_safe()`; LossyCompaction: content_format dispatch + system skip; Microcompact: XML tool compact; PendingInjectionGovernance: system role + XML format |
+| `framework/memory/pending.py` | DefaultPendingPrunedInputInjector: XML format + content_format metadata + system role |
 | `framework/memory/default_system.py` | Remove checkpoint delegations, remove pending_user_turn methods |
-| `framework/memory/core/layers.py` | Remove checkpoint methods from SessionMemoryManager ABC |
-| `framework/memory/core/system.py` | Remove CheckpointMemorySystem protocol |
-| `framework/memory/layers/session.py` | Remove checkpoint method implementations |
-| `framework/pipeline/context_assembler.py` | Remove crash recovery, single load |
-| `framework/pipeline/pipeline.py` | Remove on_checkpoint closure, clear_checkpoint calls |
+| `framework/core/message_utils.py` | normalize_agent_messages_for_llm(): agent messages → XML `<agent_message>` format with truncatable_paths |
+| `framework/pipeline/context_assembler.py` | Remove first load, crash recovery block; single load with complete system_prompt |
+| `framework/pipeline/pipeline.py` | Remove on_checkpoint closure, _safe_clear_checkpoint, turn_clean variable, checkpoint clear block |
+| `framework/session/agent_session.py` | Remove checkpoint recovery block; remove _sanitize_recovered_messages() |
+| `examples/bot_project/plugins/tool_call_cleanup/manager.py` | Remove checkpoint delegation methods (66-83) |
 
 ### Not Changed
 - Provider mechanism (MemoryProviderRegistry, etc.)
@@ -369,6 +384,7 @@ When compressing messages for archive:
 - Interceptors, Hooks, Control system (different concerns)
 - Three-layer memory (Session/Archive/Knowledge)
 - examples/bot_project/ business logic
+- ContextManager ABC: checkpoint no-op defaults kept for backward compat
 
 ## Extension Mechanism Summary (After Simplification)
 
@@ -379,18 +395,98 @@ When compressing messages for archive:
 
 Everything else (hooks, interceptors, control) serves different concerns (lifecycle observation, AOP, runtime commands) and is not a "context modification" mechanism.
 
+## Design Closure: End-to-End Verification
+
+### Data Flow (Single Request)
+
+```
+User Input
+  │
+  ▼ Pipeline ← assemble_context()
+  │
+  ├─ [No crash recovery] — dead code removed
+  │
+  ├─ ctx_mgr.load(session_id, tool_manager, skill_manager, runtime_info)
+  │    │  ← THE ONLY ASSEMBLE
+  │    ├─ Three-layer memory read (knowledge + archive + session)
+  │    ├─ Provider injection (static blocks + prefetch)
+  │    ├─ → InjectionResult(system_prompt, messages)
+  │    ├─ + skill_prompt + runtime_info
+  │    └─ → ContextState(system_prompt, history)
+  │
+  ├─ User message appended to history
+  │
+  ├─ MultiAgentContextBuilder (if needed)
+  │
+  ▼ ContextState → AgentContext
+  │
+  ▼ ReActAgent.run() → LLMNode._build_messages()
+  │
+  ├─ ctx.system_prompt → system message (protected: skips all governance truncation)
+  ├─ ctx.to_messages() → history messages (each has content_format metadata)
+  │
+  ▼ governance.apply() (single modification entry point)
+  │
+  ├─ LossyCompaction:  skip system, dispatch by content_format
+  ├─ ToolChainRepair:  skip system
+  ├─ Microcompact:     compact tool results, XML-aware for xml-format messages
+  ├─ TokenBudget:      preserve system, trim from head
+  └─ PendingInjection: inject XML system messages (always last)
+  │
+  ▼ Messages[] → LLM
+```
+
+### XML Safety Guarantees
+
+| Content | Location | Protection |
+|---------|----------|-----------|
+| Knowledge (SOUL/USER/MEMORY) | system prompt (role=system) | Skip Lossy + Preserve TokenBudget |
+| Archive summaries | system prompt (role=system) | Skip Lossy + Preserve TokenBudget |
+| Provider blocks | system prompt (role=system) | Skip Lossy + Preserve TokenBudget |
+| Pending injection | system msg (role=system, inserted last in chain) | 2-layer: system role + position-at-end |
+| Agent communication | user msg (role=user, content_format=xml) | truncate_xml_safe by content_format |
+| XML tool results | tool msg (role=tool, content_format=xml) | Microcompact: compact truncatable_paths only |
+
+### Truncation Fallback Guarantees
+
+For any XML-formatted message (`content_format == "xml"`):
+1. If XML is valid → `truncate_xml_safe()` truncates ONLY text inside `truncatable_paths` elements, preserves all tags and attributes
+2. If XML is malformed → falls back to plaintext cut with tag-closing, never raises an exception
+
+### Archive Compression Guarantees
+
+Plain messages → full-text LLM summarization (unchanged).
+XML messages → preserve XML skeleton (tags + attributes), LLM-summarize only `truncatable_paths` content. Fallback to full-text on parse failure.
+
 ## Test Impact
 
-- `test_injection_message_loss.py` — all 4 TDD tests should pass
-- `test_context_construction_issues.py` — update to reflect new flow
-- Remove crash recovery tests
+### Tests to Delete (test dead code)
+- `tests/unit/memory/test_checkpoint_dedup.py` — entire file
+- `tests/unit/memory/test_error_placeholder.py` — entire file
+- `tests/unit/memory/test_injection_message_loss.py` — repurpose or delete (tests removed filter logic)
+
+### Tests to Update
+- `test_context_construction_issues.py` — remove filter references, MemoryContextBundle imports
+- `test_bot_project_memory_pipeline.py` — remove bundle.dropped_sections access
+- `test_pending_injection_correctness.py` — remove MemoryContextBundle import
+- `tests/unit/agents/react/test_nodes.py` — remove checkpoint mock tests
+- `tests/unit/session/test_agent_session.py` — remove checkpoint recovery tests
+- `tests/unit/pipeline/test_slash_commands.py` — remove load_checkpoint mock
+- `tests/unit/pipeline/test_pipeline_subagent_emitter.py` — remove checkpoint mocks
+- `tests/unit/memory/core/test_layers.py` — remove checkpoint method mocks
+- `tests/unit/memory/core/test_default_system.py` — remove checkpoint tests
+- `tests/unit/memory/test_tool_call_cleanup_manager.py` — remove checkpoint mock methods
+- `tests/unit/core/test_context.py` — remove checkpoint tests
+
+### New Tests to Add
 - Add: verify single assemble per request
-- Add: verify InjectionResult instead of MemoryContextBundle
-- Add: verify pending injection uses XML format + system role + content_format
-- Add: verify agent messages use XML `<agent_message>` format with truncatable_paths
-- Add: verify truncate_xml_safe preserves XML structure, only truncates content
+- Add: verify InjectionResult replaces MemoryContextBundle
+- Add: verify ChatMessage content_format default is "plain"
+- Add: verify ChatMessage truncatable_paths on XML messages
+- Add: verify agent messages use XML `<agent_message>` format with truncatable_paths: ["content"]
+- Add: verify pending injection uses XML + system role + content_format: "xml"
+- Add: verify truncate_xml_safe preserves XML structure, only truncates truncatable_paths content
 - Add: verify truncate_xml_safe falls back to plaintext on malformed XML
 - Add: verify LossyContentCompaction skips system messages
 - Add: verify Microcompact only compacts truncatable_paths content for XML tool results
-- Add: verify ChatMessage content_format default is "plain"
-- Add: verify supplementary XML survives governance chain intact (integration)
+- Add: verify supplementary XML survives full governance chain intact (integration)
