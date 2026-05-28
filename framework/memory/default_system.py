@@ -43,6 +43,7 @@ class ScopedMessageHistory(MessageHistory):
         archive_manager: ArchiveMemoryManager | None = None,
         archive_strategy: ArchiveGenerationStrategy | None = None,
         cleanup_config: dict[str, int | float] | None = None,
+        pending_manager: Any | None = None,
     ) -> None:
         self._manager = manager
         self._context = context
@@ -50,6 +51,7 @@ class ScopedMessageHistory(MessageHistory):
         self._archive_manager = archive_manager
         self._archive_strategy = archive_strategy
         self._cleanup_config: dict[str, int | float] = cleanup_config or {}
+        self._pending_manager = pending_manager
         self._cache: list[ChatMessage] | None = (
             [ChatMessage.coerce(m) for m in initial_messages]
             if initial_messages is not None
@@ -65,6 +67,7 @@ class ScopedMessageHistory(MessageHistory):
             archive=self._archive_manager,
             context=self._context,
             archive_strategy=self._archive_strategy,
+            pending=self._pending_manager,
             **self._cleanup_config,
         )
 
@@ -178,6 +181,7 @@ class DefaultMemorySystem(MemorySystem):
             archive_manager=self._layers.archive,
             archive_strategy=self._archive_strategy,
             cleanup_config=self._cleanup_config,
+            pending_manager=self._layers.pending,
         )
 
     async def add_messages(
@@ -254,69 +258,6 @@ class DefaultMemorySystem(MemorySystem):
     @property
     def store_registry(self) -> MemoryStoreRegistry:
         return self._registry
-
-    # -- Session convenience --------------------------------------------
-
-    async def set_pending_user_turn(
-        self, context: MemoryContext, message_id: str, created_at: float
-    ) -> None:
-        """Mark a pending user turn so it can be recovered after a crash."""
-        storage = await self._registry.resolve(
-            layer=MemoryLayerName.SESSION,
-            scope=SessionScope(),
-            context=context,
-        )
-        await storage.set(".pending_user_turn", {
-            "message_id": message_id,
-            "created_at": created_at,
-            "session_id": context.session_id,
-        })
-
-    async def clear_pending_user_turn(self, context: MemoryContext) -> None:
-        """Clear the pending user turn marker after successful processing."""
-        storage = await self._registry.resolve(
-            layer=MemoryLayerName.SESSION,
-            scope=SessionScope(),
-            context=context,
-        )
-        await storage.delete(".pending_user_turn")
-
-    async def get_pending_user_turn(self, context: MemoryContext) -> dict[str, Any] | None:
-        """Retrieve the pending user turn marker if present."""
-        storage = await self._registry.resolve(
-            layer=MemoryLayerName.SESSION,
-            scope=SessionScope(),
-            context=context,
-        )
-        result = await storage.get(".pending_user_turn")
-        return result if isinstance(result, dict) else None
-
-    async def save_checkpoint(
-        self, context: MemoryContext, messages: Sequence[ChatMessage | dict[str, Any]]
-    ) -> None:
-        await self._layers.session.save_checkpoint(context, messages)
-
-    async def load_checkpoint(self, context: MemoryContext) -> list[ChatMessage] | None:
-        return await self._layers.session.load_checkpoint(context)
-
-    async def get_checkpoint_id(self, context: MemoryContext) -> str | None:
-        return await self._layers.session.get_checkpoint_id(context)
-
-    async def get_last_recovered_checkpoint_id(self, context: MemoryContext) -> str | None:
-        return await self._layers.session.get_last_recovered_checkpoint_id(context)
-
-    async def set_last_recovered_checkpoint_id(
-        self, context: MemoryContext, checkpoint_id: str
-    ) -> None:
-        await self._layers.session.set_last_recovered_checkpoint_id(context, checkpoint_id)
-
-    async def clear_checkpoint(self, context: MemoryContext) -> None:
-        session_mgr = self._layers.session
-        if hasattr(session_mgr, "clear_checkpoint"):
-            await session_mgr.clear_checkpoint(context)
-        else:
-            # Fallback for implementations without clear_checkpoint
-            await session_mgr.clear(context)
 
     # -- Archive convenience --------------------------------------------
 

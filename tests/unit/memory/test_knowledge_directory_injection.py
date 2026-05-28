@@ -31,20 +31,18 @@ def _make_injectable_system(knowledge_dir: Path | None = None):
 
 @pytest.mark.asyncio
 async def test_injects_knowledge_directory_path(tmp_path):
-    """Should inject knowledge directory path as a PromptSection."""
+    """Should inject knowledge directory path into the system_prompt."""
     policy = FullInjectionPolicy()
     context = MemoryContext(session_id="s1", user_id="u1")
     system = _make_injectable_system(knowledge_dir=tmp_path.resolve())
 
-    bundle = await policy.assemble(context=context, memory_system=system)
+    result = await policy.assemble(context=context, memory_system=system)
 
-    dir_section = next((s for s in bundle.system_sections if s.key == "knowledge:directory"), None)
-    assert dir_section is not None
-    assert dir_section.priority == 95
-    assert str(tmp_path.resolve()) in dir_section.content
-    assert "SOUL.md" in dir_section.content
-    assert "USER.md" in dir_section.content
-    assert "MEMORY.md" in dir_section.content
+    assert "Knowledge Directory" in result.system_prompt
+    assert str(tmp_path.resolve()) in result.system_prompt
+    assert "SOUL.md" in result.system_prompt
+    assert "USER.md" in result.system_prompt
+    assert "MEMORY.md" in result.system_prompt
 
 
 @pytest.mark.asyncio
@@ -54,10 +52,9 @@ async def test_no_directory_section_when_knowledge_disabled():
     context = MemoryContext(session_id="s1", user_id="u1")
     system = _make_injectable_system(knowledge_dir=None)
 
-    bundle = await policy.assemble(context=context, memory_system=system)
+    result = await policy.assemble(context=context, memory_system=system)
 
-    dir_section = next((s for s in bundle.system_sections if s.key == "knowledge:directory"), None)
-    assert dir_section is None
+    assert "Knowledge Directory" not in result.system_prompt
 
 
 @pytest.mark.asyncio
@@ -72,12 +69,14 @@ async def test_directory_section_cross_platform_path(tmp_path):
 
     system = _make_injectable_system(knowledge_dir=deep_dir.resolve())
 
-    bundle = await policy.assemble(context=context, memory_system=system)
+    result = await policy.assemble(context=context, memory_system=system)
 
-    dir_section = next((s for s in bundle.system_sections if s.key == "knowledge:directory"), None)
-    assert dir_section is not None
-    # Verify it's an absolute path
-    injected_path = Path(dir_section.content.split("`")[1])
+    assert "Knowledge Directory" in result.system_prompt
+    # Verify it's an absolute path by checking the injected path is absolute
+    import re
+    match = re.search(r"`([^`]+)`", result.system_prompt)
+    assert match is not None
+    injected_path = Path(match.group(1))
     assert injected_path.is_absolute()
 
 

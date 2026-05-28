@@ -6,19 +6,21 @@ from framework.core.message_utils import (
 from framework.core.types import MessageRole
 
 
-def test_normalize_agent_messages_converts_role_without_duplicate_prefix() -> None:
+def test_normalize_agent_messages_converts_role_to_xml_format() -> None:
     messages = [
         {
             "role": MessageRole.AGENT,
             "source_agent": "subagent-a",
-            "content": '<agent_message source="subagent-a"><content>hello</content></agent_message>',
+            "content": "hello",
         }
     ]
 
     converted, has_agent = normalize_agent_messages_for_llm(messages)
 
     assert has_agent is True
-    assert converted == [{
-        "role": MessageRole.USER,
-        "content": '<agent_message source="subagent-a"><content>hello</content></agent_message>',
-    }]
+    assert converted[0]["role"] == MessageRole.USER
+    assert converted[0]["content_format"] == "xml"
+    assert converted[0]["truncatable_paths"] == ["content"]
+    assert '<agent_message source="subagent-a">' in converted[0]["content"]
+    assert "<content>hello</content>" in converted[0]["content"]
+    assert "</agent_message>" in converted[0]["content"]

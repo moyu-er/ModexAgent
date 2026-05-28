@@ -24,7 +24,7 @@ class FakeContextManager:
     def __init__(self, base_system_prompt=""):
         self.base_system_prompt = base_system_prompt
 
-    async def load(self, session_id):
+    async def load(self, session_id, **kwargs):
         from framework.core.context import ContextState
 
         return ContextState(system_prompt=self.base_system_prompt, history=[])

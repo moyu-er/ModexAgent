@@ -22,9 +22,14 @@ from framework.memory.archive_generation import (
     ArchiveGenerationStrategy,
     ArchiveInputMessage,
 )
-from framework.memory.core.layers import ArchiveMemoryManager, SessionMemoryManager
+from framework.memory.core.layers import (
+    ArchiveMemoryManager,
+    PendingPrunedInputMemoryManager,
+    SessionMemoryManager,
+)
 from framework.memory.core.models import CompressionReason
 from framework.memory.core.scope import MemoryContext
+from framework.memory.pending import DefaultPendingPrunedInputExtractor
 from framework.memory.sanitizer import (
     DefaultSessionToolChainSanitizer,
     ToolChainSanitizationMode,
@@ -67,6 +72,7 @@ class CleanupResult:
     messages_pruned: int = 0
     archive_skipped: bool = False
     reason: CompressionReason | None = None
+    pending_extracted: int = 0
 
 
 async def cleanup_session(
@@ -80,6 +86,7 @@ async def cleanup_session(
     archive_strategy: ArchiveGenerationStrategy | None = None,
     archive_fail_threshold: int = 3,
     max_backups: int = 10,
+    pending: PendingPrunedInputMemoryManager | None = None,
 ) -> CleanupResult:
     """Clean up a session by pruning old messages and optionally archiving them.
 
@@ -151,6 +158,17 @@ async def cleanup_session(
             reason=trigger_reason,
         )
 
+    # Re-sanitize keep region to guarantee tool chain integrity
+    keep_messages = _resanitize_keep(keep_messages)
+
+    # Extract pending inputs from pruned messages
+    boundary_idx = len(pruned_messages)
+    pruned_indices = set(range(boundary_idx))
+    pending_entries: list[Any] = []
+    if pending is not None and pruned_messages:
+        extractor = DefaultPendingPrunedInputExtractor()
+        pending_entries = extractor.extract(sanitized, pruned_indices)
+
     # Commit: replace session messages
     revision = await session.get_revision(context)
     new_revision = await session.replace_messages_if_revision(
@@ -177,6 +195,16 @@ async def cleanup_session(
         "Cleanup committed: session=%s kept=%d pruned=%d",
         context.session_id, keep_count, prune_count,
     )
+
+    # Persist pending inputs
+    if pending is not None and pending_entries:
+        try:
+            await pending.append_entries(context, pending_entries)
+        except Exception:
+            logger.warning(
+                "Pending input persistence failed: session=%s",
+                context.session_id, exc_info=True,
+            )
 
     # ── Step 3: Archive (optional) ─────────────────────────────────────────
     #
@@ -214,6 +242,16 @@ async def cleanup_session(
                     )
                     if gen_result.writes:
                         await archive.append_bundle(context, gen_result.writes)
+                        channels = [w.channel.value for w in gen_result.writes]
+                        logger.info(
+                            "Archive generated: session=%s entries=%d channels=%s input_messages=%d",
+                            session_id, len(gen_result.writes), channels, len(archive_inputs),
+                        )
+                    else:
+                        logger.warning(
+                            "Archive generation produced no writes: session=%s input_messages=%d",
+                            session_id, len(archive_inputs),
+                        )
                     _archive_fail_counters[session_id] = 0
                     archive_skipped = False
                 except Exception:
@@ -231,6 +269,7 @@ async def cleanup_session(
         messages_pruned=prune_count,
         archive_skipped=archive_skipped,
         reason=trigger_reason,
+        pending_extracted=len(pending_entries),
     )
 
 
@@ -304,6 +343,9 @@ def _compute_boundary(
 
     # Ensure the most recent user message is kept
     boundary = _adjust_boundary_for_last_user(messages, boundary)
+
+    # Ensure keep region starts with a user message (turn boundary)
+    boundary = _adjust_boundary_for_first_user(messages, boundary)
 
     keep = messages[boundary:]
     pruned = messages[:boundary]
@@ -380,6 +422,30 @@ def _adjust_boundary_for_last_user(
         boundary = last_user_idx
 
     return boundary
+
+
+def _adjust_boundary_for_first_user(
+    messages: list[dict[str, Any]],
+    boundary: int,
+) -> int:
+    """Move boundary forward so keep region starts with a user message (turn boundary)."""
+    if boundary >= len(messages):
+        return boundary
+    if messages[boundary].get("role") == "user":
+        return boundary
+    for i in range(boundary + 1, len(messages)):
+        if messages[i].get("role") == "user":
+            return i
+    return boundary
+
+
+def _resanitize_keep(keep_messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Re-sanitize keep region to guarantee tool chain integrity."""
+    if not keep_messages:
+        return keep_messages
+    sanitizer = DefaultSessionToolChainSanitizer()
+    result = sanitizer.sanitize(keep_messages, mode=ToolChainSanitizationMode.PERSISTENT_SESSION)
+    return result.messages
 
 
 # ── Backup ───────────────────────────────────────────────────────────────────

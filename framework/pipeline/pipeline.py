@@ -20,7 +20,6 @@ from framework.commands.models import (
 from framework.core.agent_runtime_config import BusyInputMode
 from framework.core.llm_struct import RuntimeSafetyPolicy
 from framework.core.skills import SkillManager
-from framework.memory.core.message import ChatMessage
 
 from ..agents.react.state import ReActSnapshotPolicy
 from ..approval.constants import ApprovalDecision
@@ -82,15 +81,6 @@ async def _safe_flush(ctx_mgr: Any, session_id: str, *, timeout: float) -> None:
     except Exception:
         logger.exception("Memory flush failed for %s", session_id)
 
-
-async def _safe_clear_checkpoint(ctx_mgr: Any, session_id: str, *, timeout: float) -> None:
-    """Clear checkpoint 带 timeout。"""
-    try:
-        await asyncio.wait_for(ctx_mgr.clear_checkpoint(session_id), timeout=timeout)
-    except TimeoutError:
-        logger.error("Clear checkpoint timeout for %s", session_id)
-    except Exception:
-        logger.exception("Clear checkpoint failed for %s", session_id)
 
 
 async def safe_send_output(
@@ -554,8 +544,6 @@ class AgentPipeline:
         input_metadata: dict[str, Any] | None = None,
     ) -> tuple[AgentContext, Any]:
         """Build AgentContext and emitter for the turn."""
-        async def on_checkpoint(messages: list[ChatMessage | dict[str, Any]]) -> None:
-            await ctx_mgr.save_checkpoint(session_id, messages)
 
         # Ensure per-session injection queue exists
         self._injection_queues.setdefault(
@@ -721,7 +709,6 @@ class AgentPipeline:
         )
         conv_token = current_conversation_id.set(conversation_id)
         result: AgentResult | None = None
-        turn_clean = False
         turn = self.safety.turn
         turn_start = time.monotonic()
 
@@ -761,7 +748,6 @@ class AgentPipeline:
                 assistant_result=result,
                 metadata={"input_metadata": input_metadata},
             )
-            turn_clean = True
             elapsed = time.monotonic() - turn_start
             logger.info(
                 "turn_done session=%s agent=%s stop_reason=%s elapsed=%.1fs",
@@ -785,10 +771,6 @@ class AgentPipeline:
             # Clean up session task tracking
             self._session_tasks.pop(session_id, None)
             await _safe_flush(ctx_mgr, session_id, timeout=turn.memory_flush_timeout_seconds)
-            if turn_clean:
-                await _safe_clear_checkpoint(ctx_mgr, session_id, timeout=turn.memory_flush_timeout_seconds)
-            else:
-                logger.warning("Turn did not complete cleanly; checkpoint kept for %s", session_id)
             # Turn 结束时的清理（带 timeout 保护）
             if self.on_session_end is not None:
                 try:

@@ -118,21 +118,10 @@ class KnowledgeBudget:
 
 
 @dataclass(frozen=True)
-class PromptSection:
-    key: str
-    content: str
-    priority: int = 0
-    source: str = "system"
-    metadata: Mapping[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class MemoryContextBundle:
-    system_sections: list[PromptSection]
+class InjectionResult:
+    """Output of injection policy."""
+    system_prompt: str
     messages: list[ChatMessage]
-    compression_summary: str | None = None
-    dropped_sections: list[dict[str, Any]] = field(default_factory=list)
-    metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -173,12 +162,11 @@ __all__ = [
     "CompressionTrigger",
     "ConsolidationResult",
     "LongTermMemory",
+    "InjectionResult",
     "KnowledgeBudget",
     "MemoryBudget",
-    "MemoryContextBundle",
     "MemoryUpdate",
     "MemoryUpdateMode",
-    "PromptSection",
     "StorageRevision",
     "UnprocessedResult",
 ]

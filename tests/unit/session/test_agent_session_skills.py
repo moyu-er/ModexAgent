@@ -26,7 +26,7 @@ class FakeContextManager:
         self.base_system_prompt = base_system_prompt
         self._states: dict[str, Any] = {}
 
-    async def load(self, session_id):
+    async def load(self, session_id, **kwargs):
         from framework.core.context import ContextState
 
         if session_id not in self._states:

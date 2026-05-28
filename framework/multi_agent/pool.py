@@ -12,6 +12,7 @@ from framework.core.context import ContextManager
 from framework.core.emitter import AgentResult
 from framework.core.graph.interrupt import GraphInterrupt
 from framework.core.llm_struct import RuntimeSafetyPolicy
+from framework.runtime.dispatch import DispatchDeadline, current_dispatch_deadline
 from framework.core.tool_manager import InMemoryToolManager
 from framework.core.types import InputMessage
 from framework.messaging.broker import BrokerMessage, MessageBroker
@@ -273,9 +274,26 @@ class AgentPool(AgentRegistry):
             active_count,
         )
         dispatch_timeout = self._safety.turn.dispatch_timeout_seconds
+        extension = self._safety.turn.agent_run_timeout_seconds
+        deadline: DispatchDeadline | None = None
+        watchdog_task: asyncio.Task[None] | None = None
+        dispatch_task: asyncio.Task[None] | None = None
         try:
             if dispatch_timeout > 0:
-                await asyncio.wait_for(coro, timeout=dispatch_timeout)
+                deadline = DispatchDeadline(
+                    initial_timeout=dispatch_timeout, extension=extension,
+                )
+                token = current_dispatch_deadline.set(deadline)
+                dispatch_task = asyncio.ensure_future(coro)
+                watchdog_task = asyncio.create_task(
+                    self._dispatch_watchdog(dispatch_task, deadline),
+                )
+                try:
+                    await dispatch_task
+                except asyncio.CancelledError:
+                    if deadline.is_expired:
+                        raise TimeoutError from None
+                    raise
             else:
                 await coro
             self._error_counts.pop(agent_name, None)
@@ -306,6 +324,14 @@ class AgentPool(AgentRegistry):
             error_count = self._bump_error_count(agent_name)
             await self._maybe_backoff(agent_name, error_count)
         finally:
+            if watchdog_task is not None and not watchdog_task.done():
+                watchdog_task.cancel()
+                try:
+                    await watchdog_task
+                except asyncio.CancelledError:
+                    pass
+            if deadline is not None:
+                current_dispatch_deadline.reset(token)  # type: ignore[possibly-undefined]
             async with self._get_dispatch_lock(agent_name):
                 current = self._active_session_counts.get(agent_name, 0)
                 remaining = max(0, current - 1)
@@ -325,6 +351,20 @@ class AgentPool(AgentRegistry):
                 ):
                     self._transition(agent_name, AgentState.IDLE, reason="dispatch_idle")
                     self._schedule_idle_cleanup(agent_name)
+
+    async def _dispatch_watchdog(
+        self, task: asyncio.Task[None], deadline: DispatchDeadline,
+    ) -> None:
+        """监控 dispatch task 的可续期 deadline。过期则取消 task。"""
+        try:
+            while not task.done():
+                remaining = deadline.remaining
+                if remaining <= 0:
+                    task.cancel()
+                    return
+                await asyncio.sleep(remaining)
+        except asyncio.CancelledError:
+            return
 
     async def _consume_messages(self, instance: AgentInstance, descriptor: AgentDescriptor) -> None:
         """常驻 Agent 的消息消费循环（基于消息类型的分发器）。"""

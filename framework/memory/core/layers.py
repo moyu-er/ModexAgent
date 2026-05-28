@@ -58,18 +58,6 @@ class SessionMemoryManager(ABC):
         pass
 
     @abstractmethod
-    async def save_checkpoint(
-        self,
-        context: MemoryContext,
-        messages: Sequence[ChatMessage | dict[str, Any]],
-    ) -> None:
-        pass
-
-    @abstractmethod
-    async def load_checkpoint(self, context: MemoryContext) -> list[ChatMessage] | None:
-        pass
-
-    @abstractmethod
     async def clear(self, context: MemoryContext) -> None:
         pass
 
@@ -95,30 +83,6 @@ class SessionMemoryManager(ABC):
     @abstractmethod
     async def get_revision(self, context: MemoryContext) -> StorageRevision:
         pass
-
-    @abstractmethod
-    async def get_checkpoint_id(self, context: MemoryContext) -> str | None:
-        """Return the checkpoint ID stored for this session, if any."""
-        pass
-
-    @abstractmethod
-    async def clear_checkpoint(self, context: MemoryContext) -> None:
-        """Remove checkpoint data for this session without touching message history."""
-        pass
-
-    async def get_last_recovered_checkpoint_id(self, context: MemoryContext) -> str | None:
-        """Return the last checkpoint ID recovered for this session, if tracked."""
-        _ = context
-        return None
-
-    async def set_last_recovered_checkpoint_id(
-        self,
-        context: MemoryContext,
-        checkpoint_id: str,
-    ) -> None:
-        """Record that a checkpoint ID has been successfully recovered."""
-        _ = context, checkpoint_id
-        return None
 
     async def transform_messages(
         self,

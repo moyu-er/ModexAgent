@@ -1,4 +1,4 @@
-"""ContextAssembler — load context, recover checkpoints, build system prompt, run multi-agent builder.
+"""ContextAssembler — load context, build system prompt, run multi-agent builder.
 
 从 AgentPipeline._assemble_context 提取为独立模块级函数。
 """
@@ -42,46 +42,13 @@ async def assemble_context(
     context_builder: MultiAgentContextBuilder | None = None,
     append_user_message: bool = True,
 ) -> Any:
-    """Assemble context state: load context, recover checkpoints, write user message,
-    build system prompt, and run multi-agent context builder.
+    """Assemble context state: load context, write user message,
+    and run multi-agent context builder.
 
     Returns: context_state
     """
     source_agent = input_metadata.get("source_agent")
 
-    context_state = await ctx_mgr.load_with_metadata(
-        session_id,
-        metadata={"input_metadata": input_metadata},
-    )
-
-    # crash recovery with dedup
-    recover_fn = getattr(ctx_mgr, "recover_checkpoint", None)
-    if recover_fn is not None:
-        recovered, was_recovered = await recover_fn(session_id)
-        if was_recovered:
-            context_state = await ctx_mgr.load_with_metadata(
-                session_id,
-                metadata={"input_metadata": input_metadata},
-            )
-    else:
-        recovered = await ctx_mgr.load_checkpoint(session_id)
-        if recovered:
-            memory_system = getattr(ctx_mgr, "memory_system", None)
-            if memory_system is not None:
-                ctx = getattr(ctx_mgr, "_context_cache", {}).get(session_id)
-                if ctx is None:
-                    from ..memory.core.scope import MemoryContext
-
-                    ctx = MemoryContext(
-                        session_id=session_id,
-                        user_id=getattr(ctx_mgr, "default_user_id", "default"),
-                    )
-                await memory_system.add_messages(ctx, recovered)
-            await ctx_mgr.clear_checkpoint(session_id)
-            context_state = await ctx_mgr.load_with_metadata(
-                session_id,
-                metadata={"input_metadata": input_metadata},
-            )
 
     # Build multimodal content
     if media_blocks and _media_processor is not None:
@@ -101,7 +68,25 @@ async def assemble_context(
     else:
         user_message = {"role": MessageRole.USER, "content": multimodal_content}
 
-    context_state = await ctx_mgr.load(session_id)
+    # Propagate content_format / truncatable_paths from input message
+    # so governance can protect XML structure (agent messages, etc.)
+    if input_msg.content_format is not None:
+        user_message["content_format"] = input_msg.content_format
+    if input_msg.truncatable_paths is not None:
+        user_message["truncatable_paths"] = input_msg.truncatable_paths
+
+    agent_name = agent_descriptor.address.name if agent_descriptor else "main"
+    runtime_info: dict[str, Any] = {"caller_context": {"agent_name": agent_name}}
+    if input_metadata:
+        for key in ("user_id", "tenant_id", "channel", "chat_id"):
+            if key in input_metadata:
+                runtime_info[key] = input_metadata[key]
+    context_state = await ctx_mgr.load(
+        session_id,
+        tool_manager=tool_manager,
+        skill_manager=skill_manager,
+        runtime_info=runtime_info,
+    )
 
     if append_user_message and not _is_approval_cmd:
         await context_state.history.append(user_message)
@@ -122,18 +107,6 @@ async def assemble_context(
         if pending is not None:
             context_state.history = ListMessageHistory(pending)
 
-    # Build system prompt
-    agent_name = agent_descriptor.address.name if agent_descriptor else "main"
-    runtime_info: dict[str, Any] = {"caller_context": {"agent_name": agent_name}}
-    if input_metadata:
-        for key in ("user_id", "tenant_id", "channel", "chat_id"):
-            if key in input_metadata:
-                runtime_info[key] = input_metadata[key]
-    context_state.system_prompt = await ctx_mgr.build_system_prompt(
-        tool_manager=tool_manager,
-        skill_manager=skill_manager,
-        runtime_info=runtime_info,
-    )
     sideband_prompt = input_metadata.get("sideband_system_prompt")
     if isinstance(sideband_prompt, str) and sideband_prompt:
         context_state.system_prompt = "\n\n".join(

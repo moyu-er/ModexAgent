@@ -14,11 +14,18 @@ from framework.core.provider import StreamingLLMProvider
 from framework.core.types import LLMResponse
 from framework.hook import HookPayload, HookPoint
 from framework.interceptor.abc import InterceptorScope, IterationContext
+from framework.runtime.dispatch import current_dispatch_deadline
 from framework.runtime.enums import MessageDeltaSource, OperationKind, TurnPhase
 from framework.runtime.models import MessageDelta
 
 if TYPE_CHECKING:
     from framework.agents.react.agent import ReActAgent
+
+
+def _renew_dispatch_deadline() -> None:
+    deadline = current_dispatch_deadline.get()
+    if deadline is not None:
+        deadline.renew()
 
 
 class LLMNode(Node):
@@ -98,6 +105,8 @@ class LLMNode(Node):
             )
         else:
             await actual_iteration()
+
+        _renew_dispatch_deadline()
 
         response = state.llm_response
         if response is not None and response.finish_reason == FinishReason.ERROR.value:

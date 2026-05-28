@@ -580,6 +580,247 @@ class TestKeepBoundary:
         )
 
 
+class TestKeepStartsWithUser:
+    """Keep region must always start with a user message (turn boundary)."""
+
+    @pytest.mark.asyncio
+    async def test_keep_starts_with_user_after_tool_chain_adjust(
+        self, registry: InMemoryStoreRegistry,
+    ) -> None:
+        """When tool chain adjustment moves boundary backward, keep still starts with user."""
+        layer_set = _make_layer_set(registry)
+        context = _ctx()
+        session = layer_set.session
+
+        msgs = [
+            _user_msg("1"),
+            _assistant_msg("r1"),
+            _user_msg("2"),
+            _assistant_msg("r2"),
+            _user_msg("3"),
+            _tool_call_msg("call_1"),     # tool chain
+            _tool_result_msg("call_1"),
+            _assistant_msg("final"),
+        ]
+        await _add_messages(session, context, msgs)
+
+        result = await cleanup_session(
+            session=session,
+            archive=None,
+            context=context,
+            max_messages=5,
+            max_tokens=None,
+            keep_ratio=0.4,
+            archive_strategy=None,
+        )
+
+        assert result.triggered is True
+        remaining = await session.get_all_messages(context)
+        assert len(remaining) > 0
+        first_role = remaining[0].role
+        assert first_role == "user", (
+            f"Keep region must start with 'user', got '{first_role}': "
+            f"{[m.role for m in remaining]}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_keep_starts_with_user_plain_assistant_boundary(
+        self, registry: InMemoryStoreRegistry,
+    ) -> None:
+        """When boundary falls on assistant(plain), move forward to user."""
+        layer_set = _make_layer_set(registry)
+        context = _ctx()
+        session = layer_set.session
+
+        msgs = [
+            _user_msg("1"),
+            _assistant_msg("r1"),
+            _user_msg("2"),
+            _assistant_msg("r2"),  # boundary would fall here
+            _user_msg("3"),
+            _assistant_msg("r3"),
+        ]
+        await _add_messages(session, context, msgs)
+
+        result = await cleanup_session(
+            session=session,
+            archive=None,
+            context=context,
+            max_messages=4,
+            max_tokens=None,
+            keep_ratio=0.4,
+            archive_strategy=None,
+        )
+
+        assert result.triggered is True
+        remaining = await session.get_all_messages(context)
+        first_role = remaining[0].role
+        assert first_role == "user", (
+            f"Keep region must start with 'user', got '{first_role}'"
+        )
+
+
+class TestPendingExtraction:
+    """Pending inputs must be extracted from pruned messages and persisted."""
+
+    @pytest.mark.asyncio
+    async def test_pruned_user_without_response_saved_as_pending(
+        self, registry: InMemoryStoreRegistry,
+    ) -> None:
+        """User message pruned during ReAct loop (no final response) saved as pending.
+
+        Scenario: q1 asked, assistant started tool call but no plain response.
+        Boundary moves forward past tool chain to user q2. q1 becomes pending.
+        """
+        layer_set = _make_layer_set(registry)
+        context = _ctx()
+        session = layer_set.session
+
+        msgs = [
+            _user_msg("q1"),           # will be pruned — no plain assistant after it
+            _tool_call_msg("c1"),      # tool call (not plain assistant → doesn't clear pending)
+            _tool_result_msg("c1"),
+            _user_msg("q2"),           # most recent user (in keep)
+        ]
+        await _add_messages(session, context, msgs)
+
+        result = await cleanup_session(
+            session=session,
+            archive=None,
+            context=context,
+            max_messages=2,
+            max_tokens=None,
+            keep_ratio=0.5,
+            archive_strategy=None,
+            pending=layer_set.pending,
+        )
+
+        assert result.triggered is True
+        assert result.pending_extracted >= 1
+
+        entries = await layer_set.pending.get_entries(context)
+        assert len(entries) >= 1
+        pending_contents = [str(e.content) for e in entries]
+        assert any("q1" in c for c in pending_contents), (
+            f"Expected q1 in pending, got {pending_contents}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_completed_turn_not_saved_as_pending(
+        self, registry: InMemoryStoreRegistry,
+    ) -> None:
+        """User messages with a plain assistant response NOT pending."""
+        layer_set = _make_layer_set(registry)
+        context = _ctx()
+        session = layer_set.session
+
+        msgs = [
+            _user_msg("q1"), _assistant_msg("a1"),
+            _user_msg("q2"), _assistant_msg("a2"),
+            _user_msg("q3"), _assistant_msg("a3"),
+            _user_msg("q4"), _assistant_msg("a4"),
+            _user_msg("q5"), _assistant_msg("a5"),
+        ]
+        await _add_messages(session, context, msgs)
+
+        result = await cleanup_session(
+            session=session,
+            archive=None,
+            context=context,
+            max_messages=5,
+            max_tokens=None,
+            keep_ratio=0.4,
+            archive_strategy=None,
+            pending=layer_set.pending,
+        )
+
+        assert result.triggered is True
+        # All pruned user messages have plain assistant responses → no pending
+        assert result.pending_extracted == 0
+
+    @pytest.mark.asyncio
+    async def test_no_pending_when_pending_manager_is_none(
+        self, registry: InMemoryStoreRegistry,
+    ) -> None:
+        """When pending=None, cleanup still succeeds (no extraction)."""
+        layer_set = _make_layer_set(registry)
+        context = _ctx()
+        session = layer_set.session
+
+        msgs = []
+        for i in range(5):
+            msgs.append(_user_msg(f"u-{i}"))
+            msgs.append(_assistant_msg(f"a-{i}"))
+        await _add_messages(session, context, msgs)
+
+        result = await cleanup_session(
+            session=session,
+            archive=None,
+            context=context,
+            max_messages=5,
+            max_tokens=None,
+            keep_ratio=0.5,
+            archive_strategy=None,
+            pending=None,
+        )
+
+        assert result.triggered is True
+        assert result.pending_extracted == 0
+
+
+class TestKeepResanitized:
+    """Keep region is re-sanitized to ensure tool chain integrity."""
+
+    @pytest.mark.asyncio
+    async def test_incomplete_tool_chain_in_keep_force_cleaned(
+        self, registry: InMemoryStoreRegistry,
+    ) -> None:
+        """If keep region has incomplete tool chains, they are removed."""
+        layer_set = _make_layer_set(registry)
+        context = _ctx()
+        session = layer_set.session
+
+        # Build a scenario where keep region could have incomplete chains
+        msgs = [
+            _user_msg("1"),
+            _tool_call_msg("call_1"),
+            _tool_result_msg("call_1"),
+            _assistant_msg("r1"),
+            _user_msg("2"),
+            _tool_call_msg("call_2"),
+            # No tool result for call_2 — incomplete
+            _user_msg("3"),
+            _assistant_msg("r3"),
+        ]
+        await _add_messages(session, context, msgs)
+
+        result = await cleanup_session(
+            session=session,
+            archive=None,
+            context=context,
+            max_messages=5,
+            max_tokens=None,
+            keep_ratio=0.6,
+            archive_strategy=None,
+        )
+
+        assert result.triggered is True
+        remaining = await session.get_all_messages(context)
+        # No orphan tool_call without result (except possibly last open)
+        for i, m in enumerate(remaining):
+            if m.role == "assistant" and m.tool_calls:
+                call_ids = {tc["id"] if isinstance(tc, dict) else tc.id for tc in m.tool_calls}
+                # Check each call_id has a matching tool result
+                for cid in call_ids:
+                    has_result = any(
+                        rm.role == "tool" and rm.tool_call_id == cid
+                        for rm in remaining
+                    )
+                    assert has_result, (
+                        f"Orphan tool_call {cid} at index {i} has no matching result"
+                    )
+
+
 class TestCleanupResultType:
     """Verify CleanupResult dataclass fields."""
 

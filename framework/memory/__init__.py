@@ -44,11 +44,10 @@ from framework.memory.core.models import (
     CompressionPlan,
     CompressionReason,
     CompressionTrigger,
+    InjectionResult,
     KnowledgeBudget,
     LongTermMemory,
     MemoryBudget,
-    MemoryContextBundle,
-    PromptSection,
     StorageRevision,
 )
 from framework.memory.core.models import (
@@ -73,10 +72,8 @@ from framework.memory.default_system import DefaultMemorySystem
 from framework.memory.history_search import HistorySearchStrategy, KeywordHistorySearch
 from framework.memory.injection import (
     FullInjectionPolicy,
-    InjectionFilterStrategy,
     MemoryInjectionPolicy,
     RestrictedInjectionPolicy,
-    ToolMessageFilterStrategy,
 )
 from framework.memory.layers import (
     ArchiveMemoryConfig,
@@ -162,10 +159,9 @@ __all__ = [
     "CompressionReason",
     "CompressionCommitResult",
     "CompressionTrigger",
+    "InjectionResult",
     "KnowledgeBudget",
     "MemoryBudget",
-    "MemoryContextBundle",
-    "PromptSection",
     "StorageRevision",
     # Shared models
     "LongTermMemory",
@@ -191,8 +187,6 @@ __all__ = [
     "MemoryInjectionPolicy",
     "FullInjectionPolicy",
     "RestrictedInjectionPolicy",
-    "InjectionFilterStrategy",
-    "ToolMessageFilterStrategy",
     # History search
     "HistorySearchStrategy",
     "KeywordHistorySearch",

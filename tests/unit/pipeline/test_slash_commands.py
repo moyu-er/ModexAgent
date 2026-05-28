@@ -41,7 +41,15 @@ class FakeContextManager:
     ) -> FakeContextState:
         return self.state
 
-    async def load(self, session_id: str) -> FakeContextState:
+    async def load(self, session_id: str, **kwargs: Any) -> FakeContextState:
+        tool_manager = kwargs.get("tool_manager")
+        skill_manager = kwargs.get("skill_manager")
+        runtime_info = kwargs.get("runtime_info")
+        self.state.system_prompt = await self.build_system_prompt(
+            tool_manager=tool_manager,
+            skill_manager=skill_manager,
+            runtime_info=runtime_info,
+        )
         return self.state
 
     async def save(

@@ -379,7 +379,7 @@ async def test_injection_filters_no_semantic_content_entries(registry):
     bundle = await FullInjectionPolicy(max_history_entries=5).assemble(
         context=ctx, memory_system=system, query="",
     )
-    content = "\n".join(section.content for section in bundle.system_sections)
+    content = bundle.system_prompt
     assert "project setup" in content
     assert "no semantic content" not in content
 
@@ -398,7 +398,7 @@ async def test_archive_injection_prefers_query_search(registry):
     bundle = await FullInjectionPolicy(max_history_entries=1).assemble(
         context=ctx, memory_system=system, query="数据分析",
     )
-    content = "\n".join(section.content for section in bundle.system_sections)
+    content = bundle.system_prompt
     assert "Python 数据分析项目" in content
     assert "天气很好" not in content
 
@@ -428,7 +428,7 @@ async def test_archive_injection_uses_context_channel_only(registry):
     bundle = await FullInjectionPolicy(max_history_entries=5).assemble(
         context=ctx, memory_system=system, query="archive",
     )
-    content = "\n".join(section.content for section in bundle.system_sections)
+    content = bundle.system_prompt
     assert "context archive for direct dialogue continuity" in content
     assert "knowledge archive for dream consolidation only" not in content
 

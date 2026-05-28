@@ -7,14 +7,21 @@ import logging
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from datetime import datetime, timezone
 from typing import Any
 
 from framework.core.types import MessageRole
 from framework.memory.core.layers import PendingPrunedInputMemoryManager, SessionMemoryManager
+from framework.memory.core.message import ContentFormat
 from framework.memory.core.scope import MemoryContext
 from framework.memory.layers.pending import PendingPrunedInputEntry
 
 logger = logging.getLogger(__name__)
+
+
+def _xml_escape(text: str) -> str:
+    """Escape special XML characters."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 class PendingPrunedInputExtractor(ABC):
@@ -96,12 +103,25 @@ class DefaultPendingPrunedInputInjector(PendingPrunedInputInjector):
         if not entries:
             return messages
 
-        content = "\n".join(self._entry_content(entry) for entry in entries)
-        if not content:
-            return messages
+        # Build XML content
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        xml_parts = [
+            f'<supplementary-context type="pending-input" entries="{len(entries)}" timestamp="{ts}">'
+        ]
+        for entry in entries:
+            source = "user"
+            content = self._entry_content(entry)
+            xml_parts.append(f'  <entry source="{_xml_escape(source)}">')
+            xml_parts.append(f'    <content>{_xml_escape(content)}</content>')
+            xml_parts.append(f'  </entry>')
+        xml_parts.append('</supplementary-context>')
+        xml_content = "\n".join(xml_parts)
+
         pending_message = {
-            "role": MessageRole.USER.value,
-            "content": content,
+            "role": MessageRole.SYSTEM.value,
+            "content": xml_content,
+            "content_format": ContentFormat.XML,
+            "truncatable_paths": ["content"],
             "metadata": {
                 "memory_source": "pending_pruned_inputs",
                 "entry_count": len(entries),

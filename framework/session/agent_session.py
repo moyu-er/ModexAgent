@@ -227,35 +227,6 @@ class AgentSession(Generic[E]):
                 metadata={"input_metadata": runtime_info or {}},
             )
 
-            # 1.5 崩溃恢复：若存在 checkpoint，修复不完整状态并重新加载
-            load_checkpoint = getattr(self._context_manager, "load_checkpoint", None)
-            if load_checkpoint is not None:
-                recovered = await load_checkpoint(session_id)
-                if recovered:
-                    recovered = self._sanitize_recovered_messages(recovered)
-                    # MemorySystemContextManager.save() 不保存 assistant_result.messages，
-                    # 因此 recovered 消息必须通过 memory_system.add_messages() 直接写入
-                    memory_system = getattr(self._context_manager, "memory_system", None)
-                    if memory_system is not None:
-                        from framework.memory.core.scope import MemoryContext
-
-                        ctx = self._context_manager._context_cache.get(session_id)
-                        if ctx is None:
-                            ctx = MemoryContext(
-                                session_id=session_id,
-                                user_id=getattr(
-                                    self._context_manager, "default_user_id", "default"
-                                ),
-                            )
-                        await memory_system.add_messages(ctx, recovered)
-                    clear_checkpoint = getattr(self._context_manager, "clear_checkpoint", None)
-                    if clear_checkpoint is not None:
-                        await clear_checkpoint(session_id)
-                    context_state = await self._context_manager.load_with_metadata(
-                        session_id,
-                        metadata={"input_metadata": runtime_info or {}},
-                    )
-
             # 2. 构建用户消息（如有媒体附件，构建多模态 content）
             if media_blocks and _media_processor is not None:
                 try:
@@ -267,10 +238,20 @@ class AgentSession(Generic[E]):
             else:
                 multimodal_content = sanitized_content
 
-            user_message = {
+            user_message: dict[str, Any] = {
                 "role": "user",
                 "content": multimodal_content,
             }
+            # Propagate source_agent / content_format from input message
+            # so governance can protect XML structure (agent messages, etc.)
+            _msg_meta = message.metadata or {}
+            if _msg_meta.get("source_agent"):
+                user_message["role"] = "agent"
+                user_message["source_agent"] = _msg_meta["source_agent"]
+            if message.content_format is not None:
+                user_message["content_format"] = message.content_format
+            if message.truncatable_paths is not None:
+                user_message["truncatable_paths"] = message.truncatable_paths
 
             # 3. 预先保存用户消息（避免长时间 ReAct 循环中记忆缺失）
             await self._context_manager.save(
@@ -405,7 +386,8 @@ class AgentSession(Generic[E]):
             from ..multi_agent.session_id import DefaultSessionIdStrategy
             from ..multi_agent.context import current_conversation_id
             raw_id = runtime_info.get("conversation_id", session_id) if runtime_info else session_id
-            conversation_id, _agent_name = DefaultSessionIdStrategy().parse(raw_id)
+            parts = DefaultSessionIdStrategy().parse(raw_id)
+            conversation_id = parts.conversation_id
             conv_token = current_conversation_id.set(conversation_id)
 
             try:
@@ -457,39 +439,6 @@ class AgentSession(Generic[E]):
         finally:
             pass
 
-    @staticmethod
-    def _sanitize_recovered_messages(
-        messages: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        """修复恢复消息中不完整的 tool-call 链。
-
-        如果最后一条 assistant 消息包含 tool_calls 但没有对应的 tool 结果，
-        则追加错误占位 tool 结果，避免 LLM API 报错。
-        """
-        if not messages:
-            return messages
-
-        result = list(messages)
-        completed_ids = {
-            msg["tool_call_id"]
-            for msg in result
-            if msg.get("role") == "tool" and msg.get("tool_call_id")
-        }
-
-        for msg in result:
-            if msg.get("role") == "assistant" and msg.get("tool_calls"):
-                for tc in msg["tool_calls"]:
-                    tc_id = tc.get("id")
-                    if tc_id and tc_id not in completed_ids:
-                        result.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tc_id,
-                                "name": tc.get("function", {}).get("name", "unknown"),
-                                "content": "Error: Task interrupted before this tool finished.",
-                            }
-                        )
-        return result
 
     async def _maybe_trigger_dream(self, session_id: str) -> None:
         """当未处理历史条目超过阈值时，后台触发 DreamEngine。"""

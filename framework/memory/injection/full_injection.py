@@ -1,36 +1,40 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from framework.core.context import ContextState
 from framework.memory.archive_models import ArchiveChannel
 from framework.memory.core.models import (
+    InjectionResult,
     MemoryBudget,
-    MemoryContextBundle,
-    PromptSection,
 )
 from framework.memory.core.scope import MemoryContext
 from framework.memory.core.system import InjectableMemorySystem, MemorySystem
-from framework.memory.injection.filter import (
-    InjectionFilterStrategy,
-    ToolMessageFilterStrategy,
-)
 from framework.memory.injection.policy import MemoryInjectionPolicy
 from framework.memory.utils import estimate_text_tokens, normalize_memory_summary
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _PromptSection:
+    """Internal: section content with priority for sorting during assembly."""
+    content: str
+    priority: int = 0
+
+
 class FullInjectionPolicy(MemoryInjectionPolicy):
     """Main agent policy — knowledge + archive + providers + session.
 
     Injection order (deterministic, priority-ordered):
-    1. Bootstrap files: SOUL, USER → PromptSection(priority=100)
-    2. Knowledge: MEMORY.md → PromptSection(priority=90)
-    3. Archive recent: search or get_recent → PromptSection(priority=70)
-    4. Provider static blocks → PromptSection(priority=60, source="provider:{name}")
-    5. Provider prefetch → PromptSection(priority=50, source="provider:{name}")
-    6. Session visible messages → messages field of bundle (after filter)
+    1. Bootstrap files: SOUL, USER → priority=100
+    2. Knowledge: MEMORY.md → priority=90
+    3. Archive recent: search or get_recent → priority=70
+    4. Provider static blocks → priority=60
+    5. Provider prefetch → priority=50
+    6. Session visible messages → messages field of result
     """
 
     def __init__(
@@ -38,11 +42,9 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         *,
         budget: MemoryBudget | None = None,
         max_history_entries: int = 20,
-        filter_strategy: InjectionFilterStrategy | None = None,
     ) -> None:
         self._budget = budget or MemoryBudget()
         self._max_history = max_history_entries
-        self._filter = filter_strategy or ToolMessageFilterStrategy()
 
     async def assemble(
         self,
@@ -50,12 +52,12 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         context: MemoryContext,
         memory_system: MemorySystem,
         query: str = "",
-    ) -> MemoryContextBundle:
+    ) -> InjectionResult:
         if not isinstance(memory_system, InjectableMemorySystem):
             raise TypeError(
                 f"memory_system must implement InjectableMemorySystem, got {type(memory_system).__name__}"
             )
-        sections: list[PromptSection] = []
+        sections: list[_PromptSection] = []
         injectable = memory_system
 
         await self._inject_knowledge(sections, context, injectable, query)
@@ -63,24 +65,23 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         await self._inject_provider_blocks(sections, injectable)
         await self._inject_provider_prefetch(sections, context, injectable, query)
 
-        sections, dropped = self._trim_by_priority(sections)
+        sections = self._trim_by_priority(sections)
 
         session_msgs = await memory_system.get_history(
             context, max_messages=self._budget.max_history_messages
         )
-        filtered_msgs = self._filter.filter(list(session_msgs))
 
-        return MemoryContextBundle(
-            system_sections=sections,
-            messages=filtered_msgs,
-            dropped_sections=dropped,
+        system_prompt = "\n\n".join(s.content for s in sections) if sections else ""
+        return InjectionResult(
+            system_prompt=system_prompt,
+            messages=list(session_msgs),
         )
 
     # -- injection helpers ---------------------------------------------------
 
     async def _inject_knowledge(
         self,
-        sections: list[PromptSection],
+        sections: list[_PromptSection],
         context: MemoryContext,
         memory_system: InjectableMemorySystem,
         query: str,
@@ -88,26 +89,24 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         try:
             knowledge = await memory_system.retrieve_knowledge(context, query=query)
             if knowledge.soul:
-                sections.append(PromptSection(
-                    key="knowledge:soul", content=f"{knowledge.soul}",
-                    priority=100, source="system",
+                sections.append(_PromptSection(
+                    content=f"{knowledge.soul}",
+                    priority=100,
                 ))
             if knowledge.user:
-                sections.append(PromptSection(
-                    key="knowledge:user", content=f"{knowledge.user}",
-                    priority=100, source="system",
+                sections.append(_PromptSection(
+                    content=f"{knowledge.user}",
+                    priority=100,
                 ))
             if knowledge.memory:
-                sections.append(PromptSection(
-                    key="knowledge:memory", content=f"{knowledge.memory}",
-                    priority=90, source="system",
+                sections.append(_PromptSection(
+                    content=f"{knowledge.memory}",
+                    priority=90,
                 ))
 
-            # Inject knowledge directory path
             knowledge_dir = await memory_system.get_knowledge_directory(context)
             if knowledge_dir is not None:
-                sections.append(PromptSection(
-                    key="knowledge:directory",
+                sections.append(_PromptSection(
                     content=(
                         f"## Knowledge Directory\n\n"
                         f"Path: `{knowledge_dir}`\n\n"
@@ -117,14 +116,14 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                         f"Update proactively as you learn about the user.\n"
                         f"- MEMORY.md — persistent notes and facts across sessions\n"
                     ),
-                    priority=95, source="system",
+                    priority=95,
                 ))
         except Exception:
             logger.debug("Knowledge injection skipped", exc_info=True)
 
     async def _inject_archive(
         self,
-        sections: list[PromptSection],
+        sections: list[_PromptSection],
         context: MemoryContext,
         memory_system: InjectableMemorySystem,
         query: str,
@@ -154,34 +153,32 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                         time_str = f" {created_at.strftime('%Y-%m-%d %H:%M')}"
                     blocks.append(f"--- [Historical Record {idx}]{time_str} ---\n{summary}")
                 if blocks:
-                    sections.append(PromptSection(
-                        key="archive:recent",
+                    sections.append(_PromptSection(
                         content="## Historical Context Summaries\n\n" + "\n\n".join(blocks),
-                        priority=70, source="system",
+                        priority=70,
                     ))
         except Exception:
             logger.debug("Archive injection skipped", exc_info=True)
 
     async def _inject_provider_blocks(
         self,
-        sections: list[PromptSection],
+        sections: list[_PromptSection],
         memory_system: InjectableMemorySystem,
     ) -> None:
         for provider in memory_system.get_providers():
             try:
                 block = provider.system_prompt_block()
                 if block:
-                    sections.append(PromptSection(
-                        key=f"provider:{provider.name}",
+                    sections.append(_PromptSection(
                         content=block,
-                        priority=60, source=f"provider:{provider.name}",
+                        priority=60,
                     ))
             except Exception:
                 logger.debug("Provider block failed for %s", provider.name, exc_info=True)
 
     async def _inject_provider_prefetch(
         self,
-        sections: list[PromptSection],
+        sections: list[_PromptSection],
         context: MemoryContext,
         memory_system: InjectableMemorySystem,
         query: str,
@@ -191,78 +188,41 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         try:
             prefetch = await memory_system.prefetch_memories(query, context)
             if prefetch:
-                sections.append(PromptSection(
-                    key="provider:prefetch",
+                sections.append(_PromptSection(
                     content=f"<memory-context>\n{prefetch}\n</memory-context>",
-                    priority=50, source="provider:prefetch",
+                    priority=50,
                 ))
         except Exception:
             logger.debug("Provider prefetch failed", exc_info=True)
 
     def _trim_by_priority(
-        self, sections: list[PromptSection]
-    ) -> tuple[list[PromptSection], list[dict[str, Any]]]:
-        """Sort by priority descending and optionally trim to token budget.
-
-        If ``self._budget.max_system_prompt_tokens`` is set, sections are
-        dropped from lowest priority until the total is under budget.
-        Dropped sections are returned for diagnostics.
-        """
+        self, sections: list[_PromptSection]
+    ) -> list[_PromptSection]:
+        """Sort by priority descending and optionally trim to token budget."""
         sorted_sections = sorted(sections, key=lambda s: s.priority, reverse=True)
-        dropped: list[dict[str, Any]] = []
         max_tokens = self._budget.max_system_prompt_tokens
         if max_tokens is None or max_tokens <= 0:
-            return sorted_sections, dropped
+            return sorted_sections
 
-        # Calculate per-section token estimates
-        section_tokens: list[tuple[PromptSection, int]] = []
-        for sec in sorted_sections:
-            section_tokens.append((sec, estimate_text_tokens(sec.content)))
-
-        total = sum(st for _, st in section_tokens)
-        if total <= max_tokens:
-            return sorted_sections, dropped
-
-        # Drop from lowest priority until under budget
-        kept: list[PromptSection] = []
+        kept: list[_PromptSection] = []
         running = 0
-        for sec, tokens in section_tokens:
+        for sec in sorted_sections:
+            tokens = estimate_text_tokens(sec.content)
             if running + tokens <= max_tokens:
                 kept.append(sec)
                 running += tokens
             else:
-                # Try paragraph-level trim before dropping entirely
                 trimmed = self._trim_section_by_paragraphs(sec, max_tokens - running)
                 if trimmed:
                     kept.append(trimmed)
                     running += estimate_text_tokens(trimmed.content)
-                    if trimmed.content != sec.content:
-                        dropped.append({
-                            "section_key": sec.key,
-                            "source": sec.source,
-                            "priority": sec.priority,
-                            "estimated_size": tokens,
-                            "trim_reason": "paragraph_trim",
-                        })
-                else:
-                    dropped.append({
-                        "section_key": sec.key,
-                        "source": sec.source,
-                        "priority": sec.priority,
-                        "estimated_size": tokens,
-                        "trim_reason": "budget_drop",
-                    })
-        return kept, dropped
+        return kept
 
     @staticmethod
     def _trim_section_by_paragraphs(
-        section: PromptSection, max_chars: int
-    ) -> PromptSection | None:
-        """Trim a single section by dropping paragraphs from the end.
-
-        Always keeps the first paragraph. Returns None if the first paragraph
-        alone exceeds the limit.
-        """
+        section: _PromptSection, max_chars: int
+    ) -> _PromptSection | None:
+        """Trim a single section by dropping paragraphs from the end."""
         if len(section.content) <= max_chars:
             return section
         paragraphs = section.content.split("\n\n")
@@ -280,37 +240,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         trimmed_content = "\n\n".join(kept)
         if trimmed_content == section.content:
             return section
-        return PromptSection(
-            key=section.key,
+        return _PromptSection(
             content=trimmed_content,
             priority=section.priority,
-            source=section.source,
-            metadata=dict(section.metadata),
         )
-
-
-# -- context manager bridge ---------------------------------------------------
-
-
-def bundle_to_context_state(
-    bundle: MemoryContextBundle,
-    memory_system: MemorySystem,
-    context: MemoryContext,
-    base_system_prompt: str = "",
-) -> ContextState:
-    """Convert a MemoryContextBundle into the framework ContextState.
-
-    Used by MemorySystemContextManager as a bridge.
-    """
-    parts: list[str] = []
-    if base_system_prompt:
-        parts.append(base_system_prompt)
-    for section in bundle.system_sections:
-        parts.append(section.content)
-    system_prompt = "\n\n---\n\n".join(parts) if parts else ""
-
-    history = memory_system.create_message_history(
-        context=context,
-        initial_messages=bundle.messages,
-    )
-    return ContextState(system_prompt=system_prompt, history=history)
