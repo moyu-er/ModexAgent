@@ -22,6 +22,7 @@ from framework.memory.sanitizer import (
 from framework.memory.core.scope import MemoryContext
 from framework.memory.pending import PendingPrunedInputInjector
 from framework.memory.utils import estimate_token_count
+from framework.memory.xml_truncate import truncate_xml_safe
 
 TOOL_RESULT_UNAVAILABLE_CONTENT = (
     "[Tool result unavailable - the tool call may have been interrupted "
@@ -138,23 +139,33 @@ class LossyContentCompactionGovernance(ContextGovernance):
             return messages
         for i, msg in enumerate(messages):
             updated = dict(msg)
+            role = str(updated.get("role", ""))
+
+            # system messages: never truncated
+            if role == "system":
+                result.append(updated)
+                continue
+
             if i >= max_range:
                 result.append(updated)
                 continue
-            role = str(updated.get("role", ""))
+
             limit = self._limits.get(role)
             content = updated.get("content")
             if limit is not None and limit > 0 and isinstance(content, str) and len(content) > limit:
-                updated["content"] = self._truncate_content(
-                    content,
-                    limit,
-                    role,
-                    source_agent=str(updated.get("source_agent", "")),
-                )
+                fmt = str(updated.get("content_format", "plain"))
+                if fmt == "xml":
+                    paths: list[str] = updated.get("truncatable_paths") or []
+                    updated["content"] = truncate_xml_safe(content, limit, paths)
+                else:
+                    updated["content"] = self._truncate_content(
+                        content, limit, role,
+                        source_agent=str(updated.get("source_agent", "")),
+                    )
                 updated[META_CONTEXT_LOSSY] = True
                 updated[META_ORIGINAL_CHARS] = len(content)
                 updated[META_CONTEXT_REDUCTION] = self._reduction_name(role)
-            # Truncate oversized tool_calls arguments (e.g. write_file with 71 KB content)
+            # Truncate oversized tool_calls arguments
             if self._tool_args_head_chars > 0:
                 updated = self._truncate_tool_args(updated)
             result.append(updated)
@@ -339,6 +350,21 @@ class PendingInjectionGovernance(ContextGovernance):
         return await self._injector.apply(list(messages), context)
 
 
+def _compact_xml_content(content: str, paths: list[str]) -> str:
+    """Replace text inside truncatable_paths elements with compaction notice."""
+    import re
+    result = content
+    for path in paths:
+        pattern = rf'(<{path}[^>]*>)(.*?)(</{path}>)'
+        result = re.sub(
+            pattern,
+            rf'\1[content compacted: {len(result)} chars]\3',
+            result,
+            flags=re.DOTALL,
+        )
+    return result
+
+
 class MicrocompactGovernance(ContextGovernance):
     """将旧的可压缩 tool result 替换为一行摘要，保留最近 N 个。"""
     def __init__(
@@ -368,10 +394,21 @@ class MicrocompactGovernance(ContextGovernance):
             if not isinstance(content, str) or len(content) < self._min_chars:
                 continue
             name = msg.get("name", "tool")
-            summary = f"[{name} result omitted from context: {len(content):,} chars]"
-            if updated is None:
-                updated = [dict(m) for m in messages]
-            updated[idx]["content"] = summary
+            fmt = str(msg.get("content_format", "plain"))
+            if fmt == "xml":
+                paths: list[str] = msg.get("truncatable_paths") or []
+                if paths:
+                    summary = _compact_xml_content(content, paths)
+                else:
+                    summary = f"[XML {name} result omitted: {len(content):,} chars]"
+                if updated is None:
+                    updated = [dict(m) for m in messages]
+                updated[idx]["content"] = summary
+            else:
+                summary = f"[{name} result omitted from context: {len(content):,} chars]"
+                if updated is None:
+                    updated = [dict(m) for m in messages]
+                updated[idx]["content"] = summary
 
         return updated if updated is not None else list(messages)
 
