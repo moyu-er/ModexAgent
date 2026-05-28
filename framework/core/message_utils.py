@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from framework.core.types import MessageRole
-from framework.memory.core.message import ChatMessage
+from framework.memory.core.message import ChatMessage, ContentFormat
 
 AGENT_COMMUNICATION_SYSTEM_NOTE = (
     "\n\n## Agent Messages\n"
@@ -80,7 +80,7 @@ def normalize_agent_messages_for_llm(
         converted.append({
             "role": MessageRole.USER,
             "content": xml_content,
-            "content_format": "xml",
+            "content_format": ContentFormat.XML,
             "truncatable_paths": ["content"],
             "name": msg_dict.get("name"),
             "tool_calls": msg_dict.get("tool_calls"),

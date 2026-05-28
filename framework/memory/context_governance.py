@@ -155,7 +155,7 @@ class LossyContentCompactionGovernance(ContextGovernance):
             if limit is not None and limit > 0 and isinstance(content, str) and len(content) > limit:
                 fmt = str(updated.get("content_format", "plain"))
                 if fmt == "xml":
-                    paths: list[str] = updated.get("truncatable_paths") or []
+                    paths: list[str] = updated.get("truncatable_paths") or ["content"]
                     updated["content"] = truncate_xml_safe(content, limit, paths)
                 else:
                     updated["content"] = self._truncate_content(
@@ -400,14 +400,10 @@ class MicrocompactGovernance(ContextGovernance):
             name = msg.get("name", "tool")
             fmt = str(msg.get("content_format", "plain"))
             if fmt == "xml":
-                paths: list[str] = msg.get("truncatable_paths") or []
-                if paths:
-                    summary = _compact_xml_content(content, paths)
-                else:
-                    summary = f"[XML {name} result omitted: {len(content):,} chars]"
+                paths: list[str] = msg.get("truncatable_paths") or ["content"]
                 if updated is None:
                     updated = [dict(m) for m in messages]
-                updated[idx]["content"] = summary
+                updated[idx]["content"] = _compact_xml_content(content, paths)
             else:
                 summary = f"[{name} result omitted from context: {len(content):,} chars]"
                 if updated is None:

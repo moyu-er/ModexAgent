@@ -68,6 +68,12 @@ async def assemble_context(
     else:
         user_message = {"role": MessageRole.USER, "content": multimodal_content}
 
+    # Propagate content_format / truncatable_paths from metadata so
+    # governance can protect XML structure (agent messages, etc.)
+    for _xml_key in ("content_format", "truncatable_paths"):
+        if _xml_key in input_metadata:
+            user_message[_xml_key] = input_metadata[_xml_key]
+
     agent_name = agent_descriptor.address.name if agent_descriptor else "main"
     runtime_info: dict[str, Any] = {"caller_context": {"agent_name": agent_name}}
     if input_metadata:

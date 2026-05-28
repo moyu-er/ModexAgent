@@ -12,6 +12,7 @@ from typing import Any
 
 from framework.core.types import MessageRole
 from framework.memory.core.layers import PendingPrunedInputMemoryManager, SessionMemoryManager
+from framework.memory.core.message import ContentFormat
 from framework.memory.core.scope import MemoryContext
 from framework.memory.layers.pending import PendingPrunedInputEntry
 
@@ -119,7 +120,7 @@ class DefaultPendingPrunedInputInjector(PendingPrunedInputInjector):
         pending_message = {
             "role": MessageRole.SYSTEM.value,
             "content": xml_content,
-            "content_format": "xml",
+            "content_format": ContentFormat.XML,
             "truncatable_paths": ["content"],
             "metadata": {
                 "memory_source": "pending_pruned_inputs",

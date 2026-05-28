@@ -238,10 +238,19 @@ class AgentSession(Generic[E]):
             else:
                 multimodal_content = sanitized_content
 
-            user_message = {
+            user_message: dict[str, Any] = {
                 "role": "user",
                 "content": multimodal_content,
             }
+            # Propagate content_format / truncatable_paths from metadata
+            # so governance can protect XML structure (agent messages, etc.)
+            _msg_meta = message.metadata or {}
+            if _msg_meta.get("source_agent"):
+                user_message["role"] = "agent"
+                user_message["source_agent"] = _msg_meta["source_agent"]
+            for _xml_key in ("content_format", "truncatable_paths"):
+                if _xml_key in _msg_meta:
+                    user_message[_xml_key] = _msg_meta[_xml_key]
 
             # 3. 预先保存用户消息（避免长时间 ReAct 循环中记忆缺失）
             await self._context_manager.save(

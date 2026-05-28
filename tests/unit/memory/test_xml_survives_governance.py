@@ -11,7 +11,7 @@ from framework.memory.context_governance import (
 
 
 XML_AGENT_MSG = """<agent_message source="planner" timestamp="2026-05-28 14:30:00">
-  <thinking>查询数据</thinking>
+  <thinking>query data</thinking>
   <content>""" + ("d" * 3000) + """</content>
 </agent_message>"""
 
@@ -32,9 +32,30 @@ async def test_xml_agent_message_survives_lossy_truncation():
     }]
     result = await gov.apply(messages)
     assert '<agent_message source="planner"' in result[0]["content"]
-    assert '<thinking>查询数据</thinking>' in result[0]["content"]
+    assert '<thinking>query data</thinking>' in result[0]["content"]
     assert '</agent_message>' in result[0]["content"]
     assert len(result[0]["content"]) < len(XML_AGENT_MSG)
+
+
+@pytest.mark.asyncio
+async def test_xml_defaults_to_content_path_when_truncatable_paths_empty():
+    """When content_format='xml' but truncatable_paths not set, defaults to ['content']."""
+    gov = LossyContentCompactionGovernance(
+        user_head_chars=500,
+        keep_range_count=0,
+        keep_range_ratio=0.0,
+    )
+    messages = [{
+        "role": "user",
+        "content": XML_AGENT_MSG,
+        "content_format": "xml",
+    }]
+    result = await gov.apply(messages)
+    assert '<agent_message source="planner"' in result[0]["content"]
+    assert '<thinking>query data</thinking>' in result[0]["content"]
+    assert '</agent_message>' in result[0]["content"]
+    assert len(result[0]["content"]) < len(XML_AGENT_MSG)
+    assert "d" * 100 in result[0]["content"]
 
 
 @pytest.mark.asyncio
@@ -56,4 +77,4 @@ async def test_system_messages_skip_all_truncation():
     ]
     result = await gov.apply(messages)
     assert result[0]["role"] == "system"
-    assert result[0]["content"] == system_content  # Untouched
+    assert result[0]["content"] == system_content

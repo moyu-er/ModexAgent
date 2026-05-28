@@ -72,6 +72,13 @@ def _broker_msg_to_input_message(msg: BrokerMessage) -> InputMessage:
         if value:
             metadata[key] = value
 
+    # Mark XML content format for agent messages so governance can protect XML structure
+    _xml_message_types = frozenset({"agent_message", "subagent_result", "task_request", "agent_result"})
+    if metadata.get("message_type") in _xml_message_types:
+        from framework.memory.core.message import ContentFormat
+        metadata["content_format"] = ContentFormat.XML
+        metadata["truncatable_paths"] = ["content"]
+
     session_id = payload.get("session_id", str(sender))
 
     # Orphan 隔离：来自 agent 的消息若缺失 conversation_id，隔离到 synthetic session
