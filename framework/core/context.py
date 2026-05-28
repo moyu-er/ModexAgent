@@ -76,7 +76,14 @@ class ContextManager(ABC):
     """
 
     @abstractmethod
-    async def load(self, session_id: str) -> ContextState:
+    async def load(
+        self,
+        session_id: str,
+        runtime_info: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        tool_manager: Any = None,
+        skill_manager: Any = None,
+    ) -> ContextState:
         """加载指定会话的上下文"""
         pass
 
@@ -143,7 +150,7 @@ class InMemoryContextManager(ContextManager):
         self.base_system_prompt = base_system_prompt
         self._sessions: dict[str, ContextState] = {}
 
-    async def load(self, session_id: str) -> ContextState:
+    async def load(self, session_id: str, runtime_info=None, metadata=None, tool_manager=None, skill_manager=None) -> ContextState:
         if session_id not in self._sessions:
             self._sessions[session_id] = ContextState(
                 system_prompt=self.base_system_prompt,
@@ -286,7 +293,7 @@ class FileContextManager(ContextManager):
         except Exception as e:
             logger.error(f"Failed to save session {session_id} to file: {e}")
 
-    async def load(self, session_id: str) -> ContextState:
+    async def load(self, session_id: str, runtime_info=None, metadata=None, tool_manager=None, skill_manager=None) -> ContextState:
         """加载指定会话的上下文（优先从内存，其次从文件）"""
         if session_id in self._sessions:
             return self._sessions[session_id]
