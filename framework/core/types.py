@@ -72,6 +72,8 @@ class InputMessage:
     metadata: dict[str, Any] = field(default_factory=dict)
     attachments: list[str] = field(default_factory=list)
     timestamp: datetime = field(default_factory=datetime.now)
+    content_format: Any | None = None
+    truncatable_paths: list[str] | None = None
 
 
 @dataclass

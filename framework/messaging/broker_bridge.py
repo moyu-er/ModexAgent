@@ -74,10 +74,12 @@ def _broker_msg_to_input_message(msg: BrokerMessage) -> InputMessage:
 
     # Mark XML content format for agent messages so governance can protect XML structure
     _xml_message_types = frozenset({"agent_message", "subagent_result", "task_request", "agent_result"})
+    content_fmt = None
+    trunc_paths = None
     if metadata.get("message_type") in _xml_message_types:
         from framework.memory.core.message import ContentFormat
-        metadata["content_format"] = ContentFormat.XML
-        metadata["truncatable_paths"] = ["content"]
+        content_fmt = ContentFormat.XML
+        trunc_paths = ["content"]
 
     session_id = payload.get("session_id", str(sender))
 
@@ -102,6 +104,8 @@ def _broker_msg_to_input_message(msg: BrokerMessage) -> InputMessage:
         channel=msg.headers.get("channel", DefaultValues.CHANNEL),
         chat_id=msg.headers.get("chat_id", DefaultValues.CHAT_ID),
         metadata=metadata,
+        content_format=content_fmt,
+        truncatable_paths=trunc_paths,
     )
 
 
