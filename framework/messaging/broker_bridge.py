@@ -245,7 +245,8 @@ class BrokerBridgeService:
             self._restart_max_retries,
         )
         restart_task = loop.create_task(self._restart_bridge_after_delay(name, delay))
-        self._tasks.append(restart_task)
+        restart_task.add_done_callback(lambda _: self._prune_done_tasks())
+        self._add_task(restart_task)
 
     async def _restart_bridge_after_delay(self, name: str, delay: float) -> None:
         try:
@@ -260,7 +261,16 @@ class BrokerBridgeService:
         logger.info("Restarting bridge task %s", name)
         task = asyncio.create_task(spec())
         task.add_done_callback(lambda t, n=name: self._bridge_done_callback(t, n))
+        self._add_task(task)
+
+    def _add_task(self, task: asyncio.Task) -> None:
+        """Add a task and prune completed ones to keep the list clean."""
+        self._tasks = [t for t in self._tasks if not t.done()]
         self._tasks.append(task)
+
+    def _prune_done_tasks(self) -> None:
+        """Remove completed tasks from the tasks list."""
+        self._tasks = [t for t in self._tasks if not t.done()]
 
     async def start(self) -> None:
         await self.broker.start()
@@ -270,14 +280,14 @@ class BrokerBridgeService:
             self._bridge_specs[bridge_name] = lambda a=adapter, ad=addr: self._bridge_input(a, ad)
             task = asyncio.create_task(self._bridge_specs[bridge_name]())
             task.add_done_callback(lambda t, n=bridge_name: self._bridge_done_callback(t, n))
-            self._tasks.append(task)
+            self._add_task(task)
         for route in self.output_routes:
             if route.match_topic:
                 bridge_name = f"output:{route.match_topic}"
                 self._bridge_specs[bridge_name] = lambda r=route: self._bridge_output_topic(r)
                 task = asyncio.create_task(self._bridge_specs[bridge_name]())
                 task.add_done_callback(lambda t, n=bridge_name: self._bridge_done_callback(t, n))
-                self._tasks.append(task)
+                self._add_task(task)
             elif route.match_kind:
                 raise NotImplementedError(
                     "match_kind routing is not yet supported. "

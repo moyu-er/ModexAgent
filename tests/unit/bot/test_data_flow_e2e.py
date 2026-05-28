@@ -175,7 +175,7 @@ class TestNormalMessageRouting:
             await capture_task
 
         # Switch confirmation
-        switch_texts = [m.content for m, _ in output.sent if "已切换到" in m.content]
+        switch_texts = [m.content for m, _ in output.sent if "switch to" in m.content]
         assert len(switch_texts) >= 1
         assert "coding" in switch_texts[0]
 
