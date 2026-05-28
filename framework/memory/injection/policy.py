@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from framework.memory.core.models import MemoryContextBundle
+from framework.memory.core.models import InjectionResult
 from framework.memory.core.scope import MemoryContext
 from framework.memory.core.system import MemorySystem
 
@@ -17,4 +17,4 @@ class MemoryInjectionPolicy(ABC):
         context: MemoryContext,
         memory_system: MemorySystem,
         query: str = "",
-    ) -> MemoryContextBundle: ...
+    ) -> InjectionResult: ...
