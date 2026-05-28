@@ -8,7 +8,7 @@ from typing import Any
 
 from framework.core.context import ContextManager, ContextState
 from framework.core.emitter import AgentResult
-from framework.core.skills import ResolutionContext, SkillManager
+from framework.core.skills import SkillManager
 from framework.memory.context_governance import ContextGovernance
 from framework.memory.core.message import ChatMessage
 from framework.memory.core.scope import MemoryAgentRole, MemoryContext
@@ -146,6 +146,8 @@ class MemorySystemContextManager(ContextManager):
         session_id: str,
         runtime_info: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
+        tool_manager: Any = None,
+        skill_manager: SkillManager | None = None,
     ) -> ContextState:
         self._last_session_id = session_id
         ctx: MemoryContext
@@ -173,12 +175,36 @@ class MemorySystemContextManager(ContextManager):
         if runtime_info and "message" in runtime_info:
             query = str(runtime_info["message"])
 
-        bundle = await self.injection_policy.assemble(
+        # Single assemble
+        result = await self.injection_policy.assemble(
             context=ctx,
             memory_system=self.memory_system,
             query=query,
         )
-        return self._bundle_to_state(bundle, ctx)
+
+        # Build complete system_prompt in one pass
+        parts: list[str] = []
+        if self.base_system_prompt:
+            parts.append(self.base_system_prompt)
+        if result.system_prompt:
+            parts.append(result.system_prompt)
+        if skill_manager is not None:
+            from framework.core.skills import ResolutionContext
+            skill_prompt = await skill_manager.build_prompt(
+                ResolutionContext.from_runtime(tool_manager=tool_manager)
+            )
+            if skill_prompt:
+                parts.append(skill_prompt)
+        if runtime_info:
+            runtime_text = self._format_runtime_info(runtime_info)
+            if runtime_text:
+                parts.append(runtime_text)
+
+        system_prompt = "\n\n---\n\n".join(parts) if parts else ""
+        history = self.memory_system.create_message_history(
+            context=ctx, initial_messages=result.messages,
+        )
+        return ContextState(system_prompt=system_prompt, history=history)
 
     async def save(
         self,
@@ -215,58 +241,19 @@ class MemorySystemContextManager(ContextManager):
         skill_manager: SkillManager | None = None,
         runtime_info: dict[str, Any] | None = None,
     ) -> str:
-        session_id = (
-            runtime_info.get("session_id")
-            if runtime_info and "session_id" in runtime_info
-            else self._last_session_id
-        ) or "default"
-
-        ctx = self._build_context(session_id, runtime_info=runtime_info)
-        query = ""
-        if runtime_info and "message" in runtime_info:
-            query = str(runtime_info["message"])
-
-        bundle = await self.injection_policy.assemble(
-            context=ctx, memory_system=self.memory_system, query=query,
+        """Build system prompt by delegating to load()."""
+        state = await self.load(
+            session_id=self._last_session_id or "default",
+            tool_manager=tool_manager,
+            skill_manager=skill_manager,
+            runtime_info=runtime_info,
         )
-
-        parts: list[str] = []
-        if self.base_system_prompt:
-            parts.append(self.base_system_prompt)
-        for section in (bundle.system_sections or []):
-            parts.append(section.content)
-
-        if skill_manager is not None:
-            skill_prompt = await skill_manager.build_prompt(
-                ResolutionContext.from_runtime(tool_manager=tool_manager)
-            )
-            if skill_prompt:
-                parts.append(skill_prompt)
-        if runtime_info:
-            runtime_text = self._format_runtime_info(runtime_info)
-            if runtime_text:
-                parts.append(runtime_text)
-
-        return "\n\n---\n\n".join(parts)
+        return state.system_prompt
 
     def get_active_contexts(self) -> list[MemoryContext]:
         return list(self._context_cache.values())
 
     # -- Internal helpers -------------------------------------------------
-
-    def _bundle_to_state(self, bundle: Any, ctx: MemoryContext) -> ContextState:
-        """Convert a MemoryContextBundle to ContextState, injecting base prompt."""
-        parts: list[str] = []
-        if self.base_system_prompt:
-            parts.append(self.base_system_prompt)
-        for section in (bundle.system_sections or []):
-            parts.append(section.content)
-        system_prompt = "\n\n---\n\n".join(parts) if parts else ""
-
-        history = self.memory_system.create_message_history(
-            context=ctx, initial_messages=bundle.messages,
-        )
-        return ContextState(system_prompt=system_prompt, history=history)
 
     def _build_context(
         self,
