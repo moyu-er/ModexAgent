@@ -17,8 +17,8 @@ terminal:
 
 memory:
   session:
-    max_messages: 200
-    max_tokens: 100000
+    max_messages: 100
+    max_tokens: 80000
     keep_ratio_for_messages: 0.4
     keep_ratio_for_token: 0.4
   archive: {enabled: true, max_entries: 1000, retained_consumed_pairs: 3}
