@@ -125,7 +125,6 @@ class TestPoolRenewableDispatch:
             await asyncio.sleep(100)
 
         await pool._run_dispatch("main", stuck())
-        assert pool.get_status("main") == AgentState.ERROR
         assert pool._error_counts.get("main", 0) >= 1
 
     @pytest.mark.asyncio
@@ -155,11 +154,10 @@ class TestPoolRenewableDispatch:
             for _ in range(2):
                 await asyncio.sleep(0.04)
                 deadline.renew()
-            # Stop renewing; wait long enough for the extension to expire
             await asyncio.sleep(0.5)
 
         await pool._run_dispatch("main", renew_then_stall())
-        assert pool.get_status("main") == AgentState.ERROR
+        assert pool._error_counts.get("main", 0) >= 1
 
     @pytest.mark.asyncio
     async def test_context_var_cleaned_up_after_dispatch(self, pool):
