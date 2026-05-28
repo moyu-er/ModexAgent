@@ -183,18 +183,66 @@ async def assemble_context(...):
 - Crash recovery block
 - Separate `build_system_prompt()` call (merged into load)
 
-### 6. Pending Injection → XML Format in Governance
+### 6. Supplementary Injection → XML Format, System-Role Messages
 
-`PendingInjectionGovernance` changes from prefix/suffix to structured XML:
+All supplementary memory injection (pending inputs, provider prefetch, external plugin content) uses **XML format injected as system-role messages**. This ensures governance truncation cannot corrupt XML structure.
 
+**Format:**
 ```xml
-<supplementary-context type="pending-input">
-  <description>Previous user input interrupted by context compression</description>
-  <content>用户被中断的输入内容...</content>
+<supplementary-context type="pending-input" entries="2" timestamp="2026-05-28T10:30:00">
+  <entry source="user">
+    <content>用户之前被中断的输入内容...</content>
+  </entry>
+  <entry source="agent" agent-name="planner">
+    <content>另一个 agent 未完成的输入...</content>
+  </entry>
 </supplementary-context>
 ```
 
-This applies to all supplementary injections — clear labeling for the LLM to understand what each block is.
+**Pending injection moves to system role** — currently injected as `user` role at `_after_system_messages()` position. Changed to `system` role, inserted after the main system prompt:
+```python
+pending_message = {
+    "role": "system",
+    "content": xml_content,
+    "metadata": {"memory_source": "pending_pruned_inputs", ...},
+}
+```
+
+**Governance chain order (unchanged):**
+```
+LossyCompaction → ToolChainRepair → Microcompact → TokenBudget → PendingInjection
+```
+Pending injection runs LAST (already the case via `wrap_governance()`), so its XML content is never truncated.
+
+### 7. Governance: Explicit System Message Protection
+
+System messages are already de-facto protected by existing governance. This makes the protection **explicit** to prevent future regressions.
+
+**`LossyContentCompactionGovernance`** — add explicit skip for system messages:
+```python
+async def apply(self, messages):
+    for msg in messages:
+        role = str(msg.get("role", ""))
+        if role == "system":
+            result.append(msg)  # Never truncate system messages
+            continue
+        # ... existing truncation logic
+```
+
+**`TokenBudgetGovernance`** — already preserves system messages (line 394). No change needed.
+
+**`MicrocompactGovernance`** — already only targets "tool" role. No change needed.
+
+**Protection matrix after this change:**
+
+| Message Role | Truncated by Lossy? | Dropped by TokenBudget? | Compacted by Microcompact? |
+|-------------|---------------------|------------------------|---------------------------|
+| system | **No (explicit skip)** | **No (explicit preserve)** | No |
+| user | No (disabled by default) | Yes (from head) | No |
+| assistant | Yes | Yes (from head) | No |
+| tool | Yes | Yes (from head) | Yes (to summary) |
+
+All supplementary memory content (knowledge, archive summaries, provider blocks, pending inputs) lives in `system` role messages — safe from all governance truncation.
 
 ## Files Changed
 
@@ -211,7 +259,7 @@ This applies to all supplementary injections — clear labeling for the LLM to u
 | `framework/memory/injection/__init__.py` | Remove filter exports, update exports |
 | `framework/memory/core/models.py` | Delete MemoryContextBundle, PromptSection (move PromptSection internal) |
 | `framework/memory/system.py` | Remove checkpoint/pending_user_turn methods, single assemble in load(), simplify build_system_prompt |
-| `framework/memory/context_governance.py` | PendingInjectionGovernance → XML format |
+| `framework/memory/context_governance.py` | PendingInjection: system-role + XML format; LossyCompaction: explicit system skip |
 | `framework/memory/default_system.py` | Remove checkpoint delegations, remove pending_user_turn methods |
 | `framework/memory/core/layers.py` | Remove checkpoint methods from SessionMemoryManager ABC |
 | `framework/memory/core/system.py` | Remove CheckpointMemorySystem protocol |
@@ -242,4 +290,6 @@ Everything else (hooks, interceptors, control) serves different concerns (lifecy
 - Remove crash recovery tests
 - Add: verify single assemble per request
 - Add: verify InjectionResult instead of MemoryContextBundle
-- Add: verify pending injection uses XML format
+- Add: verify pending injection uses XML format + system role
+- Add: verify LossyContentCompaction skips system messages
+- Add: verify supplementary XML survives governance chain intact (integration)
