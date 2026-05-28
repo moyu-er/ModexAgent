@@ -183,66 +183,159 @@ async def assemble_context(...):
 - Crash recovery block
 - Separate `build_system_prompt()` call (merged into load)
 
-### 6. Supplementary Injection → XML Format, System-Role Messages
+### 6. ChatMessage Structural Extension
 
-All supplementary memory injection (pending inputs, provider prefetch, external plugin content) uses **XML format injected as system-role messages**. This ensures governance truncation cannot corrupt XML structure.
+Three new fields on `ChatMessage` to support structured content handling:
 
-**Format:**
+```python
+class ContentFormat(StrEnum):
+    PLAIN = "plain"
+    XML = "xml"
+
+class ChatMessage:
+    # ... existing fields ...
+    created_at: datetime | None              # message creation time (YYYY-MM-DD HH:MM:SS)
+    content_format: str | ContentFormat      # default "plain"
+    truncatable_paths: list[str] | None      # XML only: element names safe to truncate
+```
+
+**`content_format`** — drives governance truncation and archive compression strategy:
+
+| Format | Governance Truncation | Archive Compression |
+|--------|----------------------|---------------------|
+| `"plain"` | Full-text truncation (existing logic) | Full-text summarization |
+| `"xml"` | `truncate_xml_safe()` — only truncate text inside `truncatable_paths` elements | Preserve XML skeleton, compress only truncatable element contents |
+
+**`truncatable_paths`** — for XML, lists which child elements' text content can be safely truncated (typically `["content"]`). All other elements and attributes are preserved.
+
+**`created_at`** — timestamp for memory storage ordering, XML timestamp attributes, archive entry `created_at`.
+
+### 7. XML-Safe Truncation with Parse-Failure Fallback
+
+```python
+def truncate_xml_safe(content: str, max_chars: int,
+                      truncatable_paths: list[str] | None = None) -> str:
+    """Truncate XML content preserving structure. Only modifies text inside
+    truncatable_paths elements. Closes open tags on boundary cut.
+    
+    Falls back to plaintext truncation on XML parse failure.
+    """
+    if len(content) <= max_chars:
+        return content
+    
+    try:
+        # Try to parse as XML; truncate only truncatable elements
+        return _truncate_xml_structured(content, max_chars, truncatable_paths or [])
+    except (ET.ParseError, Exception):
+        # XML parse failure → fallback: plaintext truncation
+        # Still try to close any open tags on the cut boundary
+        prefix = content[:max_chars]
+        open_tags = []
+        for m in re.finditer(r'<(/?)(\w+)(?:[^>]*/?)>', prefix):
+            if m.group(1) == '/':
+                if open_tags and open_tags[-1] == m.group(2):
+                    open_tags.pop()
+            else:
+                open_tags.append(m.group(2))
+        for tag in reversed(open_tags):
+            prefix += f'</{tag}>'
+        return prefix + '\n<!-- Content truncated -->'
+```
+
+**Key behavior:**
+- For well-formed XML: truncate only text inside `truncatable_paths` elements. XML structure, attributes, and non-truncatable elements stay intact.
+- For malformed XML: fall back to plaintext cut with tag-closing, never crash.
+
+### 8. XML Message Formats
+
+All supplementary/injected content uses XML with explicit `truncatable_paths`.
+
+**Agent communication** (from other agents via `normalize_agent_messages_for_llm`):
 ```xml
-<supplementary-context type="pending-input" entries="2" timestamp="2026-05-28T10:30:00">
+<agent_message source="planner" timestamp="2026-05-28 14:30:00">
+  <thinking>需要查询数据库确认用户信息</thinking>
+  <content>用户 ID 12345 的完整资料...</content>
+</agent_message>
+<!-- content_format: "xml", truncatable_paths: ["content"] -->
+```
+
+**Pending injection** (PendingInjectionGovernance, system role):
+```xml
+<supplementary-context type="pending-input" entries="1" timestamp="2026-05-28 14:31:00">
   <entry source="user">
     <content>用户之前被中断的输入内容...</content>
   </entry>
-  <entry source="agent" agent-name="planner">
-    <content>另一个 agent 未完成的输入...</content>
-  </entry>
 </supplementary-context>
+<!-- content_format: "xml", truncatable_paths: ["content"] -->
 ```
 
-**Pending injection moves to system role** — currently injected as `user` role at `_after_system_messages()` position. Changed to `system` role, inserted after the main system prompt:
+**Provider prefetch** (system role):
+```xml
+<supplementary-context type="memory-prefetch" source="mem0" timestamp="2026-05-28 14:30:05">
+  <content>用户之前讨论过的相关话题记忆...</content>
+</supplementary-context>
+<!-- content_format: "xml", truncatable_paths: ["content"] -->
+```
+
+### 9. Governance Integration
+
+**`LossyContentCompactionGovernance`** — updated apply():
 ```python
-pending_message = {
-    "role": "system",
-    "content": xml_content,
-    "metadata": {"memory_source": "pending_pruned_inputs", ...},
-}
+async def apply(self, messages):
+    for msg in messages:
+        updated = dict(msg)
+        role = str(updated.get("role", ""))
+        
+        # system messages: never truncated
+        if role == "system":
+            result.append(updated)
+            continue
+        
+        # content truncation
+        limit = self._limits.get(role)
+        if limit and limit > 0 and isinstance(content, str) and len(content) > limit:
+            fmt = updated.get("content_format", "plain")
+            if fmt == "xml":
+                paths = updated.get("truncatable_paths") or []
+                updated["content"] = truncate_xml_safe(content, limit, paths)
+            else:
+                updated["content"] = self._truncate_content(content, limit, role)
+        
+        # tool_args truncation (unchanged)
+        ...
+```
+
+**`MicrocompactGovernance`** — for XML tool results, only compact truncatable content:
+```python
+# XML tool result: replace only <content> text with summary
+# Plain tool result: replace entire content with summary (existing)
 ```
 
 **Governance chain order (unchanged):**
 ```
 LossyCompaction → ToolChainRepair → Microcompact → TokenBudget → PendingInjection
 ```
-Pending injection runs LAST (already the case via `wrap_governance()`), so its XML content is never truncated.
 
-### 7. Governance: Explicit System Message Protection
+**Protection matrix (updated):**
 
-System messages are already de-facto protected by existing governance. This makes the protection **explicit** to prevent future regressions.
+| Message Role | content_format | Lossy behavior | TokenBudget | Microcompact |
+|-------------|---------------|----------------|-------------|-------------|
+| system | any | **Skip (explicit)** | **Preserve** | Skip |
+| user | plain | Skip (disabled default) | Drop from head | Skip |
+| user | xml | `truncate_xml_safe` | Drop from head | Skip |
+| assistant | plain | truncate_content | Drop from head | Skip |
+| assistant | xml | `truncate_xml_safe` | Drop from head | Skip |
+| tool | plain | truncate_content | Drop from head | Summarize |
+| tool | xml | `truncate_xml_safe` | Drop from head | Summarize only truncatable content |
 
-**`LossyContentCompactionGovernance`** — add explicit skip for system messages:
-```python
-async def apply(self, messages):
-    for msg in messages:
-        role = str(msg.get("role", ""))
-        if role == "system":
-            result.append(msg)  # Never truncate system messages
-            continue
-        # ... existing truncation logic
-```
+### 10. Archive Compression Rules
 
-**`TokenBudgetGovernance`** — already preserves system messages (line 394). No change needed.
+When compressing messages for archive:
 
-**`MicrocompactGovernance`** — already only targets "tool" role. No change needed.
-
-**Protection matrix after this change:**
-
-| Message Role | Truncated by Lossy? | Dropped by TokenBudget? | Compacted by Microcompact? |
-|-------------|---------------------|------------------------|---------------------------|
-| system | **No (explicit skip)** | **No (explicit preserve)** | No |
-| user | No (disabled by default) | Yes (from head) | No |
-| assistant | Yes | Yes (from head) | No |
-| tool | Yes | Yes (from head) | Yes (to summary) |
-
-All supplementary memory content (knowledge, archive summaries, provider blocks, pending inputs) lives in `system` role messages — safe from all governance truncation.
+| content_format | Rule |
+|---------------|------|
+| `"plain"` | Full-text LLM summarization |
+| `"xml"` | Preserve XML skeleton (all tags + attributes). Summarize only text inside `truncatable_paths` elements. Non-truncatable elements' text stays intact. Fallback to full-text on XML parse failure. |
 
 ## Files Changed
 
@@ -254,12 +347,15 @@ All supplementary memory content (knowledge, archive summaries, provider blocks,
 ### Modified
 | File | Change |
 |------|--------|
+| `framework/memory/core/message.py` | ChatMessage: add `created_at`, `content_format`, `truncatable_paths`; add `ContentFormat` enum |
+| `framework/memory/core/models.py` | Delete MemoryContextBundle, PromptSection (move PromptSection internal) |
 | `framework/memory/injection/full_injection.py` | Remove filter, return InjectionResult, PromptSection becomes internal |
 | `framework/memory/injection/restricted_injection.py` | Remove filter, return InjectionResult |
 | `framework/memory/injection/__init__.py` | Remove filter exports, update exports |
-| `framework/memory/core/models.py` | Delete MemoryContextBundle, PromptSection (move PromptSection internal) |
 | `framework/memory/system.py` | Remove checkpoint/pending_user_turn methods, single assemble in load(), simplify build_system_prompt |
-| `framework/memory/context_governance.py` | PendingInjection: system-role + XML format; LossyCompaction: explicit system skip |
+| `framework/memory/context_governance.py` | Add `truncate_xml_safe()`, `LossyCompaction`: content_format dispatch + system skip, `Microcompact`: XML tool compact, `PendingInjectionGovernance`: system role + XML format |
+| `framework/memory/pending.py` | `DefaultPendingPrunedInputInjector`: XML format + content_format metadata + system role |
+| `framework/core/message_utils.py` | `normalize_agent_messages_for_llm()`: agent messages → XML `<agent_message>` format with truncatable_paths |
 | `framework/memory/default_system.py` | Remove checkpoint delegations, remove pending_user_turn methods |
 | `framework/memory/core/layers.py` | Remove checkpoint methods from SessionMemoryManager ABC |
 | `framework/memory/core/system.py` | Remove CheckpointMemorySystem protocol |
@@ -290,6 +386,11 @@ Everything else (hooks, interceptors, control) serves different concerns (lifecy
 - Remove crash recovery tests
 - Add: verify single assemble per request
 - Add: verify InjectionResult instead of MemoryContextBundle
-- Add: verify pending injection uses XML format + system role
+- Add: verify pending injection uses XML format + system role + content_format
+- Add: verify agent messages use XML `<agent_message>` format with truncatable_paths
+- Add: verify truncate_xml_safe preserves XML structure, only truncates content
+- Add: verify truncate_xml_safe falls back to plaintext on malformed XML
 - Add: verify LossyContentCompaction skips system messages
+- Add: verify Microcompact only compacts truncatable_paths content for XML tool results
+- Add: verify ChatMessage content_format default is "plain"
 - Add: verify supplementary XML survives governance chain intact (integration)
