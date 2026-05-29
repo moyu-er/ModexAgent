@@ -20,7 +20,7 @@ class MemoryLayerName(StrEnum):
     ARCHIVE = "archive"
     KNOWLEDGE = "knowledge"
     PROVIDER = "provider"
-    PENDING = "pending"
+    USER_RETENTION = "user_retention"
 
 
 @dataclass

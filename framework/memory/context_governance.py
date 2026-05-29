@@ -20,7 +20,7 @@ from framework.memory.sanitizer import (
     ToolChainSanitizationMode,
 )
 from framework.memory.core.scope import MemoryContext
-from framework.memory.pending import PendingPrunedInputInjector
+from framework.memory.core.layers import UserRetentionBuffer as UserRetentionBufferABC
 from framework.memory.utils import estimate_token_count
 from framework.memory.xml_truncate import truncate_xml_safe
 
@@ -328,26 +328,25 @@ class FinalContextLegalityGovernance(ContextGovernance):
         return messages
 
 
-class PendingInjectionGovernance(ContextGovernance):
+class UserRetentionBufferInjectionGovernance(ContextGovernance):
+    """Inject user retention buffer entries into the model-visible context.
+
+    Stub — full implementation deferred to Task 6.
+    """
+
     def __init__(
         self,
-        injector: PendingPrunedInputInjector,
+        user_retention: UserRetentionBufferABC | None = None,
+        session: Any | None = None,
         context_factory: Callable[[], MemoryContext] | None = None,
     ) -> None:
-        self._injector = injector
+        self._user_retention = user_retention
+        self._session = session
         self._context_factory = context_factory
 
     async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        if self._injector is None:
-            return messages
-        context = (
-            self._context_factory()
-            if self._context_factory is not None
-            else None
-        )
-        if context is None:
-            return messages
-        return await self._injector.apply(list(messages), context)
+        # Stub: return messages unchanged for now
+        return messages
 
 
 def _compact_xml_content(content: str, paths: list[str]) -> str:

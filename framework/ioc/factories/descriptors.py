@@ -18,7 +18,7 @@ from framework.memory.injection import RestrictedInjectionPolicy
 from framework.memory.layers.config import (
     ArchiveMemoryConfig,
     MemoryLayerConfigSet,
-    PendingPrunedInputMemoryConfig,
+    UserRetentionBufferConfig,
     SessionMemoryConfig,
 )
 from framework.memory.system import MemorySystemContextManager, create_memory_system
@@ -86,7 +86,7 @@ def build_session_only_memory(
         session=SessionMemoryConfig(max_messages=max_messages),
         archive=ArchiveMemoryConfig(scope=SessionScope()),
         knowledge=None,
-        pending=PendingPrunedInputMemoryConfig(enabled=True),
+        user_retention=UserRetentionBufferConfig(enabled=True),
     )
 
     cleanup_config: dict[str, int | float] | None = None

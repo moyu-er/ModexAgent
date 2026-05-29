@@ -43,7 +43,7 @@ class ScopedMessageHistory(MessageHistory):
         archive_manager: ArchiveMemoryManager | None = None,
         archive_strategy: ArchiveGenerationStrategy | None = None,
         cleanup_config: dict[str, int | float] | None = None,
-        pending_manager: Any | None = None,
+        user_retention: Any | None = None,
     ) -> None:
         self._manager = manager
         self._context = context
@@ -51,7 +51,7 @@ class ScopedMessageHistory(MessageHistory):
         self._archive_manager = archive_manager
         self._archive_strategy = archive_strategy
         self._cleanup_config: dict[str, int | float] = cleanup_config or {}
-        self._pending_manager = pending_manager
+        self._user_retention = user_retention
         self._cache: list[ChatMessage] | None = (
             [ChatMessage.coerce(m) for m in initial_messages]
             if initial_messages is not None
@@ -67,7 +67,7 @@ class ScopedMessageHistory(MessageHistory):
             archive=self._archive_manager,
             context=self._context,
             archive_strategy=self._archive_strategy,
-            pending=self._pending_manager,
+            user_retention=self._user_retention,
             **self._cleanup_config,
         )
 
@@ -181,7 +181,7 @@ class DefaultMemorySystem(MemorySystem):
             archive_manager=self._layers.archive,
             archive_strategy=self._archive_strategy,
             cleanup_config=self._cleanup_config,
-            pending_manager=self._layers.pending,
+            user_retention=self._layers.user_retention,
         )
 
     async def add_messages(
@@ -238,8 +238,8 @@ class DefaultMemorySystem(MemorySystem):
             await self._layers.archive.clear(context)
         if self._layers.knowledge is not None:
             await self._layers.knowledge.clear(context)
-        if self._layers.pending is not None:
-            await self._layers.pending.clear(context)
+        if self._layers.user_retention is not None:
+            await self._layers.user_retention.clear(context)
 
     # -- Provider management ---------------------------------------------
 

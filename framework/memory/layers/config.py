@@ -9,10 +9,10 @@ Default session cleanup flow:
 3. When thresholds are exceeded, messages are pruned using the configured
    ``keep_ratio``. If an ``archive_strategy`` is provided, pruned messages
    are archived before removal.
-4. ``DefaultPendingPrunedInputExtractor`` records pruned unfinished
-   ``user``/``agent`` inputs so ``DefaultPendingPrunedInputInjector`` can
+4. ``UserBufferEntry`` records pruned unfinished
+   ``user``/``agent`` inputs so ``UserRetentionBuffer`` can
    restore them into the next model-visible context until a plain assistant
-   completion clears the pending entries.
+   completion clears the user retention entries.
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ class KnowledgeMemoryConfig:
 
 
 @dataclass(frozen=True)
-class PendingPrunedInputMemoryConfig:
+class UserRetentionBufferConfig:
     enabled: bool = True
     max_entries: int = 8
     max_chars: int = 12000
@@ -68,6 +68,6 @@ class MemoryLayerConfigSet:
     session: SessionMemoryConfig = field(default_factory=SessionMemoryConfig)
     archive: ArchiveMemoryConfig | None = field(default_factory=ArchiveMemoryConfig)
     knowledge: KnowledgeMemoryConfig | None = field(default_factory=KnowledgeMemoryConfig)
-    pending: PendingPrunedInputMemoryConfig | None = field(
-        default_factory=PendingPrunedInputMemoryConfig
+    user_retention: UserRetentionBufferConfig | None = field(
+        default_factory=UserRetentionBufferConfig
     )

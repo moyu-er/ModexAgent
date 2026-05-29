@@ -21,7 +21,7 @@ from framework.memory.layers.config import MemoryLayerConfigSet
 from framework.memory.layers.factory import MemoryLayerFactory
 from framework.memory.archive_generation import ArchiveGenerationStrategy
 from framework.memory.lifecycle import MemoryMaintenancePolicy
-from framework.memory.pending import DefaultPendingPrunedInputInjector
+# UserRetentionBuffer injection moved to framework.memory.user_buffer (Task 6 stub)
 from framework.memory.registry.file import DefaultMemoryStoreRegistry
 
 logger = logging.getLogger(__name__)
@@ -47,11 +47,11 @@ def create_memory_system(
     registry = DefaultMemoryStoreRegistry(workspace)
     if session_only:
         session_config = config.session if config else None
-        pending_config = config.pending if config else None
+        user_retention_config = config.user_retention if config else None
         layer_set = MemoryLayerFactory.session_only(
             registry=registry,
             config=session_config,
-            pending_config=pending_config,
+            user_retention_config=user_retention_config,
         )
     else:
         layer_set = MemoryLayerFactory.single_user(
@@ -106,20 +106,18 @@ class MemorySystemContextManager(ContextManager):
     ) -> ContextGovernance | None:
         if not isinstance(self.memory_system, DefaultMemorySystem):
             return governance
-        pending_manager = self.memory_system.layers.pending
-        if pending_manager is None:
+        user_retention = self.memory_system.layers.user_retention
+        if user_retention is None:
             return governance
-        session_manager = self.memory_system.layers.session
-        injector = DefaultPendingPrunedInputInjector(
-            manager=pending_manager,
-            session=session_manager,
-        )
+        # UserRetentionBufferInjectionGovernance stub — full implementation deferred to Task 6
         from framework.memory.context_governance import (
             CompositeGovernance,
-            PendingInjectionGovernance,
+            UserRetentionBufferInjectionGovernance,
         )
-        pending_governance = PendingInjectionGovernance(
-            injector=injector,
+        session_manager = self.memory_system.layers.session
+        retention_governance = UserRetentionBufferInjectionGovernance(
+            user_retention=user_retention,
+            session=session_manager,
             context_factory=lambda: (
                 self._context_cache.get(session_id)
                 or MemoryContext(
@@ -131,8 +129,8 @@ class MemorySystemContextManager(ContextManager):
             ),
         )
         if governance is not None:
-            return CompositeGovernance([governance, pending_governance])
-        return pending_governance
+            return CompositeGovernance([governance, retention_governance])
+        return retention_governance
 
     # -- ContextManager interface -----------------------------------------
 

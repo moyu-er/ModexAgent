@@ -24,12 +24,12 @@ from framework.memory.archive_generation import (
 )
 from framework.memory.core.layers import (
     ArchiveMemoryManager,
-    PendingPrunedInputMemoryManager,
     SessionMemoryManager,
+    UserRetentionBuffer,
 )
 from framework.memory.core.models import CompressionReason
 from framework.memory.core.scope import MemoryContext
-from framework.memory.pending import DefaultPendingPrunedInputExtractor
+from framework.memory.user_buffer import UserBufferEntry
 from framework.memory.sanitizer import (
     DefaultSessionToolChainSanitizer,
     ToolChainSanitizationMode,
@@ -72,7 +72,7 @@ class CleanupResult:
     messages_pruned: int = 0
     archive_skipped: bool = False
     reason: CompressionReason | None = None
-    pending_extracted: int = 0
+    user_retention_extracted: int = 0
 
 
 async def cleanup_session(
@@ -86,7 +86,7 @@ async def cleanup_session(
     archive_strategy: ArchiveGenerationStrategy | None = None,
     archive_fail_threshold: int = 3,
     max_backups: int = 10,
-    pending: PendingPrunedInputMemoryManager | None = None,
+    user_retention: UserRetentionBuffer | None = None,
 ) -> CleanupResult:
     """Clean up a session by pruning old messages and optionally archiving them.
 
@@ -161,13 +161,23 @@ async def cleanup_session(
     # Re-sanitize keep region to guarantee tool chain integrity
     keep_messages = _resanitize_keep(keep_messages)
 
-    # Extract pending inputs from pruned messages
+    # Extract user retention entries from pruned messages
+    import time
+    pruned_now = time.time()
     boundary_idx = len(pruned_messages)
     pruned_indices = set(range(boundary_idx))
-    pending_entries: list[Any] = []
-    if pending is not None and pruned_messages:
-        extractor = DefaultPendingPrunedInputExtractor()
-        pending_entries = extractor.extract(sanitized, pruned_indices)
+    retention_entries: list[UserBufferEntry] = []
+    if user_retention is not None and pruned_messages:
+        for idx in pruned_indices:
+            if idx < len(sanitized):
+                msg = sanitized[idx]
+                role = str(msg.get("role", ""))
+                if role in {"user", "agent"}:
+                    try:
+                        entry = UserBufferEntry.from_message(msg, pruned_at=pruned_now)
+                        retention_entries.append(entry)
+                    except (ValueError, TypeError):
+                        pass
 
     # Commit: replace session messages
     revision = await session.get_revision(context)
@@ -196,13 +206,14 @@ async def cleanup_session(
         context.session_id, keep_count, prune_count,
     )
 
-    # Persist pending inputs
-    if pending is not None and pending_entries:
+    # Persist user retention entries
+    if user_retention is not None and retention_entries:
         try:
-            await pending.append_entries(context, pending_entries)
+            for entry in retention_entries:
+                user_retention.upsert_pruned_user(entry)
         except Exception:
             logger.warning(
-                "Pending input persistence failed: session=%s",
+                "User retention persistence failed: session=%s",
                 context.session_id, exc_info=True,
             )
 
@@ -269,7 +280,7 @@ async def cleanup_session(
         messages_pruned=prune_count,
         archive_skipped=archive_skipped,
         reason=trigger_reason,
-        pending_extracted=len(pending_entries),
+        user_retention_extracted=len(retention_entries),
     )
 
 
