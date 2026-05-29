@@ -18,41 +18,13 @@ from pathlib import Path
 from typing import Any
 
 from framework.tools.terminal.prompt import drain_windows_startup
-from framework.tools.terminal.results import TerminalRead, TerminalSegment
+from framework.tools.terminal.results import SlidingOutputBuffer, TerminalRead, TerminalSegment
 from framework.tools.terminal.types import Platform, TerminalVisibility, _family_from_path
 
-from .base import TerminalBackend
+from .base import TerminalBackend, extract_current_segment_from_buffer
 
 logger = logging.getLogger(__name__)
 _READ_TIMEOUT = 0.5
-
-
-def extract_current_segment_from_buffer(text: str) -> TerminalSegment:
-    """Extract the last terminal segment from buffered PTY output.
-
-    Strips ANSI/CSI sequences before checking for prompt endings so that
-    terminal control codes (e.g. \\x1b[0K, \\x1b[?25h) after the prompt
-    do not prevent empty-prompt detection.
-    """
-    from framework.tools.terminal.prompt import _strip_ansi_and_da1
-
-    clean = _strip_ansi_and_da1(text)
-    lines = clean.splitlines()
-    if not lines:
-        return TerminalSegment(text="", cursor_line="", is_empty_prompt=True)
-    cursor_line = lines[-1]
-    prompt_indexes = [
-        index
-        for index, line in enumerate(lines)
-        if line.rstrip().endswith((">", "$", "#", "%"))
-    ]
-    start = prompt_indexes[-1] if prompt_indexes else max(0, len(lines) - 1)
-    segment_text = "\n".join(lines[start:])
-    return TerminalSegment(
-        text=segment_text,
-        cursor_line=cursor_line,
-        is_empty_prompt=cursor_line.rstrip().endswith((">", "$", "#", "%")),
-    )
 
 
 class VisibleWindowsPtyBackend(TerminalBackend):
@@ -68,11 +40,12 @@ class VisibleWindowsPtyBackend(TerminalBackend):
     visibility = TerminalVisibility.VISIBLE
 
     def __init__(self) -> None:
+        super().__init__()
         self._proc: subprocess.Popen | None = None
         self._sock: socket.socket | None = None
         self._shell: str | None = None
         self._title: str = "agent-terminal"
-        self._output_buffer: str = ""
+        self._output_buffer = SlidingOutputBuffer()
 
     @property
     def window_title(self) -> str:
@@ -147,11 +120,12 @@ class VisibleWindowsPtyBackend(TerminalBackend):
     ) -> TerminalRead:
         raw = await self.read(timeout=timeout, max_size=max_size)
         if raw:
-            self._output_buffer += raw
+            self._append_to_buffer(raw)
         return TerminalRead(stdout=raw, raw=raw)
 
     async def current_segment(self) -> TerminalSegment:
-        return extract_current_segment_from_buffer(self._output_buffer)
+        assert self._output_buffer is not None
+        return extract_current_segment_from_buffer(self._output_buffer.text)
 
     async def interrupt(self) -> None:
         await self.write("\x03")

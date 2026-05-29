@@ -9,12 +9,53 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from framework.tools.terminal.results import TerminalRead, TerminalSegment
+from framework.tools.terminal.results import SlidingOutputBuffer, TerminalRead, TerminalSegment
 from framework.tools.terminal.types import Platform, TerminalVisibility
+
+
+def extract_current_segment_from_buffer(text: str) -> TerminalSegment:
+    """Extract the last terminal segment from buffered PTY output.
+
+    Strips ANSI/CSI sequences before checking for prompt endings so that
+    terminal control codes (e.g. \\x1b[0K, \\x1b[?25h) after the prompt
+    do not prevent empty-prompt detection.
+    """
+    from framework.tools.terminal.prompt import _strip_ansi_and_da1
+
+    clean = _strip_ansi_and_da1(text)
+    lines = clean.splitlines()
+    if not lines:
+        return TerminalSegment(text="", cursor_line="", is_empty_prompt=True)
+    cursor_line = lines[-1]
+    prompt_indexes = [
+        index
+        for index, line in enumerate(lines)
+        if line.rstrip().endswith((">", "$", "#", "%"))
+    ]
+    start = prompt_indexes[-1] if prompt_indexes else max(0, len(lines) - 1)
+    segment_text = "\n".join(lines[start:])
+    return TerminalSegment(
+        text=segment_text,
+        cursor_line=cursor_line,
+        is_empty_prompt=cursor_line.rstrip().endswith((">", "$", "#", "%")),
+    )
 
 
 class TerminalBackend(ABC):
     """Abstract terminal backend — wraps platform-specific PTY libraries."""
+
+    def __init__(self) -> None:
+        self._output_buffer: SlidingOutputBuffer | None = None
+
+    def mark_command_boundary(self) -> None:
+        """Seal current buffer parts as a completed command block."""
+        if self._output_buffer is not None:
+            self._output_buffer.mark_command_boundary()
+
+    def _append_to_buffer(self, text: str) -> None:
+        """Append output text to the sliding output buffer."""
+        if self._output_buffer is not None:
+            self._output_buffer.append(text)
 
     @property
     @abstractmethod

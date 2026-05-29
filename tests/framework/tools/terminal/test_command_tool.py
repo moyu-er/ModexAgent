@@ -153,7 +153,7 @@ async def test_command_returns_running_with_waiting_for_input_hint() -> None:
     cfg = TerminalRuntimeConfig(
         default_yield_ms=60_000,  # above timeout — never yield normally
         input_wait_idle_ms=100,
-        input_wait_early_min_elapsed_ms=50,
+        initial_idle_threshold_ms=50,
         default_command_timeout_seconds=5,
         command_tool_outer_timeout_seconds=10,
     )

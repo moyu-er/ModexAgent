@@ -28,9 +28,17 @@ class TerminalRuntimeConfig:
     # Solution C: early input-wait detection via consecutive empty reads
     empty_read_threshold: int = 5
     empty_read_interval_ms: int = 50
-    input_wait_early_min_elapsed_ms: int = 2_000
     output_velocity_window_s: int = 5
     output_velocity_active_threshold: int = 2
+    # Tiered idle timeout thresholds (replaces input_wait_early_min_elapsed_ms)
+    initial_idle_threshold_ms: int = 5_000
+    active_idle_threshold_ms: int = 15_000
+    # Global memory pressure
+    max_total_buffer_chars: int = 1_000_000
+    # Pager auto-scroll
+    pager_auto_scroll_max_pages: int = 10
+    pager_auto_scroll_max_chars: int = 100_000
+    pager_idle_detect_seconds: float = 2.0
 
 
 def resolve_yield_ms(value: int | None, config: TerminalRuntimeConfig) -> int:

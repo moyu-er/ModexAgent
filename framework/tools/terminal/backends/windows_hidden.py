@@ -13,10 +13,10 @@ import socket as _socket
 import sys
 
 from framework.tools.terminal.prompt import drain_windows_startup
-from framework.tools.terminal.results import TerminalRead, TerminalSegment
+from framework.tools.terminal.results import SlidingOutputBuffer, TerminalRead, TerminalSegment
 from framework.tools.terminal.types import Platform, TerminalVisibility, _family_from_path
 
-from .base import TerminalBackend
+from .base import TerminalBackend, extract_current_segment_from_buffer
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +32,10 @@ class WindowsHiddenPtyBackend(TerminalBackend):
     visibility = TerminalVisibility.HIDDEN
 
     def __init__(self) -> None:
+        super().__init__()
         self._proc: object | None = None
         self._shell: str | None = None
-        self._output_buffer: str = ""
+        self._output_buffer = SlidingOutputBuffer()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -90,14 +91,14 @@ class WindowsHiddenPtyBackend(TerminalBackend):
         try:
             raw = await loop.run_in_executor(None, _do_read)
             if raw:
-                self._output_buffer += raw
+                self._append_to_buffer(raw)
             return TerminalRead(stdout=raw, raw=raw)
         except Exception:
             return TerminalRead(stdout="", raw="")
 
     async def current_segment(self) -> TerminalSegment:
-        from framework.tools.terminal.backends.visible_windows import extract_current_segment_from_buffer
-        return extract_current_segment_from_buffer(self._output_buffer)
+        assert self._output_buffer is not None
+        return extract_current_segment_from_buffer(self._output_buffer.text)
 
     async def interrupt(self) -> None:
         if self._proc is None:

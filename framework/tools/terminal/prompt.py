@@ -12,6 +12,8 @@ import re
 import time as _time
 from collections.abc import Awaitable, Callable
 
+from framework.tools.terminal.results import TerminalSegment
+
 # DA1 (Device Attributes) pollution from conpty/PSReadLine.
 _DA1_PATTERN = re.compile(r"\x1b\[\?[\d;]+c")
 
@@ -184,12 +186,38 @@ async def drain_windows_startup(
         # Phase 4: consume any trailing sequences until quiet again
         await _drain_until_quiet(max_empty_reads=3, read_timeout=0.3)
 
-        # Phase 5: handshake - send empty command to confirm bash is truly ready.
-        # After line clearing, bash may still have delayed bracketed-paste sequences
-        # or readline state transitions pending.  An empty command forces bash to
-        # process anything in its input buffer and emit a fresh prompt.  If there
-        # is still trailing pollution it gets consumed here, not mixed with the
-        # first real command.
-        await write_fn("\n")
+# Phase 5: handshake - send empty command to confirm bash is truly ready.
+    # After line clearing, bash may still have delayed bracketed-paste sequences
+    # or readline state transitions pending.  An empty command forces bash to
+    # process anything in its input buffer and emit a fresh prompt.  If there
+    # is still trailing pollution it gets consumed here, not mixed with the
+    # first real command.
+    await write_fn("\n")
     await asyncio.sleep(0.2)
     await _drain_until_quiet(max_empty_reads=3, read_timeout=0.3)
+
+
+_PAGER_ENTRY_MARKER = ":"
+
+
+def detect_pager_entry(cursor_line: str) -> bool:
+    """Detect if cursor line is a pager entry prompt (less colon).
+
+    Only matches bare ":" on its own line. Excludes "config:", "error:", etc.
+    """
+    return cursor_line.strip() == _PAGER_ENTRY_MARKER
+
+
+def resolve_cursor_line(segment: TerminalSegment) -> str:
+    """Get cursor line, falling back to last non-empty text line.
+
+    The tmux backend does not populate cursor_line (defaults to "").
+    This helper provides a consistent fallback.
+    """
+    if segment.cursor_line:
+        return segment.cursor_line
+    lines = segment.text.splitlines()
+    for line in reversed(lines):
+        if line.strip():
+            return line
+    return ""

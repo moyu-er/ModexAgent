@@ -19,6 +19,7 @@ class FakeBackend(TerminalBackend):
     visibility = TerminalVisibility.HIDDEN
 
     def __init__(self) -> None:
+        super().__init__()
         self.started = False
         self.writes: list[str] = []
 
