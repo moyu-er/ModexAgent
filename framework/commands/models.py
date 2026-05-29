@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from framework.approval.types import ApprovalAction
 from framework.commands.constants import (
@@ -57,6 +57,8 @@ class CommandHandlingResult:
     control_command: ControlCommand | None = None
     invocation: SlashCommandInvocation | None = None
     metadata: dict[str, JsonValue] = field(default_factory=dict)
+    content_format: Any | None = None
+    truncatable_paths: list[str] | None = None
 
 
 class CommandProcessor(Protocol):

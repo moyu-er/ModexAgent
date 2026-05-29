@@ -81,8 +81,8 @@ class ScopedMessageHistory(MessageHistory):
             return
         if msg_dict.get("tool_calls"):
             return
-        assistant_content = msg_dict.get("content", "")
-        if not assistant_content:
+        assistant_content = msg_dict.get("content")
+        if assistant_content is None:
             return
         await self._user_retention.mark_all_completed(self._context, assistant_content)
 

@@ -246,3 +246,93 @@ async def test_urb_disabled_returns_none_from_factory():
     )
     layer_set = MemoryLayerFactory.single_user(registry=registry, config=config)
     assert layer_set.user_retention is None
+
+
+# ── XML format support ──
+
+
+def test_entry_from_message_captures_content_format():
+    from framework.memory.core.message import ContentFormat
+
+    entry = UserBufferEntry.from_message(
+        {
+            "role": "user",
+            "content": '<command_context><skill>x</skill></command_context>',
+            "content_format": ContentFormat.XML,
+            "truncatable_paths": ["command_context", "skill"],
+        },
+        pruned_at=time.time(),
+    )
+    assert entry.content_format == ContentFormat.XML
+    assert entry.truncatable_paths == ["command_context", "skill"]
+
+
+def test_entry_from_message_defaults_format_to_none():
+    entry = UserBufferEntry.from_message(
+        {"role": "user", "content": "plain text"},
+        pruned_at=time.time(),
+    )
+    assert entry.content_format is None
+    assert entry.truncatable_paths is None
+
+
+def test_entry_roundtrip_preserves_xml_format():
+    from framework.memory.core.message import ContentFormat
+
+    entry = UserBufferEntry.from_message(
+        {
+            "role": "user",
+            "content": "<root>data</root>",
+            "content_format": ContentFormat.XML,
+            "truncatable_paths": ["root"],
+        },
+        pruned_at=time.time(),
+    )
+    data = entry.to_dict()
+    restored = UserBufferEntry.from_dict(data)
+    assert restored is not None
+    assert restored.content_format == ContentFormat.XML
+    assert restored.truncatable_paths == ["root"]
+
+
+@pytest.mark.asyncio
+async def test_urb_xml_truncation_preserves_structure(registry: InMemoryStoreRegistry):
+    """XML entries must be truncated using XML-safe method, not plain slicing."""
+    from framework.memory.core.message import ContentFormat
+
+    layer_set = _make_layer_set(registry)
+    ctx = MemoryContext(session_id="test-xml-trunc")
+
+    # Build a long XML skill message that exceeds max_user_chars (4000)
+    skill_content = "x" * 5000
+    xml_msg = (
+        f'<command_context type="skill" name="test">\n'
+        f"<skill>\n{skill_content}\n</skill>\n"
+        f"</command_context>\n\n"
+        f"<user_input>\nquestion\n</user_input>"
+    )
+    entry = UserBufferEntry.from_message(
+        {
+            "role": "user",
+            "content": xml_msg,
+            "content_format": ContentFormat.XML,
+            "truncatable_paths": ["command_context", "user_input", "skill"],
+        },
+        pruned_at=time.time(),
+    )
+
+    await layer_set.user_retention.upsert_pruned_user(ctx, entry)
+    entries = await layer_set.user_retention.get_entries(ctx)
+    assert len(entries) == 1
+
+    truncated = entries[0].pruned_user_content
+    # Must be shorter than original
+    assert len(truncated) < len(xml_msg)
+    # XML structure must be preserved — all opened tags must be closed
+    assert truncated.count("<command_context") == truncated.count("</command_context>")
+    assert truncated.count("<skill") == truncated.count("</skill>")
+    assert truncated.count("<user_input") == truncated.count("</user_input>")
+    # Must not have a raw cut in the middle of a tag
+    assert not any(
+        truncated.endswith(frag) for frag in ["<", "</", "<s", "<sk"]
+    )

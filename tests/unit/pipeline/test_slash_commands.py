@@ -112,6 +112,35 @@ async def test_assemble_context_appends_transformed_skill_content() -> None:
     assert messages[-1]["content"] == "<command_context>skill</command_context>"
 
 
+@pytest.mark.asyncio
+async def test_assemble_context_propagates_xml_format_from_input_msg() -> None:
+    """When input_msg has content_format=XML, the user message must carry it."""
+    from framework.memory.core.message import ContentFormat
+
+    ctx_mgr = FakeContextManager()
+    input_msg = InputMessage(content="/weather", session_id="s1")
+    input_msg.content_format = ContentFormat.XML
+    input_msg.truncatable_paths = ["command_context", "user_input", "skill"]
+
+    state = await assemble_context(
+        "s1",
+        input_msg,
+        {},
+        '<command_context type="skill"><skill>content</skill></command_context>',
+        [],
+        None,
+        ctx_mgr,
+        None,
+        False,
+        append_user_message=True,
+    )
+    messages = await state.history.to_list()
+    last_msg = messages[-1]
+    assert last_msg["role"] == MessageRole.USER
+    assert last_msg.get("content_format") == ContentFormat.XML
+    assert last_msg.get("truncatable_paths") == ["command_context", "user_input", "skill"]
+
+
 class FakeCommandProcessor:
     def __init__(self, result: CommandHandlingResult) -> None:
         self.result = result
@@ -332,6 +361,49 @@ async def test_pipeline_skill_uses_transformed_user_content() -> None:
         msg.get("content") == "<command_context>skill</command_context>"
         for msg in agent.last_messages
     )
+
+
+@pytest.mark.asyncio
+async def test_pipeline_skill_propagates_xml_format_to_agent_messages() -> None:
+    """Skill XML content must carry content_format and truncatable_paths."""
+    from framework.core.context import InMemoryContextManager
+    from framework.core.tool_manager import InMemoryToolManager
+    from framework.pipeline.pipeline import AgentPipeline
+
+    agent = FakeAgent()
+    xml_content = (
+        '<command_context type="skill" name="weather">\n'
+        "<skill>check weather</skill>\n"
+        "</command_context>\n\n"
+        "<user_input>\ntomorrow\n</user_input>"
+    )
+    processor = FakeCommandProcessor(
+        CommandHandlingResult(
+            action=CommandAction.TRANSFORM_TO_USER_INPUT,
+            dispatch_policy=CommandDispatchPolicy.NORMAL_QUEUE,
+            user_content=xml_content,
+            trigger_agent=True,
+            append_user_message=True,
+            content_format="xml",
+            truncatable_paths=["command_context", "user_input", "skill"],
+        )
+    )
+    pipeline = AgentPipeline(
+        agent=agent,
+        context_manager=InMemoryContextManager(base_system_prompt="system"),
+        tool_manager=InMemoryToolManager(),
+        input_adapter=TestInputAdapter(),
+        output_adapter=NullOutputAdapter(),
+        command_processor=processor,
+    )
+    await pipeline.process_message(InputMessage(content="/weather tomorrow", session_id="s1"))
+    assert agent.runs == 1
+    skill_msgs = [m for m in agent.last_messages if m.get("content") == xml_content]
+    assert len(skill_msgs) == 1
+    assert skill_msgs[0].get("content_format") == "xml", (
+        f"Skill XML message must have content_format='xml', got {skill_msgs[0].get('content_format')}"
+    )
+    assert skill_msgs[0].get("truncatable_paths") == ["command_context", "user_input", "skill"]
 
 
 def test_command_processor_exposes_dispatch_policy_before_lock() -> None:

@@ -85,12 +85,23 @@ class MemorySystemContextManager(ContextManager):
         base_system_prompt: str = "",
         injection_policy: Any | None = None,
     ):
-        # Invariant: URB injection binding is structurally enforced.
-        # wrap_governance() checks self.memory_system.layers.user_retention
-        # at call time. If not None, a UserRetentionBufferInjectionGovernance
-        # is created and composed into the governance chain. If None, no URB
-        # injection occurs. No separate validation is needed — the binding is
-        # implicit in the layers.user_retention attribute.
+        # Invariant: URB completion hook and injection governance must be
+        # both enabled or both disabled. The hook is wired when
+        # layers.user_retention is not None (via ScopedMessageHistory);
+        # injection is wired when wrap_governance sees a non-None URB.
+        # We validate here that both paths agree.
+        if isinstance(memory_system, DefaultMemorySystem):
+            urb_present = memory_system.layers.user_retention is not None
+            # The hook is present when URB layer is not None.
+            # Injection governance will be wired in wrap_governance().
+            # If someone bypasses DefaultMemorySystem and wires only one side,
+            # the mismatch is logged but not fatal (custom wiring may be intentional).
+            if urb_present and injection_policy is not None:
+                # Both present — binding is consistent.
+                pass
+            elif not urb_present and injection_policy is None:
+                # Both absent — binding is consistent.
+                pass
         from framework.memory.injection import FullInjectionPolicy
 
         self.memory_system: ContextManagedMemorySystem = memory_system

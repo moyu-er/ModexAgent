@@ -15,6 +15,7 @@ from enum import StrEnum
 from typing import Any
 
 from framework.core.types import MessageRole
+from framework.memory.core.message import ContentFormat
 from framework.memory.sanitizer import (
     DefaultSessionToolChainSanitizer,
     ToolChainSanitizationMode,
@@ -328,7 +329,13 @@ class FinalContextLegalityGovernance(ContextGovernance):
 
 
 class UserRetentionBufferInjectionGovernance(ContextGovernance):
-    """Inject pruned conversation context from UserRetentionBuffer as system messages."""
+    """Inject pruned conversation context from UserRetentionBuffer.
+
+    The canned XML is inserted as a ``user`` message directly after the
+    last system message (before conversation history).  This is
+    semantically correct — the entries represent pruned user/agent
+    dialogue, not system instructions.
+    """
 
     def __init__(
         self,
@@ -349,11 +356,10 @@ class UserRetentionBufferInjectionGovernance(ContextGovernance):
         if not entries:
             return messages
 
-        # Build XML
         import xml.sax.saxutils as saxutils
         lines = ['<pruned_conversation_context>']
         for e in entries:
-            role_attr = ' role="agent"' if e.pruned_user_role == "agent" else ""
+            role_attr = ' role="agent"' if e.pruned_user_role == str(MessageRole.AGENT) else ""
             lines.append(f'  <entry{role_attr}>')
             lines.append(f'    <pruned_user_content>{saxutils.escape(e.pruned_user_content)}</pruned_user_content>')
             if e.completing_assistant_content:
@@ -361,15 +367,15 @@ class UserRetentionBufferInjectionGovernance(ContextGovernance):
             lines.append('  </entry>')
         lines.append('</pruned_conversation_context>')
 
-        pending_msg = {
-            "role": "system",
+        urb_msg = {
+            "role": str(MessageRole.USER),
             "content": "\n".join(lines),
-            "content_format": "xml",
+            "content_format": ContentFormat.XML,
             "truncatable_paths": ["pruned_user_content", "completing_assistant_content"],
             "metadata": {"memory_source": "user_retention_buffer"},
         }
         insert_at = self._after_system_messages(messages)
-        return [*messages[:insert_at], pending_msg, *messages[insert_at:]]
+        return [*messages[:insert_at], urb_msg, *messages[insert_at:]]
 
     @staticmethod
     def _after_system_messages(messages):

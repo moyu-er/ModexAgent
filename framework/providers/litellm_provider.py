@@ -10,7 +10,7 @@ import json
 import logging
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, ClassVar
 
 from framework.core.constants import DefaultValues, FinishReason, ToolChoice
 from framework.core.llm_struct import (
@@ -55,6 +55,21 @@ class LiteLLMProvider(StreamingLLMProvider):
         async for event in provider.chat_stream(messages):
             print(event.content, end="")
     """
+
+    _API_MSG_FIELDS: ClassVar[frozenset[str]] = frozenset({
+        "role", "content", "name", "tool_calls", "tool_call_id",
+        "function_call",
+    })
+
+    @staticmethod
+    def _sanitize_api_messages(
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        allowed = LiteLLMProvider._API_MSG_FIELDS
+        return [
+            {k: v for k, v in msg.items() if k in allowed}
+            for msg in messages
+        ]
 
     def __init__(
         self,
@@ -162,7 +177,7 @@ class LiteLLMProvider(StreamingLLMProvider):
     ) -> dict[str, Any]:
         params = {
             "model": model or self._model,
-            "messages": messages,
+            "messages": self._sanitize_api_messages(messages),
             "api_key": self._api_key,
             "base_url": self._base_url,
             "temperature": temperature if temperature is not None else self._temperature,

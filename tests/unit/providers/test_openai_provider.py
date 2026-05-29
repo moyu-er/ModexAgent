@@ -177,6 +177,67 @@ class TestOpenAIProviderChat:
         assert call_kwargs["stream"] is False
 
 
+class TestBuildParamsStripsGovernanceFields:
+    """_build_params must strip governance-internal fields from messages.
+
+    Fields like content_format, truncatable_paths, metadata, meta_context_lossy
+    are internal governance metadata that must never reach external APIs.
+    """
+
+    @pytest.fixture
+    def provider(self):
+        safety = RuntimeSafetyPolicy(
+            llm=LLMTimeoutPolicy(request_timeout_seconds=10, stream_idle_timeout_seconds=30),
+            turn=TurnTimeoutPolicy(),
+        )
+        with patch("framework.providers.openai_provider.AsyncOpenAI") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client_cls.return_value = mock_client
+            p = OpenAIProvider(model="gpt-4o", api_key="sk-test", safety=safety)
+            p._client = mock_client
+            yield p
+
+    def test_strips_content_format_and_truncatable_paths(self, provider):
+        messages = [
+            {"role": "system", "content": "sys", "content_format": "xml", "truncatable_paths": ["content"]},
+            {"role": "user", "content": "hi"},
+        ]
+        params = provider._build_params(messages=messages)
+        api_msgs = params["messages"]
+
+        assert "content_format" not in api_msgs[0]
+        assert "truncatable_paths" not in api_msgs[0]
+        assert api_msgs[0]["role"] == "system"
+        assert api_msgs[0]["content"] == "sys"
+
+    def test_strips_metadata_and_lossy_fields(self, provider):
+        messages = [
+            {"role": "assistant", "content": "reply", "metadata": {"source": "urb"}, "meta_context_lossy": True, "meta_original_chars": 5000, "meta_context_reduction": "content_truncated"},
+        ]
+        params = provider._build_params(messages=messages)
+        api_msgs = params["messages"]
+
+        assert "metadata" not in api_msgs[0]
+        assert "meta_context_lossy" not in api_msgs[0]
+        assert "meta_original_chars" not in api_msgs[0]
+        assert "meta_context_reduction" not in api_msgs[0]
+        assert api_msgs[0]["role"] == "assistant"
+        assert api_msgs[0]["content"] == "reply"
+
+    def test_preserves_standard_api_fields(self, provider):
+        messages = [
+            {"role": "user", "content": "hi", "name": "user1"},
+            {"role": "assistant", "content": None, "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "t", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "result"},
+        ]
+        params = provider._build_params(messages=messages)
+        api_msgs = params["messages"]
+
+        assert api_msgs[0] == {"role": "user", "content": "hi", "name": "user1"}
+        assert api_msgs[1]["tool_calls"] is not None
+        assert api_msgs[2]["tool_call_id"] == "c1"
+
+
 class TestOpenAIProviderChatStream:
     """Unit tests for OpenAIProvider.chat_stream()."""
 

@@ -149,7 +149,15 @@ class ScopedUserRetentionBuffer(UserRetentionBuffer):
             )
 
     def _enforce_limits(self, entries: list[UserBufferEntry]) -> list[UserBufferEntry]:
-        """Apply FIFO eviction and per-entry content truncation."""
+        """Apply FIFO eviction and per-entry content truncation.
+
+        XML-formatted entries use ``truncate_xml_safe`` with the entry's
+        ``truncatable_paths`` to preserve structure.  Plain entries use
+        head truncation.
+        """
+        from framework.memory.core.message import ContentFormat
+        from framework.memory.xml_truncate import truncate_xml_safe
+
         max_entries = self._config.max_entries
         max_user = self._config.max_user_chars
         max_assistant = self._config.max_assistant_chars
@@ -161,10 +169,18 @@ class ScopedUserRetentionBuffer(UserRetentionBuffer):
         # Per-entry content truncation
         result: list[UserBufferEntry] = []
         for entry in entries:
-            truncated_user = entry.pruned_user_content[:max_user] if len(entry.pruned_user_content) > max_user else entry.pruned_user_content
+            truncated_user = self._truncate_field(
+                entry.pruned_user_content, max_user,
+                entry.content_format, entry.truncatable_paths,
+                truncate_xml_safe, ContentFormat,
+            )
             truncated_assistant = None
             if entry.completing_assistant_content is not None:
-                truncated_assistant = entry.completing_assistant_content[:max_assistant] if len(entry.completing_assistant_content) > max_assistant else entry.completing_assistant_content
+                truncated_assistant = self._truncate_field(
+                    entry.completing_assistant_content, max_assistant,
+                    entry.content_format, entry.truncatable_paths,
+                    truncate_xml_safe, ContentFormat,
+                )
             if truncated_user != entry.pruned_user_content or truncated_assistant != entry.completing_assistant_content:
                 result.append(
                     replace(
@@ -176,3 +192,18 @@ class ScopedUserRetentionBuffer(UserRetentionBuffer):
             else:
                 result.append(entry)
         return result
+
+    @staticmethod
+    def _truncate_field(
+        content: str,
+        max_chars: int,
+        content_format: str | None,
+        truncatable_paths: list[str] | None,
+        truncate_xml_safe: Any,
+        ContentFormat: Any,
+    ) -> str:
+        if len(content) <= max_chars:
+            return content
+        if content_format is not None and content_format == str(ContentFormat.XML):
+            return truncate_xml_safe(content, max_chars, truncatable_paths or [])
+        return content[:max_chars]

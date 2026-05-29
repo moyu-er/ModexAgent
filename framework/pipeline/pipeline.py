@@ -981,6 +981,14 @@ class AgentPipeline:
 
         if turn_request.user_content is not None:
             sanitized_content = turn_request.user_content
+            # Propagate content format from skill command to input_msg
+            # so assemble_context picks it up for governance (XML truncation, etc.)
+            cmd_result = turn_request.command_result
+            if cmd_result is not None:
+                if cmd_result.content_format is not None:
+                    input_msg.content_format = cmd_result.content_format
+                if cmd_result.truncatable_paths is not None:
+                    input_msg.truncatable_paths = cmd_result.truncatable_paths
         elif not turn_request.append_user_message:
             sanitized_content = None
 

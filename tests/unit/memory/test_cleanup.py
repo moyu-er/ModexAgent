@@ -582,8 +582,8 @@ class TestKeepBoundary:
         )
 
 
-class TestKeepStartsWithUser:
-    """Keep region must always start with a user message (turn boundary)."""
+class TestKeepToolChainIntegrity:
+    """Tool chains in the keep region must stay intact (no split assistant/tool pairs)."""
 
     @pytest.mark.asyncio
     async def test_tool_chain_in_keep_region_not_split(
@@ -631,42 +631,6 @@ class TestKeepStartsWithUser:
         )
         assert has_tool_call == has_tool_result, (
             f"Tool chain split: has_call={has_tool_call}, has_result={has_tool_result}"
-        )
-
-    @pytest.mark.asyncio
-    async def test_keep_starts_with_user_plain_assistant_boundary(
-        self, registry: InMemoryStoreRegistry,
-    ) -> None:
-        """When boundary falls on assistant(plain), move forward to user."""
-        layer_set = _make_layer_set(registry)
-        context = _ctx()
-        session = layer_set.session
-
-        msgs = [
-            _user_msg("1"),
-            _assistant_msg("r1"),
-            _user_msg("2"),
-            _assistant_msg("r2"),  # boundary would fall here
-            _user_msg("3"),
-            _assistant_msg("r3"),
-        ]
-        await _add_messages(session, context, msgs)
-
-        result = await cleanup_session(
-            session=session,
-            archive=None,
-            context=context,
-            max_messages=4,
-            max_tokens=None,
-            keep_ratio=0.4,
-            archive_strategy=None,
-        )
-
-        assert result.triggered is True
-        remaining = await session.get_all_messages(context)
-        first_role = remaining[0].role
-        assert first_role == "user", (
-            f"Keep region must start with 'user', got '{first_role}'"
         )
 
 
@@ -777,6 +741,89 @@ class TestUserRetentionExtraction:
 
         assert result.triggered is True
         assert result.user_retention_extracted == 0
+
+
+class TestToolChainDominanceDoesNotOverPrune:
+    """Regression: sessions dominated by tool chains must not over-prune.
+
+    When most of the session is tool chains (1 user + 50 tc/tool pairs + 1 user),
+    _adjust_boundary_for_first_user must not walk all the way to the last user,
+    keeping only 1 message. This was the MiniMax 400 error root cause.
+    """
+
+    @pytest.mark.asyncio
+    async def test_tool_chain_heavy_session_keeps_reasonable_count(
+        self, registry: InMemoryStoreRegistry,
+    ) -> None:
+        """1 user + 50 tool pairs + 1 new user: must keep ~40%, not 1."""
+        layer_set = _make_layer_set(registry)
+        context = _ctx()
+        session = layer_set.session
+
+        msgs = [_user_msg("question")]
+        for i in range(50):
+            msgs.append(_tool_call_msg(f"call_{i}"))
+            msgs.append(_tool_result_msg(f"call_{i}", f"result_{i}"))
+        msgs.append(_user_msg("follow-up"))
+
+        await _add_messages(session, context, msgs)
+
+        result = await cleanup_session(
+            session=session,
+            archive=None,
+            context=context,
+            max_messages=100,
+            max_tokens=None,
+            keep_ratio=0.4,
+            archive_strategy=None,
+            user_retention=layer_set.user_retention,
+        )
+
+        assert result.triggered is True
+        assert result.messages_kept > 1, (
+            f"kept={result.messages_kept} but expected significantly more than 1. "
+            f"total={len(msgs)}, keep_ratio=0.4"
+        )
+
+    @pytest.mark.asyncio
+    async def test_kept_count_respects_keep_ratio_floor(
+        self, registry: InMemoryStoreRegistry,
+    ) -> None:
+        """kept must be at least keep_target // 2 even with tool-chain sessions."""
+        layer_set = _make_layer_set(registry)
+        context = _ctx()
+        session = layer_set.session
+
+        total = 102
+        max_msgs = 100
+        keep_ratio = 0.4
+        keep_target = max(1, int(total * keep_ratio))  # 40
+
+        msgs = [_user_msg("q1")]
+        for i in range(50):
+            msgs.append(_tool_call_msg(f"call_{i}"))
+            msgs.append(_tool_result_msg(f"call_{i}", f"r_{i}"))
+        msgs.append(_user_msg("q2"))
+        assert len(msgs) == total
+
+        await _add_messages(session, context, msgs)
+
+        result = await cleanup_session(
+            session=session,
+            archive=None,
+            context=context,
+            max_messages=max_msgs,
+            max_tokens=None,
+            keep_ratio=keep_ratio,
+            archive_strategy=None,
+        )
+
+        assert result.triggered is True
+        min_kept = max(keep_target // 2, 2)
+        assert result.messages_kept >= min_kept, (
+            f"kept={result.messages_kept} < min_kept={min_kept} "
+            f"(keep_target={keep_target})"
+        )
 
 
 class TestKeepResanitized:

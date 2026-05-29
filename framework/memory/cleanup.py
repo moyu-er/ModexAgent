@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time as _time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -165,8 +166,7 @@ async def cleanup_session(
     # Walk all sanitized messages; accumulate pruned user/agent messages.
     # When a plain assistant appears (no tool_calls, content present),
     # flush accumulated entries as a completed turn.
-    import time
-    pruned_now = time.time()
+    pruned_now = _time.time()
     boundary_idx = len(pruned_messages)
     pruned_indices = set(range(boundary_idx))
     retention_entries: list[UserBufferEntry] = []
@@ -370,8 +370,10 @@ def _compute_boundary(
     # Ensure we don't split a tool chain
     boundary = _adjust_boundary_for_tool_chains(messages, boundary)
 
-    # Ensure keep region starts with a user message (turn boundary)
-    boundary = _adjust_boundary_for_first_user(messages, boundary)
+    # NOTE: we do NOT force the keep region to start with a user message.
+    # The sanitizer (_resanitize_keep) removes incomplete tool chains,
+    # and governance handles final API-legality (e.g. TokenBudgetGovernance
+    # ensures the visible context starts with a user if the provider requires it).
 
     keep = messages[boundary:]
     pruned = messages[:boundary]
@@ -422,25 +424,6 @@ def _adjust_boundary_for_tool_chains(
             # move boundary to include the assistant
             return boundary - 1
 
-    return boundary
-
-
-def _adjust_boundary_for_first_user(
-    messages: list[dict[str, Any]],
-    boundary: int,
-) -> int:
-    """Move boundary forward so keep region starts with a user message (turn boundary).
-
-    Only walks forward; if no user is found the boundary is left as-is.
-    This avoids keeping too many messages when tool chains fill the session.
-    """
-    if boundary >= len(messages):
-        return boundary
-    if messages[boundary].get("role") == "user":
-        return boundary
-    for i in range(boundary + 1, len(messages)):
-        if messages[i].get("role") == "user":
-            return i
     return boundary
 
 

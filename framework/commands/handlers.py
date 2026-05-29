@@ -15,6 +15,7 @@ from framework.commands.constants import (
     CommandAction,
     CommandDispatchPolicy,
 )
+from framework.memory.core.message import ContentFormat
 from framework.commands.models import (
     CommandContext,
     CommandHandlingResult,
@@ -221,4 +222,6 @@ class SkillCommandHandler:
             trigger_agent=True,
             invocation=invocation,
             metadata={"skill_name": skill.name, "skill_location": skill.location or ""},
+            content_format=ContentFormat.XML,
+            truncatable_paths=["command_context", "user_input", "skill"],
         )
