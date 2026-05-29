@@ -127,22 +127,7 @@ def detect_platform_shell() -> ShellInfo | None:
     plat = _parse_platform(_platform.system().lower())
 
     if plat is Platform.WINDOWS:
-        # Priority 1: WSL bash
-        system_root = os.environ.get("SystemRoot", r"C:\Windows")
-        wsl_bash = Path(system_root) / "System32" / "bash.exe"
-        if wsl_bash.is_file():
-            info = _verify_bash(str(wsl_bash))
-            if info is not None:
-                return info
-
-        # Priority 2: Git bash / MSYS2 (any bash in PATH)
-        bash_path = shutil.which("bash")
-        if bash_path:
-            info = _verify_bash(bash_path)
-            if info is not None:
-                return info
-
-        # Priority 3: PowerShell
+        # Priority 1: PowerShell
         ps_path = shutil.which("powershell.exe")
         if ps_path:
             return ShellInfo(
@@ -150,6 +135,21 @@ def detect_platform_shell() -> ShellInfo | None:
                 path=ps_path,
                 platform=plat,
             )
+
+        # Priority 2: WSL bash
+        system_root = os.environ.get("SystemRoot", r"C:\Windows")
+        wsl_bash = Path(system_root) / "System32" / "bash.exe"
+        if wsl_bash.is_file():
+            info = _verify_bash(str(wsl_bash))
+            if info is not None:
+                return info
+
+        # Priority 3: Git bash / MSYS2 (any bash in PATH)
+        bash_path = shutil.which("bash")
+        if bash_path:
+            info = _verify_bash(bash_path)
+            if info is not None:
+                return info
 
         # Should never happen on Windows
         return None
