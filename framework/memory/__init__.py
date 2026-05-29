@@ -25,6 +25,7 @@ from framework.memory.context_governance import (
     MicrocompactGovernance,
     TokenBudgetGovernance,
     ToolChainRepairGovernance,
+    UserRetentionBufferInjectionGovernance,
 )
 from framework.memory.core.consolidation import (
     ConsolidationEngine,
@@ -36,8 +37,8 @@ from framework.memory.core.layers import (
     ArchiveMemoryManager,
     KnowledgeMemoryManager,
     MemoryLayerSet,
-    PendingPrunedInputMemoryManager,
     SessionMemoryManager,
+    UserRetentionBuffer,
 )
 from framework.memory.core.models import (
     ArchiveEntry,
@@ -80,19 +81,12 @@ from framework.memory.layers import (
     KnowledgeMemoryConfig,
     MemoryLayerConfigSet,
     MemoryLayerFactory,
-    PendingPrunedInputEntry,
-    PendingPrunedInputMemoryConfig,
     ScopedArchiveMemoryManager,
     ScopedKnowledgeMemoryManager,
-    ScopedPendingPrunedInputMemoryManager,
     ScopedSessionMemoryManager,
+    ScopedUserRetentionBuffer,
     SessionMemoryConfig,
-)
-from framework.memory.pending import (
-    DefaultPendingPrunedInputExtractor,
-    DefaultPendingPrunedInputInjector,
-    PendingPrunedInputExtractor,
-    PendingPrunedInputInjector,
+    UserRetentionBufferConfig,
 )
 from framework.memory.recorder import MemoryAppendRecorder, MemoryAppendSource
 from framework.memory.registry import (
@@ -111,6 +105,7 @@ from framework.memory.system import (
     MemorySystemContextManager,
     create_memory_system,
 )
+from framework.memory.user_buffer import UserBufferEntry
 
 __all__ = [
     # Entry points
@@ -124,9 +119,8 @@ __all__ = [
     "SessionMemoryManager",
     "ArchiveMemoryManager",
     "KnowledgeMemoryManager",
-    "PendingPrunedInputMemoryManager",
-    "PendingPrunedInputMemoryConfig",
-    "PendingPrunedInputEntry",
+    "UserRetentionBuffer",
+    "UserRetentionBufferConfig",
     # Context & scope
     "MemoryContext",
     "MemoryScope",
@@ -152,7 +146,9 @@ __all__ = [
     "ScopedSessionMemoryManager",
     "ScopedArchiveMemoryManager",
     "ScopedKnowledgeMemoryManager",
-    "ScopedPendingPrunedInputMemoryManager",
+    "ScopedUserRetentionBuffer",
+    # User buffer
+    "UserBufferEntry",
     # Shared models
     "ArchiveEntry",
     "CompressionPlan",
@@ -194,12 +190,9 @@ __all__ = [
     "ContextGovernance",
     "CompositeGovernance",
     "ToolChainRepairGovernance",
+    "UserRetentionBufferInjectionGovernance",
     "MicrocompactGovernance",
     "TokenBudgetGovernance",
-    "DefaultPendingPrunedInputExtractor",
-    "DefaultPendingPrunedInputInjector",
-    "PendingPrunedInputExtractor",
-    "PendingPrunedInputInjector",
     # Cleanup
     "cleanup_session",
     "CleanupResult",

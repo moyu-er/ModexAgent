@@ -24,16 +24,17 @@ class ShortTermConfig(BaseModel):
     keep_ratio_for_token: float = 0.4
 
 
-class PendingConfig(BaseModel):
-    """Pruned pending input buffer — internal compression mechanism.
+class UserRetentionConfig(BaseModel):
+    """User retention buffer config — pruned user context tracking.
 
     This is NOT something users normally configure. Defaults work
     for nearly all use cases.
     """
 
     enabled: bool = True
-    max_entries: int = 8
-    max_chars: int = 12000
+    max_entries: int = 5
+    max_user_chars: int = 4000
+    max_assistant_chars: int = 4000
 
 
 class RetentionConfig(BaseModel):
@@ -112,7 +113,7 @@ class MemoryConfig(BaseModel):
     None (as a field in AgentConfig) = memory system not created.
     MemoryConfig() = enabled with all defaults:
       - session layer: on (100 messages / 100k tokens)
-      - pending layer: on (internal, transparent)
+      - user retention layer: on (internal, transparent)
       - archive/knowledge: off
       - governance/lossy: off
     """
@@ -125,7 +126,7 @@ class MemoryConfig(BaseModel):
 
     # Existing fields
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
-    pending: PendingConfig = Field(default_factory=PendingConfig)
+    user_retention: UserRetentionConfig = Field(default_factory=UserRetentionConfig)
     governance: GovernanceConfig | None = None
 
     # Old fields (backward compat, excluded from serialization)

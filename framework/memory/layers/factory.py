@@ -14,13 +14,13 @@ from framework.memory.core.storage import MemoryStorage
 from framework.memory.layers.archive import ScopedArchiveMemoryManager
 from framework.memory.layers.config import (
     MemoryLayerConfigSet,
-    PendingPrunedInputMemoryConfig,
     SessionMemoryConfig,
     StorageFactory,
+    UserRetentionBufferConfig,
 )
 from framework.memory.layers.knowledge import ScopedKnowledgeMemoryManager
-from framework.memory.layers.pending import ScopedPendingPrunedInputMemoryManager
 from framework.memory.layers.session import ScopedSessionMemoryManager
+from framework.memory.layers.user_buffer import ScopedUserRetentionBuffer
 from framework.memory.registry import MemoryStoreRegistry
 
 
@@ -62,21 +62,21 @@ class MemoryLayerFactory:
             if config.knowledge is not None
             else None
         )
-        pending_manager = (
-            ScopedPendingPrunedInputMemoryManager(
+        user_retention_manager = (
+            ScopedUserRetentionBuffer(
                 MemoryLayerFactory._storage_factory(
-                    registry, MemoryLayerName.PENDING, config.pending.scope
+                    registry, MemoryLayerName.USER_RETENTION, config.user_retention.scope
                 ),
-                config.pending,
+                config.user_retention,
             )
-            if config.pending is not None and config.pending.enabled
+            if config.user_retention is not None and config.user_retention.enabled
             else None
         )
         return MemoryLayerSet(
             session=session_manager,
             archive=archive_manager,
             knowledge=knowledge_manager,
-            pending=pending_manager,
+            user_retention=user_retention_manager,
         )
 
     @staticmethod
@@ -84,7 +84,7 @@ class MemoryLayerFactory:
         *,
         registry: MemoryStoreRegistry,
         config: SessionMemoryConfig | None = None,
-        pending_config: PendingPrunedInputMemoryConfig | None = None,
+        user_retention_config: UserRetentionBufferConfig | None = None,
     ) -> MemoryLayerSet:
         session_manager = ScopedSessionMemoryManager(
             MemoryLayerFactory._storage_factory(
@@ -94,20 +94,20 @@ class MemoryLayerFactory:
             ),
             config,
         )
-        effective_pending_config = pending_config or PendingPrunedInputMemoryConfig()
-        pending_manager = (
-            ScopedPendingPrunedInputMemoryManager(
+        effective_user_retention_config = user_retention_config or UserRetentionBufferConfig()
+        user_retention_manager = (
+            ScopedUserRetentionBuffer(
                 MemoryLayerFactory._storage_factory(
                     registry,
-                    MemoryLayerName.PENDING,
-                    effective_pending_config.scope,
+                    MemoryLayerName.USER_RETENTION,
+                    effective_user_retention_config.scope,
                 ),
-                effective_pending_config,
+                effective_user_retention_config,
             )
-            if effective_pending_config.enabled
+            if effective_user_retention_config.enabled
             else None
         )
-        return MemoryLayerSet(session=session_manager, pending=pending_manager)
+        return MemoryLayerSet(session=session_manager, user_retention=user_retention_manager)
 
     @staticmethod
     def subagent_session_isolated(
@@ -125,7 +125,7 @@ class MemoryLayerFactory:
 
         session_config = SessionMemoryConfig(max_messages=max_session_messages)
         archive_config = ArchiveMemoryConfig(scope=SessionScope())
-        pending_config = PendingPrunedInputMemoryConfig(enabled=True)
+        user_retention_config = UserRetentionBufferConfig(enabled=True)
 
         session_manager = ScopedSessionMemoryManager(
             MemoryLayerFactory._storage_factory(
@@ -143,19 +143,19 @@ class MemoryLayerFactory:
             ),
             archive_config,
         )
-        pending_manager = ScopedPendingPrunedInputMemoryManager(
+        user_retention_manager = ScopedUserRetentionBuffer(
             MemoryLayerFactory._storage_factory(
                 registry,
-                MemoryLayerName.PENDING,
-                pending_config.scope,
+                MemoryLayerName.USER_RETENTION,
+                user_retention_config.scope,
             ),
-            pending_config,
+            user_retention_config,
         )
         return MemoryLayerSet(
             session=session_manager,
             archive=archive_manager,
             knowledge=None,
-            pending=pending_manager,
+            user_retention=user_retention_manager,
         )
 
     @staticmethod

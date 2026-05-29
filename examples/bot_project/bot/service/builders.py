@@ -28,7 +28,7 @@ from framework.memory.injection import RestrictedInjectionPolicy
 from framework.memory.layers.config import (
     ArchiveMemoryConfig,
     MemoryLayerConfigSet,
-    PendingPrunedInputMemoryConfig,
+    UserRetentionBufferConfig,
     SessionMemoryConfig,
 )
 from framework.memory.system import MemorySystemContextManager, create_memory_system
@@ -314,12 +314,10 @@ class AgentBuilderMixin:
         from framework.ioc.configs.memory import MemoryConfig
         from framework.ioc.factories.memory import _build_memory_layer_config
 
-        if isinstance(cfg, dict) and "pending_pruned_inputs" in cfg and "pending" not in cfg:
-            cfg = {**cfg, "pending": cfg["pending_pruned_inputs"]}
         memory_cfg = cfg if isinstance(cfg, MemoryConfig) else MemoryConfig.model_validate(cfg)
         layer_config = _build_memory_layer_config(memory_cfg)
-        if layer_config.pending is not None and not layer_config.pending.enabled:
-            layer_config = replace(layer_config, pending=None)
+        if layer_config.user_retention is not None and not layer_config.user_retention.enabled:
+            layer_config = replace(layer_config, user_retention=None)
         return layer_config
 
     def _session_only_memory_config(self, cfg: Any) -> MemoryLayerConfigSet:
@@ -335,7 +333,7 @@ class AgentBuilderMixin:
             session=SessionMemoryConfig(max_messages=max_messages),
             archive=ArchiveMemoryConfig(scope=SessionScope()),
             knowledge=None,
-            pending=PendingPrunedInputMemoryConfig(enabled=True),
+            user_retention=UserRetentionBufferConfig(enabled=True),
         )
 
     async def _create_subagent_memory(self, sub_name: str, base_system_prompt: str = "") -> ContextManager:

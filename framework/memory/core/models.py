@@ -48,7 +48,7 @@ class CompressionResultReason(StrEnum):
     NO_SAFE_BOUNDARY = "no_safe_boundary"
     REVISION_CHANGED = "revision_changed"
     ARCHIVE_FAILED = "archive_failed"
-    PENDING_FAILED = "pending_failed"
+    USER_RETENTION_FAILED = "user_retention_failed"
     IDLE_EXPIRED = "idle_expired"
     NOTHING_TO_ARCHIVE = "nothing_to_archive"
 
@@ -71,7 +71,7 @@ class CompressionPlan:
     drop_messages: list[dict[str, Any]]
     summary: str | None = None
     archive_generation_result: ArchiveGenerationResult | None = None
-    pending_pruned_input_entries: list[Any] = field(default_factory=list)
+    user_retention_entries: list[Any] = field(default_factory=list)
     drop_without_archive_messages: list[dict[str, Any]] = field(default_factory=list)
     sanitization_issues: list[ToolChainSanitizationIssue] = field(default_factory=list)
     has_open_tail: bool = False

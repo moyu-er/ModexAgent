@@ -21,14 +21,15 @@ def _build_memory_layer_config(cfg: MemoryConfig) -> MemoryLayerConfigSet:
     """
     from framework.memory.layers.config import (
         MemoryLayerConfigSet,
-        PendingPrunedInputMemoryConfig,
+        UserRetentionBufferConfig,
         SessionMemoryConfig,
     )
 
-    pending_config = PendingPrunedInputMemoryConfig(
-        enabled=cfg.pending.enabled,
-        max_entries=cfg.pending.max_entries,
-        max_chars=cfg.pending.max_chars,
+    user_retention_config = UserRetentionBufferConfig(
+        enabled=cfg.user_retention.enabled,
+        max_entries=cfg.user_retention.max_entries,
+        max_user_chars=cfg.user_retention.max_user_chars,
+        max_assistant_chars=cfg.user_retention.max_assistant_chars,
     )
 
     session_config = SessionMemoryConfig(
@@ -58,7 +59,7 @@ def _build_memory_layer_config(cfg: MemoryConfig) -> MemoryLayerConfigSet:
         session=session_config,
         archive=archive_config,
         knowledge=knowledge_config,
-        pending=pending_config,
+        user_retention=user_retention_config,
     )
 
 

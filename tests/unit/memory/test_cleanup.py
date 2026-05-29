@@ -549,45 +549,47 @@ class TestKeepBoundary:
         )
 
     @pytest.mark.asyncio
-    async def test_always_keeps_recent_user_message(self, registry: InMemoryStoreRegistry) -> None:
-        """The most recent user message should always be kept as anchor."""
+    async def test_single_user_session_cleans_properly(self, registry: InMemoryStoreRegistry) -> None:
+        """Session with 1 user + 50 tool pairs: cleanup MUST prune messages.
+
+        This was the session.jsonl bug — _adjust_boundary_for_last_user
+        forced boundary=0, keeping all 101 messages despite exceeding limits.
+        """
         layer_set = _make_layer_set(registry)
         context = _ctx()
         session = layer_set.session
 
-        msgs = []
-        for i in range(10):
-            msgs.append(_user_msg(f"user-{i}"))
-            msgs.append(_assistant_msg(f"asst-{i}"))
+        msgs = [_user_msg("question")]
+        for i in range(50):
+            msgs.append(_tool_call_msg(f"call_{i}"))
+            msgs.append(_tool_result_msg(f"call_{i}", f"result_{i}"))
         await _add_messages(session, context, msgs)
 
         result = await cleanup_session(
-            session=session,
-            archive=None,
-            context=context,
-            max_messages=10,
-            max_tokens=None,
-            keep_ratio=0.2,  # keep very few
-            archive_strategy=None,
+            session=session, archive=None, context=context,
+            max_messages=20, max_tokens=None, keep_ratio=0.5,
+            archive_strategy=None, user_retention=layer_set.user_retention,
         )
 
         assert result.triggered is True
+        assert result.messages_pruned > 0, (
+            f"Must prune messages when over limit (total={len(msgs)}, "
+            f"max_messages=20), but pruned=0"
+        )
         remaining = await session.get_all_messages(context)
-        last_user = msgs[-2]  # last user message
-        user_contents = [m.content for m in remaining if m.role == "user"]
-        assert last_user["content"] in user_contents, (
-            "Most recent user message should be kept as anchor"
+        assert len(remaining) < len(msgs), (
+            f"Session must be smaller after cleanup: {len(remaining)} >= {len(msgs)}"
         )
 
 
-class TestKeepStartsWithUser:
-    """Keep region must always start with a user message (turn boundary)."""
+class TestKeepToolChainIntegrity:
+    """Tool chains in the keep region must stay intact (no split assistant/tool pairs)."""
 
     @pytest.mark.asyncio
-    async def test_keep_starts_with_user_after_tool_chain_adjust(
+    async def test_tool_chain_in_keep_region_not_split(
         self, registry: InMemoryStoreRegistry,
     ) -> None:
-        """When tool chain adjustment moves boundary backward, keep still starts with user."""
+        """When keep boundary falls on a tool chain, the chain stays intact."""
         layer_set = _make_layer_set(registry)
         context = _ctx()
         session = layer_set.session
@@ -617,60 +619,32 @@ class TestKeepStartsWithUser:
         assert result.triggered is True
         remaining = await session.get_all_messages(context)
         assert len(remaining) > 0
-        first_role = remaining[0].role
-        assert first_role == "user", (
-            f"Keep region must start with 'user', got '{first_role}': "
-            f"{[m.role for m in remaining]}"
+
+        # Tool chain must be intact: if tool_call is kept, tool_result must be too
+        has_tool_call = any(
+            m.role == "assistant" and m.tool_calls
+            for m in remaining
         )
+        has_tool_result = any(
+            m.role == "tool" and m.tool_call_id == "call_1"
+            for m in remaining
+        )
+        assert has_tool_call == has_tool_result, (
+            f"Tool chain split: has_call={has_tool_call}, has_result={has_tool_result}"
+        )
+
+
+class TestUserRetentionExtraction:
+    """Pruned user messages must be extracted and persisted to the URB."""
 
     @pytest.mark.asyncio
-    async def test_keep_starts_with_user_plain_assistant_boundary(
+    async def test_pruned_user_without_response_saved_to_urb(
         self, registry: InMemoryStoreRegistry,
     ) -> None:
-        """When boundary falls on assistant(plain), move forward to user."""
-        layer_set = _make_layer_set(registry)
-        context = _ctx()
-        session = layer_set.session
-
-        msgs = [
-            _user_msg("1"),
-            _assistant_msg("r1"),
-            _user_msg("2"),
-            _assistant_msg("r2"),  # boundary would fall here
-            _user_msg("3"),
-            _assistant_msg("r3"),
-        ]
-        await _add_messages(session, context, msgs)
-
-        result = await cleanup_session(
-            session=session,
-            archive=None,
-            context=context,
-            max_messages=4,
-            max_tokens=None,
-            keep_ratio=0.4,
-            archive_strategy=None,
-        )
-
-        assert result.triggered is True
-        remaining = await session.get_all_messages(context)
-        first_role = remaining[0].role
-        assert first_role == "user", (
-            f"Keep region must start with 'user', got '{first_role}'"
-        )
-
-
-class TestPendingExtraction:
-    """Pending inputs must be extracted from pruned messages and persisted."""
-
-    @pytest.mark.asyncio
-    async def test_pruned_user_without_response_saved_as_pending(
-        self, registry: InMemoryStoreRegistry,
-    ) -> None:
-        """User message pruned during ReAct loop (no final response) saved as pending.
+        """User message pruned during ReAct loop (no final response) saved to URB.
 
         Scenario: q1 asked, assistant started tool call but no plain response.
-        Boundary moves forward past tool chain to user q2. q1 becomes pending.
+        Boundary moves forward past tool chain to user q2. q1 becomes URB entry.
         """
         layer_set = _make_layer_set(registry)
         context = _ctx()
@@ -678,7 +652,7 @@ class TestPendingExtraction:
 
         msgs = [
             _user_msg("q1"),           # will be pruned — no plain assistant after it
-            _tool_call_msg("c1"),      # tool call (not plain assistant → doesn't clear pending)
+            _tool_call_msg("c1"),      # tool call (not plain assistant → doesn't clear URB)
             _tool_result_msg("c1"),
             _user_msg("q2"),           # most recent user (in keep)
         ]
@@ -692,24 +666,24 @@ class TestPendingExtraction:
             max_tokens=None,
             keep_ratio=0.5,
             archive_strategy=None,
-            pending=layer_set.pending,
+            user_retention=layer_set.user_retention,
         )
 
         assert result.triggered is True
-        assert result.pending_extracted >= 1
+        assert result.user_retention_extracted >= 1
 
-        entries = await layer_set.pending.get_entries(context)
+        entries = await layer_set.user_retention.get_entries(context)
         assert len(entries) >= 1
-        pending_contents = [str(e.content) for e in entries]
-        assert any("q1" in c for c in pending_contents), (
-            f"Expected q1 in pending, got {pending_contents}"
+        urbs = [str(e.pruned_user_content) for e in entries]
+        assert any("q1" in c for c in urbs), (
+            f"Expected q1 in URB, got {urbs}"
         )
 
     @pytest.mark.asyncio
-    async def test_completed_turn_not_saved_as_pending(
+    async def test_pruned_users_with_assistant_still_extracted(
         self, registry: InMemoryStoreRegistry,
     ) -> None:
-        """User messages with a plain assistant response NOT pending."""
+        """Pruned user messages with plain assistant responses are extracted as completed entries."""
         layer_set = _make_layer_set(registry)
         context = _ctx()
         session = layer_set.session
@@ -731,18 +705,19 @@ class TestPendingExtraction:
             max_tokens=None,
             keep_ratio=0.4,
             archive_strategy=None,
-            pending=layer_set.pending,
+            user_retention=layer_set.user_retention,
         )
 
         assert result.triggered is True
-        # All pruned user messages have plain assistant responses → no pending
-        assert result.pending_extracted == 0
+        # Pruned user messages in completed turns are still extracted to URB
+        # (they carry completing_assistant_content for governance decisions)
+        assert result.user_retention_extracted > 0
 
     @pytest.mark.asyncio
-    async def test_no_pending_when_pending_manager_is_none(
+    async def test_no_urb_when_user_retention_is_none(
         self, registry: InMemoryStoreRegistry,
     ) -> None:
-        """When pending=None, cleanup still succeeds (no extraction)."""
+        """When user_retention=None, cleanup still succeeds (no extraction)."""
         layer_set = _make_layer_set(registry)
         context = _ctx()
         session = layer_set.session
@@ -761,11 +736,94 @@ class TestPendingExtraction:
             max_tokens=None,
             keep_ratio=0.5,
             archive_strategy=None,
-            pending=None,
+            user_retention=None,
         )
 
         assert result.triggered is True
-        assert result.pending_extracted == 0
+        assert result.user_retention_extracted == 0
+
+
+class TestToolChainDominanceDoesNotOverPrune:
+    """Regression: sessions dominated by tool chains must not over-prune.
+
+    When most of the session is tool chains (1 user + 50 tc/tool pairs + 1 user),
+    _adjust_boundary_for_first_user must not walk all the way to the last user,
+    keeping only 1 message. This was the MiniMax 400 error root cause.
+    """
+
+    @pytest.mark.asyncio
+    async def test_tool_chain_heavy_session_keeps_reasonable_count(
+        self, registry: InMemoryStoreRegistry,
+    ) -> None:
+        """1 user + 50 tool pairs + 1 new user: must keep ~40%, not 1."""
+        layer_set = _make_layer_set(registry)
+        context = _ctx()
+        session = layer_set.session
+
+        msgs = [_user_msg("question")]
+        for i in range(50):
+            msgs.append(_tool_call_msg(f"call_{i}"))
+            msgs.append(_tool_result_msg(f"call_{i}", f"result_{i}"))
+        msgs.append(_user_msg("follow-up"))
+
+        await _add_messages(session, context, msgs)
+
+        result = await cleanup_session(
+            session=session,
+            archive=None,
+            context=context,
+            max_messages=100,
+            max_tokens=None,
+            keep_ratio=0.4,
+            archive_strategy=None,
+            user_retention=layer_set.user_retention,
+        )
+
+        assert result.triggered is True
+        assert result.messages_kept > 1, (
+            f"kept={result.messages_kept} but expected significantly more than 1. "
+            f"total={len(msgs)}, keep_ratio=0.4"
+        )
+
+    @pytest.mark.asyncio
+    async def test_kept_count_respects_keep_ratio_floor(
+        self, registry: InMemoryStoreRegistry,
+    ) -> None:
+        """kept must be at least keep_target // 2 even with tool-chain sessions."""
+        layer_set = _make_layer_set(registry)
+        context = _ctx()
+        session = layer_set.session
+
+        total = 102
+        max_msgs = 100
+        keep_ratio = 0.4
+        keep_target = max(1, int(total * keep_ratio))  # 40
+
+        msgs = [_user_msg("q1")]
+        for i in range(50):
+            msgs.append(_tool_call_msg(f"call_{i}"))
+            msgs.append(_tool_result_msg(f"call_{i}", f"r_{i}"))
+        msgs.append(_user_msg("q2"))
+        assert len(msgs) == total
+
+        await _add_messages(session, context, msgs)
+
+        result = await cleanup_session(
+            session=session,
+            archive=None,
+            context=context,
+            max_messages=max_msgs,
+            max_tokens=None,
+            keep_ratio=keep_ratio,
+            archive_strategy=None,
+        )
+
+        assert result.triggered is True
+        min_kept = max(keep_target // 2, 2)
+        assert result.messages_kept >= min_kept, (
+            f"kept={result.messages_kept} < min_kept={min_kept} "
+            f"(keep_target={keep_target})"
+        )
 
 
 class TestKeepResanitized:

@@ -42,8 +42,22 @@ def truncate_xml_safe(
     try:
         return _truncate_xml_structured(content, max_chars, paths)
     except ET.ParseError:
-        logger.debug("XML parse failed, using boundary-safe fallback")
-        return _truncate_xml_boundary(content, max_chars)
+        # Content may have multiple root elements (e.g. skill XML with
+        # <command_context> + <user_input> as siblings). Wrap in a
+        # synthetic root and retry.
+        try:
+            return _truncate_xml_structured(
+                f"<r>{content}</r>", max_chars, paths, unwrap_root=True,
+            )
+        except ET.ParseError:
+            logger.debug("XML parse failed (multi-root), using boundary fallback")
+            return _truncate_xml_boundary(content, max_chars)
+        except Exception:
+            logger.debug(
+                "Unexpected error during multi-root XML truncation, falling back",
+                exc_info=True,
+            )
+            return _truncate_xml_boundary(content, max_chars)
     except Exception:
         logger.debug("Unexpected error during XML truncation, falling back", exc_info=True)
         return _truncate_xml_boundary(content, max_chars)
@@ -53,12 +67,19 @@ def _truncate_xml_structured(
     content: str,
     max_chars: int,
     truncatable_paths: list[str],
+    *,
+    unwrap_root: bool = False,
 ) -> str:
     """Truncate well-formed XML using ElementTree.
 
-    Collects all truncatable text content, computes proportional budget
-    per element, and distributes the budget. Preserves all tags,
-    attributes, and non-truncatable element text.
+    Collects all truncatable text content and truncates each node
+    independently to *max_chars*.  No budget allocation — every
+    matching element gets the same per-element headroom so list
+    entries and nested fields are not starved.
+    Preserves all tags, attributes, and non-truncatable element text.
+
+    When *unwrap_root* is True, the result has the outer synthetic
+    ``<r>...</r>`` wrapper stripped.
     """
     root = ET.fromstring(content)
 
@@ -70,33 +91,16 @@ def _truncate_xml_structured(
                 text_nodes.append((elem, elem.text))
 
     if not text_nodes:
-        # No truncatable text — must cut at boundary
         return _truncate_xml_boundary(content, max_chars)
 
-    # Compute overhead: everything that is NOT truncatable text
-    total_text_len = sum(len(text) for _, text in text_nodes)
-    overhead = len(content) - total_text_len
-
-    if overhead >= max_chars:
-        # Overhead alone exceeds budget — must cut at boundary
-        return _truncate_xml_boundary(content, max_chars)
-
-    budget_for_text = max_chars - overhead
-    if budget_for_text >= total_text_len:
-        # All text fits — serialize as-is (shouldn't happen due to pre-filter)
-        return ET.tostring(root, encoding="unicode")
-
-    # Proportional truncation: give each text node its share of the budget
+    # Truncate each element independently to max_chars — no budget split
     for elem, original_text in text_nodes:
-        proportion = len(original_text) / total_text_len
-        elem_budget = max(1, int(budget_for_text * proportion))
-        if len(original_text) > elem_budget:
-            elem.text = original_text[:elem_budget]
+        if len(original_text) > max_chars:
+            elem.text = original_text[:max_chars]
 
     result = ET.tostring(root, encoding="unicode")
-    # Secondary check: if serialized result still exceeds budget, boundary cut
-    if len(result) > max_chars:
-        return _truncate_xml_boundary(content, max_chars)
+    if unwrap_root:
+        result = result[3:-4]
     return result
 
 

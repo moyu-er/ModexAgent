@@ -1,5 +1,7 @@
 """Tests for ContextGovernance implementations."""
 
+from typing import Any
+
 import pytest
 
 from framework.core.types import MessageRole
@@ -284,3 +286,118 @@ async def test_all_strategies_return_copies():
         result = await gov.apply(original)
         assert result is not original
         assert original == [{"role": str(MessageRole.ASSISTANT), "content": "hello"}]
+
+
+# ── UserRetentionBufferInjectionGovernance ────────────────────────────────
+
+
+class FakeURB:
+    def __init__(self, entries: list[Any] | None = None) -> None:
+        self._entries: list[Any] = entries or []
+
+    async def get_entries(self, context: Any) -> list[Any]:
+        return list(self._entries)
+
+
+def _make_urb_user_entry(content: str = "pruned user q") -> Any:
+    from framework.memory.user_buffer import UserBufferEntry
+    import time
+    return UserBufferEntry(
+        pruned_user_role="user", pruned_user_content=content,
+        pruned_user_source_agent=None, pruned_user_created_at=time.time(),
+        completing_assistant_content=None, fingerprint=f"fp-{hash(content)}",
+    )
+
+
+def _make_urb_agent_entry(content: str = "agent task") -> Any:
+    from framework.memory.user_buffer import UserBufferEntry
+    import time
+    return UserBufferEntry(
+        pruned_user_role="agent", pruned_user_content=content,
+        pruned_user_source_agent="planner", pruned_user_created_at=time.time(),
+        completing_assistant_content=None, fingerprint=f"fp-{hash(content)}",
+    )
+
+
+@pytest.mark.asyncio
+async def test_urb_injection_uses_user_role():
+    """URB message must use user role (not system)."""
+    from framework.memory.context_governance import UserRetentionBufferInjectionGovernance
+    from framework.memory.core.scope import MemoryContext
+
+    urb = FakeURB([_make_urb_user_entry("hello")])
+    ctx = MemoryContext(session_id="s1")
+    gov = UserRetentionBufferInjectionGovernance(
+        urb=urb, context_factory=lambda: ctx,
+    )
+
+    messages = [
+        {"role": str(MessageRole.SYSTEM), "content": "system prompt"},
+        {"role": str(MessageRole.USER), "content": "current turn"},
+    ]
+    result = await gov.apply(messages)
+
+    urb_msgs = [m for m in result if m.get("content_format") is not None]
+    assert len(urb_msgs) == 1
+    assert urb_msgs[0]["role"] == str(MessageRole.USER), (
+        f"URB message must be user role, got {urb_msgs[0]['role']}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_urb_injection_inserted_after_system():
+    """URB user message inserted after system, before history."""
+    from framework.memory.context_governance import UserRetentionBufferInjectionGovernance
+    from framework.memory.core.scope import MemoryContext
+
+    urb = FakeURB([_make_urb_user_entry("context")])
+    ctx = MemoryContext(session_id="s1")
+    gov = UserRetentionBufferInjectionGovernance(
+        urb=urb, context_factory=lambda: ctx,
+    )
+
+    messages = [
+        {"role": str(MessageRole.SYSTEM), "content": "sys"},
+        {"role": str(MessageRole.USER), "content": "u1"},
+        {"role": str(MessageRole.ASSISTANT), "content": "a1"},
+    ]
+    result = await gov.apply(messages)
+
+    roles = [m["role"] for m in result]
+    assert roles[0] == str(MessageRole.SYSTEM)
+    assert roles[1] == str(MessageRole.USER)  # URB injection
+    assert roles[2] == str(MessageRole.USER)  # original history
+    assert roles[3] == str(MessageRole.ASSISTANT)
+
+
+@pytest.mark.asyncio
+async def test_urb_injection_agent_entry_gets_role_attribute():
+    """Agent entries in URB XML get role='agent' attribute."""
+    from framework.memory.context_governance import UserRetentionBufferInjectionGovernance
+    from framework.memory.core.scope import MemoryContext
+
+    urb = FakeURB([_make_urb_agent_entry("task from planner")])
+    ctx = MemoryContext(session_id="s1")
+    gov = UserRetentionBufferInjectionGovernance(
+        urb=urb, context_factory=lambda: ctx,
+    )
+    result = await gov.apply([{"role": str(MessageRole.USER), "content": "hi"}])
+    urb_msgs = [m for m in result if m.get("content_format") is not None]
+    assert len(urb_msgs) == 1
+    assert 'role="agent"' in urb_msgs[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_urb_injection_empty_entries_noop():
+    """When URB has no entries, messages pass through unchanged."""
+    from framework.memory.context_governance import UserRetentionBufferInjectionGovernance
+    from framework.memory.core.scope import MemoryContext
+
+    urb = FakeURB([])
+    ctx = MemoryContext(session_id="s1")
+    gov = UserRetentionBufferInjectionGovernance(
+        urb=urb, context_factory=lambda: ctx,
+    )
+    messages = [{"role": str(MessageRole.USER), "content": "hi"}]
+    result = await gov.apply(messages)
+    assert result == messages

@@ -23,6 +23,7 @@ from framework.memory.history import MessageHistory
 from framework.memory.lifecycle import MemoryMaintenancePolicy
 from framework.memory.recorder import MemoryAppendRecorder
 from framework.memory.registry.base import MemoryStoreRegistry
+from framework.core.types import MessageRole
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ class ScopedMessageHistory(MessageHistory):
         archive_manager: ArchiveMemoryManager | None = None,
         archive_strategy: ArchiveGenerationStrategy | None = None,
         cleanup_config: dict[str, int | float] | None = None,
-        pending_manager: Any | None = None,
+        user_retention: Any | None = None,
     ) -> None:
         self._manager = manager
         self._context = context
@@ -51,7 +52,7 @@ class ScopedMessageHistory(MessageHistory):
         self._archive_manager = archive_manager
         self._archive_strategy = archive_strategy
         self._cleanup_config: dict[str, int | float] = cleanup_config or {}
-        self._pending_manager = pending_manager
+        self._user_retention = user_retention
         self._cache: list[ChatMessage] | None = (
             [ChatMessage.coerce(m) for m in initial_messages]
             if initial_messages is not None
@@ -67,14 +68,30 @@ class ScopedMessageHistory(MessageHistory):
             archive=self._archive_manager,
             context=self._context,
             archive_strategy=self._archive_strategy,
-            pending=self._pending_manager,
+            user_retention=self._user_retention,
             **self._cleanup_config,
         )
+
+    async def _urb_completion_hook(self, message: ChatMessage | dict[str, Any]) -> None:
+        """If message is a plain assistant, mark all URB entries completed."""
+        if self._user_retention is None:
+            return
+        msg_dict = message.to_dict() if hasattr(message, "to_dict") else dict(message)
+        if msg_dict.get("role") != str(MessageRole.ASSISTANT):
+            return
+        if msg_dict.get("tool_calls"):
+            return
+        assistant_content = msg_dict.get("content")
+        if assistant_content is None:
+            return
+        await self._user_retention.mark_all_completed(self._context, assistant_content)
 
     async def append(self, message: ChatMessage | dict[str, Any]) -> None:
         await self._manager.add_messages(self._context, [message])
         if self._recorder is not None:
             await self._recorder.record([message], self._context)
+        if self._user_retention is not None:
+            await self._urb_completion_hook(message)
         await self._run_cleanup()
         async with self._cache_lock:
             self._cache = None
@@ -85,6 +102,8 @@ class ScopedMessageHistory(MessageHistory):
         await self._manager.add_messages(self._context, list(messages))
         if self._recorder is not None:
             await self._recorder.record(list(messages), self._context)
+        if self._user_retention is not None and messages:
+            await self._urb_completion_hook(messages[-1])
         await self._run_cleanup()
         async with self._cache_lock:
             self._cache = None
@@ -181,7 +200,7 @@ class DefaultMemorySystem(MemorySystem):
             archive_manager=self._layers.archive,
             archive_strategy=self._archive_strategy,
             cleanup_config=self._cleanup_config,
-            pending_manager=self._layers.pending,
+            user_retention=self._layers.user_retention,
         )
 
     async def add_messages(
@@ -238,8 +257,8 @@ class DefaultMemorySystem(MemorySystem):
             await self._layers.archive.clear(context)
         if self._layers.knowledge is not None:
             await self._layers.knowledge.clear(context)
-        if self._layers.pending is not None:
-            await self._layers.pending.clear(context)
+        if self._layers.user_retention is not None:
+            await self._layers.user_retention.clear(context)
 
     # -- Provider management ---------------------------------------------
 

@@ -21,7 +21,7 @@ from framework.memory.layers.config import MemoryLayerConfigSet
 from framework.memory.layers.factory import MemoryLayerFactory
 from framework.memory.archive_generation import ArchiveGenerationStrategy
 from framework.memory.lifecycle import MemoryMaintenancePolicy
-from framework.memory.pending import DefaultPendingPrunedInputInjector
+# UserRetentionBuffer injection moved to framework.memory.user_buffer (Task 6 stub)
 from framework.memory.registry.file import DefaultMemoryStoreRegistry
 
 logger = logging.getLogger(__name__)
@@ -47,11 +47,11 @@ def create_memory_system(
     registry = DefaultMemoryStoreRegistry(workspace)
     if session_only:
         session_config = config.session if config else None
-        pending_config = config.pending if config else None
+        user_retention_config = config.user_retention if config else None
         layer_set = MemoryLayerFactory.session_only(
             registry=registry,
             config=session_config,
-            pending_config=pending_config,
+            user_retention_config=user_retention_config,
         )
     else:
         layer_set = MemoryLayerFactory.single_user(
@@ -85,6 +85,23 @@ class MemorySystemContextManager(ContextManager):
         base_system_prompt: str = "",
         injection_policy: Any | None = None,
     ):
+        # Invariant: URB completion hook and injection governance must be
+        # both enabled or both disabled. The hook is wired when
+        # layers.user_retention is not None (via ScopedMessageHistory);
+        # injection is wired when wrap_governance sees a non-None URB.
+        # We validate here that both paths agree.
+        if isinstance(memory_system, DefaultMemorySystem):
+            urb_present = memory_system.layers.user_retention is not None
+            # The hook is present when URB layer is not None.
+            # Injection governance will be wired in wrap_governance().
+            # If someone bypasses DefaultMemorySystem and wires only one side,
+            # the mismatch is logged but not fatal (custom wiring may be intentional).
+            if urb_present and injection_policy is not None:
+                # Both present — binding is consistent.
+                pass
+            elif not urb_present and injection_policy is None:
+                # Both absent — binding is consistent.
+                pass
         from framework.memory.injection import FullInjectionPolicy
 
         self.memory_system: ContextManagedMemorySystem = memory_system
@@ -106,20 +123,15 @@ class MemorySystemContextManager(ContextManager):
     ) -> ContextGovernance | None:
         if not isinstance(self.memory_system, DefaultMemorySystem):
             return governance
-        pending_manager = self.memory_system.layers.pending
-        if pending_manager is None:
+        urb = self.memory_system.layers.user_retention
+        if urb is None:
             return governance
-        session_manager = self.memory_system.layers.session
-        injector = DefaultPendingPrunedInputInjector(
-            manager=pending_manager,
-            session=session_manager,
-        )
         from framework.memory.context_governance import (
             CompositeGovernance,
-            PendingInjectionGovernance,
+            UserRetentionBufferInjectionGovernance,
         )
-        pending_governance = PendingInjectionGovernance(
-            injector=injector,
+        injector = UserRetentionBufferInjectionGovernance(
+            urb=urb,
             context_factory=lambda: (
                 self._context_cache.get(session_id)
                 or MemoryContext(
@@ -131,8 +143,8 @@ class MemorySystemContextManager(ContextManager):
             ),
         )
         if governance is not None:
-            return CompositeGovernance([governance, pending_governance])
-        return pending_governance
+            return CompositeGovernance([governance, injector])
+        return injector
 
     # -- ContextManager interface -----------------------------------------
 

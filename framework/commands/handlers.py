@@ -15,6 +15,9 @@ from framework.commands.constants import (
     CommandAction,
     CommandDispatchPolicy,
 )
+from xml.sax.saxutils import escape as xml_escape
+
+from framework.memory.core.message import ContentFormat
 from framework.commands.models import (
     CommandContext,
     CommandHandlingResult,
@@ -207,10 +210,10 @@ class SkillCommandHandler:
                 invocation=invocation,
             )
         content = (
-            f'<command_context type="skill" name="{skill.name}">\n'
-            f"<skill>\n{skill.content}\n</skill>\n"
+            f'<command_context type="skill" name="{xml_escape(skill.name)}">\n'
+            f"<skill>\n{xml_escape(skill.content)}\n</skill>\n"
             f"</command_context>\n\n"
-            f"<user_input>\n{invocation.args}\n</user_input>"
+            f"<user_input>\n{xml_escape(invocation.args)}\n</user_input>"
         )
         logger.info("Resolved slash skill command: /%s", invocation.command)
         return CommandHandlingResult(
@@ -221,4 +224,6 @@ class SkillCommandHandler:
             trigger_agent=True,
             invocation=invocation,
             metadata={"skill_name": skill.name, "skill_location": skill.location or ""},
+            content_format=ContentFormat.XML,
+            truncatable_paths=["skill", "user_input"],
         )

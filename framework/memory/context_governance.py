@@ -15,12 +15,12 @@ from enum import StrEnum
 from typing import Any
 
 from framework.core.types import MessageRole
+from framework.memory.core.message import ContentFormat
 from framework.memory.sanitizer import (
     DefaultSessionToolChainSanitizer,
     ToolChainSanitizationMode,
 )
 from framework.memory.core.scope import MemoryContext
-from framework.memory.pending import PendingPrunedInputInjector
 from framework.memory.utils import estimate_token_count
 from framework.memory.xml_truncate import truncate_xml_safe
 
@@ -328,26 +328,61 @@ class FinalContextLegalityGovernance(ContextGovernance):
         return messages
 
 
-class PendingInjectionGovernance(ContextGovernance):
+class UserRetentionBufferInjectionGovernance(ContextGovernance):
+    """Inject pruned conversation context from UserRetentionBuffer.
+
+    The canned XML is inserted as a ``user`` message directly after the
+    last system message (before conversation history).  This is
+    semantically correct — the entries represent pruned user/agent
+    dialogue, not system instructions.
+    """
+
     def __init__(
         self,
-        injector: PendingPrunedInputInjector,
+        urb,  # UserRetentionBuffer
         context_factory: Callable[[], MemoryContext] | None = None,
     ) -> None:
-        self._injector = injector
+        self._urb = urb
         self._context_factory = context_factory
 
     async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        if self._injector is None:
-            return messages
-        context = (
-            self._context_factory()
-            if self._context_factory is not None
-            else None
-        )
+        context = self._context_factory() if self._context_factory else None
         if context is None:
             return messages
-        return await self._injector.apply(list(messages), context)
+        try:
+            entries = await self._urb.get_entries(context)
+        except Exception:
+            return messages
+        if not entries:
+            return messages
+
+        import xml.sax.saxutils as saxutils
+        lines = ['<pruned_conversation_context>']
+        for e in entries:
+            role_attr = ' role="agent"' if e.pruned_user_role == str(MessageRole.AGENT) else ""
+            lines.append(f'  <entry{role_attr}>')
+            lines.append(f'    <pruned_user_content>{saxutils.escape(e.pruned_user_content)}</pruned_user_content>')
+            if e.completing_assistant_content:
+                lines.append(f'    <completing_assistant_content>{saxutils.escape(e.completing_assistant_content)}</completing_assistant_content>')
+            lines.append('  </entry>')
+        lines.append('</pruned_conversation_context>')
+
+        urb_msg = {
+            "role": str(MessageRole.USER),
+            "content": "\n".join(lines),
+            "content_format": ContentFormat.XML,
+            "truncatable_paths": ["pruned_user_content", "completing_assistant_content"],
+            "metadata": {"memory_source": "user_retention_buffer"},
+        }
+        insert_at = self._after_system_messages(messages)
+        return [*messages[:insert_at], urb_msg, *messages[insert_at:]]
+
+    @staticmethod
+    def _after_system_messages(messages):
+        index = 0
+        while index < len(messages) and messages[index].get("role") == "system":
+            index += 1
+        return index
 
 
 def _compact_xml_content(content: str, paths: list[str]) -> str:

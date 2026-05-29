@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
+from xml.sax.saxutils import escape as xml_escape
 
 from framework.memory.archive_models import ArchiveChannel
 from framework.memory.core.models import (
@@ -189,7 +190,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
             prefetch = await memory_system.prefetch_memories(query, context)
             if prefetch:
                 sections.append(_PromptSection(
-                    content=f"<memory-context>\n{prefetch}\n</memory-context>",
+                    content=f"<memory-context>\n{xml_escape(prefetch)}\n</memory-context>",
                     priority=50,
                 ))
         except Exception:

@@ -11,7 +11,7 @@ import contextlib
 import logging
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, ClassVar
 
 from openai import AsyncOpenAI
 import httpx
@@ -374,6 +374,26 @@ class OpenAIProvider(StreamingLLMProvider):
         if asyncio.iscoroutine(result):
             await result
 
+    # Standard OpenAI Chat API message fields.
+    # Everything else (content_format, truncatable_paths, metadata,
+    # meta_context_lossy, etc.) is governance-internal and must not
+    # reach external providers.
+    _API_MSG_FIELDS: ClassVar[frozenset[str]] = frozenset({
+        "role", "content", "name", "tool_calls", "tool_call_id",
+        "function_call",
+    })
+
+    @staticmethod
+    def _sanitize_api_messages(
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Strip governance-internal fields from messages before API call."""
+        allowed = OpenAIProvider._API_MSG_FIELDS
+        return [
+            {k: v for k, v in msg.items() if k in allowed}
+            for msg in messages
+        ]
+
     def _build_params(
         self,
         messages: list[dict[str, Any]],
@@ -386,7 +406,7 @@ class OpenAIProvider(StreamingLLMProvider):
     ) -> dict[str, Any]:
         params: dict[str, Any] = {
             "model": model or self._model,
-            "messages": messages,
+            "messages": self._sanitize_api_messages(messages),
             "temperature": temperature if temperature is not None else self._temperature,
             "max_tokens": max_tokens if max_tokens is not None else self._max_tokens,
             "stream": stream,

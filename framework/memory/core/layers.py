@@ -236,7 +236,7 @@ class KnowledgeMemoryManager(ABC):
         return UserScope()
 
 
-class PendingPrunedInputMemoryManager(ABC):
+class UserRetentionBuffer(ABC):
     """Auxiliary memory for pruned unfinished user/agent inputs."""
 
     @abstractmethod
@@ -263,6 +263,22 @@ class PendingPrunedInputMemoryManager(ABC):
     async def clear(self, context: MemoryContext) -> None:
         pass
 
+    @abstractmethod
+    async def mark_all_completed(
+        self,
+        context: MemoryContext,
+        assistant_content: str,
+    ) -> None:
+        pass
+
+    @abstractmethod
+    async def upsert_pruned_user(
+        self,
+        context: MemoryContext,
+        entry: Any,
+    ) -> None:
+        pass
+
 
 @dataclass(frozen=True)
 class MemoryLayerSet:
@@ -271,7 +287,7 @@ class MemoryLayerSet:
     session: SessionMemoryManager
     archive: ArchiveMemoryManager | None = None
     knowledge: KnowledgeMemoryManager | None = None
-    pending: PendingPrunedInputMemoryManager | None = None
+    user_retention: UserRetentionBuffer | None = None
 
     def with_session(self, manager: SessionMemoryManager) -> MemoryLayerSet:
         return replace(self, session=manager)
@@ -282,8 +298,8 @@ class MemoryLayerSet:
     def with_knowledge(self, manager: KnowledgeMemoryManager | None) -> MemoryLayerSet:
         return replace(self, knowledge=manager)
 
-    def with_pending(
+    def with_user_retention(
         self,
-        manager: PendingPrunedInputMemoryManager | None,
+        manager: UserRetentionBuffer | None,
     ) -> MemoryLayerSet:
-        return replace(self, pending=manager)
+        return replace(self, user_retention=manager)
