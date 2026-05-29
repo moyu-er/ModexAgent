@@ -8,6 +8,8 @@ from framework.tools.terminal.tool import TerminalTool
 
 class FakeSession:
     name = "default"
+    _busy_after_timeout = False
+    _last_status = None
 
     async def current_segment(self) -> TerminalSegment:
         return TerminalSegment(text="$ ", cursor_line="$ ", is_empty_prompt=True)
@@ -43,11 +45,27 @@ class FakeManager:
 
 
 @pytest.mark.asyncio
-async def test_terminal_current_returns_empty_prompt_as_current_segment() -> None:
+async def test_terminal_current_returns_xml_with_idle_status() -> None:
     tool = TerminalTool(FakeManager())
 
     result = await tool.execute(action="current")
 
-    assert "Current terminal segment" in result
-    assert "$ " in result
-    assert "empty_prompt=True" in result
+    assert "<terminal_result>" in result
+    assert "<status>idle</status>" in result
+    assert "<action>current</action>" in result
+    assert "$" in result
+
+
+@pytest.mark.asyncio
+async def test_terminal_current_returns_none_when_no_session() -> None:
+    class EmptyManager(FakeManager):
+        async def get_default_session(self):
+            return None
+
+    tool = TerminalTool(EmptyManager())
+
+    result = await tool.execute(action="current")
+
+    assert "<terminal_result>" in result
+    assert "<status>none</status>" in result
+    assert "No terminal is active" in result
