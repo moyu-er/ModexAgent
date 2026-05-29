@@ -197,8 +197,8 @@ def test_urb_xml_preserves_entry_role_attributes():
     assert result.count("<entry") == 2
 
 
-def test_urb_xml_proportional_distribution():
-    """Budget is distributed proportionally across all truncatable text nodes."""
+def test_urb_xml_per_element_independent_truncation():
+    """Each truncatable element gets its own max_chars — no budget split."""
     xml = _make_urb_xml(
         _urb_entry_body("p" * 4000),
         _urb_entry_body("q" * 4000, "r" * 4000),
@@ -208,9 +208,9 @@ def test_urb_xml_proportional_distribution():
     result = truncate_xml_safe(xml, max_chars=800, truncatable_paths=paths)
 
     assert len(result) < len(xml)
-    assert len(result) <= 850
     assert result.count("<pruned_user_content>") == 2
     assert result.count("<completing_assistant_content>") == 1
+    # All elements are present in the output — none starved
 
 
 def test_urb_xml_mixed_completed_unfinished():

@@ -72,9 +72,11 @@ def _truncate_xml_structured(
 ) -> str:
     """Truncate well-formed XML using ElementTree.
 
-    Collects all truncatable text content, computes proportional budget
-    per element, and distributes the budget. Preserves all tags,
-    attributes, and non-truncatable element text.
+    Collects all truncatable text content and truncates each node
+    independently to *max_chars*.  No budget allocation — every
+    matching element gets the same per-element headroom so list
+    entries and nested fields are not starved.
+    Preserves all tags, attributes, and non-truncatable element text.
 
     When *unwrap_root* is True, the result has the outer synthetic
     ``<r>...</r>`` wrapper stripped.
@@ -89,46 +91,16 @@ def _truncate_xml_structured(
                 text_nodes.append((elem, elem.text))
 
     if not text_nodes:
-        # No truncatable text — must cut at boundary
         return _truncate_xml_boundary(content, max_chars)
 
-    # Compute overhead: everything that is NOT truncatable text.
-    # When unwrap_root=True, the original content length excludes the
-    # synthetic <r></r> wrapper so the budget applies to the final
-    # (unwrapped) output.
-    total_text_len = sum(len(text) for _, text in text_nodes)
-    content_chars = len(content)
-    wrapper_extra = 7 if unwrap_root else 0  # <r> + </r>
-    raw_overhead = content_chars - total_text_len
-    effective_overhead = raw_overhead - wrapper_extra
-
-    if effective_overhead >= max_chars:
-        # Overhead alone exceeds budget — must cut at boundary.
-        # Use the original (unwrapped) content for the fallback.
-        orig_content = content[3:-4] if unwrap_root else content
-        return _truncate_xml_boundary(orig_content, max_chars)
-
-    budget_for_text = max_chars - effective_overhead
-    if budget_for_text >= total_text_len:
-        result = ET.tostring(root, encoding="unicode")
-        if unwrap_root:
-            result = result[3:-4]  # strip <r> and </r>
-        return result
-
-    # Proportional truncation: give each text node its share of the budget
+    # Truncate each element independently to max_chars — no budget split
     for elem, original_text in text_nodes:
-        proportion = len(original_text) / total_text_len
-        elem_budget = max(1, int(budget_for_text * proportion))
-        if len(original_text) > elem_budget:
-            elem.text = original_text[:elem_budget]
+        if len(original_text) > max_chars:
+            elem.text = original_text[:max_chars]
 
     result = ET.tostring(root, encoding="unicode")
     if unwrap_root:
         result = result[3:-4]
-    # Secondary check: if unwrapped result exceeds budget, boundary cut
-    if len(result) > max_chars:
-        orig_content = content[3:-4] if unwrap_root else content
-        return _truncate_xml_boundary(orig_content, max_chars)
     return result
 
 

@@ -336,3 +336,35 @@ async def test_urb_xml_truncation_preserves_structure(registry: InMemoryStoreReg
     assert not any(
         truncated.endswith(frag) for frag in ["<", "</", "<s", "<sk"]
     )
+
+
+@pytest.mark.asyncio
+async def test_urb_mark_all_completed_truncates_assistant_content(
+    registry: InMemoryStoreRegistry,
+):
+    """completing_assistant_content MUST be truncated in mark_all_completed."""
+    from framework.memory.layers.config import MemoryLayerConfigSet, UserRetentionBufferConfig
+
+    # Create buffer with low max_assistant_chars to force truncation
+    config = MemoryLayerConfigSet(
+        user_retention=UserRetentionBufferConfig(
+            max_entries=5, max_user_chars=4000, max_assistant_chars=100,
+        ),
+    )
+    layer_set = MemoryLayerFactory.single_user(registry=registry, config=config)
+    ctx = MemoryContext(session_id="test-trunc-assistant")
+
+    entry = UserBufferEntry.from_message(
+        {"role": "user", "content": "q"}, pruned_at=time.time(),
+    )
+    await layer_set.user_retention.upsert_pruned_user(ctx, entry)
+
+    long_reply = "A" * 500  # well over max_assistant_chars=100
+    await layer_set.user_retention.mark_all_completed(ctx, long_reply)
+
+    entries = await layer_set.user_retention.get_entries(ctx)
+    assert len(entries) == 1
+    assert entries[0].is_completed
+    assert len(entries[0].completing_assistant_content) <= 110, (
+        f"Expected <= 110 chars, got {len(entries[0].completing_assistant_content)}"
+    )

@@ -86,7 +86,12 @@ class ScopedUserRetentionBuffer(UserRetentionBuffer):
         context: MemoryContext,
         assistant_content: str,
     ) -> None:
-        """Load, mark every unfinished entry as completed, and save."""
+        """Load, mark every unfinished entry as completed, and save.
+
+        The *assistant_content* is written into every unfinished entry.
+        Afterwards each entry runs through ``_enforce_limits`` so
+        ``completing_assistant_content`` respects the configured size cap.
+        """
         entries = await self._load_entries(context)
         entries = [
             replace(entry, completing_assistant_content=assistant_content)
@@ -94,6 +99,7 @@ class ScopedUserRetentionBuffer(UserRetentionBuffer):
             else entry
             for entry in entries
         ]
+        entries = self._enforce_limits(entries)
         await self._save_entries(context, entries)
 
     async def upsert_pruned_user(
