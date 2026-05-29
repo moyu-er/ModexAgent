@@ -7,6 +7,7 @@ import os
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+from xml.sax.saxutils import escape as xml_escape
 
 from framework.tools.terminal.prompt import (
     _strip_ansi_and_da1,
@@ -168,7 +169,7 @@ class TerminalSession:
                 await self._backend.terminate()
             return (
                 f"<shell_result>\n"
-                f"<output>{output}</output>\n"
+                f"<output>{xml_escape(output)}</output>\n"
                 f"<status>ended</status>\n"
                 f"<message>Terminal session ended</message>\n"
                 f"</shell_result>"
@@ -229,7 +230,7 @@ class TerminalSession:
             self._last_status = "timeout"
             return (
                 f"<shell_result>\n"
-                f"<output>{output}</output>\n"
+                f"<output>{xml_escape(output)}</output>\n"
                 f"<status>timeout</status>\n"
                 f"<message>Timed out after {timeout:.0f}s — command may still be running</message>\n"
                 f"</shell_result>"
@@ -239,7 +240,7 @@ class TerminalSession:
             self._last_status = "waiting_input"
             return (
                 f"<shell_result>\n"
-                f"<output>{output}</output>\n"
+                f"<output>{xml_escape(output)}</output>\n"
                 f"<status>waiting_input</status>\n"
                 f"<message>Command is waiting for user input</message>\n"
                 f"</shell_result>"
@@ -249,7 +250,7 @@ class TerminalSession:
             self._last_status = "ended"
             return (
                 f"<shell_result>\n"
-                f"<output>{output}</output>\n"
+                f"<output>{xml_escape(output)}</output>\n"
                 f"<status>ended</status>\n"
                 f"<message>Terminal session ended</message>\n"
                 f"</shell_result>"
