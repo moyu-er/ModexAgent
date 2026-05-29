@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from enum import StrEnum
 from typing import Any
-
 from xml.sax.saxutils import escape as xml_escape
 
 from framework.core.tool_manager import Tool
