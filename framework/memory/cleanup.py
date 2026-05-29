@@ -162,22 +162,41 @@ async def cleanup_session(
     keep_messages = _resanitize_keep(keep_messages)
 
     # Extract user retention entries from pruned messages
+    # Walk all sanitized messages; accumulate pruned user/agent messages.
+    # When a plain assistant appears (no tool_calls, content present),
+    # flush accumulated entries as a completed turn.
     import time
     pruned_now = time.time()
     boundary_idx = len(pruned_messages)
     pruned_indices = set(range(boundary_idx))
     retention_entries: list[UserBufferEntry] = []
+    pending: list[dict[str, Any]] = []
+
     if user_retention is not None and pruned_messages:
-        for idx in pruned_indices:
-            if idx < len(sanitized):
-                msg = sanitized[idx]
-                role = str(msg.get("role", ""))
-                if role in {"user", "agent"}:
-                    try:
-                        entry = UserBufferEntry.from_message(msg, pruned_at=pruned_now)
-                        retention_entries.append(entry)
-                    except (ValueError, TypeError):
-                        pass
+        for idx, msg in enumerate(sanitized):
+            role = str(msg.get("role", ""))
+            # Plain assistant (no tool_calls, has content) -> completed turn barrier
+            if role == "assistant" and not msg.get("tool_calls") and msg.get("content"):
+                if pending:
+                    for pending_msg in pending:
+                        try:
+                            entry = UserBufferEntry.from_message(pending_msg, pruned_at=pruned_now)
+                            retention_entries.append(entry)
+                        except (ValueError, TypeError):
+                            pass
+                    pending.clear()
+                continue
+            # Accumulate pruned user/agent messages
+            if idx in pruned_indices and role in {"user", "agent"}:
+                pending.append(msg)
+
+        # Flush remaining pending entries (no plain assistant after them)
+        for pending_msg in pending:
+            try:
+                entry = UserBufferEntry.from_message(pending_msg, pruned_at=pruned_now)
+                retention_entries.append(entry)
+            except (ValueError, TypeError):
+                pass
 
     # Commit: replace session messages
     revision = await session.get_revision(context)
@@ -210,7 +229,7 @@ async def cleanup_session(
     if user_retention is not None and retention_entries:
         try:
             for entry in retention_entries:
-                user_retention.upsert_pruned_user(entry)
+                user_retention.upsert_pruned_user(context, entry)
         except Exception:
             logger.warning(
                 "User retention persistence failed: session=%s",
@@ -323,7 +342,6 @@ def _compute_boundary(
     - Walk backward counting messages until accumulated >= keep_target
     - Never split a tool chain: if boundary splits a tool result from its
       assistant, move boundary before the assistant
-    - Always keep the most recent user message (anchor)
 
     Returns (keep_messages, pruned_messages).
     """
@@ -351,9 +369,6 @@ def _compute_boundary(
 
     # Ensure we don't split a tool chain
     boundary = _adjust_boundary_for_tool_chains(messages, boundary)
-
-    # Ensure the most recent user message is kept
-    boundary = _adjust_boundary_for_last_user(messages, boundary)
 
     # Ensure keep region starts with a user message (turn boundary)
     boundary = _adjust_boundary_for_first_user(messages, boundary)
@@ -406,31 +421,6 @@ def _adjust_boundary_for_tool_chains(
             # The tool results are in keep region but assistant would be pruned —
             # move boundary to include the assistant
             return boundary - 1
-
-    return boundary
-
-
-def _adjust_boundary_for_last_user(
-    messages: list[dict[str, Any]],
-    boundary: int,
-) -> int:
-    """Ensure the most recent user message is in the keep region."""
-    if boundary <= 0:
-        return boundary
-
-    # Find the last user message
-    last_user_idx: int | None = None
-    for i in range(len(messages) - 1, -1, -1):
-        if messages[i].get("role") == "user":
-            last_user_idx = i
-            break
-
-    if last_user_idx is None:
-        return boundary
-
-    # If the last user message would be pruned, move boundary to include it
-    if last_user_idx < boundary:
-        boundary = last_user_idx
 
     return boundary
 
