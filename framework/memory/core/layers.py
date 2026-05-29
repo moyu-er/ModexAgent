@@ -271,6 +271,14 @@ class UserRetentionBuffer(ABC):
     ) -> None:
         pass
 
+    @abstractmethod
+    async def upsert_pruned_user(
+        self,
+        context: MemoryContext,
+        entry: Any,
+    ) -> None:
+        pass
+
 
 @dataclass(frozen=True)
 class MemoryLayerSet:
