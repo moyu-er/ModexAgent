@@ -283,65 +283,67 @@ class OpenAIProvider(StreamingLLMProvider):
         think_extractor = ThinkTagExtractor() if self._parse_think_tags else None
 
         iterator = stream.__aiter__()
-        while True:
-            try:
-                chunk = await asyncio.wait_for(
-                    iterator.__anext__(),
-                    timeout=self._stream_idle_timeout,
-                )
-            except StopAsyncIteration:
-                break
-            except asyncio.TimeoutError:
-                with contextlib.suppress(Exception):
-                    await stream.close()
-                partial_content = "".join(content_parts)
-                logger.warning(
-                    "OpenAI stream idle timeout after %.1fs, partial_content_len=%d",
-                    self._stream_idle_timeout, len(partial_content),
-                )
-                return build_timeout_response(
-                    provider="openai",
-                    message="LLM stream idle timeout",
-                    partial_content=partial_content,
-                )
+        try:
+            while True:
+                try:
+                    chunk = await asyncio.wait_for(
+                        iterator.__anext__(),
+                        timeout=self._stream_idle_timeout,
+                    )
+                except StopAsyncIteration:
+                    break
+                except asyncio.TimeoutError:
+                    partial_content = "".join(content_parts)
+                    logger.warning(
+                        "OpenAI stream idle timeout after %.1fs, partial_content_len=%d",
+                        self._stream_idle_timeout, len(partial_content),
+                    )
+                    return build_timeout_response(
+                        provider="openai",
+                        message="LLM stream idle timeout",
+                        partial_content=partial_content,
+                    )
 
-            if not chunk.choices:
-                continue
+                if not chunk.choices:
+                    continue
 
-            delta = StreamDelta.from_openai(chunk.choices[0].delta)
+                delta = StreamDelta.from_openai(chunk.choices[0].delta)
 
-            chunk_finish = chunk.choices[0].finish_reason
-            if chunk_finish is not None:
-                finish_reason = chunk_finish
+                chunk_finish = chunk.choices[0].finish_reason
+                if chunk_finish is not None:
+                    finish_reason = chunk_finish
 
-            if delta.reasoning_content:
-                has_native_reasoning = True
-                reasoning_parts.append(delta.reasoning_content)
-                await self._invoke_callback(on_reasoning_delta, delta.reasoning_content)
+                if delta.reasoning_content:
+                    has_native_reasoning = True
+                    reasoning_parts.append(delta.reasoning_content)
+                    await self._invoke_callback(on_reasoning_delta, delta.reasoning_content)
 
-            if delta.content:
-                if think_extractor and not has_native_reasoning:
-                    clean_delta, extracted_reasoning = think_extractor.feed(delta.content)
-                    if extracted_reasoning:
-                        reasoning_parts.append(extracted_reasoning)
-                        await self._invoke_callback(on_reasoning_delta, extracted_reasoning)
-                    if clean_delta:
-                        content_parts.append(clean_delta)
-                        await self._invoke_callback(on_content_delta, clean_delta)
-                else:
-                    content_parts.append(delta.content)
-                    await self._invoke_callback(on_content_delta, delta.content)
+                if delta.content:
+                    if think_extractor and not has_native_reasoning:
+                        clean_delta, extracted_reasoning = think_extractor.feed(delta.content)
+                        if extracted_reasoning:
+                            reasoning_parts.append(extracted_reasoning)
+                            await self._invoke_callback(on_reasoning_delta, extracted_reasoning)
+                        if clean_delta:
+                            content_parts.append(clean_delta)
+                            await self._invoke_callback(on_content_delta, clean_delta)
+                    else:
+                        content_parts.append(delta.content)
+                        await self._invoke_callback(on_content_delta, delta.content)
 
-            if delta.tool_call_chunks:
-                for tc_chunk in delta.tool_call_chunks:
-                    accumulator.add_chunk(tc_chunk)
+                if delta.tool_call_chunks:
+                    for tc_chunk in delta.tool_call_chunks:
+                        accumulator.add_chunk(tc_chunk)
 
-            if chunk.usage is not None:
-                usage = {
-                    "prompt_tokens": chunk.usage.prompt_tokens,
-                    "completion_tokens": chunk.usage.completion_tokens,
-                    "total_tokens": chunk.usage.total_tokens,
-                }
+                if chunk.usage is not None:
+                    usage = {
+                        "prompt_tokens": chunk.usage.prompt_tokens,
+                        "completion_tokens": chunk.usage.completion_tokens,
+                        "total_tokens": chunk.usage.total_tokens,
+                    }
+        finally:
+            with contextlib.suppress(BaseException):
+                await stream.close()
 
         pending_tools = accumulator.flush_pending()
         all_tool_calls = accumulator.get_completed() + pending_tools

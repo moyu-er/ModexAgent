@@ -6,6 +6,7 @@ class TestSafetyConfig:
         cfg = SafetyConfig()
         assert cfg.llm.request_timeout == 45.0
         assert cfg.turn.hook_timeout == 10.0
+        assert cfg.turn.dispatch_timeout == 300.0
 
     def test_partial_override(self) -> None:
         cfg = SafetyConfig(
@@ -15,3 +16,9 @@ class TestSafetyConfig:
         assert cfg.llm.request_timeout == 60.0
         assert cfg.llm.max_retries == 1
         assert cfg.turn.tool_timeout == 120.0
+
+    def test_dispatch_timeout_override(self) -> None:
+        cfg = SafetyConfig(
+            turn=TurnSafetyConfig(dispatch_timeout=60.0),
+        )
+        assert cfg.turn.dispatch_timeout == 60.0

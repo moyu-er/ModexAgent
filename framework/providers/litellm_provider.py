@@ -448,65 +448,65 @@ class LiteLLMProvider(StreamingLLMProvider):
                 tool_calls.append(tool_call)
 
         iterator = response.__aiter__()
-        while True:
-            try:
-                chunk = await asyncio.wait_for(
-                    anext(iterator),
-                    timeout=self._stream_idle_timeout,
-                )
-            except StopAsyncIteration:
-                break
-            except TimeoutError:
-                with contextlib.suppress(Exception):
-                    close = getattr(iterator, "aclose", None)
-                    if close is not None:
-                        await close
-                partial_content = "".join(content_parts)
-                logger.warning(
-                    "LiteLLM stream idle timeout after %.1fs, partial_content_len=%d",
-                    self._stream_idle_timeout,
-                    len(partial_content),
-                )
-                return build_timeout_response(
-                    provider="litellm",
-                    message="LLM stream idle timeout",
-                    partial_content=partial_content,
-                )
+        try:
+            while True:
+                try:
+                    chunk = await asyncio.wait_for(
+                        anext(iterator),
+                        timeout=self._stream_idle_timeout,
+                    )
+                except StopAsyncIteration:
+                    break
+                except TimeoutError:
+                    partial_content = "".join(content_parts)
+                    logger.warning(
+                        "LiteLLM stream idle timeout after %.1fs, partial_content_len=%d",
+                        self._stream_idle_timeout,
+                        len(partial_content),
+                    )
+                    return build_timeout_response(
+                        provider="litellm",
+                        message="LLM stream idle timeout",
+                        partial_content=partial_content,
+                    )
 
-            delta = self._extract_delta(chunk)
-            if not delta:
-                continue
+                delta = self._extract_delta(chunk)
+                if not delta:
+                    continue
 
-            if "tool_calls" in delta and delta["tool_calls"]:
-                tool_chunks = parse_tool_call_chunks_from_delta(delta["tool_calls"])
-                for tool_chunk in tool_chunks:
-                    completed_tool_calls = accumulator.add_chunk(tool_chunk)
-                    for tool_call in completed_tool_calls:
-                        _add_tool_call(tool_call)
+                if "tool_calls" in delta and delta["tool_calls"]:
+                    tool_chunks = parse_tool_call_chunks_from_delta(delta["tool_calls"])
+                    for tool_chunk in tool_chunks:
+                        completed_tool_calls = accumulator.add_chunk(tool_chunk)
+                        for tool_call in completed_tool_calls:
+                            _add_tool_call(tool_call)
 
-            # 原生 reasoning_content 优先级最高；一旦出现即持久，不再回落 think 提取
-            if "reasoning_content" in delta and delta["reasoning_content"]:
-                has_native_reasoning = True
-                reasoning_delta = delta["reasoning_content"]
-                reasoning_parts.append(reasoning_delta)
-                await self._invoke_callback(on_reasoning_delta, reasoning_delta)
+                if "reasoning_content" in delta and delta["reasoning_content"]:
+                    has_native_reasoning = True
+                    reasoning_delta = delta["reasoning_content"]
+                    reasoning_parts.append(reasoning_delta)
+                    await self._invoke_callback(on_reasoning_delta, reasoning_delta)
 
-            # 处理普通 content；若开启 parse_think_tags 且无原生 reasoning，则做 tag 剥离
-            if "content" in delta and delta["content"]:
-                if think_extractor and not has_native_reasoning:
-                    content_delta, reasoning_delta = think_extractor.feed(delta["content"])
-                    if reasoning_delta:
-                        reasoning_parts.append(reasoning_delta)
-                        await self._invoke_callback(on_reasoning_delta, reasoning_delta)
-                    if content_delta:
-                        content_parts.append(content_delta)
-                        await self._invoke_callback(on_content_delta, content_delta)
-                else:
-                    content_parts.append(delta["content"])
-                    await self._invoke_callback(on_content_delta, delta["content"])
+                if "content" in delta and delta["content"]:
+                    if think_extractor and not has_native_reasoning:
+                        content_delta, reasoning_delta = think_extractor.feed(delta["content"])
+                        if reasoning_delta:
+                            reasoning_parts.append(reasoning_delta)
+                            await self._invoke_callback(on_reasoning_delta, reasoning_delta)
+                        if content_delta:
+                            content_parts.append(content_delta)
+                            await self._invoke_callback(on_content_delta, content_delta)
+                    else:
+                        content_parts.append(delta["content"])
+                        await self._invoke_callback(on_content_delta, delta["content"])
 
-            if "finish_reason" in delta and delta["finish_reason"]:
-                finish_reason = delta["finish_reason"].lower()
+                if "finish_reason" in delta and delta["finish_reason"]:
+                    finish_reason = delta["finish_reason"].lower()
+        finally:
+            with contextlib.suppress(BaseException):
+                close = getattr(iterator, "aclose", None)
+                if close is not None:
+                    await close()
 
         pending_tools = accumulator.flush_pending()
         for tool_call in pending_tools:

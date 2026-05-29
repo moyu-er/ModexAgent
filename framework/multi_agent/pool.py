@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import sys
 import time
@@ -324,12 +325,14 @@ class AgentPool(AgentRegistry):
             error_count = self._bump_error_count(agent_name)
             await self._maybe_backoff(agent_name, error_count)
         finally:
+            if dispatch_task is not None and not dispatch_task.done():
+                dispatch_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await dispatch_task
             if watchdog_task is not None and not watchdog_task.done():
                 watchdog_task.cancel()
-                try:
+                with contextlib.suppress(asyncio.CancelledError):
                     await watchdog_task
-                except asyncio.CancelledError:
-                    pass
             if deadline is not None:
                 current_dispatch_deadline.reset(token)  # type: ignore[possibly-undefined]
             async with self._get_dispatch_lock(agent_name):
