@@ -35,12 +35,15 @@ def manager() -> TerminalManager:
 
 
 def _cfg(**kw: int) -> TerminalRuntimeConfig:
+    # Map short aliases to actual field names
+    if "yield_ms" in kw:
+        kw["default_yield_ms"] = kw.pop("yield_ms")
     defaults = dict(
         default_command_timeout_seconds=5,
         default_yield_ms=3000,
         command_tool_outer_timeout_seconds=10,
         input_wait_idle_ms=2000,
-        input_wait_early_min_elapsed_ms=1000,
+        initial_idle_threshold_ms=1000,
         prompt_stabilize_ms=100,
     )
     defaults.update(kw)

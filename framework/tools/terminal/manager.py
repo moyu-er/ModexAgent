@@ -8,6 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from framework.tools.terminal.backends.base import TerminalBackend
 from framework.tools.terminal.backends.factory import create_pty_backend
 from framework.tools.terminal.config import TerminalRuntimeConfig
 from framework.tools.terminal.results import SlidingOutputBuffer
@@ -243,9 +244,12 @@ class TerminalManager(TerminalManagerBase):
         session_buffers: list[tuple[str, int]] = []
 
         for name, session in self._sessions.items():
-            buf = session._backend._output_buffer
-            if buf is not None:
-                size = buf.total_chars if isinstance(buf, SlidingOutputBuffer) else 0
+            backend = session._backend
+            if not isinstance(backend, TerminalBackend):
+                continue
+            buf = backend._output_buffer
+            if buf is not None and isinstance(buf, SlidingOutputBuffer):
+                size = buf.total_chars
                 total_buffer += size
                 session_buffers.append((name, size))
 
@@ -260,9 +264,11 @@ class TerminalManager(TerminalManagerBase):
                 break
 
             session = self._sessions[name]
-            buf = session._backend._output_buffer
-            if isinstance(buf, SlidingOutputBuffer):
-                buf.clear()
+            backend = session._backend
+            if isinstance(backend, TerminalBackend):
+                buf = backend._output_buffer
+                if isinstance(buf, SlidingOutputBuffer):
+                    buf.clear()
 
             logger.warning(
                 "Memory pressure: cleared buffer for '%s' (was %d chars)",
