@@ -72,6 +72,16 @@ class ProcessStatus(StrEnum):
     TIMED_OUT = "timed_out"
 
 
+class CommandResultStatus(StrEnum):
+    """CommandTool return status — used in command_result XML."""
+
+    COMPLETED = "completed"
+    RUNNING = "running"
+    TIMED_OUT = "timed_out"
+    PAGINATED = "paginated"
+    INPUT_WAIT = "input_wait"
+
+
 def _parse_platform(name: str) -> Platform:
     """Map platform.system() string to Platform enum."""
     mapping: dict[str, Platform] = {
