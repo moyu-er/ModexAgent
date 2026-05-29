@@ -28,7 +28,7 @@ def _cfg(**kw: int) -> TerminalRuntimeConfig:
         default_yield_ms=kw.get("yield_ms", 4000),
         command_tool_outer_timeout_seconds=kw.get("outer", 15),
         input_wait_idle_ms=kw.get("idle_ms", 1500),
-        input_wait_early_min_elapsed_ms=kw.get("early_ms", 800),
+        initial_idle_threshold_ms=kw.get("early_ms", 800),
         prompt_stabilize_ms=100,
     )
 
