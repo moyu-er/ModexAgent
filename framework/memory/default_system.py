@@ -23,6 +23,7 @@ from framework.memory.history import MessageHistory
 from framework.memory.lifecycle import MemoryMaintenancePolicy
 from framework.memory.recorder import MemoryAppendRecorder
 from framework.memory.registry.base import MemoryStoreRegistry
+from framework.core.types import MessageRole
 
 logger = logging.getLogger(__name__)
 
@@ -71,10 +72,26 @@ class ScopedMessageHistory(MessageHistory):
             **self._cleanup_config,
         )
 
+    async def _urb_completion_hook(self, message: ChatMessage | dict[str, Any]) -> None:
+        """If message is a plain assistant, mark all URB entries completed."""
+        if self._user_retention is None:
+            return
+        msg_dict = message.to_dict() if hasattr(message, "to_dict") else dict(message)
+        if msg_dict.get("role") != str(MessageRole.ASSISTANT):
+            return
+        if msg_dict.get("tool_calls"):
+            return
+        assistant_content = msg_dict.get("content", "")
+        if not assistant_content:
+            return
+        await self._user_retention.mark_all_completed(self._context, assistant_content)
+
     async def append(self, message: ChatMessage | dict[str, Any]) -> None:
         await self._manager.add_messages(self._context, [message])
         if self._recorder is not None:
             await self._recorder.record([message], self._context)
+        if self._user_retention is not None:
+            await self._urb_completion_hook(message)
         await self._run_cleanup()
         async with self._cache_lock:
             self._cache = None
@@ -85,6 +102,8 @@ class ScopedMessageHistory(MessageHistory):
         await self._manager.add_messages(self._context, list(messages))
         if self._recorder is not None:
             await self._recorder.record(list(messages), self._context)
+        if self._user_retention is not None and messages:
+            await self._urb_completion_hook(messages[-1])
         await self._run_cleanup()
         async with self._cache_lock:
             self._cache = None

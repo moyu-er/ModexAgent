@@ -314,10 +314,6 @@ class AgentBuilderMixin:
         from framework.ioc.configs.memory import MemoryConfig
         from framework.ioc.factories.memory import _build_memory_layer_config
 
-        if isinstance(cfg, dict) and "pending" not in cfg and "pending_pruned_inputs" in cfg:
-            cfg = {**cfg, "user_retention": cfg.pop("pending_pruned_inputs")}
-        if isinstance(cfg, dict) and "user_retention" not in cfg and "pending" in cfg:
-            cfg = {**cfg, "user_retention": cfg.pop("pending")}
         memory_cfg = cfg if isinstance(cfg, MemoryConfig) else MemoryConfig.model_validate(cfg)
         layer_config = _build_memory_layer_config(memory_cfg)
         if layer_config.user_retention is not None and not layer_config.user_retention.enabled:

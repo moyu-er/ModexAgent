@@ -85,6 +85,12 @@ class MemorySystemContextManager(ContextManager):
         base_system_prompt: str = "",
         injection_policy: Any | None = None,
     ):
+        # Invariant: URB injection binding is structurally enforced.
+        # wrap_governance() checks self.memory_system.layers.user_retention
+        # at call time. If not None, a UserRetentionBufferInjectionGovernance
+        # is created and composed into the governance chain. If None, no URB
+        # injection occurs. No separate validation is needed — the binding is
+        # implicit in the layers.user_retention attribute.
         from framework.memory.injection import FullInjectionPolicy
 
         self.memory_system: ContextManagedMemorySystem = memory_system
@@ -106,18 +112,15 @@ class MemorySystemContextManager(ContextManager):
     ) -> ContextGovernance | None:
         if not isinstance(self.memory_system, DefaultMemorySystem):
             return governance
-        user_retention = self.memory_system.layers.user_retention
-        if user_retention is None:
+        urb = self.memory_system.layers.user_retention
+        if urb is None:
             return governance
-        # UserRetentionBufferInjectionGovernance stub — full implementation deferred to Task 6
         from framework.memory.context_governance import (
             CompositeGovernance,
             UserRetentionBufferInjectionGovernance,
         )
-        session_manager = self.memory_system.layers.session
-        retention_governance = UserRetentionBufferInjectionGovernance(
-            user_retention=user_retention,
-            session=session_manager,
+        injector = UserRetentionBufferInjectionGovernance(
+            urb=urb,
             context_factory=lambda: (
                 self._context_cache.get(session_id)
                 or MemoryContext(
@@ -129,8 +132,8 @@ class MemorySystemContextManager(ContextManager):
             ),
         )
         if governance is not None:
-            return CompositeGovernance([governance, retention_governance])
-        return retention_governance
+            return CompositeGovernance([governance, injector])
+        return injector
 
     # -- ContextManager interface -----------------------------------------
 
