@@ -8,7 +8,11 @@ from xml.sax.saxutils import escape as xml_escape
 
 from framework.core.tool_manager import Tool
 from framework.tools.terminal.managers import TerminalManagerBase
-from framework.tools.terminal.prompt import detect_pager_entry, resolve_cursor_line, sanitize_terminal_output
+from framework.tools.terminal.prompt import (
+    detect_pager_entry,
+    resolve_cursor_line,
+    sanitize_terminal_output,
+)
 
 
 class TerminalAction(StrEnum):
