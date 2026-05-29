@@ -229,7 +229,7 @@ async def cleanup_session(
     if user_retention is not None and retention_entries:
         try:
             for entry in retention_entries:
-                user_retention.upsert_pruned_user(context, entry)
+                await user_retention.upsert_pruned_user(context, entry)
         except Exception:
             logger.warning(
                 "User retention persistence failed: session=%s",
@@ -429,7 +429,11 @@ def _adjust_boundary_for_first_user(
     messages: list[dict[str, Any]],
     boundary: int,
 ) -> int:
-    """Move boundary forward so keep region starts with a user message (turn boundary)."""
+    """Move boundary forward so keep region starts with a user message (turn boundary).
+
+    Only walks forward; if no user is found the boundary is left as-is.
+    This avoids keeping too many messages when tool chains fill the session.
+    """
     if boundary >= len(messages):
         return boundary
     if messages[boundary].get("role") == "user":

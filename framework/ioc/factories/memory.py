@@ -28,7 +28,8 @@ def _build_memory_layer_config(cfg: MemoryConfig) -> MemoryLayerConfigSet:
     user_retention_config = UserRetentionBufferConfig(
         enabled=cfg.user_retention.enabled,
         max_entries=cfg.user_retention.max_entries,
-        max_chars=cfg.user_retention.max_chars,
+        max_user_chars=cfg.user_retention.max_user_chars,
+        max_assistant_chars=cfg.user_retention.max_assistant_chars,
     )
 
     session_config = SessionMemoryConfig(
