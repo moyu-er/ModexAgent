@@ -378,3 +378,49 @@ async def test_archive_both_channels_empty_returns_no_writes() -> None:
     )
 
     assert len(result.writes) == 0
+
+
+# ---------------------------------------------------------------------------
+# MAJOR 1: Archive generation uses PromptRegistry
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dual_llm_strategy_uses_prompt_registry_when_provided() -> None:
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from framework.memory.prompts import PromptRegistry
+
+    with TemporaryDirectory() as tmpdir:
+        prompts_dir = Path(tmpdir)
+        (prompts_dir / "archive").mkdir()
+        (prompts_dir / "archive" / "context_archive_system.md").write_text("REGISTRY_CTX_SYSTEM")
+        (prompts_dir / "archive" / "knowledge_archive_system.md").write_text("REGISTRY_KN_SYSTEM")
+
+        registry = PromptRegistry(prompts_dir)
+        summarizer = FakeSummarizer()
+        strategy = DualLLMArchiveGenerationStrategy(
+            summarizer=summarizer,
+            prompts=registry,
+        )
+
+        messages = [
+            ArchiveInputMessage(role="user", content="hello"),
+            ArchiveInputMessage(role="assistant", content="hi there"),
+        ]
+
+        result = await strategy.generate(
+            messages,
+            MemoryContext(session_id="s1"),
+            CompressionReason.MESSAGE_COUNT,
+        )
+
+        assert len(summarizer.calls) >= 1
+        for _, prompt_text, _ in summarizer.calls:
+            assert (
+                "REGISTRY_CTX_SYSTEM" in prompt_text
+                or "REGISTRY_KN_SYSTEM" in prompt_text
+                or "Context Archive" in prompt_text
+                or "Knowledge Archive" in prompt_text
+            )

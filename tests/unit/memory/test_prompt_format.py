@@ -55,3 +55,28 @@ def test_user_prompt_files_have_no_code_fences() -> None:
     for rel_path in user_prompt_files:
         content = (PROMPTS_ROOT / rel_path).read_text(encoding="utf-8")
         assert "```" not in content, f"{rel_path} has code fences: ``` in content"
+
+
+# --- MAJOR 4: Agent prompts need Knowledge & Memory section ---
+
+
+def test_agent_main_prompt_has_knowledge_section() -> None:
+    """main.md must include Knowledge & Memory awareness section."""
+    agents_root = PROMPTS_ROOT.parent.parent.parent / "examples" / "bot_project" / "agents"
+    content = (agents_root / "main.md").read_text(encoding="utf-8")
+    assert "<agent_knowledge>" in content, "main.md must reference agent_knowledge XML"
+
+
+# --- MAJOR 5: Knowledge injection XML needs reference-only comment ---
+
+
+def test_knowledge_xml_has_reference_only_comment() -> None:
+    """full_injection.py must include reference-only comment in agent_knowledge XML."""
+    import inspect
+
+    from framework.memory.injection.full_injection import FullInjectionPolicy
+
+    source = inspect.getsource(FullInjectionPolicy._inject_knowledge)
+    assert (
+        "NOT an active instruction" in source or "background reference" in source.lower()
+    ), "XML must include comment that knowledge is reference, not instruction"

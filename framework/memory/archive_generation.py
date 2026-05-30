@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Union
+from typing import Any, Union
 
 from framework.memory.archive_input import DefaultArchiveInputPolicy, MessageMapping
 from framework.memory.archive_models import (
@@ -84,12 +84,14 @@ class DualLLMArchiveGenerationStrategy(ArchiveGenerationStrategy):
         context_max_tokens: int = 800,
         knowledge_max_tokens: int = 600,
         max_segment_tokens: int = 12000,
+        prompts: Any = None,
     ) -> None:
         self._summarizer = summarizer
         self._input_policy = input_policy or DefaultArchiveInputPolicy()
         self._context_max_tokens = context_max_tokens
         self._knowledge_max_tokens = knowledge_max_tokens
         self._max_segment_tokens = max_segment_tokens
+        self._prompts = prompts
 
     async def generate(
         self,
@@ -106,6 +108,13 @@ class DualLLMArchiveGenerationStrategy(ArchiveGenerationStrategy):
 
         from framework.agents.summarizer.agent import SummarizerAgent
 
+        if self._prompts is not None:
+            ctx_system = self._prompts.get_system("archive/context_archive")
+            kn_system = self._prompts.get_system("archive/knowledge_archive")
+        else:
+            ctx_system = SummarizerAgent.PROMPT_CONTEXT_ARCHIVE
+            kn_system = SummarizerAgent.PROMPT_KNOWLEDGE_ARCHIVE
+
         context_parts: list[str] = []
         knowledge_parts: list[str] = []
 
@@ -115,7 +124,7 @@ class DualLLMArchiveGenerationStrategy(ArchiveGenerationStrategy):
 
             context_summary = await self._summarizer.summarize(
                 self._prompt_input(inputs.context_transcript, reason),
-                prompt=SummarizerAgent.PROMPT_CONTEXT_ARCHIVE,
+                prompt=ctx_system,
                 max_tokens=self._context_max_tokens,
             )
             normalized_context = normalize_memory_summary(context_summary)
@@ -124,7 +133,7 @@ class DualLLMArchiveGenerationStrategy(ArchiveGenerationStrategy):
 
             knowledge_summary = await self._summarizer.summarize(
                 self._prompt_input(inputs.knowledge_transcript, reason),
-                prompt=SummarizerAgent.PROMPT_KNOWLEDGE_ARCHIVE,
+                prompt=kn_system,
                 max_tokens=self._knowledge_max_tokens,
                 temperature=0.2,
             )
