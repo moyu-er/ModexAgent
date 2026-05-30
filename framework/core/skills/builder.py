@@ -51,15 +51,12 @@ DEFAULT_PROGRESSIVE_PROMPT = (
 
 def _render_skill_xml(
     skills: list[Skill],
-    base_path: Path | None = None,
     prompt_template: str = DEFAULT_PROGRESSIVE_PROMPT,
-    inline_always: bool = False,
 ) -> str:
-    """Render skills as an XML block.
+    """Render skills as a compact XML directory.
 
-    Non-always skills are listed with metadata only.
-    When *inline_always* is True, skills marked ``always=true`` have their
-    full content inlined inside ``<content>`` elements.
+    Only name, directory path, and description are included.
+    The LLM is expected to ``read_file`` the SKILL.md for full content.
     """
     from xml.sax.saxutils import escape as xml_escape
 
@@ -71,38 +68,15 @@ def _render_skill_xml(
         "<available_skills>",
     ]
     for skill in skills:
-        loc = str(Path(skill.location).resolve()) if skill.location else ""
         dir_path = str(Path(skill.location).parent.resolve()) if skill.location else ""
 
-        attrs = f' name="{xml_escape(skill.name)}"'
-        if loc:
-            attrs += f' file="{xml_escape(loc)}"'
-        if dir_path:
-            attrs += f' directory="{xml_escape(dir_path)}"'
-
-        if skill.metadata.always:
-            attrs += ' always="true"'
-
-        if skill.metadata.requires_tools or skill.metadata.requires_bins or skill.metadata.tags:
-            parts.append(f"  <skill{attrs}>")
-            if skill.description:
-                parts.append(f"    <description>{xml_escape(skill.description)}</description>")
-            req_parts: list[str] = []
-            if skill.metadata.requires_tools:
-                req_parts.append(f'    <requires_tools>{xml_escape(", ".join(skill.metadata.requires_tools))}</requires_tools>')
-            if skill.metadata.requires_bins:
-                req_parts.append(f'    <requires_bins>{xml_escape(", ".join(skill.metadata.requires_bins))}</requires_bins>')
-            if skill.metadata.tags:
-                req_parts.append(f'    <tags>{xml_escape(", ".join(skill.metadata.tags))}</tags>')
-            parts.extend(req_parts)
-            if inline_always and skill.metadata.always and skill.content:
-                parts.append(f"    <content>{xml_escape(skill.content)}</content>")
-            parts.append("  </skill>")
-        else:
-            if skill.description:
-                parts.append(f'  <skill{attrs} description="{xml_escape(skill.description)}" />')
-            else:
-                parts.append(f"  <skill{attrs} />")
+        parts.append(
+            f'  <skill name="{xml_escape(skill.name)}" '
+            f'directory="{xml_escape(dir_path)}">'
+        )
+        if skill.description:
+            parts.append(f'    <description>{xml_escape(skill.description)}</description>')
+        parts.append("  </skill>")
 
     parts.append("</available_skills>")
     return "\n".join(parts).strip()
@@ -146,7 +120,7 @@ class ProgressiveBuilder(SkillPromptBuilder):
         if not _has_read_tool(context):
             logger.info("ProgressiveBuilder downgrading to InlineBuilder (no read_file tool)")
             return await InlineBuilder().build(skills, context)
-        return _render_skill_xml(skills, self._base_path, self._prompt_template)
+        return _render_skill_xml(skills, self._prompt_template)
 
 
 class HybridBuilder(SkillPromptBuilder):
@@ -188,7 +162,7 @@ class HybridBuilder(SkillPromptBuilder):
             parts.append(await InlineBuilder().build(inline, context))
         if directory:
             if _has_read_tool(context):
-                parts.append(_render_skill_xml(directory, prompt_template=self._prompt_template, inline_always=True))
+                parts.append(_render_skill_xml(directory, prompt_template=self._prompt_template))
             else:
                 logger.info("HybridBuilder 'always' mode downgrading directory to InlineBuilder (no read_file tool)")
                 parts.append(await InlineBuilder().build(directory, context))
