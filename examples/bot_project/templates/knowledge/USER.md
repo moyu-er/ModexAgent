@@ -33,5 +33,3 @@ Information about the user to help personalize interactions.
 (Any specific instructions for how the assistant should behave)
 
 ---
-
-*Edit this file USER.md to customize behavior for your needs.*
