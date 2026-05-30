@@ -175,3 +175,34 @@ def _find_open_tags(content: str, cut_pos: int) -> list[str]:
         i = end + 1
 
     return open_tags
+
+
+def truncate_for_archive(content: str, max_chars: int = 1200) -> str:
+    """Archive-safe truncation. XML-structure-aware when content is XML.
+
+    For XML content: uses truncate_xml_safe to preserve structure.
+    For plain text: proportional head (67%) + tail (33%) with marker.
+
+    Args:
+        content: Content string to truncate.
+        max_chars: Maximum characters to keep.
+
+    Returns:
+        Truncated content with appropriate marker.
+    """
+    if len(content) <= max_chars:
+        return content
+
+    # Detect XML: try to preserve structure
+    if content.strip().startswith('<'):
+        try:
+            return truncate_xml_safe(content, max_chars) + "\n<!-- truncated for archive -->"
+        except Exception:
+            pass
+
+    # Non-XML fallback: proportional head + tail with marker
+    head_size = int(max_chars * 0.67)
+    tail_size = max_chars - head_size
+    head = content[:head_size]
+    tail = content[-tail_size:]
+    return f"{head}\n... (truncated, {len(content)} chars total) ...\n{tail}"

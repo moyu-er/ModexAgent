@@ -70,13 +70,8 @@ class DefaultToolResultSummarizer:
             return ""
         if len(text) <= self.max_tool_result_chars:
             return stripped
-        head = text[: self.head_chars]
-        tail = text[-self.tail_chars :]
-        return (
-            f"{head}\n"
-            f"... (truncated, {len(text)} chars total) ...\n"
-            f"{tail}"
-        )
+        from framework.memory.xml_truncate import truncate_for_archive
+        return truncate_for_archive(text, self.max_tool_result_chars)
 
     def _knowledge_claim(self, tool_name: str, content: str, status: str) -> str:
         stripped = content.strip()
