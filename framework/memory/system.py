@@ -212,7 +212,12 @@ class MemorySystemContextManager(ContextManager):
         )
 
         # Build complete system_prompt in one pass
+        # Order: Runtime → Agent Rules → Knowledge & Archive → Skills
         parts: list[str] = []
+        if runtime_info:
+            runtime_text = self._format_runtime_info(runtime_info)
+            if runtime_text:
+                parts.append(runtime_text)
         if self.base_system_prompt:
             parts.append(self.base_system_prompt)
         if result.system_prompt:
@@ -224,10 +229,6 @@ class MemorySystemContextManager(ContextManager):
             )
             if skill_prompt:
                 parts.append(skill_prompt)
-        if runtime_info:
-            runtime_text = self._format_runtime_info(runtime_info)
-            if runtime_text:
-                parts.append(runtime_text)
 
         system_prompt = "\n\n---\n\n".join(parts) if parts else ""
         history = self.memory_system.create_message_history(
@@ -372,9 +373,14 @@ class MemorySystemContextManager(ContextManager):
 
     @staticmethod
     def _format_runtime_info(info: dict[str, Any]) -> str:
+        from datetime import datetime
+        import sys
+
         lines = ["## Runtime"]
-        if "current_time" in info:
-            lines.append(f"Current Time: {info['current_time']}")
-        if "platform" in info:
-            lines.append(f"Platform: {info['platform']}")
+        current_date = str(info.get("current_time") or datetime.now().strftime("%Y-%m-%d"))
+        lines.append(f"Current Date: {current_date}")
+
+        platform_raw = str(info.get("platform") or sys.platform)
+        platform_name = {"win32": "Windows", "darwin": "macOS", "linux": "Linux"}.get(platform_raw, platform_raw)
+        lines.append(f"Platform: {platform_name}")
         return "\n".join(lines)
