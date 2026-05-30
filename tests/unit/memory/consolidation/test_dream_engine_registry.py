@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+from pathlib import Path
+import tempfile
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
 from framework.memory.archive_models import KNOWLEDGE_ARCHIVE_FILE_KEY, ArchiveChannel
-from framework.memory.consolidation.dream_engine import DreamEngine
+from framework.memory.consolidation.dream_engine import DreamEngine, _file_needs_update
 from framework.memory.core.models import ArchiveEntry, LongTermMemory, UnprocessedResult
 from framework.memory.core.scope import MemoryAgentRole, MemoryContext, MemoryLayerName, ScopeRecord
+from framework.memory.prompts import PromptRegistry
 
 
 class DummyLLM:
@@ -95,3 +102,53 @@ async def test_dream_engine_scan_all_uses_registry_records() -> None:
     assert archive.unprocessed_channels == [ArchiveChannel.KNOWLEDGE]
     assert archive.committed == [(context, "dream", 6, ArchiveChannel.KNOWLEDGE)]
     assert archive.pruned_contexts == [context]
+
+
+def test_file_needs_update_detects_marker() -> None:
+    """_file_needs_update detects [FILE] markers in analysis text."""
+    assert _file_needs_update("[SOUL] new principle", "soul") is True
+    assert _file_needs_update("[USER] name is Alice", "user") is True
+    assert _file_needs_update("[MEMORY] project info", "memory") is True
+    assert _file_needs_update("[SKIP] nothing", "soul") is False
+    assert _file_needs_update("no markers here", "soul") is False
+
+
+@pytest.mark.asyncio
+async def test_dream_engine_accepts_prompts_parameter() -> None:
+    """DreamEngine accepts optional prompts parameter and uses per-file Phase 2."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        prompts_dir = Path(tmpdir)
+        (prompts_dir / "knowledge").mkdir()
+        (prompts_dir / "knowledge" / "soul_update_system.md").write_text("SOUL system")
+        (prompts_dir / "knowledge" / "soul_update_user.md").write_text("SOUL user: {current_soul}")
+        (prompts_dir / "knowledge" / "fact_extraction_system.md").write_text("FACT system")
+        (prompts_dir / "knowledge" / "fact_extraction_user.md").write_text("FACT user: {archive_entries}")
+
+        registry = PromptRegistry(prompts_dir)
+
+        summarizer = MagicMock()
+        summarizer.analyze = AsyncMock(return_value="[SOUL] new principle")
+        summarizer.summarize = AsyncMock(
+            return_value='[{"file_name": "SOUL.md", "content": "new", "reason": "test"}]'
+        )
+
+        engine = DreamEngine(
+            llm_provider=MagicMock(),
+            history_manager=MagicMock(),
+            long_term_manager=MagicMock(),
+            summarizer=summarizer,
+            prompts=registry,
+        )
+
+        result = await engine.consolidate(
+            scope_key="",
+            new_entries=[{"summary": "test entry"}],
+            existing_memories={
+                "SOUL.md": "I am helpful",
+                "USER.md": "Name: Alice",
+                "MEMORY.md": "Project: ModexAgent",
+            },
+        )
+
+        assert result.success is True
+        assert summarizer.summarize.call_count >= 1

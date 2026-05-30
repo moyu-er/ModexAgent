@@ -42,6 +42,12 @@ def _msg_to_dict(msg: ChatMessage | dict[str, Any]) -> dict[str, Any]:
     return msg.to_dict() if isinstance(msg, ChatMessage) else msg
 
 
+def _file_needs_update(analysis: str, file_key: str) -> bool:
+    """Check if analysis contains facts for this file."""
+    marker = f"[{file_key.upper()}]"
+    return marker in analysis
+
+
 class DreamEngine(ConsolidationEngine):
     """离线 DreamEngine：两阶段长期记忆整合。
 
@@ -66,6 +72,7 @@ class DreamEngine(ConsolidationEngine):
         summarizer: SummarizerAgent | None = None,
         min_archive_count: int = 0,
         max_archive_count: int = 30,
+        prompts: Any = None,  # PromptRegistry (optional)
     ):
         self.history_manager = history_manager
         self.long_term_manager = long_term_manager
@@ -77,6 +84,7 @@ class DreamEngine(ConsolidationEngine):
         self.idle_threshold_entries = idle_threshold_entries
         self.min_archive_count = min_archive_count
         self.max_archive_count = max_archive_count
+        self._prompts = prompts  # PromptRegistry or None
         # Always use SummarizerAgent — auto-construct from llm_provider if needed
         self._summarizer: SummarizerAgent = summarizer or SummarizerAgent(llm_provider)
 
@@ -234,13 +242,26 @@ class DreamEngine(ConsolidationEngine):
             f"## Current MEMORY.md\n{existing_memories.get('MEMORY.md', '(empty)')}"
         )
 
-        # Phase 1: Fact extraction — via SummarizerAgent
+        # Phase 1: Fact extraction
         try:
-            analysis = await self._summarizer.analyze(
-                f"## History\n{history_text}\n\n{file_context}",
-                prompt=SummarizerAgent.PROMPT_FACT_EXTRACTION,
-                max_tokens=2000,
-            )
+            if self._prompts is not None:
+                system_prompt = self._prompts.get_system("knowledge/fact_extraction")
+                user_prompt = self._prompts.get_user(
+                    "knowledge/fact_extraction",
+                    archive_entries=history_text,
+                    existing_memories=file_context,
+                )
+                analysis = await self._summarizer.analyze(
+                    user_prompt,
+                    prompt=system_prompt,
+                    max_tokens=2000,
+                )
+            else:
+                analysis = await self._summarizer.analyze(
+                    f"## History\n{history_text}\n\n{file_context}",
+                    prompt=SummarizerAgent.PROMPT_FACT_EXTRACTION,
+                    max_tokens=2000,
+                )
         except Exception as e:
             logger.warning("DreamEngine Phase 1 failed: %s", e)
             return ConsolidationResult(success=False, reasoning=f"Phase 1 error: {e}")
@@ -251,30 +272,51 @@ class DreamEngine(ConsolidationEngine):
                 reasoning="Phase 1: no new information",
             )
 
-        # Phase 2: Generate memory updates — via SummarizerAgent
-        try:
-            phase2_text = await self._summarizer.summarize(
-                f"## Analysis\n{analysis}\n\n{file_context}",
-                prompt=SummarizerAgent.PROMPT_MEMORY_UPDATE,
-                max_tokens=2000,
-                temperature=0.2,
-            )
-            updates = self._parse_updates(phase2_text)
-        except Exception as e:
-            logger.warning("DreamEngine Phase 2 failed: %s", e)
-            return ConsolidationResult(
-                success=False,
-                reasoning=f"Phase 2 error: {e}",
-            )
-
+        # Phase 2: Per-file updates
         result = ConsolidationResult(success=True, reasoning=analysis)
-        for update in updates:
-            if update.file_name.upper().startswith("SOUL"):
-                result.soul_updates.append(update)
-            elif update.file_name.upper().startswith("USER"):
-                result.user_updates.append(update)
-            else:
-                result.memory_updates.append(update)
+
+        file_mapping: dict[str, tuple[str, list[MemoryUpdate]]] = {
+            "soul": ("SOUL.md", result.soul_updates),
+            "user": ("USER.md", result.user_updates),
+            "memory": ("MEMORY.md", result.memory_updates),
+        }
+
+        for file_key, (file_name, updates_list) in file_mapping.items():
+            if not _file_needs_update(analysis, file_key):
+                continue
+
+            try:
+                if self._prompts is not None:
+                    system_prompt = self._prompts.get_system(f"knowledge/{file_key}_update")
+                    user_vars: dict[str, str] = {
+                        f"current_{file_key}": existing_memories.get(file_name, ""),
+                        "new_facts": analysis,
+                        "memory_context": existing_memories.get("MEMORY.md", ""),
+                    }
+                    user_prompt = self._prompts.get_user(
+                        f"knowledge/{file_key}_update",
+                        **user_vars,
+                    )
+                    phase2_text = await self._summarizer.summarize(
+                        user_prompt,
+                        prompt=system_prompt,
+                        max_tokens=2000,
+                        temperature=0.2,
+                    )
+                else:
+                    phase2_text = await self._summarizer.summarize(
+                        f"## Analysis\n{analysis}\n\n{file_context}",
+                        prompt=SummarizerAgent.PROMPT_MEMORY_UPDATE,
+                        max_tokens=2000,
+                        temperature=0.2,
+                    )
+
+                updates = self._parse_updates(phase2_text)
+                for update in updates:
+                    if update.file_name.upper().startswith(file_key.upper()):
+                        updates_list.append(update)
+            except Exception as e:
+                logger.warning("DreamEngine Phase 2 failed for %s: %s", file_key, e)
 
         return result
 
