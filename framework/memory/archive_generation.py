@@ -21,7 +21,7 @@ class ArchiveInputMessage:
     """Lightweight, role-filtered representation of a chat message for archival.
 
     Non-essential fields are stripped per role:
-    - assistant: tool_calls are discarded (tool results carry the information).
+    - assistant: tool_calls are preserved (needed for tool chain detection).
     - tool: keeps tool_call_id for correlation; drops name.
     - user: drops all metadata.
     """
@@ -29,6 +29,7 @@ class ArchiveInputMessage:
     role: str
     content: str | None = None
     tool_call_id: str | None = None
+    tool_calls: tuple[dict[str, object], ...] = ()
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> ArchiveInputMessage:
@@ -41,7 +42,13 @@ class ArchiveInputMessage:
             raw_id = data.get("tool_call_id")
             tool_call_id = raw_id if isinstance(raw_id, str) else None
 
-        return cls(role=role, content=content_str, tool_call_id=tool_call_id)
+        # Preserve tool_calls for assistant messages
+        raw_tool_calls = data.get("tool_calls")
+        tool_calls: tuple[dict[str, object], ...] = ()
+        if isinstance(raw_tool_calls, list):
+            tool_calls = tuple(tc for tc in raw_tool_calls if isinstance(tc, dict))
+
+        return cls(role=role, content=content_str, tool_call_id=tool_call_id, tool_calls=tool_calls)
 
 
 class ArchiveGenerationStrategy(ABC):
@@ -267,7 +274,9 @@ class DualLLMArchiveGenerationStrategy(ArchiveGenerationStrategy):
                     mapping["content"] = msg.content
                 if msg.tool_call_id is not None:
                     mapping["tool_call_id"] = msg.tool_call_id
-                result.append(mapping)
+                if msg.tool_calls:
+                    mapping["tool_calls"] = list(msg.tool_calls)
+                result.append(mapping)  # type: ignore[arg-type]
             else:
                 raise TypeError(
                     f"Expected ArchiveInputMessage or Mapping, got {type(msg).__name__}"

@@ -130,8 +130,9 @@ def test_archive_input_message_from_chat_message_assistant_strips_tool_calls() -
     assert msg.role == "assistant"
     assert msg.content == "Let me check."
     assert msg.tool_call_id is None
-    # tool_calls should not be a field on ArchiveInputMessage at all
-    assert not hasattr(msg, "tool_calls")
+    # tool_calls is now preserved for tool chain detection
+    assert len(msg.tool_calls) == 1
+    assert msg.tool_calls[0]["id"] == "call_1"
 
 
 def test_archive_input_message_from_chat_message_tool() -> None:
@@ -156,6 +157,32 @@ def test_archive_input_message_user_strips_metadata() -> None:
     assert msg.role == "user"
     assert msg.content == "hi"
     assert msg.tool_call_id is None
+
+
+def test_archive_input_message_preserves_tool_calls() -> None:
+    """ArchiveInputMessage.from_dict must preserve tool_calls from assistant messages."""
+    msg = {
+        "role": "assistant",
+        "content": "I will search for files.",
+        "tool_calls": [
+            {
+                "id": "call_abc",
+                "function": {
+                    "name": "shell",
+                    "arguments": '{"command": "find . -name \\"*.py\\""}',
+                },
+            }
+        ],
+    }
+    result = ArchiveInputMessage.from_dict(msg)
+    assert result.tool_calls == tuple(msg["tool_calls"])
+
+
+def test_archive_input_message_tool_calls_empty_when_absent() -> None:
+    """ArchiveInputMessage.from_dict returns empty tuple when no tool_calls."""
+    msg = {"role": "user", "content": "hello"}
+    result = ArchiveInputMessage.from_dict(msg)
+    assert result.tool_calls == ()
 
 
 # ---------------------------------------------------------------------------
