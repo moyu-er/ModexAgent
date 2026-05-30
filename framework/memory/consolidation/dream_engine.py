@@ -64,7 +64,7 @@ class DreamEngine(ConsolidationEngine):
         schedule_mode: str = "manual",
         idle_threshold_entries: int = 5,
         summarizer: SummarizerAgent | None = None,
-        min_archive_count: int = 5,
+        min_archive_count: int = 0,
         max_archive_count: int = 30,
     ):
         self.history_manager = history_manager
