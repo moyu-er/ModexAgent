@@ -1,0 +1,10 @@
+```xml
+<fact_extraction_request>
+  <history_entries>
+{archive_entries}
+  </history_entries>
+  <existing_memories>
+{existing_memories}
+  </existing_memories>
+</fact_extraction_request>
+```
