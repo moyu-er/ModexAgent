@@ -115,6 +115,21 @@ class TerminalSession:
         """Human-readable OS window title when available."""
         return self._backend.window_title
 
+    @property
+    def busy_after_timeout(self) -> bool:
+        """True if the previous command timed out and may still be running."""
+        return self._busy_after_timeout
+
+    @property
+    def last_status(self) -> str | None:
+        """Last known session status string (timeout, waiting_input, etc.)."""
+        return self._last_status
+
+    @property
+    def backend_started(self) -> bool:
+        """True if the backend process was started at least once."""
+        return self._backend_started
+
     async def execute(self, command: str, timeout: float = 60.0) -> str:
         """Execute a command and return output.
 

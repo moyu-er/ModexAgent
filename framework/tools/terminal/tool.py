@@ -176,9 +176,9 @@ class TerminalTool(Tool):
 
             if segment.is_empty_prompt:
                 status = "idle"
-            elif getattr(session, "_busy_after_timeout", False):
+            elif session.busy_after_timeout:
                 status = "busy"
-            elif getattr(session, "_last_status", None) == "waiting_input":
+            elif session.last_status == "waiting_input":
                 status = "waiting_input"
             elif detect_pager_entry(resolve_cursor_line(segment)):
                 status = "pager"

@@ -163,7 +163,6 @@ class VisibleWindowsPtyBackend(TerminalBackend):
         )
         # Suppress interactive pagers for bash
         if is_bash:
-            # TODEL await self.write("export GIT_PAGER=cat PAGER=cat LESS=FRX\n")
             await asyncio.sleep(0.3)
             for _ in range(5):
                 await self.read(timeout=0.2, max_size=65536)

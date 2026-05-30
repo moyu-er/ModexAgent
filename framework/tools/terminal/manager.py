@@ -124,7 +124,7 @@ class TerminalManager(TerminalManagerBase):
         for name, session in list(self._sessions.items()):
             if await session._backend.is_alive():
                 alive_names.append(name)
-            elif getattr(session, "_backend_started", False):
+            elif session.backend_started:
                 # Backend was started but has since died — purge it.
                 self._sessions.pop(name, None)
                 if self._default_terminal == name:
@@ -151,7 +151,7 @@ class TerminalManager(TerminalManagerBase):
         if session is None:
             raise ValueError(f"Terminal '{name}' does not exist")
         if (
-            getattr(session, "_backend_started", False)
+            session.backend_started
             and not await session._backend.is_alive()
         ):
             raise ValueError(f"Terminal '{name}' has been closed")
@@ -171,7 +171,7 @@ class TerminalManager(TerminalManagerBase):
             self._default_terminal = None
             return None
         if (
-            getattr(session, "_backend_started", False)
+            session.backend_started
             and not await session._backend.is_alive()
         ):
             self._default_terminal = None

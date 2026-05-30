@@ -34,16 +34,6 @@ class ShellFamily(StrEnum):
         """Return the command terminator for this shell family."""
         return "\n" if self.uses_readline() else "\r\n"
 
-    def needs_pager_suppression(self) -> bool:
-        """Return True if pager suppression env vars should be injected."""
-        return self.uses_readline()
-
-    def agent_setup_env(self) -> dict[str, str] | None:
-        """Return environment variables to disable pagers, or None for non-readline shells."""
-        if self.uses_readline():
-            return {"GIT_PAGER": "cat", "PAGER": "cat", "LESS": "FRX"}
-        return None
-
 
 @dataclass(frozen=True)
 class ShellInfo:

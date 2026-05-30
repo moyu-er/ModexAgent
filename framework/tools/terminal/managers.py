@@ -101,7 +101,7 @@ class BaseTerminalManager(TerminalManagerBase):
             return None
         # Only check alive if the backend was actually started, so unstarted
         # sessions (created but never used) are not incorrectly evicted.
-        if getattr(session, "_backend_started", False) and not await session.is_alive():
+        if session.backend_started and not await session.is_alive():
             self._default_name = None
             return None
         return session
