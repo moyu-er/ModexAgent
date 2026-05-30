@@ -19,8 +19,8 @@ memory:
   session:
     max_messages: 100
     max_tokens: 100000
-    keep_ratio_for_messages: 0.4
-    keep_ratio_for_token: 0.4
+    keep_ratio_for_messages: 0.3
+    keep_ratio_for_token: 0.3
   archive: {enabled: true, max_entries: 1000, retained_consumed_pairs: 3}
   knowledge: {enabled: true, default_templates_dir: "templates/knowledge"}
   dream_engine:

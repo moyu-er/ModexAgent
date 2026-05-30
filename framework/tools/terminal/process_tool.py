@@ -305,7 +305,7 @@ class ProcessTool(Tool):
                 return await self._do_write(
                     WriteParams(
                         data=kwargs.get("data", ""),
-                        submit=kwargs.get("submit", False),
+                        submit=kwargs.get("submit", True),
                     ),
                 )
             case ProcessAction.SUBMIT:
