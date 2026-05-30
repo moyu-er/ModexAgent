@@ -234,7 +234,7 @@ async def test_dual_strategy_skips_nothing_outputs() -> None:
     assert result.writes == ()
 
 
-async def test_dual_strategy_requires_complete_archive_pair() -> None:
+async def test_dual_strategy_partial_success_one_channel() -> None:
     class PartialSummarizer(FakeSummarizer):
         async def summarize(
             self,
@@ -257,7 +257,8 @@ async def test_dual_strategy_requires_complete_archive_pair() -> None:
         CompressionReason.MESSAGE_COUNT,
     )
 
-    assert result.writes == ()
+    assert len(result.writes) == 1
+    assert result.writes[0].channel == ArchiveChannel.CONTEXT
 
 
 # ---------------------------------------------------------------------------
@@ -305,3 +306,75 @@ async def test_sliding_window_multiple_segments() -> None:
     assert len(result.writes) == 2
     # With 10 messages and tiny budget, should have more than 2 calls
     assert len(summarizer.calls) > 2
+
+
+# ---------------------------------------------------------------------------
+# Independent channel generation tests (Task 2 fix)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_archive_channels_independent_success() -> None:
+    """Context and knowledge archives are generated independently."""
+    summarizer = FakeSummarizer()
+    strategy = DualLLMArchiveGenerationStrategy(summarizer=summarizer)
+
+    messages = [
+        ArchiveInputMessage(role="user", content="hello"),
+        ArchiveInputMessage(role="assistant", content="hi there"),
+    ]
+
+    # Force context to succeed but knowledge to fail
+    original = summarizer.summarize
+
+    async def mock_summarize(
+        text: str,
+        *,
+        prompt: str | None = None,
+        max_tokens: int = 500,
+        temperature: float = 0.3,
+    ) -> str:
+        if "Context Archive" in (prompt or ""):
+            return "## Situation\n- context summary"
+        return ""  # Knowledge returns empty
+
+    summarizer.summarize = mock_summarize  # type: ignore[method-assign]
+
+    result = await strategy.generate(
+        messages,
+        MemoryContext(session_id="s1"),
+        CompressionReason.MESSAGE_COUNT,
+    )
+
+    assert len(result.writes) == 1
+    assert result.writes[0].channel == ArchiveChannel.CONTEXT
+
+
+@pytest.mark.asyncio
+async def test_archive_both_channels_empty_returns_no_writes() -> None:
+    """When both channels produce empty content, no writes are generated."""
+    summarizer = FakeSummarizer()
+    strategy = DualLLMArchiveGenerationStrategy(summarizer=summarizer)
+
+    messages = [
+        ArchiveInputMessage(role="user", content="hello"),
+    ]
+
+    async def mock_summarize(
+        text: str,
+        *,
+        prompt: str | None = None,
+        max_tokens: int = 500,
+        temperature: float = 0.3,
+    ) -> str:
+        return ""  # Both channels return empty
+
+    summarizer.summarize = mock_summarize  # type: ignore[method-assign]
+
+    result = await strategy.generate(
+        messages,
+        MemoryContext(session_id="s1"),
+        CompressionReason.MESSAGE_COUNT,
+    )
+
+    assert len(result.writes) == 0

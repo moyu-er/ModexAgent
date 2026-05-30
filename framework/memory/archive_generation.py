@@ -134,14 +134,11 @@ class DualLLMArchiveGenerationStrategy(ArchiveGenerationStrategy):
 
         all_inputs = self._input_policy.build_inputs(original_mappings, context, reason)
 
-        if not context_parts or not knowledge_parts:
-            return ArchiveGenerationResult(writes=(), inputs=all_inputs)
+        writes: list[ArchiveWrite] = []
 
-        joined_context = "\n---\n".join(context_parts)
-        joined_knowledge = "\n---\n".join(knowledge_parts)
-
-        return ArchiveGenerationResult(
-            writes=(
+        if context_parts:
+            joined_context = "\n---\n".join(context_parts)
+            writes.append(
                 ArchiveWrite(
                     channel=ArchiveChannel.CONTEXT,
                     summary=joined_context,
@@ -151,7 +148,12 @@ class DualLLMArchiveGenerationStrategy(ArchiveGenerationStrategy):
                         "generation_strategy": "dual_llm",
                         "prompt": "context_archive",
                     },
-                ),
+                )
+            )
+
+        if knowledge_parts:
+            joined_knowledge = "\n---\n".join(knowledge_parts)
+            writes.append(
                 ArchiveWrite(
                     channel=ArchiveChannel.KNOWLEDGE,
                     summary=joined_knowledge,
@@ -161,8 +163,11 @@ class DualLLMArchiveGenerationStrategy(ArchiveGenerationStrategy):
                         "generation_strategy": "dual_llm",
                         "prompt": "knowledge_archive",
                     },
-                ),
-            ),
+                )
+            )
+
+        return ArchiveGenerationResult(
+            writes=tuple(writes),
             inputs=all_inputs,
         )
 
