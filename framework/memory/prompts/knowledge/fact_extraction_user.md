@@ -1,10 +1,13 @@
-```xml
-<fact_extraction_request>
-  <history_entries>
+## Archive Entries
 {archive_entries}
-  </history_entries>
-  <existing_memories>
-{existing_memories}
-  </existing_memories>
-</fact_extraction_request>
-```
+
+## Existing Memory Files (current state — do NOT re-suggest content already here)
+
+### SOUL.md
+{current_soul}
+
+### USER.md
+{current_user}
+
+### MEMORY.md
+{current_memory}

@@ -1,18 +1,17 @@
-```xml
 <knowledge_update_request>
   <instruction>
-    Update the soul profile based on the new facts below.
-    Preserve all existing principles unless explicitly contradicted.
-    Output the COMPLETE new file content.
+    Update SOUL.md based on the new facts below.
+    Preserve all existing content unless explicitly contradicted.
+    Focus only on facts marked [SOUL]. Ignore [USER], [MEMORY], [REMOVE] items
+    unless a [REMOVE] entry references SOUL content.
   </instruction>
   <current_content file="SOUL.md">
 {current_soul}
   </current_content>
-  <new_facts>
+  <analysis>
 {new_facts}
-  </new_facts>
-  <related_context file="MEMORY.md">
+  </analysis>
+  <memory_context file="MEMORY.md">
 {memory_context}
-  </related_context>
+  </memory_context>
 </knowledge_update_request>
-```
