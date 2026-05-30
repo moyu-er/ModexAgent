@@ -98,11 +98,10 @@ class TmuxPtyBackend(TerminalBackend):
             if is_prompt_ready(text):
                 self._last_capture = text
                 logger.debug("tmux drain_startup: ready after %.1fs", elapsed)
-                # Suppress interactive pagers for readline shells
+                # Drain remaining startup output for readline shells
                 if self._shell:
                     name = self._shell.lower()
                     if any(name.endswith(s) for s in ("bash", "zsh", "sh")):
-                        # TODEL await self.write("export GIT_PAGER=cat PAGER=cat LESS=FRX\n")
                         await asyncio.sleep(0.2)
                         for _ in range(5):
                             await self.read(timeout=0.2, max_size=65536)

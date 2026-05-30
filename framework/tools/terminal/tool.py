@@ -4,9 +4,15 @@ from __future__ import annotations
 
 from enum import StrEnum
 from typing import Any
+from xml.sax.saxutils import escape as xml_escape
 
 from framework.core.tool_manager import Tool
 from framework.tools.terminal.managers import TerminalManagerBase
+from framework.tools.terminal.prompt import (
+    detect_pager_entry,
+    resolve_cursor_line,
+    sanitize_terminal_output,
+)
 
 
 class TerminalAction(StrEnum):
@@ -158,13 +164,39 @@ class TerminalTool(Tool):
             else:
                 session = await self._manager.get_default_session()
             if session is None:
-                return "No terminal is active. Use terminal open to create one."
-            from framework.tools.terminal.prompt import sanitize_terminal_output
+                return (
+                    "<terminal_result>\n"
+                    "<action>current</action>\n"
+                    "<status>none</status>\n"
+                    "<output>No terminal is active. Use terminal open to create one.</output>\n"
+                    "</terminal_result>"
+                )
             segment = await session.current_segment()
             cleaned = sanitize_terminal_output(segment.text).rstrip()
-            if not cleaned.strip():
-                return "(terminal is idle — no output yet)"
-            return cleaned
+
+            if segment.is_empty_prompt:
+                status = "idle"
+            elif session.busy_after_timeout:
+                status = "busy"
+            elif session.last_status == "waiting_input":
+                status = "waiting_input"
+            elif detect_pager_entry(resolve_cursor_line(segment)):
+                status = "pager"
+            else:
+                status = "active"
+
+            cursor = segment.cursor_line.strip() if segment.cursor_line else ""
+            output_lines = cleaned.splitlines()[-30:] if cleaned else []
+            output_text = "\n".join(output_lines) if output_lines else "(terminal is idle — no output yet)"
+
+            return (
+                "<terminal_result>\n"
+                "<action>current</action>\n"
+                f"<status>{status}</status>\n"
+                f"<cursor>{xml_escape(cursor)}</cursor>\n"
+                f"<output>{xml_escape(output_text)}</output>\n"
+                "</terminal_result>"
+            )
 
         return f"Error: Unhandled action '{action}'"
 

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any
+from xml.sax.saxutils import escape as xml_escape
 
 from framework.core.tool_manager import Tool
 from framework.tools.terminal.config import TerminalRuntimeConfig
@@ -127,6 +129,35 @@ def _format_list_line(session: ProcessSession, runtime: RunningSessionRuntime | 
     wait_marker = " [input-wait]" if runtime and runtime.waiting_for_input else ""
     idle_str = f" idle={_format_duration(runtime.idle_ms)}" if runtime else ""
     return f"{session.id}  running   {_format_duration(elapsed_ms)}{idle_str}{wait_marker}  ::  {session.command}"
+
+
+def _build_process_xml(
+    action: str,
+    output: str,
+    *,
+    session_id: str | None = None,
+    status: str | None = None,
+    idle_ms: int | None = None,
+    bytes_written: int | None = None,
+    sessions_xml: str | None = None,
+) -> str:
+    parts = [
+        "<process_result>",
+        f"<action>{action}</action>",
+        f"<output>{xml_escape(output)}</output>",
+    ]
+    if session_id is not None:
+        parts.append(f"<session_id>{session_id}</session_id>")
+    if status is not None:
+        parts.append(f"<status>{status}</status>")
+    if idle_ms is not None:
+        parts.append(f"<idle_ms>{idle_ms}</idle_ms>")
+    if bytes_written is not None:
+        parts.append(f"<bytes_written>{bytes_written}</bytes_written>")
+    if sessions_xml is not None:
+        parts.append(f"<sessions>{sessions_xml}</sessions>")
+    parts.append("</process_result>")
+    return "\n".join(parts)
 
 
 def _build_input_wait_hint(runtime: RunningSessionRuntime | None) -> str:
@@ -320,15 +351,33 @@ class ProcessTool(Tool):
         running = self._registry.list_running()
         finished = self._registry.list_finished()
         if not running and not finished:
-            return "No running or recent sessions."
+            return _build_process_xml("list", "No running or recent sessions.")
 
         lines: list[str] = []
+        session_entries: list[str] = []
         for s in running:
             runtime = self._registry.running_runtime(s.id)
             lines.append(_format_list_line(s, runtime))
+            idle = runtime.idle_ms if runtime else 0
+            session_entries.append(
+                f'<session id="{s.id}" status="running" '
+                f'command="{xml_escape(s.command)}" '
+                f'elapsed_ms="{int(((s.ended_at or time.time()) - s.started_at) * 1000)}"'
+                f'idle_ms="{idle}" />'
+            )
         for s in finished:
             lines.append(_format_list_line(s))
-        return "\n".join(lines)
+            session_entries.append(
+                f'<session id="{s.id}" status="{s.status.value}" '
+                f'command="{xml_escape(s.command)}" '
+                f'elapsed_ms="{int(((s.ended_at or 0) - s.started_at) * 1000)}" '
+                f'exit_code="{s.exit_code}" />'
+            )
+
+        return _build_process_xml(
+            "list", "\n".join(lines),
+            sessions_xml="\n".join(session_entries),
+        )
 
     # _do_poll removed — poll drains pending output but cannot detect command
     # completion reliably in PTY mode. After write+submit, use `terminal current`
@@ -342,7 +391,7 @@ class ProcessTool(Tool):
 
         session = running or finished
         if session is None:
-            return "[Error] No process session found for default terminal"
+            return _build_process_xml("log", "[Error] No process session found for default terminal")
 
         all_lines = session.aggregated.splitlines()
         total = len(all_lines)
@@ -361,12 +410,17 @@ class ProcessTool(Tool):
         )
         hint = _build_input_wait_hint(runtime)
 
-        return output + tail_note + hint
+        return _build_process_xml(
+            "log", output + tail_note + hint,
+            session_id=session.id,
+            status=session.status.value,
+            idle_ms=runtime.idle_ms if runtime else None,
+        )
 
     async def _do_write(self, params: WriteParams) -> str:
         terminal_session, running, _finished = await self._resolve_terminal()
         if running is None:
-            return "[Error] No running process session found for default terminal"
+            return _build_process_xml("write", "[Error] No running process session found for default terminal")
 
         await terminal_session.write(params.data)
         if params.submit:
@@ -377,32 +431,37 @@ class ProcessTool(Tool):
             info += " + Enter"
 
         output = await _drain_terminal_after_action(terminal_session, self._registry, running.id, self._config)
-        if output:
-            return f"{info}.\nTerminal output:\n{output}"
-        return info + "."
+        full_output = f"{info}.\nTerminal output:\n{output}" if output else f"{info}."
+
+        return _build_process_xml(
+            "write", full_output,
+            session_id=running.id,
+            bytes_written=len(params.data),
+        )
 
     async def _do_submit(self) -> str:
         terminal_session, running, _finished = await self._resolve_terminal()
         if running is None:
-            return "[Error] No running process session found for default terminal"
+            return _build_process_xml("submit", "[Error] No running process session found for default terminal")
 
         await terminal_session.write("\r")
         output = await _drain_terminal_after_action(terminal_session, self._registry, running.id, self._config)
-        if output:
-            return f"Sent Enter to session {running.id}.\nTerminal output:\n{output}"
-        return f"Sent Enter to session {running.id}."
+        full_output = f"Sent Enter to session {running.id}.\nTerminal output:\n{output}" if output else f"Sent Enter to session {running.id}."
+        return _build_process_xml("submit", full_output, session_id=running.id)
 
     async def _do_send_keys(self, params: SendKeysParams) -> str:
         terminal_session, running, _finished = await self._resolve_terminal()
         if running is None:
-            return "[Error] No running process session found for default terminal"
+            return _build_process_xml("send_keys", "[Error] No running process session found for default terminal")
 
         cursor_mode = running.cursor_key_mode
 
         if params.keys and needs_cursor_mode(params.keys) and cursor_mode == CursorKeyMode.UNKNOWN:
-            return (
+            return _build_process_xml(
+                "send_keys",
                 f"Session {running.id} cursor key mode is not known yet. "
-                "Poll or log until startup output appears, then retry send_keys."
+                "Poll or log until startup output appears, then retry send_keys.",
+                session_id=running.id,
             )
 
         parts: list[bytes] = []
@@ -422,36 +481,36 @@ class ProcessTool(Tool):
 
         combined = b"".join(parts)
         if not combined:
-            return "[Error] No key data provided."
+            return _build_process_xml("send_keys", "[Error] No key data provided.")
 
         await terminal_session.write(combined.decode("utf-8", errors="surrogateescape"))
 
         result_text = f"Sent {len(combined)} bytes to session {running.id}."
         if warnings:
             result_text += "\nWarnings:\n- " + "\n- ".join(warnings)
-        return result_text
+        return _build_process_xml("send_keys", result_text, session_id=running.id)
 
     async def _do_paste(self, params: PasteParams) -> str:
         terminal_session, running, _finished = await self._resolve_terminal()
         if running is None:
-            return "[Error] No running process session found for default terminal"
+            return _build_process_xml("paste", "[Error] No running process session found for default terminal")
 
         payload = encode_paste(params.text, bracketed=terminal_session.bracketed_paste_enabled)
         await terminal_session.write(payload.decode("utf-8", errors="surrogateescape"))
-        return f"Pasted {len(params.text)} chars to session {running.id}."
+        return _build_process_xml("paste", f"Pasted {len(params.text)} chars to session {running.id}.", session_id=running.id)
 
     async def _do_interrupt(self) -> str:
         terminal_session, running, _finished = await self._resolve_terminal()
         if running is None:
-            return "[Error] No running process session found for default terminal"
+            return _build_process_xml("interrupt", "[Error] No running process session found for default terminal")
 
         await terminal_session.interrupt()
-        return f"Sent interrupt (Ctrl+C) to session {running.id}."
+        return _build_process_xml("interrupt", f"Sent interrupt (Ctrl+C) to session {running.id}.", session_id=running.id)
 
     async def _do_kill(self) -> str:
         terminal_session, running, _finished = await self._resolve_terminal()
         if running is None:
-            return "[Error] No running process session found for default terminal"
+            return _build_process_xml("kill", "[Error] No running process session found for default terminal")
 
         await terminal_session.terminate()
         self._registry.mark_exited(
@@ -460,14 +519,14 @@ class ProcessTool(Tool):
             exit_signal="KILLED",
             status=ProcessStatus.KILLED,
         )
-        return f"Killed session {running.id}."
+        return _build_process_xml("kill", f"Killed session {running.id}.", session_id=running.id)
 
     async def _do_clear(self) -> str:
         _terminal, _running, finished = await self._resolve_terminal()
         if finished is None:
-            return "[Error] No finished process session found for default terminal"
+            return _build_process_xml("clear", "[Error] No finished process session found for default terminal")
         self._registry.delete(finished.id)
-        return f"Cleared finished session {finished.id}."
+        return _build_process_xml("clear", f"Cleared finished session {finished.id}.")
 
     async def _do_remove(self) -> str:
         terminal_session, running, finished = await self._resolve_terminal()
@@ -481,10 +540,10 @@ class ProcessTool(Tool):
                 status=ProcessStatus.KILLED,
             )
             self._registry.delete(running.id)
-            return f"Killed and removed session {running.id}."
+            return _build_process_xml("remove", f"Killed and removed session {running.id}.")
 
         if finished is not None:
             self._registry.delete(finished.id)
-            return f"Removed finished session {finished.id}."
+            return _build_process_xml("remove", f"Removed finished session {finished.id}.")
 
-        return "[Error] No process session found for default terminal"
+        return _build_process_xml("remove", "[Error] No process session found for default terminal")

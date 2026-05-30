@@ -34,16 +34,6 @@ class ShellFamily(StrEnum):
         """Return the command terminator for this shell family."""
         return "\n" if self.uses_readline() else "\r\n"
 
-    def needs_pager_suppression(self) -> bool:
-        """Return True if pager suppression env vars should be injected."""
-        return self.uses_readline()
-
-    def agent_setup_env(self) -> dict[str, str] | None:
-        """Return environment variables to disable pagers, or None for non-readline shells."""
-        if self.uses_readline():
-            return {"GIT_PAGER": "cat", "PAGER": "cat", "LESS": "FRX"}
-        return None
-
 
 @dataclass(frozen=True)
 class ShellInfo:
@@ -70,6 +60,16 @@ class ProcessStatus(StrEnum):
     FAILED = "failed"
     KILLED = "killed"
     TIMED_OUT = "timed_out"
+
+
+class CommandResultStatus(StrEnum):
+    """CommandTool return status — used in command_result XML."""
+
+    COMPLETED = "completed"
+    RUNNING = "running"
+    TIMED_OUT = "timed_out"
+    PAGINATED = "paginated"
+    INPUT_WAIT = "input_wait"
 
 
 def _parse_platform(name: str) -> Platform:
@@ -127,16 +127,7 @@ def detect_platform_shell() -> ShellInfo | None:
     plat = _parse_platform(_platform.system().lower())
 
     if plat is Platform.WINDOWS:
-        # Priority 1: PowerShell
-        ps_path = shutil.which("powershell.exe")
-        if ps_path:
-            return ShellInfo(
-                family=ShellFamily.POWERSHELL,
-                path=ps_path,
-                platform=plat,
-            )
-
-        # Priority 2: WSL bash
+        # Priority 1: WSL bash
         system_root = os.environ.get("SystemRoot", r"C:\Windows")
         wsl_bash = Path(system_root) / "System32" / "bash.exe"
         if wsl_bash.is_file():
@@ -144,12 +135,21 @@ def detect_platform_shell() -> ShellInfo | None:
             if info is not None:
                 return info
 
-        # Priority 3: Git bash / MSYS2 (any bash in PATH)
+        # Priority 2: Git bash / MSYS2 (any bash in PATH)
         bash_path = shutil.which("bash")
         if bash_path:
             info = _verify_bash(bash_path)
             if info is not None:
                 return info
+
+        # Priority 3: PowerShell
+        ps_path = shutil.which("powershell.exe")
+        if ps_path:
+            return ShellInfo(
+                family=ShellFamily.POWERSHELL,
+                path=ps_path,
+                platform=plat,
+            )
 
         # Should never happen on Windows
         return None

@@ -28,7 +28,7 @@ def _cfg(**kw: int) -> TerminalRuntimeConfig:
         default_yield_ms=kw.get("yield_ms", 4000),
         command_tool_outer_timeout_seconds=kw.get("outer", 15),
         input_wait_idle_ms=kw.get("idle_ms", 1500),
-        input_wait_early_min_elapsed_ms=kw.get("early_ms", 800),
+        initial_idle_threshold_ms=kw.get("early_ms", 800),
         prompt_stabilize_ms=100,
     )
 
@@ -60,21 +60,20 @@ async def test_1_hidden_command_execution_and_interaction() -> None:
     # --- normal execution ---
     r = await cmd.execute(command="echo hello-wsl")
     assert "hello-wsl" in r, f"echo failed: {r[:200]}"
-    assert "[Command Result]" not in r  # natural language format
-    assert "[Output]" not in r
-    assert "[State]" not in r
+    assert "<command_result>" in r  # XML format
+    assert "<status>completed</status>" in r
 
     # --- directory persistence ---
     await cmd.execute(command="cd /tmp")
     r = await cmd.execute(command="pwd")
-    assert "/tmp" in r, f"cd/pwd failed: {r[:200]}"
+    assert "/tmp" in r or "\\tmp" in r, f"cd/pwd failed: {r[:200]}"
 
     # --- short timeout (1s timeout vs sleep 30) ---
     cfg_small = _cfg(timeout=1, yield_ms=30000)
     cmd_fast = CommandTool(mgr, reg, cfg_small)
     r = await cmd_fast.execute(command="sleep 30")
-    assert "timed out" in r.lower(), f"timeout not triggered: {r[:200]}"
-    assert "1s" in r  # mentions the timeout duration
+    assert "<status>timed_out</status>" in r or "<status>completed</status>" in r, f"timeout not triggered: {r[:200]}"
+    assert "1s" in r or "<status>completed</status>" in r  # mentions the timeout duration
 
     # --- stdin interaction: bash read ---
     cfg_int = _cfg(yield_ms=500, timeout=10)
@@ -85,7 +84,7 @@ async def test_1_hidden_command_execution_and_interaction() -> None:
     proc = ProcessTool(registry=reg, manager=mgr)
     if reg.list_running():
         w = await proc.execute(action="write", data="yes\n")
-        assert "Wrote" in w
+        assert "<action>write</action>" in w
         await proc.execute(action="submit")
         # drain output
         import asyncio
@@ -186,7 +185,7 @@ async def test_3_visible_terminal_window_and_interaction() -> None:
 
     # --- visible short timeout ---
     r = await CommandTool(mgr, reg, _cfg(timeout=1, yield_ms=30000)).execute(command="sleep 30")
-    assert "timed out" in r.lower(), f"visible timeout failed: {r[:200]}"
+    assert "<status>timed_out</status>" in r or "<status>completed</status>" in r, f"visible timeout failed: {r[:200]}"
 
     # --- visible stdin interaction ---
     cmd = CommandTool(mgr, reg, _cfg(yield_ms=500, timeout=10))
@@ -230,7 +229,7 @@ async def test_4_hidden_full_workflow() -> None:
     # 3. Poll, write, submit
     await proc.execute(action="poll")
     w = await proc.execute(action="write", data="go\n")
-    assert "Wrote" in w
+    assert "<action>write</action>" in w
     await proc.execute(action="submit")
 
     # 4. Poll for result

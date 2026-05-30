@@ -6,6 +6,14 @@ TCP socket so the parent process and the visible window share the same data
 stream.
 """
 
+# TODO(terminal-human-input): Detect human keyboard input in visible terminal
+# and notify the parent process via out-of-band socket marker (\x00HUMAN\x00).
+# Parent filters the marker and sets a flag on the backend.
+# Session layer checks the flag and appends a note to command results.
+# Only affects VisibleWindowsPtyBackend (not hidden or tmux).
+# Requires: socket write lock in host process to prevent marker interleaving.
+# See: docs/superpowers/specs/2026-05-30-terminal-system-improvements-design.md §4
+
 from __future__ import annotations
 
 import os

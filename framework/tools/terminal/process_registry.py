@@ -170,12 +170,16 @@ class ProcessRegistry:
         # Formal idle threshold detection
         formal_waiting = session.stdin_writable and idle_ms >= self._config.input_wait_idle_ms
 
-        # Early detection: consecutive empty-read equivalent via elapsed time + velocity
-        elapsed_since_output_ms = idle_ms
+        # Tiered idle detection
+        if session._output_timestamps:
+            threshold = self._config.active_idle_threshold_ms
+        else:
+            threshold = self._config.initial_idle_threshold_ms
+
         early_waiting = (
             session.stdin_writable
             and not velocity.is_active
-            and elapsed_since_output_ms >= self._config.input_wait_early_min_elapsed_ms
+            and idle_ms >= threshold
         )
 
         return RunningSessionRuntime(

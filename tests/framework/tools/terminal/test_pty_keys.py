@@ -51,7 +51,6 @@ class TestProcessAction:
     def test_all_action_values(self) -> None:
         expected = {
             "list": "list",
-            "poll": "poll",
             "log": "log",
             "write": "write",
             "submit": "submit",

@@ -45,6 +45,13 @@ class FakeManager:
         return self.terminal
 
 
+def _assert_xml_result(text: str, action: str) -> None:
+    """Assert the result is wrapped in <process_result> XML with the given action."""
+    assert "<process_result>" in text
+    assert f"<action>{action}</action>" in text
+    assert "</process_result>" in text
+
+
 @pytest.mark.asyncio
 async def test_process_log_reads_from_registry() -> None:
     """log reads aggregated output from running or finished session."""
@@ -56,8 +63,8 @@ async def test_process_log_reads_from_registry() -> None:
 
     text = await tool.execute(action="log")
 
+    _assert_xml_result(text, "log")
     assert "ready" in text
-
 
 
 @pytest.mark.asyncio
@@ -67,10 +74,13 @@ async def test_process_write_submit_interrupt_and_kill() -> None:
     terminal = FakeTerminal()
     tool = ProcessTool(registry=registry, manager=FakeManager(terminal))
 
-    await tool.execute(action="write", data="password")
+    write_result = await tool.execute(action="write", data="password")
+    _assert_xml_result(write_result, "write")
+
     await tool.execute(action="submit")
     await tool.execute(action="interrupt")
-    await tool.execute(action="kill")
+    kill_result = await tool.execute(action="kill")
+    _assert_xml_result(kill_result, "kill")
 
     assert terminal.writes == ["password", "\r"]
     assert terminal.interrupted is True
@@ -92,6 +102,7 @@ async def test_process_log_reads_aggregated_output() -> None:
 
     text = await tool.execute(action="log", offset=1, limit=1)
 
+    _assert_xml_result(text, "log")
     assert "line2" in text
     assert "line1" not in text
 
@@ -103,8 +114,9 @@ async def test_process_send_keys_encodes_named_keys() -> None:
     terminal = FakeTerminal()
     tool = ProcessTool(registry=registry, manager=FakeManager(terminal))
 
-    await tool.execute(action="send_keys", keys=["escape", "enter", "c-c"])
+    text = await tool.execute(action="send_keys", keys=["escape", "enter", "c-c"])
 
+    _assert_xml_result(text, "send_keys")
     assert terminal.writes == ["\x1b\r\x03"]
 
 
@@ -115,8 +127,9 @@ async def test_process_paste_writes_text() -> None:
     terminal = FakeTerminal()
     tool = ProcessTool(registry=registry, manager=FakeManager(terminal))
 
-    await tool.execute(action="paste", text="print('hi')")
+    text = await tool.execute(action="paste", text="print('hi')")
 
+    _assert_xml_result(text, "paste")
     assert terminal.writes == ["print('hi')"]
 
 
@@ -128,8 +141,9 @@ async def test_process_paste_with_bracketed_mode() -> None:
     terminal.bracketed_paste_enabled = True
     tool = ProcessTool(registry=registry, manager=FakeManager(terminal))
 
-    await tool.execute(action="paste", text="hello")
+    text = await tool.execute(action="paste", text="hello")
 
+    _assert_xml_result(text, "paste")
     # Should be wrapped with bracketed paste start/end
     assert terminal.writes == ["\x1b[200~hello\x1b[201~"]
 
@@ -143,6 +157,7 @@ async def test_process_list_shows_sessions() -> None:
 
     text = await tool.execute(action="list")
 
+    _assert_xml_result(text, "list")
     assert "build" in text
     assert "test" in text
 
@@ -154,8 +169,9 @@ async def test_process_clear_removes_finished() -> None:
     registry.mark_exited(session.id, exit_code=0, exit_signal=None, status=ProcessStatus.COMPLETED)
     tool = ProcessTool(registry=registry, manager=FakeManager(FakeTerminal()))
 
-    await tool.execute(action="clear")
+    text = await tool.execute(action="clear")
 
+    _assert_xml_result(text, "clear")
     assert registry.get_finished(session.id) is None
 
 
@@ -170,6 +186,7 @@ async def test_process_log_finished_session() -> None:
 
     text = await tool.execute(action="log")
 
+    _assert_xml_result(text, "log")
     assert "hello" in text
 
 
@@ -182,6 +199,7 @@ async def test_process_remove_running() -> None:
 
     text = await tool.execute(action="remove")
 
+    _assert_xml_result(text, "remove")
     assert "Killed and removed" in text
     assert registry.get_running_by_terminal("default") is None
 
@@ -195,6 +213,7 @@ async def test_process_remove_finished() -> None:
 
     text = await tool.execute(action="remove")
 
+    _assert_xml_result(text, "remove")
     assert "Removed finished" in text
     assert registry.get_finished_by_terminal("default") is None
 
@@ -206,6 +225,7 @@ async def test_process_error_no_session() -> None:
 
     text = await tool.execute(action="log")
 
+    _assert_xml_result(text, "log")
     assert "[Error]" in text
 
 
@@ -225,4 +245,5 @@ async def test_process_log_with_tui_context() -> None:
     tool = ProcessTool(registry=registry, manager=FakeManager(terminal))
     text = await tool.execute(action="log")
 
+    _assert_xml_result(text, "log")
     assert "opened" in text

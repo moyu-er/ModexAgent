@@ -115,6 +115,21 @@ class TerminalSession:
         """Human-readable OS window title when available."""
         return self._backend.window_title
 
+    @property
+    def busy_after_timeout(self) -> bool:
+        """True if the previous command timed out and may still be running."""
+        return self._busy_after_timeout
+
+    @property
+    def last_status(self) -> str | None:
+        """Last known session status string (timeout, waiting_input, etc.)."""
+        return self._last_status
+
+    @property
+    def backend_started(self) -> bool:
+        """True if the backend process was started at least once."""
+        return self._backend_started
+
     async def execute(self, command: str, timeout: float = 60.0) -> str:
         """Execute a command and return output.
 
@@ -126,6 +141,7 @@ class TerminalSession:
         5. Record truncated history.
         6. Update last_active.
         """
+        self._backend.mark_command_boundary()
         if not await self._backend.is_alive() or self._needs_restart:
             await self._backend.start(
                 shell=self.shell_info.path,
@@ -363,9 +379,6 @@ class TerminalSession:
         env = dict(os.environ)
         if self._env:
             env.update(self._env)
-        env["GIT_PAGER"] = "cat"
-        env["PAGER"] = "cat"
-        env["LESS"] = "FRX"
         return env
 
     def get_history(self) -> list[CommandRecord]:
@@ -502,6 +515,21 @@ class TerminalSession:
         """
         await self._backend.write("\x03")
         self._busy_after_timeout = False
+
+    async def submit_command(self, command: str) -> None:
+        """Submit a command to the PTY with proper pre-cleanup and line ending.
+
+        Ensures readline input line is cleared before writing the command,
+        and uses the shell-family-appropriate line ending.
+        """
+        if self.shell_info.family.uses_readline():
+            await self._discard_pending_output()
+            await self._backend.clear_input_line()
+            await asyncio.sleep(0.05)
+            await self._discard_pending_output()
+
+        ending = self.shell_info.family.command_ending()
+        await self._backend.write(command + ending)
 
     async def close(self) -> None:
         """Terminate the backend gracefully, then force kill if needed."""

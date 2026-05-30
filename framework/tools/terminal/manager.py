@@ -8,7 +8,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from framework.tools.terminal.backends.base import TerminalBackend
 from framework.tools.terminal.backends.factory import create_pty_backend
+from framework.tools.terminal.config import TerminalRuntimeConfig
+from framework.tools.terminal.results import SlidingOutputBuffer
 from framework.tools.terminal.session import CommandRecord, TerminalInfo, TerminalSession
 from framework.tools.terminal.state_store import JsonTerminalStateStore
 from framework.tools.terminal.types import Platform, ShellFamily, ShellInfo, detect_platform_shell
@@ -64,6 +67,7 @@ class TerminalManager(TerminalManagerBase):
             platform=Platform.LINUX,
         )
         self._backend_factory: Callable[..., Any] = backend_factory or create_pty_backend
+        self._config = TerminalRuntimeConfig()
 
     async def get_or_create(
         self, name: str, cwd: str | None = None
@@ -91,6 +95,7 @@ class TerminalManager(TerminalManagerBase):
         if self._default_terminal is None:
             self._default_terminal = name
         logger.info("Created terminal session: %s", name)
+        await self._check_memory_pressure()
         return session
 
     def get(self, name: str) -> TerminalSession | None:
@@ -119,7 +124,7 @@ class TerminalManager(TerminalManagerBase):
         for name, session in list(self._sessions.items()):
             if await session._backend.is_alive():
                 alive_names.append(name)
-            elif getattr(session, "_backend_started", False):
+            elif session.backend_started:
                 # Backend was started but has since died — purge it.
                 self._sessions.pop(name, None)
                 if self._default_terminal == name:
@@ -133,6 +138,7 @@ class TerminalManager(TerminalManagerBase):
             session = self._sessions[name]
             info = await session.to_info(is_default=(name == self._default_terminal))
             result.append(info)
+        await self._check_memory_pressure()
         return result
 
     def list_names(self) -> list[str]:
@@ -145,7 +151,7 @@ class TerminalManager(TerminalManagerBase):
         if session is None:
             raise ValueError(f"Terminal '{name}' does not exist")
         if (
-            getattr(session, "_backend_started", False)
+            session.backend_started
             and not await session._backend.is_alive()
         ):
             raise ValueError(f"Terminal '{name}' has been closed")
@@ -165,7 +171,7 @@ class TerminalManager(TerminalManagerBase):
             self._default_terminal = None
             return None
         if (
-            getattr(session, "_backend_started", False)
+            session.backend_started
             and not await session._backend.is_alive()
         ):
             self._default_terminal = None
@@ -231,6 +237,44 @@ class TerminalManager(TerminalManagerBase):
         if self._default_terminal not in self._sessions:
             self._default_terminal = next(iter(self._sessions), None)
         logger.info("Loaded %d terminal sessions from state", len(self._sessions))
+
+    async def _check_memory_pressure(self) -> None:
+        """Clear buffers of largest non-default sessions when total exceeds threshold."""
+        total_buffer = 0
+        session_buffers: list[tuple[str, int]] = []
+
+        for name, session in self._sessions.items():
+            backend = session._backend
+            if not isinstance(backend, TerminalBackend):
+                continue
+            buf = backend._output_buffer
+            if buf is not None and isinstance(buf, SlidingOutputBuffer):
+                size = buf.total_chars
+                total_buffer += size
+                session_buffers.append((name, size))
+
+        if total_buffer <= self._config.max_total_buffer_chars:
+            return
+
+        session_buffers.sort(key=lambda x: x[1], reverse=True)
+        for name, size in session_buffers:
+            if name == self._default_terminal:
+                continue
+            if total_buffer <= self._config.max_total_buffer_chars:
+                break
+
+            session = self._sessions[name]
+            backend = session._backend
+            if isinstance(backend, TerminalBackend):
+                buf = backend._output_buffer
+                if isinstance(buf, SlidingOutputBuffer):
+                    buf.clear()
+
+            logger.warning(
+                "Memory pressure: cleared buffer for '%s' (was %d chars)",
+                name, size,
+            )
+            total_buffer -= size
 
     async def _evict_oldest(self) -> None:
         """Close the least recently used session."""

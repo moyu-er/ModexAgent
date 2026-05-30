@@ -38,21 +38,6 @@ class TestShellFamily:
         assert ShellFamily.SH.command_ending() == "\n"
         assert ShellFamily.CMD.command_ending() == "\r\n"
 
-    def test_needs_pager_suppression(self) -> None:
-        assert ShellFamily.BASH.needs_pager_suppression() is True
-        assert ShellFamily.ZSH.needs_pager_suppression() is True
-        assert ShellFamily.SH.needs_pager_suppression() is True
-        assert ShellFamily.CMD.needs_pager_suppression() is False
-
-    def test_agent_setup_env_readline_shells(self) -> None:
-        expected = {"GIT_PAGER": "cat", "PAGER": "cat", "LESS": "FRX"}
-        assert ShellFamily.BASH.agent_setup_env() == expected
-        assert ShellFamily.ZSH.agent_setup_env() == expected
-        assert ShellFamily.SH.agent_setup_env() == expected
-
-    def test_agent_setup_env_cmd(self) -> None:
-        assert ShellFamily.CMD.agent_setup_env() is None
-
 
 class TestShellInfo:
     """Tests for the ShellInfo frozen dataclass."""
