@@ -313,6 +313,7 @@ async def test_full_injection_includes_knowledge_archive_and_session():
     )
 
     content = bundle.system_prompt
+    assert "<agent_knowledge>" in content
     assert "friendly and concise" in content
     assert "prefers dark mode" in content
     assert "ModexAgent" in content

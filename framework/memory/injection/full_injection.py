@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
 from xml.sax.saxutils import escape as xml_escape
 
 from framework.memory.archive_models import ArchiveChannel
@@ -87,37 +86,69 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         memory_system: InjectableMemorySystem,
         query: str,
     ) -> None:
+        """Inject knowledge as semantic XML with absolute paths and editability metadata."""
         try:
             knowledge = await memory_system.retrieve_knowledge(context, query=query)
-            if knowledge.soul:
-                sections.append(_PromptSection(
-                    content=f"{knowledge.soul}",
-                    priority=100,
-                ))
-            if knowledge.user:
-                sections.append(_PromptSection(
-                    content=f"{knowledge.user}",
-                    priority=100,
-                ))
-            if knowledge.memory:
-                sections.append(_PromptSection(
-                    content=f"{knowledge.memory}",
-                    priority=90,
-                ))
-
             knowledge_dir = await memory_system.get_knowledge_directory(context)
-            if knowledge_dir is not None:
+
+            # Build XML sections for each knowledge file
+            xml_parts: list[str] = ["<agent_knowledge>"]
+
+            if knowledge.soul:
+                file_path = ""
+                if knowledge_dir:
+                    file_path = f' file="{xml_escape(str((knowledge_dir / "SOUL.md").resolve()))}"'
+                xml_parts.append(
+                    f'  <identity{file_path} editable="true" '
+                    f'description="Your personality, core principles, and behavioral rules.">'
+                    f"{xml_escape(knowledge.soul)}"
+                    f"</identity>"
+                )
+
+            if knowledge.user:
+                file_path = ""
+                if knowledge_dir:
+                    file_path = f' file="{xml_escape(str((knowledge_dir / "USER.md").resolve()))}"'
+                xml_parts.append(
+                    f'  <user_profile{file_path} editable="true" '
+                    f'description="Information about the user you are interacting with - preferences, background, habits.">'
+                    f"{xml_escape(knowledge.user)}"
+                    f"</user_profile>"
+                )
+
+            if knowledge.memory:
+                file_path = ""
+                if knowledge_dir:
+                    file_path = f' file="{xml_escape(str((knowledge_dir / "MEMORY.md").resolve()))}"'
+                xml_parts.append(
+                    f'  <persistent_memory{file_path} editable="false" '
+                    f'description="Facts and context preserved across sessions. Maintained automatically.">'
+                    f"{xml_escape(knowledge.memory)}"
+                    f"</persistent_memory>"
+                )
+
+            xml_parts.append("</agent_knowledge>")
+
+            if len(xml_parts) > 2:  # More than just opening/closing tags
+                xml_content = "\n".join(xml_parts)
+
+                # Pre-truncation: if XML exceeds 8000 chars, truncate safely
+                from framework.memory.xml_truncate import truncate_xml_safe
+
+                if len(xml_content) > 8000:
+                    xml_content = truncate_xml_safe(
+                        xml_content,
+                        8000,
+                        truncatable_paths=[
+                            "identity",
+                            "user_profile",
+                            "persistent_memory",
+                        ],
+                    )
+
                 sections.append(_PromptSection(
-                    content=(
-                        f"## Knowledge Directory\n\n"
-                        f"Path: `{knowledge_dir}`\n\n"
-                        f"Files:\n"
-                        f"- SOUL.md — your personality, principles, and behavioral rules\n"
-                        f"- USER.md — user profile (name, preferences, tech level, work context). "
-                        f"Update proactively as you learn about the user.\n"
-                        f"- MEMORY.md — persistent notes and facts across sessions\n"
-                    ),
-                    priority=95,
+                    content=xml_content,
+                    priority=100,
                 ))
         except Exception:
             logger.debug("Knowledge injection skipped", exc_info=True)
