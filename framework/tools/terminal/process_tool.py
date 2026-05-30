@@ -362,7 +362,7 @@ class ProcessTool(Tool):
             session_entries.append(
                 f'<session id="{s.id}" status="running" '
                 f'command="{xml_escape(s.command)}" '
-                f'elapsed_ms="{int((s.ended_at or time.time()) - s.started_at) * 1000}" '
+                f'elapsed_ms="{int(((s.ended_at or time.time()) - s.started_at) * 1000)}"'
                 f'idle_ms="{idle}" />'
             )
         for s in finished:
@@ -370,7 +370,7 @@ class ProcessTool(Tool):
             session_entries.append(
                 f'<session id="{s.id}" status="{s.status.value}" '
                 f'command="{xml_escape(s.command)}" '
-                f'elapsed_ms="{int((s.ended_at or 0) - s.started_at) * 1000}" '
+                f'elapsed_ms="{int(((s.ended_at or 0) - s.started_at) * 1000)}" '
                 f'exit_code="{s.exit_code}" />'
             )
 

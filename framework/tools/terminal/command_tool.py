@@ -258,7 +258,7 @@ class CommandTool(Tool):
             )
 
         message = (
-            "Command still running. Use process poll/log for status, "
+            "Command still running. Use process log for status, "
             "process write/send_keys/paste for input."
         )
         xml = _build_command_xml(
@@ -360,7 +360,8 @@ class CommandTool(Tool):
                 return output_parts, pages_scrolled
 
         # Exit the pager
-        await session.write("q")
+        if await session.is_alive():
+            await session.write("q")
         await asyncio.sleep(0.5)
         while True:
             read = await session.poll_once(timeout=0.3)

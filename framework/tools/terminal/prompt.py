@@ -186,7 +186,7 @@ async def drain_windows_startup(
         # Phase 4: consume any trailing sequences until quiet again
         await _drain_until_quiet(max_empty_reads=3, read_timeout=0.3)
 
-# Phase 5: handshake - send empty command to confirm bash is truly ready.
+        # Phase 5: handshake - send empty command to confirm bash is truly ready.
     # After line clearing, bash may still have delayed bracketed-paste sequences
     # or readline state transitions pending.  An empty command forces bash to
     # process anything in its input buffer and emit a fresh prompt.  If there
