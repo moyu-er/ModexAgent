@@ -19,14 +19,4 @@ Rules:
    "I keep responses short" OK — "Always respond concisely" WRONG
 9. Keep output under 1000 tokens
 
-Output a json array with one element:
-[
-  {
-    "file_name": "SOUL.md",
-    "content": "<complete new SOUL.md content>",
-    "reason": "<brief explanation of what changed>"
-  }
-]
-
-Return ONLY the json. No markdown code blocks, no extra text.
-Do NOT include any thinking/reasoning tags.
+Output the COMPLETE new SOUL.md content directly. No JSON, no code blocks, no extra text.

@@ -901,21 +901,6 @@ class BotService(AgentBuilderMixin):
         ctx = MemoryContext(session_id="default", user_id="default")
         await lt_mgr.ensure_defaults(ctx, defaults)
 
-        # Wire auto-consolidation into knowledge manager
-        summarizer = getattr(self, "_summarizer_agent", None)
-        if summarizer is not None and hasattr(lt_mgr, "_consolidation_fn"):
-            from framework.agents.summarizer.agent import SummarizerAgent
-
-            async def _consolidate(content: str, _file_name: str) -> str:
-                return await summarizer.summarize(
-                    content,
-                    prompt=SummarizerAgent.PROMPT_KNOWLEDGE_CONSOLIDATION,
-                    max_tokens=2000,
-                )
-
-            lt_mgr._consolidation_fn = _consolidate
-            print("   [OK] Knowledge auto-consolidation wired")
-
         print("   [OK] Long-term memory defaults ensured")
 
     async def _init_maintenance_task(
@@ -978,7 +963,6 @@ class BotService(AgentBuilderMixin):
             registry=self.memory_system.store_registry,
             max_batch_size=dream_cfg.max_batch_size,
             max_iterations=10,
-            summarizer=getattr(self, "_summarizer_agent", None),
             min_archive_count=dream_cfg.min_archive_count,
             max_archive_count=dream_cfg.max_archive_count,
         )

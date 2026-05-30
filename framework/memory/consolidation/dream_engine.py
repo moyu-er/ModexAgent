@@ -84,7 +84,14 @@ class DreamEngine(ConsolidationEngine):
         self.idle_threshold_entries = idle_threshold_entries
         self.min_archive_count = min_archive_count
         self.max_archive_count = max_archive_count
-        self._prompts = prompts  # PromptRegistry or None
+        if prompts is None:
+            from framework.memory.prompts import create_default_registry
+
+            try:
+                prompts = create_default_registry()
+            except Exception:
+                pass
+        self._prompts = prompts
         # Always use SummarizerAgent — auto-construct from llm_provider if needed
         self._summarizer: SummarizerAgent = summarizer or SummarizerAgent(llm_provider)
 
@@ -249,7 +256,9 @@ class DreamEngine(ConsolidationEngine):
                 user_prompt = self._prompts.get_user(
                     "knowledge/fact_extraction",
                     archive_entries=history_text,
-                    existing_memories=file_context,
+                    current_soul=existing_memories.get("SOUL.md", ""),
+                    current_user=existing_memories.get("USER.md", ""),
+                    current_memory=existing_memories.get("MEMORY.md", ""),
                 )
                 analysis = await self._summarizer.analyze(
                     user_prompt,
@@ -311,10 +320,22 @@ class DreamEngine(ConsolidationEngine):
                         temperature=0.2,
                     )
 
-                updates = self._parse_updates(phase2_text)
-                for update in updates:
-                    if update.file_name.upper().startswith(file_key.upper()):
-                        updates_list.append(update)
+                content = phase2_text.strip()
+                if content.startswith("```"):
+                    lines = content.splitlines()
+                    if lines[0].startswith("```"):
+                        lines = lines[1:]
+                    if lines and lines[-1].startswith("```"):
+                        lines = lines[:-1]
+                    content = "\n".join(lines).strip()
+                if content:
+                    update = MemoryUpdate(
+                        file_name=file_name,
+                        content=content,
+                        mode=str(MemoryUpdateMode.SECTION_REPLACE),
+                        reason=f"DreamEngine per-file {file_key} update",
+                    )
+                    updates_list.append(update)
             except Exception as e:
                 logger.warning("DreamEngine Phase 2 failed for %s: %s", file_key, e)
 

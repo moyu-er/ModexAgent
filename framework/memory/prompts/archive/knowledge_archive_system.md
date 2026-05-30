@@ -17,6 +17,9 @@ Use exactly this structure:
 
 ## Reusable Lessons
 - Verified solutions, recurring failures, and reusable approaches.
+- Do NOT capture negative claims ("X tool doesn't work", "Y feature is broken").
+  These harden into permanent refusals long after the problem is fixed.
+  Capture the FIX instead: "install X via brew", "set env var Y=1".
 
 ## Exclusions
 - Important items deliberately excluded from long-term memory and why.

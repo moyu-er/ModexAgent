@@ -59,6 +59,23 @@ def create_memory_system(
             config=config,
             llm_provider=llm_provider,
         )
+
+        # Wire knowledge auto-consolidation
+        if layer_set.knowledge is not None and llm_provider is not None:
+            from framework.agents.summarizer.agent import SummarizerAgent
+            from framework.memory.prompts import create_default_registry
+
+            _summarizer = SummarizerAgent(llm_provider)
+            _registry = create_default_registry()
+
+            async def _consolidate(content: str, _file_name: str) -> str:
+                prompt = _registry.get_system("consolidation/knowledge_consolidation")
+                if not prompt:
+                    prompt = SummarizerAgent.PROMPT_KNOWLEDGE_CONSOLIDATION
+                return await _summarizer.summarize(content, prompt=prompt, max_tokens=2000)
+
+            layer_set.knowledge._consolidation_fn = _consolidate
+
     return DefaultMemorySystem(
         layer_set=layer_set,
         store_registry=registry,

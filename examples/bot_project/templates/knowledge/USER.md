@@ -1,6 +1,6 @@
 # User Profile
 
-Information about the user to help personalize interactions.
+Information about the user to personalize interactions.
 
 ## Basic Information
 
@@ -31,5 +31,3 @@ Information about the user to help personalize interactions.
 ## Special Instructions
 
 (Any specific instructions for how the assistant should behave)
-
----

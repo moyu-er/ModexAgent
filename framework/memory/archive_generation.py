@@ -91,6 +91,13 @@ class DualLLMArchiveGenerationStrategy(ArchiveGenerationStrategy):
         self._context_max_tokens = context_max_tokens
         self._knowledge_max_tokens = knowledge_max_tokens
         self._max_segment_tokens = max_segment_tokens
+        if prompts is None:
+            from framework.memory.prompts import create_default_registry
+
+            try:
+                prompts = create_default_registry()
+            except Exception:
+                pass
         self._prompts = prompts
 
     async def generate(
@@ -122,8 +129,17 @@ class DualLLMArchiveGenerationStrategy(ArchiveGenerationStrategy):
             seg_mappings = [original_mappings[i] for i in indices]
             inputs = self._input_policy.build_inputs(seg_mappings, context, reason)
 
+            if self._prompts is not None:
+                ctx_user = self._prompts.get_user(
+                    "archive/context_archive",
+                    reason=reason.value,
+                    transcript=inputs.context_transcript.strip(),
+                )
+            else:
+                ctx_user = self._prompt_input(inputs.context_transcript, reason)
+
             context_summary = await self._summarizer.summarize(
-                self._prompt_input(inputs.context_transcript, reason),
+                ctx_user,
                 prompt=ctx_system,
                 max_tokens=self._context_max_tokens,
             )
@@ -131,8 +147,17 @@ class DualLLMArchiveGenerationStrategy(ArchiveGenerationStrategy):
             if normalized_context:
                 context_parts.append(normalized_context)
 
+            if self._prompts is not None:
+                kn_user = self._prompts.get_user(
+                    "archive/knowledge_archive",
+                    reason=reason.value,
+                    transcript=inputs.knowledge_transcript.strip(),
+                )
+            else:
+                kn_user = self._prompt_input(inputs.knowledge_transcript, reason)
+
             knowledge_summary = await self._summarizer.summarize(
-                self._prompt_input(inputs.knowledge_transcript, reason),
+                kn_user,
                 prompt=kn_system,
                 max_tokens=self._knowledge_max_tokens,
                 temperature=0.2,

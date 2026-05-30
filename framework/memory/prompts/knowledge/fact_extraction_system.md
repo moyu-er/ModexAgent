@@ -30,6 +30,8 @@ Long-term memory files:
 - Git history, commit SHAs, PR numbers, issue numbers
 - Tool invocation details, raw tool outputs
 - Temporary errors that were resolved
+- Environment failures fixed by setup changes (missing binaries, unconfigured
+  credentials, uninstalled packages — capture the FIX, not the failure)
 - Transient task progress ("Phase N done", "submitted PR Y")
 - Trivial pleasantries, greetings, acknowledgments
 - Anything already captured in the current file content shown below

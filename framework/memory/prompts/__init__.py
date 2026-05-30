@@ -73,9 +73,26 @@ class PromptRegistry:
 
     @staticmethod
     def _substitute(content: str, variables: dict[str, str]) -> str:
-        """Substitute {variable_name} placeholders with values."""
+        """Substitute {variable_name} placeholders with XML-escaped values.
+
+        Variable values are XML-escaped so user content containing <, >, &
+        or " characters does not break XML template structure.
+        """
+        from xml.sax.saxutils import escape as xml_escape
+
         result = content
         for var_name, var_value in variables.items():
             placeholder = f"{{{var_name}}}"
-            result = result.replace(placeholder, str(var_value))
+            result = result.replace(
+                placeholder,
+                xml_escape(str(var_value), {'"': "&quot;", "'": "&apos;"}),
+            )
         return result
+
+
+def _default_prompts_dir() -> Path:
+    return Path(__file__).resolve().parent
+
+
+def create_default_registry() -> PromptRegistry:
+    return PromptRegistry(_default_prompts_dir())

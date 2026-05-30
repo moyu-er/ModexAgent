@@ -1,13 +1,16 @@
-## Archive Entries
+<fact_extraction_request>
+  <new_archive_entries>
 {archive_entries}
-
-## Existing Memory Files (current state — do NOT re-suggest content already here)
-
-### SOUL.md
+  </new_archive_entries>
+  <current_state>
+    <soul file="SOUL.md">
 {current_soul}
-
-### USER.md
+    </soul>
+    <user_profile file="USER.md">
 {current_user}
-
-### MEMORY.md
+    </user_profile>
+    <memory file="MEMORY.md">
 {current_memory}
+    </memory>
+  </current_state>
+</fact_extraction_request>

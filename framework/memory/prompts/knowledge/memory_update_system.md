@@ -20,14 +20,4 @@ Rules:
    "project uses pytest" OK — "run pytest before committing" WRONG
 10. Keep output under 1500 tokens
 
-Output a json array with one element:
-[
-  {
-    "file_name": "MEMORY.md",
-    "content": "<complete new MEMORY.md content>",
-    "reason": "<brief explanation of what changed>"
-  }
-]
-
-Return ONLY the json. No markdown code blocks, no extra text.
-Do NOT include any thinking/reasoning tags.
+Output the COMPLETE new MEMORY.md content directly. No JSON, no code blocks, no extra text.

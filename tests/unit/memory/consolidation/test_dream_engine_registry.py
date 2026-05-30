@@ -152,3 +152,52 @@ async def test_dream_engine_accepts_prompts_parameter() -> None:
 
         assert result.success is True
         assert summarizer.summarize.call_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_per_file_update_uses_raw_output_not_json() -> None:
+    """Per-file Phase 2 uses raw LLM output directly, not _parse_updates."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        prompts_dir = Path(tmpdir)
+        (prompts_dir / "knowledge").mkdir()
+        (prompts_dir / "knowledge" / "soul_update_system.md").write_text("SOUL system")
+        (prompts_dir / "knowledge" / "soul_update_user.md").write_text("SOUL user: {current_soul}")
+        (prompts_dir / "knowledge" / "fact_extraction_system.md").write_text("FACT system")
+        (prompts_dir / "knowledge" / "fact_extraction_user.md").write_text("FACT user")
+
+        registry = PromptRegistry(prompts_dir)
+
+        summarizer = MagicMock()
+        summarizer.analyze = AsyncMock(return_value="[SOUL] new principle\n[USER] name is Bob")
+        raw_soul_content = "# Soul Profile\n\nI am helpful.\n\n## Core Principles\n- Be concise"
+        summarizer.summarize = AsyncMock(return_value=raw_soul_content)
+
+        engine = DreamEngine(
+            llm_provider=MagicMock(),
+            history_manager=MagicMock(),
+            long_term_manager=MagicMock(),
+            summarizer=summarizer,
+            prompts=registry,
+        )
+
+        engine.long_term_manager.get_all = AsyncMock()
+        mock_knowledge = MagicMock()
+        mock_knowledge.soul = "old content"
+        mock_knowledge.user = "old user"
+        mock_knowledge.memory = "old memory"
+        engine.long_term_manager.get_all.return_value = mock_knowledge
+
+        result = await engine.consolidate(
+            scope_key="",
+            new_entries=[{"summary": "test"}],
+            existing_memories={
+                "SOUL.md": "old content",
+                "USER.md": "old user",
+                "MEMORY.md": "old memory",
+            },
+        )
+
+        assert result.success is True
+        assert len(result.soul_updates) == 1
+        assert result.soul_updates[0].content == raw_soul_content
+        assert result.soul_updates[0].file_name == "SOUL.md"
