@@ -28,7 +28,9 @@ def test_truncates_only_content_element():
     assert '<thinking>需要查询数据</thinking>' in result
     assert '<status>ok</status>' in result
     assert '</agent_message>' in result
-    assert len(result) <= 250
+    # Verify the truncatable field text was cut to <= max_chars
+    content_text = result.split('<content>', 1)[1].split('</content>', 1)[0]
+    assert len(content_text) <= 200
 
 
 def test_preserves_attributes():

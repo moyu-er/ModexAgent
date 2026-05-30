@@ -743,6 +743,154 @@ class TestUserRetentionExtraction:
         assert result.user_retention_extracted == 0
 
 
+class TestUserRetentionCompletion:
+    """URB entries must be correctly marked as completed when their answering
+    plain assistant is in the kept (unpruned) region.
+
+    Key property: a plain assistant completes ALL currently unfinished entries,
+    including ones left over from previous cleanups.  Unfinished entries always
+    sit at the buffer's tail.
+    """
+
+    @pytest.mark.asyncio
+    async def test_pruned_user_completed_by_kept_assistant(
+        self, registry: InMemoryStoreRegistry,
+    ) -> None:
+        """User pruned, plain assistant kept → entry must be completed."""
+        layer_set = _make_layer_set(registry)
+        context = _ctx()
+        session = layer_set.session
+
+        msgs = [
+            _user_msg("q1"), _assistant_msg("a1"),
+            _user_msg("q2"), _assistant_msg("a2"),
+            _user_msg("q3"), _assistant_msg("a3"),
+            _user_msg("q4"), _assistant_msg("a4"),
+        ]
+        await _add_messages(session, context, msgs)
+
+        result = await cleanup_session(
+            session=session,
+            archive=None,
+            context=context,
+            max_messages=4,
+            max_tokens=None,
+            keep_ratio=0.5,
+            archive_strategy=None,
+            user_retention=layer_set.user_retention,
+        )
+
+        assert result.triggered is True
+        entries = await layer_set.user_retention.get_entries(context)
+        # All pruned users had plain assistants (pruned or kept) after them.
+        # Every entry must be completed.
+        unfinished = [e for e in entries if not e.is_completed]
+        assert unfinished == [], (
+            f"All entries should be completed, but found unfinished: "
+            f"{[e.pruned_user_content for e in unfinished]}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_pruned_user_completed_by_pruned_assistant_kept_has_no_plain(
+        self, registry: InMemoryStoreRegistry,
+    ) -> None:
+        """Plain assistant in the PRUNED region, kept region has no plain
+        assistant (only tool chain).  Pruned entries must still be completed."""
+        layer_set = _make_layer_set(registry)
+        context = _ctx()
+        session = layer_set.session
+
+        msgs = [
+            _user_msg("q1"), _assistant_msg("a1"),
+            _user_msg("q2"), _assistant_msg("a2"),
+            _user_msg("q3"),
+            _tool_call_msg("c1"),
+            _tool_result_msg("c1"),
+        ]
+        await _add_messages(session, context, msgs)
+
+        result = await cleanup_session(
+            session=session,
+            archive=None,
+            context=context,
+            max_messages=3,
+            max_tokens=None,
+            keep_ratio=0.4,
+            archive_strategy=None,
+            user_retention=layer_set.user_retention,
+        )
+
+        assert result.triggered is True
+        entries = await layer_set.user_retention.get_entries(context)
+        by_content = {e.pruned_user_content: e for e in entries}
+        # q1 answered by a1 (pruned), q2 answered by a2 (pruned) → completed
+        assert by_content["q1"].is_completed, "q1 should be completed by pruned a1"
+        assert by_content["q2"].is_completed, "q2 should be completed by pruned a2"
+        # q3 has no plain assistant after it → legitimately unfinished
+        assert not by_content["q3"].is_completed, "q3 should be unfinished (no plain assistant)"
+
+    @pytest.mark.asyncio
+    async def test_kept_assistant_completes_prior_unfinished_entries(
+        self, registry: InMemoryStoreRegistry,
+    ) -> None:
+        """A plain assistant in the kept region also completes unfinished
+        entries from a *previous* cleanup cycle."""
+        layer_set = _make_layer_set(registry)
+        context = _ctx()
+        session = layer_set.session
+
+        # Round 1: force a cleanup that leaves unfinished entries.
+        # q1 has no following plain assistant → stays unfinished.
+        msgs = [
+            _user_msg("q1"),
+            _tool_call_msg("c1", "tool_x"),
+            _tool_result_msg("c1"),
+            _user_msg("q2"),
+            _user_msg("q3"),
+        ]
+        await _add_messages(session, context, msgs)
+
+        await cleanup_session(
+            session=session,
+            archive=None,
+            context=context,
+            max_messages=3,
+            max_tokens=None,
+            keep_ratio=0.5,
+            archive_strategy=None,
+            user_retention=layer_set.user_retention,
+        )
+
+        entries_after_round1 = await layer_set.user_retention.get_entries(context)
+        assert len(entries_after_round1) > 0, "First cleanup should extract entries"
+        # At this point, all entries are unfinished (no plain assistant anywhere).
+        assert all(not e.is_completed for e in entries_after_round1)
+
+        # Round 2: add messages so that a plain assistant lands in the KEPT region.
+        # This assistant should complete ALL existing unfinished entries.
+        await _add_messages(session, context, [
+            _user_msg("q4"),
+            _assistant_msg("final_answer"),
+        ])
+        await cleanup_session(
+            session=session,
+            archive=None,
+            context=context,
+            max_messages=2,
+            max_tokens=None,
+            keep_ratio=0.5,
+            archive_strategy=None,
+            user_retention=layer_set.user_retention,
+        )
+
+        entries_after_round2 = await layer_set.user_retention.get_entries(context)
+        unfinished = [e for e in entries_after_round2 if not e.is_completed]
+        assert unfinished == [], (
+            f"Plain assistant in kept region should complete all entries, "
+            f"but found unfinished: {[e.pruned_user_content for e in unfinished]}"
+        )
+
+
 class TestToolChainDominanceDoesNotOverPrune:
     """Regression: sessions dominated by tool chains must not over-prune.
 
