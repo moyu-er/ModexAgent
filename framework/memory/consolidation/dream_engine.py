@@ -346,18 +346,29 @@ class DreamEngine(ConsolidationEngine):
         "(no semantic content)",
     })
 
+    _TOOL_XML_PATTERNS = (
+        "<minimax:tool_call>",
+        "<tool_call>",
+        "<function_call>",
+        "<invoke name=",
+    )
+
     @classmethod
     def _is_meaningful_entry(cls, entry: dict[str, Any]) -> bool:
         """Check whether an archive entry contains useful content for consolidation.
 
-        Rejects empty summaries, known placeholder markers, and entries
+        Rejects empty summaries, known placeholder markers, entries
         that were explicitly marked as empty by the archive strategy
-        (source=="empty" or semantic_count==0).
+        (source=="empty" or semantic_count==0), and summaries that are
+        raw tool-call XML leaked from LLM hallucination.
         """
         summary = entry.get("summary", "")
         if not summary or not summary.strip():
             return False
-        if summary.strip() in cls._EMPTY_MARKERS:
+        stripped = summary.strip()
+        if stripped in cls._EMPTY_MARKERS:
+            return False
+        if any(p in stripped for p in cls._TOOL_XML_PATTERNS):
             return False
         metadata = entry.get("metadata", {})
         if isinstance(metadata, dict):

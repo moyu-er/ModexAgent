@@ -25,7 +25,7 @@ memory:
   dream_engine:
     enabled: true
     interval: 600
-    min_archive_count: 5
+    min_archive_count: 1
     max_archive_count: 30
     max_batch_size: 20
   governance:
