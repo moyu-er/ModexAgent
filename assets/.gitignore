@@ -1,6 +1,0 @@
-# Render artifacts inside video-hf (canonical files are in assets/ root)
-video-hf/modexagent-intro.mp4
-video-hf/modexagent-intro-zh.mp4
-
-# HyperFrames dependencies (reinstall with `npm install`)
-video-hf/node_modules/
