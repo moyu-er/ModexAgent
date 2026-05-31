@@ -277,10 +277,14 @@ async def create_pool(
 # ── internal helpers ──
 
 def _create_terminal_manager(pool_cfg: PoolConfig, project_dir: Path) -> Any | None:
-    """Create terminal manager with platform-aware degradation chain.
+    """Create terminal manager with visibility-aware degradation chain.
 
-    Windows: visible terminal > hidden terminal > None (subprocess fallback).
-    Linux/macOS: pexpect > tmux > None (subprocess fallback).
+    use_terminal=false → None (SubprocessTool only, no terminal tools).
+    use_terminal=true:
+      visibility="visible" → visible → hidden → None (subprocess fallback)
+      visibility="hidden"  → hidden  → None (subprocess fallback)
+
+    Linux/macOS has no visible backend; "visible" degrades to hidden (pexpect/tmux).
     """
     use_terminal = any(
         getattr(a, "use_terminal", False) for a in pool_cfg.agents
@@ -288,12 +292,23 @@ def _create_terminal_manager(pool_cfg: PoolConfig, project_dir: Path) -> Any | N
     if not use_terminal:
         return None
 
+    # Read visibility preference from the main agent
+    visibility: str = "visible"
+    for a in pool_cfg.agents:
+        if getattr(a, "role", None) == "main":
+            visibility = getattr(a, "terminal_visibility", "visible")
+            break
+
     import sys
     from framework.tools.terminal.managers import create_terminal_manager
 
     if sys.platform == "win32":
-        kinds = ["windows_visible", "windows_hidden"]
+        if visibility == "visible":
+            kinds = ["windows_visible", "windows_hidden"]
+        else:
+            kinds = ["windows_hidden"]
     else:
+        # Linux/macOS: no visible backend; "visible" degrades to hidden
         kinds = ["linux"]
 
     for kind in kinds:

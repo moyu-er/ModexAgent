@@ -41,6 +41,7 @@ agents:
     # system_prompt loaded from agents/main.md by convention
     max_steps: 50
     use_terminal: true
+    terminal_visibility: visible  # visible | hidden — initial preference; degrades through chain
     # skills auto-discovered from skills/main/main/ by convention
     approval:
       tools:

@@ -287,11 +287,13 @@ class BotService(AgentBuilderMixin):
                 try:
                     from framework.tools.terminal import TerminalManager
 
+                    visibility = getattr(main_cfg, 'terminal_visibility', 'visible')
                     self.terminal_manager = TerminalManager(
                         max_terminals=getattr(self._app_config, 'terminal', {}).get('max_terminals', 5),
                         shell_info=shell_info,
+                        visibility=visibility,
                     )
-                    print(f"[OK] TerminalManager initialized ({shell_info.family.value}: {shell_info.path}, lazy)")
+                    print(f"[OK] TerminalManager initialized ({shell_info.family.value}: {shell_info.path}, {visibility}, lazy)")
                 except Exception as e:
                     logger.warning("TerminalManager initialization failed: %s", e)
                     self.terminal_manager = None

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -52,6 +53,7 @@ class TerminalManager(TerminalManagerBase):
         default_timeout: float = 60.0,
         backend_factory: Callable[[], Any] | None = None,
         shell_info: ShellInfo | None = None,
+        visibility: str = "visible",
     ):
         self._storage_dir = Path(storage_dir)
         self._max_terminals = max_terminals
@@ -66,7 +68,13 @@ class TerminalManager(TerminalManagerBase):
             path="bash",
             platform=Platform.LINUX,
         )
-        self._backend_factory: Callable[..., Any] = backend_factory or create_pty_backend
+        if backend_factory is not None:
+            self._backend_factory: Callable[..., Any] = backend_factory
+        elif visibility == "hidden" and sys.platform == "win32":
+            from framework.tools.terminal.backends.windows_hidden import WindowsHiddenPtyBackend
+            self._backend_factory = WindowsHiddenPtyBackend
+        else:
+            self._backend_factory = create_pty_backend
         self._config = TerminalRuntimeConfig()
 
     async def get_or_create(

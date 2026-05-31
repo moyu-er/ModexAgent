@@ -21,5 +21,6 @@ class AgentTemplate:
     max_steps: int = 20
     standard_tools: bool = True
     use_terminal: bool = True
+    terminal_visibility: str = "visible"  # "visible" | "hidden" — initial preference
     memory: MemoryConfig | None = None
     skills: SkillsConfig | None = None
