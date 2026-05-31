@@ -1,33 +1,42 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-05-16 | Updated: 2026-05-22 -->
+<!-- Updated: 2026-05-31 | Branch: develop_gyt | Commit: 6647e8a -->
 
 # memory
 
-Three-layer memory system with scope isolation. Layers: Session (short-term), Archive (history), Knowledge (long-term SOUL/USER/MEMORY.md). Supports compaction, consolidation, governance, and context injection.
+Three-layer memory system with scope isolation. Layers: Session (short-term), Archive (history), Knowledge (long-term). Supports compaction, consolidation, governance, context injection, and XML truncation.
 
 ## Key Files
 
 | File | Description |
 |------|-------------|
-| `system.py` | `MemorySystemContextManager(ContextManager)`, `create_memory_system()` — high-level facade for pipeline |
+| `system.py` | `MemorySystemContextManager(ContextManager)` — high-level facade wrapping `MemorySystem` for pipeline |
 | `default_system.py` | `DefaultMemorySystem` — standard implementation wiring all layers |
-| `history.py` | `MessageHistory`, `ListMessageHistory`, `inject_attachments_to_history` |
+| `history.py` | `MessageHistory`, `ListMessageHistory`, `ScopedMessageHistory`, `inject_attachments_to_history` |
 | `context_governance.py` | `ContextGovernance` ABC — `CompositeGovernance`, `TokenBudgetGovernance`, `MicrocompactGovernance`, `ToolChainRepairGovernance` |
 | `archive_generation.py` | `ArchiveGenerationStrategy` (ABC), `DualLLMArchiveGenerationStrategy`, `ArchiveInputMessage`, `SummarizerLike` |
+| `archive_input.py` | Archive input message types |
+| `archive_models.py` | `ArchiveChannelStorage` Protocol, archive data models |
 | `cleanup.py` | `cleanup_session()`, `CleanupResult` — main entry point for session cleanup + archive |
 | `sanitizer.py` | `DefaultSessionToolChainSanitizer` — removes invalid tool-chain records |
-| `pending.py` | `PendingPrunedInputExtractor`/`Injector` — handles messages pruned from session but not yet delivered |
 | `recorder.py` | `MemoryAppendRecorder` — records what gets appended and from where |
+| `content_transform.py` | `ContentTransformer` ABC — transforms messages for injection |
+| `history_search.py` | `HistorySearchStrategy` ABC — search over history |
+| `knowledge_search.py` | `KnowledgeSearchStrategy` ABC — search over knowledge |
+| `user_buffer.py` | User retention buffer for pending messages |
+| `lifecycle.py` | `MemoryMaintenancePolicy`, `SessionRetentionPolicy`, `ArchiveRetentionPolicy`, `KnowledgeRetentionPolicy` ABCs |
+| `xml_truncate.py` | XML-based content truncation for governance |
+| `utils.py` | Memory utility helpers |
 
 ## Subdirectories
 
 | Directory | Purpose |
 |-----------|---------|
-| `core/` | ABCs — `MemoryScope`, `MemoryStorage`, `ChatMessage`, `MemoryContext`, scope metadata, layer managers |
-| `layers/` | Concrete layer managers — Session, Archive, Knowledge, Pending + `MemoryLayerFactory` + config |
+| `core/` | ABCs — `MemorySystem`, `MemoryScope`, `MemoryStorage`, `ChatMessage`, `MemoryContext`, layer managers, consolidation (see `core/AGENTS.md`) |
+| `layers/` | Concrete layer managers — Session, Archive, Knowledge + `MemoryLayerConfigSet` + `MemoryLayerFactory` |
 | `consolidation/` | `DreamEngine` (offline background consolidation) |
-| `injection/` | `MemoryInjectionPolicy` → `ContextState` assembly (`FullInjectionPolicy`, `RestrictedInjectionPolicy`, `ToolMessageFilterStrategy`) |
+| `injection/` | `MemoryInjectionPolicy` → `ContextState` assembly (`FullInjectionPolicy`, `RestrictedInjectionPolicy`) |
 | `registry/` | `MemoryStoreRegistry` — storage provider registry |
+| `stores/` | Storage backend implementations (`FileStorage`, `InMemoryStorage`) |
 
 ## For AI Agents
 

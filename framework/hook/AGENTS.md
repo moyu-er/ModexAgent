@@ -1,11 +1,12 @@
 <!-- Parent: ../AGENTS.md -->
+<!-- Updated: 2026-05-31 -->
 
 # hook
 
 ## Purpose
-Lifecycle extension points -- lightweight observation, context injection, policy veto.
+Lifecycle extension points — lightweight observation, context injection, policy veto.
 Hooks execute at 9 defined `HookPoint`s and must be fast (default 10s timeout).
-Unlike Interceptors, hooks do NOT wrap execution -- they observe and optionally modify context.
+Unlike Interceptors, hooks do NOT wrap execution — they observe and optionally modify context.
 
 ## Key Files
 | File | Description |

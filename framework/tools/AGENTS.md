@@ -1,18 +1,18 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-05-16 -->
+<!-- Updated: 2026-05-31 | Branch: develop_gyt | Commit: 6647e8a -->
 
 # tools
 
 ## Purpose
-Tool subsystem — registry, executor, MCP integration, standard tools, filtering, and metadata. All tools implement the `Tool` ABC and are discovered/registered via `ToolRegistry`.
+Tool subsystem — registry, executor, MCP integration, terminal system, overflow management, standard tools, filtering, and metadata. All tools implement the `Tool` ABC.
 
 ## Key Files
 | File | Description |
 |------|-------------|
 | `registry.py` | `ToolRegistry` — tool registration and lookup |
 | `executor.py` | Tool execution engine |
-| `types.py` | Tool-related type definitions |
-| `toolkit.py` | Toolkit with AOP hooks |
+| `types.py` | Tool-related type definitions (767 lines) |
+| `toolkit.py` | Toolkit with AOP hooks (730 lines) |
 | `filter.py` | `FilteredToolManager` — per-agent tool visibility |
 | `mcp_adapter.py` | `MCPToolAdapter`, `MCPToolRegistry` — bridges MCP to framework `Tool` |
 | `metadata_parser.py` | Rich docstring parser (Google/NumPy/Sphinx styles) |
@@ -21,8 +21,10 @@ Tool subsystem — registry, executor, MCP integration, standard tools, filterin
 ## Subdirectories
 | Directory | Purpose |
 |-----------|---------|
-| `mcp/` | MCP integration — `MCPClientManager` (`client.py`), connection management (`manager.py`), tool wrapper (`tool.py`); three transports: stdio, SSE, streamable_http |
+| `mcp/` | MCP integration — `BaseMCPClient`, `MCPClientManager`, connection management, tool wrapper; stdio/SSE/streamable_http transports |
 | `standard/` | Built-in tools — `file_tool.py`, `search_tool.py`, `shell_tool.py` |
+| `terminal/` | Stateful terminal — `TerminalManager`, `TerminalSession`, `ShellTool`, pexpect/tmux/winpty backends (see `terminal/AGENTS.md`) |
+| `overflow/` | Tool result overflow — `ToolOverflowStore` ABC, `ToolResultOverflowHandler`, `OverflowCleaner` (see `overflow/AGENTS.md`) |
 
 ## For AI Agents
 - New tools: subclass `Tool` ABC with `name`, `description`, `parameters`, `execute()` method

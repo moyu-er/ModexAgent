@@ -1,10 +1,10 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-05-16 -->
+<!-- Updated: 2026-05-31 | Branch: develop_gyt | Commit: 6647e8a -->
 
 # ioc
 
 ## Purpose
-Inversion of Control container — configuration dataclasses and factory functions. Root `AppConfig` drives all subsystem assembly through typed config objects and dedicated factory modules.
+Inversion of Control container — typed configuration (Pydantic) and factory functions. Root `AppConfig` drives all subsystem assembly through 13 config objects and 8 factory modules.
 
 ## Key Files
 | File | Description |
@@ -14,14 +14,14 @@ Inversion of Control container — configuration dataclasses and factory functio
 ## Subdirectories
 | Directory | Purpose |
 |-----------|---------|
-| `configs/` | Typed configuration dataclasses |
-| `factories/` | Assembly factory functions |
+| `configs/` | Typed configuration dataclasses (13 files) |
+| `factories/` | Assembly factory functions (8 files) |
 
 ### configs/
-`app.py` (root `AppConfig` from YAML), `agent.py` (`AgentConfig`), `llm.py` (`LLMConfig`), `memory.py` (`MemoryConfig`), `safety.py` (`SafetyConfig`), `mcp.py` (`MCPConfig`), `approval.py` (`ApprovalConfig`), `hooks.py` (`HooksConfig`), `observability.py` (`ObservabilityConfig`), `plugins.py` (`PluginsConfig`), `skills.py` (`SkillsConfig`)
+`app.py` (root `AppConfig`), `agent.py` (`AgentConfig`), `llm.py` (`LLMConfig`), `memory.py` (`MemoryConfig`), `safety.py` (`SafetyConfig`), `mcp.py` (`MCPConfig`), `approval.py` (`ApprovalConfig`), `hooks.py` (`HooksConfig`), `observability.py` (`ObservabilityConfig`), `plugins.py` (`PluginsConfig`), `skills.py` (`SkillsConfig`), `pool.py` (`PoolConfig`) — all loaded from YAML via `AppConfig`
 
 ### factories/
-`app_factory`, `agent_factory`, `llm_factory`, `memory_factory`, `tools_factory`, `governance_factory`, `compression_factory`, `descriptors` — each assembles its subsystem from the corresponding config
+`app.py` (app factory), `agent.py` (agent factory), `llm.py` (LLM factory), `memory.py` (memory factory), `tools.py` (tools factory), `governance.py` (governance factory), `descriptors.py` (descriptor factory), `__init__.py`
 
 ## For AI Agents
 - `AppConfig` is the root config loaded from YAML; all other configs are nested fields
