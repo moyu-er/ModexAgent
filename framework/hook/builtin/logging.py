@@ -32,17 +32,34 @@ class RunLoggingHook:
         self._max_result_chars = max_result_chars
         self._pending_tool_calls: dict[str, list[Any]] = {}
 
+    @staticmethod
+    def _get_agent_name(ctx: AgentContext[Any]) -> str:
+        if ctx.session_meta is not None:
+            return ctx.session_meta.agent_name
+        if ctx.identity is not None:
+            return ctx.identity.agent_id
+        return "<unknown>"
+
+    @staticmethod
+    def _get_iteration(ctx: AgentContext[Any]) -> int:
+        if ctx.runtime is not None:
+            return getattr(ctx.runtime.state, "iteration", 0)
+        return 0
+
     async def after_llm_response(self, ctx: AgentContext[Any], response: LLMResponse) -> None:
         tool_names = [call.tool_name for call in response.tool_calls]
+        agent = self._get_agent_name(ctx)
+        iteration = self._get_iteration(ctx)
         self._logger.log(
             self._level,
-            "LLM response session_id=%s finish_reason=%s tool_calls=%s usage=%s "
-            "reasoning=%s content=%s",
+            "[LLM] session_id=%s agent=%s iter=%s finish_reason=%s "
+            "tools=%s usage=%s\ncontent=%s",
             ctx.session_id,
+            agent,
+            iteration,
             response.finish_reason,
             self._format_value(tool_names, self._max_content_chars),
             self._format_value(response.usage, self._max_content_chars),
-            self._format_text(response.reasoning_content, self._max_content_chars),
             self._format_text(response.content, self._max_content_chars),
         )
 
@@ -54,14 +71,18 @@ class RunLoggingHook:
         if tool_calls is None:
             return
         self._pending_tool_calls[ctx.session_id] = list(tool_calls)
+        agent = self._get_agent_name(ctx)
+        iteration = self._get_iteration(ctx)
         for tool_call in tool_calls:
             tool_name = getattr(tool_call, "tool_name", "<unknown>")
             call_id = getattr(tool_call, "call_id", None)
             arguments = getattr(tool_call, "arguments", {}) or {}
             self._logger.log(
                 self._level,
-                "Tool call start session_id=%s tool=%s call_id=%s arguments=%s",
+                "[TOOL_CALL] session_id=%s agent=%s iter=%s tool=%s call_id=%s\narguments=%s",
                 ctx.session_id,
+                agent,
+                iteration,
                 tool_name,
                 call_id,
                 self._format_value(arguments, self._max_content_chars),
@@ -77,6 +98,8 @@ class RunLoggingHook:
         pending = self._pending_tool_calls.get(ctx.session_id, [])
         pending_by_call_id = {getattr(call, "call_id", None): call for call in pending}
         pending_by_name = {getattr(call, "tool_name", None): call for call in pending}
+        agent = self._get_agent_name(ctx)
+        iteration = self._get_iteration(ctx)
 
         for result in results:
             tool_name = self._result_tool_name(result)
@@ -87,12 +110,13 @@ class RunLoggingHook:
             output = self._result_output(result)
             self._logger.log(
                 self._level,
-                "Tool call end session_id=%s tool=%s call_id=%s success=%s arguments=%s result=%s",
+                "[TOOL_RESULT] session_id=%s agent=%s iter=%s tool=%s call_id=%s success=%s\nresult=%s",
                 ctx.session_id,
+                agent,
+                iteration,
                 tool_name,
                 call_id,
                 error is None,
-                self._format_value(arguments or {}, self._max_content_chars),
                 self._format_value(
                     output if error is None else {"error": error},
                     self._max_result_chars,

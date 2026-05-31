@@ -160,9 +160,11 @@ class TestRunLoggingHook:
             )
 
         messages = [record.message for record in caplog.records]
+        assert any("[LLM]" in msg for msg in messages)
         assert any("session_id=chat-a" in msg for msg in messages)
-        assert any("LLM response" in msg and "final answer" in msg for msg in messages)
-        assert any("short reasoning" in msg for msg in messages)
+        assert any("agent=" in msg for msg in messages)
+        assert any("iter=" in msg for msg in messages)
+        assert any("final answer" in msg for msg in messages)
         assert any("prompt_tokens" in msg for msg in messages)
 
     @pytest.mark.asyncio
@@ -188,11 +190,12 @@ class TestRunLoggingHook:
             )
 
         messages = [record.message for record in caplog.records]
-        assert any("Tool call start" in msg for msg in messages)
+        assert any("[TOOL_CALL]" in msg for msg in messages)
+        assert any("[TOOL_RESULT]" in msg for msg in messages)
         assert any("session_id=chat-b" in msg for msg in messages)
         assert any("tool=search" in msg for msg in messages)
         assert any('"query": "weather"' in msg for msg in messages)
-        assert any("Tool call end" in msg and '"temp": 21' in msg for msg in messages)
+        assert any('"temp": 21' in msg for msg in messages)
 
     @pytest.mark.asyncio
     async def test_collapses_newlines_and_truncates_long_content(self, caplog):
@@ -225,6 +228,11 @@ class TestRunLoggingHook:
             )
 
         for record in caplog.records:
-            assert "\n" not in record.message
-            assert "\\n" not in record.message
+            lines = record.message.split("\n")
+            assert len(lines) == 2, (
+                f"Expected exactly 2 lines (tag line + content line), got {len(lines)}: {record.message!r}"
+            )
+            assert "\\n" not in lines[1], (
+                f"Content line should have no literal \\n: {lines[1]!r}"
+            )
         assert any("truncated" in record.message for record in caplog.records)
