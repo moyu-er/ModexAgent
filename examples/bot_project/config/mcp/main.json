@@ -11,20 +11,6 @@
         "Authorization": "Bearer ${MCP_BEARER_TOKEN}"
       }
     },
-    "12306-mcp": {
-      "type": "streamable_http",
-      "url": "https://mcp.api-inference.modelscope.net/b4b3d3f601b44d/mcp",
-      "headers": {
-        "Authorization": "Bearer ${MCP_BEARER_TOKEN}"
-      }
-    },
-    "mcp-deepwiki": {
-      "type": "streamable_http",
-      "url": "https://mcp.api-inference.modelscope.net/bfec38642ada42/mcp",
-      "headers": {
-        "Authorization": "Bearer ${MCP_BEARER_TOKEN}"
-      }
-    },
     "MiniMax": {
       "command": "uvx",
       "args": ["minimax-coding-plan-mcp", "-y"],
