@@ -1,8 +1,0 @@
-# Browser-playable version (derived from video-hf/index.html)
-standalone-intro.html
-
-# Render artifact inside video-hf (the canonical MP4 is at assets/modexagent-intro.mp4)
-video-hf/modexagent-intro.mp4
-
-# HyperFrames dependencies (reinstall with `npm install`)
-video-hf/node_modules/
