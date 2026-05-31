@@ -199,6 +199,29 @@ mcp:
 
 ### 4. 运行
 
+**一键启动（推荐）：**
+
+```bash
+# 任意目录 — 后台运行，关闭终端不影响
+python examples/bot_project/scripts/botctl.py restart
+```
+
+脚本会先停止已有 bot，再以脱离子进程启动新的，写入 PID 后立即返回。
+
+停止 bot：
+
+```bash
+python examples/bot_project/scripts/botctl.py stop
+```
+
+使用 `--help` 查看所有选项：
+
+```bash
+python examples/bot_project/scripts/botctl.py --help
+```
+
+**手动启动（调试用）：**
+
 ```bash
 # Pool 模式（默认，多 Agent 协作）
 python bot_service.py

@@ -82,7 +82,7 @@ class QQInputAdapter(InputAdapter):
         self.last_input_metadata: dict[str, Any] = {}
 
         # 媒体文件保存目录
-        self._media_dir = Path(media_dir) if media_dir else Path(__file__).parent.parent.parent / "data" / "media" / "qq"
+        self._media_dir = Path(media_dir) if media_dir else Path(__file__).resolve().parent.parent.parent / "data" / "media" / "qq"
         self._media_dir.mkdir(parents=True, exist_ok=True)
 
     @property

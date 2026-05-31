@@ -186,8 +186,20 @@ class SkillCommandHandler:
         if invocation.command in {c.value for c in BuiltinCommand}:
             return False
         if context.skill_manager is None:
+            logger.warning(
+                "SkillCommandHandler: skill_manager is None, cannot resolve /%s "
+                "(pipeline skill_manager not wired or _build_pool_skill_manager returned None)",
+                invocation.command,
+            )
             return False
-        return await context.skill_manager.get_skill(invocation.command) is not None
+        skill = await context.skill_manager.get_skill(invocation.command)
+        if skill is None:
+            logger.info(
+                "SkillCommandHandler: skill '/%s' not found by SkillManager.get_skill",
+                invocation.command,
+            )
+            return False
+        return True
 
     async def handle(
         self,

@@ -41,6 +41,9 @@ env/
 .DS_Store
 Thumbs.db
 
+# Bot pid file
+.bot.pid
+
 # Project specific
 config/bot_config.local.yml
 config/*.local.json

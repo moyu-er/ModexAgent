@@ -211,8 +211,7 @@ class AgentBuilderMixin:
             if main_cfg is None:
                 return
 
-            project_dir = Path(__file__).parent.parent.parent
-            mcp_tools, self.mcp_manager = await _load_agent_mcp_tools(main_cfg.name, project_dir)
+            mcp_tools, self.mcp_manager = await _load_agent_mcp_tools(main_cfg.name, self._project_dir)
             for tool in mcp_tools:
                 self.tool_manager.register(tool)
 
@@ -276,8 +275,7 @@ class AgentBuilderMixin:
             tm.register(tool)
 
         if agent_name:
-            project_dir = Path(__file__).parent.parent.parent
-            mcp_tools, _ = await _load_agent_mcp_tools(agent_name, project_dir)
+            mcp_tools, _ = await _load_agent_mcp_tools(agent_name, self._project_dir)
             for tool in mcp_tools:
                 tm.register(tool)
 
@@ -292,11 +290,10 @@ class AgentBuilderMixin:
         if cache_key in self._subagent_skill_managers:
             return self._subagent_skill_managers[cache_key]
 
-        project_dir = Path(__file__).parent.parent.parent
         sources: list[Any] = []
 
         default_dirs = [
-            project_dir / "skills" / "subagents" / name,
+            self._project_dir / "skills" / "subagents" / name,
         ]
         found_default = [d for d in default_dirs if d.exists()]
         if found_default:
@@ -318,7 +315,7 @@ class AgentBuilderMixin:
 
         source = (CompositeSkillSource(sources=sources, merge_strategy="last_wins")
                   if len(sources) > 1 else sources[0])
-        builder = ProgressiveBuilder(base_path=project_dir)
+        builder = ProgressiveBuilder(base_path=self._project_dir)
 
         all_dirs: list[Path] = []
         for s in sources:

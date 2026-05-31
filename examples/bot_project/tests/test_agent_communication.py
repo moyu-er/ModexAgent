@@ -1,26 +1,30 @@
 from __future__ import annotations
 
-import yaml
+from pathlib import Path
 
 from framework.ioc.configs.agent import AgentConfig
 from framework.ioc.configs.app import AppConfig
 from framework.ioc.configs.llm import LLMConfig
 from framework.ioc.factories.descriptors import build_subagent_descriptor
 from framework.multi_agent.comm_kind import AgentCommKind
-from framework.multi_agent.tools import (
-    ListCommunicationTargetsTool,
-    SendToAgentTool,
-)
+from framework.multi_agent.tools import SendToAgentTool
+from framework.multi_agent.template_registry import AgentTemplateRegistry
+
+_BOT_PROJECT_DIR = Path(__file__).resolve().parent.parent
 
 
 def test_bot_project_subagents_are_configured_as_subagents() -> None:
-    with open("examples/bot_project/config/bot_config.yml", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
+    """Subagent templates for office-expert and query-12306 must be loadable."""
+    registry = AgentTemplateRegistry(_BOT_PROJECT_DIR)
+    templates = registry.list_templates("main")
+    agent_types = {t.agent_type for t in templates}
 
-    agents = {agent["name"]: agent for agent in config["agents"]}
-
-    assert agents["office-expert"]["role"] == "subagent"
-    assert agents["query-12306"]["role"] == "subagent"
+    assert "office-expert" in agent_types, (
+        "office-expert subagent template should exist in config/pools/main/templates/"
+    )
+    assert "query-12306" in agent_types, (
+        "query-12306 subagent template should exist in config/pools/main/templates/"
+    )
 
 
 def test_bot_project_new_tool_names_are_available_and_old_names_removed() -> None:

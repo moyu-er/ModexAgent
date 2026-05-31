@@ -220,8 +220,13 @@ class BotService(AgentBuilderMixin):
 
     @property
     def _project_dir(self) -> Path:
-        """Project root directory (where bot_service.py lives)."""
-        return Path(__file__).parent.parent.parent
+        """Project root directory (where bot_service.py lives).
+
+        resolve() ensures the path is absolute even when __file__ is relative,
+        which can happen when running via python examples/bot_project/bot_service.py
+        from a different CWD (common in production deployments).
+        """
+        return Path(__file__).resolve().parent.parent.parent
 
     def _resolve_path(self, config_key: str, default_relative: str) -> Path:
         """Resolve a path from AppConfig paths, falling back to a relative default."""
@@ -315,7 +320,7 @@ class BotService(AgentBuilderMixin):
         # in bot_config.yml has `enabled: true`.
         plugins_cfg = self._app_config.plugins
         if plugins_cfg is not None and plugins_cfg.enabled:
-            local_plugins_dir = Path(__file__).parent.parent.parent / "plugins"
+            local_plugins_dir = self._project_dir / "plugins"
             self.plugin_integration = PluginIntegration(
                 plugins_cfg.model_dump(),
                 extra_plugin_dirs=[local_plugins_dir] if local_plugins_dir.exists() else [],
