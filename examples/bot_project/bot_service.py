@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Literal
 
 # Path setup
-framework_dir = Path(__file__).parent.parent.parent
+framework_dir = Path(__file__).resolve().parent.parent.parent
 if str(framework_dir) not in sys.path:
     sys.path.insert(0, str(framework_dir))
 
@@ -102,7 +102,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 async def main(argv: list[str] | None = None) -> None:
     """Main entry point."""
     args = parse_args(argv)
-    config_dir = Path(__file__).parent / "config"
+    config_dir = Path(__file__).resolve().parent / "config"
     service = create_qq_service(config_dir, mode=args.mode)
 
     loop = asyncio.get_running_loop()

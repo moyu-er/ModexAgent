@@ -124,6 +124,12 @@ async def create_pool(
 
     # 6. Per-pool SkillManager (convention: skills/{pool_name}/{agent_name}/)
     skill_manager = _build_pool_skill_manager(main_cfg, project_dir, pool_name)
+    if skill_manager is not None:
+        available = await skill_manager.list_skills()
+        skill_names = [s.name for s in available]
+        logger.info("Pool '%s': SkillManager ready (%d skills: %s)", pool_name, len(skill_names), skill_names)
+    else:
+        logger.warning("Pool '%s': SkillManager is None — skill directory not found, slash commands will not resolve", pool_name)
 
     # 7. AgentFactory (creates RuntimeContextManager internally for tool-call tracking)
     factory = DefaultAgentFactory(
@@ -244,6 +250,19 @@ async def create_pool(
         # through SkillManager and are injected as context.
         from framework.commands.processor import SlashCommandProcessor
         main_instance.pipeline.command_processor = SlashCommandProcessor.default()
+        logger.info(
+            "Pool '%s': pipeline wired — command_processor=%s, skill_manager=%s",
+            pool_name,
+            type(main_instance.pipeline.command_processor).__name__,
+            type(main_instance.pipeline.skill_manager).__name__ if main_instance.pipeline.skill_manager else None,
+        )
+    else:
+        logger.warning(
+            "Pool '%s': could not wire pipeline — main_instance=%s, pipeline=%s",
+            pool_name,
+            type(main_instance).__name__ if main_instance else None,
+            type(main_instance.pipeline).__name__ if main_instance and main_instance.pipeline else None,
+        )
 
     # 13. BrokerBridgeService (output routes only — input handled by PoolRouter)
     bridge = BrokerBridgeService(
@@ -373,8 +392,15 @@ def _build_pool_skill_manager(main_cfg: Any, project_dir: Path, pool_name: str) 
         # Convention: skills/{pool_name}/{agent_name}/
         directories = [project_dir / "skills" / pool_name / main_cfg.name]
 
-    found = [d for d in directories if d.exists()]
+    logger.info(
+        "Pool '%s': scanning skill directories: %s (exists=%s)",
+        pool_name,
+        [str(d) for d in directories],
+        [d.exists() for d in directories],
+    )
+    found = [d for d in directories if d.resolve().exists()]
     if not found:
+        logger.warning("Pool '%s': no skill directories found, SkillManager will be None", pool_name)
         return None
 
     from framework.core.skills import (
