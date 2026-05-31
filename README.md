@@ -94,7 +94,7 @@ pip install -r requirements.txt
 | Extra     | 包含内容                                                                                                     | 适用场景            |
 | --------- | ------------------------------------------------------------------------------------------------------------ | ------------------- |
 | `llm`     | `litellm`, `openai`                                                                                          | LLM Provider        |
-| `storage` | `faiss-cpu`, `chromadb`, `sentence-transformers`, `aiosqlite`, `mem0ai`                                      | 向量存储与语义记忆  |
+| `storage` | `faiss-cpu`, `chromadb`, `sentence-transformers`, `aiosqlite`                                                | 向量存储与语义记忆  |
 | `session` | `sqlalchemy[asyncio]`                                                                                        | 会话持久化          |
 | `sandbox` | `docker`, `e2b-code-interpreter`                                                                             | 沙箱执行            |
 | `gateway` | `qq-botpy`, `python-dotenv`, `aiohttp`                                                                       | QQ Bot 适配器与网关 |

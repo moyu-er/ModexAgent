@@ -39,7 +39,6 @@ bot_project/
 │   ├── subagents/             # Subagent 的技能（按 agent name 自动发现）
 │   └── subagents/             # 通用子 Agent 技能（通过 skill_dirs 引用）
 ├── plugins/                   # 本地插件目录
-│   ├── mem0_memory/           # Mem0 语义记忆插件
 │   └── tool_call_cleanup/     # 工具调用清理插件
 ├── data/                      # 数据目录
 │   ├── memory/                # 记忆存储
@@ -509,18 +508,6 @@ plugins:
   configurations:
     tool_call_cleanup:
       enabled: true                   # 清理冗余的工具调用记录
-
-    mem0_memory:
-      enabled: false                  # Mem0 语义记忆（需额外依赖）
-      workspace: "./data/vector_memory"
-      vector_store: "chroma"
-      collection_name: "bot_memories"
-      embedding_provider: "openai"
-      embedding_model: "${MEM0_EMBEDDING_MODEL}"
-      embedding_base_url: "${MEM0_EMBEDDING_BASE_URL}"
-      embedding_api_key: "${MEM0_EMBEDDING_API_KEY}"
-      prefetch_top_k: 5
-      search_top_k: 5
 ```
 
 ### 平级 Agent (Peer) 配置
@@ -719,7 +706,6 @@ MCP 工具通过 `MCPTool` 动态加载，支持：
 | 插件 | 功能 | 状态 |
 |------|------|------|
 | **tool_call_cleanup** | 清理冗余工具调用记录，优化上下文 | 默认启用 |
-| **mem0_memory** | Mem0 语义记忆，向量检索增强对话记忆 | 需手动启用 |
 
 ### 插件加载机制
 

@@ -40,12 +40,6 @@ class TestPluginDiscovery:
         assert plugin_dir.exists()
         assert (plugin_dir / "__init__.py").exists()
 
-    def test_mem0_plugin_has_config(self):
-        plugin_dir = Path(__file__).parent.parent / "plugins" / "mem0_memory"
-        # mem0_memory may exist but be disabled
-        if plugin_dir.exists():
-            assert (plugin_dir / "__init__.py").exists()
-            assert (plugin_dir / "provider.py").exists()
 
 
 class TestToolCallCleanupManager:

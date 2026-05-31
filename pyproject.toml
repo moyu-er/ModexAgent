@@ -46,7 +46,6 @@ storage = [
   "sentence-transformers>=2.2.0",
   "chromadb>=0.4.0",
   "aiosqlite>=0.19.0",
-  "mem0ai>=0.1.0",
 ]
 session = ["sqlalchemy[asyncio]>=2.0.0"]
 sandbox = ["docker>=6.0.0", "e2b-code-interpreter>=0.1.0"]
