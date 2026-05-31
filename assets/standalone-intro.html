@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ModexAgent â€?Modular AI Agent Framework</title>
+<style>
+  /* ========== GLOBAL ========== */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    width: 1920px;
+    height: 1080px;
+    background: #0A0E17;
+    color: #E8ECF1;
+    overflow: hidden;
+  }
+
+  /* ========== BACKGROUND GLOW ========== */
+  .bg-glow {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .bg-glow::before {
+    content: '';
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 800px; height: 800px;
+    transform: translate(-50%, -50%);
+    background: radial-gradient(circle, rgba(45,212,168,0.12) 0%, rgba(45,212,168,0.03) 40%, transparent 70%);
+    border-radius: 50%;
+  }
+
+  /* ========== SCENE SYSTEM ========== */
+  .scene {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* ========== SCENE 0: LOGO ========== */
+  .s0-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 28px;
+    width: 100%;
+    height: 100%;
+    padding: 200px 160px;
+    justify-content: center;
+  }
+  .s0-logo-svg { width: 140px; height: 140px; }
+  .s0-title {
+    font-size: 96px;
+    font-weight: 700;
+    letter-spacing: -1.5px;
+    color: #E8ECF1;
+  }
+  .s0-title .accent { color: #2DD4A8; }
+  .s0-sub {
+    font-size: 28px;
+    font-weight: 400;
+    color: #64748B;
+    letter-spacing: 0.5px;
+  }
+
+  /* ========== SCENE 1: ARCHITECTURE ========== */
+  .s1-content {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    padding: 120px 180px;
+    gap: 48px;
+  }
+  .s1-heading {
+    font-size: 72px;
+    font-weight: 700;
+    letter-spacing: -1px;
+    color: #E8ECF1;
+  }
+  .s1-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+    max-width: 1100px;
+  }
+  .s1-card {
+    background: #141B2D;
+    border: 1px solid #1E293B;
+    border-radius: 8px;
+    padding: 24px 28px;
+    font-size: 20px;
+    font-weight: 500;
+    color: #E8ECF1;
+    font-family: 'JetBrains Mono', monospace;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .s1-card .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .dot-teal { background: #2DD4A8; }
+  .dot-orange { background: #F59E4B; }
+  .dot-dim { background: #1A6B56; }
+
+  /* ========== SCENE 2: APPROVAL + TERMINAL ========== */
+  .s2-content {
+    display: flex;
+    width: 100%;
+    height: 100%;
+    padding: 100px 140px;
+    gap: 80px;
+  }
+  .s2-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+  }
+  .s2-col-title {
+    font-size: 48px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    color: #E8ECF1;
+  }
+  .s2-flow {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .s2-step {
+    background: #141B2D;
+    border: 1px solid #1E293B;
+    border-radius: 8px;
+    padding: 14px 20px;
+    font-size: 17px;
+    font-weight: 600;
+    color: #E8ECF1;
+    white-space: nowrap;
+  }
+  .s2-step.pause {
+    background: rgba(245, 158, 75, 0.1);
+    border-color: rgba(245, 158, 75, 0.3);
+    color: #F59E4B;
+  }
+  .s2-arrow { color: #64748B; font-size: 18px; }
+  .s2-sub {
+    font-size: 20px;
+    color: #64748B;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .s2-sub code {
+    background: rgba(45,212,168,0.1);
+    color: #2DD4A8;
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 17px;
+  }
+  .s2-term {
+    background: #141B2D;
+    border: 1px solid #1E293B;
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .s2-term-header {
+    background: #1A2338;
+    padding: 10px 18px;
+    display: flex;
+    gap: 18px;
+  }
+  .s2-term-tab {
+    font-size: 13px;
+    font-weight: 600;
+    color: #64748B;
+    font-family: 'JetBrains Mono', monospace;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .s2-term-tab .ind { width: 7px; height: 7px; border-radius: 50%; }
+  .ind-green { background: #2DD4A8; }
+  .ind-orange { background: #F59E4B; }
+  .ind-gray { background: #475569; }
+  .s2-term-body {
+    padding: 16px 18px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 15px;
+    line-height: 1.8;
+    color: #94A3B8;
+  }
+  .s2-term-body .pr { color: #2DD4A8; }
+  .s2-term-body .cm { color: #E8ECF1; }
+  .s2-term-body .out { color: #64748B; }
+
+  /* ========== SCENE 3: MULTI-AGENT + MEMORY ========== */
+  .s3-content {
+    display: flex;
+    width: 100%;
+    height: 100%;
+    padding: 100px 140px;
+    gap: 80px;
+  }
+  .s3-col {
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+  }
+  .s3-col.wide { flex: 1.3; }
+  .s3-col.narrow { flex: 1; }
+  .s3-col-title {
+    font-size: 42px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    color: #E8ECF1;
+  }
+  .s3-topo {
+    position: relative;
+    width: 420px;
+    height: 360px;
+  }
+  .s3-node {
+    position: absolute;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+    text-align: center;
+    line-height: 1.3;
+  }
+  .s3-node.main {
+    width: 90px; height: 90px;
+    left: 165px; top: 135px;
+    background: rgba(45,212,168,0.12);
+    border: 2px solid #2DD4A8;
+    font-size: 16px;
+    z-index: 2;
+  }
+  .s3-node.sub {
+    width: 66px; height: 66px;
+    background: #141B2D;
+    border: 2px solid #1E293B;
+  }
+  .s3-sub1 { left: 30px; top: 30px; }
+  .s3-sub2 { left: 324px; top: 30px; }
+  .s3-sub3 { left: 30px; top: 264px; }
+  .s3-sub4 { left: 324px; top: 264px; }
+  .s3-edges {
+    position: absolute; inset: 0; pointer-events: none;
+  }
+  .s3-edge {
+    stroke: #F59E4B;
+    stroke-width: 2;
+    stroke-dasharray: 6 4;
+    opacity: 0.5;
+  }
+  .s3-mem-layers {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .s3-mem {
+    background: #141B2D;
+    border: 1px solid #1E293B;
+    border-radius: 8px;
+    padding: 16px 22px;
+    font-size: 17px;
+    font-weight: 600;
+    color: #E8ECF1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 320px;
+  }
+  .s3-mem .tag {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 100px;
+    letter-spacing: 0.3px;
+  }
+  .tag-s { background: rgba(45,212,168,0.15); color: #2DD4A8; }
+  .tag-a { background: rgba(245,158,75,0.15); color: #F59E4B; }
+  .tag-k { background: rgba(100,200,255,0.15); color: #64C8FF; }
+  .s3-mem.extra { border-style: dashed; }
+  .s3-cap {
+    font-size: 18px;
+    color: #64748B;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* ========== SCENE 4: OUTRO ========== */
+  .s4-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 36px;
+    width: 100%;
+    height: 100%;
+    padding: 200px 160px;
+    justify-content: center;
+  }
+  .s4-card {
+    background: #141B2D;
+    border: 2px solid #F59E4B;
+    border-radius: 12px;
+    padding: 32px 48px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+  .s4-card .label {
+    font-size: 12px;
+    font-weight: 700;
+    color: #F59E4B;
+    background: rgba(245,158,75,0.1);
+    padding: 5px 14px;
+    border-radius: 100px;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+  }
+  .s4-card h3 {
+    font-size: 38px;
+    font-weight: 700;
+    color: #E8ECF1;
+  }
+  .s4-card p {
+    font-size: 20px;
+    color: #64748B;
+  }
+  .s4-cta {
+    font-size: 22px;
+    font-weight: 600;
+    color: #2DD4A8;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .s4-logo-svg { width: 100px; height: 100px; }
+
+  /* ========== LAYOUT HELPERS ========== */
+  .accent { color: #2DD4A8; }
+</style>
+</head>
+<body>
+
+<div data-composition-id="modexagent-intro" data-width="1920" data-height="1080">
+
+  <!-- Background glow (shared) -->
+  <div class="bg-glow"></div>
+
+  <!-- ==================== SCENE 0: LOGO ==================== -->
+  <div class="scene clip" id="s0" data-start="0" data-duration="3.5" data-track-index="0">
+    <div class="s0-content">
+      <!-- New Logo: geometric node with cardinal connections + central diamond -->
+      <svg class="s0-logo-svg" id="s0-logo" viewBox="0 0 140 140" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <!-- Outer ring -->
+        <circle cx="70" cy="70" r="62" stroke="#2DD4A8" stroke-width="2.5" stroke-dasharray="8 4" opacity="0.3"/>
+        <!-- Cardinal connection lines -->
+        <line x1="70" y1="16" x2="70" y2="42" stroke="#2DD4A8" stroke-width="2"/>
+        <line x1="124" y1="70" x2="98" y2="70" stroke="#2DD4A8" stroke-width="2"/>
+        <line x1="70" y1="124" x2="70" y2="98" stroke="#2DD4A8" stroke-width="2"/>
+        <line x1="16" y1="70" x2="42" y2="70" stroke="#2DD4A8" stroke-width="2"/>
+        <!-- Cardinal nodes (dots) -->
+        <circle cx="70" cy="12" r="5" fill="#2DD4A8"/>
+        <circle cx="128" cy="70" r="5" fill="#2DD4A8"/>
+        <circle cx="70" cy="128" r="5" fill="#2DD4A8"/>
+        <circle cx="12" cy="70" r="5" fill="#2DD4A8"/>
+        <!-- Central diamond (agent core) -->
+        <polygon points="70,44 88,62 70,80 52,62" fill="#2DD4A8"/>
+        <!-- Inner accent ring -->
+        <circle cx="70" cy="70" r="30" stroke="#2DD4A8" stroke-width="1.5" opacity="0.4"/>
+      </svg>
+      <div class="s0-title" id="s0-title">Modex<span class="accent">Agent</span></div>
+      <div class="s0-sub" id="s0-sub">Modular AI Agent Framework</div>
+    </div>
+  </div>
+
+  <!-- ==================== SCENE 1: ARCHITECTURE ==================== -->
+  <div class="scene clip" id="s1" data-start="3.5" data-duration="6.5" data-track-index="0">
+    <div class="s1-content">
+      <div class="s1-heading" id="s1-heading">Modular Architecture</div>
+      <div class="s1-grid" id="s1-grid">
+        <div class="s1-card"><span class="dot dot-teal"></span>ReAct Agent</div>
+        <div class="s1-card"><span class="dot dot-orange"></span>Tool System</div>
+        <div class="s1-card"><span class="dot dot-dim"></span>Memory Engine</div>
+        <div class="s1-card"><span class="dot dot-teal"></span>Multi-Agent</div>
+        <div class="s1-card"><span class="dot dot-orange"></span>Sandbox</div>
+        <div class="s1-card"><span class="dot dot-dim"></span>Pipeline</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== SCENE 2: APPROVAL + TERMINAL ==================== -->
+  <div class="scene clip" id="s2" data-start="10" data-duration="7" data-track-index="0">
+    <div class="s2-content">
+      <div class="s2-col">
+        <div class="s2-col-title" id="s2-title">Interruptible<br>Approval</div>
+        <div class="s2-flow" id="s2-flow">
+          <div class="s2-step">Tool Call</div>
+          <div class="s2-arrow">â†?/div>
+          <div class="s2-step pause">Paused</div>
+          <div class="s2-arrow">â†?/div>
+          <div class="s2-step">Approve</div>
+          <div class="s2-arrow">â†?/div>
+          <div class="s2-step">Resume</div>
+        </div>
+        <div class="s2-sub" id="s2-sub">
+          <code>/approve</code> <code>/deny</code> &mdash; 4-tier cascade
+        </div>
+      </div>
+      <div class="s2-col">
+        <div class="s2-col-title" id="s2-term-title" style="font-size:38px;">Interactive Terminal</div>
+        <div class="s2-term" id="s2-term">
+          <div class="s2-term-header">
+            <span class="s2-term-tab"><span class="ind ind-green"></span>bash</span>
+            <span class="s2-term-tab"><span class="ind ind-orange"></span>ssh</span>
+            <span class="s2-term-tab"><span class="ind ind-gray"></span>python</span>
+          </div>
+          <div class="s2-term-body">
+            <span class="pr">$</span> <span class="cm">cd /workspace</span><br>
+            <span class="pr">$</span> <span class="cm">git pull</span><br>
+            <span class="out">Already up to date.</span><br>
+            <span class="pr">$</span> <span class="cm">ssh deploy@server</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== SCENE 3: MULTI-AGENT + MEMORY ==================== -->
+  <div class="scene clip" id="s3" data-start="17" data-duration="7" data-track-index="0">
+    <div class="s3-content">
+      <div class="s3-col wide">
+        <div class="s3-col-title" id="s3-ma-title">Star Topology<br>Multi-Agent</div>
+        <div class="s3-topo" id="s3-topo">
+          <svg class="s3-edges" viewBox="0 0 420 360">
+            <line x1="210" y1="180" x2="63" y2="63" class="s3-edge" id="e1"/>
+            <line x1="210" y1="180" x2="357" y2="63" class="s3-edge" id="e2"/>
+            <line x1="210" y1="180" x2="63" y2="297" class="s3-edge" id="e3"/>
+            <line x1="210" y1="180" x2="357" y2="297" class="s3-edge" id="e4"/>
+          </svg>
+          <div class="s3-node main" id="n-main" style="left:165px;top:135px;">Main<br>Agent</div>
+          <div class="s3-node sub s3-sub1" id="n-s1">Office</div>
+          <div class="s3-node sub s3-sub2" id="n-s2">Query</div>
+          <div class="s3-node sub s3-sub3" id="n-s3">Helper</div>
+          <div class="s3-node sub s3-sub4" id="n-s4">Custom</div>
+        </div>
+        <div class="s3-cap" id="s3-ma-cap">send_to_agent &middot; async inbox &middot; CommunicationTracker</div>
+      </div>
+      <div class="s3-col narrow">
+        <div class="s3-col-title" id="s3-mem-title" style="font-size:34px;">Multi-Level<br>Memory</div>
+        <div class="s3-mem-layers" id="s3-mem-layers">
+          <div class="s3-mem">Short-term<span class="tag tag-s">Session</span></div>
+          <div class="s3-mem">Archive<span class="tag tag-a">History</span></div>
+          <div class="s3-mem">Knowledge<span class="tag tag-k">Long-term</span></div>
+          <div class="s3-mem extra">User Buffer<span class="tag tag-s">Retention</span></div>
+        </div>
+        <div class="s3-cap" id="s3-mem-cap">DreamEngine &middot; Governance &middot; 9 Hook Points</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== SCENE 4: OUTRO ==================== -->
+  <div class="scene clip" id="s4" data-start="24" data-duration="6" data-track-index="0">
+    <div class="s4-content">
+      <div class="s4-card" id="s4-card">
+        <span class="label">Example Project</span>
+        <h3>bot_project</h3>
+        <p>QQ Bot is just the start &mdash; adapt to any IM platform</p>
+      </div>
+      <div class="s4-cta" id="s4-cta">github.com/moyu-er/ModexAgent</div>
+      <svg class="s4-logo-svg" id="s4-logo" viewBox="0 0 140 140" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="70" cy="70" r="62" stroke="#2DD4A8" stroke-width="2.5" stroke-dasharray="8 4" opacity="0.25"/>
+        <line x1="70" y1="16" x2="70" y2="42" stroke="#2DD4A8" stroke-width="2"/>
+        <line x1="124" y1="70" x2="98" y2="70" stroke="#2DD4A8" stroke-width="2"/>
+        <line x1="70" y1="124" x2="70" y2="98" stroke="#2DD4A8" stroke-width="2"/>
+        <line x1="16" y1="70" x2="42" y2="70" stroke="#2DD4A8" stroke-width="2"/>
+        <circle cx="70" cy="12" r="5" fill="#2DD4A8"/>
+        <circle cx="128" cy="70" r="5" fill="#2DD4A8"/>
+        <circle cx="70" cy="128" r="5" fill="#2DD4A8"/>
+        <circle cx="12" cy="70" r="5" fill="#2DD4A8"/>
+        <polygon points="70,44 88,62 70,80 52,62" fill="#2DD4A8"/>
+        <circle cx="70" cy="70" r="30" stroke="#2DD4A8" stroke-width="1.5" opacity="0.4"/>
+      </svg>
+    </div>
+  </div>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script>
+  window.__timelines = window.__timelines || {};
+  var tl = gsap.timeline({ paused: false });
+
+  // Background glow â€?single continuous breathe (no overlap)
+  tl.fromTo(".bg-glow", { scale: 0.92 }, { scale: 1.04, duration: 4, ease: "sine.inOut", yoyo: true, repeat: 6 }, 0);
+
+  // ==================== SCENE 0 (0-3.5s) ====================
+  tl.set("#s0", { opacity: 1 }, 0);
+  tl.from("#s0-logo", { scale: 0.6, opacity: 0, duration: 0.8, ease: "power3.out" }, 0.2);
+  tl.from("#s0-title", { y: 40, opacity: 0, duration: 0.7, ease: "expo.out" }, 0.6);
+  tl.from("#s0-sub", { y: 20, opacity: 0, duration: 0.5, ease: "power2.out" }, 1.2);
+
+  // Transition s0â†’s1
+  tl.to("#s0", { opacity: 0, duration: 0.5, ease: "power2.inOut" }, 3.3);
+  tl.fromTo("#s1", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.inOut" }, 3.3);
+
+  // ==================== SCENE 1 (3.5-10s) ====================
+  tl.from("#s1-heading", { y: -50, opacity: 0, duration: 0.6, ease: "power3.out" }, 3.7);
+  var cards = document.querySelectorAll("#s1-grid .s1-card");
+  var cardDirs = [
+    { x: -60, y: 0 }, { x: 0, y: 60 }, { x: 60, y: 0 },
+    { x: -40, y: 40 }, { x: 0, y: 40 }, { x: 40, y: 40 }
+  ];
+  cards.forEach(function(el, i) {
+    tl.from(el, { x: cardDirs[i].x, y: cardDirs[i].y, opacity: 0, duration: 0.5, ease: "power2.out" }, 4.2 + i * 0.1);
+  });
+
+  // Transition s1â†’s2
+  tl.to("#s1", { opacity: 0, duration: 0.5, ease: "power2.inOut" }, 9.8);
+  tl.fromTo("#s2", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.inOut" }, 9.8);
+
+  // ==================== SCENE 2 (10-17s) ====================
+  tl.from("#s2-title", { x: -50, opacity: 0, duration: 0.6, ease: "power3.out" }, 10.2);
+  var steps = document.querySelectorAll("#s2-flow .s2-step");
+  var arrows = document.querySelectorAll("#s2-flow .s2-arrow");
+  steps.forEach(function(el, i) {
+    tl.from(el, { y: 30, opacity: 0, duration: 0.4, ease: "expo.out" }, 10.6 + i * 0.25);
+  });
+  arrows.forEach(function(el, i) {
+    tl.from(el, { opacity: 0, duration: 0.3, ease: "power2.out" }, 10.8 + i * 0.25);
+  });
+  tl.from("#s2-sub", { y: 15, opacity: 0, duration: 0.5, ease: "sine.out" }, 11.8);
+  tl.from("#s2-term-title", { x: 40, opacity: 0, duration: 0.6, ease: "power3.out" }, 10.3);
+  tl.from("#s2-term", { scale: 0.95, opacity: 0, duration: 0.5, ease: "expo.out" }, 10.7);
+
+  // Transition s2â†’s3
+  tl.to("#s2", { opacity: 0, duration: 0.5, ease: "power2.inOut" }, 16.8);
+  tl.fromTo("#s3", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.inOut" }, 16.8);
+
+  // ==================== SCENE 3 (17-24s) ====================
+  tl.from("#s3-ma-title", { x: -40, opacity: 0, duration: 0.6, ease: "power3.out" }, 17.2);
+  tl.from("#s3-mem-title", { x: 40, opacity: 0, duration: 0.6, ease: "power3.out" }, 17.2);
+  tl.from("#n-main", { scale: 0.5, opacity: 0, duration: 0.5, ease: "expo.out" }, 17.8);
+  var subNodes = ["#n-s1","#n-s2","#n-s3","#n-s4"];
+  subNodes.forEach(function(id, i) {
+    tl.from(id, { scale: 0.3, opacity: 0, duration: 0.4, ease: "power2.out" }, 18.2 + i * 0.15);
+  });
+  var edges = ["#e1","#e2","#e3","#e4"];
+  edges.forEach(function(id, i) {
+    tl.from(id, { opacity: 0, duration: 0.3, ease: "sine.out" }, 18.5 + i * 0.15);
+  });
+  tl.from("#s3-ma-cap", { y: 10, opacity: 0, duration: 0.4, ease: "power2.out" }, 19.2);
+
+  var memCards = document.querySelectorAll("#s3-mem-layers .s3-mem");
+  memCards.forEach(function(el, i) {
+    tl.from(el, { x: 30, opacity: 0, duration: 0.45, ease: "expo.out" }, 18.0 + i * 0.2);
+  });
+  tl.from("#s3-mem-cap", { y: 10, opacity: 0, duration: 0.4, ease: "sine.out" }, 19.2);
+
+  // Transition s3â†’s4
+  tl.to("#s3", { opacity: 0, duration: 0.5, ease: "power2.inOut" }, 23.8);
+  tl.fromTo("#s4", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.inOut" }, 23.8);
+
+  // ==================== SCENE 4: OUTRO (24-30s) ====================
+  tl.from("#s4-card", { scale: 0.9, opacity: 0, duration: 0.7, ease: "expo.out" }, 24.2);
+  tl.from("#s4-cta", { y: 20, opacity: 0, duration: 0.5, ease: "power3.out" }, 25.0);
+  tl.from("#s4-logo", { scale: 0.6, opacity: 0, duration: 0.6, ease: "power2.out" }, 25.5);
+
+  // FINAL SCENE ONLY: exit animations allowed
+  tl.to("#s4-card", { opacity: 0, duration: 0.6, ease: "power2.in" }, 28.5);
+  tl.to("#s4-cta", { opacity: 0, duration: 0.4, ease: "power2.in" }, 28.6);
+  tl.to("#s4-logo", { opacity: 0, duration: 0.5, ease: "power2.in" }, 28.7);
+  tl.to(".bg-glow", { opacity: 0, duration: 1.0, ease: "power2.in" }, 28.5);
+  tl.to("#s4", { opacity: 0, duration: 0.3, ease: "power2.in" }, 29.7);
+
+  window.__timelines["modexagent-intro"] = tl;
+</script>
+
+</body>
+</html>

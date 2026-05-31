@@ -19,11 +19,7 @@
 </p>
 
 <p align="center">
-  <a href="assets/modexagent-intro.mp4">
-    <img src="assets/logo-icon.svg" alt="ModexAgent Intro" width="120">
-  </a>
-  <br>
-  <sub>Click to watch the 30s intro</sub>
+  <img src="assets/modexagent-intro-en.gif" alt="ModexAgent Intro" width="720">
 </p>
 
 ModexAgent is a Python framework for building AI agent applications. It decomposes model inference, tool invocation, memory management, I/O adapters, and multi-agent collaboration into independently evolvable modules. Start with a minimal ReAct agent and gradually expand into a full application with long-term memory, multi-agent coordination, and runtime governance.

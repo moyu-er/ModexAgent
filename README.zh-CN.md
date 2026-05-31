@@ -19,11 +19,7 @@
 </p>
 
 <p align="center">
-  <a href="assets/modexagent-intro.mp4">
-    <img src="assets/logo-icon.svg" alt="ModexAgent 介绍视频" width="120">
-  </a>
-  <br>
-  <sub>点击观看 30 秒介绍视频</sub>
+  <img src="assets/modexagent-intro-zh.gif" alt="ModexAgent 介绍" width="720">
 </p>
 
 ModexAgent 是一个用于构建 AI Agent 应用的 Python 框架。它将模型推理、工具调用、记忆管理、输入输出适配器和多 Agent 协作拆分为可独立演进的模块。你可以从一个最简单的 ReAct Agent 起步，逐步扩展为具备长期记忆、多 Agent 协作和运行时治理的完整应用。
