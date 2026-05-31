@@ -17,7 +17,7 @@ terminal:
 
 memory:
   session:
-    max_messages: 100
+    max_messages: 150
     max_tokens: 100000
     keep_ratio_for_messages: 0.3
     keep_ratio_for_token: 0.3
@@ -43,21 +43,6 @@ agents:
     max_steps: 50
     use_terminal: true
     mcp_filter: ["fetch", "mcp-deepwiki", "MiniMax", "playwright"]
-    memory:
-      session:
-        max_messages: 200
-        max_tokens: 100000
-        keep_ratio_for_messages: 0.4
-        keep_ratio_for_token: 0.4
-      archive: {enabled: true}
-      knowledge: {enabled: true, default_templates_dir: "templates/knowledge"}
-      dream_engine: {enabled: true, interval: 600, min_archive_count: 5, max_archive_count: 30, max_batch_size: 20}
-      governance:
-        lossy_compaction:
-          tool_result_head_chars: 1200
-          assistant_head_chars: 1200
-          agent_head_chars: 2000
-          user_head_chars: 4000
     # skills auto-discovered from skills/main/main/ by convention
     approval:
       tools:
