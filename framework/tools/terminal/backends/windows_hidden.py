@@ -70,6 +70,30 @@ class WindowsHiddenPtyBackend(TerminalBackend):
             raise RuntimeError("PTY not started")
         self._proc.write(data)  # type: ignore[union-attr]
 
+    async def read(self, timeout: float = 5.0, max_size: int = 65536) -> str:
+        """Read raw output without buffering (matching VisibleWindowsPtyBackend).
+
+        drain_startup() / drain_windows_startup() call read(), not
+        read_pending(), so this keeps startup output out of the buffer.
+        """
+        if self._proc is None:
+            raise RuntimeError("PTY not started")
+        loop = asyncio.get_running_loop()
+
+        def _do_read() -> str:
+            fobj = self._proc.fileobj  # type: ignore[union-attr]
+            fobj.settimeout(timeout)
+            try:
+                raw = fobj.recv(max_size)
+                return raw.decode("utf-8", errors="replace")
+            except (_socket.timeout, TimeoutError, OSError):
+                return ""
+
+        try:
+            return await loop.run_in_executor(None, _do_read)
+        except Exception:
+            return ""
+
     async def read_pending(
         self, timeout: float = 5.0, max_size: int = 65536
     ) -> TerminalRead:
