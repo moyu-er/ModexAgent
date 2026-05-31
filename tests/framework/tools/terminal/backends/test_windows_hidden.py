@@ -143,3 +143,10 @@ async def test_hidden_backend_drain_startup() -> None:
         await backend.drain_startup()
     finally:
         await backend.terminate()
+
+
+def test_hidden_backend_read_does_not_buffer() -> None:
+    """read() returns raw output without appending to the sliding buffer."""
+    backend = WindowsHiddenPtyBackend()
+    assert backend._output_buffer is not None
+    assert backend._output_buffer.total_chars == 0
