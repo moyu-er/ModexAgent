@@ -167,6 +167,10 @@ class BotService(AgentBuilderMixin):
         self.interceptor_chain: InterceptorChain | None = None
         self._safety_policy_cache: RuntimeSafetyPolicy | None = None
 
+        # Observability
+        self._event_bus: Any | None = None
+        self._trace_writer: Any | None = None
+
         # Approval
         self._approval_workspace: Path | None = None
         self._im_ui: IMUserInterface | None = None
@@ -521,8 +525,19 @@ class BotService(AgentBuilderMixin):
         if self.tool_manager is None:
             raise RuntimeError("ToolManager is not initialized")
 
-        pipeline_hooks = [inbox_flush_hook]
+        pipeline_hooks: list[Any] = [inbox_flush_hook]
         pipeline_hooks.extend(self._collect_run_hooks())
+
+        # Pipeline mode observability
+        from framework.control import CallbackControlEventBus, ControlEventType
+        from framework.hook.builtin import ProgressReportHook, TraceFileWriter
+
+        self._event_bus = CallbackControlEventBus()
+        trace_dir = self._project_dir / "logs"
+        trace_dir.mkdir(exist_ok=True)
+        self._trace_writer = TraceFileWriter(path=trace_dir / "trace.jsonl")
+        await self._event_bus.subscribe(ControlEventType.AGENT_PROGRESS, self._trace_writer.handle)
+        pipeline_hooks.append(ProgressReportHook(event_bus=self._event_bus))
 
         # Build AgentRuntime via framework RuntimeAssembler
         runtime = await self._assemble_runtime(hooks=self._build_hook_runner(pipeline_hooks))
@@ -586,6 +601,18 @@ class BotService(AgentBuilderMixin):
 
         # 4. Shared infra: Hooks & Interceptors
         shared_hooks = self._collect_run_hooks()
+
+        # 4b. Shared infra: Observability event bus + trace writer + progress report hook
+        from framework.control import CallbackControlEventBus, ControlEventType
+        from framework.hook.builtin import ProgressReportHook, TraceFileWriter
+
+        self._event_bus = CallbackControlEventBus()
+        trace_dir = self._project_dir / "logs"
+        trace_dir.mkdir(exist_ok=True)
+        self._trace_writer = TraceFileWriter(path=trace_dir / "trace.jsonl")
+        await self._event_bus.subscribe(ControlEventType.AGENT_PROGRESS, self._trace_writer.handle)
+        shared_hooks.append(ProgressReportHook(event_bus=self._event_bus))
+
         shared_hook_runner = self._build_hook_runner(shared_hooks)
         shared_interceptor_chain = self._build_interceptor_chain()
 
