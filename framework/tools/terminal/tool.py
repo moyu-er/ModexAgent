@@ -192,6 +192,7 @@ class TerminalTool(Tool):
             return (
                 "<terminal_result>\n"
                 "<action>current</action>\n"
+                f"<terminal>{xml_escape(session.name)}</terminal>\n"
                 f"<status>{status}</status>\n"
                 f"<cursor>{xml_escape(cursor)}</cursor>\n"
                 f"<output>{xml_escape(output_text)}</output>\n"

@@ -124,11 +124,11 @@ def _format_list_line(session: ProcessSession, runtime: RunningSessionRuntime | 
         exit_part = f"exit={session.exit_code}" if session.exit_code is not None else ""
         signal_part = f"signal={session.exit_signal}" if session.exit_signal is not None else ""
         suffix = " ".join(p for p in (exit_part, signal_part) if p)
-        return f"{session.id}  {session.status.value:9s}  {_format_duration(elapsed_ms)}  {session.command}  ({suffix})"
+        return f"{session.id}  {session.status.value:9s}  {_format_duration(elapsed_ms)}  [{session.terminal}]  {session.command}  ({suffix})"
 
     wait_marker = " [input-wait]" if runtime and runtime.waiting_for_input else ""
     idle_str = f" idle={_format_duration(runtime.idle_ms)}" if runtime else ""
-    return f"{session.id}  running   {_format_duration(elapsed_ms)}{idle_str}{wait_marker}  ::  {session.command}"
+    return f"{session.id}  running   {_format_duration(elapsed_ms)}{idle_str}{wait_marker}  [{session.terminal}]  ::  {session.command}"
 
 
 def _build_process_xml(
@@ -360,7 +360,7 @@ class ProcessTool(Tool):
             lines.append(_format_list_line(s, runtime))
             idle = runtime.idle_ms if runtime else 0
             session_entries.append(
-                f'<session id="{s.id}" status="running" '
+                f'<session id="{s.id}" terminal="{xml_escape(s.terminal)}" status="running" '
                 f'command="{xml_escape(s.command)}" '
                 f'elapsed_ms="{int(((s.ended_at or time.time()) - s.started_at) * 1000)}"'
                 f'idle_ms="{idle}" />'
@@ -368,7 +368,7 @@ class ProcessTool(Tool):
         for s in finished:
             lines.append(_format_list_line(s))
             session_entries.append(
-                f'<session id="{s.id}" status="{s.status.value}" '
+                f'<session id="{s.id}" terminal="{xml_escape(s.terminal)}" status="{s.status.value}" '
                 f'command="{xml_escape(s.command)}" '
                 f'elapsed_ms="{int(((s.ended_at or 0) - s.started_at) * 1000)}" '
                 f'exit_code="{s.exit_code}" />'

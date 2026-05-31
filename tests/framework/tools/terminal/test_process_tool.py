@@ -74,7 +74,7 @@ async def test_process_write_submit_interrupt_and_kill() -> None:
     terminal = FakeTerminal()
     tool = ProcessTool(registry=registry, manager=FakeManager(terminal))
 
-    write_result = await tool.execute(action="write", data="password")
+    write_result = await tool.execute(action="write", data="password", submit=False)
     _assert_xml_result(write_result, "write")
 
     await tool.execute(action="submit")

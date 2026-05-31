@@ -517,17 +517,14 @@ class TerminalSession:
         self._busy_after_timeout = False
 
     async def submit_command(self, command: str) -> None:
-        """Submit a command to the PTY with proper pre-cleanup and line ending.
+        """Submit a command to the PTY with the shell-appropriate line ending.
 
-        Ensures readline input line is cleared before writing the command,
-        and uses the shell-family-appropriate line ending.
+        Discards pending output to avoid mixing with the command response.
+        Shell cleanup (clear_input_line) is no longer needed here — the
+        caller (CommandTool.execute) already guards against busy/dead
+        states and the shell is expected to be at a clean prompt.
         """
-        if self.shell_info.family.uses_readline():
-            await self._discard_pending_output()
-            await self._backend.clear_input_line()
-            await asyncio.sleep(0.05)
-            await self._discard_pending_output()
-
+        await self._discard_pending_output()
         ending = self.shell_info.family.command_ending()
         await self._backend.write(command + ending)
 
