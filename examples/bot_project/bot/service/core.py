@@ -720,18 +720,19 @@ class BotService(AgentBuilderMixin):
     def _build_hook_runner(self, hooks: list[Any]) -> Any:
         """Build HookRunner from collected hooks with default HookSpec.
 
-        Explicitly injects RuntimeContextHook so SubagentAutoSendHook can detect
-        communication tool calls. Previously this was auto-injected by
-        AgentPipeline into its hooks list, but ReActAgent prefers hook_runner
-        and never falls back to hooks — causing the hook to be silently ignored.
+        Default hooks (always present):
+          - RuntimeContextHook — records tool calls for SubagentAutoSendHook
+          - SubagentAutoSendHook — fallback forward when send_to_agent not called
+          - MaxIterationNotifyHook — notify parent/user when max_iterations hit
         """
         from framework.hook import HookErrorPolicy, HookRunner, HookSpec
-        from framework.hook.builtin import RuntimeContextHook
+        from framework.hook.builtin import RuntimeContextHook, SubagentAutoSendHook
+        from framework.hook.notification import MaxIterationNotifyHook
 
         runner = HookRunner()
-        # RuntimeContextHook must be in hook_runner (not just hooks list)
-        # so that ReActAgent._call_hooks() actually dispatches it.
         runner.add(HookSpec(hook=RuntimeContextHook(), on_error=HookErrorPolicy.LOG))
+        runner.add(HookSpec(hook=SubagentAutoSendHook(), on_error=HookErrorPolicy.LOG))
+        runner.add(HookSpec(hook=MaxIterationNotifyHook(), on_error=HookErrorPolicy.LOG))
         for hook in hooks:
             runner.add(HookSpec(hook=hook, on_error=HookErrorPolicy.LOG))
         return runner

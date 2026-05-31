@@ -85,10 +85,12 @@ class MaxIterationNotifyHook:
     Routing is handled internally by AgentNotificationService.
     """
 
-    def __init__(self, notification_service: AgentNotificationService):
+    def __init__(self, notification_service: AgentNotificationService | None = None):
         self._svc = notification_service
 
     async def after_turn(self, ctx: AgentContext, result: AgentResult) -> None:
+        if self._svc is None:
+            return
         if getattr(result, "stop_reason", None) != "max_iterations":
             return
 

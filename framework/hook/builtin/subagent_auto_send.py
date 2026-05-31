@@ -35,8 +35,8 @@ class SubagentAutoSendHook:
 
     def __init__(
         self,
-        agent_bus: AgentMessageBus,
-        self_name: str,
+        agent_bus: AgentMessageBus | None = None,
+        self_name: str = "",
         parent_name: str = "main",
         notification_service: Any | None = None,
     ) -> None:
@@ -86,6 +86,16 @@ class SubagentAutoSendHook:
             )
             return
 
+        # MaxIterationNotifyHook handles max_iterations — don't duplicate
+        if getattr(result, "stop_reason", None) == "max_iterations":
+            return
+
+        # No agent_bus wired yet — no-op (wired later by pool/subagent service)
+        if self._agent_bus is None:
+            return
+
+        agent_bus = self._agent_bus  # narrow None
+
         # Derive reply target from session_meta, fallback to parent_name
         reply_target = self._parent_name
         invocation_id: str | None = None
@@ -134,7 +144,7 @@ class SubagentAutoSendHook:
 
         forwarded = False
         try:
-            await self._agent_bus.send(inbox_key, envelope)
+            await agent_bus.send(inbox_key, envelope)
             forwarded = True
             logger.info(
                 "Auto-forwarded subagent %s content to %s (session=%s)",

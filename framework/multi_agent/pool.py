@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from framework.core.context import ContextManager
-from framework.core.emitter import AgentResult
 from framework.core.graph.interrupt import GraphInterrupt
 from framework.core.llm_struct import RuntimeSafetyPolicy
 from framework.runtime.dispatch import DispatchDeadline, current_dispatch_deadline
@@ -24,7 +23,6 @@ from .descriptor import AgentDescriptor, AgentInstance
 from .envelope import AgentMessageEnvelope
 from .factory import AgentFactory
 from .inbox.consumer import InboxConsumer
-from .inbox.producer import InboxProducer
 from .inbox.types import InboxMessage
 from .registry import AgentProfile, AgentRegistry
 from .session_id import DefaultSessionIdStrategy
@@ -573,7 +571,6 @@ class AgentPool(AgentRegistry):
                 invocation_id=str(task_invocation_id),
                 content_summary=task_prompt[:500],
             )
-        result: AgentResult | None = None
         if instance.pipeline is not None:
             lock = self.get_lock(session_id)
             async with lock:
@@ -585,7 +582,7 @@ class AgentPool(AgentRegistry):
                     )
                 else:
                     self._touch_session(session_id)
-                result = await instance.pipeline.process_message(
+                await instance.pipeline.process_message(
                     InputMessage(content=task_prompt, session_id=session_id, metadata=metadata)
                 )
             await self._enforce_session_cap(descriptor.address.name)
@@ -599,72 +596,10 @@ class AgentPool(AgentRegistry):
                     "Failed to clear ephemeral context for %s", descriptor.address.name
                 )
 
-        # send subagent_result back to parent
-        if result is not None and envelope.message_type == "task_request":
-            await self._send_subagent_result(descriptor, envelope, conversation_id, result)
-
-    async def _send_subagent_result(
-        self,
-        descriptor: AgentDescriptor,
-        envelope: AgentMessageEnvelope,
-        conversation_id: str,
-        result: AgentResult,
-    ) -> None:
-        """将 AgentResult 包装为 subagent_result 回传给父 Agent。"""
-        parent_address = envelope.source
-        parent_session_id = (
-            self._session_strategy.format(conversation_id=conversation_id, agent_name=parent_address.name)
-            if parent_address
-            else conversation_id
-        )
-
-        result_envelope = AgentMessageEnvelope(
-            payload={
-                "content": result.content or "",
-                "stop_reason": result.stop_reason,
-                "partial_content": getattr(result, "partial_content", None),
-                "error": getattr(result, "error", None),
-            },
-            source=descriptor.address,
-            target=parent_address,
-            message_type="subagent_result",
-            conversation_id=conversation_id,
-            agent_session_id=parent_session_id,
-            invocation_id=envelope.invocation_id or envelope.correlation_id,
-            correlation_id=envelope.correlation_id,
-        )
-        result_invocation_id = envelope.invocation_id or envelope.correlation_id
-        if result_invocation_id and self._comm_tracker is not None:
-            self._comm_tracker.acknowledge(
-                invocation_id=str(result_invocation_id),
-                reply_from=descriptor.address.name,
-                reply_summary=(result.content or "")[:500],
-            )
-
-        if self._agent_bus is not None:
-            await self._agent_bus.send(parent_session_id, result_envelope)
-        elif self._inbox_consumer is not None and hasattr(self._inbox_consumer, "_server"):
-            producer = InboxProducer(server=self._inbox_consumer._server)
-            await producer.send(parent_session_id, result_envelope)
-            if self._broker is not None and parent_address is not None:
-                await self._broker.send_to(
-                    parent_address,
-                    BrokerMessage(
-                        payload={"_inbox_wakeup": True, "session_id": parent_session_id},
-                        sender=AgentAddress(kind="system", name="agent_pool"),
-                    ),
-                )
-        else:
-            logger.warning(
-                "Cannot send subagent_result for %s: no agent_bus or inbox_consumer available",
-                descriptor.address.name,
-            )
-
-        # Channel 2: sync Future for create_and_wait() consumers
-        correlation = envelope.correlation_id
-        future = self._sync_futures.pop(correlation, None) if correlation else None
-        if future is not None and not future.done():
-            future.set_result(result)
+        # Subagent result delivery is handled by:
+        #   1. send_to_agent tool (LLM-initiated reply)
+        #   2. SubagentAutoSendHook (fallback when send_to_agent not called)
+        # No additional dispatch needed here.
 
     async def _dispatch_agent_message(
         self,
