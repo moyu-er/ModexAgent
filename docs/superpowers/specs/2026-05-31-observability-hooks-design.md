@@ -85,20 +85,41 @@ All content fields in events are kept in full. This is the core distinction from
 
 `ctx.session_meta.agent_name`, fallback `ctx.identity.agent_id`.
 
-## TraceFileWriter (new)
+## Collection vs Distribution Architecture
 
-A `ControlEventBus` subscriber that writes `AGENT_PROGRESS` events to a JSON-lines file.
+```
+Framework layer (collection only):
+  ProgressReportHook → ControlEventBus.emit(AGENT_PROGRESS)
+  Events carry: session_id, agent_name, iteration, max_iterations, phase, full content
+
+Business layer (distribution):
+  Subscribers receive events → route by scope (pool, agent, user) to destinations
+  TraceFileWriter is the simplest reference subscriber (single file)
+  Bot_project can implement pool-scoped subscribers for isolation
+```
+
+**Framework responsibility**: emit events with complete scope info. No routing logic.
+**Subscriber responsibility**: receive events, route, filter, write, or forward. This is where pool-level isolation and user-level access control live.
+
+`pool_name` is not available in `AgentContext` (it is a bot_project concept). Subscribers that need pool-level routing must maintain their own session→pool mapping.
+
+## TraceFileWriter (new, reference subscriber)
+
+A `ControlEventBus` subscriber that writes `AGENT_PROGRESS` events to a single JSON-lines file. This is the framework-provided reference implementation — the simplest possible subscriber.
 
 - Location: `framework/hook/builtin/trace_writer.py`
 - Format: one JSON object per line, each with `timestamp`, `phase`, `agent_name`, `session_id`, plus phase-specific fields
 - File rotation: use `RotatingFileHandler` or manual rotation (TBD during implementation)
-- This is the mock implementation; real implementations (HTTP reporters, etc.) subscribe to the same bus
+- Writes to a single file; does NOT handle scope-based routing
+
+Business-specific subscribers (e.g., per-pool trace files, user-isolated storage) belong in the application layer (bot_project), not in the framework.
 
 ### Integration in bot_project
 
 - `_collect_run_hooks()`: create `ProgressReportHook(event_bus)`, add to hooks
 - `_initialize_pool()` / `_initialize_pipeline()`: create `TraceFileWriter` and subscribe to `event_bus`
 - RunLoggingHook: existing conditional enablement in `_collect_run_hooks()` continues to work
+- Future: bot_project can add pool-scoped subscribers that route traces by pool/agent/user
 
 ## File changes
 
@@ -116,3 +137,5 @@ A `ControlEventBus` subscriber that writes `AGENT_PROGRESS` events to a JSON-lin
 - `framework/hook/runner.py` — dispatch logic unchanged
 - `framework/control/event_bus.py` — existing event mechanism unchanged
 - Real external reporters (HTTP, gRPC, etc.) — mock only for now
+- Pool-scoped or user-isolated trace routing — business layer concern, not in this iteration
+- `before_turn` hook point — not needed for current requirements
