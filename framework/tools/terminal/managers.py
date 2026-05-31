@@ -10,7 +10,7 @@ from framework.tools.terminal.backends.visible_windows import VisibleWindowsPtyB
 from framework.tools.terminal.backends.windows_hidden import WindowsHiddenPtyBackend
 from framework.tools.terminal.config import TerminalRuntimeConfig
 from framework.tools.terminal.session import TerminalInfo, TerminalSession
-from framework.tools.terminal.types import ShellFamily, ShellInfo, TerminalVisibility, detect_platform_shell
+from framework.tools.terminal.types import Platform, ShellFamily, ShellInfo, TerminalVisibility, detect_platform_shell
 
 
 class TerminalManagerBase(ABC):
@@ -166,6 +166,33 @@ class WindowsVisibleTerminalManager(BaseTerminalManager):
         )
 
 
+class LinuxTerminalManager(BaseTerminalManager):
+    """Terminal manager for Linux/macOS headless PTY sessions.
+
+    Eagerly validates backend availability during __init__.  If neither
+    pexpect nor tmux+libtmux is importable, raises RuntimeError so the
+    caller can degrade to SubprocessTool.
+
+    Degradation chain (per-session): pexpect → tmux.
+    """
+
+    def __init__(self, config: TerminalRuntimeConfig | None = None) -> None:
+        shell_info = detect_platform_shell()
+        super().__init__(
+            shell_info=shell_info or ShellInfo(
+                family=ShellFamily.BASH,
+                path="/bin/sh",
+                platform=Platform.LINUX,
+            ),
+            visibility=TerminalVisibility.HIDDEN,
+            backend_factory=_create_linux_backend,
+            config=config,
+        )
+        # Eager validation: fail now (at pool startup) rather than at
+        # first command if no backend is available.
+        _create_linux_backend()
+
+
 def _require_windows_shell() -> ShellInfo:
     """Detect shell: WSL bash > Git bash > PowerShell."""
     info = detect_platform_shell()
@@ -182,6 +209,32 @@ def _require_bash_shell() -> ShellInfo | None:
     return None
 
 
+def _create_linux_backend() -> Any:
+    """Create a Linux PTY backend (pexpect preferred, tmux fallback).
+
+    Called eagerly by LinuxTerminalManager.__init__ to validate that at
+    least one backend is available at pool startup.  Also used as the
+    lazy backend_factory for new sessions.
+
+    Raises:
+        RuntimeError: If neither pexpect nor tmux+libtmux is available.
+    """
+    try:
+        from framework.tools.terminal.backends.pexpect_pty import PexpectPtyBackend
+        return PexpectPtyBackend()
+    except ImportError:
+        pass
+    try:
+        from framework.tools.terminal.backends.tmux_pty import TmuxPtyBackend
+        return TmuxPtyBackend()
+    except ImportError:
+        pass
+    raise RuntimeError(
+        "No Linux terminal backend available. "
+        "Install pexpect (`pip install pexpect`) or tmux+libtmux (`pip install libtmux`)."
+    )
+
+
 def create_terminal_manager(
     *,
     manager_kind: str,
@@ -190,17 +243,20 @@ def create_terminal_manager(
     """Create a terminal manager by kind string.
 
     Args:
-        manager_kind: One of "windows_hidden" or "windows_visible".
+        manager_kind: "windows_hidden", "windows_visible", or "linux".
         config: Optional runtime configuration.
 
     Returns:
-        A TerminalManagerProtocol instance.
+        A TerminalManagerBase instance.
 
     Raises:
         ValueError: If manager_kind is not recognized.
+        RuntimeError: If the selected manager cannot find an available backend.
     """
     if manager_kind == "windows_hidden":
         return WindowsHiddenTerminalManager(config=config)
     if manager_kind == "windows_visible":
         return WindowsVisibleTerminalManager(config=config)
+    if manager_kind == "linux":
+        return LinuxTerminalManager(config=config)
     raise ValueError(f"Unsupported terminal manager kind: {manager_kind}")
