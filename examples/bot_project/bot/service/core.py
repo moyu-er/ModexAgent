@@ -554,7 +554,6 @@ class BotService(AgentBuilderMixin):
             dream_interval=300,
             max_iterations=main_cfg.max_steps if main_cfg else 40,
             skill_manager=main_skill_manager,  # type: ignore[arg-type]
-            hooks=pipeline_hooks,
             hook_runner=self._build_hook_runner(pipeline_hooks),
             interceptor_chain=self.interceptor_chain,
 
