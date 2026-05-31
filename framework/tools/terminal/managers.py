@@ -166,6 +166,32 @@ class WindowsVisibleTerminalManager(BaseTerminalManager):
         )
 
 
+def _create_linux_backend() -> Any:
+    """Create a Linux PTY backend (pexpect preferred, tmux fallback).
+
+    Called eagerly by LinuxTerminalManager.__init__ to validate that at
+    least one backend is available at pool startup.  Also used as the
+    lazy backend_factory for new sessions.
+
+    Raises:
+        RuntimeError: If neither pexpect nor tmux+libtmux is available.
+    """
+    try:
+        from framework.tools.terminal.backends.pexpect_pty import PexpectPtyBackend
+        return PexpectPtyBackend()
+    except ImportError:
+        pass
+    try:
+        from framework.tools.terminal.backends.tmux_pty import TmuxPtyBackend
+        return TmuxPtyBackend()
+    except ImportError:
+        pass
+    raise RuntimeError(
+        "No Linux terminal backend available. "
+        "Install pexpect (`pip install pexpect`) or tmux+libtmux (`pip install libtmux`)."
+    )
+
+
 class LinuxTerminalManager(BaseTerminalManager):
     """Terminal manager for Linux/macOS headless PTY sessions.
 
@@ -207,32 +233,6 @@ def _require_bash_shell() -> ShellInfo | None:
     if info is not None and info.family == ShellFamily.BASH:
         return info
     return None
-
-
-def _create_linux_backend() -> Any:
-    """Create a Linux PTY backend (pexpect preferred, tmux fallback).
-
-    Called eagerly by LinuxTerminalManager.__init__ to validate that at
-    least one backend is available at pool startup.  Also used as the
-    lazy backend_factory for new sessions.
-
-    Raises:
-        RuntimeError: If neither pexpect nor tmux+libtmux is available.
-    """
-    try:
-        from framework.tools.terminal.backends.pexpect_pty import PexpectPtyBackend
-        return PexpectPtyBackend()
-    except ImportError:
-        pass
-    try:
-        from framework.tools.terminal.backends.tmux_pty import TmuxPtyBackend
-        return TmuxPtyBackend()
-    except ImportError:
-        pass
-    raise RuntimeError(
-        "No Linux terminal backend available. "
-        "Install pexpect (`pip install pexpect`) or tmux+libtmux (`pip install libtmux`)."
-    )
 
 
 def create_terminal_manager(
