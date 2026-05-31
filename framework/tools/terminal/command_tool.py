@@ -84,15 +84,19 @@ class CommandTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Execute a command in a persistent terminal session. "
+            "Execute a shell command in the CURRENTLY SELECTED terminal tab. "
+            "Use 'terminal list' to see all tabs and which is selected (default). "
+            "Use 'terminal select <name>' to switch tabs; use 'terminal open <name>' "
+            "to create a new tab (it auto-selects).\n\n"
             "The shell is stateful: cd, environment variables, venv/nvm activations, "
-            "and SSH connections persist across commands. Do NOT re-run setup commands "
-            "(cd, source, export, etc.) that were already executed in this session.\n"
+            "and SSH connections persist across commands in the same tab. "
+            "Do NOT re-run setup commands (cd, source, export, etc.) that were "
+            "already executed in this tab.\n\n"
+            "Returns <command_result> XML with <status>: completed, running, "
+            "timed_out, paginated, or input_wait. If <status> is not 'completed', "
+            "use 'process log' or 'terminal current' to check the state.\n\n"
             "IMPORTANT: If a command asks for a password, STOP and ask the user. "
-            "NEVER guess or invent passwords. Use 'process write submit=true' only "
-            "after the user provides the password.\n"
-            "If the command completes quickly you get output directly. "
-            "If it keeps running, use the process tool for follow-up."
+            "NEVER guess or invent passwords."
         )
 
     @property

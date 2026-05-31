@@ -180,24 +180,22 @@ def _build_output_velocity_hint(runtime: RunningSessionRuntime | None) -> str:
 
 
 class ProcessTool(Tool):
-    """Manage running exec sessions for commands already started.
+    """Interact with a running command in the CURRENTLY SELECTED terminal tab.
 
-    Use poll/log when you need status, logs, quiet-success confirmation, or
-    completion confirmation.  Use poll/log also for input-wait hints.
-    Use write/send_keys/submit/paste/kill for input or intervention.
+    Use log when you need status, full output history, or completion confirmation.
+    Use write/send_keys/submit/paste/interrupt/kill for input or intervention.
 
     Actions:
-      list       — list all running and finished sessions
-      poll       — drain pending output; shows input-wait hints when idle
-      log        — read aggregated output with line paging
-      write      — write raw data to session stdin
-      submit     — send CR (Enter) to session stdin
-      send_keys  — send encoded key sequences (named keys, modifiers, hex)
-      paste      — paste text with optional bracketed-paste wrapping
-      interrupt  — send interrupt signal (Ctrl+C equivalent)
-      kill       — terminate the process and mark as killed
-      clear      — remove a finished session from the registry
-      remove     — kill (if running) and remove a session
+      list       — list all running and finished sessions across all tabs
+      log        — read aggregated output with optional line paging (offset/limit)
+      write      — send text to the running command's stdin (use submit=true for Enter)
+      submit     — send Enter key to stdin (confirm a prompt after write)
+      send_keys  — send key sequences: arrows, c-c (Ctrl+C), escape, tab, f1-f12
+      paste      — paste multi-line text with bracketed-paste wrapping
+      interrupt  — send Ctrl+C to stop the command
+      kill       — forcefully terminate the command
+      clear      — remove a finished session record
+      remove     — kill (if running) and remove the session
     """
 
     def __init__(
@@ -218,12 +216,14 @@ class ProcessTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Interact with a running command in the default terminal. Actions:\n"
+            "Interact with a running command in the CURRENTLY SELECTED terminal tab.\n"
+            "Use 'terminal list' to see which tab is active.\n\n"
+            "Actions:\n"
             "  log       -- read full output history (optional: offset, limit for paging)\n"
             "  list      -- list all running and recently finished sessions\n"
             "  write     -- send text to the command's stdin\n"
             "  submit    -- send Enter key to stdin (confirm a prompt after write)\n"
-            "  send_keys -- send key sequences: arrows, c-c (Ctrl+C), escape, tab, f1-f12, etc.\n"
+            "  send_keys -- send key sequences: arrows, c-c (Ctrl+C), escape, tab, f1-f12\n"
             "  paste     -- paste multi-line text\n"
             "  interrupt -- send Ctrl+C to stop the command\n"
             "  kill      -- forcefully terminate the command\n"

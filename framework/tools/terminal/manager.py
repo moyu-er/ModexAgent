@@ -92,8 +92,7 @@ class TerminalManager(TerminalManagerBase):
             history_truncate=self._history_truncate,
         )
         self._sessions[name] = session
-        if self._default_terminal is None:
-            self._default_terminal = name
+        self._default_terminal = name
         logger.info("Created terminal session: %s", name)
         await self._check_memory_pressure()
         return session
