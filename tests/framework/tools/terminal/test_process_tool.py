@@ -13,7 +13,6 @@ class FakeTerminal:
         self.interrupted = False
         self.killed = False
         self.name = name
-        self.created_at = 0.0
         self.cursor_key_mode = "unknown"
         self.bracketed_paste_enabled = False
         self._segment = None

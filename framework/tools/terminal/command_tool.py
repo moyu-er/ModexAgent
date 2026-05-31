@@ -34,7 +34,6 @@ def _build_command_xml(
     elapsed_ms: int,
     *,
     terminal: str | None = None,
-    created_at: float | None = None,
     idle_ms: int | None = None,
     pages_scrolled: int | None = None,
     truncated: bool | None = None,
@@ -46,8 +45,6 @@ def _build_command_xml(
     ]
     if terminal is not None:
         parts.append(f"<terminal>{xml_escape(terminal)}</terminal>")
-    if created_at is not None:
-        parts.append(f"<created_at>{int(created_at)}</created_at>")
     parts.extend([
         f"<output>{xml_escape(output)}</output>",
         f"<status>{status.value}</status>",
@@ -122,7 +119,6 @@ class CommandTool(Tool):
     ) -> str:
         session = await self._manager.get_default()
         terminal_name = session.name
-        created_at = session.created_at
         await session.ensure_started()
 
         proc = self._registry.create(
@@ -166,7 +162,7 @@ class CommandTool(Tool):
                     exit_signal=None,
                     status=ProcessStatus.COMPLETED,
                 )
-                return self._format_completed(output_parts, elapsed_ms, terminal=terminal_name, created_at=created_at)
+                return self._format_completed(output_parts, elapsed_ms, terminal=terminal_name)
 
             # 2. Prompt detection (auxiliary completion)
             if output_received:
@@ -184,7 +180,7 @@ class CommandTool(Tool):
                             exit_signal=None,
                             status=ProcessStatus.COMPLETED,
                         )
-                        return self._format_completed(output_parts, elapsed_ms, terminal=terminal_name, created_at=created_at)
+                        return self._format_completed(output_parts, elapsed_ms, terminal=terminal_name)
                 else:
                     prompt_stable_since = None
 
@@ -212,7 +208,7 @@ class CommandTool(Tool):
                         return self._format_paginated(
                             output_parts, pages, elapsed_ms,
                             total_chars, self._config.pager_auto_scroll_max_chars,
-                            terminal=terminal_name, created_at=created_at,
+                            terminal=terminal_name,
                         )
 
             # 3. Timeout (kills process)
@@ -225,23 +221,23 @@ class CommandTool(Tool):
                     status=ProcessStatus.TIMED_OUT,
                     timed_out=True,
                 )
-                return self._format_timed_out(output_parts, timeout_seconds, elapsed_ms, terminal=terminal_name, created_at=created_at)
+                return self._format_timed_out(output_parts, timeout_seconds, elapsed_ms, terminal=terminal_name)
 
             # 4. waiting_for_input hint
             runtime = self._registry.running_runtime(proc.id)
             if runtime is not None and runtime.waiting_for_input:
-                return await self._format_running(session, output_parts, runtime, elapsed_ms, terminal=terminal_name, created_at=created_at)
+                return await self._format_running(session, output_parts, runtime, elapsed_ms, terminal=terminal_name)
 
             # 5. yield_ms elapsed
             if elapsed_ms >= yield_window_ms:
-                return await self._format_running(session, output_parts, None, elapsed_ms, terminal=terminal_name, created_at=created_at)
+                return await self._format_running(session, output_parts, None, elapsed_ms, terminal=terminal_name)
 
     # ------------------------------------------------------------------
     # XML formatting
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _format_completed(output_parts: list[str], elapsed_ms: int, *, terminal: str | None = None, created_at: float | None = None) -> str:
+    def _format_completed(output_parts: list[str], elapsed_ms: int, *, terminal: str | None = None) -> str:
         raw = "".join(output_parts)
         output = sanitize_terminal_output(raw).rstrip()
         return _build_command_xml(
@@ -249,7 +245,6 @@ class CommandTool(Tool):
             CommandResultStatus.COMPLETED,
             elapsed_ms,
             terminal=terminal,
-            created_at=created_at,
         )
 
     @staticmethod
@@ -260,7 +255,6 @@ class CommandTool(Tool):
         elapsed_ms: int,
         *,
         terminal: str | None = None,
-        created_at: float | None = None,
     ) -> str:
         raw = "".join(output_parts)
         output = sanitize_terminal_output(raw).rstrip()
@@ -274,7 +268,7 @@ class CommandTool(Tool):
             )
             return _build_command_xml(
                 output, CommandResultStatus.INPUT_WAIT, elapsed_ms,
-                terminal=terminal, created_at=created_at, idle_ms=idle_ms, message=message,
+                terminal=terminal, idle_ms=idle_ms, message=message,
             )
 
         message = (
@@ -283,7 +277,7 @@ class CommandTool(Tool):
         )
         xml = _build_command_xml(
             output, CommandResultStatus.RUNNING, elapsed_ms,
-            terminal=terminal, created_at=created_at, idle_ms=idle_ms, message=message,
+            terminal=terminal, idle_ms=idle_ms, message=message,
         )
 
         if terminal_session.cursor_key_mode == CursorKeyMode.APPLICATION:
@@ -304,7 +298,6 @@ class CommandTool(Tool):
         elapsed_ms: int,
         *,
         terminal: str | None = None,
-        created_at: float | None = None,
     ) -> str:
         raw = "".join(output_parts)
         output = sanitize_terminal_output(raw).rstrip()
@@ -314,7 +307,7 @@ class CommandTool(Tool):
         )
         return _build_command_xml(
             output, CommandResultStatus.TIMED_OUT, elapsed_ms,
-            terminal=terminal, created_at=created_at, message=message,
+            terminal=terminal, message=message,
         )
 
     @staticmethod
@@ -326,7 +319,6 @@ class CommandTool(Tool):
         max_chars: int,
         *,
         terminal: str | None = None,
-        created_at: float | None = None,
     ) -> str:
         raw = "".join(output_parts)
         output = sanitize_terminal_output(raw).rstrip()
@@ -338,7 +330,7 @@ class CommandTool(Tool):
         )
         return _build_command_xml(
             output, CommandResultStatus.PAGINATED, elapsed_ms,
-            terminal=terminal, created_at=created_at,
+            terminal=terminal,
             pages_scrolled=pages_scrolled,
             truncated=truncated,
             message=message,
