@@ -53,7 +53,7 @@ class TerminalManager(TerminalManagerBase):
         default_timeout: float = 60.0,
         backend_factory: Callable[[], Any] | None = None,
         shell_info: ShellInfo | None = None,
-        visibility: str = "visible",
+        visibility: bool = True,
     ):
         self._storage_dir = Path(storage_dir)
         self._max_terminals = max_terminals
@@ -70,7 +70,7 @@ class TerminalManager(TerminalManagerBase):
         )
         if backend_factory is not None:
             self._backend_factory: Callable[..., Any] = backend_factory
-        elif visibility == "hidden" and sys.platform == "win32":
+        elif not visibility and sys.platform == "win32":
             from framework.tools.terminal.backends.windows_hidden import WindowsHiddenPtyBackend
             self._backend_factory = WindowsHiddenPtyBackend
         else:

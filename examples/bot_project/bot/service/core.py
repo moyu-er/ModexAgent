@@ -287,7 +287,7 @@ class BotService(AgentBuilderMixin):
                 try:
                     from framework.tools.terminal import TerminalManager
 
-                    visibility = getattr(main_cfg, 'terminal_visibility', 'visible')
+                    visibility: bool = getattr(main_cfg, 'terminal_visibility', True)
                     self.terminal_manager = TerminalManager(
                         max_terminals=getattr(self._app_config, 'terminal', {}).get('max_terminals', 5),
                         shell_info=shell_info,

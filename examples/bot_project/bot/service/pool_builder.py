@@ -293,17 +293,17 @@ def _create_terminal_manager(pool_cfg: PoolConfig, project_dir: Path) -> Any | N
         return None
 
     # Read visibility preference from the main agent
-    visibility: str = "visible"
+    visibility: bool = True
     for a in pool_cfg.agents:
         if getattr(a, "role", None) == "main":
-            visibility = getattr(a, "terminal_visibility", "visible")
+            visibility = getattr(a, "terminal_visibility", True)
             break
 
     import sys
     from framework.tools.terminal.managers import create_terminal_manager
 
     if sys.platform == "win32":
-        if visibility == "visible":
+        if visibility:
             kinds = ["windows_visible", "windows_hidden"]
         else:
             kinds = ["windows_hidden"]

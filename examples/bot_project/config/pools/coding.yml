@@ -34,5 +34,4 @@ agents:
     max_steps: 100
     standard_tools: true
     use_terminal: true
-    terminal_visibility: visible  # visible | hidden — initial preference; degrades through chain
-    # skills auto-discovered from skills/coding/coding/ by convention
+    terminal_visibility: true
