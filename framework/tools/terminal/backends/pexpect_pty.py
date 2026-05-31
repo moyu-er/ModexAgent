@@ -9,12 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import time as _time
 
 from framework.tools.terminal.prompt import drain_windows_startup
 from framework.tools.terminal.results import SlidingOutputBuffer, TerminalRead, TerminalSegment
-from framework.tools.terminal.types import Platform, ShellFamily, TerminalVisibility, _family_from_path
+from framework.tools.terminal.types import Platform, TerminalVisibility, _family_from_path
 
 from .base import TerminalBackend, extract_current_segment_from_buffer
 
