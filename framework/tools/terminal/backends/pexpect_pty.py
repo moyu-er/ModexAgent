@@ -144,8 +144,8 @@ class PexpectPtyBackend(TerminalBackend):
                 await loop.run_in_executor(
                     None, lambda: self._proc.terminate(force=False)  # type: ignore[union-attr]
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("pexpect terminate failed: %s", exc)
             self._proc = None
 
     async def kill(self) -> None:
@@ -155,8 +155,8 @@ class PexpectPtyBackend(TerminalBackend):
                 await loop.run_in_executor(
                     None, lambda: self._proc.terminate(force=True)  # type: ignore[union-attr]
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("pexpect kill failed: %s", exc)
             self._proc = None
 
     # ------------------------------------------------------------------

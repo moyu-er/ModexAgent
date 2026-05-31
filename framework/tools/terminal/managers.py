@@ -6,6 +6,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any
 
+from framework.tools.terminal.backends.base import TerminalBackend
+from framework.tools.terminal.backends.factory import create_pty_backend as _create_pty_backend
 from framework.tools.terminal.backends.visible_windows import VisibleWindowsPtyBackend
 from framework.tools.terminal.backends.windows_hidden import WindowsHiddenPtyBackend
 from framework.tools.terminal.config import TerminalRuntimeConfig
@@ -166,9 +168,10 @@ class WindowsVisibleTerminalManager(BaseTerminalManager):
         )
 
 
-def _create_linux_backend() -> Any:
+def _create_linux_backend() -> TerminalBackend:
     """Create a Linux PTY backend (pexpect preferred, tmux fallback).
 
+    Delegates to ``create_pty_backend()`` for the actual selection logic.
     Called eagerly by LinuxTerminalManager.__init__ to validate that at
     least one backend is available at pool startup.  Also used as the
     lazy backend_factory for new sessions.
@@ -177,19 +180,12 @@ def _create_linux_backend() -> Any:
         RuntimeError: If neither pexpect nor tmux+libtmux is available.
     """
     try:
-        from framework.tools.terminal.backends.pexpect_pty import PexpectPtyBackend
-        return PexpectPtyBackend()
-    except ImportError:
-        pass
-    try:
-        from framework.tools.terminal.backends.tmux_pty import TmuxPtyBackend
-        return TmuxPtyBackend()
-    except ImportError:
-        pass
-    raise RuntimeError(
-        "No Linux terminal backend available. "
-        "Install pexpect (`pip install pexpect`) or tmux+libtmux (`pip install libtmux`)."
-    )
+        return _create_pty_backend()
+    except ImportError as e:
+        raise RuntimeError(
+            "No Linux terminal backend available. "
+            "Install pexpect (`pip install pexpect`) or tmux+libtmux (`pip install libtmux`)."
+        ) from e
 
 
 class LinuxTerminalManager(BaseTerminalManager):
