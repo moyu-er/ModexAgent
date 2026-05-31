@@ -100,21 +100,19 @@ class ConfigLoader:
             data = json.load(f)
         return _expand_vars(data)
 
-    def load_mcp_config(self, mcp_config: dict[str, Any]) -> dict[str, Any]:
-        """Load MCP server configuration from JSON file.
+    def load_mcp_config(self, agent_name: str) -> dict[str, Any]:
+        """Load MCP server configuration for a specific agent.
 
-        Follows MCP standard: args are passed to subprocess as-is,
-        no path conversion. Env vars in headers/env are expanded.
+        Convention: config/mcp/{agent_name}.json
         """
-        config_file = mcp_config.get("config_file", "mcp.json")
-        config_path = self.config_dir / config_file
+        mcp_dir = self.config_dir / "mcp"
+        config_path = mcp_dir / f"{agent_name}.json"
 
         if not config_path.exists():
-            print(f"  [WARN] MCP config file not found: {config_path}")
             return {"enabled": False, "servers": {}}
 
         try:
-            json_config = self.load_json(config_file)
+            json_config = self.load_json(f"mcp/{agent_name}.json")
 
             servers = {}
             mcp_servers = json_config.get("mcpServers", {})
@@ -135,17 +133,17 @@ class ConfigLoader:
                     "enabled": True,
                 }
 
-                for key in ["url", "command", "args", "headers", "env"]:
+                for key in ["url", "command", "args", "headers", "env", "environment", "cwd"]:
                     if key in server_config:
                         normalized_config[key] = server_config[key]
 
                 servers[server_name] = normalized_config
 
             return {
-                "enabled": mcp_config.get("enabled", True),
+                "enabled": True,
                 "servers": servers,
             }
 
         except Exception as e:
-            print(f"  [WARN] Failed to load MCP config: {e}")
+            print(f"  [WARN] Failed to load MCP config for {agent_name}: {e}")
             return {"enabled": False, "servers": {}}

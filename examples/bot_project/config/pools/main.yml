@@ -9,7 +9,6 @@ llm:
 
 mcp:
   enabled: true
-  config_file: "mcp/main_mcp.json"
 
 terminal:
   storage_dir: "data/terminals/main"
@@ -42,7 +41,6 @@ agents:
     # system_prompt loaded from agents/main.md by convention
     max_steps: 50
     use_terminal: true
-    mcp_filter: ["fetch", "mcp-deepwiki", "MiniMax", "playwright"]
     # skills auto-discovered from skills/main/main/ by convention
     approval:
       tools:

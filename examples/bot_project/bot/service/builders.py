@@ -82,21 +82,57 @@ def _make_standard_tools() -> list[Tool]:
 
 # ── MCP tool helpers ──
 
-async def _mcp_tools_for_agent(
-    mcp_manager: Any,
-    server_filter: list[str] | None,
-) -> list[Tool]:
-    """Get MCP tools for a specific agent, filtered by server names."""
-    if mcp_manager is None or not server_filter:
-        return []
+async def _load_agent_mcp_tools(
+    agent_name: str,
+    project_dir: Path,
+) -> tuple[list[Tool], Any | None]:
+    """Load MCP tools for an agent from config/mcp/{agent_name}.json.
 
+    Returns (tools, mcp_manager) — the manager must be kept alive for
+    connection lifecycle and disconnected on shutdown.
+    """
+    import json
+
+    from framework.ioc.configs.app import _resolve_env_in
+    from framework.tools.mcp import MCPClientManager
     from framework.tools.mcp_adapter import MCPToolAdapter
     from framework.tools.registry import ToolRegistry
 
-    adapter = MCPToolAdapter(mcp_manager=mcp_manager, default_prefix=True, tool_timeout=60)
-    registry = ToolRegistry()
-    await adapter.register_tools(registry=registry, server_filter=server_filter)
-    return [registry.get(name) for name in registry.list_tools() if registry.get(name) is not None]
+    mcp_json = project_dir / "config" / "mcp" / f"{agent_name}.json"
+    if not mcp_json.exists():
+        return [], None
+
+    try:
+        with open(mcp_json, encoding="utf-8") as f:
+            raw = json.load(f)
+
+        servers = raw.get("mcpServers") or raw.get("servers") or {}
+        if not servers:
+            return [], None
+
+        servers = _resolve_env_in(servers)
+        manager = MCPClientManager(config=servers)
+        await manager.initialize()
+
+        if not manager.connected_servers:
+            logger.warning("Agent %s: MCP config loaded but no servers connected", agent_name)
+            return [], manager
+
+        adapter = MCPToolAdapter(mcp_manager=manager, default_prefix=True, tool_timeout=60)
+        registry = ToolRegistry()
+        await adapter.register_tools(registry=registry)
+
+        tools: list[Tool] = []
+        for name in registry.list_tools():
+            t = registry.get(name)
+            if t is not None:
+                tools.append(t)
+        logger.info("Agent %s: %d MCP tools loaded from %s", agent_name, len(tools), mcp_json.name)
+        return tools, manager
+
+    except Exception as e:
+        logger.warning("Failed to load MCP tools for agent %s: %s", agent_name, e)
+        return [], None
 
 
 class AgentBuilderMixin:
@@ -168,33 +204,20 @@ class AgentBuilderMixin:
             return
 
         try:
-            from framework.tools.mcp import MCPClientManager
-
-            mcp_cfg = self._app_config.mcp
-            if mcp_cfg is None or not mcp_cfg.servers:
-                return
-
-            logger.info("Connecting to %d MCP servers...", len(mcp_cfg.servers))
-            servers_dict = {
-                name: entry.model_dump(exclude_none=True)
-                for name, entry in mcp_cfg.servers.items()
-            }
-            self.mcp_manager = MCPClientManager(config=servers_dict)
-            await self.mcp_manager.initialize()
-
-            # Main agent MCP server filter (config-driven)
             main_cfg = next(
                 (a for a in self._app_config.agents if a.role == "main"),
                 self._app_config.agents[0] if self._app_config.agents else None,
             )
-            main_mcp_filter = main_cfg.mcp_filter if main_cfg else None
-            if main_mcp_filter:
-                mcp_tools = await _mcp_tools_for_agent(self.mcp_manager, main_mcp_filter)
-                count = 0
-                for tool in mcp_tools:
-                    self.tool_manager.register(tool)
-                    count += 1
-                logger.info("Registered %d MCP tools for main", count)
+            if main_cfg is None:
+                return
+
+            project_dir = Path(__file__).parent.parent.parent
+            mcp_tools, self.mcp_manager = await _load_agent_mcp_tools(main_cfg.name, project_dir)
+            for tool in mcp_tools:
+                self.tool_manager.register(tool)
+
+            if mcp_tools:
+                logger.info("Registered %d MCP tools for main agent '%s'", len(mcp_tools), main_cfg.name)
 
         except ImportError as e:
             logger.warning("MCP adapter not available: %s", e)
@@ -244,7 +267,7 @@ class AgentBuilderMixin:
     async def _build_subagent_tool_manager(
         self,
         tools: list[Tool],
-        mcp_server_filter: list[str] | None = None,
+        agent_name: str | None = None,
     ) -> InMemoryToolManager:
         tm = InMemoryToolManager(config=ToolManagerConfig(
             max_workers=10, enable_parallel=True, parallel_max_workers=5,
@@ -252,8 +275,9 @@ class AgentBuilderMixin:
         for tool in tools:
             tm.register(tool)
 
-        if mcp_server_filter and self.mcp_manager:
-            mcp_tools = await _mcp_tools_for_agent(self.mcp_manager, mcp_server_filter)
+        if agent_name:
+            project_dir = Path(__file__).parent.parent.parent
+            mcp_tools, _ = await _load_agent_mcp_tools(agent_name, project_dir)
             for tool in mcp_tools:
                 tm.register(tool)
 

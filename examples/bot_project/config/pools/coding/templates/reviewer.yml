@@ -3,7 +3,6 @@ description: "Expert code reviewer — analyzes code for correctness, security, 
 max_steps: 80
 standard_tools: true
 use_terminal: false
-mcp_filter: []
 memory:
   short_term: {max_messages: 80, max_tokens: 80000}
   long_term: {enabled: true}

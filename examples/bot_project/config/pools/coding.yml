@@ -9,7 +9,6 @@ llm:
 
 mcp:
   enabled: true
-  config_file: "mcp/coding_mcp.json"
 
 terminal:
   storage_dir: "data/terminals/coding"
