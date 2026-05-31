@@ -6,6 +6,7 @@ from framework.tools.terminal.command_tool import CommandTool
 from framework.tools.terminal.manager import TerminalManager
 from framework.tools.terminal.managers import (
     BaseTerminalManager,
+    LinuxTerminalManager,
     TerminalManagerBase,
     WindowsHiddenTerminalManager,
     WindowsVisibleTerminalManager,
@@ -23,6 +24,7 @@ __all__ = [
     "CommandRecord",
     "CommandTool",
     "JsonTerminalStateStore",
+    "LinuxTerminalManager",
     "ProcessRegistry",
     "ProcessTool",
     "ShellExecutor",

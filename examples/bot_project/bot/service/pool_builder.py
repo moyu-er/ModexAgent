@@ -277,22 +277,31 @@ async def create_pool(
 # ── internal helpers ──
 
 def _create_terminal_manager(pool_cfg: PoolConfig, project_dir: Path) -> Any | None:
-    """Create terminal manager with degradation chain.
+    """Create terminal manager with platform-aware degradation chain.
 
-    Priority: visible terminal > hidden terminal > None (subprocess fallback).
+    Windows: visible terminal > hidden terminal > None (subprocess fallback).
+    Linux/macOS: pexpect > tmux > None (subprocess fallback).
     """
     use_terminal = any(
         getattr(a, "use_terminal", False) for a in pool_cfg.agents
     )
     if not use_terminal:
         return None
+
+    import sys
     from framework.tools.terminal.managers import create_terminal_manager
 
-    # Try visible terminal first; fall back to hidden
-    try:
-        return create_terminal_manager(manager_kind="windows_visible")
-    except Exception:
-        return create_terminal_manager(manager_kind="windows_hidden")
+    if sys.platform == "win32":
+        kinds = ["windows_visible", "windows_hidden"]
+    else:
+        kinds = ["linux"]
+
+    for kind in kinds:
+        try:
+            return create_terminal_manager(manager_kind=kind)
+        except Exception:
+            continue
+    return None
 
 
 async def _build_pool_tool_manager(
