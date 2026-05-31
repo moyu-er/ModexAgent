@@ -497,9 +497,11 @@ async def test_archive_injection_has_distinguishable_markers():
     )
     content = bundle.system_prompt
 
-    assert "[Historical Record 1]" in content
-    assert "[Historical Record 2]" in content
-    assert "[Historical Record 3]" in content
+    assert '<record id="1"' in content
+    assert '<record id="2"' in content
+    assert '<record id="3"' in content
+    assert "<historical_context>" in content
+    assert "</historical_context>" in content
     assert "login bug" in content
     assert "auth flow" in content
     assert "JWT tests" in content
@@ -532,8 +534,8 @@ async def test_archive_injection_includes_timestamp_when_available():
 
     assert "2026-05-01 10:30" in content
     assert "2026-05-06 14:45" in content
-    assert "[Historical Record 1]" in content
-    assert "[Historical Record 2]" in content
+    assert '<record id="1" timestamp="2026-05-01 10:30"' in content
+    assert '<record id="2" timestamp="2026-05-06 14:45"' in content
 
 
 @pytest.mark.asyncio
@@ -553,8 +555,10 @@ async def test_build_system_prompt_has_distinguishable_archive_markers():
 
     prompt = await system.build_system_prompt(ctx, max_history_entries=5)
 
-    assert "[Historical Record 1]" in prompt
-    assert "[Historical Record 2]" in prompt
+    assert '<record id="1"' in prompt
+    assert '<record id="2"' in prompt
+    assert "<historical_context>" in prompt
+    assert "</historical_context>" in prompt
     assert "FastAPI" in prompt
     assert "SQLAlchemy" in prompt
 
