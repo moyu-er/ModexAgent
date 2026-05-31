@@ -30,7 +30,6 @@ class RunLoggingHook:
         self._level = level
         self._max_content_chars = max_content_chars
         self._max_result_chars = max_result_chars
-        self._pending_tool_calls: dict[str, list[Any]] = {}
 
     @staticmethod
     def _get_agent_name(ctx: AgentContext[Any]) -> str:
@@ -70,7 +69,6 @@ class RunLoggingHook:
     ) -> None:
         if tool_calls is None:
             return
-        self._pending_tool_calls[ctx.session_id] = list(tool_calls)
         agent = self._get_agent_name(ctx)
         iteration = self._get_iteration(ctx)
         for tool_call in tool_calls:
@@ -95,17 +93,12 @@ class RunLoggingHook:
     ) -> None:
         if results is None:
             return
-        pending = self._pending_tool_calls.get(ctx.session_id, [])
-        pending_by_call_id = {getattr(call, "call_id", None): call for call in pending}
-        pending_by_name = {getattr(call, "tool_name", None): call for call in pending}
         agent = self._get_agent_name(ctx)
         iteration = self._get_iteration(ctx)
 
         for result in results:
             tool_name = self._result_tool_name(result)
             call_id = self._result_call_id(result)
-            tool_call = pending_by_call_id.get(call_id) or pending_by_name.get(tool_name)
-            arguments = getattr(tool_call, "arguments", {}) if tool_call is not None else {}
             error = self._result_error(result)
             output = self._result_output(result)
             self._logger.log(
@@ -122,8 +115,6 @@ class RunLoggingHook:
                     self._max_result_chars,
                 ),
             )
-
-        self._pending_tool_calls.pop(ctx.session_id, None)
 
     @staticmethod
     def _result_tool_name(result: Any) -> str:
