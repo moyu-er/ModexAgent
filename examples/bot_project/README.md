@@ -142,7 +142,8 @@ source .venv/bin/activate
 uv pip install -e ".[all,dev]"
 ```
 
-> [!IMPORTANT]> The `terminal` extra is required for the interactive shell tool (`shell` tool in the bot). On Windows it installs `pywinpty`; on Linux/macOS it installs `pexpect` and `libtmux`.
+> [!IMPORTANT]
+> The `terminal` extra is required for the interactive shell tool (`shell` tool in the bot). On Windows it installs `pywinpty`; on Linux/macOS it installs `pexpect` and `libtmux`.
 
 ### 2. Configure Environment Variables
 
@@ -196,6 +197,30 @@ mcp:
 `config/mcp.json` should be configured for your MCP servers.
 
 ### 4. Run
+
+**One-click start (recommended):**
+
+```bash
+# Any directory — runs in background, survives terminal close
+python examples/bot_project/scripts/botctl.py restart
+```
+
+The script stops any existing bot, then starts a new one as a detached process.
+It returns immediately — the bot keeps running in the background.
+
+To stop:
+
+```bash
+python examples/bot_project/scripts/botctl.py stop
+```
+
+Use `--help` to see all options:
+
+```bash
+python examples/bot_project/scripts/botctl.py --help
+```
+
+**Manual start (for debugging):**
 
 ```bash
 # Pool mode (default, multi-agent collaboration)
