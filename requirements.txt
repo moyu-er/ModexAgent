@@ -33,8 +33,9 @@ openai>=1.0.0,<2
 #sqlalchemy[asyncio]>=2.0.0
 
 # ---- Terminal backends (platform-specific) ----
-pywinpty>=3.0  # Windows only; Unix uses pexpect below
-pexpect>=4.0     # Unix/Linux/macOS only; Windows uses pywinpty above
+pywinpty>=3.0; sys_platform == 'win32'
+pexpect>=4.0; sys_platform != 'win32'
+libtmux>=0.15.0; sys_platform != 'win32'
 
 # ---- Sandbox backends ----
 docker>=6.0.0
