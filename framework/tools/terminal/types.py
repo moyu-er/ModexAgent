@@ -72,6 +72,27 @@ class CommandResultStatus(StrEnum):
     INPUT_WAIT = "input_wait"
 
 
+# XML root tag → list of element names whose text content is safe to truncate.
+# Defined once here so governance code does not hard-code element names.
+_TERMINAL_XML_TRUNCATABLE: dict[str, list[str]] = {
+    "command_result": ["output"],
+    "process_result": ["output"],
+    "terminal_result": ["output", "cursor"],
+}
+
+
+def get_terminal_xml_truncatable_paths(content: str) -> list[str] | None:
+    """Return truncatable element names if *content* is a known terminal XML format.
+
+    Returns None for unrecognised / plain-text content so callers can fall
+    back to content-format-agnostic truncation.
+    """
+    for root_tag, paths in _TERMINAL_XML_TRUNCATABLE.items():
+        if f"<{root_tag}>" in content:
+            return paths
+    return None
+
+
 def _parse_platform(name: str) -> Platform:
     """Map platform.system() string to Platform enum."""
     mapping: dict[str, Platform] = {
