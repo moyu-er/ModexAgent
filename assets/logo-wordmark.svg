@@ -1,0 +1,19 @@
+<!-- ModexAgent Wordmark (light background) -->
+<svg viewBox="0 0 380 70" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <g transform="translate(0, 0) scale(0.5)">
+    <circle cx="70" cy="70" r="62" stroke="#2DD4A8" stroke-width="2.5" stroke-dasharray="8 4" opacity="0.3"/>
+    <line x1="70" y1="16" x2="70" y2="42" stroke="#2DD4A8" stroke-width="2"/>
+    <line x1="124" y1="70" x2="98" y2="70" stroke="#2DD4A8" stroke-width="2"/>
+    <line x1="70" y1="124" x2="70" y2="98" stroke="#2DD4A8" stroke-width="2"/>
+    <line x1="16" y1="70" x2="42" y2="70" stroke="#2DD4A8" stroke-width="2"/>
+    <circle cx="70" cy="12" r="5" fill="#2DD4A8"/>
+    <circle cx="128" cy="70" r="5" fill="#2DD4A8"/>
+    <circle cx="70" cy="128" r="5" fill="#2DD4A8"/>
+    <circle cx="12" cy="70" r="5" fill="#2DD4A8"/>
+    <polygon points="70,44 88,62 70,80 52,62" fill="#2DD4A8"/>
+    <circle cx="70" cy="70" r="30" stroke="#2DD4A8" stroke-width="1.5" opacity="0.4"/>
+  </g>
+  <text x="82" y="46" font-family="system-ui, -apple-system, sans-serif" font-weight="700" font-size="28" letter-spacing="-0.5" fill="#1A1A2E">
+    Modex<tspan fill="#2DD4A8">Agent</tspan>
+  </text>
+</svg>
