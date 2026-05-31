@@ -41,3 +41,8 @@ multi_agent:
 # ---- Plugins (OFF by default) ----
 plugins:
   enabled: false
+
+# ---- Observability ----
+observability:
+  run_logging: true
+  level: "INFO"
