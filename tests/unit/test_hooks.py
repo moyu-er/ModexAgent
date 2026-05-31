@@ -4,11 +4,14 @@ import logging
 
 import pytest
 
-from framework.core.agent import AgentContext
+from framework.core.agent import AgentContext, AgentSessionMeta
+from framework.core.emitter import AgentResult
 from framework.core.tool_manager import ToolResult
 from framework.core.types import LLMResponse, ToolCall
+from framework.control.event_bus import CallbackControlEventBus
+from framework.control.types import ControlEvent, ControlEventType
 from framework.hook import HookPoint, HookPayload, HookRunner, HookSpec, HookErrorPolicy
-from framework.hook.builtin import RunLoggingHook
+from framework.hook.builtin import RunLoggingHook, ProgressReportHook
 
 
 class BrokenHook:
@@ -236,3 +239,128 @@ class TestRunLoggingHook:
                 f"Content line should have no literal \\n: {lines[1]!r}"
             )
         assert any("truncated" in record.message for record in caplog.records)
+
+
+class TestProgressReportHook:
+    """ProgressReportHook emits full-content AGENT_PROGRESS events."""
+
+    @pytest.mark.asyncio
+    async def test_llm_response_event_contains_full_content(self):
+        events: list[ControlEvent] = []
+
+        async def capture(event: ControlEvent) -> None:
+            events.append(event)
+
+        bus = CallbackControlEventBus()
+        await bus.subscribe(ControlEventType.AGENT_PROGRESS, capture)
+
+        hook = ProgressReportHook(event_bus=bus)
+        ctx = AgentContext(
+            system_prompt="",
+            history=None,  # type: ignore[arg-type]
+            tool_manager=None,  # type: ignore[arg-type]
+            session_id="s-1",
+            session_meta=AgentSessionMeta(
+                conversation_id="c-1",
+                agent_name="main",
+                comm_kind=None,  # type: ignore[arg-type]
+            ),
+            max_iterations=50,
+        )
+
+        response = LLMResponse(
+            content="full response content",
+            reasoning_content="thinking...",
+            finish_reason="stop",
+            usage={"prompt_tokens": 10},
+            tool_calls=[ToolCall(tool_name="read", arguments={"path": "/x"}, call_id="c1")],
+        )
+        await hook.after_llm_response(ctx, response)
+
+        assert len(events) == 1
+        p = events[0].payload
+        assert p["phase"] == "llm_response"
+        assert p["content"] == "full response content"
+        assert p["agent_name"] == "main"
+        assert p["iteration"] == 0
+        assert p["max_iterations"] == 50
+        assert p["tool_names"] == ["read"]
+        assert "arguments" not in p  # no tool call args in LLM response event
+
+    @pytest.mark.asyncio
+    async def test_turn_max_iterations_phase(self):
+        events: list[ControlEvent] = []
+
+        async def capture(event: ControlEvent) -> None:
+            events.append(event)
+
+        bus = CallbackControlEventBus()
+        await bus.subscribe(ControlEventType.AGENT_PROGRESS, capture)
+
+        hook = ProgressReportHook(event_bus=bus)
+        ctx = AgentContext(
+            system_prompt="",
+            history=None,  # type: ignore[arg-type]
+            tool_manager=None,  # type: ignore[arg-type]
+            session_id="s-2",
+            max_iterations=50,
+        )
+
+        result = AgentResult(content="stopped", stop_reason="max_iterations")
+        await hook.after_turn(ctx, result)
+
+        assert len(events) == 1
+        assert events[0].payload["phase"] == "turn_max_iterations"
+        assert events[0].payload["max_iterations"] == 50
+
+    @pytest.mark.asyncio
+    async def test_tool_execution_events_contain_full_arguments(self):
+        events: list[ControlEvent] = []
+
+        async def capture(event: ControlEvent) -> None:
+            events.append(event)
+
+        bus = CallbackControlEventBus()
+        await bus.subscribe(ControlEventType.AGENT_PROGRESS, capture)
+
+        hook = ProgressReportHook(event_bus=bus)
+        ctx = AgentContext(
+            system_prompt="",
+            history=None,  # type: ignore[arg-type]
+            tool_manager=None,  # type: ignore[arg-type]
+            session_id="s-3",
+        )
+
+        tool_call = ToolCall(tool_name="write", arguments={"path": "/a", "content": "x" * 100}, call_id="c2")
+        await hook.before_tool_execution(ctx, [tool_call])
+
+        assert len(events) == 1
+        p = events[0].payload
+        assert p["phase"] == "tool_execution_start"
+        assert p["tool_name"] == "write"
+        assert p["arguments"]["content"] == "x" * 100  # no truncation
+
+    @pytest.mark.asyncio
+    async def test_iteration_events_carry_max_iterations(self):
+        events: list[ControlEvent] = []
+
+        async def capture(event: ControlEvent) -> None:
+            events.append(event)
+
+        bus = CallbackControlEventBus()
+        await bus.subscribe(ControlEventType.AGENT_PROGRESS, capture)
+
+        hook = ProgressReportHook(event_bus=bus)
+        ctx = AgentContext(
+            system_prompt="",
+            history=None,  # type: ignore[arg-type]
+            tool_manager=None,  # type: ignore[arg-type]
+            session_id="s-4",
+            max_iterations=100,
+        )
+
+        await hook.before_iteration(ctx)
+
+        assert len(events) == 1
+        assert events[0].payload["phase"] == "iteration_start"
+        assert events[0].payload["max_iterations"] == 100
