@@ -110,7 +110,8 @@ class TerminalTool(Tool):
             session = await self._manager.get_or_create(target_name, cwd=cwd)
             await session.ensure_started()
             return (
-                f"Opened terminal '{target_name}' ({session.shell_info.name}). "
+                f"Opened terminal '{target_name}' ({session.shell_info.name}) "
+                f"at timestamp {int(session.created_at)}. "
                 f"This tab is now the default — 'command' and 'process' tools will use it."
             )
 
@@ -123,15 +124,17 @@ class TerminalTool(Tool):
         if action_enum == TerminalAction.LIST:
             sessions = await self._manager.list_sessions()
             if not sessions:
-                return "No active terminals."
-            lines = ["Active terminals:"]
+                return "<terminal_result>\n<action>list</action>\n<output>No active terminals.</output>\n</terminal_result>"
+            lines = ["<terminal_result>", "<action>list</action>", "<tabs>"]
             for s in sessions:
-                default_marker = " (default)" if s.is_default else ""
-                alive_marker = "" if s.is_alive else " [dead]"
+                default_attr = ' default="true"' if s.is_default else ""
+                alive_attr = ' alive="false"' if not s.is_alive else ""
                 lines.append(
-                    f"  - {s.name}: {s.shell_type}, "
-                    f"commands={s.command_count}{default_marker}{alive_marker}"
+                    f'  <tab name="{xml_escape(s.name)}" shell="{s.shell_type}" '
+                    f'created_at="{int(s.created_at)}" commands="{s.command_count}"{default_attr}{alive_attr} />'
                 )
+            lines.append("</tabs>")
+            lines.append("</terminal_result>")
             return "\n".join(lines)
 
         if action_enum == TerminalAction.SELECT:
@@ -201,6 +204,7 @@ class TerminalTool(Tool):
                 "<terminal_result>\n"
                 "<action>current</action>\n"
                 f"<terminal>{xml_escape(session.name)}</terminal>\n"
+                f"<created_at>{int(session.created_at)}</created_at>\n"
                 f"<default>{str(is_default).lower()}</default>\n"
                 f"<status>{status}</status>\n"
                 f"<cursor>{xml_escape(cursor)}</cursor>\n"

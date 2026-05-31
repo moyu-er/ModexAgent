@@ -49,6 +49,7 @@ class TerminalInfo:
     last_active: float
     command_count: int
     is_default: bool = False
+    created_at: float = 0.0
 
 
 class TerminalSession:
@@ -430,6 +431,7 @@ class TerminalSession:
             last_active=self.last_active,
             command_count=len(self._history),
             is_default=is_default,
+            created_at=self.created_at,
         )
 
     async def write(self, data: str) -> None:
