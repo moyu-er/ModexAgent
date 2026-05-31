@@ -21,6 +21,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_STOP_REASON_COMPLETED = "completed"
+_STOP_REASON_MAX_ITERATIONS = "max_iterations"
+_STOP_REASON_ERROR = "error"
+_STOP_REASON_TURN_CANCELLED = "turn_cancelled"
+
 
 def _get_agent_name(ctx: AgentContext[Any]) -> str:
     if ctx.session_meta is not None:
@@ -98,11 +103,11 @@ class ProgressReportHook:
         self, ctx: AgentContext[Any], result: AgentResult,
     ) -> None:
         stop_reason = result.stop_reason
-        if stop_reason == "max_iterations":
+        if stop_reason == _STOP_REASON_MAX_ITERATIONS:
             phase = "turn_max_iterations"
-        elif stop_reason == "error":
+        elif stop_reason == _STOP_REASON_ERROR:
             phase = "turn_error"
-        elif stop_reason == "turn_cancelled":
+        elif stop_reason == _STOP_REASON_TURN_CANCELLED:
             phase = "turn_cancelled"
         else:
             phase = "turn_complete"

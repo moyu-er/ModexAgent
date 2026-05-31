@@ -1049,6 +1049,9 @@ class BotService(AgentBuilderMixin):
                     await self.terminal_manager.close(name)
         with contextlib.suppress(BaseException):
             await self.input_adapter.stop()
+        if self._trace_writer is not None:
+            with contextlib.suppress(BaseException):
+                self._trace_writer.close()
         if self.broker:
             with contextlib.suppress(BaseException):
                 await self.broker.stop()

@@ -36,6 +36,8 @@ class TraceFileWriter:
             backupCount=backup_count,
             encoding="utf-8",
         )
+        # Prevent any formatter from wrapping JSON lines
+        self._handler.setFormatter(logging.Formatter("%(message)s"))
 
     async def handle(self, event: ControlEvent) -> None:
         if event.type != ControlEventType.AGENT_PROGRESS:
