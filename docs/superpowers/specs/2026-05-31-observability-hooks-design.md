@@ -109,8 +109,25 @@ A `ControlEventBus` subscriber that writes `AGENT_PROGRESS` events to a single J
 
 - Location: `framework/hook/builtin/trace_writer.py`
 - Format: one JSON object per line, each with `timestamp`, `phase`, `agent_name`, `session_id`, plus phase-specific fields
-- File rotation: use `RotatingFileHandler` or manual rotation (TBD during implementation)
 - Writes to a single file; does NOT handle scope-based routing
+
+### File rotation config
+
+TraceFileWriter must prevent unbounded file growth. Constructor accepts:
+
+```python
+TraceFileWriter(
+    path: Path,              # trace file path
+    max_bytes: int = 20 * 1024 * 1024,  # 20 MB per file
+    backup_count: int = 5,   # keep at most 5 rotated files
+)
+```
+
+When the file reaches `max_bytes`, rotate: current file → `.1`, `.1` → `.2`, etc. Files beyond `backup_count` are deleted. Same semantics as `logging.handlers.RotatingFileHandler`.
+
+### RunLoggingHook rotation (existing)
+
+RunLoggingHook writes through Python `logging`, which bot_project already configures with `RotatingFileHandler(maxBytes=50MB, backupCount=10)`. No additional rotation logic needed in the hook itself.
 
 Business-specific subscribers (e.g., per-pool trace files, user-isolated storage) belong in the application layer (bot_project), not in the framework.
 
