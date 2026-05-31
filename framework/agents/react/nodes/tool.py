@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from framework.agents.react.agent import ReActEvent
@@ -257,6 +257,7 @@ class ToolNode(Node):
 
         batch = state.active_tool_batch() if state else None
         denied_encountered = False
+        tool_results: list[Any] = []
         for tc, decision in zip(tool_calls, decisions, strict=False):
             if ctx.emitter is not None:
                 await ctx.emitter.emit(ReActEvent.TOOL_CALL_START, tc)
@@ -275,6 +276,8 @@ class ToolNode(Node):
 
             if ctx.emitter is not None:
                 await ctx.emitter.emit(ReActEvent.TOOL_CALL_END, (tc, result))
+
+            tool_results.append(result)
 
             from framework.utils.message_builder import build_tool_message
 
@@ -304,19 +307,9 @@ class ToolNode(Node):
             batch.status = ToolBatchStatus.FAILED if denied_encountered else ToolBatchStatus.COMPLETED
 
         if ctx.runtime and ctx.runtime.hooks:
-            # Collect tool messages for RuntimeContextHook to record tool calls.
-            # Without this payload, after_tool_execution(results=None) returns early
-            # and SubagentAutoSendHook cannot detect send_to_agent calls.
-            tool_msgs: list[dict[str, Any]] = []
-            for tc in tool_calls:
-                if tc.call_id and hasattr(ctx, 'history'):
-                    for msg in reversed(list(getattr(ctx.history, '_messages', []))):
-                        if isinstance(msg, dict) and msg.get('tool_call_id') == tc.call_id:
-                            tool_msgs.append(msg)
-                            break
             await ctx.runtime.hooks.dispatch(
                 HookPoint.AFTER_TOOL_EXECUTION, ctx,
-                payload=HookPayload(data={"results": tool_msgs}),
+                payload=HookPayload(data={"results": tool_results}),
             )
 
         if ctx.emitter is not None:
