@@ -25,6 +25,7 @@ def create_pty_backend() -> TerminalBackend:
 
     # Linux/macOS: pexpect preferred, tmux fallback
     try:
+        import pexpect  # noqa: F401 — verify pexpect is installed
         from .pexpect_pty import PexpectPtyBackend
         return PexpectPtyBackend()
     except ImportError:
