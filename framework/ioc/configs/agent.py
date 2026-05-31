@@ -59,7 +59,6 @@ class AgentConfig(BaseModel):
     tools: list[Tool] = Field(default_factory=list)  # code-passed only
     standard_tools: bool = True  # register read/write/edit/list/shell/search
     use_terminal: bool = True  # use TerminalSessionExecutor + TerminalManager; false = SubprocessExecutor
-    mcp_filter: list[str] | None = None  # which MCP servers to use (names from mcp.json)
     memory: MemoryConfig | None = None
     skills: SkillsConfig | None = None
     approval: ApprovalConfig | None = None

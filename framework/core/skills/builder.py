@@ -45,7 +45,7 @@ class InlineBuilder(SkillPromptBuilder):
 DEFAULT_PROGRESSIVE_PROMPT = (
     "You have access to the following skills. "
     "Use a file-reading tool to load the full content of a skill when you need it. "
-    "You can also use list_dir or read_file to browse skill resources (scripts, references, assets)."
+    "You can also browse skill resources (scripts, references, assets) in the skill directory."
 )
 
 

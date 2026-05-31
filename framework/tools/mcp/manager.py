@@ -88,10 +88,21 @@ class MCPClientManager:
         await server_stack.__aenter__()
 
         try:
-            transport = server_config.get("transport", "").lower()
+            # Normalize raw dict input: "environment" alias → "env"
+            if "environment" in server_config and "env" not in server_config:
+                server_config = {**server_config, "env": server_config["environment"]}
+
+            # Normalize "type" → "transport" (Claude mcp.json convention)
+            raw_type = server_config.get("type") or server_config.get("transport", "")
+            transport = raw_type.lower() if isinstance(raw_type, str) else ""
+
+            # "local" → stdio
+            if transport == "local":
+                transport = TransportType.STDIO
 
             if not transport:
-                if server_config.get("command"):
+                cmd = server_config.get("command")
+                if cmd and (isinstance(cmd, str) and cmd.strip() or isinstance(cmd, list) and cmd):
                     transport = TransportType.STDIO
                 elif server_config.get("url"):
                     url = server_config["url"]
@@ -179,12 +190,23 @@ class MCPClientManager:
         from mcp import StdioServerParameters
         from mcp.client.stdio import stdio_client
 
-        command = server_config.get("command")
-        if not command:
+        raw_command = server_config.get("command")
+        if not raw_command:
             raise MCPConnectionError("Command required for stdio transport")
 
+        # Support command as list: ["npx", "-y", "@playwright/mcp"]
+        # First element → command, rest → prepend to args
+        if isinstance(raw_command, list):
+            if not raw_command:
+                raise MCPConnectionError("Command list must not be empty")
+            command = str(raw_command[0])
+            extra_args = [str(a) for a in raw_command[1:]]
+            args = extra_args + server_config.get("args", [])
+        else:
+            command = str(raw_command)
+            args = server_config.get("args", [])
+
         env = server_config.get("env", {})
-        args = server_config.get("args", [])
 
         params = StdioServerParameters(
             command=command,

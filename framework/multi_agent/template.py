@@ -21,6 +21,5 @@ class AgentTemplate:
     max_steps: int = 20
     standard_tools: bool = True
     use_terminal: bool = True
-    mcp_filter: list[str] | None = None
     memory: MemoryConfig | None = None
     skills: SkillsConfig | None = None
