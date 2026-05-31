@@ -25,9 +25,8 @@ class FakePexpectProcess:
         self._sent.append("<SIGINT>")
 
     def read_nonblocking(self, size: int, timeout: float = 0.5) -> str:
-        # simulates no output available
-        import pexpect
-        raise pexpect.exceptions.TIMEOUT("timeout")
+        # simulates no output available — use the fake's own TIMEOUT
+        raise FakePexpectModule.exceptions.TIMEOUT("timeout")
 
     def isalive(self) -> bool:
         return self._alive

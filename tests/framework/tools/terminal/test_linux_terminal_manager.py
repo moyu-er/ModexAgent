@@ -10,6 +10,10 @@ import pytest
 from framework.tools.terminal.managers import LinuxTerminalManager, create_terminal_manager
 
 
+linux_only = pytest.mark.skipif(sys.platform == "win32", reason="Linux/macOS-only terminal manager")
+
+
+@linux_only
 class TestLinuxTerminalManagerConstruction:
 
     def test_linux_kind_creates_linux_terminal_manager(self) -> None:
@@ -29,6 +33,7 @@ class TestLinuxTerminalManagerConstruction:
             create_terminal_manager(manager_kind="nonexistent")
 
 
+@linux_only
 class TestLinuxTerminalManagerDegradation:
 
     def test_create_terminal_manager_linux_eager_validates_backend(self) -> None:
@@ -40,6 +45,7 @@ class TestLinuxTerminalManagerDegradation:
             assert "No Linux terminal backend available" in str(e)
 
 
+@linux_only
 class TestLinuxTerminalManagerLazySession:
 
     def test_get_or_create_creates_session(self) -> None:
@@ -80,7 +86,7 @@ class TestLinuxTerminalManagerLazySession:
             pytest.skip("No Linux terminal backend available")
 
         async def _run() -> None:
-            session = await mgr.get_or_create("default", cwd=None)
+            _ = await mgr.get_or_create("default", cwd=None)
             default = await mgr.get_default_session()
             assert default is not None
             assert default.name == "default"
