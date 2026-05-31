@@ -28,7 +28,9 @@ def test_truncates_only_content_element():
     assert '<thinking>需要查询数据</thinking>' in result
     assert '<status>ok</status>' in result
     assert '</agent_message>' in result
-    assert len(result) <= 250
+    # Verify the truncatable field text was cut to <= max_chars
+    content_text = result.split('<content>', 1)[1].split('</content>', 1)[0]
+    assert len(content_text) <= 200
 
 
 def test_preserves_attributes():
@@ -229,3 +231,41 @@ def test_urb_xml_mixed_completed_unfinished():
         assert result.count(f"<{tag}") == result.count(f"</{tag}>"), (
             f"Mismatched {tag} tags"
         )
+
+
+# ── truncate_for_archive tests ─────────────────────────────────────────
+
+
+def test_truncate_for_archive_xml_content() -> None:
+    """XML content is truncated preserving structure."""
+    from framework.memory.xml_truncate import truncate_for_archive
+
+    xml_content = "<root><data>" + ("x" * 2000) + "</data></root>"
+    result = truncate_for_archive(xml_content, max_chars=500)
+
+    assert "<root>" in result
+    assert "</root>" in result
+    assert "<!-- truncated for archive -->" in result
+    assert len(result) <= 600  # Allow overhead for tags + comment
+
+
+def test_truncate_for_archive_plain_text() -> None:
+    """Plain text uses proportional head+tail truncation."""
+    from framework.memory.xml_truncate import truncate_for_archive
+
+    text = "a" * 2000
+    result = truncate_for_archive(text, max_chars=1200)
+
+    assert "truncated" in result
+    assert len(result) <= 1300  # Allow overhead for marker
+    # Head is 67%: 1200 * 0.67 = 804 chars
+    assert result.startswith("a" * 800)
+
+
+def test_truncate_for_archive_short_content_unchanged() -> None:
+    """Content under max_chars is returned unchanged."""
+    from framework.memory.xml_truncate import truncate_for_archive
+
+    text = "short content"
+    result = truncate_for_archive(text, max_chars=1200)
+    assert result == text

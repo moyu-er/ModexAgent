@@ -42,6 +42,12 @@ def _msg_to_dict(msg: ChatMessage | dict[str, Any]) -> dict[str, Any]:
     return msg.to_dict() if isinstance(msg, ChatMessage) else msg
 
 
+def _file_needs_update(analysis: str, file_key: str) -> bool:
+    """Check if analysis contains facts for this file."""
+    marker = f"[{file_key.upper()}]"
+    return marker in analysis
+
+
 class DreamEngine(ConsolidationEngine):
     """离线 DreamEngine：两阶段长期记忆整合。
 
@@ -64,8 +70,9 @@ class DreamEngine(ConsolidationEngine):
         schedule_mode: str = "manual",
         idle_threshold_entries: int = 5,
         summarizer: SummarizerAgent | None = None,
-        min_archive_count: int = 5,
+        min_archive_count: int = 0,
         max_archive_count: int = 30,
+        prompts: Any = None,  # PromptRegistry (optional)
     ):
         self.history_manager = history_manager
         self.long_term_manager = long_term_manager
@@ -77,6 +84,14 @@ class DreamEngine(ConsolidationEngine):
         self.idle_threshold_entries = idle_threshold_entries
         self.min_archive_count = min_archive_count
         self.max_archive_count = max_archive_count
+        if prompts is None:
+            from framework.memory.prompts import create_default_registry
+
+            try:
+                prompts = create_default_registry()
+            except Exception:
+                pass
+        self._prompts = prompts
         # Always use SummarizerAgent — auto-construct from llm_provider if needed
         self._summarizer: SummarizerAgent = summarizer or SummarizerAgent(llm_provider)
 
@@ -234,13 +249,28 @@ class DreamEngine(ConsolidationEngine):
             f"## Current MEMORY.md\n{existing_memories.get('MEMORY.md', '(empty)')}"
         )
 
-        # Phase 1: Fact extraction — via SummarizerAgent
+        # Phase 1: Fact extraction
         try:
-            analysis = await self._summarizer.analyze(
-                f"## History\n{history_text}\n\n{file_context}",
-                prompt=SummarizerAgent.PROMPT_FACT_EXTRACTION,
-                max_tokens=2000,
-            )
+            if self._prompts is not None:
+                system_prompt = self._prompts.get_system("knowledge/fact_extraction")
+                user_prompt = self._prompts.get_user(
+                    "knowledge/fact_extraction",
+                    archive_entries=history_text,
+                    current_soul=existing_memories.get("SOUL.md", ""),
+                    current_user=existing_memories.get("USER.md", ""),
+                    current_memory=existing_memories.get("MEMORY.md", ""),
+                )
+                analysis = await self._summarizer.analyze(
+                    user_prompt,
+                    prompt=system_prompt,
+                    max_tokens=2000,
+                )
+            else:
+                analysis = await self._summarizer.analyze(
+                    f"## History\n{history_text}\n\n{file_context}",
+                    prompt=SummarizerAgent.PROMPT_FACT_EXTRACTION,
+                    max_tokens=2000,
+                )
         except Exception as e:
             logger.warning("DreamEngine Phase 1 failed: %s", e)
             return ConsolidationResult(success=False, reasoning=f"Phase 1 error: {e}")
@@ -251,30 +281,63 @@ class DreamEngine(ConsolidationEngine):
                 reasoning="Phase 1: no new information",
             )
 
-        # Phase 2: Generate memory updates — via SummarizerAgent
-        try:
-            phase2_text = await self._summarizer.summarize(
-                f"## Analysis\n{analysis}\n\n{file_context}",
-                prompt=SummarizerAgent.PROMPT_MEMORY_UPDATE,
-                max_tokens=2000,
-                temperature=0.2,
-            )
-            updates = self._parse_updates(phase2_text)
-        except Exception as e:
-            logger.warning("DreamEngine Phase 2 failed: %s", e)
-            return ConsolidationResult(
-                success=False,
-                reasoning=f"Phase 2 error: {e}",
-            )
-
+        # Phase 2: Per-file updates
         result = ConsolidationResult(success=True, reasoning=analysis)
-        for update in updates:
-            if update.file_name.upper().startswith("SOUL"):
-                result.soul_updates.append(update)
-            elif update.file_name.upper().startswith("USER"):
-                result.user_updates.append(update)
-            else:
-                result.memory_updates.append(update)
+
+        file_mapping: dict[str, tuple[str, list[MemoryUpdate]]] = {
+            "soul": ("SOUL.md", result.soul_updates),
+            "user": ("USER.md", result.user_updates),
+            "memory": ("MEMORY.md", result.memory_updates),
+        }
+
+        for file_key, (file_name, updates_list) in file_mapping.items():
+            if not _file_needs_update(analysis, file_key):
+                continue
+
+            try:
+                if self._prompts is not None:
+                    system_prompt = self._prompts.get_system(f"knowledge/{file_key}_update")
+                    user_vars: dict[str, str] = {
+                        f"current_{file_key}": existing_memories.get(file_name, ""),
+                        "new_facts": analysis,
+                        "memory_context": existing_memories.get("MEMORY.md", ""),
+                    }
+                    user_prompt = self._prompts.get_user(
+                        f"knowledge/{file_key}_update",
+                        **user_vars,
+                    )
+                    phase2_text = await self._summarizer.summarize(
+                        user_prompt,
+                        prompt=system_prompt,
+                        max_tokens=2000,
+                        temperature=0.2,
+                    )
+                else:
+                    phase2_text = await self._summarizer.summarize(
+                        f"## Analysis\n{analysis}\n\n{file_context}",
+                        prompt=SummarizerAgent.PROMPT_MEMORY_UPDATE,
+                        max_tokens=2000,
+                        temperature=0.2,
+                    )
+
+                content = phase2_text.strip()
+                if content.startswith("```"):
+                    lines = content.splitlines()
+                    if lines[0].startswith("```"):
+                        lines = lines[1:]
+                    if lines and lines[-1].startswith("```"):
+                        lines = lines[:-1]
+                    content = "\n".join(lines).strip()
+                if content:
+                    update = MemoryUpdate(
+                        file_name=file_name,
+                        content=content,
+                        mode=str(MemoryUpdateMode.SECTION_REPLACE),
+                        reason=f"DreamEngine per-file {file_key} update",
+                    )
+                    updates_list.append(update)
+            except Exception as e:
+                logger.warning("DreamEngine Phase 2 failed for %s: %s", file_key, e)
 
         return result
 
@@ -283,18 +346,29 @@ class DreamEngine(ConsolidationEngine):
         "(no semantic content)",
     })
 
+    _TOOL_XML_PATTERNS = (
+        "<minimax:tool_call>",
+        "<tool_call>",
+        "<function_call>",
+        "<invoke name=",
+    )
+
     @classmethod
     def _is_meaningful_entry(cls, entry: dict[str, Any]) -> bool:
         """Check whether an archive entry contains useful content for consolidation.
 
-        Rejects empty summaries, known placeholder markers, and entries
+        Rejects empty summaries, known placeholder markers, entries
         that were explicitly marked as empty by the archive strategy
-        (source=="empty" or semantic_count==0).
+        (source=="empty" or semantic_count==0), and summaries that are
+        raw tool-call XML leaked from LLM hallucination.
         """
         summary = entry.get("summary", "")
         if not summary or not summary.strip():
             return False
-        if summary.strip() in cls._EMPTY_MARKERS:
+        stripped = summary.strip()
+        if stripped in cls._EMPTY_MARKERS:
+            return False
+        if any(p in stripped for p in cls._TOOL_XML_PATTERNS):
             return False
         metadata = entry.get("metadata", {})
         if isinstance(metadata, dict):

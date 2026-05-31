@@ -8,6 +8,7 @@ from framework.tools.terminal.tool import TerminalTool
 
 class FakeSession:
     name = "default"
+    created_at = 0.0
     _busy_after_timeout = False
     _last_status = None
 
@@ -53,6 +54,7 @@ async def test_terminal_current_returns_xml_with_idle_status() -> None:
     assert "<terminal_result>" in result
     assert "<status>idle</status>" in result
     assert "<action>current</action>" in result
+    assert "<created_at>0</created_at>" in result
     assert "$" in result
 
 

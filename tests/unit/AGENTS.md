@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-05-16 | Updated: 2026-05-16 -->
+<!-- Updated: 2026-05-31 -->
 
 # unit
 

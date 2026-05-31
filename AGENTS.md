@@ -1,19 +1,24 @@
+<!-- Updated: 2026-05-31 | Branch: develop_gyt | Commit: 6647e8a -->
+
 # Repository Guidelines
 
 ## Project Layout
 
-`framework/` is the reusable agent framework. Key areas:
+`framework/` is the reusable agent framework (322 Python files, 22 subdirectories). Key areas:
 
-- `framework/core/`: ABCs — Agent[E], Emitter, Tool, ContextManager, graph engine, skills, types.
-- `framework/agents/react/`: graph-based ReAct runtime (4-node: START→LLM→TOOL→END).
-- `framework/memory/`: session/archive/knowledge memory, compression, governance.
-- `framework/multi_agent/`: star-topology subagent coordination, inbox, communication tracker.
-- `framework/ioc/`: typed config (`AppConfig`) + factory layer.
-- `framework/runtime/`: `AgentRuntime`, `TurnStateStore`, `RuntimeCommandStore`.
-- `framework/pipeline/`: `AgentPipeline`, adapters, approval renderer.
-- `framework/hook/` + `framework/interceptor/` + `framework/control/`: three-layer runtime model.
+- `framework/core/`: ABCs — `Agent[E]`, `ContentEmitter[E]`, `Tool`, `ContextManager`, graph engine (`Graph[R]`/`Node[R]`), skills, types.
+- `framework/agents/react/`: graph-based ReAct runtime (4-node: START→LLM→TOOL→END), approval suspension/resume, `RuntimeAssembler`.
+- `framework/memory/`: three-layer memory (session/archive/knowledge) + compression + governance + injection policies.
+- `framework/multi_agent/`: star-topology subagent coordination, `AgentPool`, inbox, `CommunicationTracker`, `AgentMessageBus`.
+- `framework/ioc/`: typed config (`AppConfig` via Pydantic) + 8 factory modules + `PoolConfig`.
+- `framework/runtime/`: `AgentRuntime`, `AgentRuntimeServices`, `TurnStateStore`, `RuntimeCommandStore`, typed enums/models.
+- `framework/pipeline/`: `AgentPipeline` end-to-end orchestration, I/O adapters, approval renderer, slash commands.
+- `framework/hook/` + `framework/interceptor/` + `framework/control/`: three-layer runtime model (observe/AOP/control).
+- `framework/tools/`: tool registry, executor, MCP integration, terminal system (pexpect/tmux/winpty backends), overflow management.
+- `framework/commands/`: slash command processor with two-stage dispatch (pre-lock routing + in-lock execution).
+- `framework/sandbox/`: sandboxed execution adapters (Subprocess/Docker/E2B/Landlock).
 
-`examples/bot_project/` is the primary end-to-end reference. Framework-generic behavior in `framework/`; business wiring in `examples/`.
+`examples/bot_project/` is the primary end-to-end reference (Pool + Pipeline modes). Framework-generic behavior in `framework/`; business wiring in `examples/`.
 
 ## Commands
 
@@ -24,19 +29,24 @@
 - `ruff format framework/ tests/`: format
 - `mypy framework/`: type check
 
-## Coding Rules
+## Type Safety Rules (from rules/type-safety.md)
+
+1. **Enums/constants over raw strings** for categories, roles, states, protocol values. Use `MessageRole`, `MessageType`, `FinishReason`, `DefaultValues`.
+2. **Typed structures over loose dicts**. Use existing dataclasses: `ChatMessage`, `ToolCall`, `LLMResponse`, `InputMessage`, `OutputMessage`.
+3. **Typed signatures**. No bare `Any`, `list`, `dict`, `object`, `list[Any]` in framework-facing APIs. Declare parameter and return types.
+4. **ABCs/Protocols before implementations**. No concrete dependency where a pluggable contract exists. 63 ABCs + 18 Protocols in framework/.
+5. **Framework vs examples separation**. `framework/` = reusable behavior; `examples/` = business wiring. No example-specific config in framework.
+6. **No dynamic access** (`getattr`/`hasattr`) except at real extension boundaries. Prefer explicit typed attributes and method calls.
+
+## Architecture Rules
 
 - Python 3.12+, `from __future__ import annotations` in all framework modules.
-- Enums/constants over raw strings for categories, roles, states, protocol values.
-- Typed structures over loose dicts (`ChatMessage`, `ToolCall`, `LLMResponse`, `InputMessage`, `OutputMessage`).
-- Typed parameters and returns; avoid bare `Any`, `list`, `dict`, `object` in framework APIs.
-- Protocols/ABCs for extension points; no concrete dependency where a pluggable contract exists.
-- Framework behavior in `framework/`, business wiring in `examples/`; no example-specific config in framework.
-- Avoid `getattr`/`hasattr` unless at a real extension boundary.
-- `MessageRole` lives in `framework.core.types.MessageRole`.
-- Per-turn state in `runtime.state` (typed turn state), not instance attributes or `ctx.metadata`.
-- Frozen dataclasses for config; runtime = state/connections.
 - `Agent[E]`, `ContentEmitter[E]` with `TypeVar("E", bound=AgentEvent)`.
+- Per-turn state in `runtime.state` (typed `ReActTurnState`), not instance attributes or `ctx.metadata`.
+- Frozen dataclasses for config/value objects; runtime objects hold state/connections.
+- `MessageRole` lives in `framework.core.types.MessageRole`.
+- `GraphInterrupt` for approval suspension — never catch and swallow it.
+- `TurnCustomKey` enum for per-turn custom state keys in `TurnStateBase.custom`.
 
 ## Memory Rules
 
@@ -45,7 +55,7 @@
 - Tool-call chains must stay structurally legal: don't split `assistant.tool_calls` from matching `tool` results.
 - `archive=None` is standard session-only mode for subagent memory.
 - Subagent session memory is temporary; clear after subagent finishes.
-- Memory scopes: Session, User, Tenant, Agent, Channel, Chat, Composite, Global.
+- Memory scopes: Session, User, Tenant, Agent, Channel, Chat, PeerPair, Composite, Global.
 
 ## Multi-Agent Communication Rules
 
@@ -53,23 +63,19 @@
 - Three communication tools: `send_to_agent` (sync broker), `send_to_agent_async` (inbox-based, deferred), `spawn_subagent` (isolated invocation session).
 - `AgentMessageBus` is the primary async channel. `InboxProducer`/`InboxConsumer` wrap `InboxServer` with local-cache dedup.
 - `CommunicationTracker` provides sideband memory: send/acknowledge bracket matching prevents memory compression from silently dropping pending communications.
-- Session ID format: `{conversation_id}:{agent_name}` (via `DefaultSessionIdStrategy`). `dispatch_task` appends `:{invocation_id}` for isolated sessions.
+- Session ID format: `{conversation_id}:{agent_name}[:{invocation_id}]` (via `DefaultSessionIdStrategy`).
 - `AgentPool` manages resident agent lifecycle: consumer loop, inbox wakeup polling, per-session locks, TTL + LRU session eviction.
 - `SubagentAutoSendHook` safety net: auto-forwards final output to parent if LLM forgets to use communication tools.
 - Each subagent gets isolated Memory/ToolManager/SkillManager. Subagent memory is `RestrictedInjectionPolicy` (session-only, limited context window).
 
-## Testing
-
-Focused regression tests under `tests/unit/`. Write/update tests before production code when practical. Absolute imports (`from framework.xxx`).
-
 ## Approval Architecture Rules (CRITICAL)
 
 1. **One approval path only.** `ToolNode` → `ApprovalTransaction` → `TurnSnapshot` → `ApprovalRenderer`. Do NOT add approval logic to interceptors, hooks, or control consumers.
-
 2. **`ControlDrainInterceptor` must not drain `APPROVAL_RESPONSE`.** Drain set is for cancel/inject/config only.
-
 3. **`ApprovalRuntime` is a policy service, not a state owner.** Owns classifier + deny_policy. State lives in `ApprovalTransaction` inside `ReActTurnState`.
-
 4. **Deny policy defaults to `TOOL_RESULT_ONLY`.** Rejection returns tool errors with `deny_reason`, continues ReAct loop. `CANCEL_TURN` is a configurable override.
-
 5. **`deny_reason` lives on `ApprovalTransaction.deny_reason`.** Do not read from `ctx.metadata` or other locations.
+
+## Testing
+
+Focused regression tests under `tests/unit/`. Write/update tests before production code when practical. Absolute imports (`from framework.xxx`). Mirror package structure. Mock `LLMProvider`, `ControlChannel`, `ControlEventBus` — never hit real APIs.

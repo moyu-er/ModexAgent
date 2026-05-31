@@ -49,7 +49,7 @@ from framework.tools.standard import (
 from framework.tools.terminal import SubprocessTool, SubprocessExecutor
 from framework.tools.terminal.managers import TerminalManagerBase
 
-from .builders import _make_file_tools, _mcp_tools_for_agent, resolve_system_prompt
+from .builders import _load_agent_mcp_tools, _make_file_tools, resolve_system_prompt
 from .pool_instance import PoolInstance
 
 logger = logging.getLogger(__name__)
@@ -202,7 +202,6 @@ async def create_pool(
         pool_llm_model=pool_cfg.llm.model,
         pool_llm_temperature=pool_cfg.llm.temperature,
         pool_llm_max_tokens=pool_cfg.llm.max_tokens,
-        mcp_manager=mcp_manager,
         inbox_consumer=inbox_consumer,
         notification_service=notification_service,
         main_agent_name=main_agent_name,
@@ -278,22 +277,46 @@ async def create_pool(
 # ── internal helpers ──
 
 def _create_terminal_manager(pool_cfg: PoolConfig, project_dir: Path) -> Any | None:
-    """Create terminal manager with degradation chain.
+    """Create terminal manager with visibility-aware degradation chain.
 
-    Priority: visible terminal > hidden terminal > None (subprocess fallback).
+    use_terminal=false → None (SubprocessTool only, no terminal tools).
+    use_terminal=true:
+      visibility="visible" → visible → hidden → None (subprocess fallback)
+      visibility="hidden"  → hidden  → None (subprocess fallback)
+
+    Linux/macOS has no visible backend; "visible" degrades to hidden (pexpect/tmux).
     """
     use_terminal = any(
         getattr(a, "use_terminal", False) for a in pool_cfg.agents
     )
     if not use_terminal:
         return None
+
+    # Read visibility preference from the main agent
+    visibility: bool = True
+    for a in pool_cfg.agents:
+        if getattr(a, "role", None) == "main":
+            visibility = getattr(a, "terminal_visibility", True)
+            break
+
+    import sys
     from framework.tools.terminal.managers import create_terminal_manager
 
-    # Try visible terminal first; fall back to hidden
-    try:
-        return create_terminal_manager(manager_kind="windows_visible")
-    except Exception:
-        return create_terminal_manager(manager_kind="windows_hidden")
+    if sys.platform == "win32":
+        if visibility:
+            kinds = ["windows_visible", "windows_hidden"]
+        else:
+            kinds = ["windows_hidden"]
+    else:
+        # Linux/macOS: no visible backend; "visible" degrades to hidden
+        kinds = ["linux"]
+
+    for kind in kinds:
+        try:
+            return create_terminal_manager(manager_kind=kind)
+        except Exception:
+            continue
+    return None
 
 
 async def _build_pool_tool_manager(
@@ -321,7 +344,6 @@ async def _build_pool_tool_manager(
         tm.register(ProcessTool(registry=registry, manager=terminal_manager))
         tm.register(TerminalTool(terminal_manager))
     else:
-        # No terminal backend — fall back to stateless subprocess for main agent
         shell_tool = SubprocessTool(executor=SubprocessExecutor(), timeout=60)
         tm.register(shell_tool)
 
@@ -331,30 +353,10 @@ async def _build_pool_tool_manager(
     from bot.tools.custom import SendFileToUserTool
     tm.register(SendFileToUserTool(output_adapter=output_adapter))
 
-    # MCP
-    mcp_cfg = pool_cfg.mcp
-    mcp_manager = None
-    if mcp_cfg is not None and getattr(mcp_cfg, "enabled", False):
-        try:
-            from framework.tools.mcp import MCPClientManager
-            import json
-            mcp_json_path = project_dir / "config" / mcp_cfg.config_file
-            if mcp_json_path.exists():
-                with open(mcp_json_path, encoding="utf-8") as f:
-                    raw = json.load(f)
-                servers = raw.get("mcpServers", {}) or raw.get("servers", {})
-                if servers:
-                    from framework.ioc.configs.app import _resolve_env_in
-                    servers = _resolve_env_in(servers)
-                    mcp_manager = MCPClientManager(config=servers)
-                    await mcp_manager.initialize()
-        except Exception as e:
-            logger.warning("MCP init failed for pool '%s': %s", pool_cfg.main_agent_name, e)
-
-    if mcp_manager and main_cfg.mcp_filter:
-        mcp_tools = await _mcp_tools_for_agent(mcp_manager, main_cfg.mcp_filter)
-        for tool in mcp_tools:
-            tm.register(tool)
+    # MCP: load per-agent config from config/mcp/{agentName}.json
+    mcp_tools, mcp_manager = await _load_agent_mcp_tools(main_cfg.name, project_dir)
+    for tool in mcp_tools:
+        tm.register(tool)
 
     return tm, mcp_manager
 

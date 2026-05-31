@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-05-16 -->
+<!-- Updated: 2026-05-31 | Branch: develop_gyt | Commit: 6647e8a -->
 
 # runtime
 
@@ -9,12 +9,13 @@ Runtime state governance — typed state models, enums, persistence, codecs, and
 ## Key Files
 | File | Description |
 |------|-------------|
-| `enums.py` | 15+ runtime enum types: `StateScope`, `AgentKind`, `TurnPhase`, `ApprovalDenyPolicy`, `OperationKind`, `ToolBatchStatus`, `ToolCallStatus`, `CancellationSource`, `SnapshotReason`, etc. |
-| `models.py` | `TurnStateBase`, `ApprovalTransaction`, `ToolBatchState`, `TurnSnapshot`, `TurnSummary`, `ControlCommandState` |
+| `enums.py` | `StateScope`, `AgentKind`, `TurnPhase`, `OperationKind`, `ToolBatchStatus`, `ToolCallStatus`, `ApprovalDenyPolicy`, `ApprovalSubjectType`, `OperationStatus`, `CancellationSource`, `SnapshotReason`, `ControlCommandKind`, `MessageDeltaSource`, `TurnCustomKey` |
+| `models.py` | `TurnIdentity`, `ToolArguments`, `ApprovalRequest`, `ApprovalTransaction`, `ToolCallRecord`, `ToolBatchState`, `TurnStateBase`, `TurnSnapshot`, `TurnSummary`, `ControlCommandState`, `StateQueryScope`, `MessageDelta` |
 | `codec.py` | `RuntimeStateCodec` ABC + `RuntimeStateCodecRegistry` — serialization extensibility |
 | `policy.py` | `SnapshotPolicy` ABC — when/how snapshots are taken |
-| `services.py` | `AgentRuntimeServices` (process-scope services), `AgentRuntime` (composes services + state) |
-| `store.py` | `TurnStateStore` + `RuntimeCommandStore` ABCs; `NoOp`/`InMemory`/`JsonFile` implementations |
+| `services.py` | `AgentRuntimeServices` (process-scope services: hooks, interceptors, control, approval, governance, stores), `AgentRuntime[composes services + state)` |
+| `store.py` | `TurnStateStore` + `RuntimeCommandStore` ABCs; `NoOp`/`InMemory`/`JsonFile` implementations; `ActiveTurnConflictError` |
+| `dispatch.py` | Runtime dispatch utilities |
 
 ## Design Rules
 1. **TurnStateStore is the ONE persistence abstraction.** All runtime state flows through `TurnSnapshot` → `TurnStateStore.save_turn()`.

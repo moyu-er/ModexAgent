@@ -120,7 +120,7 @@ async def test_assemble_context_propagates_xml_format_from_input_msg() -> None:
     ctx_mgr = FakeContextManager()
     input_msg = InputMessage(content="/weather", session_id="s1")
     input_msg.content_format = ContentFormat.XML
-    input_msg.truncatable_paths = ["command_context", "user_input", "skill"]
+    input_msg.truncatable_paths = ["command_context", "user_input"]
 
     state = await assemble_context(
         "s1",
@@ -138,7 +138,7 @@ async def test_assemble_context_propagates_xml_format_from_input_msg() -> None:
     last_msg = messages[-1]
     assert last_msg["role"] == MessageRole.USER
     assert last_msg.get("content_format") == ContentFormat.XML
-    assert last_msg.get("truncatable_paths") == ["command_context", "user_input", "skill"]
+    assert last_msg.get("truncatable_paths") == ["command_context", "user_input"]
 
 
 class FakeCommandProcessor:
@@ -385,7 +385,7 @@ async def test_pipeline_skill_propagates_xml_format_to_agent_messages() -> None:
             trigger_agent=True,
             append_user_message=True,
             content_format="xml",
-            truncatable_paths=["command_context", "user_input", "skill"],
+            truncatable_paths=["command_context", "user_input"],
         )
     )
     pipeline = AgentPipeline(
@@ -403,7 +403,7 @@ async def test_pipeline_skill_propagates_xml_format_to_agent_messages() -> None:
     assert skill_msgs[0].get("content_format") == "xml", (
         f"Skill XML message must have content_format='xml', got {skill_msgs[0].get('content_format')}"
     )
-    assert skill_msgs[0].get("truncatable_paths") == ["command_context", "user_input", "skill"]
+    assert skill_msgs[0].get("truncatable_paths") == ["command_context", "user_input"]
 
 
 def test_command_processor_exposes_dispatch_policy_before_lock() -> None:

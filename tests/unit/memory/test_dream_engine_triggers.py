@@ -22,9 +22,19 @@ class TestDreamEngineConfigHasDualTriggerFields:
     def test_dream_engine_config_defaults(self):
         cfg = DreamEngineConfig()
         assert cfg.interval == 1200
-        assert cfg.min_archive_count == 5
+        assert cfg.min_archive_count == 0
         assert cfg.max_archive_count == 30
         assert cfg.max_batch_size == 20
+
+
+def test_dream_engine_default_min_archive_count_is_zero(self) -> None:
+    """DreamEngine should process any available entries (min=0)."""
+    engine = DreamEngine(
+        llm_provider=MagicMock(),
+        history_manager=MagicMock(),
+        long_term_manager=MagicMock(),
+    )
+    assert engine.min_archive_count == 0
 
     def test_dream_engine_config_custom_values(self):
         cfg = DreamEngineConfig(

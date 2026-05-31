@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Union
+from typing import Any, Union
 
 from framework.memory.archive_input import DefaultArchiveInputPolicy, MessageMapping
 from framework.memory.archive_models import (
@@ -21,7 +21,7 @@ class ArchiveInputMessage:
     """Lightweight, role-filtered representation of a chat message for archival.
 
     Non-essential fields are stripped per role:
-    - assistant: tool_calls are discarded (tool results carry the information).
+    - assistant: tool_calls are preserved (needed for tool chain detection).
     - tool: keeps tool_call_id for correlation; drops name.
     - user: drops all metadata.
     """
@@ -29,6 +29,7 @@ class ArchiveInputMessage:
     role: str
     content: str | None = None
     tool_call_id: str | None = None
+    tool_calls: tuple[dict[str, object], ...] = ()
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> ArchiveInputMessage:
@@ -41,7 +42,13 @@ class ArchiveInputMessage:
             raw_id = data.get("tool_call_id")
             tool_call_id = raw_id if isinstance(raw_id, str) else None
 
-        return cls(role=role, content=content_str, tool_call_id=tool_call_id)
+        # Preserve tool_calls for assistant messages
+        raw_tool_calls = data.get("tool_calls")
+        tool_calls: tuple[dict[str, object], ...] = ()
+        if isinstance(raw_tool_calls, list):
+            tool_calls = tuple(tc for tc in raw_tool_calls if isinstance(tc, dict))
+
+        return cls(role=role, content=content_str, tool_call_id=tool_call_id, tool_calls=tool_calls)
 
 
 class ArchiveGenerationStrategy(ABC):
@@ -77,12 +84,21 @@ class DualLLMArchiveGenerationStrategy(ArchiveGenerationStrategy):
         context_max_tokens: int = 800,
         knowledge_max_tokens: int = 600,
         max_segment_tokens: int = 12000,
+        prompts: Any = None,
     ) -> None:
         self._summarizer = summarizer
         self._input_policy = input_policy or DefaultArchiveInputPolicy()
         self._context_max_tokens = context_max_tokens
         self._knowledge_max_tokens = knowledge_max_tokens
         self._max_segment_tokens = max_segment_tokens
+        if prompts is None:
+            from framework.memory.prompts import create_default_registry
+
+            try:
+                prompts = create_default_registry()
+            except Exception:
+                pass
+        self._prompts = prompts
 
     async def generate(
         self,
@@ -99,6 +115,13 @@ class DualLLMArchiveGenerationStrategy(ArchiveGenerationStrategy):
 
         from framework.agents.summarizer.agent import SummarizerAgent
 
+        if self._prompts is not None:
+            ctx_system = self._prompts.get_system("archive/context_archive")
+            kn_system = self._prompts.get_system("archive/knowledge_archive")
+        else:
+            ctx_system = SummarizerAgent.PROMPT_CONTEXT_ARCHIVE
+            kn_system = SummarizerAgent.PROMPT_KNOWLEDGE_ARCHIVE
+
         context_parts: list[str] = []
         knowledge_parts: list[str] = []
 
@@ -106,18 +129,36 @@ class DualLLMArchiveGenerationStrategy(ArchiveGenerationStrategy):
             seg_mappings = [original_mappings[i] for i in indices]
             inputs = self._input_policy.build_inputs(seg_mappings, context, reason)
 
+            if self._prompts is not None:
+                ctx_user = self._prompts.get_user(
+                    "archive/context_archive",
+                    reason=reason.value,
+                    transcript=inputs.context_transcript.strip(),
+                )
+            else:
+                ctx_user = self._prompt_input(inputs.context_transcript, reason)
+
             context_summary = await self._summarizer.summarize(
-                self._prompt_input(inputs.context_transcript, reason),
-                prompt=SummarizerAgent.PROMPT_CONTEXT_ARCHIVE,
+                ctx_user,
+                prompt=ctx_system,
                 max_tokens=self._context_max_tokens,
             )
             normalized_context = normalize_memory_summary(context_summary)
             if normalized_context:
                 context_parts.append(normalized_context)
 
+            if self._prompts is not None:
+                kn_user = self._prompts.get_user(
+                    "archive/knowledge_archive",
+                    reason=reason.value,
+                    transcript=inputs.knowledge_transcript.strip(),
+                )
+            else:
+                kn_user = self._prompt_input(inputs.knowledge_transcript, reason)
+
             knowledge_summary = await self._summarizer.summarize(
-                self._prompt_input(inputs.knowledge_transcript, reason),
-                prompt=SummarizerAgent.PROMPT_KNOWLEDGE_ARCHIVE,
+                kn_user,
+                prompt=kn_system,
                 max_tokens=self._knowledge_max_tokens,
                 temperature=0.2,
             )
@@ -127,14 +168,11 @@ class DualLLMArchiveGenerationStrategy(ArchiveGenerationStrategy):
 
         all_inputs = self._input_policy.build_inputs(original_mappings, context, reason)
 
-        if not context_parts or not knowledge_parts:
-            return ArchiveGenerationResult(writes=(), inputs=all_inputs)
+        writes: list[ArchiveWrite] = []
 
-        joined_context = "\n---\n".join(context_parts)
-        joined_knowledge = "\n---\n".join(knowledge_parts)
-
-        return ArchiveGenerationResult(
-            writes=(
+        if context_parts:
+            joined_context = "\n---\n".join(context_parts)
+            writes.append(
                 ArchiveWrite(
                     channel=ArchiveChannel.CONTEXT,
                     summary=joined_context,
@@ -144,7 +182,12 @@ class DualLLMArchiveGenerationStrategy(ArchiveGenerationStrategy):
                         "generation_strategy": "dual_llm",
                         "prompt": "context_archive",
                     },
-                ),
+                )
+            )
+
+        if knowledge_parts:
+            joined_knowledge = "\n---\n".join(knowledge_parts)
+            writes.append(
                 ArchiveWrite(
                     channel=ArchiveChannel.KNOWLEDGE,
                     summary=joined_knowledge,
@@ -154,8 +197,11 @@ class DualLLMArchiveGenerationStrategy(ArchiveGenerationStrategy):
                         "generation_strategy": "dual_llm",
                         "prompt": "knowledge_archive",
                     },
-                ),
-            ),
+                )
+            )
+
+        return ArchiveGenerationResult(
+            writes=tuple(writes),
             inputs=all_inputs,
         )
 
@@ -267,7 +313,9 @@ class DualLLMArchiveGenerationStrategy(ArchiveGenerationStrategy):
                     mapping["content"] = msg.content
                 if msg.tool_call_id is not None:
                     mapping["tool_call_id"] = msg.tool_call_id
-                result.append(mapping)
+                if msg.tool_calls:
+                    mapping["tool_calls"] = list(msg.tool_calls)
+                result.append(mapping)  # type: ignore[arg-type]
             else:
                 raise TypeError(
                     f"Expected ArchiveInputMessage or Mapping, got {type(msg).__name__}"

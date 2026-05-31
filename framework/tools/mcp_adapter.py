@@ -32,7 +32,6 @@ class MCPToolAdapter:
 
     Supports:
     - Config-driven MCP server connections
-    - Tool filtering (whitelist/blacklist)
     - Tool name prefixing (to avoid conflicts)
     - Auto-reconnect and error handling
 
@@ -51,13 +50,6 @@ class MCPToolAdapter:
         default_prefix: bool = True,
         tool_timeout: int = _DEFAULT_TOOL_TIMEOUT,
     ):
-        """Initialize MCP adapter.
-
-        Args:
-            mcp_manager: MCP client manager instance
-            default_prefix: whether to prefix tool names with server name (default True)
-            tool_timeout: default timeout for tool calls in seconds
-        """
         if mcp_manager is None:
             raise ValueError("mcp_manager is required")
         self.mcp_manager = mcp_manager
@@ -67,16 +59,12 @@ class MCPToolAdapter:
     async def register_tools(
         self,
         registry: ToolRegistry,
-        server_filter: list[str] | None = None,
-        tool_filter: dict[str, list[str]] | None = None,
         prefix: bool | None = None,
     ) -> list[str]:
-        """Register MCP tools to ToolRegistry.
+        """Register all connected MCP servers' tools to ToolRegistry.
 
         Args:
             registry: tool registry
-            server_filter: server whitelist, None means all servers
-            tool_filter: tool whitelist, format {server_name: [tool_names]}
             prefix: whether to add server prefix, None uses default_prefix
 
         Returns:
@@ -86,25 +74,14 @@ class MCPToolAdapter:
         registered: list[str] = []
 
         for server_name in self.mcp_manager.connected_servers:
-            if server_filter and server_name not in server_filter:
-                continue
-
             try:
                 tools = await self.mcp_manager.list_tools(server_name)
             except Exception as e:
                 logger.warning("Failed to list tools from %s: %s", server_name, e)
                 continue
 
-            allowed_tools = None
-            if tool_filter and server_name in tool_filter:
-                allowed_tools = set(tool_filter[server_name])
-
             for tool_info in tools:
                 tool_name = tool_info["name"]
-
-                if allowed_tools and tool_name not in allowed_tools:
-                    continue
-
                 parameters = tool_info.get("inputSchema", {"type": "object", "properties": {}})
 
                 tool = MCPTool(
@@ -188,16 +165,8 @@ class MCPToolRegistry(ToolRegistry):
         self._mcp_manager = mcp_manager
         self._tool_timeout = tool_timeout
 
-    async def initialize_from_config(
-        self,
-        server_filter: list[str] | None = None,
-        tool_filter: dict[str, list[str]] | None = None,
-    ) -> list[str]:
+    async def initialize_from_config(self) -> list[str]:
         """Initialize MCP tools from config.
-
-        Args:
-            server_filter: server whitelist
-            tool_filter: tool whitelist
 
         Returns:
             list of registered tool names
@@ -210,11 +179,7 @@ class MCPToolRegistry(ToolRegistry):
             mcp_manager=self._mcp_manager,
             tool_timeout=self._tool_timeout,
         )
-        return await self._mcp_adapter.register_tools(
-            self,
-            server_filter=server_filter,
-            tool_filter=tool_filter,
-        )
+        return await self._mcp_adapter.register_tools(self)
 
     async def close(self) -> None:
         """Close MCP connections."""

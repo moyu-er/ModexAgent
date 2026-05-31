@@ -154,7 +154,7 @@ async def build_subagent_descriptor(
 
     Tool selection is config-driven via AgentConfig fields:
       - standard_tools: bool  → register file/shell/search tools
-      - mcp_filter: list[str] → which MCP servers to use (applied by caller)
+      - standard_tools: bool → register file/shell/search tools
     """
     subagent_name = agent_cfg.name
 

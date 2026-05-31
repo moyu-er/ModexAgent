@@ -60,6 +60,17 @@ def _is_meaningless_summary(summary: str) -> bool:
         if text == phrase or text == phrase + ".":
             return True
 
+    # Reject summaries that are raw tool-call XML (LLM hallucination — the
+    # model echoed tool-call markup instead of producing a summary).
+    _tool_xml_patterns = (
+        "<minimax:tool_call>",
+        "<tool_call>",
+        "<function_call>",
+        "<invoke name=",
+    )
+    if any(p in text for p in _tool_xml_patterns):
+        return True
+
     return False
 
 

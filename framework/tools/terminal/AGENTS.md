@@ -205,9 +205,17 @@ bash output -> pywinpty -> visible host -> socket -> agent
 bash output -> pywinpty -> visible host -> stdout (visible window)
 ```
 
-### Unix: TmuxPtyBackend
+### Unix: PexpectPtyBackend (primary) + TmuxPtyBackend (fallback)
 
-Uses tmux for persistent shared terminal sessions.
+Linux uses a degradation chain: `PexpectPtyBackend` (native PTY via pexpect) → `TmuxPtyBackend` (tmux sessions).
+`LinuxTerminalManager` auto-detects available backends and falls back gracefully.
+`create_pty_backend()` checks pexpect availability first; if unavailable, falls back to tmux.
+
+### Windows: VisibleWindowsPtyBackend + WindowsHiddenPtyBackend
+
+Two Windows backends: visible (OS console window, human can observe/intervene) and hidden (headless, no visible window).
+`WindowsTerminalManager` selects the appropriate backend.
+`create_pty_backend()` on Windows uses `WindowsHiddenPtyBackend` by default.
 
 ### Fallback: SubprocessExecutor
 
@@ -262,12 +270,25 @@ terminal:
 
 | File | Purpose |
 |------|---------|
-| `framework/tools/terminal/manager.py` | Session registry, default terminal, LRU, persistence |
-| `framework/tools/terminal/session.py` | Per-tab execution, timeout XML, cleanup, history |
-| `framework/tools/terminal/tool.py` | LLM terminal management tool (open/close/list/select/interrupt) |
-| `framework/tools/terminal/prompt.py` | Prompt detection, ANSI/DA1 stripping, startup drain |
-| `framework/tools/terminal/types.py` | `ShellFamily`, `ShellInfo`, `Platform`, `detect_platform_shell` |
-| `framework/tools/standard/shell_tool.py` | LLM shell tool with executor selection |
-| `framework/tools/terminal/backends/visible_windows.py` | Visible Windows backend parent side |
-| `framework/tools/terminal/backends/visible_windows_host.py` | Visible console helper process |
-| `framework/tools/terminal/backends/tmux_pty.py` | Unix tmux backend |
+| `manager.py` | Session registry, default terminal, LRU, persistence |
+| `managers.py` | `WindowsTerminalManager`, `LinuxTerminalManager` — platform-specific manager variants with auto-detection |
+| `session.py` | Per-tab execution, timeout XML, cleanup, history |
+| `tool.py` | LLM terminal management tool (open/close/list/select/interrupt) |
+| `process_tool.py` | Process management tool — list/kill processes |
+| `process_registry.py` | Process tracking and registry |
+| `command_tool.py` | Command execution tool |
+| `prompt.py` | Prompt detection, ANSI/DA1 stripping, startup drain |
+| `types.py` | `ShellFamily`, `ShellInfo`, `Platform`, `detect_platform_shell` |
+| `config.py` | Terminal configuration |
+| `state_store.py` | Terminal state persistence |
+| `results.py` | Result types |
+| `pty_keys.py` | PTY key constants |
+| `subprocess_tool.py` | Subprocess-based execution fallback |
+| `backends/base.py` | `TerminalBackend` ABC |
+| `backends/factory.py` | `create_pty_backend()` — platform-auto backend selection |
+| `backends/visible_windows.py` | Visible Windows backend (winpty) — parent side |
+| `backends/visible_windows_host.py` | Visible console helper process |
+| `backends/windows_hidden.py` | `WindowsHiddenPtyBackend` — hidden Windows PTY backend |
+| `backends/pexpect_pty.py` | `PexpectPtyBackend` — Linux native PTY via pexpect |
+| `backends/tmux_pty.py` | `TmuxPtyBackend` — Unix tmux backend |
+| `../standard/shell_tool.py` | LLM shell tool with executor selection |

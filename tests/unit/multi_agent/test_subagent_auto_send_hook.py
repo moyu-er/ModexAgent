@@ -328,3 +328,179 @@ class TestSubagentAutoSendHook:
         assert inbox_key == "conv_001:qq_bot"
         assert envelope.agent_session_id == "conv_001:qq_bot"
         assert envelope.target.name == "qq_bot"
+
+    # ------------------------------------------------------------------
+    # 14. Skip auto-forward when stop_reason is max_iterations
+    # ------------------------------------------------------------------
+
+    async def test_skips_auto_forward_when_max_iterations(self):
+        """stop_reason=max_iterations → bus.send is NOT called.
+        MaxIterationNotifyHook handles this case; SubagentAutoSendHook must not duplicate."""
+        bus = self._make_bus()
+        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
+        ctx = self._make_ctx([])
+        result = AgentResult(content="agent ran out of steps", stop_reason="max_iterations")
+
+        await hook.after_turn(ctx, result)
+
+        bus.send.assert_not_awaited()
+
+    # ------------------------------------------------------------------
+    # 15. Still auto-forwards with normal stop reason (no regression)
+    # ------------------------------------------------------------------
+
+    async def test_still_auto_forwards_when_normal_stop_reason(self):
+        """stop_reason='completed' (not max_iterations) → auto-forward still fires."""
+        bus = self._make_bus()
+        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
+        ctx = self._make_ctx([])
+        result = AgentResult(content="Task done.", stop_reason="completed")
+
+        await hook.after_turn(ctx, result)
+
+        bus.send.assert_awaited_once()
+
+    async def test_still_auto_forwards_when_no_stop_reason(self):
+        """stop_reason is None (default) → auto-forward still fires."""
+        bus = self._make_bus()
+        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
+        ctx = self._make_ctx([])
+        result = AgentResult(content="Task done.")
+
+        await hook.after_turn(ctx, result)
+
+        bus.send.assert_awaited_once()
+
+    # ------------------------------------------------------------------
+    # 16. Default hook is safe — no-op when agent_bus is None
+    # ------------------------------------------------------------------
+
+    async def test_noop_when_agent_bus_is_none(self):
+        """Default constructor (agent_bus=None) → after_turn is a no-op, no crash."""
+        hook = SubagentAutoSendHook()
+        ctx = self._make_ctx([])
+        result = AgentResult(content="Some output.")
+
+        # Must not raise
+        await hook.after_turn(ctx, result)
+
+
+# ── MaxIterationNotifyHook + SubagentAutoSendHook non-overlap tests ──
+
+
+class TestMaxIterationAndAutoSendNonOverlap:
+    """Prove that SubagentAutoSendHook and MaxIterationNotifyHook don't duplicate.
+
+    Semantics:
+      - normal stop, no send_to_agent → SubagentAutoSendHook auto-forwards
+      - max_iterations stop              → MaxIterationNotifyHook notifies, SubagentAutoSendHook stays silent
+    """
+
+    @staticmethod
+    def _make_ctx(session_id="conv_001:sub", runtime_mgr=None):
+        from unittest.mock import MagicMock
+
+        history = ListMessageHistory([])
+        identity = TurnIdentity(agent_id="sub", session_id=session_id, turn_id="t1")
+        state = TurnStateBase(identity=identity, agent_kind=AgentKind.REACT, phase=TurnPhase.RUNNING)
+        services = AgentRuntimeServices(runtime_context_manager=runtime_mgr)
+        return AgentContext(
+            system_prompt="",
+            history=history,
+            tool_manager=MagicMock(spec=ToolManager),
+            session_id=session_id,
+            runtime=AgentRuntime(services=services, state=state),
+            identity=identity,
+        )
+
+    def _make_auto_send_hook(self, bus, name="sub"):
+        return SubagentAutoSendHook(agent_bus=bus, self_name=name, parent_name="main")
+
+    # ── MaxIterationNotifyHook tests ──
+
+    @staticmethod
+    def _make_notify_svc():
+        svc = AsyncMock()
+        svc.notify = AsyncMock()
+        return svc
+
+    async def test_maxiter_notify_fires_when_max_iterations(self):
+        """MaxIterationNotifyHook sends notification when stop_reason is max_iterations."""
+        from framework.hook.notification import MaxIterationNotifyHook
+
+        svc = self._make_notify_svc()
+        hook = MaxIterationNotifyHook(notification_service=svc)
+        ctx = self._make_ctx()
+        result = AgentResult(content="Ran out.", stop_reason="max_iterations")
+
+        await hook.after_turn(ctx, result)
+
+        svc.notify.assert_awaited_once()
+
+    async def test_maxiter_notify_silent_when_normal_stop(self):
+        """MaxIterationNotifyHook does NOT notify when stop_reason is normal."""
+        from framework.hook.notification import MaxIterationNotifyHook
+
+        svc = self._make_notify_svc()
+        hook = MaxIterationNotifyHook(notification_service=svc)
+        ctx = self._make_ctx()
+        result = AgentResult(content="Done.", stop_reason="completed")
+
+        await hook.after_turn(ctx, result)
+
+        svc.notify.assert_not_awaited()
+
+    async def test_maxiter_notify_noop_when_svc_is_none(self):
+        """Default constructor → after_turn returns without raising."""
+        from framework.hook.notification import MaxIterationNotifyHook
+
+        hook = MaxIterationNotifyHook()
+        ctx = self._make_ctx()
+        result = AgentResult(content="Done.", stop_reason="max_iterations")
+
+        # Must not raise
+        await hook.after_turn(ctx, result)
+
+    # ── Non-overlap at max_iterations ──
+
+    async def test_at_maxiter_only_notify_fires_not_auto_send(self):
+        """max_iterations → MaxIterationNotifyHook notifies, SubagentAutoSendHook is silent."""
+        from unittest.mock import MagicMock
+        from framework.hook.notification import MaxIterationNotifyHook
+
+        bus = MagicMock()
+        bus.send = AsyncMock()
+        notify_svc = self._make_notify_svc()
+
+        auto_send = self._make_auto_send_hook(bus)
+        maxiter_hook = MaxIterationNotifyHook(notification_service=notify_svc)
+        ctx = self._make_ctx()
+        result = AgentResult(content="Out of steps.", stop_reason="max_iterations")
+
+        await maxiter_hook.after_turn(ctx, result)
+        await auto_send.after_turn(ctx, result)
+
+        notify_svc.notify.assert_awaited_once()
+        bus.send.assert_not_awaited()
+
+    # ── Non-overlap at normal stop ──
+
+    async def test_at_normal_stop_only_auto_send_fires_not_maxiter_notify(self):
+        """Normal stop → SubagentAutoSendHook auto-forwards, MaxIterationNotifyHook is silent."""
+        from unittest.mock import MagicMock
+        from framework.hook.notification import MaxIterationNotifyHook
+
+        bus = MagicMock()
+        bus.send = AsyncMock()
+        notify_svc = self._make_notify_svc()
+
+        auto_send = self._make_auto_send_hook(bus)
+        maxiter_hook = MaxIterationNotifyHook(notification_service=notify_svc)
+        ctx = self._make_ctx()
+        result = AgentResult(content="Task done.", stop_reason="completed")
+
+        await auto_send.after_turn(ctx, result)
+        await maxiter_hook.after_turn(ctx, result)
+
+        bus.send.assert_awaited_once()
+        notify_svc.notify.assert_not_awaited()

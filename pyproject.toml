@@ -46,7 +46,6 @@ storage = [
   "sentence-transformers>=2.2.0",
   "chromadb>=0.4.0",
   "aiosqlite>=0.19.0",
-  "mem0ai>=0.1.0",
 ]
 session = ["sqlalchemy[asyncio]>=2.0.0"]
 sandbox = ["docker>=6.0.0", "e2b-code-interpreter>=0.1.0"]
@@ -65,6 +64,7 @@ skills = [
 terminal = [
   "pywinpty>=3.0; sys_platform == 'win32'",
   "pexpect>=4.0; sys_platform != 'win32'",
+  "libtmux>=0.15.0; sys_platform != 'win32'",
 ]
 all = ["ModexAgent[llm,storage,session,sandbox,gateway,skills,terminal]"]
 

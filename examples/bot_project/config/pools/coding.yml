@@ -9,7 +9,6 @@ llm:
 
 mcp:
   enabled: true
-  config_file: "mcp/coding_mcp.json"
 
 terminal:
   storage_dir: "data/terminals/coding"
@@ -23,7 +22,7 @@ memory:
     keep_ratio_for_token: 0.3
   archive: {enabled: true}
   knowledge: {enabled: true, default_templates_dir: "templates/knowledge"}
-  dream_engine: {enabled: true, interval: 600, min_archive_count: 10, max_archive_count: 50, max_batch_size: 25}
+  dream_engine: {enabled: true, interval: 600, min_archive_count: 1, max_archive_count: 50, max_batch_size: 25}
   governance:
     lossy_compaction:
       tool_result_head_chars: 2000
@@ -35,4 +34,4 @@ agents:
     max_steps: 100
     standard_tools: true
     use_terminal: true
-    # skills auto-discovered from skills/coding/coding/ by convention
+    terminal_visibility: true

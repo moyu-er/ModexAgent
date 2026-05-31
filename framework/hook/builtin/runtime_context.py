@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from framework.core.tool_manager import ToolResult
+
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
 
@@ -58,11 +60,13 @@ class RuntimeContextHook:
 
         result_map: dict[str | None, str] = {}
         if results:
-            result_map = {
-                msg.get("tool_call_id"): msg.get("content", "")
-                for msg in results
-                if isinstance(msg, dict) and msg.get("role") == "tool"
-            }
+            for r in results:
+                if isinstance(r, ToolResult):
+                    result_map[r.call_id] = (
+                        f"Error: {r.error}" if r.error else str(r.result)
+                    )
+                elif isinstance(r, dict) and r.get("role") == "tool":
+                    result_map[r.get("tool_call_id")] = r.get("content", "")
 
         for tool_call in pending:
             call_id = getattr(tool_call, "call_id", None)

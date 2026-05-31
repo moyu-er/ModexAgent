@@ -130,8 +130,9 @@ def test_archive_input_message_from_chat_message_assistant_strips_tool_calls() -
     assert msg.role == "assistant"
     assert msg.content == "Let me check."
     assert msg.tool_call_id is None
-    # tool_calls should not be a field on ArchiveInputMessage at all
-    assert not hasattr(msg, "tool_calls")
+    # tool_calls is now preserved for tool chain detection
+    assert len(msg.tool_calls) == 1
+    assert msg.tool_calls[0]["id"] == "call_1"
 
 
 def test_archive_input_message_from_chat_message_tool() -> None:
@@ -156,6 +157,32 @@ def test_archive_input_message_user_strips_metadata() -> None:
     assert msg.role == "user"
     assert msg.content == "hi"
     assert msg.tool_call_id is None
+
+
+def test_archive_input_message_preserves_tool_calls() -> None:
+    """ArchiveInputMessage.from_dict must preserve tool_calls from assistant messages."""
+    msg = {
+        "role": "assistant",
+        "content": "I will search for files.",
+        "tool_calls": [
+            {
+                "id": "call_abc",
+                "function": {
+                    "name": "shell",
+                    "arguments": '{"command": "find . -name \\"*.py\\""}',
+                },
+            }
+        ],
+    }
+    result = ArchiveInputMessage.from_dict(msg)
+    assert result.tool_calls == tuple(msg["tool_calls"])
+
+
+def test_archive_input_message_tool_calls_empty_when_absent() -> None:
+    """ArchiveInputMessage.from_dict returns empty tuple when no tool_calls."""
+    msg = {"role": "user", "content": "hello"}
+    result = ArchiveInputMessage.from_dict(msg)
+    assert result.tool_calls == ()
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +234,7 @@ async def test_dual_strategy_skips_nothing_outputs() -> None:
     assert result.writes == ()
 
 
-async def test_dual_strategy_requires_complete_archive_pair() -> None:
+async def test_dual_strategy_partial_success_one_channel() -> None:
     class PartialSummarizer(FakeSummarizer):
         async def summarize(
             self,
@@ -230,7 +257,8 @@ async def test_dual_strategy_requires_complete_archive_pair() -> None:
         CompressionReason.MESSAGE_COUNT,
     )
 
-    assert result.writes == ()
+    assert len(result.writes) == 1
+    assert result.writes[0].channel == ArchiveChannel.CONTEXT
 
 
 # ---------------------------------------------------------------------------
@@ -278,3 +306,121 @@ async def test_sliding_window_multiple_segments() -> None:
     assert len(result.writes) == 2
     # With 10 messages and tiny budget, should have more than 2 calls
     assert len(summarizer.calls) > 2
+
+
+# ---------------------------------------------------------------------------
+# Independent channel generation tests (Task 2 fix)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_archive_channels_independent_success() -> None:
+    """Context and knowledge archives are generated independently."""
+    summarizer = FakeSummarizer()
+    strategy = DualLLMArchiveGenerationStrategy(summarizer=summarizer)
+
+    messages = [
+        ArchiveInputMessage(role="user", content="hello"),
+        ArchiveInputMessage(role="assistant", content="hi there"),
+    ]
+
+    # Force context to succeed but knowledge to fail
+    original = summarizer.summarize
+
+    async def mock_summarize(
+        text: str,
+        *,
+        prompt: str | None = None,
+        max_tokens: int = 500,
+        temperature: float = 0.3,
+    ) -> str:
+        if "Context Archive" in (prompt or ""):
+            return "## Situation\n- context summary"
+        return ""  # Knowledge returns empty
+
+    summarizer.summarize = mock_summarize  # type: ignore[method-assign]
+
+    result = await strategy.generate(
+        messages,
+        MemoryContext(session_id="s1"),
+        CompressionReason.MESSAGE_COUNT,
+    )
+
+    assert len(result.writes) == 1
+    assert result.writes[0].channel == ArchiveChannel.CONTEXT
+
+
+@pytest.mark.asyncio
+async def test_archive_both_channels_empty_returns_no_writes() -> None:
+    """When both channels produce empty content, no writes are generated."""
+    summarizer = FakeSummarizer()
+    strategy = DualLLMArchiveGenerationStrategy(summarizer=summarizer)
+
+    messages = [
+        ArchiveInputMessage(role="user", content="hello"),
+    ]
+
+    async def mock_summarize(
+        text: str,
+        *,
+        prompt: str | None = None,
+        max_tokens: int = 500,
+        temperature: float = 0.3,
+    ) -> str:
+        return ""  # Both channels return empty
+
+    summarizer.summarize = mock_summarize  # type: ignore[method-assign]
+
+    result = await strategy.generate(
+        messages,
+        MemoryContext(session_id="s1"),
+        CompressionReason.MESSAGE_COUNT,
+    )
+
+    assert len(result.writes) == 0
+
+
+# ---------------------------------------------------------------------------
+# MAJOR 1: Archive generation uses PromptRegistry
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dual_llm_strategy_uses_prompt_registry_when_provided() -> None:
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from framework.memory.prompts import PromptRegistry
+
+    with TemporaryDirectory() as tmpdir:
+        prompts_dir = Path(tmpdir)
+        (prompts_dir / "archive").mkdir()
+        (prompts_dir / "archive" / "context_archive_system.md").write_text("REGISTRY_CTX_SYSTEM")
+        (prompts_dir / "archive" / "knowledge_archive_system.md").write_text("REGISTRY_KN_SYSTEM")
+
+        registry = PromptRegistry(prompts_dir)
+        summarizer = FakeSummarizer()
+        strategy = DualLLMArchiveGenerationStrategy(
+            summarizer=summarizer,
+            prompts=registry,
+        )
+
+        messages = [
+            ArchiveInputMessage(role="user", content="hello"),
+            ArchiveInputMessage(role="assistant", content="hi there"),
+        ]
+
+        result = await strategy.generate(
+            messages,
+            MemoryContext(session_id="s1"),
+            CompressionReason.MESSAGE_COUNT,
+        )
+
+        assert len(summarizer.calls) >= 1
+        for _, prompt_text, _ in summarizer.calls:
+            assert (
+                "REGISTRY_CTX_SYSTEM" in prompt_text
+                or "REGISTRY_KN_SYSTEM" in prompt_text
+                or "Context Archive" in prompt_text
+                or "Knowledge Archive" in prompt_text
+            )

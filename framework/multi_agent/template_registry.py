@@ -55,7 +55,7 @@ class AgentTemplateRegistry:
                         max_steps=raw.get("max_steps", 20),
                         standard_tools=raw.get("standard_tools", True),
                         use_terminal=raw.get("use_terminal", True),
-                        mcp_filter=raw.get("mcp_filter"),
+                        terminal_visibility=raw.get("terminal_visibility", True),
                         memory=(
                             MemoryConfig.model_validate(raw["memory"])
                             if raw.get("memory") else None

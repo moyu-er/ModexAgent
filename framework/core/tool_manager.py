@@ -259,16 +259,28 @@ class ToolResult:
         """转换为 LLM message 格式
 
         Returns:
-            OpenAI 格式的 tool message
+            OpenAI 格式的 tool message。终端工具的 XML 格式会附加
+            content_format 和 truncatable_paths 元数据，供治理层截断。
         """
         from .types import MessageRole
         content = self.result if self.success else f"Error: {self.error}"
-        return {
+        content_str = str(content) if content is not None else ""
+        msg: dict[str, Any] = {
             "role": MessageRole.TOOL.value,
             "tool_call_id": self.call_id or "",
             "name": self.tool_name,
-            "content": str(content) if content is not None else "",
+            "content": content_str,
         }
+        # Detect terminal tool XML and declare truncation metadata
+        try:
+            from framework.tools.terminal.types import get_terminal_xml_truncatable_paths
+        except ImportError:
+            return msg
+        paths = get_terminal_xml_truncatable_paths(content_str)
+        if paths is not None:
+            msg["content_format"] = "xml"
+            msg["truncatable_paths"] = paths
+        return msg
 
 
 class ToolManager(ABC):

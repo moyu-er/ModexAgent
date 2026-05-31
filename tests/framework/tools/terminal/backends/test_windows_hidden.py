@@ -143,3 +143,17 @@ async def test_hidden_backend_drain_startup() -> None:
         await backend.drain_startup()
     finally:
         await backend.terminate()
+
+
+def test_hidden_backend_read_does_not_buffer() -> None:
+    """read() returns raw output without appending to the sliding buffer."""
+    import asyncio
+
+    backend = WindowsHiddenPtyBackend()
+    assert backend._output_buffer is not None
+    assert backend._output_buffer.total_chars == 0
+    # Verify read() returns empty string (no proc) without buffering
+    with pytest.raises(RuntimeError, match="PTY not started"):
+        asyncio.get_event_loop().run_until_complete(backend.read(timeout=0.1))
+    # Buffer should still be empty after the failed read attempt
+    assert backend._output_buffer.total_chars == 0

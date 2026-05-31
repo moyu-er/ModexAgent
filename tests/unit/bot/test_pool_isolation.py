@@ -105,19 +105,20 @@ class TestPerPoolLLMIsolation:
 
 
 class TestPerPoolMcpIsolation:
-    def test_different_mcp_config_files(self):
-        """Each pool has its own MCP config file."""
+    def test_mcp_config_dir_default(self):
+        """Each pool shares the same MCP config directory convention."""
         cfg_main = PoolConfig(
             llm=LLMConfig(model="test", api_key="k"),
             agents=[AgentConfig(name="main", role="main")],
-            mcp=MCPConfig(enabled=True, config_file="mcp/main_mcp.json"),
+            mcp=MCPConfig(enabled=True),
         )
         cfg_coding = PoolConfig(
             llm=LLMConfig(model="test", api_key="k"),
             agents=[AgentConfig(name="coding", role="main")],
-            mcp=MCPConfig(enabled=True, config_file="mcp/coding_mcp.json"),
+            mcp=MCPConfig(enabled=True),
         )
-        assert cfg_main.mcp.config_file != cfg_coding.mcp.config_file
+        # Both use the same config_dir, but agents load different files
+        assert cfg_main.mcp.config_dir == cfg_coding.mcp.config_dir
 
     def test_mcp_can_be_none(self):
         """Pool can have no MCP config."""

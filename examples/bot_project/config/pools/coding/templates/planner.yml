@@ -3,7 +3,6 @@ description: "Task planner — breaks down complex goals into structured impleme
 max_steps: 50
 standard_tools: true
 use_terminal: false
-mcp_filter: []
 memory:
   short_term: {max_messages: 50, max_tokens: 50000}
   long_term: { enabled: true }

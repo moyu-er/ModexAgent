@@ -23,7 +23,7 @@ def setup_logging() -> None:
     )
 
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.DEBUG)
+    root_logger.setLevel(logging.INFO)
     root_logger.handlers = []
 
     console_handler = logging.StreamHandler(sys.stdout)
@@ -37,9 +37,9 @@ def setup_logging() -> None:
         backupCount=10,
         encoding="utf-8",
     )
-    file_handler.setLevel(logging.DEBUG)
+    file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(logging.Formatter(detailed_format))
     root_logger.addHandler(file_handler)
 
-    for name in ["asyncio", "LiteLLM", "botpy", "mcp", "httpx", "httpcore", "urllib3"]:
+    for name in ["asyncio", "LiteLLM", "litellm", "botpy", "mcp", "httpx", "httpcore", "urllib3"]:
         logging.getLogger(name).setLevel(logging.WARNING)

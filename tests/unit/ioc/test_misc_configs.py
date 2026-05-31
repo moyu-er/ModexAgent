@@ -12,10 +12,10 @@ class TestPluginConfig:
     def test_with_plugin_configs(self) -> None:
         cfg = PluginConfig(
             enabled=True,
-            configurations={"mem0_memory": {"enabled": True}},
+            configurations={"example_plugin": {"enabled": True}},
         )
         assert cfg.enabled is True
-        assert cfg.configurations["mem0_memory"]["enabled"] is True
+        assert cfg.configurations["example_plugin"]["enabled"] is True
 
 
 class TestObservabilityConfig:

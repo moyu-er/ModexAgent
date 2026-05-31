@@ -1,4 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
+<!-- Updated: 2026-05-31 -->
 
 # security
 

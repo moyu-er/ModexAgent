@@ -1,0 +1,23 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["@playwright/mcp"]
+    },
+    "fetch": {
+      "type": "streamable_http",
+      "url": "https://mcp.api-inference.modelscope.net/1697ff30a27342/mcp",
+      "headers": {
+        "Authorization": "Bearer ${MCP_BEARER_TOKEN}"
+      }
+    },
+    "MiniMax": {
+      "command": "uvx",
+      "args": ["minimax-coding-plan-mcp", "-y"],
+      "env": {
+        "MINIMAX_API_KEY": "${MINIMAX_MCP_API_KEY}",
+        "MINIMAX_API_HOST": "https://api.minimaxi.com"
+      }
+    }
+  }
+}

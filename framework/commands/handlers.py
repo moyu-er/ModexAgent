@@ -225,5 +225,5 @@ class SkillCommandHandler:
             invocation=invocation,
             metadata={"skill_name": skill.name, "skill_location": skill.location or ""},
             content_format=ContentFormat.XML,
-            truncatable_paths=["skill", "user_input"],
+            truncatable_paths=["user_input"],
         )

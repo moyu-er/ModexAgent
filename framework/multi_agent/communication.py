@@ -33,6 +33,51 @@ logger = logging.getLogger(__name__)
 _TASK_ID_BYTES = 8
 
 
+async def _load_per_agent_mcp(
+    tool_manager: Any,
+    mcp_json: Path,
+    agent_name: str,
+) -> None:
+    """Load MCP servers from a per-agent JSON file and register as tools."""
+    import json
+
+    from framework.ioc.configs.app import _resolve_env_in
+    from framework.tools.mcp import MCPClientManager
+    from framework.tools.mcp_adapter import MCPToolAdapter
+    from framework.tools.registry import ToolRegistry
+
+    with open(mcp_json, encoding="utf-8") as f:
+        raw = json.load(f)
+
+    servers = raw.get("mcpServers") or raw.get("servers") or {}
+    if not servers:
+        return
+
+    servers = _resolve_env_in(servers)
+    manager = MCPClientManager(config=servers)
+    await manager.initialize()
+
+    if not manager.connected_servers:
+        logger.warning("Agent %s: MCP config %s — no servers connected", agent_name, mcp_json.name)
+        return
+
+    adapter = MCPToolAdapter(mcp_manager=manager, default_prefix=True, tool_timeout=60)
+    registry = ToolRegistry()
+    await adapter.register_tools(registry=registry)
+
+    registered = 0
+    for name in registry.list_tools():
+        tool = registry.get(name)
+        if tool is not None:
+            tool_manager.register(tool)
+            registered += 1
+
+    logger.info(
+        "Agent %s: %d MCP tools loaded from %s",
+        agent_name, registered, mcp_json.name,
+    )
+
+
 @dataclass(frozen=True)
 class AgentSendResult:
     """Result returned by AgentCommunicationService after a send attempt."""
@@ -72,7 +117,6 @@ class AgentCommunicationService:
         pool_llm_model: str | None = None,
         pool_llm_temperature: float = 0.7,
         pool_llm_max_tokens: int | None = None,
-        mcp_manager: Any | None = None,
         inbox_consumer: Any | None = None,
         notification_service: Any | None = None,
         main_agent_name: str | None = None,
@@ -92,7 +136,6 @@ class AgentCommunicationService:
         self._pool_llm_model = pool_llm_model
         self._pool_llm_temperature = pool_llm_temperature
         self._pool_llm_max_tokens = pool_llm_max_tokens
-        self._mcp_manager = mcp_manager
         self._inbox_consumer = inbox_consumer
         self._notification_service = notification_service
         self._main_agent_name = main_agent_name
@@ -312,7 +355,7 @@ class AgentCommunicationService:
         Includes:
         - Standard tools (file + shell + search) if template.standard_tools
         - Terminal tools if template.use_terminal
-        - MCP tools filtered by template.mcp_filter
+        - MCP tools from per-agent config ``config/mcp/{agentType}.json``
         - Communication tools (send_to_agent, list_communication_targets) — always
         """
         from framework.core.tool_manager import InMemoryToolManager, ToolManagerConfig
@@ -343,40 +386,17 @@ class AgentCommunicationService:
         # Persistent terminal tools (CommandTool etc.) — separate from standard_tools
         # use_terminal is reserved for future persistent terminal manager integration
 
-        # MCP tools from template.mcp_filter
-        if template.mcp_filter and self._mcp_manager is not None:
-            try:
-                from framework.tools.mcp_adapter import MCPToolAdapter
-                from framework.tools.registry import ToolRegistry
-
-                adapter = MCPToolAdapter(
-                    mcp_manager=self._mcp_manager,
-                    default_prefix=True,
-                    tool_timeout=60,
-                )
-                registry = ToolRegistry()
-                await adapter.register_tools(
-                    registry=registry,
-                    server_filter=template.mcp_filter,
-                )
-                mcp_count = 0
-                for name in registry.list_tools():
-                    tool = registry.get(name)
-                    if tool is not None:
-                        tm.register(tool)
-                        mcp_count += 1
-                if mcp_count == 0:
-                    logger.warning(
-                        "Subagent %s: mcp_filter=%s matched no tools "
-                        "(connected servers: %s)",
-                        agent_name, template.mcp_filter,
-                        self._mcp_manager.connected_servers,
+        # MCP tools from per-agent config file: config/mcp/{agentType}.json
+        if self._project_dir is not None:
+            mcp_json = self._project_dir / "config" / "mcp" / f"{template.agent_type}.json"
+            if mcp_json.exists():
+                try:
+                    await _load_per_agent_mcp(tm, mcp_json, agent_name)
+                except Exception:
+                    logger.exception(
+                        "Failed to load MCP tools for subagent %s from %s",
+                        agent_name, mcp_json,
                     )
-            except Exception:
-                logger.exception(
-                    "Failed to load MCP tools for subagent %s (filter=%s)",
-                    agent_name, template.mcp_filter,
-                )
 
         # Communication tools — always included so subagent can reply to parent
         subagent_address = AgentAddress(name=agent_name)

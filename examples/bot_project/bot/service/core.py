@@ -167,6 +167,10 @@ class BotService(AgentBuilderMixin):
         self.interceptor_chain: InterceptorChain | None = None
         self._safety_policy_cache: RuntimeSafetyPolicy | None = None
 
+        # Observability
+        self._event_bus: Any | None = None
+        self._trace_writer: Any | None = None
+
         # Approval
         self._approval_workspace: Path | None = None
         self._im_ui: IMUserInterface | None = None
@@ -283,11 +287,13 @@ class BotService(AgentBuilderMixin):
                 try:
                     from framework.tools.terminal import TerminalManager
 
+                    visibility: bool = getattr(main_cfg, 'terminal_visibility', True)
                     self.terminal_manager = TerminalManager(
                         max_terminals=getattr(self._app_config, 'terminal', {}).get('max_terminals', 5),
                         shell_info=shell_info,
+                        visibility=visibility,
                     )
-                    print(f"[OK] TerminalManager initialized ({shell_info.family.value}: {shell_info.path}, lazy)")
+                    print(f"[OK] TerminalManager initialized ({shell_info.family.value}: {shell_info.path}, {visibility}, lazy)")
                 except Exception as e:
                     logger.warning("TerminalManager initialization failed: %s", e)
                     self.terminal_manager = None
@@ -521,8 +527,19 @@ class BotService(AgentBuilderMixin):
         if self.tool_manager is None:
             raise RuntimeError("ToolManager is not initialized")
 
-        pipeline_hooks = [inbox_flush_hook]
+        pipeline_hooks: list[Any] = [inbox_flush_hook]
         pipeline_hooks.extend(self._collect_run_hooks())
+
+        # Pipeline mode observability
+        from framework.control import CallbackControlEventBus, ControlEventType
+        from framework.hook.builtin import ProgressReportHook, TraceFileWriter
+
+        self._event_bus = CallbackControlEventBus()
+        trace_dir = self._project_dir / "logs"
+        trace_dir.mkdir(exist_ok=True)
+        self._trace_writer = TraceFileWriter(path=trace_dir / "trace.jsonl")
+        await self._event_bus.subscribe(ControlEventType.AGENT_PROGRESS, self._trace_writer.handle)
+        pipeline_hooks.append(ProgressReportHook(event_bus=self._event_bus))
 
         # Build AgentRuntime via framework RuntimeAssembler
         runtime = await self._assemble_runtime(hooks=self._build_hook_runner(pipeline_hooks))
@@ -539,7 +556,6 @@ class BotService(AgentBuilderMixin):
             dream_interval=300,
             max_iterations=main_cfg.max_steps if main_cfg else 40,
             skill_manager=main_skill_manager,  # type: ignore[arg-type]
-            hooks=pipeline_hooks,
             hook_runner=self._build_hook_runner(pipeline_hooks),
             interceptor_chain=self.interceptor_chain,
 
@@ -586,6 +602,18 @@ class BotService(AgentBuilderMixin):
 
         # 4. Shared infra: Hooks & Interceptors
         shared_hooks = self._collect_run_hooks()
+
+        # 4b. Shared infra: Observability event bus + trace writer + progress report hook
+        from framework.control import CallbackControlEventBus, ControlEventType
+        from framework.hook.builtin import ProgressReportHook, TraceFileWriter
+
+        self._event_bus = CallbackControlEventBus()
+        trace_dir = self._project_dir / "logs"
+        trace_dir.mkdir(exist_ok=True)
+        self._trace_writer = TraceFileWriter(path=trace_dir / "trace.jsonl")
+        await self._event_bus.subscribe(ControlEventType.AGENT_PROGRESS, self._trace_writer.handle)
+        shared_hooks.append(ProgressReportHook(event_bus=self._event_bus))
+
         shared_hook_runner = self._build_hook_runner(shared_hooks)
         shared_interceptor_chain = self._build_interceptor_chain()
 
@@ -721,18 +749,19 @@ class BotService(AgentBuilderMixin):
     def _build_hook_runner(self, hooks: list[Any]) -> Any:
         """Build HookRunner from collected hooks with default HookSpec.
 
-        Explicitly injects RuntimeContextHook so SubagentAutoSendHook can detect
-        communication tool calls. Previously this was auto-injected by
-        AgentPipeline into its hooks list, but ReActAgent prefers hook_runner
-        and never falls back to hooks — causing the hook to be silently ignored.
+        Default hooks (always present):
+          - RuntimeContextHook — records tool calls for SubagentAutoSendHook
+          - SubagentAutoSendHook — fallback forward when send_to_agent not called
+          - MaxIterationNotifyHook — notify parent/user when max_iterations hit
         """
         from framework.hook import HookErrorPolicy, HookRunner, HookSpec
-        from framework.hook.builtin import RuntimeContextHook
+        from framework.hook.builtin import RuntimeContextHook, SubagentAutoSendHook
+        from framework.hook.notification import MaxIterationNotifyHook
 
         runner = HookRunner()
-        # RuntimeContextHook must be in hook_runner (not just hooks list)
-        # so that ReActAgent._call_hooks() actually dispatches it.
         runner.add(HookSpec(hook=RuntimeContextHook(), on_error=HookErrorPolicy.LOG))
+        runner.add(HookSpec(hook=SubagentAutoSendHook(), on_error=HookErrorPolicy.LOG))
+        runner.add(HookSpec(hook=MaxIterationNotifyHook(), on_error=HookErrorPolicy.LOG))
         for hook in hooks:
             runner.add(HookSpec(hook=hook, on_error=HookErrorPolicy.LOG))
         return runner
@@ -902,21 +931,6 @@ class BotService(AgentBuilderMixin):
         ctx = MemoryContext(session_id="default", user_id="default")
         await lt_mgr.ensure_defaults(ctx, defaults)
 
-        # Wire auto-consolidation into knowledge manager
-        summarizer = getattr(self, "_summarizer_agent", None)
-        if summarizer is not None and hasattr(lt_mgr, "_consolidation_fn"):
-            from framework.agents.summarizer.agent import SummarizerAgent
-
-            async def _consolidate(content: str, _file_name: str) -> str:
-                return await summarizer.summarize(
-                    content,
-                    prompt=SummarizerAgent.PROMPT_KNOWLEDGE_CONSOLIDATION,
-                    max_tokens=2000,
-                )
-
-            lt_mgr._consolidation_fn = _consolidate
-            print("   [OK] Knowledge auto-consolidation wired")
-
         print("   [OK] Long-term memory defaults ensured")
 
     async def _init_maintenance_task(
@@ -979,7 +993,6 @@ class BotService(AgentBuilderMixin):
             registry=self.memory_system.store_registry,
             max_batch_size=dream_cfg.max_batch_size,
             max_iterations=10,
-            summarizer=getattr(self, "_summarizer_agent", None),
             min_archive_count=dream_cfg.min_archive_count,
             max_archive_count=dream_cfg.max_archive_count,
         )
@@ -1038,6 +1051,9 @@ class BotService(AgentBuilderMixin):
                     await self.terminal_manager.close(name)
         with contextlib.suppress(BaseException):
             await self.input_adapter.stop()
+        if self._trace_writer is not None:
+            with contextlib.suppress(BaseException):
+                self._trace_writer.close()
         if self.broker:
             with contextlib.suppress(BaseException):
                 await self.broker.stop()

@@ -45,46 +45,41 @@ class InlineBuilder(SkillPromptBuilder):
 DEFAULT_PROGRESSIVE_PROMPT = (
     "You have access to the following skills. "
     "Use a file-reading tool to load the full content of a skill when you need it. "
-    "You can also use list_dir or read_file to browse skill resources (scripts, references, assets)."
+    "You can also browse skill resources (scripts, references, assets) in the skill directory."
 )
 
 
-def _render_skill_table(
+def _render_skill_xml(
     skills: list[Skill],
-    base_path: Path | None = None,
     prompt_template: str = DEFAULT_PROGRESSIVE_PROMPT,
 ) -> str:
-    """Render a ProgressiveBuilder-style Markdown table for skills."""
-    lines = [
+    """Render skills as a compact XML directory.
+
+    Only name, directory path, and description are included.
+    The LLM is expected to ``read_file`` the SKILL.md for full content.
+    """
+    from xml.sax.saxutils import escape as xml_escape
+
+    parts: list[str] = [
         "## Skills",
         "",
         prompt_template,
         "",
-        "| Skill | Description | Location | Resources |",
-        "|-------|-------------|----------|-----------|",
+        "<available_skills>",
     ]
     for skill in skills:
-        # Location: absolute path to SKILL.md (platform-native format)
-        loc = skill.location or ""
-        if loc:
-            loc = str(Path(loc).resolve())
-        # Resources: absolute path to the skill directory
-        resources = ""
-        if skill.location:
-            resources = str(Path(skill.location).parent.resolve())
-        meta_parts: list[str] = []
-        if skill.metadata.requires_tools:
-            meta_parts.append(f"tools: {', '.join(skill.metadata.requires_tools)}")
-        if skill.metadata.requires_bins:
-            meta_parts.append(f"bins: {', '.join(skill.metadata.requires_bins)}")
-        if skill.metadata.tags:
-            meta_parts.append(f"tags: {', '.join(skill.metadata.tags)}")
-        metadata = "; ".join(meta_parts)
-        lines.append(
-            f"| {skill.name} | {skill.description or ''} | {loc} | {resources} |"
+        dir_path = str(Path(skill.location).parent.resolve()) if skill.location else ""
+
+        parts.append(
+            f'  <skill name="{xml_escape(skill.name)}" '
+            f'directory="{xml_escape(dir_path)}">'
         )
-    lines.append("")
-    return "\n".join(lines).strip()
+        if skill.description:
+            parts.append(f'    <description>{xml_escape(skill.description)}</description>')
+        parts.append("  </skill>")
+
+    parts.append("</available_skills>")
+    return "\n".join(parts).strip()
 
 
 def _has_read_tool(context: ResolutionContext | None) -> bool:
@@ -125,7 +120,7 @@ class ProgressiveBuilder(SkillPromptBuilder):
         if not _has_read_tool(context):
             logger.info("ProgressiveBuilder downgrading to InlineBuilder (no read_file tool)")
             return await InlineBuilder().build(skills, context)
-        return _render_skill_table(skills, self._base_path, self._prompt_template)
+        return _render_skill_xml(skills, self._prompt_template)
 
 
 class HybridBuilder(SkillPromptBuilder):
@@ -158,7 +153,7 @@ class HybridBuilder(SkillPromptBuilder):
             if not _has_read_tool(context):
                 logger.info("HybridBuilder 'none' mode downgrading to InlineBuilder (no read_file tool)")
                 return await InlineBuilder().build(skills, context)
-            return _render_skill_table(skills, prompt_template=self._prompt_template)
+            return _render_skill_xml(skills, prompt_template=self._prompt_template)
         # "always" mode
         inline = [s for s in skills if s.metadata.always]
         directory = [s for s in skills if not s.metadata.always]
@@ -167,7 +162,7 @@ class HybridBuilder(SkillPromptBuilder):
             parts.append(await InlineBuilder().build(inline, context))
         if directory:
             if _has_read_tool(context):
-                parts.append(_render_skill_table(directory, prompt_template=self._prompt_template))
+                parts.append(_render_skill_xml(directory, prompt_template=self._prompt_template))
             else:
                 logger.info("HybridBuilder 'always' mode downgrading directory to InlineBuilder (no read_file tool)")
                 parts.append(await InlineBuilder().build(directory, context))

@@ -31,39 +31,40 @@ def _make_injectable_system(knowledge_dir: Path | None = None):
 
 @pytest.mark.asyncio
 async def test_injects_knowledge_directory_path(tmp_path):
-    """Should inject knowledge directory path into the system_prompt."""
+    """Should inject knowledge as XML with absolute file paths."""
     policy = FullInjectionPolicy()
     context = MemoryContext(session_id="s1", user_id="u1")
     system = _make_injectable_system(knowledge_dir=tmp_path.resolve())
 
     result = await policy.assemble(context=context, memory_system=system)
 
-    assert "Knowledge Directory" in result.system_prompt
+    assert "<agent_knowledge>" in result.system_prompt
     assert str(tmp_path.resolve()) in result.system_prompt
     assert "SOUL.md" in result.system_prompt
     assert "USER.md" in result.system_prompt
     assert "MEMORY.md" in result.system_prompt
+    assert 'file="' in result.system_prompt
 
 
 @pytest.mark.asyncio
-async def test_no_directory_section_when_knowledge_disabled():
-    """Should not inject directory section when get_knowledge_directory returns None."""
+async def test_no_injection_when_knowledge_disabled():
+    """Test when knowledge directory is None, we still get XML but no file paths."""
     policy = FullInjectionPolicy()
     context = MemoryContext(session_id="s1", user_id="u1")
     system = _make_injectable_system(knowledge_dir=None)
 
     result = await policy.assemble(context=context, memory_system=system)
 
-    assert "Knowledge Directory" not in result.system_prompt
+    if "<agent_knowledge>" in result.system_prompt:
+        assert 'file="' not in result.system_prompt
 
 
 @pytest.mark.asyncio
 async def test_directory_section_cross_platform_path(tmp_path):
-    """Should use resolve() for absolute path regardless of platform."""
+    """Should use resolve() for absolute path in file attributes."""
     policy = FullInjectionPolicy()
     context = MemoryContext(session_id="s1", user_id="u1")
 
-    # Use a path with subdirectories
     deep_dir = tmp_path / "data" / "memory" / "main" / "knowledge" / "default"
     deep_dir.mkdir(parents=True, exist_ok=True)
 
@@ -71,10 +72,9 @@ async def test_directory_section_cross_platform_path(tmp_path):
 
     result = await policy.assemble(context=context, memory_system=system)
 
-    assert "Knowledge Directory" in result.system_prompt
-    # Verify it's an absolute path by checking the injected path is absolute
+    assert "<agent_knowledge>" in result.system_prompt
     import re
-    match = re.search(r"`([^`]+)`", result.system_prompt)
+    match = re.search(r'file="([^"]+)"', result.system_prompt)
     assert match is not None
     injected_path = Path(match.group(1))
     assert injected_path.is_absolute()
@@ -96,3 +96,31 @@ def test_in_memory_storage_base_path():
 
     storage = InMemoryScopedStorage()
     assert storage.base_path is None
+
+
+@pytest.mark.asyncio
+async def test_knowledge_injection_uses_xml_with_absolute_paths():
+    """Knowledge injection wraps content in <agent_knowledge> XML with absolute paths."""
+    import sys
+    if sys.platform == "win32":
+        test_path = Path("C:\\tmp\\memory\\knowledge")
+    else:
+        test_path = Path("/tmp/memory/knowledge")
+
+    policy = FullInjectionPolicy()
+    context = MemoryContext(session_id="s1", user_id="u1")
+    system = _make_injectable_system(knowledge_dir=test_path)
+
+    result = await policy.assemble(context=context, memory_system=system)
+
+    assert "<agent_knowledge>" in result.system_prompt
+    assert "</agent_knowledge>" in result.system_prompt
+    assert 'file="' in result.system_prompt
+    assert 'SOUL.md' in result.system_prompt
+    assert 'USER.md' in result.system_prompt
+    assert 'MEMORY.md' in result.system_prompt
+    assert 'editable="true"' in result.system_prompt
+    assert 'editable="false"' in result.system_prompt
+    assert 'description="Your personality' in result.system_prompt
+    assert 'description="Information about the user' in result.system_prompt
+    assert 'description="Facts and context' in result.system_prompt

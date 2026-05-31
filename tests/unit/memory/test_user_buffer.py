@@ -259,12 +259,12 @@ def test_entry_from_message_captures_content_format():
             "role": "user",
             "content": '<command_context><skill>x</skill></command_context>',
             "content_format": ContentFormat.XML,
-            "truncatable_paths": ["command_context", "skill"],
+            "truncatable_paths": ["command_context"],
         },
         pruned_at=time.time(),
     )
     assert entry.content_format == ContentFormat.XML
-    assert entry.truncatable_paths == ["command_context", "skill"]
+    assert entry.truncatable_paths == ["command_context"]
 
 
 def test_entry_from_message_defaults_format_to_none():
@@ -303,20 +303,21 @@ async def test_urb_xml_truncation_preserves_structure(registry: InMemoryStoreReg
     layer_set = _make_layer_set(registry)
     ctx = MemoryContext(session_id="test-xml-trunc")
 
-    # Build a long XML skill message that exceeds max_user_chars (4000)
-    skill_content = "x" * 5000
+    # Build a long XML message that exceeds max_user_chars (4000)
+    # user_input is truncatable; skill content is preserved.
+    long_input = "y" * 5000
     xml_msg = (
         f'<command_context type="skill" name="test">\n'
-        f"<skill>\n{skill_content}\n</skill>\n"
+        f"<skill>short skill</skill>\n"
         f"</command_context>\n\n"
-        f"<user_input>\nquestion\n</user_input>"
+        f"<user_input>\n{long_input}\n</user_input>"
     )
     entry = UserBufferEntry.from_message(
         {
             "role": "user",
             "content": xml_msg,
             "content_format": ContentFormat.XML,
-            "truncatable_paths": ["command_context", "user_input", "skill"],
+            "truncatable_paths": ["command_context", "user_input"],
         },
         pruned_at=time.time(),
     )

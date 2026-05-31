@@ -1,11 +1,12 @@
 <!-- Parent: ../AGENTS.md -->
+<!-- Updated: 2026-05-31 -->
 
 # hook
 
 ## Purpose
-Lifecycle extension points -- lightweight observation, context injection, policy veto.
+Lifecycle extension points — lightweight observation, context injection, policy veto.
 Hooks execute at 9 defined `HookPoint`s and must be fast (default 10s timeout).
-Unlike Interceptors, hooks do NOT wrap execution -- they observe and optionally modify context.
+Unlike Interceptors, hooks do NOT wrap execution — they observe and optionally modify context.
 
 ## Key Files
 | File | Description |
@@ -17,7 +18,7 @@ Unlike Interceptors, hooks do NOT wrap execution -- they observe and optionally 
 ## Subdirectories
 | Directory | Purpose |
 |-----------|---------|
-| `builtin/` | 10 framework hooks -- logging, runtime_context, inbox_flush, subagent_auto_send, subagent_cleanup, dynamic_tool_filter, llm_output_guard, tool_result_transform, progress_report |
+| `builtin/` | 10 components -- 9 hooks (logging, runtime_context, inbox_flush, subagent_auto_send, subagent_cleanup, dynamic_tool_filter, llm_output_guard, tool_result_transform, progress_report) + TraceFileWriter (event subscriber) |
 
 ## HookPoint Dispatch
 | HookPoint | Method | When | Common Use |

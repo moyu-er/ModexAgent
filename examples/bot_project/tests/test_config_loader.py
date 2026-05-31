@@ -131,7 +131,9 @@ class TestConfigLoader:
     def test_load_mcp_config_with_stdio_server(self):
         with TemporaryDirectory() as tmp:
             config_dir = Path(tmp)
-            mcp_json = config_dir / "mcp.json"
+            mcp_dir = config_dir / "mcp"
+            mcp_dir.mkdir()
+            mcp_json = mcp_dir / "main.json"
             mcp_json.write_text(json.dumps({
                 "mcpServers": {
                     "playwright": {
@@ -141,7 +143,7 @@ class TestConfigLoader:
                 }
             }))
             loader = ConfigLoader(config_dir)
-            result = loader.load_mcp_config({"config_file": "mcp.json"})
+            result = loader.load_mcp_config("main")
             assert result["enabled"] is True
             assert "playwright" in result["servers"]
             assert result["servers"]["playwright"]["transport"] == "stdio"
@@ -149,7 +151,9 @@ class TestConfigLoader:
     def test_load_mcp_config_with_sse_server(self):
         with TemporaryDirectory() as tmp:
             config_dir = Path(tmp)
-            mcp_json = config_dir / "mcp.json"
+            mcp_dir = config_dir / "mcp"
+            mcp_dir.mkdir()
+            mcp_json = mcp_dir / "main.json"
             mcp_json.write_text(json.dumps({
                 "mcpServers": {
                     "fetch": {
@@ -158,11 +162,11 @@ class TestConfigLoader:
                 }
             }))
             loader = ConfigLoader(config_dir)
-            result = loader.load_mcp_config({"config_file": "mcp.json"})
+            result = loader.load_mcp_config("main")
             assert result["servers"]["fetch"]["transport"] == "sse"
 
     def test_load_mcp_config_file_missing(self):
         loader = ConfigLoader(Path("/nonexistent"))
-        result = loader.load_mcp_config({"config_file": "mcp.json"})
+        result = loader.load_mcp_config("nonexistent")
         assert result["enabled"] is False
         assert result["servers"] == {}

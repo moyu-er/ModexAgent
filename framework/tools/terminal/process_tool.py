@@ -124,17 +124,18 @@ def _format_list_line(session: ProcessSession, runtime: RunningSessionRuntime | 
         exit_part = f"exit={session.exit_code}" if session.exit_code is not None else ""
         signal_part = f"signal={session.exit_signal}" if session.exit_signal is not None else ""
         suffix = " ".join(p for p in (exit_part, signal_part) if p)
-        return f"{session.id}  {session.status.value:9s}  {_format_duration(elapsed_ms)}  {session.command}  ({suffix})"
+        return f"{session.id}  {session.status.value:9s}  {_format_duration(elapsed_ms)}  [{session.terminal}]  {session.command}  ({suffix})"
 
     wait_marker = " [input-wait]" if runtime and runtime.waiting_for_input else ""
     idle_str = f" idle={_format_duration(runtime.idle_ms)}" if runtime else ""
-    return f"{session.id}  running   {_format_duration(elapsed_ms)}{idle_str}{wait_marker}  ::  {session.command}"
+    return f"{session.id}  running   {_format_duration(elapsed_ms)}{idle_str}{wait_marker}  [{session.terminal}]  ::  {session.command}"
 
 
 def _build_process_xml(
     action: str,
     output: str,
     *,
+    terminal_name: str | None = None,
     session_id: str | None = None,
     status: str | None = None,
     idle_ms: int | None = None,
@@ -146,6 +147,8 @@ def _build_process_xml(
         f"<action>{action}</action>",
         f"<output>{xml_escape(output)}</output>",
     ]
+    if terminal_name is not None:
+        parts.append(f"<terminal>{terminal_name}</terminal>")
     if session_id is not None:
         parts.append(f"<session_id>{session_id}</session_id>")
     if status is not None:
@@ -177,24 +180,22 @@ def _build_output_velocity_hint(runtime: RunningSessionRuntime | None) -> str:
 
 
 class ProcessTool(Tool):
-    """Manage running exec sessions for commands already started.
+    """Interact with a running command in the CURRENTLY SELECTED terminal tab.
 
-    Use poll/log when you need status, logs, quiet-success confirmation, or
-    completion confirmation.  Use poll/log also for input-wait hints.
-    Use write/send_keys/submit/paste/kill for input or intervention.
+    Use log when you need status, full output history, or completion confirmation.
+    Use write/send_keys/submit/paste/interrupt/kill for input or intervention.
 
     Actions:
-      list       — list all running and finished sessions
-      poll       — drain pending output; shows input-wait hints when idle
-      log        — read aggregated output with line paging
-      write      — write raw data to session stdin
-      submit     — send CR (Enter) to session stdin
-      send_keys  — send encoded key sequences (named keys, modifiers, hex)
-      paste      — paste text with optional bracketed-paste wrapping
-      interrupt  — send interrupt signal (Ctrl+C equivalent)
-      kill       — terminate the process and mark as killed
-      clear      — remove a finished session from the registry
-      remove     — kill (if running) and remove a session
+      list       — list all running and finished sessions across all tabs
+      log        — read aggregated output with optional line paging (offset/limit)
+      write      — send text to the running command's stdin (use submit=true for Enter)
+      submit     — send Enter key to stdin (confirm a prompt after write)
+      send_keys  — send key sequences: arrows, c-c (Ctrl+C), escape, tab, f1-f12
+      paste      — paste multi-line text with bracketed-paste wrapping
+      interrupt  — send Ctrl+C to stop the command
+      kill       — forcefully terminate the command
+      clear      — remove a finished session record
+      remove     — kill (if running) and remove the session
     """
 
     def __init__(
@@ -215,12 +216,14 @@ class ProcessTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Interact with a running command in the default terminal. Actions:\n"
+            "Interact with a running command in the CURRENTLY SELECTED terminal tab.\n"
+            "Use 'terminal list' to see which tab is active.\n\n"
+            "Actions:\n"
             "  log       -- read full output history (optional: offset, limit for paging)\n"
             "  list      -- list all running and recently finished sessions\n"
             "  write     -- send text to the command's stdin\n"
             "  submit    -- send Enter key to stdin (confirm a prompt after write)\n"
-            "  send_keys -- send key sequences: arrows, c-c (Ctrl+C), escape, tab, f1-f12, etc.\n"
+            "  send_keys -- send key sequences: arrows, c-c (Ctrl+C), escape, tab, f1-f12\n"
             "  paste     -- paste multi-line text\n"
             "  interrupt -- send Ctrl+C to stop the command\n"
             "  kill      -- forcefully terminate the command\n"
@@ -305,7 +308,7 @@ class ProcessTool(Tool):
                 return await self._do_write(
                     WriteParams(
                         data=kwargs.get("data", ""),
-                        submit=kwargs.get("submit", False),
+                        submit=kwargs.get("submit", True),
                     ),
                 )
             case ProcessAction.SUBMIT:
@@ -360,7 +363,7 @@ class ProcessTool(Tool):
             lines.append(_format_list_line(s, runtime))
             idle = runtime.idle_ms if runtime else 0
             session_entries.append(
-                f'<session id="{s.id}" status="running" '
+                f'<session id="{s.id}" terminal="{xml_escape(s.terminal)}" status="running" '
                 f'command="{xml_escape(s.command)}" '
                 f'elapsed_ms="{int(((s.ended_at or time.time()) - s.started_at) * 1000)}"'
                 f'idle_ms="{idle}" />'
@@ -368,7 +371,7 @@ class ProcessTool(Tool):
         for s in finished:
             lines.append(_format_list_line(s))
             session_entries.append(
-                f'<session id="{s.id}" status="{s.status.value}" '
+                f'<session id="{s.id}" terminal="{xml_escape(s.terminal)}" status="{s.status.value}" '
                 f'command="{xml_escape(s.command)}" '
                 f'elapsed_ms="{int(((s.ended_at or 0) - s.started_at) * 1000)}" '
                 f'exit_code="{s.exit_code}" />'
@@ -412,6 +415,7 @@ class ProcessTool(Tool):
 
         return _build_process_xml(
             "log", output + tail_note + hint,
+            terminal_name=_terminal.name,
             session_id=session.id,
             status=session.status.value,
             idle_ms=runtime.idle_ms if runtime else None,
@@ -435,6 +439,7 @@ class ProcessTool(Tool):
 
         return _build_process_xml(
             "write", full_output,
+            terminal_name=terminal_session.name,
             session_id=running.id,
             bytes_written=len(params.data),
         )
@@ -447,7 +452,7 @@ class ProcessTool(Tool):
         await terminal_session.write("\r")
         output = await _drain_terminal_after_action(terminal_session, self._registry, running.id, self._config)
         full_output = f"Sent Enter to session {running.id}.\nTerminal output:\n{output}" if output else f"Sent Enter to session {running.id}."
-        return _build_process_xml("submit", full_output, session_id=running.id)
+        return _build_process_xml("submit", full_output, terminal_name=terminal_session.name, session_id=running.id)
 
     async def _do_send_keys(self, params: SendKeysParams) -> str:
         terminal_session, running, _finished = await self._resolve_terminal()
@@ -461,6 +466,7 @@ class ProcessTool(Tool):
                 "send_keys",
                 f"Session {running.id} cursor key mode is not known yet. "
                 "Poll or log until startup output appears, then retry send_keys.",
+                terminal_name=terminal_session.name,
                 session_id=running.id,
             )
 
@@ -488,7 +494,7 @@ class ProcessTool(Tool):
         result_text = f"Sent {len(combined)} bytes to session {running.id}."
         if warnings:
             result_text += "\nWarnings:\n- " + "\n- ".join(warnings)
-        return _build_process_xml("send_keys", result_text, session_id=running.id)
+        return _build_process_xml("send_keys", result_text, terminal_name=terminal_session.name, session_id=running.id)
 
     async def _do_paste(self, params: PasteParams) -> str:
         terminal_session, running, _finished = await self._resolve_terminal()
@@ -497,7 +503,7 @@ class ProcessTool(Tool):
 
         payload = encode_paste(params.text, bracketed=terminal_session.bracketed_paste_enabled)
         await terminal_session.write(payload.decode("utf-8", errors="surrogateescape"))
-        return _build_process_xml("paste", f"Pasted {len(params.text)} chars to session {running.id}.", session_id=running.id)
+        return _build_process_xml("paste", f"Pasted {len(params.text)} chars to session {running.id}.", terminal_name=terminal_session.name, session_id=running.id)
 
     async def _do_interrupt(self) -> str:
         terminal_session, running, _finished = await self._resolve_terminal()
@@ -505,7 +511,7 @@ class ProcessTool(Tool):
             return _build_process_xml("interrupt", "[Error] No running process session found for default terminal")
 
         await terminal_session.interrupt()
-        return _build_process_xml("interrupt", f"Sent interrupt (Ctrl+C) to session {running.id}.", session_id=running.id)
+        return _build_process_xml("interrupt", f"Sent interrupt (Ctrl+C) to session {running.id}.", terminal_name=terminal_session.name, session_id=running.id)
 
     async def _do_kill(self) -> str:
         terminal_session, running, _finished = await self._resolve_terminal()
@@ -519,14 +525,14 @@ class ProcessTool(Tool):
             exit_signal="KILLED",
             status=ProcessStatus.KILLED,
         )
-        return _build_process_xml("kill", f"Killed session {running.id}.", session_id=running.id)
+        return _build_process_xml("kill", f"Killed session {running.id}.", terminal_name=terminal_session.name, session_id=running.id)
 
     async def _do_clear(self) -> str:
         _terminal, _running, finished = await self._resolve_terminal()
         if finished is None:
             return _build_process_xml("clear", "[Error] No finished process session found for default terminal")
         self._registry.delete(finished.id)
-        return _build_process_xml("clear", f"Cleared finished session {finished.id}.")
+        return _build_process_xml("clear", f"Cleared finished session {finished.id}.", terminal_name=_terminal.name)
 
     async def _do_remove(self) -> str:
         terminal_session, running, finished = await self._resolve_terminal()
@@ -540,10 +546,10 @@ class ProcessTool(Tool):
                 status=ProcessStatus.KILLED,
             )
             self._registry.delete(running.id)
-            return _build_process_xml("remove", f"Killed and removed session {running.id}.")
+            return _build_process_xml("remove", f"Killed and removed session {running.id}.", terminal_name=terminal_session.name)
 
         if finished is not None:
             self._registry.delete(finished.id)
-            return _build_process_xml("remove", f"Removed finished session {finished.id}.")
+            return _build_process_xml("remove", f"Removed finished session {finished.id}.", terminal_name=terminal_session.name)
 
         return _build_process_xml("remove", "[Error] No process session found for default terminal")

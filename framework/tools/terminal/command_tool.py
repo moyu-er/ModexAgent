@@ -33,6 +33,7 @@ def _build_command_xml(
     status: CommandResultStatus,
     elapsed_ms: int,
     *,
+    terminal: str | None = None,
     idle_ms: int | None = None,
     pages_scrolled: int | None = None,
     truncated: bool | None = None,
@@ -41,10 +42,14 @@ def _build_command_xml(
     """Build a <command_result> XML string."""
     parts: list[str] = [
         "<command_result>",
+    ]
+    if terminal is not None:
+        parts.append(f"<terminal>{xml_escape(terminal)}</terminal>")
+    parts.extend([
         f"<output>{xml_escape(output)}</output>",
         f"<status>{status.value}</status>",
         f"<elapsed_ms>{elapsed_ms}</elapsed_ms>",
-    ]
+    ])
     if idle_ms is not None:
         parts.append(f"<idle_ms>{idle_ms}</idle_ms>")
     if pages_scrolled is not None:
@@ -79,15 +84,19 @@ class CommandTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Execute a command in a persistent terminal session. "
+            "Execute a shell command in the CURRENTLY SELECTED terminal tab. "
+            "Use 'terminal list' to see all tabs and which is selected (default). "
+            "Use 'terminal select <name>' to switch tabs; use 'terminal open <name>' "
+            "to create a new tab (it auto-selects).\n\n"
             "The shell is stateful: cd, environment variables, venv/nvm activations, "
-            "and SSH connections persist across commands. Do NOT re-run setup commands "
-            "(cd, source, export, etc.) that were already executed in this session.\n"
+            "and SSH connections persist across commands in the same tab. "
+            "Do NOT re-run setup commands (cd, source, export, etc.) that were "
+            "already executed in this tab.\n\n"
+            "Returns <command_result> XML with <status>: completed, running, "
+            "timed_out, paginated, or input_wait. If <status> is not 'completed', "
+            "use 'process log' or 'terminal current' to check the state.\n\n"
             "IMPORTANT: If a command asks for a password, STOP and ask the user. "
-            "NEVER guess or invent passwords. Use 'process write submit=true' only "
-            "after the user provides the password.\n"
-            "If the command completes quickly you get output directly. "
-            "If it keeps running, use the process tool for follow-up."
+            "NEVER guess or invent passwords."
         )
 
     @property
@@ -109,11 +118,12 @@ class CommandTool(Tool):
         **_kwargs: object,
     ) -> str:
         session = await self._manager.get_default()
+        terminal_name = session.name
         await session.ensure_started()
 
         proc = self._registry.create(
             command=command,
-            terminal=session.name,
+            terminal=terminal_name,
             cwd=None,
             pid=None,
         )
@@ -152,7 +162,7 @@ class CommandTool(Tool):
                     exit_signal=None,
                     status=ProcessStatus.COMPLETED,
                 )
-                return self._format_completed(output_parts, elapsed_ms)
+                return self._format_completed(output_parts, elapsed_ms, terminal=terminal_name)
 
             # 2. Prompt detection (auxiliary completion)
             if output_received:
@@ -170,7 +180,7 @@ class CommandTool(Tool):
                             exit_signal=None,
                             status=ProcessStatus.COMPLETED,
                         )
-                        return self._format_completed(output_parts, elapsed_ms)
+                        return self._format_completed(output_parts, elapsed_ms, terminal=terminal_name)
                 else:
                     prompt_stable_since = None
 
@@ -198,6 +208,7 @@ class CommandTool(Tool):
                         return self._format_paginated(
                             output_parts, pages, elapsed_ms,
                             total_chars, self._config.pager_auto_scroll_max_chars,
+                            terminal=terminal_name,
                         )
 
             # 3. Timeout (kills process)
@@ -210,29 +221,30 @@ class CommandTool(Tool):
                     status=ProcessStatus.TIMED_OUT,
                     timed_out=True,
                 )
-                return self._format_timed_out(output_parts, timeout_seconds, elapsed_ms)
+                return self._format_timed_out(output_parts, timeout_seconds, elapsed_ms, terminal=terminal_name)
 
             # 4. waiting_for_input hint
             runtime = self._registry.running_runtime(proc.id)
             if runtime is not None and runtime.waiting_for_input:
-                return await self._format_running(session, output_parts, runtime, elapsed_ms)
+                return await self._format_running(session, output_parts, runtime, elapsed_ms, terminal=terminal_name)
 
             # 5. yield_ms elapsed
             if elapsed_ms >= yield_window_ms:
-                return await self._format_running(session, output_parts, None, elapsed_ms)
+                return await self._format_running(session, output_parts, None, elapsed_ms, terminal=terminal_name)
 
     # ------------------------------------------------------------------
     # XML formatting
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _format_completed(output_parts: list[str], elapsed_ms: int) -> str:
+    def _format_completed(output_parts: list[str], elapsed_ms: int, *, terminal: str | None = None) -> str:
         raw = "".join(output_parts)
         output = sanitize_terminal_output(raw).rstrip()
         return _build_command_xml(
             output or "(no output)",
             CommandResultStatus.COMPLETED,
             elapsed_ms,
+            terminal=terminal,
         )
 
     @staticmethod
@@ -241,6 +253,8 @@ class CommandTool(Tool):
         output_parts: list[str],
         runtime: RunningSessionRuntime | None,
         elapsed_ms: int,
+        *,
+        terminal: str | None = None,
     ) -> str:
         raw = "".join(output_parts)
         output = sanitize_terminal_output(raw).rstrip()
@@ -254,7 +268,7 @@ class CommandTool(Tool):
             )
             return _build_command_xml(
                 output, CommandResultStatus.INPUT_WAIT, elapsed_ms,
-                idle_ms=idle_ms, message=message,
+                terminal=terminal, idle_ms=idle_ms, message=message,
             )
 
         message = (
@@ -263,7 +277,7 @@ class CommandTool(Tool):
         )
         xml = _build_command_xml(
             output, CommandResultStatus.RUNNING, elapsed_ms,
-            idle_ms=idle_ms, message=message,
+            terminal=terminal, idle_ms=idle_ms, message=message,
         )
 
         if terminal_session.cursor_key_mode == CursorKeyMode.APPLICATION:
@@ -278,7 +292,13 @@ class CommandTool(Tool):
         return xml
 
     @staticmethod
-    def _format_timed_out(output_parts: list[str], timeout_seconds: int, elapsed_ms: int) -> str:
+    def _format_timed_out(
+        output_parts: list[str],
+        timeout_seconds: int,
+        elapsed_ms: int,
+        *,
+        terminal: str | None = None,
+    ) -> str:
         raw = "".join(output_parts)
         output = sanitize_terminal_output(raw).rstrip()
         message = (
@@ -287,7 +307,7 @@ class CommandTool(Tool):
         )
         return _build_command_xml(
             output, CommandResultStatus.TIMED_OUT, elapsed_ms,
-            message=message,
+            terminal=terminal, message=message,
         )
 
     @staticmethod
@@ -297,6 +317,8 @@ class CommandTool(Tool):
         elapsed_ms: int,
         total_chars: int,
         max_chars: int,
+        *,
+        terminal: str | None = None,
     ) -> str:
         raw = "".join(output_parts)
         output = sanitize_terminal_output(raw).rstrip()
@@ -308,6 +330,7 @@ class CommandTool(Tool):
         )
         return _build_command_xml(
             output, CommandResultStatus.PAGINATED, elapsed_ms,
+            terminal=terminal,
             pages_scrolled=pages_scrolled,
             truncated=truncated,
             message=message,

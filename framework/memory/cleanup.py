@@ -14,7 +14,7 @@ import json
 import logging
 import time as _time
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -178,9 +178,11 @@ async def cleanup_session(
             # Plain assistant (no tool_calls, has content) -> completed turn barrier
             if role == "assistant" and not msg.get("tool_calls") and msg.get("content"):
                 if pending:
+                    asst_content = str(msg.get("content", ""))
                     for pending_msg in pending:
                         try:
                             entry = UserBufferEntry.from_message(pending_msg, pruned_at=pruned_now)
+                            entry = replace(entry, completing_assistant_content=asst_content)
                             retention_entries.append(entry)
                         except (ValueError, TypeError):
                             pass
@@ -235,6 +237,26 @@ async def cleanup_session(
                 "User retention persistence failed: session=%s",
                 context.session_id, exc_info=True,
             )
+
+    # A plain assistant in the kept region completes ALL unfinished entries
+    # (both newly created and leftover from previous cleanups).
+    if user_retention is not None and keep_messages:
+        last_plain_asst: str | None = None
+        for msg in reversed(keep_messages):
+            role = str(msg.get("role", ""))
+            if (role == "assistant"
+                    and not msg.get("tool_calls")
+                    and msg.get("content")):
+                last_plain_asst = str(msg.get("content", ""))
+                break
+        if last_plain_asst is not None:
+            try:
+                await user_retention.mark_all_completed(context, last_plain_asst)
+            except Exception:
+                logger.warning(
+                    "URB mark_all_completed failed: session=%s",
+                    context.session_id, exc_info=True,
+                )
 
     # ── Step 3: Archive (optional) ─────────────────────────────────────────
     #

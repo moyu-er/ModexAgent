@@ -47,16 +47,19 @@ class TerminalTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Manage persistent terminal tabs. Actions:\n"
-            "  open     -- create a named tab (optional: cwd for initial directory)\n"
-            "  close    -- terminate a tab\n"
-            "  list     -- show all tabs with status\n"
-            "  select   -- switch which tab 'command' and 'process' tools target\n"
-            "  current  -- show what is visible in the active tab\n"
-            "  interrupt-- send Ctrl+C to the current tab\n\n"
-            "Each tab has its own independent shell session (separate cd, env, etc.). "
-            "The default tab is created automatically; you only need 'open' to create "
-            "additional named tabs for parallel work. Use 'select' to switch between them."
+            "Manage persistent terminal tabs for the 'command' and 'process' tools. "
+            "Every command runs in the CURRENTLY SELECTED tab — use 'open' or 'select' "
+            "to switch context before running commands.\n\n"
+            "Actions:\n"
+            "  open      — create a new tab AND auto-select it (the next command runs there)\n"
+            "  close     — close a tab by name; cannot close the default tab if it's the last one\n"
+            "  list      — list all tabs; the '(default)' marker shows which tab commands target\n"
+            "  select    — switch the default tab; all subsequent commands run in this tab\n"
+            "  current   — see the terminal screen (last 30 lines) + status of the default tab\n"
+            "  interrupt — send Ctrl+C to stop a running command in the default tab\n\n"
+            "Workflow: to work on a separate task, open a new tab (it auto-selects), run "
+            "commands there, then select back to the previous tab when done. Tabs are "
+            "independent: each has its own shell session, working directory, and environment."
         )
 
     @property
@@ -106,7 +109,11 @@ class TerminalTool(Tool):
             target_name = name or self._auto_name()
             session = await self._manager.get_or_create(target_name, cwd=cwd)
             await session.ensure_started()
-            return f"Opened terminal '{target_name}' ({session.shell_info.name})."
+            return (
+                f"Opened terminal '{target_name}' ({session.shell_info.name}) "
+                f"at timestamp {int(session.created_at)}. "
+                f"This tab is now the default — 'command' and 'process' tools will use it."
+            )
 
         if action_enum == TerminalAction.CLOSE:
             if not name:
@@ -117,15 +124,17 @@ class TerminalTool(Tool):
         if action_enum == TerminalAction.LIST:
             sessions = await self._manager.list_sessions()
             if not sessions:
-                return "No active terminals."
-            lines = ["Active terminals:"]
+                return "<terminal_result>\n<action>list</action>\n<output>No active terminals.</output>\n</terminal_result>"
+            lines = ["<terminal_result>", "<action>list</action>", "<tabs>"]
             for s in sessions:
-                default_marker = " (default)" if s.is_default else ""
-                alive_marker = "" if s.is_alive else " [dead]"
+                default_attr = ' default="true"' if s.is_default else ""
+                alive_attr = ' alive="false"' if not s.is_alive else ""
                 lines.append(
-                    f"  - {s.name}: {s.shell_type}, "
-                    f"commands={s.command_count}{default_marker}{alive_marker}"
+                    f'  <tab name="{xml_escape(s.name)}" shell="{s.shell_type}" '
+                    f'created_at="{int(s.created_at)}" commands="{s.command_count}"{default_attr}{alive_attr} />'
                 )
+            lines.append("</tabs>")
+            lines.append("</terminal_result>")
             return "\n".join(lines)
 
         if action_enum == TerminalAction.SELECT:
@@ -133,7 +142,7 @@ class TerminalTool(Tool):
                 return "Error: 'name' is required for select action"
             try:
                 await self._manager.select_default(name)
-                return f"Selected '{name}' as default terminal."
+                return f"Selected '{name}' as default terminal. All 'command' and 'process' tool calls now target this tab."
             except ValueError as e:
                 return f"Error: {e}"
 
@@ -189,9 +198,14 @@ class TerminalTool(Tool):
             output_lines = cleaned.splitlines()[-30:] if cleaned else []
             output_text = "\n".join(output_lines) if output_lines else "(terminal is idle — no output yet)"
 
+            default_session = await self._manager.get_default_session()
+            is_default = default_session is not None and session.name == default_session.name
             return (
                 "<terminal_result>\n"
                 "<action>current</action>\n"
+                f"<terminal>{xml_escape(session.name)}</terminal>\n"
+                f"<created_at>{int(session.created_at)}</created_at>\n"
+                f"<default>{str(is_default).lower()}</default>\n"
                 f"<status>{status}</status>\n"
                 f"<cursor>{xml_escape(cursor)}</cursor>\n"
                 f"<output>{xml_escape(output_text)}</output>\n"
