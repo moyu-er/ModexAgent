@@ -1,0 +1,8 @@
+agent_type: delegate
+description: "Lightweight subagent for simple delegated tasks"
+max_steps: 50
+tool_preset: full
+context_mode: fresh
+memory:
+  short_term: {max_messages: 50, max_tokens: 50000}
+  archive: {enabled: true}

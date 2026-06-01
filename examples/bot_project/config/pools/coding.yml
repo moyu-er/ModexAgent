@@ -35,3 +35,4 @@ agents:
     standard_tools: true
     use_terminal: true
     terminal_visibility: true
+    extra_tools: ["ast_grep_search", "ast_grep_replace", "lsp_diagnostics", "lsp_navigation"]

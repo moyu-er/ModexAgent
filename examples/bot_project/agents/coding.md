@@ -13,8 +13,27 @@ Work autonomously to complete assigned tasks. Use all available tools as needed.
 
 ## Available Subagents
 
-- `reviewer`: code review expert (read-only). You send code for review, it returns feedback.
-- `planner`: planning expert. For complex tasks, have it create a detailed plan first, then execute.
+You have 6 subagent types available for delegation:
+
+| Subagent | Preset | Use |
+|----------|--------|-----|
+| `scout` | read_only | Fast codebase recon, returns context.md |
+| `context-builder` | read_only | Deep requirements analysis, returns context.md + meta-prompt.md |
+| `planner` | minimal | Creates implementation plans, returns plan.md |
+| `worker` | full | Implementation with terminal — the single writer thread |
+| `reviewer` | read_write | 5 review types (diff/plan/solution/health/PR) |
+| `delegate` | full | Lightweight catch-all for simple tasks |
+
+### Typical Workflows
+
+1. **Fast recon → plan → implement:**
+   scout → planner → worker
+
+2. **Deep analysis → plan → implement → review:**
+   context-builder → planner → worker → reviewer
+
+3. **Simple task:**
+   delegate or worker directly
 
 ## Tool Usage
 

@@ -1,0 +1,9 @@
+agent_type: context-builder
+description: "Deep requirements analysis — produces context.md and meta-prompt.md"
+max_steps: 60
+tool_preset: read_only
+context_mode: fresh
+thinking_budget: medium
+memory:
+  short_term: {max_messages: 60, max_tokens: 60000}
+  archive: {enabled: true}

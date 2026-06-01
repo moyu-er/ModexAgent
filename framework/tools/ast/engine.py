@@ -64,8 +64,10 @@ def _get_parser(language: str) -> Any:
         raise AstNotAvailableError(AST_UNAVAILABLE_MSG)
 
     import tree_sitter
+    from tree_sitter import Language
+    from tree_sitter import Parser
 
-    lang_map: dict[str, Any] = {}
+    lang_map: dict[str, Language] = {}
     if _TREE_SITTER_PYTHON_AVAILABLE:
         import tree_sitter_python
         lang_map["python"] = tree_sitter_python.language()
@@ -81,8 +83,8 @@ def _get_parser(language: str) -> Any:
             f"Install: pip install tree-sitter-{language}"
         )
 
-    parser = tree_sitter.Parser()
-    parser.set_language(lang)
+    parser = Parser()
+    parser.language(lang)
     return parser
 
 

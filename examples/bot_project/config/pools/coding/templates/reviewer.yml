@@ -1,11 +1,10 @@
 agent_type: reviewer
-description: "Expert code reviewer — analyzes code for correctness, security, and style issues"
-max_steps: 80
-standard_tools: true
-use_terminal: false
+description: "Versatile review specialist for code diffs, plans, and solutions"
+max_steps: 100
+tool_preset: read_write
+context_mode: fresh
+thinking_budget: high
+default_reads: ["plan.md", "progress.md"]
 memory:
   short_term: {max_messages: 80, max_tokens: 80000}
-  long_term: {enabled: true}
-  governance: {}
-skills:
-  roots: ["skills/coding/reviewer"]
+  archive: {enabled: true}
