@@ -133,7 +133,11 @@ class SubagentAutoSendHook:
         )
 
         envelope = AgentMessageEnvelope(
-            payload={"content": xml_content, "message_type": "agent_result"},
+            payload={
+                "content": xml_content,
+                "message_type": "agent_result",
+                "metadata": {"agent_type": self._self_name},
+            },
             source=AgentAddress(name=self._self_name),
             target=AgentAddress(name=reply_target),
             message_type="agent_result",

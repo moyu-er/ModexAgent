@@ -120,6 +120,7 @@ class AgentCommunicationService:
         inbox_consumer: Any | None = None,
         notification_service: Any | None = None,
         main_agent_name: str | None = None,
+        parent_memory_system: Any | None = None,
     ) -> None:
         self._source = source
         self._broker = broker
@@ -139,6 +140,7 @@ class AgentCommunicationService:
         self._inbox_consumer = inbox_consumer
         self._notification_service = notification_service
         self._main_agent_name = main_agent_name
+        self._parent_memory_system = parent_memory_system
 
     def _resolve_source(self, context: AgentContext) -> AgentAddress:
         """Resolve effective source address from context, fallback to constructor default."""
@@ -202,6 +204,15 @@ class AgentCommunicationService:
                 system_prompt = md_path.read_text(encoding="utf-8")
         if not system_prompt:
             system_prompt = DEFAULT_SYSTEM_PROMPT
+
+        # ── Fork preamble: inject when context_mode="fork" ──
+        if template.context_mode == "fork":
+            fork_preamble = (
+                "\n\nYou are a subagent running from a fork of the parent session. "
+                "Treat inherited conversation as reference-only context, not a live "
+                "thread to continue. Your sole job is to execute the assigned task."
+            )
+            system_prompt = system_prompt + fork_preamble
 
         # ── Memory: session-scoped, no knowledge layer ──
         from framework.ioc.factories.descriptors import build_session_only_memory
@@ -352,39 +363,30 @@ class AgentCommunicationService:
     async def _build_subagent_tool_manager(self, template: AgentTemplate, agent_name: str):
         """Build the subagent tool manager from template configuration.
 
-        Includes:
-        - Standard tools (file + shell + search) if template.standard_tools
-        - Terminal tools if template.use_terminal
-        - MCP tools from per-agent config ``config/mcp/{agentType}.json``
-        - Communication tools (send_to_agent, list_communication_targets) — always
+        Uses template.tool_preset to determine which tools to register.
+        Falls back to template.standard_tools for backward compatibility.
         """
         from framework.core.tool_manager import InMemoryToolManager, ToolManagerConfig
+        from framework.multi_agent.address import AgentAddress
         from framework.multi_agent.tools import (
             ListCommunicationTargetsTool,
             SendToAgentTool,
         )
-        from framework.multi_agent.address import AgentAddress
+        from framework.tools.presets import get_preset_tools
 
         tm = InMemoryToolManager(config=ToolManagerConfig(
             max_workers=10, enable_parallel=True, parallel_max_workers=5,
         ))
 
-        # Standard tools: file + shell + search (matching _make_standard_tools)
-        if template.standard_tools:
-            from framework.tools.standard import (
-                EditFileTool, FindFilesTool, ListDirTool,
-                ReadFileTool, SearchFilesTool, WriteFileTool,
-            )
-            from framework.tools.terminal import SubprocessTool
-            for tool in [
-                ReadFileTool(), WriteFileTool(), EditFileTool(),
-                ListDirTool(), SearchFilesTool(), FindFilesTool(),
-                SubprocessTool(timeout=60),
-            ]:
-                tm.register(tool)
+        # Bash tool factory: use SubprocessTool for subagents (no terminal)
+        from framework.tools.terminal import SubprocessTool
 
-        # Persistent terminal tools (CommandTool etc.) — separate from standard_tools
-        # use_terminal is reserved for future persistent terminal manager integration
+        def _make_bash() -> SubprocessTool:
+            return SubprocessTool(timeout=60)
+
+        # Register preset tools
+        for tool in get_preset_tools(template.tool_preset, subprocess_tool_factory=_make_bash):
+            tm.register(tool)
 
         # MCP tools from per-agent config file: config/mcp/{agentType}.json
         if self._project_dir is not None:
@@ -400,6 +402,11 @@ class AgentCommunicationService:
 
         # Communication tools — always included so subagent can reply to parent
         subagent_address = AgentAddress(name=agent_name)
+        # Dynamic target visibility: subagents default to parent-only
+        visible = template.visible_targets
+        if visible is None:
+            visible = [self._main_agent_name] if self._main_agent_name else []
+
         tm.register(SendToAgentTool(
             source=subagent_address,
             broker=self._broker,
@@ -413,6 +420,7 @@ class AgentCommunicationService:
             registry=self._registry,
             template_registry=self._template_registry,
             pool_name=self._pool_name,
+            visible_targets=visible,
         ))
 
         return tm

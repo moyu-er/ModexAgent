@@ -111,6 +111,12 @@ async def create_pool(
     )
     logger.info("Pool '%s': ToolManager ready (%d tools)", pool_name, len(tool_manager.list_tools()))
 
+    # 5.1. Register extra_tools for main agent (AST, LSP, etc.)
+    extra_tools = getattr(main_cfg, "extra_tools", []) or []
+    if extra_tools:
+        _register_extra_tools(tool_manager, extra_tools)
+        logger.info("Pool '%s': %d extra_tools registered: %s", pool_name, len(extra_tools), extra_tools)
+
     # 5.5. Per-pool runtime stores (TurnStateStore + RuntimeCommandStore)
     from framework.agents.react.state import ReActRuntimeStateCodec
     from framework.runtime.codec import RuntimeStateCodecRegistry
@@ -211,6 +217,7 @@ async def create_pool(
         inbox_consumer=inbox_consumer,
         notification_service=notification_service,
         main_agent_name=main_agent_name,
+        parent_memory_system=memory_system,
     )
     tool_manager.register(SendToAgentTool(
         source=main_address, broker=broker, registry=pool,
@@ -294,6 +301,35 @@ async def create_pool(
 
 
 # ── internal helpers ──
+
+def _register_extra_tools(tool_manager: InMemoryToolManager, tool_names: list[str]) -> None:
+    """Register named tools by looking up their class in known modules.
+
+    Supports: ast_grep_search, ast_grep_replace, lsp_diagnostics, lsp_navigation
+    Falls back silently if a tool class cannot be imported.
+    """
+    _TOOL_REGISTRY: dict[str, tuple[str, str]] = {
+        "ast_grep_search": ("framework.tools.ast", "AstGrepSearchTool"),
+        "ast_grep_replace": ("framework.tools.ast", "AstGrepReplaceTool"),
+        "lsp_diagnostics": ("framework.tools.lsp", "LspDiagnosticsTool"),
+        "lsp_navigation": ("framework.tools.lsp", "LspNavigationTool"),
+    }
+
+    import importlib
+
+    for name in tool_names:
+        entry = _TOOL_REGISTRY.get(name)
+        if entry is None:
+            logger.warning("Unknown extra_tool: %s", name)
+            continue
+        module_name, class_name = entry
+        try:
+            module = importlib.import_module(module_name)
+            tool_cls = getattr(module, class_name)
+            tool_manager.register(tool_cls())
+        except Exception:
+            logger.exception("Failed to register extra_tool: %s", name)
+
 
 def _create_terminal_manager(pool_cfg: PoolConfig, project_dir: Path) -> Any | None:
     """Create terminal manager with visibility-aware degradation chain.
