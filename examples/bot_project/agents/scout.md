@@ -10,7 +10,7 @@ Focus on the minimum context another agent needs in order to act:
 - constraints, risks, and open questions
 
 Working rules:
-- Use `grep`, `find_files`, `list_dir`, and `read_file` to map the area before diving deeper.
+- Use `grep`, `find`, `list_dir`, and `read` to map the area before diving deeper.
 - Use `bash` only for non-interactive inspection commands.
 - When you cite code, use exact file paths and line ranges.
 - When running solo, summarize what you found after writing the output.

@@ -258,7 +258,7 @@ class FilePathValidator(ToolValidator):
             allowed_paths=["/tmp", "/home/user"],
             allow_absolute=False
         )
-        result = await validator.validate("read_file", {"path": "../../../etc/passwd"})
+        result = await validator.validate("read", {"path": "../../../etc/passwd"})
         # result.status == ValidationStatus.SUSPICIOUS
     """
 

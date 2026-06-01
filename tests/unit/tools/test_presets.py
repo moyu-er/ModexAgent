@@ -23,18 +23,18 @@ class TestGetPresetTools:
         """FULL preset includes Read/Write/Edit/Search tools."""
         tools = get_preset_tools(ToolPreset.FULL)
         names = [t.name for t in tools]
-        assert "read_file" in names
+        assert "read" in names
         assert "write_file" in names
         assert "edit_file" in names
         assert "list_dir" in names
         assert "grep" in names
-        assert "find_files" in names
+        assert "find" in names
 
     def test_read_only_preset_excludes_write(self) -> None:
         """READ_ONLY preset has no Write/Edit tools."""
         tools = get_preset_tools(ToolPreset.READ_ONLY)
         names = [t.name for t in tools]
-        assert "read_file" in names
+        assert "read" in names
         assert "write_file" not in names
         assert "edit_file" not in names
         assert "grep" in names
@@ -54,10 +54,10 @@ class TestGetPresetTools:
         """MINIMAL preset has no Edit, no FindFiles, no bash."""
         tools = get_preset_tools(ToolPreset.MINIMAL)
         names = [t.name for t in tools]
-        assert "read_file" in names
+        assert "read" in names
         assert "write_file" in names
         assert "edit_file" not in names
-        assert "find_files" not in names
+        assert "find" not in names
 
     def test_bash_injected_for_full_preset(self) -> None:
         """FULL preset includes bash when factory provided."""

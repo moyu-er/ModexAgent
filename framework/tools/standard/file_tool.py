@@ -253,7 +253,7 @@ class ReadFileTool(Tool):
 
     @property
     def name(self) -> str:
-        return "read_file"
+        return "read"
 
     @property
     def description(self) -> str:
