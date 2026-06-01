@@ -6,7 +6,6 @@ context_mode: fork
 thinking_budget: high
 default_reads: ["context.md", "plan.md"]
 progress_tracking: true
-use_terminal: true
 memory:
   short_term: {max_messages: 120, max_tokens: 120000}
   archive: {enabled: true}

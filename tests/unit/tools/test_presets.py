@@ -27,7 +27,7 @@ class TestGetPresetTools:
         assert "write_file" in names
         assert "edit_file" in names
         assert "list_dir" in names
-        assert "search_files" in names
+        assert "grep" in names
         assert "find_files" in names
 
     def test_read_only_preset_excludes_write(self) -> None:
@@ -37,13 +37,18 @@ class TestGetPresetTools:
         assert "read_file" in names
         assert "write_file" not in names
         assert "edit_file" not in names
-        assert "search_files" in names
+        assert "grep" in names
 
-    def test_read_write_preset_no_bash(self) -> None:
-        """READ_WRITE preset has no bash tool."""
-        tools = get_preset_tools(ToolPreset.READ_WRITE)
+    def test_read_write_preset_has_bash(self) -> None:
+        """READ_WRITE preset includes bash for code review (git diff, git log)."""
+        from framework.tools.terminal.subprocess_tool import SubprocessTool
+
+        tools = get_preset_tools(
+            ToolPreset.READ_WRITE,
+            subprocess_tool_factory=lambda: SubprocessTool(timeout=60),
+        )
         names = [t.name for t in tools]
-        assert "bash" not in names
+        assert "bash" in names
 
     def test_minimal_preset_no_edit_no_bash(self) -> None:
         """MINIMAL preset has no Edit, no FindFiles, no bash."""
@@ -65,12 +70,12 @@ class TestGetPresetTools:
         names = [t.name for t in tools]
         assert "bash" in names
 
-    def test_bash_not_injected_for_read_write(self) -> None:
-        """READ_WRITE preset excludes bash even when factory provided."""
+    def test_bash_not_injected_for_minimal(self) -> None:
+        """MINIMAL preset excludes bash even when factory provided."""
         from framework.tools.terminal.subprocess_tool import SubprocessTool
 
         tools = get_preset_tools(
-            ToolPreset.READ_WRITE,
+            ToolPreset.MINIMAL,
             subprocess_tool_factory=lambda: SubprocessTool(timeout=60),
         )
         names = [t.name for t in tools]

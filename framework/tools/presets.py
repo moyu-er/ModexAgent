@@ -22,9 +22,9 @@ class ToolPreset(str, Enum):
     Values map to tool factory lists in TOOL_PRESETS.
     """
     FULL = "full"               # all tools + bash + terminal
-    READ_WRITE = "read_write"   # read + write + edit + search (no bash)
-    READ_ONLY = "read_only"     # read + search + bash (prompt-constrained read-only)
-    MINIMAL = "minimal"         # read + write + list (no edit, no bash)
+    READ_WRITE = "read_write"   # read + write + edit + grep/find + bash (review & fix)
+    READ_ONLY = "read_only"     # read + grep/find + bash (prompt-constrained read-only)
+    MINIMAL = "minimal"         # read + write + list + grep (no edit, no bash)
     NONE = "none"               # no standard tools — communication tools only (MCP still loaded)
 
 
@@ -100,8 +100,8 @@ def get_preset_tools(
     factory = tool_lists[preset]
     tools: list[Tool] = factory()
 
-    # Bash tool: FULL and READ_ONLY get bash; READ_WRITE and MINIMAL do not
-    if subprocess_tool_factory is not None and preset in (ToolPreset.FULL, ToolPreset.READ_ONLY):
+    # Bash tool: FULL, READ_ONLY, and READ_WRITE get bash; MINIMAL and NONE do not
+    if subprocess_tool_factory is not None and preset in (ToolPreset.FULL, ToolPreset.READ_ONLY, ToolPreset.READ_WRITE):
         tools.append(subprocess_tool_factory())
 
     return tools

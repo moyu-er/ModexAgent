@@ -47,14 +47,15 @@ class SearchFilesTool(Tool):
 
     @property
     def name(self) -> str:
-        return "search_files"
+        return "grep"
 
     @property
     def description(self) -> str:
         return (
-            "Search file contents for a pattern (regex or literal text). "
+            "Search file contents for a pattern (regex or literal text), like the grep/ripgrep tool. "
             "Returns matching lines with file paths, line numbers, and context. "
-            "Uses ripgrep when available for performance, falls back to Python re."
+            "Uses ripgrep when available for performance, falls back to git grep or Python re. "
+            "Pattern: set regex=true for regex (default), regex=false for fixed string match."
         )
 
     @property
@@ -254,8 +255,10 @@ class SearchFilesTool(Tool):
             "grep", "-n",
             "--untracked",
         ]
-        if not regex:
-            cmd.append("-F")
+        if regex:
+            cmd.append("-E")  # Extended regex (| is alternation, not literal)
+        else:
+            cmd.append("-F")  # Fixed string (literal match)
         cmd.extend(["-e", query, "--", file_pattern])
 
         try:
@@ -480,13 +483,18 @@ class FindFilesTool(Tool):
 
         return await self._find_with_python(pattern, search_path, max_results)
 
+    _DEFAULT_EXCLUDES = [".git", ".venv", "venv", "node_modules", "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".idea", ".vscode"]
+
     async def _find_with_fd(
         self,
         pattern: str,
         search_path: Path,
         max_results: int,
     ) -> str:
-        cmd = ["fd", "--max-results", str(max_results), pattern, str(search_path)]
+        cmd = ["fd", "--max-results", str(max_results)]
+        for d in self._DEFAULT_EXCLUDES:
+            cmd.extend(["--exclude", d])
+        cmd.extend([pattern, str(search_path)])
         try:
             proc = await _async_subprocess_run(
                 cmd, capture_output=True, text=True, timeout=30
@@ -509,6 +517,10 @@ class FindFilesTool(Tool):
         files: list[str] = []
         for file_path in search_path.rglob(pattern.lstrip("/")):
             if file_path.is_file():
+                # Skip excluded directories
+                parts = set(file_path.parts)
+                if parts & set(self._DEFAULT_EXCLUDES):
+                    continue
                 rel_path = str(
                     file_path.relative_to(search_path)
                     if file_path.is_relative_to(search_path)
