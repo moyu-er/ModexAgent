@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="../../assets/logo-wordmark.svg" alt="ModexAgent" width="300">
+  <img src="../../assets/logo-wordmark-dark.svg" alt="ModexAgent" width="300">
 </p>
 
 <p align="center">

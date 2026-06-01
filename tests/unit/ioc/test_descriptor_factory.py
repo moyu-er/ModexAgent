@@ -43,10 +43,10 @@ class TestBuildSubagentDescriptorQuery12306:
             safety=None, llm=None,
         )
         tools = tm.list_tools()
-        assert "read_file" in tools
+        assert "read" in tools
         assert "write_file" in tools
-        assert "shell" in tools
-        assert "search_files" in tools
+        assert "bash" in tools
+        assert "grep" in tools
         assert desc.max_tools_per_turn == 10
 
 
@@ -63,7 +63,7 @@ class TestBuildSubagentDescriptor:
             safety=None, llm=None,
         )
         tools = tm.list_tools()
-        assert "read_file" in tools
+        assert "read" in tools
         assert "spawn_subagent" not in tools  # denied
         assert "send_message" not in tools  # denied
         assert desc.context_strategy == "persistent"

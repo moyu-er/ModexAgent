@@ -141,7 +141,7 @@ class TestHandlerEndToEnd:
         _, ref = await handler.store_overflow(
             session_id="sid_full",
             tool_call_id="call_full",
-            tool_name="shell",
+            tool_name="bash",
             content=content,
         )
 

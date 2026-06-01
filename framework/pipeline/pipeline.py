@@ -1,4 +1,4 @@
-﻿"""AgentPipeline - 端到端流程编排
+"""AgentPipeline - 端到端流程编排
 
 提供 AgentPipeline 类，统一编排完整的输入→处理→输出流程。
 """
@@ -82,7 +82,6 @@ async def _safe_flush(ctx_mgr: Any, session_id: str, *, timeout: float) -> None:
         logger.exception("Memory flush failed for %s", session_id)
 
 
-
 async def safe_send_output(
     adapter: Any,
     message: Any,
@@ -103,15 +102,16 @@ async def safe_send_output(
     except TimeoutError:
         logger.error(
             "Output send timeout after %.1fs for session=%s adapter=%s",
-            timeout, session_id, getattr(adapter, "name", "unknown"),
+            timeout,
+            session_id,
+            getattr(adapter, "name", "unknown"),
         )
     except Exception:
         logger.exception(
             "Output send failed for session=%s adapter=%s",
-            session_id, getattr(adapter, "name", "unknown"),
+            session_id,
+            getattr(adapter, "name", "unknown"),
         )
-
-
 
 
 class AgentPipeline:
@@ -144,7 +144,6 @@ class AgentPipeline:
         incremental_flush: bool = True,
         skill_manager: SkillManager | None = None,
         hooks: list[Any] | None = None,
-
         command_interceptor: Any | None = None,
         router: AgentMessageRouter | None = None,
         deduplicator: MessageDeduplicator | None = None,
@@ -325,6 +324,13 @@ class AgentPipeline:
                     scope_key = f"{ctx.session_id or ''}:{ctx.user_id or ''}:{ctx.tenant_id or ''}"
                     lock = _dream_locks.setdefault(scope_key, asyncio.Lock())
 
+                    logger.info(
+                        "DreamEngine timer trigger, scope=%s, count=%d, threshold=%d",
+                        scope_key,
+                        count,
+                        self.dream_threshold,
+                    )
+
                     async def _run_dream(
                         c: Any = ctx,
                         engine: Any = dream_engine,
@@ -363,6 +369,7 @@ class AgentPipeline:
             prelock_parse_result = self.command_processor.parse(input_msg.content or "")
             if prelock_parse_result.invocation is not None:
                 from framework.commands.constants import CommandDispatchPolicy
+
                 prelock_pending = await self._load_pending_approval_snapshot(session_id)
                 prelock_dispatch_policy = self.command_processor.dispatch_policy(
                     prelock_parse_result.invocation,
@@ -377,9 +384,7 @@ class AgentPipeline:
                     ),
                 )
                 if prelock_dispatch_policy == CommandDispatchPolicy.BYPASS_QUEUE:
-                    logger.info(
-                        "Bypass slash-command received but no bypass handler is configured"
-                    )
+                    logger.info("Bypass slash-command received but no bypass handler is configured")
                     return None
                 if prelock_dispatch_policy == CommandDispatchPolicy.DROP_IF_BUSY:
                     logger.info("Drop-if-busy slash-command received; dropping")
@@ -444,12 +449,15 @@ class AgentPipeline:
                         ControlCommandType,
                         ControlScope,
                     )
-                    await self.control_channel.send(ControlCommand(
-                        command_id=str(uuid.uuid4()),
-                        type=ControlCommandType.INJECT_STEER,
-                        scope=ControlScope(session_id=session_id),
-                        payload={"text": input_msg.content or ""},
-                    ))
+
+                    await self.control_channel.send(
+                        ControlCommand(
+                            command_id=str(uuid.uuid4()),
+                            type=ControlCommandType.INJECT_STEER,
+                            scope=ControlScope(session_id=session_id),
+                            payload={"text": input_msg.content or ""},
+                        )
+                    )
                 return None
             else:
                 # Unknown mode, fall through (queue)
@@ -526,8 +534,15 @@ class AgentPipeline:
     ) -> Any:
         """Assemble context state via context_assembler module."""
         return await assemble_context(
-            session_id, input_msg, input_metadata, sanitized_content,
-            media_blocks, _media_processor, ctx_mgr, route_result, _is_approval_cmd,
+            session_id,
+            input_msg,
+            input_metadata,
+            sanitized_content,
+            media_blocks,
+            _media_processor,
+            ctx_mgr,
+            route_result,
+            _is_approval_cmd,
             agent_descriptor=self.agent_descriptor,
             tool_manager=self.tool_manager,
             skill_manager=self.skill_manager,
@@ -546,14 +561,13 @@ class AgentPipeline:
         """Build AgentContext and emitter for the turn."""
 
         # Ensure per-session injection queue exists
-        self._injection_queues.setdefault(
-            session_id, asyncio.Queue(maxsize=50)
-        )
+        self._injection_queues.setdefault(session_id, asyncio.Queue(maxsize=50))
 
         # ---- typed TurnIdentity (new) ----
         from uuid import uuid4
 
         from framework.runtime.models import TurnIdentity
+
         strategy = DefaultSessionIdStrategy()
         parts = strategy.parse(session_id)
         turn_identity = TurnIdentity(
@@ -575,10 +589,12 @@ class AgentPipeline:
         agent_context.session_meta = AgentSessionMeta(
             conversation_id=parts.conversation_id,
             agent_name=parts.agent_name or getattr(self.agent, "name", "main"),
-            comm_kind=self.agent_descriptor.comm_kind if self.agent_descriptor else AgentCommKind.NORMAL,
-            invocation_id=parts.invocation_id or (input_metadata or {}).get("invocation_id") if (
-                self.agent_descriptor and self.agent_descriptor.comm_kind == AgentCommKind.SUBAGENT
-            ) else None,
+            comm_kind=self.agent_descriptor.comm_kind
+            if self.agent_descriptor
+            else AgentCommKind.NORMAL,
+            invocation_id=parts.invocation_id or (input_metadata or {}).get("invocation_id")
+            if (self.agent_descriptor and self.agent_descriptor.comm_kind == AgentCommKind.SUBAGENT)
+            else None,
         )
 
         # ---- governance (pending injection, etc.) — unconditional ----
@@ -592,6 +608,7 @@ class AgentPipeline:
             from framework.runtime.enums import AgentKind, TurnCustomKey
             from framework.runtime.enums import TurnPhase as RTurnPhase
             from framework.runtime.services import AgentRuntime
+
             react_state = ReActTurnState(
                 identity=turn_identity,
                 agent_kind=AgentKind.REACT,
@@ -603,10 +620,12 @@ class AgentPipeline:
             # channel so that AgentRuntime.validate() does not raise PolicyViolation.
             if control is None and self.interceptor_chain is not None:
                 from framework.interceptor.builtin import ControlDrainInterceptor
+
                 for ci in self.interceptor_chain.interceptors:
                     if isinstance(ci, ControlDrainInterceptor):
                         from framework.control.runtime import ControlRuntime
                         from framework.control.store import InMemoryControlStore
+
                         control = ControlRuntime(
                             channel=ci._channel,
                             store=InMemoryControlStore(),
@@ -637,7 +656,8 @@ class AgentPipeline:
                 safety=base_services.safety if base_services is not None else self.safety,
                 runtime_context_manager=(
                     base_services.runtime_context_manager
-                    if base_services is not None and base_services.runtime_context_manager is not None
+                    if base_services is not None
+                    and base_services.runtime_context_manager is not None
                     else self.runtime_context_manager
                 ),
             )
@@ -649,13 +669,16 @@ class AgentPipeline:
             from framework.runtime.enums import AgentKind
             from framework.runtime.enums import TurnPhase as RTurnPhase
             from framework.runtime.services import AgentRuntime
+
             control = None
             if self.interceptor_chain is not None:
                 from framework.interceptor.builtin import ControlDrainInterceptor
+
                 for ci in self.interceptor_chain.interceptors:
                     if isinstance(ci, ControlDrainInterceptor):
                         from framework.control.runtime import ControlRuntime
                         from framework.control.store import InMemoryControlStore
+
                         control = ControlRuntime(
                             channel=ci._channel,
                             store=InMemoryControlStore(),
@@ -738,9 +761,7 @@ class AgentPipeline:
 
             # 为最后一条 assistant 消息注入 attachments metadata
             if result and result.attachments:
-                await inject_attachments_to_history(
-                    context_state.history, result.attachments
-                )
+                await inject_attachments_to_history(context_state.history, result.attachments)
 
             await ctx_mgr.save(
                 session_id=session_id,
@@ -873,11 +894,7 @@ class AgentPipeline:
     ) -> TurnRequest | None:
         if self.command_processor is None:
             parsed_command = parse_input_command(input_msg.content or "")
-            approval_action = (
-                parsed_command.approval_action
-                if parsed_command is not None
-                else None
-            )
+            approval_action = parsed_command.approval_action if parsed_command is not None else None
             return TurnRequest(
                 session_id=session_id,
                 input_msg=input_msg,
@@ -888,6 +905,7 @@ class AgentPipeline:
             )
 
         from framework.commands.constants import CommandAction, CommandParseStatus
+
         parse_result = self.command_processor.parse(input_msg.content or "")
         if parse_result.status == CommandParseStatus.PLAIN_INPUT:
             return TurnRequest(
@@ -974,7 +992,10 @@ class AgentPipeline:
             return None
 
         sanitized_content, media_blocks, media_processor = await self._preprocess_input(
-            input_msg, session_id, input_metadata, route_result,
+            input_msg,
+            session_id,
+            input_metadata,
+            route_result,
         )
         if sanitized_content is None:
             return None
@@ -1036,8 +1057,14 @@ class AgentPipeline:
             return None
 
         return await self._execute_turn(
-            agent_context, emitter, session_id, context_state, input_metadata, ctx_mgr,
+            agent_context,
+            emitter,
+            session_id,
+            context_state,
+            input_metadata,
+            ctx_mgr,
         )
+
     async def cleanup_session_resources(self, session_id: str) -> None:
         """清理 per-session 资源（长时间运行避免内存泄漏）。
 

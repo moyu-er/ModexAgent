@@ -1,14 +1,13 @@
 """Search tools: file content search and file discovery.
 
 Auto-detects the fastest available backend per platform:
-  - search_files: ripgrep (rg) > git grep > Python re
-  - find_files: fd > Python pathlib.rglob
+  - grep (SearchFilesTool): ripgrep (rg) > git grep > Python re
+  - find  (FindFilesTool):  fd > Python pathlib.rglob
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import re
 import shutil
 import subprocess
@@ -16,6 +15,12 @@ from pathlib import Path
 from typing import Any
 
 from ...core.tool_manager import Tool
+
+# Directories excluded from search by all backends.
+DEFAULT_EXCLUDES = [
+    ".git", ".venv", "venv", "node_modules", "__pycache__",
+    ".mypy_cache", ".pytest_cache", ".ruff_cache", ".idea", ".vscode",
+]
 
 
 def _resolve_path(path: str) -> Path:
@@ -47,14 +52,15 @@ class SearchFilesTool(Tool):
 
     @property
     def name(self) -> str:
-        return "search_files"
+        return "grep"
 
     @property
     def description(self) -> str:
         return (
-            "Search file contents for a pattern (regex or literal text). "
+            "Search file contents for a pattern (regex or literal text), like the grep/ripgrep tool. "
             "Returns matching lines with file paths, line numbers, and context. "
-            "Uses ripgrep when available for performance, falls back to Python re."
+            "Uses ripgrep when available for performance, falls back to git grep or Python re. "
+            "Pattern: set regex=true for regex (default), regex=false for fixed string match."
         )
 
     @property
@@ -151,6 +157,10 @@ class SearchFilesTool(Tool):
         except Exception:
             return False
 
+    # ------------------------------------------------------------------
+    # ripgrep backend — uses --vimgrep for simple line-based output
+    # ------------------------------------------------------------------
+
     async def _search_with_ripgrep(
         self,
         query: str,
@@ -162,13 +172,15 @@ class SearchFilesTool(Tool):
     ) -> str:
         cmd = [
             "rg",
-            "--json",
-            "--heading",
+            "--vimgrep",
             f"-C{context_lines}",
             "--max-count", str(max_results),
-            "--glob", file_pattern,
             "--max-filesize", "10M",
         ]
+        for d in DEFAULT_EXCLUDES:
+            cmd.extend(["--glob", f"!{d}"])
+        if file_pattern != "*":
+            cmd.extend(["--glob", file_pattern])
         if not regex:
             cmd.append("--fixed-strings")
         cmd.extend([query, str(search_path)])
@@ -179,66 +191,80 @@ class SearchFilesTool(Tool):
             )
             if proc.returncode not in (0, 1):
                 return f"Error: ripgrep failed (exit {proc.returncode}): {proc.stderr[:200]}"
-            return self._parse_rg_output(proc.stdout, max_results)
+            if not proc.stdout.strip():
+                return "No matches found."
+            return self._parse_vimgrep_output(proc.stdout, max_results)
         except subprocess.TimeoutExpired:
             return "Error: ripgrep search timed out after 30 seconds"
         except Exception as e:
             return f"Error: ripgrep execution failed: {e}"
 
-    def _parse_rg_output(self, stdout: str, max_results: int) -> str:
-        if not stdout.strip():
+    def _parse_vimgrep(self, line: str) -> tuple[str, int, str] | None:
+        """Parse one line of --vimgrep output: file:lnum:col:text"""
+        parts = line.split(":", 3)
+        if len(parts) < 4:
+            return None
+        try:
+            lnum = int(parts[1])
+        except ValueError:
+            return None
+        return parts[0], lnum, parts[3].rstrip("\n\r")
+
+    def _parse_vimgrep_output(self, stdout: str, max_results: int) -> str:
+        """Parse --vimgrep output into grouped results.
+
+        vimgrep format: file:lnum:col:text  (one line per match)
+        With -C, context lines are also in vimgrep format but have '-' lnum prefix
+        or just plain file:lnum:col:text lines around matches.
+        We group consecutive lines from the same file into match blocks.
+        """
+        # Collect all parsed lines
+        entries: list[tuple[str, int, str]] = []
+        for raw_line in stdout.splitlines():
+            parsed = self._parse_vimgrep(raw_line)
+            if parsed:
+                entries.append(parsed)
+
+        if not entries:
             return "No matches found."
 
-        results: list[tuple[str, int, str, list[tuple[int, str]], list[tuple[int, str]]]] = []
+        return self._format_vimgrep_entries(entries, max_results)
+
+    def _format_vimgrep_entries(
+        self,
+        entries: list[tuple[str, int, str]],
+        max_results: int,
+    ) -> str:
+        lines: list[str] = []
+        shown = 0
+
+        # Group by file, preserving order
         current_file = ""
-        match_line_no = 0
-        match_text = ""
-        ctx_before: list[tuple[int, str]] = []
-        ctx_after: list[tuple[int, str]] = []
+        for file_path, lnum, text in entries:
+            if shown >= max_results:
+                break
+            if file_path != current_file:
+                if current_file:
+                    lines.append("")  # blank line between files
+                current_file = file_path
+                lines.append(f"{file_path}:")
+            lines.append(f"  {lnum:4d} | {text}")
+            shown += 1
 
-        for line in stdout.strip().splitlines():
-            if not line.strip():
-                continue
-            try:
-                data = json.loads(line)
-            except json.JSONDecodeError:
-                continue
+        total = len(entries)
+        header = f"Found {total} match{'es' if total != 1 else ''}:"
+        result_lines = [header, ""] + lines
 
-            msg_type = data.get("type")
-            payload = data.get("data", {})
+        if total > max_results:
+            result_lines.append(
+                f"[... {total - max_results} more matches not shown (limit: {max_results})]"
+            )
 
-            if msg_type == "begin":
-                current_file = payload.get("path", {}).get("text", "")
+        return "\n".join(result_lines)
 
-            elif msg_type == "match":
-                match_line_no = payload.get("line_number", 0)
-                match_text = payload.get("lines", {}).get("text", "").rstrip("\n\r")
-
-            elif msg_type == "context":
-                ctx_line_no = payload.get("line_number", 0)
-                ctx_text = payload.get("lines", {}).get("text", "").rstrip("\n\r")
-                if match_line_no == 0:
-                    ctx_before.append((ctx_line_no, ctx_text))
-                else:
-                    ctx_after.append((ctx_line_no, ctx_text))
-
-            elif msg_type == "end":
-                if match_line_no > 0:
-                    results.append((current_file, match_line_no, match_text, ctx_before, ctx_after))
-                    if len(results) >= max_results:
-                        break
-                match_line_no = 0
-                match_text = ""
-                ctx_before = []
-                ctx_after = []
-
-        if match_line_no > 0 and len(results) < max_results:
-            results.append((current_file, match_line_no, match_text, ctx_before, ctx_after))
-
-        if not results:
-            return "No matches found."
-
-        return self._format_results(results, max_results)
+    # ------------------------------------------------------------------
+    # git grep backend — -C provides context lines natively
+    # ------------------------------------------------------------------
 
     async def _search_with_git_grep(
         self,
@@ -252,10 +278,13 @@ class SearchFilesTool(Tool):
         cmd = [
             "git", "-C", str(search_path),
             "grep", "-n",
+            f"-C{context_lines}",
             "--untracked",
         ]
-        if not regex:
-            cmd.append("-F")
+        if regex:
+            cmd.append("-E")  # Extended regex (| is alternation, not literal)
+        else:
+            cmd.append("-F")  # Fixed string (literal match)
         cmd.extend(["-e", query, "--", file_pattern])
 
         try:
@@ -264,7 +293,7 @@ class SearchFilesTool(Tool):
             )
             if proc.returncode not in (0, 1):
                 return f"Error: git grep failed (exit {proc.returncode}): {proc.stderr[:200]}"
-            return self._parse_git_grep_output(proc.stdout, max_results, context_lines, search_path)
+            return self._parse_git_grep_output(proc.stdout, max_results)
         except subprocess.TimeoutExpired:
             return "Error: git grep search timed out after 30 seconds"
         except Exception as e:
@@ -274,62 +303,63 @@ class SearchFilesTool(Tool):
         self,
         stdout: str,
         max_results: int,
-        context_lines: int,
-        search_path: Path,
     ) -> str:
         if not stdout.strip():
             return "No matches found."
 
-        results: list[tuple[str, int, str, list[tuple[int, str]], list[tuple[int, str]]]] = []
+        # git grep -C output format:
+        #   file:lnum:text        (match line)
+        #   file-lnum-text        (context line, uses '-' separator)
+        entries: list[tuple[str, int, str]] = []
 
-        for line in stdout.strip().splitlines():
-            parts = line.split(":", 2)
-            if len(parts) < 3:
-                continue
-            try:
-                line_no = int(parts[1])
-            except ValueError:
-                continue
+        for raw_line in stdout.splitlines():
+            # Try match format first (file:lnum:text)
+            parsed = self._parse_git_grep_line(raw_line)
+            if parsed:
+                entries.append(parsed)
 
-            file_path = parts[0]
-            match_text = parts[2]
-            ctx_before, ctx_after = self._read_context(
-                search_path / file_path, line_no, context_lines
-            )
-            results.append((file_path, line_no, match_text, ctx_before, ctx_after))
-            if len(results) >= max_results:
-                break
-
-        if not results:
+        if not entries:
             return "No matches found."
 
-        return self._format_results(results, max_results)
+        return self._format_vimgrep_entries(entries, max_results)
 
-    def _read_context(
-        self,
-        file_path: Path,
-        match_line: int,
-        context_lines: int,
-    ) -> tuple[list[tuple[int, str]], list[tuple[int, str]]]:
+    @staticmethod
+    def _parse_git_grep_line(raw_line: str) -> tuple[str, int, str] | None:
+        """Parse git grep -C output line.
+
+        Match lines:  file:lnum:text
+        Context lines: file-lnum-text  (dash separator, negative lnum marker)
+        """
+        # Match format: file:lnum:text
+        colon_idx = raw_line.find(":")
+        if colon_idx < 0:
+            # Context format: file-lnum-text
+            dash_idx = raw_line.find("-")
+            if dash_idx < 0:
+                return None
+            try:
+                lnum = abs(int(raw_line[dash_idx + 1:raw_line.find("-", dash_idx + 1)]))
+            except (ValueError, IndexError):
+                return None
+            file_path = raw_line[:dash_idx]
+            text = raw_line[raw_line.find("-", dash_idx + 1) + 1:]
+            return file_path, lnum, text.rstrip("\n\r")
+
+        file_path = raw_line[:colon_idx]
+        rest = raw_line[colon_idx + 1:]
+        colon2 = rest.find(":")
+        if colon2 < 0:
+            return None
         try:
-            with file_path.open("r", encoding="utf-8", errors="replace", newline="") as f:
-                all_lines = list(enumerate(f, start=1))
-        except (OSError, PermissionError):
-            return [], []
+            lnum = int(rest[:colon2])
+        except ValueError:
+            return None
+        text = rest[colon2 + 1:]
+        return file_path, lnum, text.rstrip("\n\r")
 
-        match_idx = match_line - 1
-        if match_idx < 0 or match_idx >= len(all_lines):
-            return [], []
-
-        ctx_before = [
-            (ln, txt.rstrip("\n\r"))
-            for ln, txt in all_lines[max(0, match_idx - context_lines):match_idx]
-        ]
-        ctx_after = [
-            (ln, txt.rstrip("\n\r"))
-            for ln, txt in all_lines[match_idx + 1:min(len(all_lines), match_idx + 1 + context_lines)]
-        ]
-        return ctx_before, ctx_after
+    # ------------------------------------------------------------------
+    # Python re fallback — skips excluded directories
+    # ------------------------------------------------------------------
 
     async def _search_with_python(
         self,
@@ -348,10 +378,14 @@ class SearchFilesTool(Tool):
         except re.error as e:
             return f"Error: Invalid regex pattern: {e}"
 
+        exclude_set = set(DEFAULT_EXCLUDES)
         results: list[tuple[str, int, str, list[tuple[int, str]], list[tuple[int, str]]]] = []
 
         for file_path in search_path.rglob(file_pattern.lstrip("/")):
             if not file_path.is_file():
+                continue
+            # Skip files inside excluded directories
+            if exclude_set & set(file_path.parts):
                 continue
             if _is_binary(file_path):
                 continue
@@ -422,7 +456,7 @@ class FindFilesTool(Tool):
 
     @property
     def name(self) -> str:
-        return "find_files"
+        return "find"
 
     @property
     def description(self) -> str:
@@ -486,7 +520,10 @@ class FindFilesTool(Tool):
         search_path: Path,
         max_results: int,
     ) -> str:
-        cmd = ["fd", "--max-results", str(max_results), pattern, str(search_path)]
+        cmd = ["fd", "--type", "f", "--max-results", str(max_results)]
+        for d in DEFAULT_EXCLUDES:
+            cmd.extend(["--exclude", d])
+        cmd.extend([pattern, str(search_path)])
         try:
             proc = await _async_subprocess_run(
                 cmd, capture_output=True, text=True, timeout=30
@@ -506,9 +543,12 @@ class FindFilesTool(Tool):
         search_path: Path,
         max_results: int,
     ) -> str:
+        exclude_set = set(DEFAULT_EXCLUDES)
         files: list[str] = []
         for file_path in search_path.rglob(pattern.lstrip("/")):
             if file_path.is_file():
+                if exclude_set & set(file_path.parts):
+                    continue
                 rel_path = str(
                     file_path.relative_to(search_path)
                     if file_path.is_relative_to(search_path)

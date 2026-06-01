@@ -1,0 +1,10 @@
+agent_type: scout
+description: "Fast codebase recon — returns compressed context for handoff"
+max_steps: 40
+tool_preset: read_only
+context_mode: fresh
+thinking_budget: low
+progress_tracking: true
+memory:
+  short_term: {max_messages: 40, max_tokens: 40000}
+  archive: {enabled: true}

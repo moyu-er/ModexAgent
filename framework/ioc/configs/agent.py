@@ -58,10 +58,14 @@ class AgentConfig(BaseModel):
     max_steps: int = 20
     tools: list[Tool] = Field(default_factory=list)  # code-passed only
     standard_tools: bool = True  # register read/write/edit/list/shell/search
-    use_terminal: bool = True  # master switch: false = SubprocessExecutor, skip terminal tools
-    terminal_visibility: bool = True  # True=prefer visible, False=prefer hidden; degrades through chain
+    use_terminal: bool = False  # master switch: false = SubprocessExecutor, skip terminal tools
+    terminal_visibility: bool = False  # True=prefer visible, False=prefer hidden; degrades through chain
     memory: MemoryConfig | None = None
     skills: SkillsConfig | None = None
     approval: ApprovalConfig | None = None
     safety: SafetyConfig | None = None
     hooks: HooksConfig | None = Field(default_factory=HooksConfig)
+
+    # pi-aligned: extra tools registered by name for the main agent
+    # e.g. ["ast_grep_search", "ast_grep_replace", "lsp_diagnostics", "lsp_navigation"]
+    extra_tools: list[str] = Field(default_factory=list)

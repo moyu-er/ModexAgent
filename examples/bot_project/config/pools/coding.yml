@@ -1,4 +1,38 @@
 # config/pools/coding.yml — Coding Agent pool
+#
+# ── Tool Preset Reference ──
+# Communication tools (send_to_agent + list_communication_targets)
+# are always auto-injected for every preset.
+#
+#   Preset      | Read | Write | Edit | List | Search | Find | Bash | Terminal |
+#   ------------|------|-------|------|------|--------|------|------|----------|
+#   full        |  Y   |   Y   |  Y   |  Y   |   Y    |  Y   |  Y   |   Y*     |
+#   read_write  |  Y   |   Y   |  Y   |  Y   |   Y    |  Y   |  Y   |   -      |
+#   read_only   |  Y   |   -   |  -   |  Y   |   Y    |  Y   |  Y   |   -      |
+#   minimal     |  Y   |   Y   |  -   |  Y   |   Y    |  -   |  -   |   -      |
+#   none        |  -   |   -   |  -   |  -   |   -    |  -   |  -   |   -      |
+#
+#   * Terminal tools require use_terminal: true. Subagents always use
+#     SubprocessTool for bash (stateless — each invocation is independent).
+#
+# ── Coding Pool Agent Summary ──
+#
+#   Agent           | Preset     | Context | Think  | Steps | Terminal |
+#   ----------------|------------|---------|--------|-------|----------|
+#   coding (main)   | full*      | persist | -      | 100   | true     |
+#   scout           | read_only  | fresh   | low    | 40    | -        |
+#   context-builder | read_only  | fresh   | medium | 60    | -        |
+#   planner         | minimal    | fork    | high   | 80    | -        |
+#   worker          | full       | fork    | high   | 150   | true     |
+#   reviewer        | read_write | fresh   | high   | 100   | -        |
+#   delegate        | full       | fresh   | medium | 50    | -        |
+#
+#   * Main agent extra_tools: ast_grep_search, ast_grep_replace,
+#     lsp_diagnostics, lsp_navigation.
+#   Fork context: parent session messages deep-copied into subagent,
+#     comm tool calls/results sanitized, fork marker inserted at position 0.
+#   Bash tool: SubprocessTool (stateless) for subagents;
+#     CommandTool/TerminalTool (stateful persistent session) for main agent.
 
 llm:
   model: "${LLM_MODEL:-openai/MiniMax-M2.5}"
@@ -33,5 +67,5 @@ agents:
     role: main
     max_steps: 100
     standard_tools: true
-    use_terminal: true
-    terminal_visibility: true
+    use_terminal: false
+    extra_tools: ["ast_grep_search", "ast_grep_replace", "lsp_diagnostics", "lsp_navigation"]

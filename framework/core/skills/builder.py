@@ -56,7 +56,7 @@ def _render_skill_xml(
     """Render skills as a compact XML directory.
 
     Only name, directory path, and description are included.
-    The LLM is expected to ``read_file`` the SKILL.md for full content.
+    The LLM is expected to ``read`` the SKILL.md for full content.
     """
     from xml.sax.saxutils import escape as xml_escape
 
@@ -87,7 +87,7 @@ def _has_read_tool(context: ResolutionContext | None) -> bool:
     tm = getattr(context, "tool_manager", None) if context else None
     if tm is None:
         return False
-    for name in ("read_file", "filesystem_read_file", "cat"):
+    for name in ("read", "read_file", "filesystem_read_file", "cat"):
         try:
             if hasattr(tm, "has_tool") and tm.has_tool(name):
                 return True

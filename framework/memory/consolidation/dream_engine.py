@@ -112,21 +112,25 @@ class DreamEngine(ConsolidationEngine):
 
         archive_count = len(entries)
 
+        scope_info = f"user={context.user_id} agent={context.agent_id}"
+
         # Dual trigger: skip if below minimum threshold
         if archive_count < self.min_archive_count:
             logger.debug(
-                "DreamEngine: skipping consolidation, archive_count=%d < min=%d",
+                "DreamEngine: skipping consolidation, archive_count=%d < min=%d, %s",
                 archive_count,
                 self.min_archive_count,
+                scope_info,
             )
             return False
 
         # Dual trigger: force trigger if above maximum threshold
         if archive_count > self.max_archive_count:
             logger.info(
-                "DreamEngine: triggering consolidation, archive_count=%d > max=%d",
+                "DreamEngine: archive overflow trigger, archive_count=%d > max=%d, %s",
                 archive_count,
                 self.max_archive_count,
+                scope_info,
             )
 
         batch = entries[: self.max_batch_size]
@@ -221,9 +225,7 @@ class DreamEngine(ConsolidationEngine):
                 if did_work:
                     processed.append(ctx)
             except Exception as e:
-                logger.warning(
-                    "DreamEngine failed for scope %s: %s", record.scope_key, e
-                )
+                logger.warning("DreamEngine failed for scope %s: %s", record.scope_key, e)
         return processed
 
     async def consolidate(
@@ -341,10 +343,14 @@ class DreamEngine(ConsolidationEngine):
 
         return result
 
-    _EMPTY_MARKERS = frozenset({
-        "(no conversation content)", "(no summary)", "(nothing)",
-        "(no semantic content)",
-    })
+    _EMPTY_MARKERS = frozenset(
+        {
+            "(no conversation content)",
+            "(no summary)",
+            "(nothing)",
+            "(no semantic content)",
+        }
+    )
 
     _TOOL_XML_PATTERNS = (
         "<minimax:tool_call>",

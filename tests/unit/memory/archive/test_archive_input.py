@@ -16,7 +16,7 @@ def test_tool_chain_is_grouped_with_assistant_tool_calls() -> None:
                 {
                     "id": "call_123456",
                     "function": {
-                        "name": "shell",
+                        "name": "bash",
                         "arguments": "{\"command\":\"pytest tests/unit -q\",\"unused\":\"drop me\"}",
                     },
                 }
@@ -25,7 +25,7 @@ def test_tool_chain_is_grouped_with_assistant_tool_calls() -> None:
         {
             "role": "tool",
             "tool_call_id": "call_123456",
-            "name": "shell",
+            "name": "bash",
             "content": "FAILED test_a\n" + ("x" * 1300) + "\nshort summary tail",
         },
     ]
@@ -48,7 +48,7 @@ def test_tool_chain_is_grouped_with_assistant_tool_calls() -> None:
 def test_orphan_tool_result_is_dropped() -> None:
     policy = DefaultArchiveInputPolicy()
     result = policy.build_inputs(
-        [{"role": "tool", "tool_call_id": "missing", "name": "shell", "content": "noise"}],
+        [{"role": "tool", "tool_call_id": "missing", "name": "bash", "content": "noise"}],
         MemoryContext(session_id="s1"),
         CompressionReason.MESSAGE_COUNT,
     )

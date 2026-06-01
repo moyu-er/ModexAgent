@@ -10,8 +10,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import platform
-import signal
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -52,7 +50,7 @@ from framework.interceptor.chain import InterceptorChain
 from framework.ioc.configs.agent import AgentConfig as IOCAgentConfig
 from framework.ioc.configs.app import AppConfig
 from framework.ioc.configs.memory import MemoryConfig as IOCMemoryConfig
-from framework.ioc.factories.governance import create_governance, create_subagent_governance
+from framework.ioc.factories.governance import create_governance
 from framework.ioc.factories.llm import create_llm_provider
 from framework.ioc.factories.memory import create_memory
 from framework.memory.core.scope import MemoryContext
@@ -60,7 +58,6 @@ from framework.memory.injection import FullInjectionPolicy
 from framework.memory.system import MemorySystemContextManager
 from framework.messaging.broker_bridge import (
     BrokerBridgeService,
-    OutputRoute,
 )
 from framework.messaging.broker_memory import InMemoryMessageBroker
 from framework.multi_agent import (
@@ -179,6 +176,8 @@ class BotService(AgentBuilderMixin):
 
         # Router task
         self._router_task: asyncio.Task | None = None
+        self._dream_task: asyncio.Task | None = None
+        self._dream_interval: int = 600
 
         # Runtime control
         self._shutdown_event = asyncio.Event()
@@ -211,6 +210,7 @@ class BotService(AgentBuilderMixin):
     def _load_app_config(self) -> AppConfig:
         """Load IOC AppConfig from bot_config.yml."""
         import os
+
         path = os.path.join(self.config_dir, "bot_config.yml")
         return AppConfig.from_yaml(path)
 
@@ -267,6 +267,7 @@ class BotService(AgentBuilderMixin):
         if self.mode == "pool":
             # Plugins are OFF by default in pool mode.
             from bot.plugins.integration import PluginIntegration as _PI
+
             self.plugin_integration = _PI(config={"enabled": False})
             await self._initialize_pool()
             self._print_pool_info()
@@ -292,13 +293,17 @@ class BotService(AgentBuilderMixin):
                 try:
                     from framework.tools.terminal import TerminalManager
 
-                    visibility: bool = getattr(main_cfg, 'terminal_visibility', True)
+                    visibility: bool = getattr(main_cfg, "terminal_visibility", True)
                     self.terminal_manager = TerminalManager(
-                        max_terminals=getattr(self._app_config, 'terminal', {}).get('max_terminals', 5),
+                        max_terminals=getattr(self._app_config, "terminal", {}).get(
+                            "max_terminals", 5
+                        ),
                         shell_info=shell_info,
                         visibility=visibility,
                     )
-                    print(f"[OK] TerminalManager initialized ({shell_info.family.value}: {shell_info.path}, {visibility}, lazy)")
+                    print(
+                        f"[OK] TerminalManager initialized ({shell_info.family.value}: {shell_info.path}, {visibility}, lazy)"
+                    )
                 except Exception as e:
                     logger.warning("TerminalManager initialization failed: %s", e)
                     self.terminal_manager = None
@@ -309,11 +314,11 @@ class BotService(AgentBuilderMixin):
             self.terminal_manager = None
             print("[INFO] TerminalManager disabled (use_terminal=false)")
 
-        await self._register_tools(
-            terminal_manager=self.terminal_manager
-        )
+        await self._register_tools(terminal_manager=self.terminal_manager)
         await self._register_mcp_tools()
-        print(f"[OK] ToolManager initialized, {len(self.tool_manager.list_tools())} tools registered")
+        print(
+            f"[OK] ToolManager initialized, {len(self.tool_manager.list_tools())} tools registered"
+        )
 
         # -- Plugin system --
         # Plugins are OFF by default. Only enabled if `plugins:` section
@@ -328,12 +333,15 @@ class BotService(AgentBuilderMixin):
             has_plugins = await self.plugin_integration.discover_and_load()
             if has_plugins:
                 self.plugin_integration.inject_tools(self.tool_manager)
-                print(f"[OK] Plugin system loaded, {len(self.plugin_integration.list_plugins())} plugins active")
+                print(
+                    f"[OK] Plugin system loaded, {len(self.plugin_integration.list_plugins())} plugins active"
+                )
             else:
                 print("[INFO] No plugins found")
         else:
             # Stub integration: no-op for downstream injection calls.
             from bot.plugins.integration import PluginIntegration as _PI
+
             self.plugin_integration = _PI(config={"enabled": False})
             print("[INFO] Plugins disabled (no `plugins.enabled: true` in config)")
 
@@ -396,12 +404,16 @@ class BotService(AgentBuilderMixin):
             )
             builder = ProgressiveBuilder(base_path=self._project_dir)
             main_skill_manager = SkillManager(
-                source=source, builder=builder, cache=cache,
+                source=source,
+                builder=builder,
+                cache=cache,
             )
             available_skills = await main_skill_manager.list_skills(
                 ResolutionContext.from_runtime(tool_manager=self.tool_manager)
             )
-            print(f"[OK] SkillManager initialized, main agent loaded {len(available_skills)} skills")
+            print(
+                f"[OK] SkillManager initialized, main agent loaded {len(available_skills)} skills"
+            )
 
             self.plugin_integration.inject_skill_sources(main_skill_manager)
             print("[OK] Plugin skill sources injected")
@@ -425,6 +437,7 @@ class BotService(AgentBuilderMixin):
         # Start overflow cleaner
         if self.interceptor_chain is not None:
             from framework.interceptor.builtin.result_limit import ToolResultLimitInterceptor
+
             for interceptor in self.interceptor_chain.interceptors:
                 if isinstance(interceptor, ToolResultLimitInterceptor):
                     if interceptor.handler is not None:
@@ -550,6 +563,7 @@ class BotService(AgentBuilderMixin):
         runtime = await self._assemble_runtime(hooks=self._build_hook_runner(pipeline_hooks))
         command_processor = self._build_main_command_processor(main_skill_manager)
 
+        dream_cfg = self._main_memory_cfg.dream_engine if self._main_memory_cfg else None
         self.pipeline = AgentPipeline(
             agent=self.agent,
             context_manager=self.context_manager,
@@ -558,12 +572,12 @@ class BotService(AgentBuilderMixin):
             output_adapter=self.output_adapter,
             emitter_factory=self.emitter_factory,
             dream_engine=self.dream_engine,
-            dream_interval=300,
+            dream_interval=self._dream_interval,
+            dream_threshold=dream_cfg.min_archive_count if dream_cfg else 5,
             max_iterations=main_cfg.max_steps if main_cfg else 40,
             skill_manager=main_skill_manager,  # type: ignore[arg-type]
             hook_runner=self._build_hook_runner(pipeline_hooks),
             interceptor_chain=self.interceptor_chain,
-
             context_manager_factory=self._get_context_manager,
             governance=create_governance(self._main_memory_cfg, self._app_config.llm.max_tokens),
             safety=self.safety_policy,
@@ -669,6 +683,8 @@ class BotService(AgentBuilderMixin):
             default_pool=self._app_config.multi_agent.default_pool,
         )
 
+        await self._init_pool_dream_engine()
+
     def _print_pool_info(self) -> None:
         """Display pool configuration summary."""
         print(f"\n[INFO] Pools: {list(self._pools.keys())}")
@@ -693,8 +709,9 @@ class BotService(AgentBuilderMixin):
             return []
         primary = self._find_subagent_cfg()
         primary_name = primary.name if primary else None
-        return [a for a in self._app_config.agents
-                if a.role == "subagent" and a.name != primary_name]
+        return [
+            a for a in self._app_config.agents if a.role == "subagent" and a.name != primary_name
+        ]
 
     @property
     def safety_policy(self) -> RuntimeSafetyPolicy:
@@ -740,6 +757,7 @@ class BotService(AgentBuilderMixin):
         obs = self._app_config.observability
         if obs is not None and obs.run_logging:
             from framework.hook.builtin import RunLoggingHook
+
             level = getattr(logging, obs.level.upper(), logging.INFO)
             hooks.append(
                 RunLoggingHook(
@@ -807,10 +825,12 @@ class BotService(AgentBuilderMixin):
             cleaner=overflow_cleaner,
             max_chars=max_chars,
         )
-        chain.add(ToolResultLimitInterceptor(
-            overflow_handler=overflow_handler,
-            max_chars=10000,
-        ))
+        chain.add(
+            ToolResultLimitInterceptor(
+                overflow_handler=overflow_handler,
+                max_chars=10000,
+            )
+        )
 
         self.interceptor_chain = chain
         return chain
@@ -838,6 +858,17 @@ class BotService(AgentBuilderMixin):
         await self.input_adapter.start()
         for pool in self._pools.values():
             await pool.broker_bridge.start()
+
+        if self.dream_engine is not None:
+            self._dream_task = asyncio.create_task(
+                self._dream_background_loop(interval=self._dream_interval)
+            )
+            logger.info(
+                "DreamEngine background loop started, pool=%s interval=%ds",
+                self._default_pool_name,
+                self._dream_interval,
+            )
+
         self._router_task = asyncio.create_task(self.pool_router.run())
         print(f"[OK] PoolRouter running, {len(self._pools)} pools active")
         await self._shutdown_event.wait()
@@ -874,23 +905,31 @@ class BotService(AgentBuilderMixin):
 
         approval_config = AgentApprovalConfig(enabled=enabled, tools=tools_approval)
 
-        runtime = await RuntimeAssembler.assemble(RuntimeServicesConfig(
-            mode="full",
-            hooks=hooks,
-            interceptors=list(self.interceptor_chain.interceptors) if self.interceptor_chain else None,
-            approval_classifier=TieredToolApprovalClassifier(
-                config=approval_config,
-                argument_matcher=ArgumentMatcher(project_root=self._project_dir),
-            ),
-            control_channel=self.control_channel,
-            control_store=InMemoryControlStore(),
-            command_handlers=[(ControlCommandType.CANCEL_TURN, DefaultCancelHandler())],
-            turn_store=self._turn_store,
-            project_root=self._project_dir,
-            governance=create_governance(self._main_memory_cfg, self._app_config.llm.max_tokens),
-            safety=self.safety_policy,
-        ))
-        print(f"[OK] AgentRuntime built (approval enabled={enabled}, tools={list(tools_approval.keys())})")
+        runtime = await RuntimeAssembler.assemble(
+            RuntimeServicesConfig(
+                mode="full",
+                hooks=hooks,
+                interceptors=list(self.interceptor_chain.interceptors)
+                if self.interceptor_chain
+                else None,
+                approval_classifier=TieredToolApprovalClassifier(
+                    config=approval_config,
+                    argument_matcher=ArgumentMatcher(project_root=self._project_dir),
+                ),
+                control_channel=self.control_channel,
+                control_store=InMemoryControlStore(),
+                command_handlers=[(ControlCommandType.CANCEL_TURN, DefaultCancelHandler())],
+                turn_store=self._turn_store,
+                project_root=self._project_dir,
+                governance=create_governance(
+                    self._main_memory_cfg, self._app_config.llm.max_tokens
+                ),
+                safety=self.safety_policy,
+            )
+        )
+        print(
+            f"[OK] AgentRuntime built (approval enabled={enabled}, tools={list(tools_approval.keys())})"
+        )
         return runtime
 
     # ------------------------------------------------------------------ #
@@ -922,15 +961,9 @@ class BotService(AgentBuilderMixin):
                 "- 不确定的事情如实说明，不编造\n"
             ),
             "user": (
-                "## 用户画像\n"
-                "- 首次使用，暂无特定偏好记录\n"
-                "- 后续对话中会逐渐积累用户习惯和偏好\n"
+                "## 用户画像\n- 首次使用，暂无特定偏好记录\n- 后续对话中会逐渐积累用户习惯和偏好\n"
             ),
-            "memory": (
-                "## 相关知识\n"
-                "- 暂无特定领域知识记录\n"
-                "- 长期对话中会自动整理和更新\n"
-            ),
+            "memory": ("## 相关知识\n- 暂无特定领域知识记录\n- 长期对话中会自动整理和更新\n"),
         }
 
         ctx = MemoryContext(session_id="default", user_id="default")
@@ -951,13 +984,8 @@ class BotService(AgentBuilderMixin):
         self._maintenance_policy = DefaultMemoryMaintenancePolicy()
 
         scan_interval = 300
-        self._maintenance_task = asyncio.create_task(
-            self._maintenance_loop(scan_interval)
-        )
-        print(
-            f"   [OK] MaintenanceService started "
-            f"(scan_interval={scan_interval}s)"
-        )
+        self._maintenance_task = asyncio.create_task(self._maintenance_loop(scan_interval))
+        print(f"   [OK] MaintenanceService started (scan_interval={scan_interval}s)")
 
     async def _maintenance_loop(self, interval: float) -> None:
         """Background loop for memory maintenance using maintenance policy."""
@@ -978,44 +1006,100 @@ class BotService(AgentBuilderMixin):
                 logger.exception("Maintenance scan loop error")
 
     def _init_dream(self) -> None:
-        """Initialize DreamEngine for offline memory consolidation."""
         if self._main_memory_cfg is None or self._main_memory_cfg.dream_engine is None:
             return
         if not self._main_memory_cfg.dream_engine.enabled:
             return
         if self.memory_system is None or self.provider is None:
             return
-        if self.memory_system.archive_manager is None or self.memory_system.knowledge_manager is None:
+        if (
+            self.memory_system.archive_manager is None
+            or self.memory_system.knowledge_manager is None
+        ):
             return
 
+        dream_cfg = self._main_memory_cfg.dream_engine
+        self._dream_interval = dream_cfg.interval
+        self.dream_engine = self._build_dream_engine(
+            llm_provider=self.provider,
+            memory_system=self.memory_system,
+            dream_cfg=dream_cfg,
+        )
+        logger.info("DreamEngine initialized, pipeline mode, interval=%ds", self._dream_interval)
+
+    async def _init_pool_dream_engine(self) -> None:
+        default_pool = self._pools.get(self._default_pool_name)
+        if default_pool is None:
+            return
+        pool_cfg = default_pool.config
+        if pool_cfg.memory is None or pool_cfg.memory.dream_engine is None:
+            return
+        if not pool_cfg.memory.dream_engine.enabled:
+            return
+        if default_pool.memory_system is None:
+            return
+        ms = default_pool.memory_system
+        if ms.archive_manager is None or ms.knowledge_manager is None:
+            return
+
+        dream_cfg = pool_cfg.memory.dream_engine
+        self._dream_interval = dream_cfg.interval
+        self.dream_engine = self._build_dream_engine(
+            llm_provider=default_pool.provider,
+            memory_system=ms,
+            dream_cfg=dream_cfg,
+        )
+        logger.info(
+            "DreamEngine initialized, pool=%s, interval=%ds",
+            self._default_pool_name,
+            self._dream_interval,
+        )
+
+    def _build_dream_engine(
+        self,
+        *,
+        llm_provider: object,
+        memory_system: object,
+        dream_cfg: object,
+    ) -> object:
         from framework.memory.consolidation.dream_engine import DreamEngine
 
-        dream_cfg = self._main_memory_cfg.dream_engine
-        self.dream_engine = DreamEngine(
-            llm_provider=self.provider,
-            history_manager=self.memory_system.archive_manager,
-            long_term_manager=self.memory_system.knowledge_manager,
-            registry=self.memory_system.store_registry,
+        return DreamEngine(
+            llm_provider=llm_provider,
+            history_manager=memory_system.archive_manager,
+            long_term_manager=memory_system.knowledge_manager,
+            registry=memory_system.store_registry,
             max_batch_size=dream_cfg.max_batch_size,
             max_iterations=10,
             min_archive_count=dream_cfg.min_archive_count,
             max_archive_count=dream_cfg.max_archive_count,
         )
-        print("   [OK] DreamEngine initialized")
 
     async def _dream_background_loop(self, interval: int = 300) -> None:
-        """Background loop for DreamEngine in pool mode."""
         if self.dream_engine is None:
             return
-        print(f"[OK] DreamEngine background loop starting (interval={interval}s)")
+        logger.info(
+            "DreamEngine background loop starting, pool=%s interval=%ds",
+            self._default_pool_name,
+            interval,
+        )
         while not self._shutdown_event.is_set():
             try:
                 await asyncio.sleep(interval)
                 if self._shutdown_event.is_set():
                     break
+                logger.debug(
+                    "DreamEngine timer scan, pool=%s interval=%ds",
+                    self._default_pool_name,
+                    interval,
+                )
                 processed = await self.dream_engine.scan_all()
                 if processed:
-                    print(f"[Dream] Processed {len(processed)} scopes")
+                    logger.info(
+                        "DreamEngine processed %d scope(s), pool=%s",
+                        len(processed),
+                        self._default_pool_name,
+                    )
             except asyncio.CancelledError:
                 break
             except Exception:
@@ -1027,7 +1111,11 @@ class BotService(AgentBuilderMixin):
             self._maintenance_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._maintenance_task
-        if hasattr(self, '_router_task') and self._router_task:
+        if self._dream_task is not None:
+            self._dream_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._dream_task
+        if hasattr(self, "_router_task") and self._router_task:
             self._router_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._router_task

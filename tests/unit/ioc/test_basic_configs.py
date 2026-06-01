@@ -36,9 +36,9 @@ class TestApprovalConfig:
     def test_with_tools(self) -> None:
         cfg = ApprovalConfig(
             tools={
-                "shell": ToolApprovalEntry(allowed_paths=["*"]),
+                "bash": ToolApprovalEntry(allowed_paths=["*"]),
                 "write_file": ToolApprovalEntry(allowed_paths=["./*"]),
             }
         )
-        assert cfg.tools["shell"].allowed_paths == ["*"]
+        assert cfg.tools["bash"].allowed_paths == ["*"]
         assert cfg.tools["write_file"].allowed_paths == ["./*"]

@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 
 from framework.multi_agent.template_registry import AgentTemplateRegistry
+from framework.tools.presets import ToolPreset
 
 
 def _write_yml(dir_path: Path, name: str, content: str) -> None:
@@ -28,6 +29,8 @@ standard_tools: false
         assert len(templates) == 1
         assert templates[0].agent_type == "helper"
         assert templates[0].max_steps == 10
+        # standard_tools: false + no tool_preset → NONE (backward compat)
+        assert templates[0].tool_preset == ToolPreset.NONE
         assert templates[0].standard_tools is False
 
 

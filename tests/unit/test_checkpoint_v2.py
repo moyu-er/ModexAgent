@@ -7,7 +7,7 @@ from framework.runtime.models import ApprovalDenialContext
 class TestApprovalDenialContext:
     def test_fields(self):
         ctx = ApprovalDenialContext(
-            tool_name="shell",
+            tool_name="bash",
             tool_call_id="tc1",
             arguments={"cmd": "rm"},
             tier="dangerous",
@@ -15,6 +15,6 @@ class TestApprovalDenialContext:
             reason="denied by user",
             session_id="s1",
         )
-        assert ctx.tool_name == "shell"
+        assert ctx.tool_name == "bash"
         assert ctx.tier == "dangerous"
         assert ctx.reason == "denied by user"

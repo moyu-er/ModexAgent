@@ -108,7 +108,7 @@ class TestStreamWithControlPreservesToolCalls:
         fake_chain.around_llm_stream = _fake_llm_stream
 
         # Arrange: mock streaming provider that returns tool_calls
-        tool_call = ToolCall(tool_name="shell", arguments={"cmd": "ls"}, call_id="call_1")
+        tool_call = ToolCall(tool_name="bash", arguments={"cmd": "ls"}, call_id="call_1")
 
         class StreamingProvider(StreamingLLMProvider):
             async def chat_stream(self, messages, tools=None, temperature=0.7,

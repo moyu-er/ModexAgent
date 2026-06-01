@@ -153,11 +153,13 @@ class ListCommunicationTargetsTool(Tool):
         registry: AgentRegistry,
         template_registry: AgentTemplateRegistry | None = None,
         pool_name: str | None = None,
+        visible_targets: list[str] | None = None,
     ) -> None:
         self._self_address = self_address
         self._registry = registry
         self._template_registry = template_registry
         self._pool_name = pool_name
+        self._visible_targets = visible_targets
         super().__init__(
             name="list_communication_targets",
             description=(
@@ -197,6 +199,11 @@ class ListCommunicationTargetsTool(Tool):
         # Subagents can only see NORMAL targets
         if current_comm_kind == AgentCommKind.SUBAGENT:
             targets = [p for p in targets if p.comm_kind == AgentCommKind.NORMAL]
+
+        # Apply visible_targets restriction (if set)
+        if self._visible_targets is not None:
+            visible_set = set(self._visible_targets)
+            targets = [p for p in targets if p.name in visible_set]
 
         # Check if templates exist (needed for both early return and summary)
         templates: list = []

@@ -55,7 +55,7 @@ class DefaultToolResultSummarizer:
 
     # Override in subclasses to add domain-specific tools.
     status_tool_names: frozenset[str] = frozenset({"shell", "pytest", "ruff", "mypy"})
-    result_tool_names: frozenset[str] = frozenset({"read_file", "web_search", "search", "rg"})
+    result_tool_names: frozenset[str] = frozenset({"read", "read_file", "web_search", "search", "rg"})
 
     def summarize(self, tool_name: str, content: str) -> ToolResultSummary:
         lowered = content.lower()

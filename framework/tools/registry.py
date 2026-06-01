@@ -27,7 +27,7 @@ class ToolRegistry(InMemoryToolManager):
         schemas = registry.get_definitions()
 
         # 执行工具
-        result = await registry.execute("read_file", {"path": "/tmp/test.txt"})
+        result = await registry.execute("read", {"path": "/tmp/test.txt"})
     """
 
     def __init__(self):

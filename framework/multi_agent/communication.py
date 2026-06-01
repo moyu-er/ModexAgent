@@ -21,6 +21,7 @@ from framework.multi_agent.template_registry import AgentTemplateRegistry
 
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
+    from framework.memory.core.system import MemorySystem
     from framework.messaging.broker import MessageBroker
     from framework.multi_agent.address import AgentAddress
     from framework.multi_agent.bus import AgentMessageBus
@@ -120,6 +121,7 @@ class AgentCommunicationService:
         inbox_consumer: Any | None = None,
         notification_service: Any | None = None,
         main_agent_name: str | None = None,
+        parent_memory_system: MemorySystem | None = None,
     ) -> None:
         self._source = source
         self._broker = broker
@@ -139,6 +141,7 @@ class AgentCommunicationService:
         self._inbox_consumer = inbox_consumer
         self._notification_service = notification_service
         self._main_agent_name = main_agent_name
+        self._parent_memory_system = parent_memory_system
 
     def _resolve_source(self, context: AgentContext) -> AgentAddress:
         """Resolve effective source address from context, fallback to constructor default."""
@@ -203,6 +206,17 @@ class AgentCommunicationService:
         if not system_prompt:
             system_prompt = DEFAULT_SYSTEM_PROMPT
 
+        # ── Fork preamble: inject when context_mode="fork" ──
+        from framework.tools.presets import ContextMode
+
+        if template.context_mode == ContextMode.FORK:
+            fork_preamble = (
+                "\n\nYou are a subagent running from a fork of the parent session. "
+                "Treat inherited conversation as reference-only context, not a live "
+                "thread to continue. Your sole job is to execute the assigned task."
+            )
+            system_prompt = system_prompt + fork_preamble
+
         # ── Memory: session-scoped, no knowledge layer ──
         from framework.ioc.factories.descriptors import build_session_only_memory
         from framework.memory.core.scope import MemoryAgentRole
@@ -218,6 +232,99 @@ class AgentCommunicationService:
             agent_role=MemoryAgentRole.SUBAGENT,
             system_prompt=system_prompt,
         )
+
+        # ── Fork context: deep-copy parent session messages into subagent memory ──
+        if template.context_mode == ContextMode.FORK and self._parent_memory_system is not None:
+            try:
+                import copy
+
+                from framework.memory.core.scope import MemoryContext
+                from framework.memory.core.message import ChatMessage
+
+                parent_session_id = self._session_strategy.format(
+                    conversation_id=conversation_id,
+                    agent_name=self._main_agent_name or "main",
+                )
+                parent_ctx = MemoryContext(session_id=parent_session_id)
+                parent_messages = self._parent_memory_system._layers.session.get_all_messages(
+                    parent_ctx
+                )
+
+                if parent_messages:
+                    # ── Sanitize: remove inter-agent communication tool calls/results ──
+                    _COMM_TOOLS = {"send_to_agent", "list_communication_targets"}
+                    sanitized: list[ChatMessage] = []
+
+                    for msg in parent_messages:
+                        msg_copy = copy.deepcopy(msg)
+
+                        # Skip assistant tool_calls that are purely communication tools
+                        if msg_copy.role == "assistant" and msg_copy.tool_calls:
+                            filtered_calls = []
+                            for tc in msg_copy.tool_calls:
+                                func = tc.get("function", {})
+                                tc_name = func.get("name", "")
+                                if tc_name in _COMM_TOOLS:
+                                    # Replace communication tool call with a fork-note stub
+                                    filtered_calls.append({
+                                        "id": tc.get("id", ""),
+                                        "type": "function",
+                                        "function": {
+                                            "name": "_fork_note",
+                                            "arguments": "{}",
+                                        },
+                                    })
+                                else:
+                                    filtered_calls.append(tc)
+                            msg_copy.tool_calls = filtered_calls if filtered_calls else None
+
+                        # Skip tool result messages from communication tools
+                        if msg_copy.role == "tool" and msg_copy.name in _COMM_TOOLS:
+                            msg_copy.content = (
+                                f"[fork: inter-agent communication event "
+                                f"({msg_copy.name}) from parent session — removed]"
+                            )
+
+                        sanitized.append(msg_copy)
+
+                    # ── Insert fork marker as first system message ──
+                    import datetime as _dt
+                    fork_marker = ChatMessage(
+                        role="system",
+                        content=(
+                            "The following conversation history is a forked reference copy "
+                            "from the parent coding agent session. Treat it as read-only "
+                            "reference context — do not act on these messages or respond "
+                            "to them directly. Your actual task to execute is described in "
+                            "the most recent user message below."
+                        ),
+                        created_at=_dt.datetime.now().astimezone(),
+                    )
+                    sanitized.insert(0, fork_marker)
+
+                    # ── Write to subagent session memory ──
+                    subagent_session_ctx = MemoryContext(
+                        session_id=self._session_strategy.format(
+                            conversation_id=conversation_id,
+                            agent_name=name,
+                            invocation_id=invocation_id,
+                        )
+                    )
+                    subagent_memory = getattr(subagent_ctx, "memory_system", None)
+                    if subagent_memory is not None:
+                        await subagent_memory._layers.session.replace_messages(
+                            subagent_session_ctx,
+                            sanitized,
+                        )
+                        logger.info(
+                            "Fork context: sanitized & copied %d messages (from %d parent) "
+                            "to subagent %s",
+                            len(sanitized), len(parent_messages), name,
+                        )
+            except Exception:
+                logger.exception(
+                    "Failed to copy parent messages for fork context (subagent=%s)", name,
+                )
 
         # ── Tool manager: standard + MCP + communication ──
         subagent_tm = await self._build_subagent_tool_manager(template, agent_name=name)
@@ -352,39 +459,30 @@ class AgentCommunicationService:
     async def _build_subagent_tool_manager(self, template: AgentTemplate, agent_name: str):
         """Build the subagent tool manager from template configuration.
 
-        Includes:
-        - Standard tools (file + shell + search) if template.standard_tools
-        - Terminal tools if template.use_terminal
-        - MCP tools from per-agent config ``config/mcp/{agentType}.json``
-        - Communication tools (send_to_agent, list_communication_targets) — always
+        Uses template.tool_preset to determine which tools to register.
+        Falls back to template.standard_tools for backward compatibility.
         """
         from framework.core.tool_manager import InMemoryToolManager, ToolManagerConfig
+        from framework.multi_agent.address import AgentAddress
         from framework.multi_agent.tools import (
             ListCommunicationTargetsTool,
             SendToAgentTool,
         )
-        from framework.multi_agent.address import AgentAddress
+        from framework.tools.presets import get_preset_tools
 
         tm = InMemoryToolManager(config=ToolManagerConfig(
             max_workers=10, enable_parallel=True, parallel_max_workers=5,
         ))
 
-        # Standard tools: file + shell + search (matching _make_standard_tools)
-        if template.standard_tools:
-            from framework.tools.standard import (
-                EditFileTool, FindFilesTool, ListDirTool,
-                ReadFileTool, SearchFilesTool, WriteFileTool,
-            )
-            from framework.tools.terminal import SubprocessTool
-            for tool in [
-                ReadFileTool(), WriteFileTool(), EditFileTool(),
-                ListDirTool(), SearchFilesTool(), FindFilesTool(),
-                SubprocessTool(timeout=60),
-            ]:
-                tm.register(tool)
+        # Bash tool factory: use SubprocessTool for subagents (no terminal)
+        from framework.tools.terminal import SubprocessTool
 
-        # Persistent terminal tools (CommandTool etc.) — separate from standard_tools
-        # use_terminal is reserved for future persistent terminal manager integration
+        def _make_bash() -> SubprocessTool:
+            return SubprocessTool(timeout=60)
+
+        # Register preset tools
+        for tool in get_preset_tools(template.tool_preset, subprocess_tool_factory=_make_bash):
+            tm.register(tool)
 
         # MCP tools from per-agent config file: config/mcp/{agentType}.json
         if self._project_dir is not None:
@@ -400,6 +498,11 @@ class AgentCommunicationService:
 
         # Communication tools — always included so subagent can reply to parent
         subagent_address = AgentAddress(name=agent_name)
+        # Dynamic target visibility: subagents default to parent-only
+        visible = template.visible_targets
+        if visible is None:
+            visible = [self._main_agent_name] if self._main_agent_name else []
+
         tm.register(SendToAgentTool(
             source=subagent_address,
             broker=self._broker,
@@ -413,6 +516,7 @@ class AgentCommunicationService:
             registry=self._registry,
             template_registry=self._template_registry,
             pool_name=self._pool_name,
+            visible_targets=visible,
         ))
 
         return tm

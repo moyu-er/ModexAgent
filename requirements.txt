@@ -37,6 +37,13 @@ pywinpty>=3.0; sys_platform == 'win32'
 pexpect>=4.0; sys_platform != 'win32'
 libtmux>=0.15.0; sys_platform != 'win32'
 
+# ---- AST tools (tree-sitter, optional) ----
+# Install: pip install -r requirements.txt
+# Or: pip install ModexAgent[ast]
+tree-sitter>=0.24
+tree-sitter-python>=0.23
+tree-sitter-java>=0.23
+
 # ---- Sandbox backends ----
 docker>=6.0.0
 e2b-code-interpreter>=0.1.0

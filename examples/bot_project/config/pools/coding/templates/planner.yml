@@ -1,11 +1,10 @@
 agent_type: planner
-description: "Task planner — breaks down complex goals into structured implementation steps"
-max_steps: 50
-standard_tools: true
-use_terminal: false
+description: "Creates implementation plans from context and requirements"
+max_steps: 80
+tool_preset: minimal
+context_mode: fork
+thinking_budget: high
+default_reads: ["context.md"]
 memory:
-  short_term: {max_messages: 50, max_tokens: 50000}
-  long_term: { enabled: true }
-  governance: { }
-skills:
-  roots: ["skills/coding/planner"]
+  short_term: {max_messages: 60, max_tokens: 60000}
+  archive: {enabled: true}

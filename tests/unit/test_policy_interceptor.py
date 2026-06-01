@@ -30,7 +30,7 @@ def _ctx(meta: dict | None = None) -> AgentContext:
     )
 
 
-def _call(name: str = "shell") -> ToolCallContext:
+def _call(name: str = "bash") -> ToolCallContext:
     return ToolCallContext(
         tool_call=ToolCall(tool_name=name, arguments={}),
         tool_name=name,
@@ -42,19 +42,19 @@ def _call(name: str = "shell") -> ToolCallContext:
 class TestToolPolicyInterceptor:
     async def test_vetoes_denied_tool(self):
         interceptor = ToolPolicyInterceptor()
-        ctx = _ctx({"_policy_denied_tools": {"shell": "security policy"}})
+        ctx = _ctx({"_policy_denied_tools": {"bash": "security policy"}})
 
         async def _next():
-            return ToolResult(tool_name="shell", result="should not execute")
+            return ToolResult(tool_name="bash", result="should not execute")
 
-        result = await interceptor.around_tool_call(ctx, _call("shell"), _next)
+        result = await interceptor.around_tool_call(ctx, _call("bash"), _next)
         assert result.error is not None
         assert "blocked by policy" in result.error
         assert result.result is None
 
     async def test_passes_non_denied_tool(self):
         interceptor = ToolPolicyInterceptor()
-        ctx = _ctx({"_policy_denied_tools": {"shell": "security policy"}})
+        ctx = _ctx({"_policy_denied_tools": {"bash": "security policy"}})
 
         async def _next():
             return ToolResult(tool_name="read_file", result="content")
@@ -68,7 +68,7 @@ class TestToolPolicyInterceptor:
         ctx = _ctx()
 
         async def _next():
-            return ToolResult(tool_name="shell", result="ok")
+            return ToolResult(tool_name="bash", result="ok")
 
-        result = await interceptor.around_tool_call(ctx, _call("shell"), _next)
+        result = await interceptor.around_tool_call(ctx, _call("bash"), _next)
         assert result.result == "ok"
