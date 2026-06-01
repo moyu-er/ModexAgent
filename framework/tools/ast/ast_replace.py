@@ -1,4 +1,4 @@
-"""ast_grep_replace tool — replace code using AST pattern matching."""
+"""ast_grep_replace tool — replace code using AST pattern matching (tree-sitter S-expression queries)."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ from framework.core.tool_manager import Tool
 from framework.tools.ast.engine import (
     AST_UNAVAILABLE_MSG,
     AstNotAvailableError,
+    AstParseError,
+    AstQueryError,
     is_ast_available,
     replace_in_file,
 )
@@ -28,7 +30,8 @@ class AstGrepReplaceTool(Tool):
     def description(self) -> str:
         return (
             "Replace code using AST pattern matching. "
-            "Use $VAR from the pattern in the replacement. "
+            "Each match of the S-expression pattern is replaced with the replacement text. "
+            "Use @capture_name to identify nodes in the pattern. "
             "Dry-run by default — set dry_run=false to apply changes."
         )
 

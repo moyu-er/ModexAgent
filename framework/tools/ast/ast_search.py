@@ -1,4 +1,4 @@
-"""ast_grep_search tool — search code using AST pattern matching."""
+"""ast_grep_search tool — search code using AST pattern matching (tree-sitter S-expression queries)."""
 
 from __future__ import annotations
 
@@ -9,15 +9,13 @@ from framework.core.tool_manager import Tool
 from framework.tools.ast.engine import (
     AST_UNAVAILABLE_MSG,
     AstNotAvailableError,
+    AstParseError,
+    AstQueryError,
+    _EXT_MAP,
     is_ast_available,
     search_in_file,
     search_in_directory,
 )
-
-_EXT_MAP: dict[str, tuple[str, ...]] = {
-    "python": (".py",),
-    "java": (".java",),
-}
 
 
 class AstGrepSearchTool(Tool):
@@ -33,9 +31,10 @@ class AstGrepSearchTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Search code using AST pattern matching. "
-            "Use $NAME for a single node, $$$ARGS for zero or more nodes. "
-            "Example: 'def $FUNC($$$ARGS): return $EXPR' matches function definitions. "
+            "Search code using tree-sitter AST pattern matching. "
+            "Use S-expression queries with @capture_name for captures. "
+            "Example: '(function_definition name: (identifier) @name) @func' "
+            "matches function definitions and captures names. "
             "Supported languages: python, java."
         )
 
@@ -47,9 +46,9 @@ class AstGrepSearchTool(Tool):
                 "pattern": {
                     "type": "string",
                     "description": (
-                        "AST pattern. $NAME captures a single AST node. "
-                        "$$$ARGS captures zero or more nodes. "
-                        "Example: 'function $NAME($$$ARGS) { $$$BODY }'"
+                        "tree-sitter S-expression query pattern. "
+                        "Use @capture_name to capture nodes. "
+                        "Example: '(function_definition name: (identifier) @name)'"
                     ),
                 },
                 "language": {
