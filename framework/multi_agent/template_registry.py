@@ -11,6 +11,7 @@ import yaml
 from framework.ioc.configs.memory import MemoryConfig
 from framework.ioc.configs.skills import SkillsConfig
 from framework.multi_agent.template import AgentTemplate
+from framework.tools.presets import ToolPreset
 
 logger = logging.getLogger(__name__)
 
@@ -49,13 +50,31 @@ class AgentTemplateRegistry:
                         logger.warning("Skipping invalid template: %s", yml_path)
                         continue
 
+                    # Parse pi-aligned fields with fallback
+                    tool_preset_raw = raw.get("tool_preset")
+                    tool_preset = ToolPreset.FULL
+                    if tool_preset_raw is not None:
+                        try:
+                            tool_preset = ToolPreset(tool_preset_raw)
+                        except ValueError:
+                            logger.warning(
+                                "Invalid tool_preset '%s' in %s, falling back to 'full'",
+                                tool_preset_raw, yml_path,
+                            )
+
                     template = AgentTemplate(
                         agent_type=raw["agent_type"],
                         description=raw.get("description", ""),
                         max_steps=raw.get("max_steps", 20),
                         standard_tools=raw.get("standard_tools", True),
+                        tool_preset=tool_preset,
                         use_terminal=raw.get("use_terminal", True),
                         terminal_visibility=raw.get("terminal_visibility", True),
+                        context_mode=raw.get("context_mode", "fresh"),
+                        thinking_budget=raw.get("thinking_budget", "medium"),
+                        default_reads=raw.get("default_reads", []),
+                        progress_tracking=raw.get("progress_tracking", False),
+                        visible_targets=raw.get("visible_targets"),
                         memory=(
                             MemoryConfig.model_validate(raw["memory"])
                             if raw.get("memory") else None

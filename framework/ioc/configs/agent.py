@@ -65,3 +65,7 @@ class AgentConfig(BaseModel):
     approval: ApprovalConfig | None = None
     safety: SafetyConfig | None = None
     hooks: HooksConfig | None = Field(default_factory=HooksConfig)
+
+    # pi-aligned: extra tools registered by name for the main agent
+    # e.g. ["ast_grep_search", "ast_grep_replace", "lsp_diagnostics", "lsp_navigation"]
+    extra_tools: list[str] = Field(default_factory=list)
