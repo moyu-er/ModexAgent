@@ -51,8 +51,9 @@ class AgentTemplateRegistry:
                         continue
 
                     # Parse pi-aligned fields with fallback
+                    # tool_preset takes precedence; standard_tools is deprecated fallback
+                    standard_tools = raw.get("standard_tools", True)
                     tool_preset_raw = raw.get("tool_preset")
-                    tool_preset = ToolPreset.FULL
                     if tool_preset_raw is not None:
                         try:
                             tool_preset = ToolPreset(tool_preset_raw)
@@ -61,6 +62,13 @@ class AgentTemplateRegistry:
                                 "Invalid tool_preset '%s' in %s, falling back to 'full'",
                                 tool_preset_raw, yml_path,
                             )
+                            tool_preset = ToolPreset.FULL
+                    elif standard_tools is False:
+                        # Backward compat: old templates with standard_tools=false
+                        # but no tool_preset → no standard tools, comm+MCP only
+                        tool_preset = ToolPreset.NONE
+                    else:
+                        tool_preset = ToolPreset.FULL
 
                     context_mode_raw = raw.get("context_mode", "fresh")
                     try:
@@ -86,6 +94,7 @@ class AgentTemplateRegistry:
                         agent_type=raw["agent_type"],
                         description=raw.get("description", ""),
                         max_steps=raw.get("max_steps", 20),
+                        standard_tools=standard_tools,
                         tool_preset=tool_preset,
                         use_terminal=raw.get("use_terminal", True),
                         terminal_visibility=raw.get("terminal_visibility", True),

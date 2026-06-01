@@ -30,6 +30,10 @@ class AgentTemplate:
     max_steps: int = 20
 
     # ── tool policy ──
+    # standard_tools is DEPRECATED; use tool_preset instead.
+    # When template YAML has standard_tools: false without tool_preset,
+    # template_registry translates it to tool_preset=NONE.
+    standard_tools: bool = True
     tool_preset: ToolPreset = ToolPreset.FULL
     use_terminal: bool = True
     terminal_visibility: bool = True  # True=prefer visible, False=prefer hidden

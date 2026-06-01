@@ -12,6 +12,7 @@ def test_agent_template_defaults():
     assert t.agent_type == "test"
     assert t.description == ""
     assert t.max_steps == 20
+    assert t.standard_tools is True
     assert t.tool_preset == ToolPreset.FULL
     assert t.context_mode == ContextMode.FRESH
     assert t.thinking_budget == ThinkingBudget.MEDIUM

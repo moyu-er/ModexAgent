@@ -236,7 +236,10 @@ class AgentCommunicationService:
         # ── Fork context: deep-copy parent session messages into subagent memory ──
         if template.context_mode == ContextMode.FORK and self._parent_memory_system is not None:
             try:
+                import copy
+
                 from framework.memory.core.scope import MemoryContext
+                from framework.memory.core.message import ChatMessage
 
                 parent_session_id = self._session_strategy.format(
                     conversation_id=conversation_id,
@@ -248,8 +251,58 @@ class AgentCommunicationService:
                 )
 
                 if parent_messages:
-                    import copy
+                    # ── Sanitize: remove inter-agent communication tool calls/results ──
+                    _COMM_TOOLS = {"send_to_agent", "list_communication_targets"}
+                    sanitized: list[ChatMessage] = []
 
+                    for msg in parent_messages:
+                        msg_copy = copy.deepcopy(msg)
+
+                        # Skip assistant tool_calls that are purely communication tools
+                        if msg_copy.role == "assistant" and msg_copy.tool_calls:
+                            filtered_calls = []
+                            for tc in msg_copy.tool_calls:
+                                func = tc.get("function", {})
+                                tc_name = func.get("name", "")
+                                if tc_name in _COMM_TOOLS:
+                                    # Replace communication tool call with a fork-note stub
+                                    filtered_calls.append({
+                                        "id": tc.get("id", ""),
+                                        "type": "function",
+                                        "function": {
+                                            "name": "_fork_note",
+                                            "arguments": "{}",
+                                        },
+                                    })
+                                else:
+                                    filtered_calls.append(tc)
+                            msg_copy.tool_calls = filtered_calls if filtered_calls else None
+
+                        # Skip tool result messages from communication tools
+                        if msg_copy.role == "tool" and msg_copy.name in _COMM_TOOLS:
+                            msg_copy.content = (
+                                f"[fork: inter-agent communication event "
+                                f"({msg_copy.name}) from parent session — removed]"
+                            )
+
+                        sanitized.append(msg_copy)
+
+                    # ── Insert fork marker as first system message ──
+                    import datetime as _dt
+                    fork_marker = ChatMessage(
+                        role="system",
+                        content=(
+                            "The following conversation history is a forked reference copy "
+                            "from the parent coding agent session. Treat it as read-only "
+                            "reference context — do not act on these messages or respond "
+                            "to them directly. Your actual task to execute is described in "
+                            "the most recent user message below."
+                        ),
+                        created_at=_dt.datetime.now().astimezone(),
+                    )
+                    sanitized.insert(0, fork_marker)
+
+                    # ── Write to subagent session memory ──
                     subagent_session_ctx = MemoryContext(
                         session_id=self._session_strategy.format(
                             conversation_id=conversation_id,
@@ -261,11 +314,12 @@ class AgentCommunicationService:
                     if subagent_memory is not None:
                         await subagent_memory._layers.session.replace_messages(
                             subagent_session_ctx,
-                            copy.deepcopy(parent_messages),
+                            sanitized,
                         )
                         logger.info(
-                            "Fork context: copied %d messages from parent session %s to subagent %s",
-                            len(parent_messages), parent_session_id, name,
+                            "Fork context: sanitized & copied %d messages (from %d parent) "
+                            "to subagent %s",
+                            len(sanitized), len(parent_messages), name,
                         )
             except Exception:
                 logger.exception(

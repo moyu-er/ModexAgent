@@ -29,7 +29,9 @@ standard_tools: false
         assert len(templates) == 1
         assert templates[0].agent_type == "helper"
         assert templates[0].max_steps == 10
-        assert templates[0].tool_preset == ToolPreset.FULL
+        # standard_tools: false + no tool_preset → NONE (backward compat)
+        assert templates[0].tool_preset == ToolPreset.NONE
+        assert templates[0].standard_tools is False
 
 
 def test_registry_pool_isolation():

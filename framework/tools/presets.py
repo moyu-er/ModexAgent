@@ -25,6 +25,7 @@ class ToolPreset(str, Enum):
     READ_WRITE = "read_write"   # read + write + edit + search (no bash)
     READ_ONLY = "read_only"     # read + search + bash (prompt-constrained read-only)
     MINIMAL = "minimal"         # read + write + list (no edit, no bash)
+    NONE = "none"               # no standard tools — communication tools only (MCP still loaded)
 
 
 class ContextMode(str, Enum):
@@ -68,6 +69,11 @@ def _make_standard_minimal() -> list[Tool]:
     ]
 
 
+def _make_standard_none() -> list[Tool]:
+    """Create empty standard tool set (communication + MCP tools registered separately)."""
+    return []
+
+
 def get_preset_tools(
     preset: ToolPreset,
     *,
@@ -88,6 +94,7 @@ def get_preset_tools(
         ToolPreset.READ_WRITE: _make_standard_read_write,
         ToolPreset.READ_ONLY: _make_standard_read,
         ToolPreset.MINIMAL: _make_standard_minimal,
+        ToolPreset.NONE: _make_standard_none,
     }
 
     factory = tool_lists[preset]

@@ -75,3 +75,19 @@ class TestGetPresetTools:
         )
         names = [t.name for t in tools]
         assert "bash" not in names
+
+    def test_none_preset_returns_empty(self) -> None:
+        """NONE preset returns zero standard tools."""
+        tools = get_preset_tools(ToolPreset.NONE)
+        assert len(tools) == 0
+
+    def test_none_preset_no_bash(self) -> None:
+        """NONE preset does not get bash even with factory."""
+        from framework.tools.terminal.subprocess_tool import SubprocessTool
+
+        tools = get_preset_tools(
+            ToolPreset.NONE,
+            subprocess_tool_factory=lambda: SubprocessTool(timeout=60),
+        )
+        names = [t.name for t in tools]
+        assert "bash" not in names
