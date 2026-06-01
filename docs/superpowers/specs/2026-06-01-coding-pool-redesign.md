@@ -105,9 +105,10 @@ class AgentTemplate:
     # new pi-aligned fields
     tool_preset: ToolPreset = ToolPreset.FULL
     context_mode: str = "fresh"        # "fresh" | "fork"
-    thinking_budget: str = "medium"    # "low" | "medium" | "high" — prompt annotation only, no framework enforcement
+    thinking_budget: str = "medium"    # "low" | "medium" | "high" — prompt annotation only
     default_reads: list[str] = field(default_factory=list)
     progress_tracking: bool = False
+    visible_targets: list[str] | None = None  # None=all NORMAL agents visible; list=restrict
 ```
 
 Backward compatibility: `standard_tools=true` without `tool_preset` falls back to legacy behavior. `tool_preset` present takes precedence.
@@ -129,6 +130,36 @@ Update `_build_subagent_tool_manager` to accept template and register tools base
 3. Register bash (SubprocessTool or CommandTool based on terminal availability and preset)
 4. Always append `SendToAgentTool` + `ListCommunicationTargetsTool` (communication tools)
 5. When `context_mode="fork"`, inject fork preamble into system prompt: "You are a subagent running from a fork of the parent session. Treat inherited conversation as reference-only context, not a live thread to continue. Your sole job is to execute the assigned task."
+6. **New**: When `context_mode="fork"`, deep-copy the parent agent's conversation history into the subagent's memory (see 3.5a below)
+
+### 3.5a Fork Context — Memory Deep-Copy
+
+**Why**: `context_mode="fork"` must give the subagent a deep copy of the parent's conversation history, not just a preamble. Parent and subagent must have independent memory — they cannot share the same storage. The subagent treats inherited history as read-only reference.
+
+**Implementation**:
+
+1. `AgentCommunicationService.__init__` receives a new `parent_memory_system` parameter (the main agent's `MemorySystem`).
+2. In `_create_dynamic_subagent`, when `template.context_mode == "fork"`:
+   a. Build a `MemoryContext` for the parent's session (using parent's `conversation_id` + main agent name).
+   b. Call `parent_memory_system._layers.session.get_all_messages(parent_context)` to retrieve all messages.
+   c. Convert messages to `ChatMessage` list (deep copy — each message is a new dict/dataclass).
+   d. Pass `initial_messages=parent_messages` into the subagent's `create_message_history()`.
+3. The subagent's `RestrictedInjectionPolicy` will inject these messages as context on load.
+4. Parent and subagent memory systems remain completely independent — the subagent writes to its own session scope.
+
+**Key constraint**: Subagent must NOT mutate the parent's messages. The deep copy ensures isolation.
+
+### 3.5b Dynamic Communication Targets
+
+**Why**: Subagents should only see communication targets relevant to their task context, not all NORMAL agents in the pool. The list must be configurable at creation time.
+
+**Implementation**:
+
+1. `ListCommunicationTargetsTool.__init__` accepts an optional `visible_targets: list[str] | None` parameter.
+2. When `visible_targets` is set, `execute()` only returns agents whose names are in the list (in addition to existing comm_kind filtering).
+3. When `visible_targets` is None (default), behavior is unchanged (all NORMAL agents visible).
+4. `AgentCommunicationService._create_dynamic_subagent` passes `visible_targets=["coding"]` (or the main agent name) when creating subagent tools — subagents only see their parent.
+5. `AgentTemplate` gains an optional `visible_targets: list[str] | None` field to allow YAML override per template type.
 
 ### 3.6 AgentConfig Extension
 
@@ -277,26 +308,27 @@ Delete old `config/pools/coding/templates/planner.yml` and `reviewer.yml` (repla
 | 9 | framework | `framework/multi_agent/template.py` | Modify |
 | 10 | framework | `framework/multi_agent/template_registry.py` | Modify |
 | 11 | framework | `framework/multi_agent/communication.py` | Modify |
-| 12 | framework | `framework/ioc/configs/agent.py` | Modify |
-| 13 | framework | `framework/tools/terminal/subprocess_tool.py` | Modify |
-| 14 | framework | `framework/tools/terminal/command_tool.py` | Modify |
-| 15 | framework | `framework/hook/builtin/subagent_auto_send.py` | Modify |
-| 16 | framework | `framework/hook/notification.py` | Modify |
-| 17 | framework | `pyproject.toml` | Modify (add ast optional dep) |
-| 18 | bot | `config/pools/coding/templates/scout.yml` | New |
-| 19 | bot | `config/pools/coding/templates/context-builder.yml` | New |
-| 20 | bot | `config/pools/coding/templates/worker.yml` | New |
-| 21 | bot | `config/pools/coding/templates/delegate.yml` | New |
-| 22 | bot | `config/pools/coding/templates/planner.yml` | Replace |
-| 23 | bot | `config/pools/coding/templates/reviewer.yml` | Replace |
-| 24 | bot | `agents/scout.md` | New |
-| 25 | bot | `agents/context-builder.md` | New |
-| 26 | bot | `agents/worker.md` | New |
-| 27 | bot | `agents/delegate.md` | New |
-| 28 | bot | `agents/planner.md` | Replace |
-| 29 | bot | `agents/reviewer.md` | Replace |
-| 30 | bot | `agents/coding.md` | Modify |
-| 31 | bot | `config/pools/coding.yml` | Modify |
+| 12 | framework | `framework/multi_agent/tools.py` | Modify |
+| 13 | framework | `framework/ioc/configs/agent.py` | Modify |
+| 14 | framework | `framework/tools/terminal/subprocess_tool.py` | Modify |
+| 15 | framework | `framework/tools/terminal/command_tool.py` | Modify |
+| 16 | framework | `framework/hook/builtin/subagent_auto_send.py` | Modify |
+| 17 | framework | `framework/hook/notification.py` | Modify |
+| 18 | framework | `pyproject.toml` | Modify (add ast optional dep) |
+| 19 | bot | `config/pools/coding/templates/scout.yml` | New |
+| 20 | bot | `config/pools/coding/templates/context-builder.yml` | New |
+| 21 | bot | `config/pools/coding/templates/worker.yml` | New |
+| 22 | bot | `config/pools/coding/templates/delegate.yml` | New |
+| 23 | bot | `config/pools/coding/templates/planner.yml` | Replace |
+| 24 | bot | `config/pools/coding/templates/reviewer.yml` | Replace |
+| 25 | bot | `agents/scout.md` | New |
+| 26 | bot | `agents/context-builder.md` | New |
+| 27 | bot | `agents/worker.md` | New |
+| 28 | bot | `agents/delegate.md` | New |
+| 29 | bot | `agents/planner.md` | Replace |
+| 30 | bot | `agents/reviewer.md` | Replace |
+| 31 | bot | `agents/coding.md` | Modify |
+| 32 | bot | `config/pools/coding.yml` | Modify |
 
 ---
 

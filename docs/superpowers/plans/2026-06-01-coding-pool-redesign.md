@@ -1412,12 +1412,291 @@ into system prompt when context_mode='fork'."
 
 ---
 
+### Task 8a: Fork Context — Deep-Copy Parent Session Memory
+
+**Files:**
+- Modify: `framework/multi_agent/communication.py:169-220` (`_create_dynamic_subagent`)
+- Modify: `examples/bot_project/bot/service/pool_builder.py` (`create_pool`)
+
+**Why:** When `context_mode="fork"`, the subagent must receive a deep copy of the parent's conversation history as read-only reference. Parent and subagent must NOT share the same memory instance. Currently only a preamble is injected; no actual history is copied.
+
+**Design:**
+1. `AgentCommunicationService.__init__` receives `parent_memory_system` parameter.
+2. `pool_builder.create_pool()` passes `pool.memory_system` (the main agent's MemorySystem) to the service.
+3. In `_create_dynamic_subagent`, when `template.context_mode == "fork"`:
+   a. Get parent session messages via `parent_memory_system._layers.session.get_all_messages(parent_ctx)`
+   b. Deep copy each message (new dicts/dataclasses, no shared references)
+   c. Pass as `initial_messages` to the subagent's `create_message_history()`
+4. The fork preamble is still injected into system prompt.
+
+- [ ] **Step 1: Add parent_memory_system to AgentCommunicationService.__init__**
+
+In `framework/multi_agent/communication.py`, add the parameter:
+
+```python
+class AgentCommunicationService:
+    def __init__(
+        self,
+        *,
+        source: AgentAddress,
+        broker: MessageBroker,
+        registry: AgentRegistry,
+        agent_bus: AgentMessageBus,
+        session_strategy: DefaultSessionIdStrategy,
+        comm_tracker: CommunicationTracker | None = None,
+        template_registry: AgentTemplateRegistry | None = None,
+        pool: AgentPool | None = None,
+        pool_name: str = "",
+        project_dir: Path | None = None,
+        # ... existing subagent creation deps ...
+        main_agent_name: str = "",
+        # NEW: parent memory system for fork context deep-copy
+        parent_memory_system: Any | None = None,
+    ):
+        # ... store self._parent_memory_system = parent_memory_system
+```
+
+- [ ] **Step 2: Implement fork memory deep-copy in _create_dynamic_subagent**
+
+In `_create_dynamic_subagent`, after loading the system prompt (~line 204), add:
+
+```python
+# ── Fork context: deep-copy parent conversation history ──
+if template.context_mode == "fork" and self._parent_memory_system is not None:
+    try:
+        from framework.memory.core.scope import MemoryContext
+        parent_session_id = self._session_strategy.format(
+            conversation_id=conversation_id,
+            agent_name=self._main_agent_name or "main",
+        )
+        parent_ctx = MemoryContext(session_id=parent_session_id)
+        parent_messages = self._parent_memory_system._layers.session.get_all_messages(
+            parent_ctx
+        )
+        if parent_messages:
+            # Deep copy: recreate each message as a new ChatMessage
+            import copy
+            initial_messages = copy.deepcopy(parent_messages)
+            # Pass to subagent memory via initial_messages
+            subagent_ctx._initial_messages = initial_messages
+            logger.info(
+                "Fork context: copied %d messages from parent session %s",
+                len(initial_messages), parent_session_id,
+            )
+    except Exception:
+        logger.exception("Failed to copy parent messages for fork context")
+```
+
+**Note:** The exact API for passing `initial_messages` depends on how `build_session_only_memory`'s result is consumed. If `create_message_history()` is called later by the pool's consumer loop, we need to inject `initial_messages` into the subagent's session memory before the first `load()`. The simplest approach: after building the subagent memory, call `replace_messages()` on the subagent's session layer.
+
+```python
+# Alternative: inject after subagent memory is created
+if template.context_mode == "fork" and self._parent_memory_system is not None:
+    try:
+        parent_messages = self._parent_memory_system._layers.session.get_all_messages(
+            MemoryContext(session_id=parent_session_id)
+        )
+        if parent_messages:
+            subagent_session_ctx = MemoryContext(session_id=subagent_session_id)
+            subagent_memory_system = subagent_ctx.memory_system
+            await subagent_memory_system._layers.session.replace_messages(
+                subagent_session_ctx,
+                copy.deepcopy(parent_messages),
+            )
+    except Exception:
+        logger.exception("Failed to fork parent session messages")
+```
+
+- [ ] **Step 3: Connect parent_memory_system in pool_builder**
+
+In `pool_builder.py`, pass the pool's `memory_system` to `AgentCommunicationService`:
+
+```python
+main_service = AgentCommunicationService(
+    # ... existing params ...
+    parent_memory_system=memory_system,  # NEW: for fork context deep-copy
+)
+```
+
+- [ ] **Step 4: Create unit test for fork memory copy**
+
+```python
+# tests/unit/multi_agent/test_fork_context.py
+"""Verify fork context deep-copies parent messages into subagent memory."""
+
+from __future__ import annotations
+
+import pytest
+from unittest.mock import AsyncMock, MagicMock
+
+
+class TestForkContextMemoryCopy:
+    """When context_mode='fork', parent messages are deep-copied."""
+
+    def test_fork_copies_parent_messages(self) -> None:
+        """Fork mode calls get_all_messages on parent and copies to subagent."""
+        # Import the core logic — to be written as a helper function
+        from framework.multi_agent.communication import _fork_parent_messages
+        parent_memory = MagicMock()
+        subagent_memory = MagicMock()
+        parent_messages = [{"role": "user", "content": "hello"}]
+        parent_memory._layers.session.get_all_messages.return_value = parent_messages
+
+        result = _fork_parent_messages(
+            parent_memory_system=parent_memory,
+            parent_session_id="conv123:main",
+            subagent_memory_system=subagent_memory,
+            subagent_session_id="conv123:worker:abc123",
+        )
+
+        assert result is True
+        # Subagent session was seeded with copied messages
+        subagent_memory._layers.session.replace_messages.assert_called_once()
+
+    def test_fork_empty_parent_session(self) -> None:
+        """When parent has no messages, fork is a no-op."""
+        from framework.multi_agent.communication import _fork_parent_messages
+        parent_memory = MagicMock()
+        subagent_memory = MagicMock()
+        parent_memory._layers.session.get_all_messages.return_value = []
+
+        result = _fork_parent_messages(
+            parent_memory_system=parent_memory,
+            parent_session_id="conv123:main",
+            subagent_memory_system=subagent_memory,
+            subagent_session_id="conv123:worker:abc123",
+        )
+
+        assert result is False
+        subagent_memory._layers.session.replace_messages.assert_not_called()
+```
+
+- [ ] **Step 5: Run tests**
+
+```bash
+pytest tests/unit/multi_agent/test_fork_context.py -v
+```
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add framework/multi_agent/communication.py \
+        examples/bot_project/bot/service/pool_builder.py \
+        tests/unit/multi_agent/test_fork_context.py
+git commit -m "feat: fork context — deep-copy parent session memory
+
+When AgentTemplate.context_mode='fork', the subagent receives
+a deep-copied snapshot of the parent agent's conversation
+history as read-only reference. Parent and subagent memory
+systems remain independent.
+
+AgentCommunicationService accepts parent_memory_system for
+fork operations. pool_builder wires it through."
+```
+
+---
+
+### Task 8b: Dynamic Communication Targets
+
+**Files:**
+- Modify: `framework/multi_agent/template.py` (add `visible_targets`)
+- Modify: `framework/multi_agent/tools.py` (parameterize `ListCommunicationTargetsTool`)
+- Modify: `framework/multi_agent/communication.py` (pass visible_targets to tool)
+
+**Why:** Subagents should only see communication targets relevant to them, configurable at creation time. Default: subagents only see their parent (main agent). The list must be parameterized so future pool configurations can override.
+
+- [ ] **Step 1: Add visible_targets to AgentTemplate**
+
+In `framework/multi_agent/template.py`:
+
+```python
+@dataclass
+class AgentTemplate:
+    # ... existing fields ...
+    progress_tracking: bool = False
+    visible_targets: list[str] | None = None  # None=all NORMAL; list=restrict to named agents
+```
+
+- [ ] **Step 2: Parameterize ListCommunicationTargetsTool**
+
+In `framework/multi_agent/tools.py`, modify `ListCommunicationTargetsTool.__init__`:
+
+```python
+class ListCommunicationTargetsTool(Tool):
+    def __init__(
+        self,
+        *,
+        self_address: AgentAddress,
+        registry: AgentRegistry,
+        template_registry: AgentTemplateRegistry | None = None,
+        pool_name: str | None = None,
+        visible_targets: list[str] | None = None,  # NEW
+    ):
+        super().__init__()
+        # ... existing stores ...
+        self._visible_targets = visible_targets
+```
+
+In `execute()`, after the comm_kind filtering (~line 199), add:
+
+```python
+# Apply visible_targets restriction (if set)
+if self._visible_targets is not None:
+    visible_set = set(self._visible_targets)
+    targets = [p for p in targets if p.name in visible_set]
+```
+
+- [ ] **Step 3: Pass visible_targets when creating subagent tools**
+
+In `communication.py`, `_build_subagent_tool_manager`:
+
+```python
+# Communication tools with dynamic target visibility
+subagent_address = AgentAddress(name=agent_name)
+visible = template.visible_targets if template.visible_targets is not None else None
+# If not specified, default to parent-only for subagents
+if visible is None:
+    visible = [self._main_agent_name] if self._main_agent_name else []
+
+tm.register(ListCommunicationTargetsTool(
+    self_address=subagent_address,
+    registry=self._registry,
+    template_registry=self._template_registry,
+    pool_name=self._pool_name,
+    visible_targets=visible,  # NEW
+))
+```
+
+- [ ] **Step 4: Run existing tests**
+
+```bash
+pytest tests/unit/multi_agent/test_send_to_agent_tools.py -v
+```
+Expected: All tests PASS (None default preserves backward-compatible behavior)
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add framework/multi_agent/template.py \
+        framework/multi_agent/tools.py \
+        framework/multi_agent/communication.py
+git commit -m "feat: dynamic communication targets for subagents
+
+ListCommunicationTargetsTool accepts visible_targets parameter.
+Subagents default to seeing only their parent agent.
+AgentTemplate gains visible_targets field for YAML override."
+```
+
+---
+
 ### Task 9: Pool Builder — Register extra_tools for Main Agent
 
 **Files:**
 - Modify: `examples/bot_project/bot/service/pool_builder.py`
 
 **Why:** The pool_builder needs to read `main_cfg.extra_tools` and register the named tools (AST, LSP) into the main agent's tool_manager.
+
+Also passes `memory_system` to `AgentCommunicationService` for fork context support (see Task 8a).
 
 - [ ] **Step 1: Add extra_tools registration in create_pool()**
 
@@ -2089,23 +2368,26 @@ git commit -m "chore: integration verification — all modules import, templates
 ```
 T1 (presets) ──┐
 T2 (bash) ─────┤
-T3 (template) ─┼──► T8 (comm.py) ──► T9 (pool_builder)
-T4 (registry) ─┤         │
-T5 (agentcfg) ─┘         │
-                        │
-T6 (ast) ───────────────┤
-T7 (lsp) ───────────────┘
-                         │
-                         ▼
-                    T11-T17 (bot config) ──► T18-T19 (verify)
-                         │
-                    All independent
+T3 (template) ─┤
+T4 (registry) ─┤
+T5 (agentcfg) ─┤
+               ├──► T8 (comm preset) ──┬──► T9 (pool_builder)
+               │                       │
+T6 (ast) ──────┤                       ├──► T8a (fork memory)
+T7 (lsp) ──────┘                       └──► T8b (dynamic targets)
+                                               │
+T10 (hooks) ───────────────────────────────────┤
+                                               ▼
+                                          T11-T17 (bot config)
+                                               │
+                                               ▼
+                                          T18-T19 (verify)
 ```
 
 **Parallel execution groups:**
 - Group A: T1, T2, T3, T4, T5 (framework foundations — can run concurrently)
 - Group B: T6, T7 (tool infrastructure — can run concurrently with Group A)
-- Group C: T8 (depends on T1 through T5)
-- Group D: T9, T10 (depends on T8)
-- Group E: T11-T17 (bot config — all independent, can run concurrently after T8)
+- Group C: T8 (preset-based tool reg, depends on T1-T5)
+- Group D: T8a, T8b, T9, T10 (can run concurrently after T8 — fork memory, dynamic targets, pool_builder, hook adaptations)
+- Group E: T11-T17 (bot config — all independent, can run concurrently after Group D)
 - Group F: T18-T19 (verification — after all others)
