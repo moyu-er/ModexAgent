@@ -66,7 +66,12 @@ terminal = [
   "pexpect>=4.0; sys_platform != 'win32'",
   "libtmux>=0.15.0; sys_platform != 'win32'",
 ]
-all = ["ModexAgent[llm,storage,session,sandbox,gateway,skills,terminal]"]
+ast = [
+  "tree-sitter>=0.24",
+  "tree-sitter-python>=0.23",
+  "tree-sitter-java>=0.23",
+]
+all = ["ModexAgent[llm,storage,session,sandbox,gateway,skills,terminal,ast]"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["framework"]
