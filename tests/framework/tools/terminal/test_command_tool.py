@@ -284,8 +284,8 @@ async def test_command_tool_properties() -> None:
     """Tool has minimal parameter set: only command."""
     tool, _, _ = make_tool()
 
-    assert tool.name == "command"
-    assert "terminal" in tool.description.lower() or "command" in tool.description.lower()
+    assert tool.name == "bash"
+    assert "terminal" in tool.description.lower() or "persistent" in tool.description.lower()
     params = tool.parameters
     assert "command" in params["properties"]
     assert params["required"] == ["command"]

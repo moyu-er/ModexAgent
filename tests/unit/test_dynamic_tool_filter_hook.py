@@ -34,7 +34,7 @@ class TestDynamicToolFilterHook:
         base = MagicMock()
         hook = DynamicToolFilterHook(
             base=base,
-            token_thresholds={100: {"shell"}, 200: {"shell", "write_file"}},
+            token_thresholds={100: {"bash"}, 200: {"bash", "write_file"}},
         )
         ctx = _ctx(token_usage={"total_tokens": 150})
 
@@ -43,7 +43,7 @@ class TestDynamicToolFilterHook:
         assert ctx.tool_manager is not base
         assert ctx.runtime.state.custom.get(TurnCustomKey.DYNAMIC_TOOL_ACTIVE) is True
         denied = ctx.runtime.state.custom.get(TurnCustomKey.DYNAMIC_TOOL_DENIED, set())
-        assert "shell" in denied
+        assert "bash" in denied
 
     async def test_error_threshold_readonly(self):
         base = MagicMock()
@@ -53,12 +53,12 @@ class TestDynamicToolFilterHook:
         await hook.before_iteration(ctx)
         assert ctx.tool_manager is not base
         denied = ctx.runtime.state.custom.get(TurnCustomKey.DYNAMIC_TOOL_DENIED, set())
-        assert "write_file" in denied or "shell" in denied
+        assert "write_file" in denied or "bash" in denied
         assert ctx.runtime.state.custom.get(TurnCustomKey.DYNAMIC_TOOL_ACTIVE) is True
 
     async def test_restores_base_after_iteration(self):
         base = MagicMock()
-        hook = DynamicToolFilterHook(base=base, token_thresholds={10: {"shell"}})
+        hook = DynamicToolFilterHook(base=base, token_thresholds={10: {"bash"}})
         ctx = _ctx(token_usage={"total_tokens": 100})
 
         await hook.before_iteration(ctx)

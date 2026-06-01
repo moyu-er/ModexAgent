@@ -28,7 +28,7 @@ class TestTieredToolApprovalClassifier:
     def test_disabled_returns_normal(self):
         config = AgentApprovalConfig(enabled=False)
         c = TieredToolApprovalClassifier(config=config)
-        tc = ToolCall(tool_name="shell", call_id="1", arguments={})
+        tc = ToolCall(tool_name="bash", call_id="1", arguments={})
         assert c.classify(tc, make_ctx()) == ApprovalTier.NORMAL
 
     def test_tool_not_in_config_returns_normal(self):
@@ -37,7 +37,7 @@ class TestTieredToolApprovalClassifier:
             tools={"write_file": ToolApprovalConfig(allowed_paths=["./*"])},
         )
         c = TieredToolApprovalClassifier(config=config)
-        tc = ToolCall(tool_name="shell", call_id="1", arguments={})
+        tc = ToolCall(tool_name="bash", call_id="1", arguments={})
         assert c.classify(tc, make_ctx()) == ApprovalTier.NORMAL
 
     def test_path_in_allowed_returns_normal(self):
@@ -63,21 +63,21 @@ class TestTieredToolApprovalClassifier:
     def test_empty_allowed_paths_all_dangerous(self):
         config = AgentApprovalConfig(
             enabled=True,
-            tools={"shell": ToolApprovalConfig(allowed_paths=[])},
+            tools={"bash": ToolApprovalConfig(allowed_paths=[])},
         )
         matcher = ArgumentMatcher(project_root=Path("/project"))
         c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
-        tc = ToolCall(tool_name="shell", call_id="1", arguments={"command": "ls"})
+        tc = ToolCall(tool_name="bash", call_id="1", arguments={"command": "ls"})
         assert c.classify(tc, make_ctx()) == ApprovalTier.DANGEROUS
 
     def test_star_allowed_paths_all_normal(self):
         config = AgentApprovalConfig(
             enabled=True,
-            tools={"shell": ToolApprovalConfig(allowed_paths=["*"])},
+            tools={"bash": ToolApprovalConfig(allowed_paths=["*"])},
         )
         matcher = ArgumentMatcher(project_root=Path("/project"))
         c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
-        tc = ToolCall(tool_name="shell", call_id="1", arguments={"command": "ls"})
+        tc = ToolCall(tool_name="bash", call_id="1", arguments={"command": "ls"})
         assert c.classify(tc, make_ctx()) == ApprovalTier.NORMAL
 
 

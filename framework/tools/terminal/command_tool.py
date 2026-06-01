@@ -79,19 +79,19 @@ class CommandTool(Tool):
 
     @property
     def name(self) -> str:
-        return "command"
+        return "bash"
 
     @property
     def description(self) -> str:
         return (
-            "Execute a shell command in the CURRENTLY SELECTED terminal tab. "
-            "Use 'terminal list' to see all tabs and which is selected (default). "
-            "Use 'terminal select <name>' to switch tabs; use 'terminal open <name>' "
-            "to create a new tab (it auto-selects).\n\n"
-            "The shell is stateful: cd, environment variables, venv/nvm activations, "
-            "and SSH connections persist across commands in the same tab. "
+            "Execute a shell command in a persistent terminal session. "
+            "Working directory, environment variables, and background "
+            "processes persist between calls in the same session.\n\n"
+            "Use 'terminal list' to see all sessions and which is selected (default). "
+            "Use 'terminal select <name>' to switch sessions; use 'terminal open <name>' "
+            "to create a new session (it auto-selects).\n\n"
             "Do NOT re-run setup commands (cd, source, export, etc.) that were "
-            "already executed in this tab.\n\n"
+            "already executed in this session.\n\n"
             "Returns <command_result> XML with <status>: completed, running, "
             "timed_out, paginated, or input_wait. If <status> is not 'completed', "
             "use 'process log' or 'terminal current' to check the state.\n\n"

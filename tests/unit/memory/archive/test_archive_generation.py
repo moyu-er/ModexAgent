@@ -168,7 +168,7 @@ def test_archive_input_message_preserves_tool_calls() -> None:
             {
                 "id": "call_abc",
                 "function": {
-                    "name": "shell",
+                    "name": "bash",
                     "arguments": '{"command": "find . -name \\"*.py\\""}',
                 },
             }

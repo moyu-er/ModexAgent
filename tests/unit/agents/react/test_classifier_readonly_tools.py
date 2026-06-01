@@ -26,7 +26,7 @@ class TestUnconfiguredToolsNeverNeedApproval:
     def test_list_dir_with_any_path_is_normal(self):
         config = AgentApprovalConfig(
             enabled=True,
-            tools={"shell": ToolApprovalConfig(allowed_paths=[])},
+            tools={"bash": ToolApprovalConfig(allowed_paths=[])},
         )
         matcher = ArgumentMatcher(project_root=Path("/project"))
         c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)

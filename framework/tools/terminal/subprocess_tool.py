@@ -150,7 +150,7 @@ class SubprocessTool(Tool):
 
     @property
     def name(self) -> str:
-        return "shell"
+        return "bash"
 
     _FAMILY_DESCRIPTIONS: dict[ShellFamily, str] = {
         ShellFamily.BASH: (
@@ -182,8 +182,9 @@ class SubprocessTool(Tool):
             parts.append(family_desc)
 
         parts.append(
-            "Each command runs in a fresh process: cd and environment "
-            "changes do NOT persist."
+            "Each invocation runs independently in a fresh shell. "
+            "Working directory, environment variables, and background "
+            "processes do NOT persist between calls."
         )
 
         if self.enable_safety_guard:

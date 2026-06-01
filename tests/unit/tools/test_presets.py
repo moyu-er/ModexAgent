@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 from framework.tools.presets import ToolPreset, get_preset_tools
 
 
@@ -64,7 +63,7 @@ class TestGetPresetTools:
 
         tools = get_preset_tools(ToolPreset.FULL, subprocess_tool_factory=make_bash)
         names = [t.name for t in tools]
-        assert "shell" in names  # TODO: rename to "bash" in T2
+        assert "bash" in names
 
     def test_bash_not_injected_for_read_write(self) -> None:
         """READ_WRITE preset excludes bash even when factory provided."""
@@ -75,4 +74,4 @@ class TestGetPresetTools:
             subprocess_tool_factory=lambda: SubprocessTool(timeout=60),
         )
         names = [t.name for t in tools]
-        assert "shell" not in names  # TODO: rename to "bash" in T2
+        assert "bash" not in names

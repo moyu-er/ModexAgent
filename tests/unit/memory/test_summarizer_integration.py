@@ -334,7 +334,7 @@ async def test_summarizer_formats_tool_calls_without_content():
         [
             {"role": "user", "content": "do task"},
             {"role": "assistant", "content": "", "tool_calls": [
-                {"id": "t1", "function": {"name": "shell"}},
+                {"id": "t1", "function": {"name": "bash"}},
                 {"id": "t2", "function": {"name": "read_file"}},
             ]},
         ],
@@ -343,7 +343,7 @@ async def test_summarizer_formats_tool_calls_without_content():
     )
 
     formatted = mock_agent.captured_formatted
-    assert "shell" in formatted
+    assert "bash" in formatted
     assert "read_file" in formatted
     assert "-> tools:" in formatted
 

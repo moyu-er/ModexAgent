@@ -36,14 +36,14 @@ class TestSteerInject:
         ))
         interceptor = SteerInjectInterceptor(channel=ch)
         call = ToolCallContext(
-            tool_call=_tool_call("shell", "tc1"),
-            tool_name="shell",
+            tool_call=_tool_call("bash", "tc1"),
+            tool_name="bash",
             arguments={"cmd": "ls"},
             session_id="s1",
         )
 
         async def _next():
-            return ToolResult(tool_name="shell", result="file1\nfile2")
+            return ToolResult(tool_name="bash", result="file1\nfile2")
 
         result = await interceptor.around_tool_call(_ctx(), call, _next)
         assert "[User guidance" in result.result
@@ -58,14 +58,14 @@ class TestSteerInject:
         ))
         interceptor = SteerInjectInterceptor(channel=ch)
         call = ToolCallContext(
-            tool_call=_tool_call("shell", "tc1"),
-            tool_name="shell",
+            tool_call=_tool_call("bash", "tc1"),
+            tool_name="bash",
             arguments={"cmd": "bad"},
             session_id="s1",
         )
 
         async def _next():
-            return ToolResult(tool_name="shell", result=None, error="command not found")
+            return ToolResult(tool_name="bash", result=None, error="command not found")
 
         result = await interceptor.around_tool_call(_ctx(), call, _next)
         assert "[User guidance" in result.error

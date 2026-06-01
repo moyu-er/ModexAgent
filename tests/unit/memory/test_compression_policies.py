@@ -166,10 +166,10 @@ async def test_cleanup_compresses_tool_chains_atomically(registry):
         messages.append({"role": "user", "content": f"q{i}"})
         messages.append({"role": "assistant", "content": "", "tool_calls": [
             {"id": f"tc{i}a", "type": "function", "function": {"name": "read_file"}},
-            {"id": f"tc{i}b", "type": "function", "function": {"name": "shell"}},
+            {"id": f"tc{i}b", "type": "function", "function": {"name": "bash"}},
         ]})
         messages.append({"role": "tool", "tool_call_id": f"tc{i}a", "name": "read_file", "content": f"out{i}a"})
-        messages.append({"role": "tool", "tool_call_id": f"tc{i}b", "name": "shell", "content": f"out{i}b"})
+        messages.append({"role": "tool", "tool_call_id": f"tc{i}b", "name": "bash", "content": f"out{i}b"})
         messages.append({"role": "assistant", "content": f"answer {i}"})
     await session.add_messages(ctx, messages)
 
