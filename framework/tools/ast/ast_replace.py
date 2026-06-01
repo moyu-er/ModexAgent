@@ -42,11 +42,15 @@ class AstGrepReplaceTool(Tool):
             "properties": {
                 "pattern": {
                     "type": "string",
-                    "description": "AST pattern to match. Use $VAR and $$$ARGS meta-variables.",
+                    "description": (
+                        "tree-sitter S-expression query pattern. "
+                        "Use @capture_name to capture nodes. "
+                        "Example: '(function_definition name: (identifier) @name) @func'"
+                    ),
                 },
                 "replacement": {
                     "type": "string",
-                    "description": "Replacement template. Reference $VAR captures from the pattern.",
+                    "description": "Text to replace each full pattern match with.",
                 },
                 "language": {
                     "type": "string",

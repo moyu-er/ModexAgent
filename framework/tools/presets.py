@@ -27,6 +27,19 @@ class ToolPreset(str, Enum):
     MINIMAL = "minimal"         # read + write + list (no edit, no bash)
 
 
+class ContextMode(str, Enum):
+    """Subagent context mode — controls memory inheritance strategy."""
+    FRESH = "fresh"  # clean session, no parent context inherited
+    FORK = "fork"    # deep-copy of parent session context as read-only reference
+
+
+class ThinkingBudget(str, Enum):
+    """Thinking budget annotation for subagent LLM calls."""
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
 def _make_standard_read() -> list[Tool]:
     """Create read-only standard tools."""
     return [ReadFileTool(), ListDirTool(), SearchFilesTool(), FindFilesTool()]

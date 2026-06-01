@@ -21,6 +21,7 @@ from framework.multi_agent.template_registry import AgentTemplateRegistry
 
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
+    from framework.memory.core.system import MemorySystem
     from framework.messaging.broker import MessageBroker
     from framework.multi_agent.address import AgentAddress
     from framework.multi_agent.bus import AgentMessageBus
@@ -120,7 +121,7 @@ class AgentCommunicationService:
         inbox_consumer: Any | None = None,
         notification_service: Any | None = None,
         main_agent_name: str | None = None,
-        parent_memory_system: Any | None = None,
+        parent_memory_system: MemorySystem | None = None,
     ) -> None:
         self._source = source
         self._broker = broker
@@ -206,7 +207,9 @@ class AgentCommunicationService:
             system_prompt = DEFAULT_SYSTEM_PROMPT
 
         # ── Fork preamble: inject when context_mode="fork" ──
-        if template.context_mode == "fork":
+        from framework.tools.presets import ContextMode
+
+        if template.context_mode == ContextMode.FORK:
             fork_preamble = (
                 "\n\nYou are a subagent running from a fork of the parent session. "
                 "Treat inherited conversation as reference-only context, not a live "
@@ -229,6 +232,45 @@ class AgentCommunicationService:
             agent_role=MemoryAgentRole.SUBAGENT,
             system_prompt=system_prompt,
         )
+
+        # ── Fork context: deep-copy parent session messages into subagent memory ──
+        if template.context_mode == ContextMode.FORK and self._parent_memory_system is not None:
+            try:
+                from framework.memory.core.scope import MemoryContext
+
+                parent_session_id = self._session_strategy.format(
+                    conversation_id=conversation_id,
+                    agent_name=self._main_agent_name or "main",
+                )
+                parent_ctx = MemoryContext(session_id=parent_session_id)
+                parent_messages = self._parent_memory_system._layers.session.get_all_messages(
+                    parent_ctx
+                )
+
+                if parent_messages:
+                    import copy
+
+                    subagent_session_ctx = MemoryContext(
+                        session_id=self._session_strategy.format(
+                            conversation_id=conversation_id,
+                            agent_name=name,
+                            invocation_id=invocation_id,
+                        )
+                    )
+                    subagent_memory = getattr(subagent_ctx, "memory_system", None)
+                    if subagent_memory is not None:
+                        await subagent_memory._layers.session.replace_messages(
+                            subagent_session_ctx,
+                            copy.deepcopy(parent_messages),
+                        )
+                        logger.info(
+                            "Fork context: copied %d messages from parent session %s to subagent %s",
+                            len(parent_messages), parent_session_id, name,
+                        )
+            except Exception:
+                logger.exception(
+                    "Failed to copy parent messages for fork context (subagent=%s)", name,
+                )
 
         # ── Tool manager: standard + MCP + communication ──
         subagent_tm = await self._build_subagent_tool_manager(template, agent_name=name)

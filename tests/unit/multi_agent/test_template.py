@@ -4,6 +4,7 @@
 from framework.ioc.configs.memory import MemoryConfig
 from framework.ioc.configs.skills import SkillsConfig
 from framework.multi_agent.template import AgentTemplate
+from framework.tools.presets import ContextMode, ThinkingBudget, ToolPreset
 
 
 def test_agent_template_defaults():
@@ -11,7 +12,9 @@ def test_agent_template_defaults():
     assert t.agent_type == "test"
     assert t.description == ""
     assert t.max_steps == 20
-    assert t.standard_tools is True
+    assert t.tool_preset == ToolPreset.FULL
+    assert t.context_mode == ContextMode.FRESH
+    assert t.thinking_budget == ThinkingBudget.MEDIUM
     assert t.use_terminal is True
     assert t.memory is None
     assert t.skills is None
@@ -22,10 +25,10 @@ def test_agent_template_full():
         agent_type="code-reviewer",
         description="Reviews code",
         max_steps=30,
-        standard_tools=False,
+        tool_preset=ToolPreset.READ_WRITE,
         use_terminal=False,
         memory=MemoryConfig(),
         skills=SkillsConfig(roots=["skills/reviewer"]),
     )
     assert t.max_steps == 30
-    assert t.standard_tools is False
+    assert t.tool_preset == ToolPreset.READ_WRITE

@@ -11,7 +11,7 @@ import yaml
 from framework.ioc.configs.memory import MemoryConfig
 from framework.ioc.configs.skills import SkillsConfig
 from framework.multi_agent.template import AgentTemplate
-from framework.tools.presets import ToolPreset
+from framework.tools.presets import ContextMode, ThinkingBudget, ToolPreset
 
 logger = logging.getLogger(__name__)
 
@@ -62,16 +62,35 @@ class AgentTemplateRegistry:
                                 tool_preset_raw, yml_path,
                             )
 
+                    context_mode_raw = raw.get("context_mode", "fresh")
+                    try:
+                        context_mode = ContextMode(context_mode_raw)
+                    except ValueError:
+                        logger.warning(
+                            "Invalid context_mode '%s' in %s, falling back to 'fresh'",
+                            context_mode_raw, yml_path,
+                        )
+                        context_mode = ContextMode.FRESH
+
+                    thinking_budget_raw = raw.get("thinking_budget", "medium")
+                    try:
+                        thinking_budget = ThinkingBudget(thinking_budget_raw)
+                    except ValueError:
+                        logger.warning(
+                            "Invalid thinking_budget '%s' in %s, falling back to 'medium'",
+                            thinking_budget_raw, yml_path,
+                        )
+                        thinking_budget = ThinkingBudget.MEDIUM
+
                     template = AgentTemplate(
                         agent_type=raw["agent_type"],
                         description=raw.get("description", ""),
                         max_steps=raw.get("max_steps", 20),
-                        standard_tools=raw.get("standard_tools", True),
                         tool_preset=tool_preset,
                         use_terminal=raw.get("use_terminal", True),
                         terminal_visibility=raw.get("terminal_visibility", True),
-                        context_mode=raw.get("context_mode", "fresh"),
-                        thinking_budget=raw.get("thinking_budget", "medium"),
+                        context_mode=context_mode,
+                        thinking_budget=thinking_budget,
                         default_reads=raw.get("default_reads", []),
                         progress_tracking=raw.get("progress_tracking", False),
                         visible_targets=raw.get("visible_targets"),
