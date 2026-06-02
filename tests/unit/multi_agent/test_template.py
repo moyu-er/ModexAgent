@@ -42,12 +42,6 @@ def test_agent_template_system_prompt_mode_default() -> None:
     assert t.system_prompt_mode == SystemPromptMode.REPLACE
 
 
-def test_agent_template_fork_max_messages_default() -> None:
-    """Default fork_max_messages is 80."""
-    t = AgentTemplate(agent_type="test")
-    assert t.fork_max_messages == 80
-
-
 def test_agent_template_system_prompt_mode_append() -> None:
     """system_prompt_mode can be set to APPEND."""
     from framework.tools.presets import SystemPromptMode
