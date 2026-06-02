@@ -121,7 +121,6 @@ class AgentCommunicationService:
         inbox_consumer: Any | None = None,
         notification_service: Any | None = None,
         main_agent_name: str | None = None,
-        parent_memory_system: MemorySystem | None = None,
     ) -> None:
         self._source = source
         self._broker = broker
@@ -141,7 +140,6 @@ class AgentCommunicationService:
         self._inbox_consumer = inbox_consumer
         self._notification_service = notification_service
         self._main_agent_name = main_agent_name
-        self._parent_memory_system = parent_memory_system
 
     def _resolve_source(self, context: AgentContext) -> AgentAddress:
         """Resolve effective source address from context, fallback to constructor default."""
@@ -195,6 +193,9 @@ class AgentCommunicationService:
 
         name = template.agent_type
 
+        # ── Dynamic parent — the agent that dispatched this subagent ──
+        parent_name = (source or self._source).name
+
         # Load system prompt from agents/{agent_type}.md (same convention as resolve_system_prompt)
         from framework.ioc.factories.descriptors import DEFAULT_SYSTEM_PROMPT
 
@@ -234,7 +235,7 @@ class AgentCommunicationService:
         )
 
         # ── Fork context: deep-copy parent session messages into subagent memory ──
-        if template.context_mode == ContextMode.FORK and self._parent_memory_system is not None:
+        if template.context_mode == ContextMode.FORK and getattr(self, '_parent_memory_system', None) is not None:
             try:
                 import copy
 
@@ -327,7 +328,9 @@ class AgentCommunicationService:
                 )
 
         # ── Tool manager: standard + MCP + communication ──
-        subagent_tm = await self._build_subagent_tool_manager(template, agent_name=name)
+        subagent_tm = await self._build_subagent_tool_manager(
+            template, agent_name=name, parent_name=parent_name,
+        )
 
         # ── Skill manager ──
         subagent_sm = None
@@ -381,7 +384,7 @@ class AgentCommunicationService:
         self._pool._mark_dynamic(name)
 
         # ── Wire hooks ──
-        self._wire_subagent_hooks(name)
+        self._wire_subagent_hooks(name, parent_name=parent_name)
 
         # ── Send initial task (XML-wrapped per spec Section 4.1) ──
         session_id = self._session_strategy.format(
@@ -421,7 +424,7 @@ class AgentCommunicationService:
             created_new_task=True,
         )
 
-    def _wire_subagent_hooks(self, agent_name: str) -> None:
+    def _wire_subagent_hooks(self, agent_name: str, parent_name: str = "main") -> None:
         """Wire standard subagent hooks on the registered agent's pipeline."""
         if self._pool is None:
             return
@@ -447,7 +450,7 @@ class AgentCommunicationService:
             _add_hook(sub_instance.pipeline, SubagentAutoSendHook(
                 agent_bus=self._agent_bus,
                 self_name=agent_name,
-                parent_name=self._main_agent_name or "main",
+                parent_name=parent_name,
             ))
 
         if self._notification_service is not None:
@@ -456,7 +459,10 @@ class AgentCommunicationService:
                 notification_service=self._notification_service,
             ))
 
-    async def _build_subagent_tool_manager(self, template: AgentTemplate, agent_name: str):
+    async def _build_subagent_tool_manager(
+        self, template: AgentTemplate, agent_name: str,
+        parent_name: str = "main",
+    ):
         """Build the subagent tool manager from template configuration.
 
         Uses template.tool_preset to determine which tools to register.
@@ -501,7 +507,7 @@ class AgentCommunicationService:
         # Dynamic target visibility: subagents default to parent-only
         visible = template.visible_targets
         if visible is None:
-            visible = [self._main_agent_name] if self._main_agent_name else []
+            visible = [parent_name]
 
         tm.register(SendToAgentTool(
             source=subagent_address,
