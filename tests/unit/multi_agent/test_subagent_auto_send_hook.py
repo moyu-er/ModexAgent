@@ -333,9 +333,11 @@ class TestSubagentAutoSendHook:
     # 14. Skip auto-forward when stop_reason is max_iterations
     # ------------------------------------------------------------------
 
-    async def test_skips_auto_forward_when_max_iterations(self):
-        """stop_reason=max_iterations → bus.send is NOT called.
-        MaxIterationNotifyHook handles this case; SubagentAutoSendHook must not duplicate."""
+    async def test_auto_forwards_when_max_iterations(self):
+        """stop_reason=max_iterations → bus.send IS called.
+        The subagent may have produced partial output that the parent needs to see,
+        even if it hit its step limit. The actual stop_reason is forwarded so
+        the parent knows why the subagent stopped."""
         bus = self._make_bus()
         hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
         ctx = self._make_ctx([])
@@ -343,7 +345,7 @@ class TestSubagentAutoSendHook:
 
         await hook.after_turn(ctx, result)
 
-        bus.send.assert_not_awaited()
+        bus.send.assert_awaited_once()
 
     # ------------------------------------------------------------------
     # 15. Still auto-forwards with normal stop reason (no regression)
@@ -463,8 +465,10 @@ class TestMaxIterationAndAutoSendNonOverlap:
 
     # ── Non-overlap at max_iterations ──
 
-    async def test_at_maxiter_only_notify_fires_not_auto_send(self):
-        """max_iterations → MaxIterationNotifyHook notifies, SubagentAutoSendHook is silent."""
+    async def test_at_maxiter_auto_send_forwards_when_no_send_to_agent(self):
+        """max_iterations + no send_to_agent → both hooks fire.
+        SubagentAutoSendHook forwards partial output to parent
+        (subagent may have useful work to report even at step limit)."""
         from unittest.mock import MagicMock
         from framework.hook.notification import MaxIterationNotifyHook
 
@@ -481,7 +485,7 @@ class TestMaxIterationAndAutoSendNonOverlap:
         await auto_send.after_turn(ctx, result)
 
         notify_svc.notify.assert_awaited_once()
-        bus.send.assert_not_awaited()
+        bus.send.assert_awaited_once()
 
     # ── Non-overlap at normal stop ──
 

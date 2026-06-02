@@ -131,11 +131,15 @@ class SubagentAutoSendHook(AfterTurnHook):
 
         sanitized = self._sanitize_forward_content(result.content)
 
+        # Use the actual stop_reason from the result so the parent agent knows
+        # why the subagent stopped (completed, max_iterations, error, etc.)
+        actual_stop_reason = getattr(result, "stop_reason", None) or "completed"
+
         xml_content = build_agent_result(
             source=self._self_name,
             invocation_id=invocation_id,
             status="completed",
-            stop_reason="missed_communication",
+            stop_reason=actual_stop_reason,
             content=sanitized,
         )
 

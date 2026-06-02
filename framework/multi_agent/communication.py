@@ -742,6 +742,82 @@ class AgentCommunicationService:
                 )
             # Agent exists → fall through to normal inbox delivery
 
+        # ── Registered SUBAGENT new task: agent instance exists, send via inbox ──
+        # When a SUBAGENT is already registered (template is None) and this is a NEW
+        # task (empty invocation_id), generate a new invocation_id and deliver through
+        # inbox with immediate wakeup so the consumer can process it concurrently with
+        # any other active session. Continuations (existing invocation_id) fall through
+        # to the original normal delivery path below.
+        if target_kind == AgentCommKind.SUBAGENT and template is None and (
+            invocation_id is None or invocation_id.strip() == ""
+        ):
+            # Subagent-to-subagent still forbidden
+            if session_meta.comm_kind == AgentCommKind.SUBAGENT:
+                return AgentSendResult(
+                    target_agent=target_agent,
+                    target_kind=target_kind,
+                    session_id="",
+                    invocation_id=None,
+                    created_new_task=False,
+                    error="Subagents can only reply to normal agents; send subagent-to-subagent requests through a normal agent.",
+                )
+
+            # Generate new invocation_id for the new task
+            resolved_invocation_id = _uuid_mod.uuid4().hex[:_TASK_ID_BYTES]
+
+            session_id = self._session_strategy.format(
+                conversation_id=conversation_id,
+                agent_name=target_agent,
+                invocation_id=resolved_invocation_id,
+            )
+
+            from framework.multi_agent.message_xml import build_agent_message
+            xml_content = build_agent_message(
+                source=effective_source.name,
+                invocation_id=resolved_invocation_id,
+                content=content,
+            )
+            envelope = AgentMessageEnvelope(
+                payload={"content": xml_content, "message_type": "task_request"},
+                source=effective_source,
+                target=AgentAddress(name=target_agent),
+                message_type="task_request",
+                conversation_id=conversation_id,
+                agent_session_id=session_id,
+                invocation_id=resolved_invocation_id,
+            )
+
+            # Record in communication tracker
+            if self._comm_tracker is not None:
+                self._comm_tracker.record_send(
+                    agent_name=effective_source.name,
+                    target_agent=target_agent,
+                    invocation_id=resolved_invocation_id,
+                    session_id=session_id,
+                    content_summary=content[:500],
+                )
+
+            # Deliver: inbox + immediate wakeup (not send_silent)
+            if async_mode and self._agent_bus is not None:
+                await self._agent_bus.send(session_id, envelope)
+            else:
+                if envelope.target is None:
+                    return AgentSendResult(
+                        target_agent=target_agent, target_kind=target_kind,
+                        session_id=session_id, invocation_id=resolved_invocation_id,
+                        created_new_task=True,
+                        error="No target address for broker delivery",
+                    )
+                await self._broker.send_to(envelope.target, envelope.to_broker_message())
+
+            return AgentSendResult(
+                target_agent=target_agent,
+                target_kind=target_kind,
+                session_id=session_id,
+                invocation_id=resolved_invocation_id,
+                created_new_task=True,
+            )
+
         # 3. Validate invocation_id
         if session_meta.comm_kind == AgentCommKind.SUBAGENT and target_kind == AgentCommKind.SUBAGENT:
             return AgentSendResult(
