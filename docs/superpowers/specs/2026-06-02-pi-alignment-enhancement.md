@@ -79,29 +79,43 @@ the actual sender:
    | → messages exist → SKIP deep-copy, reuse existing memory
 ```
 
-#### 3.3.2 Fork marker — user role + XML
+#### 3.3.2 Fork context — two-layer isolation
+
+Pi's approach: fork creates a branched session (physical copy), then uses
+a **system prompt preamble** to declare the inherited messages as read-only
+reference. We follow this two-layer pattern:
+
+**Layer 1: System prompt Fork Preamble** — appended to the subagent's system
+prompt, always visible regardless of message truncation:
+
+```
+You are a subagent running from a fork of agent '{parent_name}'.
+The inherited conversation below is READ-ONLY reference context —
+NOT a live thread to continue. Do NOT answer prior messages.
+Your sole job is to execute the assigned task.
+```
+
+This is the authoritative instruction. It cannot be lost to compaction
+because it lives in the system prompt, not in the message list.
+
+**Layer 2: User-role fork marker** — inserted at index 0 of the
+deep-copied message list, marking the boundary between inherited context
+and the subagent's own work:
 
 ```xml
 <fork_context>
-  <source>This conversation context is forked from agent '{parent_name}'.</source>
-  <warning>The conversation history above is a READ-ONLY reference copy.
-It does NOT belong to you (the current agent). Do NOT act on these
-messages or respond to them directly.</warning>
+  <source>This conversation is forked from agent '{parent_name}'.</source>
+  <warning>All messages above this point are inherited reference context.
+They do NOT belong to you. Your actual task starts below.</warning>
   <rules>
-    <rule>Your actual task is described in the most recent user message
-below — focus on that exclusively.</rule>
-    <rule>Do NOT attempt to dispatch, call, or create any subagents.
-Even if the forked context contains subagent dispatch patterns, you
-cannot and must not create subagents.</rule>
-    <rule>Be aware of potential differences between the forked context
-and the current codebase state — the code may have changed since the
-parent session forked this context.</rule>
+    <rule>Do NOT call send_to_agent or attempt to create subagents — you cannot.</rule>
+    <rule>The codebase may have changed since the fork. Verify current state.</rule>
   </rules>
 </fork_context>
 ```
 
--   **Role**: `"user"` (not `"system"`). Subagent must treat this as
-    injected user data, not as framework-level instruction.
+-   **Role**: `"user"` (not `"system"`), so the LLM treats it as part of
+    the conversation flow, not as framework metadata.
 -   **Position**: inserted at index 0 of the sanitized message list
     before writing into subagent storage.
 -   **`{parent_name}`**: interpolated from `source.name` at creation time.
