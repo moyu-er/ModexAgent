@@ -10,13 +10,18 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from framework.core.tool_manager import ToolResult
+from framework.hook.abc import AfterToolExecutionHook, BeforeToolExecutionHook, BeforeTurnHook
 
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
 
 
-class RuntimeContextHook:
+class RuntimeContextHook(BeforeTurnHook, BeforeToolExecutionHook, AfterToolExecutionHook):
     """通过 hook 接口管理 per-turn RuntimeContext 生命周期。"""
+
+    @property
+    def name(self) -> str:
+        return "runtime_context_hook"
 
     _PENDING_KEY = "_pending_tool_calls"
 

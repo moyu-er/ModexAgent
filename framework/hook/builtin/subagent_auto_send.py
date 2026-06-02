@@ -14,14 +14,20 @@ if TYPE_CHECKING:
     from framework.core.agent import AgentContext
     from framework.multi_agent.bus import AgentMessageBus
 
+from framework.hook.abc import AfterTurnHook
+
 logger = logging.getLogger(__name__)
 
 
-class SubagentAutoSendHook:
+class SubagentAutoSendHook(AfterTurnHook):
     """Peer agent auto-send hook。
 
     在 agent turn 结束后自动将内容转发给父 agent。
     """
+
+    @property
+    def name(self) -> str:
+        return "subagent_auto_send_hook"
 
     _THINK_PAIRED_RE = re.compile(
         r"<\s*(?:think|reasoning|reflection)\b[^>]*(?:>|\n)"
@@ -38,7 +44,7 @@ class SubagentAutoSendHook:
         agent_bus: AgentMessageBus | None = None,
         self_name: str = "",
         parent_name: str = "main",
-        notification_service: Any | None = None,
+        notification_service: Any | None = None,  # noqa: ANN401
     ) -> None:
         self._agent_bus = agent_bus
         self._self_name = self_name
@@ -50,9 +56,10 @@ class SubagentAutoSendHook:
         self._communicated: set[str] = set()
 
     async def before_turn(self, ctx: AgentContext) -> None:
+        """No-op kept for backward compatibility with existing callers."""
         pass
 
-    async def after_turn(self, ctx: AgentContext, result: Any = None) -> None:
+    async def after_turn(self, ctx: AgentContext, result: Any = None) -> None:  # noqa: ANN401
         if not result or not getattr(result, "content", None):
             return
 

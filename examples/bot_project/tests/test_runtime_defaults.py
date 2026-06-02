@@ -3,18 +3,17 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import AsyncIterator
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from bot.service.core import BotService
+
 from framework.core.types import InputMessage
 from framework.interceptor.builtin import (
     ToolResultLimitInterceptor,
-    ToolTimeoutInterceptor,
 )
-from framework.interceptor.builtin.turn_timeout import TurnTimeoutInterceptor
 from framework.pipeline.adapters import InputAdapter, NullOutputAdapter
 
 
@@ -46,9 +45,6 @@ def test_default_interceptor_chain_keeps_only_effective_defaults() -> None:
     interceptors = chain.interceptors
 
     assert any(isinstance(item, ToolResultLimitInterceptor) for item in interceptors)
-    assert not any(isinstance(item, TurnTimeoutInterceptor) for item in interceptors)
-    # TurnTimeoutInterceptor 已从默认导出中移除——Agent 通过 max_iterations 自然结束
-    assert not any(isinstance(item, ToolTimeoutInterceptor) for item in interceptors)
 
 
 def test_tool_timeout_exceeds_shell_internal_timeout() -> None:

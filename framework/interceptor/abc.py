@@ -5,10 +5,11 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Generic, Protocol
+from typing import TYPE_CHECKING, Any
 
 from typing_extensions import TypeVar
 
@@ -134,45 +135,84 @@ R = TypeVar("R", default=Any)
 
 
 # ---------------------------------------------------------------------------
-# Interceptor 协议
+# Interceptor ABC Hierarchy
 # ---------------------------------------------------------------------------
 
 
-class Interceptor(Protocol, Generic[R]):
-    """拦截器协议 —— 调用边界 AOP 包裹。
+class Interceptor(ABC):
+    """All interceptors' public base class.
 
-    拦截器按配置顺序形成洋葱链。外层先进入、后退出。
-    每个拦截器声明自己生效的作用域，InterceptorChain 据此筛选。
+    Replaces the old Protocol. Each concrete interceptor inherits from
+    one or more per-scope ABCs (ToolCallInterceptor, TurnInterceptor, etc.).
+    The `scopes` property is auto-derived from MRO.
     """
 
-    # 该拦截器声明的作用域集合
-    scopes: frozenset[InterceptorScope]
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """Unique interceptor name for logging and diagnostics."""
+        ...
 
+    @property
+    def scopes(self) -> frozenset[InterceptorScope]:
+        """Auto-derived from MRO: collects _scope from all per-scope ABC ancestors."""
+        result: set[InterceptorScope] = set()
+        for cls in type(self).__mro__:
+            if cls is object:
+                continue
+            s = getattr(cls, "_scope", None)
+            if s is not None:
+                result.add(s)
+        return frozenset(result)
+
+
+class ToolCallInterceptor(Interceptor):
+    """TOOL_CALL scope interceptor ABC."""
+    _scope = InterceptorScope.TOOL_CALL
+
+    @abstractmethod
     async def around_tool_call(
         self,
         ctx: AgentContext,
         call: ToolCallContext,
         next_call: ToolCallNext,
     ) -> ToolResult:
-        """包裹单个工具调用。必须返回合法 ToolResult。"""
+        """Wrap individual tool call execution. Must return a legal ToolResult."""
         ...
 
+
+class TurnInterceptor(Interceptor):
+    """TURN scope interceptor ABC."""
+    _scope = InterceptorScope.TURN
+
+    @abstractmethod
     async def around_turn(
         self,
         ctx: AgentContext,
         next_call: TurnNext,
     ) -> AgentResult:
-        """包裹单个 turn。"""
+        """Wrap entire turn execution."""
         ...
 
+
+class IterationInterceptor(Interceptor):
+    """ITERATION scope interceptor ABC."""
+    _scope = InterceptorScope.ITERATION
+
+    @abstractmethod
     async def around_iteration(
         self,
         ctx: AgentContext,
         call: IterationContext,
         next_call: IterationNext,
     ) -> None:
-        """包裹单次迭代。"""
+        """Wrap single ReAct iteration."""
         ...
+
+
+class LLMStreamInterceptor(Interceptor):
+    """LLM_STREAM scope interceptor ABC."""
+    _scope = InterceptorScope.LLM_STREAM
 
     async def around_llm_stream(
         self,
@@ -180,7 +220,7 @@ class Interceptor(Protocol, Generic[R]):
         call: LLMStreamContext,
         next_stream: LLMStreamNext,
     ) -> AsyncIterator[LLMStreamChunk]:
-        """包裹 LLM 流式调用。yield 每个 chunk，可注入控制信号。"""
+        """Wrap LLM streaming response. Default: pass-through."""
         async for chunk in next_stream():
             yield chunk
         return

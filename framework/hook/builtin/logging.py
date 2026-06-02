@@ -10,16 +10,28 @@ import logging
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
+from framework.core.types import LLMResponse
+
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
-    from framework.core.types import LLMResponse, ToolCall
     from framework.core.tool_manager import ToolResult
+    from framework.core.types import ToolCall
+
+from framework.hook.abc import (
+    AfterLLMResponseHook,
+    AfterToolExecutionHook,
+    BeforeToolExecutionHook,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class RunLoggingHook:
+class RunLoggingHook(AfterLLMResponseHook, BeforeToolExecutionHook, AfterToolExecutionHook):
     """详细 per-session 日志：LLM 响应和工具执行。"""
+
+    @property
+    def name(self) -> str:
+        return "run_logging_hook"
 
     def __init__(
         self,
@@ -113,7 +125,7 @@ class RunLoggingHook:
             )
 
     @classmethod
-    def _format_value(cls, value: Any, max_chars: int) -> str:
+    def _format_value(cls, value: Any, max_chars: int) -> str:  # noqa: ANN401
         try:
             text = json.dumps(value, ensure_ascii=False, default=str)
         except TypeError:

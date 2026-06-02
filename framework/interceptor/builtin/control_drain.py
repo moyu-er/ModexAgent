@@ -11,13 +11,15 @@ from typing import TYPE_CHECKING, Any
 
 from framework.control.types import ControlCommandType, ControlScope
 from framework.interceptor.abc import (
-    InterceptorScope,
     IterationContext,
+    IterationInterceptor,
     IterationNext,
+    TurnInterceptor,
     TurnNext,
 )
 from framework.interceptor.handler import (
     CommandHandlerRegistry,
+    ControlCommandHandler,
     DefaultCancelHandler,
 )
 
@@ -29,7 +31,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _is_raw_channel(obj: Any) -> bool:
+def _is_raw_channel(obj: Any) -> bool:  # noqa: ANN401
     """Return True if obj is a raw ControlChannel, not a ControlRuntime wrapper.
 
     ``ControlChannel`` is a Protocol (not runtime_checkable), so we detect
@@ -39,14 +41,16 @@ def _is_raw_channel(obj: Any) -> bool:
     return not isinstance(obj, ControlRuntime)
 
 
-class ControlDrainInterceptor:
+class ControlDrainInterceptor(TurnInterceptor, IterationInterceptor):
     """控制命令消费拦截器。
 
     通过 handler 注册机制处理控制命令，默认注册 DefaultCancelHandler。
     后续可通过 register_handler() 添加自定义处理器（如 INJECT_USER_MESSAGE）。
     """
 
-    scopes = frozenset([InterceptorScope.TURN, InterceptorScope.ITERATION])
+    @property
+    def name(self) -> str:
+        return "control_drain"
 
     def __init__(
         self,
@@ -64,7 +68,7 @@ class ControlDrainInterceptor:
                 ControlCommandType.CANCEL_RUN, DefaultCancelHandler()
             )
 
-    def register_handler(self, handler) -> None:
+    def register_handler(self, handler: ControlCommandHandler) -> None:
         """注册额外的命令处理器。"""
         self._registry.register(handler)
 
