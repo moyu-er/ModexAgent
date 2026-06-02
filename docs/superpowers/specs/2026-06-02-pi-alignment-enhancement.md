@@ -54,100 +54,63 @@ the actual sender:
 -   Fallback: if `source` is `None`, use `self._source` (the pool builder's
     own address) or `self._main_agent_name`.
 
-### 3.3 Fork context — correct deep-copy lifecycle (P0)
+### 3.3 Fork context — system-prompt injection with persistence (P0)
 
-#### 3.3.1 Copy only on initial creation
+**Design**: Forked parent context is NOT deep-copied into the subagent's
+session message history. Instead it is injected into the subagent's
+**system prompt** and persisted to a durable file. This gives three
+benefits:
+
+1. **Immune to compaction** — system prompt content cannot be lost to
+   message-history governance.
+2. **Clean subagent session** — the subagent's conversation history
+   starts empty; inherited context is clearly separated as reference.
+3. **Survives restarts** — the forked context file is loaded on resume.
+
+#### 3.3.1 Lifecycle
 
 ```
-+------------------+        +-----------------------------+
-| parent session   |        | subagent session (fork)     |
-| conv:parent      |        | conv:subagent:invoc         |
-+------------------+        +-----------------------------+
-   |                                     |
-   | 1. get_history(parent_ctx)          |
-   | 2. governance (lossy compact)       |
-   | 3. sanitize comm tool calls          |
-   | 4. deep-copy every ChatMessage      |
-   | 5. insert fork marker (user role)   |
-   | 6. add_messages(sub_ctx, msgs)      |
-   |------------------------------------>|
-   |                                     | 7. subagent runs
-   |                                     | 8. subagent completes
++----------------------+          +-----------------------------------+
+| parent session       |          | subagent (fork mode)              |
+| conv:parent          |          | conv:subagent:invoc               |
++----------------------+          +-----------------------------------+
+   |                                   |
+   | 1. get_history(parent_ctx)        |
+   | 2. count truncation (last N)      |
+   | 3. governance (lossy compact)     |
+   | 4. format as XML                  |
+   | 5. persist to fork_context file   |
+   |                                   |
+   | 6. build system prompt:           |
+   |    base_prompt + fork_preamble    |
+   |    + fork_context_xml             |
+   |                                   |
+   | 7. create subagent session        |
+   |    (empty — no inherited msgs)    |
+   |---------------------------------->|
+   |                                   | 8. subagent runs
+   |                                   | 9. subagent completes
    |
-   | 9. resume: send_to_agent(invocation_id="abc123")
-   | → _create_dynamic_subagent checks get_history(sub_ctx)
-   | → messages exist → SKIP deep-copy, reuse existing memory
+   | 10. resume: send_to_agent(invocation_id="abc123")
+   |   → fork_context file exists → SKIP steps 1-5
+   |   → load from file → inject into system prompt
+   |   → reuse subagent's own session messages
 ```
 
-#### 3.3.2 Fork context — two-layer isolation
+#### 3.3.2 Two-stage truncation
 
-Pi's approach: fork creates a branched session (physical copy), then uses
-a **system prompt preamble** to declare the inherited messages as read-only
-reference. We follow this two-layer pattern:
-
-**Layer 1: System prompt Fork Preamble** — appended to the subagent's system
-prompt, always visible regardless of message truncation:
-
-```
-You are a subagent running from a fork of agent '{parent_name}'.
-The inherited conversation below is READ-ONLY reference context —
-NOT a live thread to continue. Do NOT answer prior messages.
-Your sole job is to execute the assigned task.
-```
-
-This is the authoritative instruction. It cannot be lost to compaction
-because it lives in the system prompt, not in the message list.
-
-**Layer 2: User-role fork marker** — inserted at index 0 of the
-deep-copied message list, marking the boundary between inherited context
-and the subagent's own work:
-
-```xml
-<fork_context>
-  <source>This conversation is forked from agent '{parent_name}'.</source>
-  <warning>All messages above this point are inherited reference context.
-They do NOT belong to you. Your actual task starts below.</warning>
-  <rules>
-    <rule>Do NOT call send_to_agent or attempt to create subagents — you cannot.</rule>
-    <rule>The codebase may have changed since the fork. Verify current state.</rule>
-  </rules>
-</fork_context>
-```
-
--   **Role**: `"user"` (not `"system"`), so the LLM treats it as part of
-    the conversation flow, not as framework metadata.
--   **Position**: inserted at index 0 of the sanitized message list
-    before writing into subagent storage.
--   **`{parent_name}`**: interpolated from `source.name` at creation time.
-
-#### 3.3.3 Abstract memory API
-
-All fork memory operations go through the `MemorySystem` ABC, never through
-private layers or file-system access:
+Stage 1 — **count-based** (executed first):
 
 ```python
-# ✅  Correct
-parent_msgs = await parent_memory_system.get_history(parent_ctx)
-await sub_memory_system.add_messages(sub_ctx, sanitized_msgs)
-
-# ❌  Never
-parent_memory_system._layers.session.get_all_messages(...)
-subagent_memory._layers.session.replace_messages(...)
+# Keep only the most recent N messages from the parent session.
+# Default: fork_max_messages = 80 (configurable per template).
+parent_msgs = parent_msgs[-fork_max_messages:]
 ```
 
-#### 3.3.4 Pre-fork governance
+Count truncation runs first because lossy compaction on messages that
+will be discarded anyway is wasted work.
 
-Pi does NOT compact at fork time. It copies the parent's session file as-is,
-relying on the fact that the parent's auto-compaction has already kept the
-session manageable during normal operation (triggered when `contextTokens >
-contextWindow - reserveTokens`, preserving ~20K recent tokens + LLM-generated
-summary of older content).
-
-**We go further**: before deep-copy, parent messages explicitly pass through
-the parent's configured governance pipeline. Lossy compaction truncates
-oversized tool results and assistant content to their configured `head_chars`
-limits. This guarantees the subagent receives a manageable, high-signal
-context regardless of whether the parent had recently been compacted.
+Stage 2 — **lossy governance** (on the kept messages):
 
 ```python
 from framework.memory.context_governance import CompositeGovernance
@@ -155,32 +118,99 @@ from framework.memory.context_governance import CompositeGovernance
 if parent_config.governance and parent_config.governance.lossy_compaction:
     governor = CompositeGovernance.from_config(parent_config.governance)
     parent_msgs, _stats = governor.apply(parent_msgs)
-# Deep-copy the compacted result — not the raw full history
+```
+
+Pi does NOT compact at fork time. It relies on the parent's prior
+auto-compaction. Our two-stage approach is stricter and guarantees a
+manageable subagent system prompt regardless of parent state.
+
+#### 3.3.3 Persistence
+
+The truncated + compacted context is written to a durable file keyed by
+the subagent's session identity:
+
+```
+data/memory/{pool_name}/fork_contexts/{agent_name}_{invocation_id}.xml
+```
+
+-   Written **once** at initial creation.
+-   **Not rewritten** on resume — the file is the authoritative source.
+-   On subagent completion/destruction, the file may optionally be
+    cleaned up.
+
+The system prompt assembly reads this file on every turn:
+
+```
+# System prompt structure (fork mode):
+#
+#   [base system prompt — from agents/{agent_type}.md]
+#
+#   ---
+#   ## Fork Context
+#   You are a subagent running from a fork of agent '{parent_name}'.
+#   The context below is READ-ONLY reference. Do NOT continue the
+#   prior conversation. Your task starts now.
+#
+#   <forked_context>
+#   ... content loaded from fork_context file ...
+#   </forked_context>
+#   ---
+#
+#   [progress tracking — if enabled]
+```
+
+The base prompt (`agents/{agent_type}.md`) and the fork preamble are
+static template content. Only the `<forked_context>` block is loaded
+from the persisted file.
+
+#### 3.3.4 Abstract memory API
+
+Fork context persistence goes through file I/O (the context is a system
+prompt component, not session messages). Session messages use the
+`MemorySystem` ABC as normal — the subagent starts with an empty session.
+
+```python
+# ✅  Correct — fork context is a file, not session messages
+fork_file = workspace / "fork_contexts" / f"{agent_name}_{invocation_id}.xml"
+fork_file.parent.mkdir(parents=True, exist_ok=True)
+fork_file.write_text(fork_xml, encoding="utf-8")
+
+# ✅  Correct — subagent session starts empty
+# No add_messages() call with parent history
 ```
 
 #### 3.3.5 Fork subagent memory capacity
 
-Fork-mode subagents use an explicit `MemoryConfig` with larger limits than the
-parent coding agent. The template YAML is the source of truth:
+Fork-mode subagents use larger memory limits because the forked context
+occupies system-prompt tokens. The subagent's own session messages need
+ample headroom:
 
 ```yaml
 # Fork agents (planner, worker, oracle) — larger capacity
 memory:
   session:
-    max_messages: 200      # parent: 100
-    max_tokens: 200000     # parent: 150000
+    max_messages: 200
+    max_tokens: 200000
     keep_ratio_for_messages: 0.4
     keep_ratio_for_token: 0.4
   governance:
     tool_chain_repair: true
-    # lossy_compaction: null (no immediate compression on inherited context)
+
+# fork_max_messages controls the count-truncation window
+fork_max_messages: 80
 ```
 
-Fresh-mode subagents keep the default smaller limits. Fork-mode agents
-disable lossy compaction at startup so the inherited reference context is
-not compressed on first load. Governance is re-enabled once the subagent
-generates its own messages (after the first turn) or when the total
-message count exceeds the configured `max_messages` threshold.
+#### 3.3.6 Template field
+
+`AgentTemplate` gains `fork_max_messages: int = 80` — the N in
+count-based truncation. Default 80. Overridable per template.
+
+```python
+@dataclass
+class AgentTemplate:
+    # ... existing fields ...
+    fork_max_messages: int = 80  # only meaningful when context_mode == FORK
+```
 
 ### 3.4 System prompt mode — `append` for delegate (P1)
 
@@ -279,9 +309,9 @@ maintain it.
 
 | File | Change |
 |------|--------|
-| `framework/multi_agent/communication.py` | Dynamic parent threading; fork context lifecycle (init-only copy, pre-fork governance, correct API); append prompt mode; progress tracking injection |
-| `framework/multi_agent/template.py` | Add `system_prompt_mode: SystemPromptMode` field |
-| `framework/multi_agent/template_registry.py` | Parse `system_prompt_mode` from YAML |
+| `framework/multi_agent/communication.py` | Dynamic parent threading; fork context lifecycle (count truncation → governance → XML → persist to file → inject into system prompt; resume skips truncation, loads from file); append prompt mode; progress tracking injection |
+| `framework/multi_agent/template.py` | Add `system_prompt_mode: SystemPromptMode`; add `fork_max_messages: int = 80` |
+| `framework/multi_agent/template_registry.py` | Parse `system_prompt_mode`, `fork_max_messages` from YAML |
 | `framework/multi_agent/tools.py` | Dynamic descriptions via `get_dynamic_schema` based on `comm_kind` |
 | `framework/tools/presets.py` | Add `SystemPromptMode` enum |
 | `framework/tools/web/__init__.py` | New empty package |
