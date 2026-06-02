@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 from framework.ioc.configs.memory import MemoryConfig
 from framework.ioc.configs.skills import SkillsConfig
-from framework.tools.presets import ContextMode, ThinkingBudget, ToolPreset
+from framework.tools.presets import ContextMode, SystemPromptMode, ThinkingBudget, ToolPreset
 
 
 @dataclass
@@ -44,6 +44,12 @@ class AgentTemplate:
     default_reads: list[str] = field(default_factory=list)
     progress_tracking: bool = False
     visible_targets: list[str] | None = None  # None=all NORMAL agents visible; list=restrict
+
+    # ── system prompt control ──
+    system_prompt_mode: SystemPromptMode = SystemPromptMode.REPLACE
+
+    # ── fork context control ──
+    fork_max_messages: int = 80  # only meaningful when context_mode == FORK
 
     # ── optional subsystems ──
     memory: MemoryConfig | None = None

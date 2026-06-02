@@ -41,6 +41,12 @@ class ThinkingBudget(str, Enum):
     HIGH = "high"
 
 
+class SystemPromptMode(str, Enum):
+    """System prompt assembly mode for subagent creation."""
+    REPLACE = "replace"  # subagent uses its own complete prompt
+    APPEND = "append"    # subagent prompt appended after parent's
+
+
 def _make_standard_read() -> list[Tool]:
     """Create read-only standard tools."""
     return [ReadFileTool(), ListDirTool(), SearchFilesTool(), FindFilesTool()]
