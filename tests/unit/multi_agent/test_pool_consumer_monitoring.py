@@ -95,9 +95,9 @@ class TestConsumerTaskMonitoring:
         assert pool._status.get("test_agent") == AgentState.SHUTTING_DOWN
 
     @pytest.mark.asyncio
-    async def test_consumer_done_callback_skips_cancelled(self, pool: AgentPool) -> None:
-        """If consumer task is cancelled, the done callback should not
-        transition state — cancellation is expected."""
+    async def test_consumer_done_callback_recovers_from_cancelled(self, pool: AgentPool) -> None:
+        """If consumer task is cancelled (e.g. by max errors), the done callback
+        must recover the agent to IDLE so it can be restarted."""
 
         async def _sleep_forever() -> None:
             await asyncio.sleep(999)
@@ -111,7 +111,7 @@ class TestConsumerTaskMonitoring:
         with pytest.raises(asyncio.CancelledError):
             await task
 
-        assert pool._status.get("test_agent") == AgentState.WORKING
+        assert pool._status.get("test_agent") == AgentState.IDLE
 
     @pytest.mark.asyncio
     async def test_register_resident_attaches_done_callback(self, pool: AgentPool) -> None:
@@ -262,4 +262,10 @@ class TestConsumerTaskMonitoring:
         task = pool._consumers.get("test_agent")
         assert task is not None
         assert task.done()
-        assert pool._status.get("test_agent") == AgentState.ERROR
+
+        await asyncio.sleep(0.05)
+
+        assert pool._status.get("test_agent") == AgentState.IDLE
+        new_task = pool._consumers.get("test_agent")
+        assert new_task is not None
+        assert new_task is not task

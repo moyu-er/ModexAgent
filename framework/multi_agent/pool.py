@@ -111,6 +111,8 @@ class AgentPool(AgentRegistry):
 
     def _transition(self, name: str, new_state: AgentState, reason: str = "") -> None:
         current = self._status.get(name, AgentState.SHUTDOWN)
+        if current == new_state:
+            return
         valid = self._valid_transitions.get(current, set())
         if new_state not in valid:
             logger.warning(
@@ -120,14 +122,13 @@ class AgentPool(AgentRegistry):
                 name,
                 reason or "unspecified",
             )
-        if current != new_state:
-            logger.info(
-                "Agent state transition: %s %s -> %s reason=%s",
-                name,
-                current.value,
-                new_state.value,
-                reason or "unspecified",
-            )
+        logger.info(
+            "Agent state transition: %s %s -> %s reason=%s",
+            name,
+            current.value,
+            new_state.value,
+            reason or "unspecified",
+        )
         self._status[name] = new_state
 
     async def register_resident(
@@ -194,6 +195,12 @@ class AgentPool(AgentRegistry):
         """Consumer task 完成回调：记录异常并尝试恢复。"""
         if task.cancelled():
             logger.info("Consumer task for %s was cancelled", agent_name)
+            if self._status.get(agent_name) not in (
+                AgentState.SHUTTING_DOWN,
+                AgentState.SHUTDOWN,
+            ):
+                self._transition(agent_name, AgentState.IDLE, reason="consumer_cancelled_recover")
+                self._restart_consumer_if_needed(agent_name)
             return
         exc = task.exception()
         if exc is not None:
@@ -214,6 +221,7 @@ class AgentPool(AgentRegistry):
             AgentState.SHUTDOWN,
         ):
             self._transition(agent_name, AgentState.IDLE, reason="consumer_done_recover")
+            self._restart_consumer_if_needed(agent_name)
 
     # Watchdog: warn when dispatch exceeds this threshold (P0-a, seconds)
     _DISPATCH_WARN_SECONDS: float = 300.0
@@ -264,6 +272,10 @@ class AgentPool(AgentRegistry):
             )
             active_count = self._active_session_counts[agent_name]
         start_time = time.monotonic()
+        current_state = self._status.get(agent_name)
+        if current_state == AgentState.ERROR:
+            self._error_counts.pop(agent_name, None)
+            self._transition(agent_name, AgentState.IDLE, reason="error_recovery")
         if self._status.get(agent_name) != AgentState.WORKING:
             self._transition(agent_name, AgentState.WORKING, reason="dispatch_start")
         logger.debug(
@@ -379,6 +391,11 @@ class AgentPool(AgentRegistry):
                     msg.sender,
                     list(msg.payload.keys()),
                 )
+
+                if self._status.get(address.name) == AgentState.ERROR:
+                    await self._broker.send_to(address, msg)
+                    await asyncio.sleep(0.1)
+                    continue
 
                 # 1. Inbox wakeup 信号（同步顺序处理，不创建后台任务）
                 if msg.payload.get("_inbox_wakeup"):
@@ -999,6 +1016,28 @@ class AgentPool(AgentRegistry):
 
         timers = getattr(self, "_cleanup_timers", {})
         timers[agent_name] = asyncio.create_task(_cleanup_after_delay())
+
+    def _restart_consumer_if_needed(self, agent_name: str) -> None:
+        """Restart consumer task if agent is IDLE and has no consumer running."""
+        if self._status.get(agent_name) != AgentState.IDLE:
+            return
+        consumer_task = self._consumers.get(agent_name)
+        if consumer_task is not None and not consumer_task.done():
+            return
+        instance = self._agents.get(agent_name)
+        if instance is None:
+            return
+        descriptor = instance.descriptor
+        if descriptor is None:
+            return
+        logger.info("Restarting consumer for %s", agent_name)
+        new_task = asyncio.create_task(self._consume_messages(instance, descriptor))
+
+        def on_consumer_done(task: asyncio.Task[Any], name: str = agent_name) -> None:
+            self._on_consumer_done(task, name)
+
+        new_task.add_done_callback(on_consumer_done)
+        self._consumers[agent_name] = new_task
 
     async def _shutdown_agent(self, agent_name: str) -> None:
         """Shut down a single agent and release its resources."""
