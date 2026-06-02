@@ -137,11 +137,17 @@ subagent_memory._layers.session.replace_messages(...)
 
 #### 3.3.4 Pre-fork governance
 
-Before deep-copy, parent messages pass through the parent's configured governance
-pipeline. Lossy compaction truncates oversized tool results and assistant content
-to their configured `head_chars` limits, keeping structural completeness while
-reducing token volume. This prevents the subagent from receiving 500+ messages
-of which most are verbose tool output.
+Pi does NOT compact at fork time. It copies the parent's session file as-is,
+relying on the fact that the parent's auto-compaction has already kept the
+session manageable during normal operation (triggered when `contextTokens >
+contextWindow - reserveTokens`, preserving ~20K recent tokens + LLM-generated
+summary of older content).
+
+**We go further**: before deep-copy, parent messages explicitly pass through
+the parent's configured governance pipeline. Lossy compaction truncates
+oversized tool results and assistant content to their configured `head_chars`
+limits. This guarantees the subagent receives a manageable, high-signal
+context regardless of whether the parent had recently been compacted.
 
 ```python
 from framework.memory.context_governance import CompositeGovernance
