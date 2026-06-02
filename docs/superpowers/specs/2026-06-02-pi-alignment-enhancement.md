@@ -124,44 +124,70 @@ Pi does NOT compact at fork time. It relies on the parent's prior
 auto-compaction. Our two-stage approach is stricter and guarantees a
 manageable subagent system prompt regardless of parent state.
 
-#### 3.3.3 Persistence
+#### 3.3.3 Persistence and injection
 
-The truncated + compacted context is written to a durable file keyed by
-the subagent's session identity:
+**Injection**: The framework already has a system-prompt assembly pipeline in
+`MemorySystemContextManager.load()` (line 214-233 of `framework/memory/system.py`).
+No new mechanism is introduced. The `base_system_prompt` parameter, which
+currently holds the raw content from `agents/{agent_type}.md`, is extended to
+include the fork preamble and forked context:
+
+```python
+# In _create_dynamic_subagent — system prompt assembly for fork mode:
+if template.context_mode == ContextMode.FORK:
+    fork_xml = _build_fork_context_xml(truncated_parent_msgs, parent_name)
+    fork_preamble = (
+        f"\n\n---\n\n"
+        f"## Fork Context\n"
+        f"You are a subagent running from a fork of agent '{parent_name}'.\n"
+        f"The context below is READ-ONLY reference. Do NOT continue the\n"
+        f"prior conversation. Your task starts now.\n\n"
+        f"<forked_context>\n{fork_xml}\n</forked_context>"
+    )
+    system_prompt = agent_md_content + fork_preamble
+else:
+    system_prompt = agent_md_content
+
+# Pass through existing mechanism — no new code paths:
+subagent_ctx = build_session_only_memory(
+    cfg=template.memory,
+    workspace=memory_workspace,
+    agent_id=name,
+    agent_role=MemoryAgentRole.SUBAGENT,
+    system_prompt=system_prompt,  # ← already contains fork context
+)
+```
+
+This flows into `MemorySystemContextManager.base_system_prompt` and is injected
+on every `load()` call via the standard `parts.append(self.base_system_prompt)`
+line. Zero new injection mechanism.
+
+**Persistence**: The forked context XML is written to a durable file so the
+system prompt can be rebuilt after a bot restart.
 
 ```
 data/memory/{pool_name}/fork_contexts/{agent_name}_{invocation_id}.xml
 ```
 
--   Written **once** at initial creation.
+```python
+# Resume detection — check persisted file first
+fork_file = workspace / "fork_contexts" / f"{name}_{invocation_id}.xml"
+if fork_file.exists():
+    # Resume: load from persisted file, no re-truncation
+    fork_xml = fork_file.read_text(encoding="utf-8")
+else:
+    # Initial creation or recovery: two-stage truncate + persist
+    fork_xml = _build_and_persist_fork_context(
+        parent_memory_system, parent_ctx, fork_file, ...
+    )
+# Either way, assemble base_system_prompt the same way
+system_prompt = agent_md_content + _build_fork_preamble(parent_name, fork_xml)
+```
+
+-   Written **once** at initial creation (after two-stage truncation).
 -   **Not rewritten** on resume — the file is the authoritative source.
--   On subagent completion/destruction, the file may optionally be
-    cleaned up.
-
-The system prompt assembly reads this file on every turn:
-
-```
-# System prompt structure (fork mode):
-#
-#   [base system prompt — from agents/{agent_type}.md]
-#
-#   ---
-#   ## Fork Context
-#   You are a subagent running from a fork of agent '{parent_name}'.
-#   The context below is READ-ONLY reference. Do NOT continue the
-#   prior conversation. Your task starts now.
-#
-#   <forked_context>
-#   ... content loaded from fork_context file ...
-#   </forked_context>
-#   ---
-#
-#   [progress tracking — if enabled]
-```
-
-The base prompt (`agents/{agent_type}.md`) and the fork preamble are
-static template content. Only the `<forked_context>` block is loaded
-from the persisted file.
+-   Recovery: if the fork context file is lost after restart,
+    re-truncate from parent session (same two-stage pipeline).
 
 #### 3.3.4 Abstract memory API
 
