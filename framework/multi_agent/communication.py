@@ -229,6 +229,19 @@ class AgentCommunicationService:
         if not system_prompt:
             system_prompt = DEFAULT_SYSTEM_PROMPT
 
+        # ── Append mode: concat parent prompt before subagent prompt ──
+        from framework.tools.presets import SystemPromptMode
+
+        if template.system_prompt_mode == SystemPromptMode.APPEND:
+            parent_prompt = ""
+            parent_name_for_append = parent_name
+            if self._pool is not None:
+                parent_instance = self._pool.get(parent_name_for_append)
+                if parent_instance is not None and parent_instance.descriptor.system_prompt_template:
+                    parent_prompt = parent_instance.descriptor.system_prompt_template
+            if parent_prompt:
+                system_prompt = parent_prompt + "\n\n---\n\n" + system_prompt
+
         # ── Memory: session-scoped, no knowledge layer ──
         from framework.ioc.factories.descriptors import build_session_only_memory
         from framework.memory.core.scope import MemoryAgentRole
@@ -349,6 +362,20 @@ class AgentCommunicationService:
                 f"{fork_xml}"
             )
             system_prompt = system_prompt + fork_preamble
+
+        # ── Progress tracking prompt ──
+        if template.progress_tracking:
+            progress_instruction = (
+                "\n\n---\n\n"
+                "## Progress Tracking\n"
+                "Maintain a file called `progress.md` in the current working directory.\n"
+                "Update it after each significant step with:\n"
+                "- What was checked/done\n"
+                "- What was found\n"
+                "- What remains\n"
+                "Keep it concise — this is a scratch file for coordination, not documentation."
+            )
+            system_prompt = system_prompt + progress_instruction
 
         # ── Tool manager: standard + MCP + communication ──
         subagent_tm = await self._build_subagent_tool_manager(
