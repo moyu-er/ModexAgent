@@ -60,6 +60,54 @@ def _build_dynamic_description(
     return f"{base_description}\n\n{targets_desc}"
 
 
+_NORMAL_SEND_DESCRIPTION = (
+    "Dispatch a task to a subagent. Use this to delegate work.\n\n"
+    "Parameters:\n"
+    "  target_agent: Name of the subagent type or agent to dispatch to.\n"
+    "  content: Complete task description with all necessary context.\n"
+    "  invocation_id:\n"
+    "    - null → Start a NEW task (framework generates a fresh session).\n"
+    '    - "<id>" → CONTINUE an existing session using the invocation_id\n'
+    "      returned from a previous dispatch. The subagent preserves its\n"
+    "      memory and context.\n\n"
+    "Dispatch patterns:\n"
+    "  Sequential chain: Dispatch one subagent, wait for its result in\n"
+    "    your next turn, then dispatch the next subagent passing relevant\n"
+    "    context in the content field.\n"
+    "  Parallel fan-out: Call this tool multiple times in the SAME turn\n"
+    '    (recommended max 5 concurrent). Use invocation_id=null for each.\n'
+    "    Results arrive in subsequent turns via inbox.\n\n"
+    "Important: This tool does NOT wait for the subagent to finish.\n"
+    "Results arrive in your inbox asynchronously."
+)
+
+_SUBAGENT_SEND_DESCRIPTION = (
+    "Send a coordination message to your parent agent. Use ONLY for\n"
+    "blocking decisions or important progress updates.\n\n"
+    "Parameters:\n"
+    "  target_agent: Your parent agent name (shown in list_communication_targets).\n"
+    '  content: Structured message prefix —\n'
+    '    "NEED_DECISION: <question>" — blocked, requires parent decision.\n'
+    '    "PROGRESS_UPDATE: <info>" — non-blocking, important discovery.\n'
+    "  invocation_id: Always use null for parent communication.\n\n"
+    "Important:\n"
+    "  - You can ONLY message your parent — not other subagents.\n"
+    "  - Routine completion goes through your normal return — do NOT\n"
+    "    use this tool for completion acknowledgements."
+)
+
+_NORMAL_LIST_DESCRIPTION = (
+    "List all agents and subagent types available for dispatch.\n"
+    "MUST be called BEFORE send_to_agent to verify target existence\n"
+    "and invocation_id requirements."
+)
+
+_SUBAGENT_LIST_DESCRIPTION = (
+    "List your parent agent for coordination messages.\n"
+    "You can ONLY communicate with your parent — star topology."
+)
+
+
 class SendToAgentTool(Tool):
     """Asynchronous send-to-agent tool using inbox delivery.
 
@@ -101,11 +149,18 @@ class SendToAgentTool(Tool):
         )
 
     def get_dynamic_schema(self, caller_context: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Return schema with description tailored to caller's comm_kind."""
+        from framework.core.agent import current_agent_context
+        ctx = current_agent_context.get(None)
+        if ctx is not None and ctx.session_meta is not None and ctx.session_meta.comm_kind == AgentCommKind.SUBAGENT:
+            desc = _SUBAGENT_SEND_DESCRIPTION
+        else:
+            desc = _build_dynamic_description(self._service, _NORMAL_SEND_DESCRIPTION)
         return {
             "type": "function",
             "function": {
                 "name": self.name,
-                "description": _build_dynamic_description(self._service, self.description),
+                "description": desc,
                 "parameters": self.parameters,
             },
         }
@@ -248,3 +303,20 @@ class ListCommunicationTargetsTool(Tool):
                     lines.append(f"| {t.agent_type} | null (new) or existing |")
 
         return "\n".join(lines)
+
+    def get_dynamic_schema(self, caller_context: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Return schema with description tailored to caller's comm_kind."""
+        from framework.core.agent import current_agent_context
+        ctx = current_agent_context.get(None)
+        if ctx is not None and ctx.session_meta is not None and ctx.session_meta.comm_kind == AgentCommKind.SUBAGENT:
+            desc = _SUBAGENT_LIST_DESCRIPTION
+        else:
+            desc = _NORMAL_LIST_DESCRIPTION
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": desc,
+                "parameters": self.parameters,
+            },
+        }
