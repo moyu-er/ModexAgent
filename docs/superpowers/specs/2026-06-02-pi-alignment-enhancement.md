@@ -329,6 +329,21 @@ Keep it concise — this is a scratch file for coordination, not documentation.
 No framework code writes `progress.md`. The agent uses `write_file` to
 maintain it.
 
+### 3.8 Old implementation cleanup
+
+The following code paths are **removed or replaced** by this spec. No
+compatibility shim is kept — delete old code directly.
+
+| Location | Old code | Disposition |
+|----------|----------|-------------|
+| `communication.py:_create_dynamic_subagent` | Fork: deep-copy parent messages into subagent session via `_layers.session.replace_messages()` | **Removed**. Replaced by system-prompt injection (3.3.3). |
+| `communication.py:_create_dynamic_subagent` | Fork: `ChatMessage(role="system", content="..." )` fork marker | **Removed**. Replaced by Fork Preamble in system prompt + user-role marker in base_system_prompt. |
+| `communication.py:_wire_subagent_hooks` | `parent_name=self._main_agent_name` (hardcoded) | **Replaced** by `source.name` from `_create_dynamic_subagent(source=...)`. |
+| `communication.py:__init__` | `parent_memory_system: MemorySystem \| None` parameter | **Removed**. Fork context no longer reads from parent memory. |
+| `communication.py:_build_subagent_tool_manager` | `visible_targets = [self._main_agent_name]` (hardcoded) | **Replaced** by dynamic `parent_name` parameter. |
+| `template.py:AgentTemplate` | `standard_tools: bool = True` (deprecated field) | **Kept** for backward compat. Deprecation note stays. |
+| `SubagentAutoSendHook.__init__` | `parent_name: str = "main"` (hardcoded default) | **Replaced** by explicit `parent_name` from `_wire_subagent_hooks`. |
+
 ## 4. Files Changed
 
 ### 4.1 Framework layer
@@ -347,18 +362,34 @@ maintain it.
 
 ### 4.2 Bot layer
 
+#### 4.2.1 Configuration
+
 | File | Change |
 |------|--------|
-| `examples/bot_project/config/pools/coding.yml` | Add oracle template; update summary table; fork agents get explicit memory config |
-| `examples/bot_project/config/pools/coding/templates/oracle.yml` | New oracle template |
-| `examples/bot_project/agents/coding.md` | Dispatch patterns (chain, parallel, invocation_id); NEED_DECISION recognition |
-| `examples/bot_project/agents/scout.md` | Structured communication prefixes; progress tracking |
-| `examples/bot_project/agents/context-builder.md` | Structured communication prefixes |
-| `examples/bot_project/agents/planner.md` | Structured communication prefixes |
-| `examples/bot_project/agents/worker.md` | Structured communication prefixes; progress tracking |
-| `examples/bot_project/agents/reviewer.md` | Structured communication prefixes |
-| `examples/bot_project/agents/delegate.md` | Append-mode concise prompt |
-| `examples/bot_project/agents/oracle.md` | New oracle prompt |
+| `config/pools/coding.yml` | Add oracle agent entry + template registration; update agent summary table (add oracle row); fork agents (planner, worker) get explicit `memory` block with `fork_max_messages: 80` |
+| `config/pools/coding/templates/oracle.yml` | New: `agent_type: oracle`, `tool_preset: read_only`, `context_mode: fork`, `thinking_budget: high`, `max_steps: 60` |
+| `config/pools/coding/templates/planner.yml` | Add `system_prompt_mode: replace`, `fork_max_messages: 80`, explicit `memory` block |
+| `config/pools/coding/templates/worker.yml` | Add `system_prompt_mode: replace`, `fork_max_messages: 80`, explicit `memory` block, `progress_tracking: true` |
+| `config/pools/coding/templates/delegate.yml` | Change `system_prompt_mode: append` (was implicit replace) |
+
+#### 4.2.2 Agent prompts
+
+| File | Change |
+|------|--------|
+| `agents/coding.md` | Add dispatch patterns section: chain (sequential send_to_agent + invocation_id handoff), parallel (same-turn send_to_agent ×N, max 5); NEED_DECISION recognition; invocation_id semantics |
+| `agents/scout.md` | Communication rules: use `send_to_agent` with `NEED_DECISION:` / `PROGRESS_UPDATE:` prefixes; list_communication_targets to discover parent; progress tracking section |
+| `agents/context-builder.md` | Communication rules: structured `NEED_DECISION:` / `PROGRESS_UPDATE:` prefixes; `web_search` conditional usage note |
+| `agents/planner.md` | Communication rules: structured prefixes; output writes to working directory (plan.md) |
+| `agents/worker.md` | Communication rules: structured prefixes; progress tracking; output format (changed files, validation, risks) |
+| `agents/reviewer.md` | Communication rules: structured prefixes; review output format |
+| `agents/delegate.md` | Short prompt (append mode — parent prompt is the primary context); communication rules |
+| `agents/oracle.md` | New: oracle role prompt based on `docs/pi-reference/oracle/prompt.md`; fork-aware; read-only inspection; inherited decisions → diagnosis → drift → recommendation → risks format |
+
+#### 4.2.3 Service wiring
+
+| File | Change |
+|------|--------|
+| `bot/service/pool_builder.py` | Remove `parent_memory_system=memory_system` from `AgentCommunicationService(...)` — fork context no longer reads parent memory. Keep `extra_tools` registration unchanged. |
 
 ### 4.3 Tests
 
@@ -384,7 +415,9 @@ dispatch or comparison logic.
 
 ## 6. Implementation Order
 
-1. **P0: Foundation fixes** — dynamic parent, fork context lifecycle, abstract API
-2. **P1: Tool & prompt improvements** — dynamic descriptions, system prompt mode, structured prefixes
-3. **P2: Capability expansion** — oracle role, web stubs, progress tracking
-4. **Verification** — unit tests, bot integration smoke test
+1. **P0: Foundation fixes** — dynamic parent, fork context rewrite (two-stage truncation + system-prompt injection + persistence), old fork code removal
+2. **P1: Old implementation cleanup** — remove `parent_memory_system` param, remove `_layers.session` fork code, update `pool_builder.py`, update `SubagentAutoSendHook`
+3. **P2: Tool & prompt improvements** — dynamic descriptions (normal/subagent), `SystemPromptMode` + `fork_max_messages`, template_registry parsing
+4. **P3: Bot layer adaptation** — template YAMLs, agent prompts (coding + 6 subagents + oracle), coding.yml config
+5. **P4: Capability expansion** — oracle role, web stubs, progress tracking injection
+6. **Verification** — unit tests, bot integration smoke test
