@@ -1,10 +1,9 @@
-agent_type: planner
-description: "Creates implementation plans from context and requirements"
-max_steps: 80
-tool_preset: minimal
+agent_type: oracle
+description: "Decision-consistency oracle — prevents drift from inherited decisions"
+tool_preset: read_only
 context_mode: fork
 thinking_budget: high
-default_reads: ["context.md"]
+max_steps: 60
 system_prompt_mode: replace
 fork_max_messages: 80
 memory:

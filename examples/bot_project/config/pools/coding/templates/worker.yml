@@ -6,6 +6,13 @@ context_mode: fork
 thinking_budget: high
 default_reads: ["context.md", "plan.md"]
 progress_tracking: true
+system_prompt_mode: replace
+fork_max_messages: 80
 memory:
-  short_term: {max_messages: 120, max_tokens: 120000}
-  archive: {enabled: true}
+  session:
+    max_messages: 200
+    max_tokens: 200000
+    keep_ratio_for_messages: 0.4
+    keep_ratio_for_token: 0.4
+  governance:
+    tool_chain_repair: true

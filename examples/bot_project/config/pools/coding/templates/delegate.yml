@@ -3,6 +3,7 @@ description: "Lightweight subagent for simple delegated tasks"
 max_steps: 50
 tool_preset: full
 context_mode: fresh
+system_prompt_mode: append
 memory:
   short_term: {max_messages: 50, max_tokens: 50000}
   archive: {enabled: true}
