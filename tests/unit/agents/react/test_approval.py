@@ -34,7 +34,7 @@ class TestTieredToolApprovalClassifier:
     def test_tool_not_in_config_returns_normal(self):
         config = AgentApprovalConfig(
             enabled=True,
-            tools={"write_file": ToolApprovalConfig(allowed_paths=["./*"])},
+            tools={"write": ToolApprovalConfig(allowed_paths=["./*"])},
         )
         c = TieredToolApprovalClassifier(config=config)
         tc = ToolCall(tool_name="bash", call_id="1", arguments={})
@@ -43,21 +43,21 @@ class TestTieredToolApprovalClassifier:
     def test_path_in_allowed_returns_normal(self):
         config = AgentApprovalConfig(
             enabled=True,
-            tools={"write_file": ToolApprovalConfig(allowed_paths=["./*"])},
+            tools={"write": ToolApprovalConfig(allowed_paths=["./*"])},
         )
         matcher = ArgumentMatcher(project_root=Path("/project"))
         c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
-        tc = ToolCall(tool_name="write_file", call_id="1", arguments={"path": "./file.txt"})
+        tc = ToolCall(tool_name="write", call_id="1", arguments={"path": "./file.txt"})
         assert c.classify(tc, make_ctx()) == ApprovalTier.NORMAL
 
     def test_path_not_in_allowed_returns_dangerous(self):
         config = AgentApprovalConfig(
             enabled=True,
-            tools={"write_file": ToolApprovalConfig(allowed_paths=["./*"])},
+            tools={"write": ToolApprovalConfig(allowed_paths=["./*"])},
         )
         matcher = ArgumentMatcher(project_root=Path("/project"))
         c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
-        tc = ToolCall(tool_name="write_file", call_id="1", arguments={"path": "/etc/passwd"})
+        tc = ToolCall(tool_name="write", call_id="1", arguments={"path": "/etc/passwd"})
         assert c.classify(tc, make_ctx()) == ApprovalTier.DANGEROUS
 
     def test_empty_allowed_paths_all_dangerous(self):

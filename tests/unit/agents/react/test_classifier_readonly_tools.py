@@ -30,13 +30,13 @@ class TestUnconfiguredToolsNeverNeedApproval:
         )
         matcher = ArgumentMatcher(project_root=Path("/project"))
         c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
-        tc = ToolCall(tool_name="list_dir", call_id="1", arguments={"path": "/home"})
+        tc = ToolCall(tool_name="ls", call_id="1", arguments={"path": "/home"})
         assert c.classify(tc, make_ctx()) == ApprovalTier.NORMAL
 
     def test_read_file_with_any_path_is_normal(self):
         config = AgentApprovalConfig(
             enabled=True,
-            tools={"write_file": ToolApprovalConfig(allowed_paths=["./*"])},
+            tools={"write": ToolApprovalConfig(allowed_paths=["./*"])},
         )
         matcher = ArgumentMatcher(project_root=Path("/project"))
         c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
@@ -46,7 +46,7 @@ class TestUnconfiguredToolsNeverNeedApproval:
     def test_cat_with_any_path_is_normal(self):
         config = AgentApprovalConfig(
             enabled=True,
-            tools={"edit_file": ToolApprovalConfig(allowed_paths=["./*"])},
+            tools={"edit": ToolApprovalConfig(allowed_paths=["./*"])},
         )
         matcher = ArgumentMatcher(project_root=Path("/project"))
         c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
@@ -56,7 +56,7 @@ class TestUnconfiguredToolsNeverNeedApproval:
     def test_search_content_with_any_path_is_normal(self):
         config = AgentApprovalConfig(
             enabled=True,
-            tools={"write_file": ToolApprovalConfig(allowed_paths=["./*"])},
+            tools={"write": ToolApprovalConfig(allowed_paths=["./*"])},
         )
         matcher = ArgumentMatcher(project_root=Path("/project"))
         c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
@@ -70,19 +70,19 @@ class TestConfiguredToolsCheckPaths:
     def test_configured_tool_outside_allowed_paths_is_dangerous(self):
         config = AgentApprovalConfig(
             enabled=True,
-            tools={"edit_file": ToolApprovalConfig(allowed_paths=["./*"])},
+            tools={"edit": ToolApprovalConfig(allowed_paths=["./*"])},
         )
         matcher = ArgumentMatcher(project_root=Path("/project"))
         c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
-        tc = ToolCall(tool_name="edit_file", call_id="1", arguments={"path": "/etc/shadow"})
+        tc = ToolCall(tool_name="edit", call_id="1", arguments={"path": "/etc/shadow"})
         assert c.classify(tc, make_ctx()) == ApprovalTier.DANGEROUS
 
     def test_configured_tool_inside_allowed_paths_is_normal(self):
         config = AgentApprovalConfig(
             enabled=True,
-            tools={"edit_file": ToolApprovalConfig(allowed_paths=["./*"])},
+            tools={"edit": ToolApprovalConfig(allowed_paths=["./*"])},
         )
         matcher = ArgumentMatcher(project_root=Path("/project"))
         c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
-        tc = ToolCall(tool_name="edit_file", call_id="1", arguments={"path": "./project/file.txt"})
+        tc = ToolCall(tool_name="edit", call_id="1", arguments={"path": "./project/file.txt"})
         assert c.classify(tc, make_ctx()) == ApprovalTier.NORMAL

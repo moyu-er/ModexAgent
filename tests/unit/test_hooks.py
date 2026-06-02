@@ -11,11 +11,18 @@ from framework.core.types import LLMResponse, ToolCall
 from framework.control.event_bus import CallbackControlEventBus
 from framework.control.types import ControlEvent, ControlEventType
 from framework.hook import HookPoint, HookPayload, HookRunner, HookSpec, HookErrorPolicy
+from framework.hook.abc import (
+    AfterIterationHook, AfterLLMResponseHook, AfterTurnHook,
+    BeforeIterationHook, BeforeTurnHook, FinalizeContentHook,
+)
 from framework.hook.builtin import RunLoggingHook, ProgressReportHook
 
-
-class BrokenHook:
+class BrokenHook(BeforeTurnHook, BeforeIterationHook, AfterIterationHook, AfterTurnHook, AfterLLMResponseHook):
     """Hook that raises in every async method."""
+
+    @property
+    def name(self) -> str:
+        return "broken_hook"
 
     async def before_turn(self, ctx):
         raise RuntimeError("before_turn boom")
@@ -61,7 +68,9 @@ class TestHookRunnerLogging:
     async def test_other_hooks_still_run_after_exception(self):
         calls: list[str] = []
 
-        class TrackingHook:
+        class TrackingHook(BeforeTurnHook):
+            @property
+            def name(self) -> str: return "tracking_hook"
             async def before_turn(self, ctx):
                 calls.append("track")
 
@@ -74,11 +83,15 @@ class TestHookRunnerLogging:
         assert calls == ["track"]
 
     def test_finalize_content_chains_through_all_hooks(self):
-        class UpperHook:
+        class UpperHook(FinalizeContentHook):
+            @property
+            def name(self) -> str: return "upper_hook"
             def finalize_content(self, ctx, content):
                 return content.upper() if content else content
 
-        class PrefixHook:
+        class PrefixHook(FinalizeContentHook):
+            @property
+            def name(self) -> str: return "prefix_hook"
             def finalize_content(self, ctx, content):
                 return f"[{content}]" if content else content
 
@@ -91,11 +104,15 @@ class TestHookRunnerLogging:
         assert result == "[HELLO]"
 
     def test_finalize_content_logs_errors(self, caplog):
-        class BrokenFinalizeHook:
+        class BrokenFinalizeHook(FinalizeContentHook):
+            @property
+            def name(self) -> str: return "broken_finalize_hook"
             def finalize_content(self, ctx, content):
                 raise RuntimeError("finalize boom")
 
-        class GoodFinalizeHook:
+        class GoodFinalizeHook(FinalizeContentHook):
+            @property
+            def name(self) -> str: return "good_finalize_hook"
             def finalize_content(self, ctx, content):
                 return content + "!"
 
@@ -115,7 +132,9 @@ class TestHookRunnerLogging:
     async def test_after_llm_response_delegates_to_all_hooks(self):
         calls: list[str] = []
 
-        class TrackingHook:
+        class TrackingHook(AfterLLMResponseHook):
+            @property
+            def name(self) -> str: return "tracking_hook"
             async def after_llm_response(self, ctx, response):
                 calls.append(f"{ctx.session_id}:{response.content}")
 
@@ -214,7 +233,7 @@ class TestRunLoggingHook:
             session_id="chat-c",
         )
         tool_call = ToolCall(
-            tool_name="write_file",
+            tool_name="write",
             arguments={"content": "line1\nline2\nline3\n" + "x" * 50},
             call_id="call-2",
         )
@@ -227,7 +246,7 @@ class TestRunLoggingHook:
             await hook.before_tool_execution(ctx, [tool_call])
             await hook.after_tool_execution(
                 ctx,
-                [ToolResult(tool_name="write_file", result="result1\nresult2\n" + "z" * 50, call_id="call-2")],
+                [ToolResult(tool_name="write", result="result1\nresult2\n" + "z" * 50, call_id="call-2")],
             )
 
         for record in caplog.records:

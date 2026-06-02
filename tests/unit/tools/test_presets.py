@@ -24,9 +24,9 @@ class TestGetPresetTools:
         tools = get_preset_tools(ToolPreset.FULL)
         names = [t.name for t in tools]
         assert "read" in names
-        assert "write_file" in names
-        assert "edit_file" in names
-        assert "list_dir" in names
+        assert "write" in names
+        assert "edit" in names
+        assert "ls" in names
         assert "grep" in names
         assert "find" in names
 
@@ -35,8 +35,8 @@ class TestGetPresetTools:
         tools = get_preset_tools(ToolPreset.READ_ONLY)
         names = [t.name for t in tools]
         assert "read" in names
-        assert "write_file" not in names
-        assert "edit_file" not in names
+        assert "write" not in names
+        assert "edit" not in names
         assert "grep" in names
 
     def test_read_write_preset_has_bash(self) -> None:
@@ -55,8 +55,8 @@ class TestGetPresetTools:
         tools = get_preset_tools(ToolPreset.MINIMAL)
         names = [t.name for t in tools]
         assert "read" in names
-        assert "write_file" in names
-        assert "edit_file" not in names
+        assert "write" in names
+        assert "edit" not in names
         assert "find" not in names
 
     def test_bash_injected_for_full_preset(self) -> None:

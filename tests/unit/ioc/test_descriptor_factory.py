@@ -44,7 +44,7 @@ class TestBuildSubagentDescriptorQuery12306:
         )
         tools = tm.list_tools()
         assert "read" in tools
-        assert "write_file" in tools
+        assert "write" in tools
         assert "bash" in tools
         assert "grep" in tools
         assert desc.max_tools_per_turn == 10

@@ -31,7 +31,7 @@ class ToolPreset(str, Enum):
 class ContextMode(str, Enum):
     """Subagent context mode — controls memory inheritance strategy."""
     FRESH = "fresh"  # clean session, no parent context inherited
-    FORK = "fork"    # deep-copy of parent session context as read-only reference
+    FORK = "fork"    # system-prompt injection of truncated parent context as read-only reference
 
 
 class ThinkingBudget(str, Enum):

@@ -101,7 +101,7 @@ class AgentTemplateRegistry:
                         system_prompt_mode = SystemPromptMode.REPLACE
 
                     fork_max_messages = raw.get("fork_max_messages", 80)
-                    if not isinstance(fork_max_messages, int) or fork_max_messages < 1:
+                    if isinstance(fork_max_messages, bool) or not isinstance(fork_max_messages, int) or fork_max_messages < 1:
                         fork_max_messages = 80
 
                     template = AgentTemplate(

@@ -5,7 +5,7 @@ context_mode: fork
 thinking_budget: high
 max_steps: 60
 system_prompt_mode: replace
-fork_max_messages: 80
+fork_max_messages: 60
 memory:
   session:
     max_messages: 200

@@ -5,5 +5,11 @@ tool_preset: full
 context_mode: fresh
 system_prompt_mode: append
 memory:
-  short_term: {max_messages: 50, max_tokens: 50000}
+  session:
+    max_messages: 100
+    max_tokens: 100000
+    keep_ratio_for_messages: 0.4
+    keep_ratio_for_token: 0.4
   archive: {enabled: true}
+  governance:
+    tool_chain_repair: true

@@ -862,6 +862,12 @@ class AgentPool(AgentRegistry):
             instance = self._agents.get(meta.agent_name)
             if instance and instance.context_manager:
                 await instance.context_manager.clear(session_id)
+            # ── Fork context cleanup — delete persisted fork XML on session eviction ──
+            try:
+                from framework.multi_agent.communication import cleanup_fork_context
+                cleanup_fork_context(session_id)
+            except Exception:
+                pass
             self._session_meta.pop(session_id, None)
             self._session_locks.pop(session_id, None)
         finally:

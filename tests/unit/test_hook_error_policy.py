@@ -6,9 +6,14 @@ import pytest
 
 from framework.control.exceptions import PolicyViolation
 from framework.hook import HookErrorPolicy, HookPoint, HookPayload, HookRunner, HookSpec
+from framework.hook.abc import BeforeIterationHook, BeforeTurnHook
 
 
-class BrokenHook:
+class BrokenHook(BeforeTurnHook, BeforeIterationHook):
+    @property
+    def name(self) -> str:
+        return "broken_hook"
+
     async def before_turn(self, ctx):
         raise RuntimeError("boom")
 
@@ -16,7 +21,11 @@ class BrokenHook:
         raise RuntimeError("boom")
 
 
-class GoodHook:
+class GoodHook(BeforeTurnHook):
+    @property
+    def name(self) -> str:
+        return "good_hook"
+
     async def before_turn(self, ctx):
         pass
 
@@ -37,7 +46,9 @@ class TestHookErrorPolicyIgnore:
     async def test_ignore_allows_subsequent_hooks(self):
         calls: list[str] = []
 
-        class TrackingHook:
+        class TrackingHook(BeforeTurnHook):
+            @property
+            def name(self) -> str: return "tracking_hook"
             async def before_turn(self, ctx):
                 calls.append("track")
 
@@ -68,7 +79,9 @@ class TestHookErrorPolicyLog:
     async def test_log_allows_subsequent_hooks(self):
         calls: list[str] = []
 
-        class TrackingHook:
+        class TrackingHook(BeforeTurnHook):
+            @property
+            def name(self) -> str: return "tracking_hook"
             async def before_turn(self, ctx):
                 calls.append("track")
 
@@ -95,7 +108,9 @@ class TestHookErrorPolicyAbort:
     async def test_abort_stops_subsequent_hooks(self):
         calls: list[str] = []
 
-        class TrackingHook:
+        class TrackingHook(BeforeTurnHook):
+            @property
+            def name(self) -> str: return "tracking_hook"
             async def before_turn(self, ctx):
                 calls.append("track")
 
@@ -111,7 +126,9 @@ class TestHookErrorPolicyAbort:
     async def test_abort_distinguishes_timeout_vs_error(self):
         import asyncio
 
-        class SlowHook:
+        class SlowHook(BeforeTurnHook):
+            @property
+            def name(self) -> str: return "slow_hook"
             async def before_turn(self, ctx):
                 await asyncio.sleep(100)
 
@@ -134,7 +151,9 @@ class TestHookErrorPolicyMixed:
 
         calls: list[str] = []
 
-        class TrackingHook:
+        class TrackingHook(BeforeTurnHook):
+            @property
+            def name(self) -> str: return "tracking_hook"
             async def before_turn(self, ctx):
                 calls.append("track")
 

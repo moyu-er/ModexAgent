@@ -20,7 +20,13 @@ class AgentTemplate:
     Pi-aligned fields (tool_preset, context_mode, thinking_budget,
     default_reads, progress_tracking) were added for the coding pool
     redesign. tool_preset controls tool registration; context_mode
-    controls memory inheritance; thinking_budget is prompt annotation only.
+    controls memory inheritance.
+
+    thinking_budget is reserved for future LLM reasoning-budget control
+    — it is parsed from YAML but not yet consumed by any LLM config path.
+
+    default_reads is reserved for future use — parsed from YAML but
+    not yet injected into subagent context by the framework.
     """
 
     agent_type: str

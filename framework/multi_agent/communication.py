@@ -33,6 +33,25 @@ logger = logging.getLogger(__name__)
 
 _TASK_ID_BYTES = 8
 
+# ── Fork context file registry — tracks persisted fork XML files for cleanup ──
+# Key: subagent session_id, Value: path to fork XML file
+_FORK_FILE_REGISTRY: dict[str, Path] = {}
+
+
+def cleanup_fork_context(session_id: str) -> None:
+    """Delete the persisted fork context file for a session, if one exists.
+
+    Called by AgentPool during session eviction. Safe to call for sessions
+    that have no fork context (no-op).
+    """
+    fork_file = _FORK_FILE_REGISTRY.pop(session_id, None)
+    if fork_file is not None and fork_file.exists():
+        try:
+            fork_file.unlink()
+            logger.debug("Fork context file cleaned: %s", fork_file)
+        except OSError:
+            pass
+
 
 async def _load_per_agent_mcp(
     tool_manager: Any,
@@ -339,6 +358,12 @@ class AgentCommunicationService:
                             # Format as XML
                             fork_xml = _messages_to_xml(truncated, parent_name)
 
+                    else:
+                        logger.warning(
+                            "Fork context: context manager lacks memory_system attribute, "
+                            "fork context will be empty for %s", name,
+                        )
+
                     # Persist
                     fork_file.parent.mkdir(parents=True, exist_ok=True)
                     fork_file.write_text(fork_xml, encoding="utf-8")
@@ -442,6 +467,22 @@ class AgentCommunicationService:
             agent_name=name,
             invocation_id=invocation_id,
         )
+
+        # ── Register fork context file for cleanup on session eviction ──
+        if template.context_mode == ContextMode.FORK:
+            # fork_file was computed in the fork block above;
+            # use the same path construction to reference it
+            _fw = (
+                self._memory_dir
+                or (self._project_dir / "data" / "memory" / self._pool_name
+                    if self._project_dir and self._pool_name
+                    else self._project_dir / "data" / "memory")
+                if self._project_dir else None
+            )
+            if _fw is not None:
+                _fork_path = _fw / "fork_contexts" / f"{name}_{invocation_id}.xml"
+                if _fork_path.exists():
+                    _FORK_FILE_REGISTRY[session_id] = _fork_path
 
         effective_source = source or self._source
         from framework.multi_agent.message_xml import build_agent_message

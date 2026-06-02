@@ -4,10 +4,10 @@ max_steps: 150
 tool_preset: full
 context_mode: fork
 thinking_budget: high
-default_reads: ["context.md", "plan.md"]
+# NOTE: default_reads is not implemented yet — field reserved for future use
 progress_tracking: true
 system_prompt_mode: replace
-fork_max_messages: 80
+fork_max_messages: 60
 memory:
   session:
     max_messages: 200

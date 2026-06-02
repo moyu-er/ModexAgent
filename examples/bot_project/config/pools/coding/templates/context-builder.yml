@@ -1,9 +1,15 @@
 agent_type: context-builder
-description: "Deep requirements analysis — produces context.md and meta-prompt.md"
+description: "Deep requirements analysis — get context analysis"
 max_steps: 60
 tool_preset: read_only
 context_mode: fresh
 thinking_budget: medium
 memory:
-  short_term: {max_messages: 60, max_tokens: 60000}
+  session:
+    max_messages: 150
+    max_tokens: 150000
+    keep_ratio_for_messages: 0.3
+    keep_ratio_for_token: 0.3
   archive: {enabled: true}
+  governance:
+    tool_chain_repair: true

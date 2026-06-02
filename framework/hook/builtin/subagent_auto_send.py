@@ -76,7 +76,7 @@ class SubagentAutoSendHook(AfterTurnHook):
                 rt._runtime_context = rc
         if rc is not None:
             calls = await rc.get_tool_calls()
-            sent_tools = {"send_to_agent", "send_to_agent_async"}
+            sent_tools = {"send_to_agent"}
             if any(c.tool_name in sent_tools for c in calls):
                 self._communicated.add(ctx.session_id)
                 logger.debug(
@@ -93,9 +93,9 @@ class SubagentAutoSendHook(AfterTurnHook):
             )
             return
 
-        # MaxIterationNotifyHook handles max_iterations — don't duplicate
-        if getattr(result, "stop_reason", None) == "max_iterations":
-            return
+        # Also forward on max_iterations — the subagent may have produced
+        # output that the parent needs to see, even if it hit its step limit.
+        # MaxIterationNotifyHook handles notification separately.
 
         # No agent_bus wired yet — no-op (wired later by pool/subagent service)
         if self._agent_bus is None:

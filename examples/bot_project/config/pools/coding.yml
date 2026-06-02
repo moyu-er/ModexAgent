@@ -19,7 +19,7 @@
 #
 #   Agent           | Preset     | Context | Think  | Steps | Terminal |
 #   ----------------|------------|---------|--------|-------|----------|
-#   coding (main)   | full*      | persist | -      | 100   | true     |
+#   coding (main)   | full*      | persist | -      | 100   | -        |
 #   scout           | read_only  | fresh   | low    | 40    | -        |
 #   context-builder | read_only  | fresh   | medium | 60    | -        |
 #   planner         | minimal    | fork    | high   | 80    | -        |
@@ -30,8 +30,9 @@
 #
 #   * Main agent extra_tools: ast_grep_search, ast_grep_replace,
 #     lsp_diagnostics, lsp_navigation.
-#   Fork context: parent session messages deep-copied into subagent,
-#     comm tool calls/results sanitized, fork marker inserted at position 0.
+#   Fork context: parent session messages truncated (count → governance),
+#     formatted as XML, and injected into subagent system prompt (not session
+#     messages). Persisted to fork_contexts/*.xml for resume across restarts.
 #   Bash tool: SubprocessTool (stateless) for subagents;
 #     CommandTool/TerminalTool (stateful persistent session) for main agent.
 

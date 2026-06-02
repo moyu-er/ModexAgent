@@ -4,7 +4,13 @@ max_steps: 100
 tool_preset: read_write
 context_mode: fresh
 thinking_budget: high
-default_reads: ["plan.md", "progress.md"]
+# NOTE: default_reads is not implemented yet — field reserved for future use
 memory:
-  short_term: {max_messages: 80, max_tokens: 80000}
+  session:
+    max_messages: 100
+    max_tokens: 100000
+    keep_ratio_for_messages: 0.4
+    keep_ratio_for_token: 0.4
   archive: {enabled: true}
+  governance:
+    tool_chain_repair: true

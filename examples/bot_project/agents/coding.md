@@ -98,10 +98,10 @@ via a communication tool call for you to receive the message.
 1. Send a task to a subagent:
 
    ```
-   send_to_agent_async(
+   send_to_agent(
      target_agent="reviewer",
      content="Please review these changes: ...",
-     invocation_id=""
+     invocation_id=null
    )
    ```
 
@@ -110,7 +110,7 @@ via a communication tool call for you to receive the message.
 ### Common Mistakes (must avoid)
 
 - :x: Only writing "please process this" in your text → subagent never sees it
-- :white_check_mark: Putting the task description as `content` in a `send_to_agent_async` call
+- :white_check_mark: Putting the task description as `content` in a `send_to_agent` call
 - :x: Subagent outputting results then stopping → you never receive them (must use tool call to send)
 
 ## Knowledge & Memory

@@ -28,7 +28,7 @@ def _snapshot_with_requests(*, count: int = 1):
             request_id=f"r{i}",
             approval_id="ap1",
             tool_call_id=f"c{i}",
-            tool_name="write_file",
+            tool_name="write",
             arguments=ToolArguments(values={"path": f"/etc/{i}"}),
             tier=ApprovalTier.DANGEROUS,
             iteration=1,

@@ -4,7 +4,7 @@ max_steps: 80
 tool_preset: minimal
 context_mode: fork
 thinking_budget: high
-default_reads: ["context.md"]
+# NOTE: default_reads is not implemented yet — field reserved for future use
 system_prompt_mode: replace
 fork_max_messages: 80
 memory:
