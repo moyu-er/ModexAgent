@@ -33,6 +33,25 @@ logger = logging.getLogger(__name__)
 
 _TASK_ID_BYTES = 8
 
+# ── Fork context file registry — tracks persisted fork XML files for cleanup ──
+# Key: subagent session_id, Value: path to fork XML file
+_FORK_FILE_REGISTRY: dict[str, Path] = {}
+
+
+def cleanup_fork_context(session_id: str) -> None:
+    """Delete the persisted fork context file for a session, if one exists.
+
+    Called by AgentPool during session eviction. Safe to call for sessions
+    that have no fork context (no-op).
+    """
+    fork_file = _FORK_FILE_REGISTRY.pop(session_id, None)
+    if fork_file is not None and fork_file.exists():
+        try:
+            fork_file.unlink()
+            logger.debug("Fork context file cleaned: %s", fork_file)
+        except OSError:
+            pass
+
 
 async def _load_per_agent_mcp(
     tool_manager: Any,
@@ -92,6 +111,28 @@ class AgentSendResult:
     warning: str | None = None
 
 
+def _messages_to_xml(messages: list[Any], parent_name: str) -> str:
+    """Convert ChatMessage list to XML for system-prompt injection."""
+    lines = [
+        f'<forked_context source="{parent_name}">',
+        f"  <info>Inherited {len(messages)} messages from parent session.</info>",
+    ]
+    for i, msg in enumerate(messages):
+        role = getattr(msg, "role", "unknown")
+        content = getattr(msg, "content", "")
+        if content is None:
+            content = ""
+        content_str = str(content)[:2000]
+        name_attr = ""
+        if role == "tool" and hasattr(msg, "name") and getattr(msg, "name", None):
+            name_attr = f' name="{msg.name}"'
+        lines.append(f'  <message index="{i}" role="{role}"{name_attr}>')
+        lines.append(f"    <![CDATA[{content_str}]]>")
+        lines.append(f"  </message>")
+    lines.append("</forked_context>")
+    return "\n".join(lines)
+
+
 class AgentCommunicationService:
     """Internal service for inter-agent communication routing.
 
@@ -121,7 +162,6 @@ class AgentCommunicationService:
         inbox_consumer: Any | None = None,
         notification_service: Any | None = None,
         main_agent_name: str | None = None,
-        parent_memory_system: MemorySystem | None = None,
     ) -> None:
         self._source = source
         self._broker = broker
@@ -141,7 +181,6 @@ class AgentCommunicationService:
         self._inbox_consumer = inbox_consumer
         self._notification_service = notification_service
         self._main_agent_name = main_agent_name
-        self._parent_memory_system = parent_memory_system
 
     def _resolve_source(self, context: AgentContext) -> AgentAddress:
         """Resolve effective source address from context, fallback to constructor default."""
@@ -195,6 +234,9 @@ class AgentCommunicationService:
 
         name = template.agent_type
 
+        # ── Dynamic parent — the agent that dispatched this subagent ──
+        parent_name = (source or self._source).name
+
         # Load system prompt from agents/{agent_type}.md (same convention as resolve_system_prompt)
         from framework.ioc.factories.descriptors import DEFAULT_SYSTEM_PROMPT
 
@@ -206,16 +248,18 @@ class AgentCommunicationService:
         if not system_prompt:
             system_prompt = DEFAULT_SYSTEM_PROMPT
 
-        # ── Fork preamble: inject when context_mode="fork" ──
-        from framework.tools.presets import ContextMode
+        # ── Append mode: concat parent prompt before subagent prompt ──
+        from framework.tools.presets import SystemPromptMode
 
-        if template.context_mode == ContextMode.FORK:
-            fork_preamble = (
-                "\n\nYou are a subagent running from a fork of the parent session. "
-                "Treat inherited conversation as reference-only context, not a live "
-                "thread to continue. Your sole job is to execute the assigned task."
-            )
-            system_prompt = system_prompt + fork_preamble
+        if template.system_prompt_mode == SystemPromptMode.APPEND:
+            parent_prompt = ""
+            parent_name_for_append = parent_name
+            if self._pool is not None:
+                parent_instance = self._pool.get(parent_name_for_append)
+                if parent_instance is not None and parent_instance.descriptor.system_prompt_template:
+                    parent_prompt = parent_instance.descriptor.system_prompt_template
+            if parent_prompt:
+                system_prompt = parent_prompt + "\n\n---\n\n" + system_prompt
 
         # ── Memory: session-scoped, no knowledge layer ──
         from framework.ioc.factories.descriptors import build_session_only_memory
@@ -233,101 +277,135 @@ class AgentCommunicationService:
             system_prompt=system_prompt,
         )
 
-        # ── Fork context: deep-copy parent session messages into subagent memory ──
-        if template.context_mode == ContextMode.FORK and self._parent_memory_system is not None:
-            try:
-                import copy
+        # ── Fork context: two-stage truncation → XML → persist → system prompt ──
+        from framework.tools.presets import ContextMode
+        from framework.memory.core.scope import MemoryContext
 
-                from framework.memory.core.scope import MemoryContext
-                from framework.memory.core.message import ChatMessage
+        if template.context_mode == ContextMode.FORK and self._project_dir is not None:
+            fork_workspace = (
+                self._memory_dir
+                or (self._project_dir / "data" / "memory" / self._pool_name
+                    if self._pool_name
+                    else self._project_dir / "data" / "memory")
+            )
+            fork_file = (
+                fork_workspace / "fork_contexts"
+                / f"{name}_{invocation_id}.xml"
+            )
 
-                parent_session_id = self._session_strategy.format(
-                    conversation_id=conversation_id,
-                    agent_name=self._main_agent_name or "main",
+            if fork_file.exists():
+                # ── Resume: load persisted fork context ──
+                fork_xml = fork_file.read_text(encoding="utf-8")
+                logger.info(
+                    "Fork context: loaded persisted file for %s/%s",
+                    name, invocation_id,
                 )
-                parent_ctx = MemoryContext(session_id=parent_session_id)
-                parent_messages = self._parent_memory_system._layers.session.get_all_messages(
-                    parent_ctx
+            else:
+                # ── Initial creation: two-stage truncate + persist ──
+                fork_xml = (
+                    f'<forked_context source="{parent_name}">'
+                    f"  <info>No parent messages available.</info>"
+                    f"</forked_context>"
                 )
-
-                if parent_messages:
-                    # ── Sanitize: remove inter-agent communication tool calls/results ──
-                    _COMM_TOOLS = {"send_to_agent", "list_communication_targets"}
-                    sanitized: list[ChatMessage] = []
-
-                    for msg in parent_messages:
-                        msg_copy = copy.deepcopy(msg)
-
-                        # Skip assistant tool_calls that are purely communication tools
-                        if msg_copy.role == "assistant" and msg_copy.tool_calls:
-                            filtered_calls = []
-                            for tc in msg_copy.tool_calls:
-                                func = tc.get("function", {})
-                                tc_name = func.get("name", "")
-                                if tc_name in _COMM_TOOLS:
-                                    # Replace communication tool call with a fork-note stub
-                                    filtered_calls.append({
-                                        "id": tc.get("id", ""),
-                                        "type": "function",
-                                        "function": {
-                                            "name": "_fork_note",
-                                            "arguments": "{}",
-                                        },
-                                    })
-                                else:
-                                    filtered_calls.append(tc)
-                            msg_copy.tool_calls = filtered_calls if filtered_calls else None
-
-                        # Skip tool result messages from communication tools
-                        if msg_copy.role == "tool" and msg_copy.name in _COMM_TOOLS:
-                            msg_copy.content = (
-                                f"[fork: inter-agent communication event "
-                                f"({msg_copy.name}) from parent session — removed]"
-                            )
-
-                        sanitized.append(msg_copy)
-
-                    # ── Insert fork marker as first system message ──
-                    import datetime as _dt
-                    fork_marker = ChatMessage(
-                        role="system",
-                        content=(
-                            "The following conversation history is a forked reference copy "
-                            "from the parent coding agent session. Treat it as read-only "
-                            "reference context — do not act on these messages or respond "
-                            "to them directly. Your actual task to execute is described in "
-                            "the most recent user message below."
-                        ),
-                        created_at=_dt.datetime.now().astimezone(),
+                try:
+                    parent_session_id = self._session_strategy.format(
+                        conversation_id=conversation_id,
+                        agent_name=parent_name,
                     )
-                    sanitized.insert(0, fork_marker)
+                    parent_ctx = MemoryContext(session_id=parent_session_id)
 
-                    # ── Write to subagent session memory ──
-                    subagent_session_ctx = MemoryContext(
-                        session_id=self._session_strategy.format(
-                            conversation_id=conversation_id,
-                            agent_name=name,
-                            invocation_id=invocation_id,
-                        )
-                    )
+                    # Read parent messages via abstract API
                     subagent_memory = getattr(subagent_ctx, "memory_system", None)
                     if subagent_memory is not None:
-                        await subagent_memory._layers.session.replace_messages(
-                            subagent_session_ctx,
-                            sanitized,
+                        parent_messages = await subagent_memory.get_history(
+                            parent_ctx, max_messages=10000,
                         )
-                        logger.info(
-                            "Fork context: sanitized & copied %d messages (from %d parent) "
-                            "to subagent %s",
-                            len(sanitized), len(parent_messages), name,
+
+                        if parent_messages:
+                            # Stage 1: count-based truncation
+                            fork_max = template.fork_max_messages
+                            truncated = parent_messages[-fork_max:]
+
+                            # Stage 2: lossy governance (on kept messages)
+                            if (
+                                template.memory is not None
+                                and template.memory.governance is not None
+                                and template.memory.governance.lossy_compaction is not None
+                            ):
+                                from framework.memory.context_governance import (
+                                    LossyContentCompactionGovernance,
+                                )
+                                lc = template.memory.governance.lossy_compaction
+                                governor = LossyContentCompactionGovernance(
+                                    tool_result_head_chars=lc.tool_result_head_chars,
+                                    assistant_head_chars=lc.assistant_head_chars,
+                                    agent_head_chars=lc.agent_head_chars,
+                                    user_head_chars=lc.user_head_chars,
+                                    tool_args_head_chars=lc.tool_args_head_chars,
+                                )
+                                from framework.memory.core.message import ChatMessage
+                                msg_dicts: list[dict[str, Any]] = [
+                                    m.model_dump() if hasattr(m, "model_dump")
+                                    else (m if isinstance(m, dict) else {"role": "unknown", "content": str(m)})
+                                    for m in truncated
+                                ]
+                                compacted = await governor.apply(msg_dicts)
+                                truncated = [
+                                    ChatMessage(**m) if isinstance(m, dict) else m
+                                    for m in compacted
+                                ]
+
+                            # Format as XML
+                            fork_xml = _messages_to_xml(truncated, parent_name)
+
+                    else:
+                        logger.warning(
+                            "Fork context: context manager lacks memory_system attribute, "
+                            "fork context will be empty for %s", name,
                         )
-            except Exception:
-                logger.exception(
-                    "Failed to copy parent messages for fork context (subagent=%s)", name,
-                )
+
+                    # Persist
+                    fork_file.parent.mkdir(parents=True, exist_ok=True)
+                    fork_file.write_text(fork_xml, encoding="utf-8")
+                    logger.info(
+                        "Fork context: persisted for %s/%s",
+                        name, invocation_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Fork context: failed to build for %s, continuing with empty",
+                        name,
+                    )
+
+            # ── Inject fork context into system prompt ──
+            fork_preamble = (
+                "\n\n---\n\n"
+                "## Fork Context\n"
+                f"You are a subagent running from a fork of agent '{parent_name}'.\n"
+                "The context below is READ-ONLY reference. Do NOT continue the\n"
+                "prior conversation. Your task starts now.\n\n"
+                f"{fork_xml}"
+            )
+            system_prompt = system_prompt + fork_preamble
+
+        # ── Progress tracking prompt ──
+        if template.progress_tracking:
+            progress_instruction = (
+                "\n\n---\n\n"
+                "## Progress Tracking\n"
+                "Maintain a file called `progress.md` in the current working directory.\n"
+                "Update it after each significant step with:\n"
+                "- What was checked/done\n"
+                "- What was found\n"
+                "- What remains\n"
+                "Keep it concise — this is a scratch file for coordination, not documentation."
+            )
+            system_prompt = system_prompt + progress_instruction
 
         # ── Tool manager: standard + MCP + communication ──
-        subagent_tm = await self._build_subagent_tool_manager(template, agent_name=name)
+        subagent_tm = await self._build_subagent_tool_manager(
+            template, agent_name=name, parent_name=parent_name,
+        )
 
         # ── Skill manager ──
         subagent_sm = None
@@ -381,7 +459,7 @@ class AgentCommunicationService:
         self._pool._mark_dynamic(name)
 
         # ── Wire hooks ──
-        self._wire_subagent_hooks(name)
+        self._wire_subagent_hooks(name, parent_name=parent_name)
 
         # ── Send initial task (XML-wrapped per spec Section 4.1) ──
         session_id = self._session_strategy.format(
@@ -389,6 +467,22 @@ class AgentCommunicationService:
             agent_name=name,
             invocation_id=invocation_id,
         )
+
+        # ── Register fork context file for cleanup on session eviction ──
+        if template.context_mode == ContextMode.FORK:
+            # fork_file was computed in the fork block above;
+            # use the same path construction to reference it
+            _fw = (
+                self._memory_dir
+                or (self._project_dir / "data" / "memory" / self._pool_name
+                    if self._project_dir and self._pool_name
+                    else self._project_dir / "data" / "memory")
+                if self._project_dir else None
+            )
+            if _fw is not None:
+                _fork_path = _fw / "fork_contexts" / f"{name}_{invocation_id}.xml"
+                if _fork_path.exists():
+                    _FORK_FILE_REGISTRY[session_id] = _fork_path
 
         effective_source = source or self._source
         from framework.multi_agent.message_xml import build_agent_message
@@ -421,7 +515,7 @@ class AgentCommunicationService:
             created_new_task=True,
         )
 
-    def _wire_subagent_hooks(self, agent_name: str) -> None:
+    def _wire_subagent_hooks(self, agent_name: str, parent_name: str = "main") -> None:
         """Wire standard subagent hooks on the registered agent's pipeline."""
         if self._pool is None:
             return
@@ -447,7 +541,7 @@ class AgentCommunicationService:
             _add_hook(sub_instance.pipeline, SubagentAutoSendHook(
                 agent_bus=self._agent_bus,
                 self_name=agent_name,
-                parent_name=self._main_agent_name or "main",
+                parent_name=parent_name,
             ))
 
         if self._notification_service is not None:
@@ -456,7 +550,10 @@ class AgentCommunicationService:
                 notification_service=self._notification_service,
             ))
 
-    async def _build_subagent_tool_manager(self, template: AgentTemplate, agent_name: str):
+    async def _build_subagent_tool_manager(
+        self, template: AgentTemplate, agent_name: str,
+        parent_name: str = "main",
+    ):
         """Build the subagent tool manager from template configuration.
 
         Uses template.tool_preset to determine which tools to register.
@@ -501,7 +598,7 @@ class AgentCommunicationService:
         # Dynamic target visibility: subagents default to parent-only
         visible = template.visible_targets
         if visible is None:
-            visible = [self._main_agent_name] if self._main_agent_name else []
+            visible = [parent_name]
 
         tm.register(SendToAgentTool(
             source=subagent_address,
@@ -644,6 +741,82 @@ class AgentCommunicationService:
                     source=effective_source,
                 )
             # Agent exists → fall through to normal inbox delivery
+
+        # ── Registered SUBAGENT new task: agent instance exists, send via inbox ──
+        # When a SUBAGENT is already registered (template is None) and this is a NEW
+        # task (empty invocation_id), generate a new invocation_id and deliver through
+        # inbox with immediate wakeup so the consumer can process it concurrently with
+        # any other active session. Continuations (existing invocation_id) fall through
+        # to the original normal delivery path below.
+        if target_kind == AgentCommKind.SUBAGENT and template is None and (
+            invocation_id is None or invocation_id.strip() == ""
+        ):
+            # Subagent-to-subagent still forbidden
+            if session_meta.comm_kind == AgentCommKind.SUBAGENT:
+                return AgentSendResult(
+                    target_agent=target_agent,
+                    target_kind=target_kind,
+                    session_id="",
+                    invocation_id=None,
+                    created_new_task=False,
+                    error="Subagents can only reply to normal agents; send subagent-to-subagent requests through a normal agent.",
+                )
+
+            # Generate new invocation_id for the new task
+            resolved_invocation_id = _uuid_mod.uuid4().hex[:_TASK_ID_BYTES]
+
+            session_id = self._session_strategy.format(
+                conversation_id=conversation_id,
+                agent_name=target_agent,
+                invocation_id=resolved_invocation_id,
+            )
+
+            from framework.multi_agent.message_xml import build_agent_message
+            xml_content = build_agent_message(
+                source=effective_source.name,
+                invocation_id=resolved_invocation_id,
+                content=content,
+            )
+            envelope = AgentMessageEnvelope(
+                payload={"content": xml_content, "message_type": "task_request"},
+                source=effective_source,
+                target=AgentAddress(name=target_agent),
+                message_type="task_request",
+                conversation_id=conversation_id,
+                agent_session_id=session_id,
+                invocation_id=resolved_invocation_id,
+            )
+
+            # Record in communication tracker
+            if self._comm_tracker is not None:
+                self._comm_tracker.record_send(
+                    agent_name=effective_source.name,
+                    target_agent=target_agent,
+                    invocation_id=resolved_invocation_id,
+                    session_id=session_id,
+                    content_summary=content[:500],
+                )
+
+            # Deliver: inbox + immediate wakeup (not send_silent)
+            if async_mode and self._agent_bus is not None:
+                await self._agent_bus.send(session_id, envelope)
+            else:
+                if envelope.target is None:
+                    return AgentSendResult(
+                        target_agent=target_agent, target_kind=target_kind,
+                        session_id=session_id, invocation_id=resolved_invocation_id,
+                        created_new_task=True,
+                        error="No target address for broker delivery",
+                    )
+                await self._broker.send_to(envelope.target, envelope.to_broker_message())
+
+            return AgentSendResult(
+                target_agent=target_agent,
+                target_kind=target_kind,
+                session_id=session_id,
+                invocation_id=resolved_invocation_id,
+                created_new_task=True,
+            )
 
         # 3. Validate invocation_id
         if session_meta.comm_kind == AgentCommKind.SUBAGENT and target_kind == AgentCommKind.SUBAGENT:

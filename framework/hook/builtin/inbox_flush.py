@@ -9,6 +9,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from framework.core.types import MessageRole
+from framework.hook.abc import BeforeIterationHook, BeforeTurnHook
 
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
@@ -16,11 +17,15 @@ if TYPE_CHECKING:
     from framework.multi_agent.inbox.consumer import InboxConsumer
 
 
-class InboxFlushHook:
+class InboxFlushHook(BeforeTurnHook, BeforeIterationHook):
     """Inbox 消费 Hook：在 turn 开始和每次迭代前 flush pending 消息到 history。
 
     幂等性由 InboxServer.consume() 的原子性 + InboxConsumer 本地缓存共同保证。
     """
+
+    @property
+    def name(self) -> str:
+        return "inbox_flush_hook"
 
     def __init__(
         self,

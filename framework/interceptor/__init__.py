@@ -1,24 +1,29 @@
-"""framework.interceptor — 调用边界 AOP 包裹机制。
+"""framework.interceptor — AOP interceptor chain.
 
-提供：
-- InterceptorScope 作用域枚举
-- Interceptor 协议与各 scope 上下文类型
-- InterceptorChain 洋葱链执行器
-- 内置拦截器实现
+Provides:
+- InterceptorScope scope enum
+- Interceptor base ABC + per-scope ABCs
+- Scope context types and next-call signatures
+- InterceptorChain onion-chain executor
+- Built-in interceptor implementations
 """
 
 from framework.interceptor.abc import (
     Interceptor,
     InterceptorScope,
     IterationContext,
+    IterationInterceptor,
     IterationNext,
     LLMCallContext,
     LLMStreamChunk,
     LLMStreamContext,
+    LLMStreamInterceptor,
     LLMStreamNext,
     ToolCallContext,
+    ToolCallInterceptor,
     ToolCallNext,
     TurnContext,
+    TurnInterceptor,
     TurnNext,
 )
 from framework.interceptor.chain import InterceptorChain
@@ -36,13 +41,17 @@ __all__ = [
     "InterceptorChain",
     "InterceptorScope",
     "IterationContext",
+    "IterationInterceptor",
     "IterationNext",
     "LLMCallContext",
     "LLMStreamChunk",
     "LLMStreamContext",
+    "LLMStreamInterceptor",
     "LLMStreamNext",
     "ToolCallContext",
+    "ToolCallInterceptor",
     "ToolCallNext",
     "TurnContext",
+    "TurnInterceptor",
     "TurnNext",
 ]

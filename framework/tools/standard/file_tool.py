@@ -338,7 +338,7 @@ class WriteFileTool(Tool):
 
     @property
     def name(self) -> str:
-        return "write_file"
+        return "write"
 
     @property
     def description(self) -> str:
@@ -386,7 +386,7 @@ class EditFileTool(Tool):
 
     @property
     def name(self) -> str:
-        return "edit_file"
+        return "edit"
 
     @property
     def description(self) -> str:
@@ -532,7 +532,7 @@ class ListDirTool(Tool):
 
     @property
     def name(self) -> str:
-        return "list_dir"
+        return "ls"
 
     @property
     def description(self) -> str:

@@ -90,10 +90,10 @@ class TestClean:
             _msg("user", content="read and write"),
             _msg("assistant", content="", tool_calls=[
                 {"id": "t1", "type": "function", "function": {"name": "read_file"}},
-                {"id": "t2", "type": "function", "function": {"name": "write_file"}},
+                {"id": "t2", "type": "function", "function": {"name": "write"}},
             ]),
             _msg("tool", tool_call_id="t1", name="read_file", content="old"),
-            _msg("tool", tool_call_id="t2", name="write_file", content="ok"),
+            _msg("tool", tool_call_id="t2", name="write", content="ok"),
             _msg("assistant", content="done"),
         ]
         result = policy.clean(msgs)

@@ -406,7 +406,7 @@ class TestToolNode:
         agent = ReActAgent(provider=object(), mode="clean")
         node = ToolNode(agent)
 
-        tc = ToolCall(tool_name="write_file", arguments={"path": "/tmp/x"}, call_id="c1")
+        tc = ToolCall(tool_name="write", arguments={"path": "/tmp/x"}, call_id="c1")
         runtime = _make_runtime()
         runtime.state.iteration = 1
         from framework.agents.react.approval import ApprovalRuntime

@@ -14,14 +14,20 @@ if TYPE_CHECKING:
     from framework.core.agent import AgentContext
     from framework.multi_agent.bus import AgentMessageBus
 
+from framework.hook.abc import AfterTurnHook
+
 logger = logging.getLogger(__name__)
 
 
-class SubagentAutoSendHook:
+class SubagentAutoSendHook(AfterTurnHook):
     """Peer agent auto-send hook。
 
     在 agent turn 结束后自动将内容转发给父 agent。
     """
+
+    @property
+    def name(self) -> str:
+        return "subagent_auto_send_hook"
 
     _THINK_PAIRED_RE = re.compile(
         r"<\s*(?:think|reasoning|reflection)\b[^>]*(?:>|\n)"
@@ -38,7 +44,7 @@ class SubagentAutoSendHook:
         agent_bus: AgentMessageBus | None = None,
         self_name: str = "",
         parent_name: str = "main",
-        notification_service: Any | None = None,
+        notification_service: Any | None = None,  # noqa: ANN401
     ) -> None:
         self._agent_bus = agent_bus
         self._self_name = self_name
@@ -50,9 +56,10 @@ class SubagentAutoSendHook:
         self._communicated: set[str] = set()
 
     async def before_turn(self, ctx: AgentContext) -> None:
+        """No-op kept for backward compatibility with existing callers."""
         pass
 
-    async def after_turn(self, ctx: AgentContext, result: Any = None) -> None:
+    async def after_turn(self, ctx: AgentContext, result: Any = None) -> None:  # noqa: ANN401
         if not result or not getattr(result, "content", None):
             return
 
@@ -69,7 +76,7 @@ class SubagentAutoSendHook:
                 rt._runtime_context = rc
         if rc is not None:
             calls = await rc.get_tool_calls()
-            sent_tools = {"send_to_agent", "send_to_agent_async"}
+            sent_tools = {"send_to_agent"}
             if any(c.tool_name in sent_tools for c in calls):
                 self._communicated.add(ctx.session_id)
                 logger.debug(
@@ -86,9 +93,9 @@ class SubagentAutoSendHook:
             )
             return
 
-        # MaxIterationNotifyHook handles max_iterations — don't duplicate
-        if getattr(result, "stop_reason", None) == "max_iterations":
-            return
+        # Also forward on max_iterations — the subagent may have produced
+        # output that the parent needs to see, even if it hit its step limit.
+        # MaxIterationNotifyHook handles notification separately.
 
         # No agent_bus wired yet — no-op (wired later by pool/subagent service)
         if self._agent_bus is None:
@@ -124,11 +131,15 @@ class SubagentAutoSendHook:
 
         sanitized = self._sanitize_forward_content(result.content)
 
+        # Use the actual stop_reason from the result so the parent agent knows
+        # why the subagent stopped (completed, max_iterations, error, etc.)
+        actual_stop_reason = getattr(result, "stop_reason", None) or "completed"
+
         xml_content = build_agent_result(
             source=self._self_name,
             invocation_id=invocation_id,
             status="completed",
-            stop_reason="missed_communication",
+            stop_reason=actual_stop_reason,
             content=sanitized,
         )
 

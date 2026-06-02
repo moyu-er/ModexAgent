@@ -1,30 +1,28 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-05-31 -->
+<!-- Updated: 2026-06-02 -->
 
 # builtin hooks
 
 ## Purpose
-10 framework-provided hooks covering logging, context tracking, multi-agent communication, dynamic tool filtering, output safety, and progress reporting.
+6 framework-provided hooks covering logging, context tracking, multi-agent communication, and progress reporting. 4 previously defined hooks (SubagentMemoryCleanupHook, DynamicToolFilterHook, LLMOutputGuardHook, ToolResultTransformHook) were removed — they had zero production instantiation.
 
 ## Hooks
 | File | Class | HookPoint(s) | Description |
 |------|-------|--------------|-------------|
-| `logging.py` | `RunLoggingHook` | before/after_turn, before/after_iteration | Basic execution logging |
-| `runtime_context.py` | `RuntimeContextHook` | before_turn, after_tool_execution | Tracks tool calls per session via RuntimeContextManager |
-| `inbox_flush.py` | `InboxFlushHook` | before_turn | Flushes inbox messages at turn start |
-| `subagent_auto_send.py` | `SubagentAutoSendHook` | after_tool_execution | Auto-forwards to subagents when LLM forgets send_message |
-| `subagent_cleanup.py` | `SubagentMemoryCleanupHook` | after_turn | Cleans up subagent resources |
-| `dynamic_tool_filter.py` | `DynamicToolFilterHook` | before/after_iteration | Per-iteration tool list management (token budgets, error downgrade, mutual exclusion) |
-| `llm_output_guard.py` | `LLMOutputGuardHook` | after_llm_response | LLM output sanitization + risk assessment |
-| `tool_result_transform.py` | `ToolResultTransformHook` | after_tool_execution | Tool result redaction/formatting |
-| `progress_report.py` | `ProgressReportHook` | after_tool_execution | Pushes progress events to ControlEventBus |
+| `logging.py` | `RunLoggingHook` | after_llm_response, before/after_tool_execution | Basic execution logging |
+| `runtime_context.py` | `RuntimeContextHook` | before_turn, before/after_tool_execution | Tracks tool calls per session via RuntimeContextManager |
+| `inbox_flush.py` | `InboxFlushHook` | before_turn, before_iteration | Flushes inbox messages at turn start |
+| `subagent_auto_send.py` | `SubagentAutoSendHook` | after_turn | Auto-forwards to subagents when LLM forgets send_message |
+| `progress_report.py` | `ProgressReportHook` | multiple (before/after_iteration, before/after_tool_execution, after_llm_response, after_turn) | Pushes progress events to ControlEventBus |
+| `trace_writer.py` | `TraceFileWriter` | (event subscriber) | Writes trace events to JSONL file |
 
 ## Design Rules
 - One hook class per file
+- Each hook inherits from per-point ABCs (BeforeTurnHook, AfterToolExecutionHook, etc.) via multiple inheritance
 - Per-turn state in `ctx.runtime.state` (pool-safe); session-keyed `self._state[sid]` if unavoidable
-- Register via `AgentRuntimeConfig.hooks` as `HookSpec(hook=MyHook(), on_error=...)`
+- Register via `HookRunner.add(HookSpec(hook=MyHook(), on_error=...))`
 
 ## Dependencies
 - `framework.core` -- AgentContext
 - `framework.control` -- ControlEventBus, ControlEventType (ProgressReportHook)
-- `framework.multi_agent.filtered_tool_manager` -- FilteredToolManager (DynamicToolFilterHook)
+- `framework.hook.abc` -- Hook base ABC + per-point ABC hierarchy

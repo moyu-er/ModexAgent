@@ -11,7 +11,7 @@ import yaml
 from framework.ioc.configs.memory import MemoryConfig
 from framework.ioc.configs.skills import SkillsConfig
 from framework.multi_agent.template import AgentTemplate
-from framework.tools.presets import ContextMode, ThinkingBudget, ToolPreset
+from framework.tools.presets import ContextMode, SystemPromptMode, ThinkingBudget, ToolPreset
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +90,20 @@ class AgentTemplateRegistry:
                         )
                         thinking_budget = ThinkingBudget.MEDIUM
 
+                    system_prompt_mode_raw = raw.get("system_prompt_mode", "replace")
+                    try:
+                        system_prompt_mode = SystemPromptMode(system_prompt_mode_raw)
+                    except ValueError:
+                        logger.warning(
+                            "Invalid system_prompt_mode '%s' in %s, falling back to 'replace'",
+                            system_prompt_mode_raw, yml_path,
+                        )
+                        system_prompt_mode = SystemPromptMode.REPLACE
+
+                    fork_max_messages = raw.get("fork_max_messages", 80)
+                    if isinstance(fork_max_messages, bool) or not isinstance(fork_max_messages, int) or fork_max_messages < 1:
+                        fork_max_messages = 80
+
                     template = AgentTemplate(
                         agent_type=raw["agent_type"],
                         description=raw.get("description", ""),
@@ -103,6 +117,8 @@ class AgentTemplateRegistry:
                         default_reads=raw.get("default_reads", []),
                         progress_tracking=raw.get("progress_tracking", False),
                         visible_targets=raw.get("visible_targets"),
+                        system_prompt_mode=system_prompt_mode,
+                        fork_max_messages=fork_max_messages,
                         memory=(
                             MemoryConfig.model_validate(raw["memory"])
                             if raw.get("memory") else None

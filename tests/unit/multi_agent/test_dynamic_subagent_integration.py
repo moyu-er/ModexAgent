@@ -615,8 +615,8 @@ class TestSubagentIsolation:
             tool_names = set(passed_tm.list_tools())
             assert "send_to_agent" in tool_names
             assert "list_communication_targets" in tool_names
-            assert "read_file" in tool_names
-            assert "write_file" in tool_names
+            assert "read" in tool_names
+            assert "write" in tool_names
             assert "mcp_playwright_browser_navigate" not in tool_names, (
                 "Subagent must not inherit main's MCP tools"
             )

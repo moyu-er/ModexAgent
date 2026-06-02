@@ -17,7 +17,7 @@ def test_denial_preempts_unresolved_requests() -> None:
                 request_id="r1",
                 approval_id="ap-1",
                 tool_call_id="call-1",
-                tool_name="write_file",
+                tool_name="write",
                 arguments=ToolArguments(values={"path": "a.txt"}),
                 tier=ApprovalTier.DANGEROUS,
                 iteration=1,

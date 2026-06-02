@@ -200,10 +200,10 @@ class TestToolCallCleanupIntegration:
                     "role": "assistant",
                     "content": "",
                     "tool_calls": [
-                        {"id": "t2", "type": "function", "function": {"name": "write_file"}}
+                        {"id": "t2", "type": "function", "function": {"name": "write"}}
                     ],
                 },
-                {"role": "tool", "tool_call_id": "t2", "name": "write_file", "content": "ok"},
+                {"role": "tool", "tool_call_id": "t2", "name": "write", "content": "ok"},
                 {"role": "assistant", "content": "b.py written"},
             ],
         )

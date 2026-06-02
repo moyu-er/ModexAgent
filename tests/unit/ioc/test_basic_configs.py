@@ -37,8 +37,8 @@ class TestApprovalConfig:
         cfg = ApprovalConfig(
             tools={
                 "bash": ToolApprovalEntry(allowed_paths=["*"]),
-                "write_file": ToolApprovalEntry(allowed_paths=["./*"]),
+                "write": ToolApprovalEntry(allowed_paths=["./*"]),
             }
         )
         assert cfg.tools["bash"].allowed_paths == ["*"]
-        assert cfg.tools["write_file"].allowed_paths == ["./*"]
+        assert cfg.tools["write"].allowed_paths == ["./*"]

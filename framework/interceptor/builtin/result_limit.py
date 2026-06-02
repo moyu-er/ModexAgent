@@ -7,8 +7,8 @@ from uuid import uuid4
 
 from framework.core.tool_manager import ToolResult
 from framework.interceptor.abc import (
-    InterceptorScope,
     ToolCallContext,
+    ToolCallInterceptor,
     ToolCallNext,
 )
 from framework.tools.overflow.handler import ToolResultOverflowHandler
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 _DEFAULT_MAX_CHARS = 10000
 
 
-class ToolResultLimitInterceptor:
+class ToolResultLimitInterceptor(ToolCallInterceptor):
     """Tool result overflow interceptor.
 
     When a tool result exceeds *max_chars*, the full content is persisted
@@ -30,7 +30,9 @@ class ToolResultLimitInterceptor:
     truncation when *overflow_handler* is None.
     """
 
-    scopes = frozenset([InterceptorScope.TOOL_CALL])
+    @property
+    def name(self) -> str:
+        return "tool_result_limit"
 
     def __init__(
         self,

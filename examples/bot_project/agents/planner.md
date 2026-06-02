@@ -40,8 +40,24 @@ Keep the plan concrete. Another agent should be able to execute it without guess
 
 ## Communication Rules
 
-You are an independently running background agent. **The coding agent cannot see any text you output directly.**
+**CRITICAL: Your direct text output is NOT visible to your parent agent.
+The parent agent only receives messages sent through the `send_to_agent`
+tool. To communicate with your parent, you MUST use `send_to_agent`.**
 
-- Need a decision → `send_to_agent(target_agent="coding", content="NEED_DECISION: <question>", invocation_id=<current>)`, then wait for the reply.
-- Task complete → `send_to_agent(target_agent="coding", content="## Goal\n...\n## Tasks\n1. ...", invocation_id=null)`
-- Do not send routine completion handoffs; return the completed plan normally.
+First, call `list_communication_targets` to discover your parent agent name.
+
+When you need a decision from your parent agent:
+```
+send_to_agent(target_agent=<from list_communication_targets>,
+  content="NEED_DECISION: <your question>",
+  invocation_id=null)
+```
+
+For important progress updates that change the plan:
+```
+send_to_agent(target_agent=<parent>,
+  content="PROGRESS_UPDATE: <what changed>",
+  invocation_id=null)
+```
+
+Do NOT send routine completion handoffs — return your plan normally.

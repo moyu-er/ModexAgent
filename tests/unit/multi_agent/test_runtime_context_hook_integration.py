@@ -18,6 +18,7 @@ from framework.runtime.models import TurnIdentity, TurnStateBase
 from framework.runtime.services import AgentRuntime, AgentRuntimeServices
 from framework.core.emitter import AgentResult, ContentEmitter
 from framework.hook import Hook, HookErrorPolicy, HookSpec, HookRunner
+from framework.hook.abc import AfterToolExecutionHook, AfterTurnHook, BeforeTurnHook
 from framework.hook.builtin import RuntimeContextHook
 from framework.core.runtime_context import RuntimeContextManager
 
@@ -256,10 +257,25 @@ class TestHookCollaboration:
         bus = self._make_bus()
         runtime_mgr = RuntimeContextManager()
 
-        custom_hook = MagicMock(spec=Hook)
-        custom_hook.before_turn = AsyncMock()
-        custom_hook.after_tool_execution = AsyncMock()
-        custom_hook.after_turn = AsyncMock()
+        class _CallTrackingHook(BeforeTurnHook, AfterToolExecutionHook, AfterTurnHook):
+            def __init__(self) -> None:
+                self.before_turn_called = False
+                self.after_turn_called = False
+
+            @property
+            def name(self) -> str:
+                return "call_tracking"
+
+            async def before_turn(self, ctx) -> None:
+                self.before_turn_called = True
+
+            async def after_tool_execution(self, ctx, results) -> None:
+                pass
+
+            async def after_turn(self, ctx, result) -> None:
+                self.after_turn_called = True
+
+        custom_hook = _CallTrackingHook()
 
         subagent_hook = SubagentAutoSendHook(
             agent_bus=bus, self_name="doc-expert", parent_name="main"
@@ -286,8 +302,8 @@ class TestHookCollaboration:
         await FakeAgent().run(ctx, MagicMock(spec=ContentEmitter))
 
         # All hooks should have been invoked
-        custom_hook.before_turn.assert_awaited_once()
-        custom_hook.after_turn.assert_awaited_once()
+        assert custom_hook.before_turn_called
+        assert custom_hook.after_turn_called
 
         # SubagentAutoSendHook should auto-forward (no tool calls)
         bus.send.assert_awaited_once()

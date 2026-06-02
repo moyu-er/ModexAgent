@@ -217,7 +217,6 @@ async def create_pool(
         inbox_consumer=inbox_consumer,
         notification_service=notification_service,
         main_agent_name=main_agent_name,
-        parent_memory_system=memory_system,
     )
     tool_manager.register(SendToAgentTool(
         source=main_address, broker=broker, registry=pool,

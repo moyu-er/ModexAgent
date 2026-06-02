@@ -3,8 +3,12 @@ description: "处理 Office 文档（Word/Excel/PPT/PDF），支持格式转换�
 max_steps: 30
 standard_tools: true
 memory:
-  short_term: {max_messages: 80, max_tokens: 80000, keep_ratio_for_messages: 0.5, keep_ratio_for_token: 0.5}
-  long_term: { enabled: true }
-  governance: {}
+  session:
+    max_messages: 80
+    max_tokens: 80000
+    keep_ratio_for_messages: 0.5
+    keep_ratio_for_token: 0.5
+  archive: {enabled: true}
+  knowledge: {enabled: true}
 skills:
   roots: ["skills/main/office-expert"]

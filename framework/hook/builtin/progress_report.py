@@ -13,8 +13,16 @@ from framework.control.types import (
 )
 from framework.core.agent import AgentContext
 from framework.core.emitter import AgentResult
-from framework.core.types import LLMResponse, ToolCall
 from framework.core.tool_manager import ToolResult
+from framework.core.types import LLMResponse, ToolCall
+from framework.hook.abc import (
+    AfterIterationHook,
+    AfterLLMResponseHook,
+    AfterToolExecutionHook,
+    AfterTurnHook,
+    BeforeIterationHook,
+    BeforeToolExecutionHook,
+)
 
 if TYPE_CHECKING:
     from framework.control.event_bus import ControlEventBus
@@ -44,11 +52,22 @@ def _get_max_iterations(ctx: AgentContext[Any]) -> int:
     return ctx.max_iterations
 
 
-class ProgressReportHook:
+class ProgressReportHook(
+    BeforeIterationHook,
+    AfterIterationHook,
+    BeforeToolExecutionHook,
+    AfterToolExecutionHook,
+    AfterLLMResponseHook,
+    AfterTurnHook,
+):
     """推送进度事件到 ControlEventBus。
 
     在各 hook 点发射 AGENT_PROGRESS 事件，监控/仪表板可订阅。
     """
+
+    @property
+    def name(self) -> str:
+        return "progress_report_hook"
 
     def __init__(self, event_bus: ControlEventBus) -> None:
         self._event_bus = event_bus

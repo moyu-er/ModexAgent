@@ -1,6 +1,7 @@
 """Multi-agent 专属 Hook 实现。
 
-SubagentAutoSendHook、SubagentMemoryCleanupHook 已迁入 framework.hook.builtin。
+SubagentAutoSendHook 已迁入 framework.hook.builtin。
+SubagentMemoryCleanupHook 已移除（零生产实例化）。
 TaskInterventionHook 已被 ControlDrainInterceptor + ControlCommand 机制替代，已移除。
 本文件仅保留 TaskProgressHook。
 """
@@ -24,7 +25,7 @@ class TaskProgressHook:
     按 session_id 隔离计数器，防止 pool 模式下多 session 竞态。
     """
 
-    def __init__(self, task_id: str, event_bus: TaskEventBus):
+    def __init__(self, task_id: str, event_bus: TaskEventBus) -> None:
         self._task_id = task_id
         self._event_bus = event_bus
         # session_id → {"iteration": int, "tool_calls": int}

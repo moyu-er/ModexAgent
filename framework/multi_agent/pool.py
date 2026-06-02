@@ -112,6 +112,8 @@ class AgentPool(AgentRegistry):
 
     def _transition(self, name: str, new_state: AgentState, reason: str = "") -> None:
         current = self._status.get(name, AgentState.SHUTDOWN)
+        if current == new_state:
+            return
         valid = self._valid_transitions.get(current, set())
         if new_state not in valid:
             logger.warning(
@@ -121,14 +123,13 @@ class AgentPool(AgentRegistry):
                 name,
                 reason or "unspecified",
             )
-        if current != new_state:
-            logger.info(
-                "Agent state transition: %s %s -> %s reason=%s",
-                name,
-                current.value,
-                new_state.value,
-                reason or "unspecified",
-            )
+        logger.info(
+            "Agent state transition: %s %s -> %s reason=%s",
+            name,
+            current.value,
+            new_state.value,
+            reason or "unspecified",
+        )
         self._status[name] = new_state
 
     async def register_resident(
@@ -195,6 +196,12 @@ class AgentPool(AgentRegistry):
         """Consumer task 完成回调：记录异常并尝试恢复。"""
         if task.cancelled():
             logger.info("Consumer task for %s was cancelled", agent_name)
+            if self._status.get(agent_name) not in (
+                AgentState.SHUTTING_DOWN,
+                AgentState.SHUTDOWN,
+            ):
+                self._transition(agent_name, AgentState.IDLE, reason="consumer_cancelled_recover")
+                self._restart_consumer_if_needed(agent_name)
             return
         exc = task.exception()
         if exc is not None:
@@ -215,6 +222,7 @@ class AgentPool(AgentRegistry):
             AgentState.SHUTDOWN,
         ):
             self._transition(agent_name, AgentState.IDLE, reason="consumer_done_recover")
+            self._restart_consumer_if_needed(agent_name)
 
     # Watchdog: warn when dispatch exceeds this threshold (P0-a, seconds)
     _DISPATCH_WARN_SECONDS: float = 300.0
@@ -258,13 +266,16 @@ class AgentPool(AgentRegistry):
         consumer 循环快速 create_task，实际处理在后台执行，
         通过 per-session lock 保证同 session 串行，但不同 session 可以并发。
         """
-        self._cancel_cleanup(agent_name)
         async with self._get_dispatch_lock(agent_name):
             self._active_session_counts[agent_name] = (
                 self._active_session_counts.get(agent_name, 0) + 1
             )
             active_count = self._active_session_counts[agent_name]
         start_time = time.monotonic()
+        current_state = self._status.get(agent_name)
+        if current_state == AgentState.ERROR:
+            self._error_counts.pop(agent_name, None)
+            self._transition(agent_name, AgentState.IDLE, reason="error_recovery")
         if self._status.get(agent_name) != AgentState.WORKING:
             self._transition(agent_name, AgentState.WORKING, reason="dispatch_start")
         logger.debug(
@@ -351,7 +362,6 @@ class AgentPool(AgentRegistry):
                     AgentState.SHUTDOWN,
                 ):
                     self._transition(agent_name, AgentState.IDLE, reason="dispatch_idle")
-                    self._schedule_idle_cleanup(agent_name)
 
     async def _dispatch_watchdog(
         self, task: asyncio.Task[None], deadline: DispatchDeadline,
@@ -383,7 +393,17 @@ class AgentPool(AgentRegistry):
                     list(msg.payload.keys()),
                 )
 
-                # 1. Inbox wakeup 信号（同步顺序处理，不创建后台任务）
+                if self._status.get(address.name) == AgentState.ERROR:
+                    await self._broker.send_to(address, msg)
+                    await asyncio.sleep(0.1)
+                    continue
+
+                # 1. Inbox wakeup 信号（并发后台处理，不阻塞 consumer loop）
+                # Note: _handle_inbox_wakeup is NOT wrapped in _run_dispatch here,
+                # because it creates per-dispatch tasks that each have their own
+                # _run_dispatch wrapper. Wrapping it would cause a premature
+                # active_count drop to 0 (outer _run_dispatch completes before
+                # inner tasks start), triggering a spurious IDLE transition.
                 if msg.payload.get("_inbox_wakeup"):
                     session_id = msg.payload.get("session_id", "")
                     if session_id:
@@ -392,10 +412,10 @@ class AgentPool(AgentRegistry):
                             address.name,
                             session_id,
                         )
-                        await self._run_dispatch(
-                            address.name,
-                            self._handle_inbox_wakeup(instance, session_id),
+                        task = asyncio.create_task(
+                            self._handle_inbox_wakeup(instance, session_id)
                         )
+                        self._track_agent_task(address.name, task)
                     continue
 
                 # 2. 解析为 AgentMessageEnvelope 并后台分发
@@ -497,15 +517,20 @@ class AgentPool(AgentRegistry):
                 continue
             agent_name = instance.descriptor.address.name
             if envelope.message_type == "task_request":
-                await self._run_dispatch(
-                    agent_name,
-                    self._dispatch_task_request(instance, instance.descriptor, envelope),
+                task = asyncio.create_task(
+                    self._run_dispatch(
+                        agent_name,
+                        self._dispatch_task_request(instance, instance.descriptor, envelope),
+                    )
                 )
             else:
-                await self._run_dispatch(
-                    agent_name,
-                    self._dispatch_agent_message(instance, envelope),
+                task = asyncio.create_task(
+                    self._run_dispatch(
+                        agent_name,
+                        self._dispatch_agent_message(instance, envelope),
+                    )
                 )
+            self._track_agent_task(agent_name, task)
 
     def _wrap_inbox_message(self, session_id: str, inbox_msg: InboxMessage) -> AgentMessageEnvelope:
         """将 InboxMessage 包装为 AgentMessageEnvelope，使用防御性字段提取。"""
@@ -848,6 +873,12 @@ class AgentPool(AgentRegistry):
             instance = self._agents.get(meta.agent_name)
             if instance and instance.context_manager:
                 await instance.context_manager.clear(session_id)
+            # ── Fork context cleanup — delete persisted fork XML on session eviction ──
+            try:
+                from framework.multi_agent.communication import cleanup_fork_context
+                cleanup_fork_context(session_id)
+            except Exception:
+                pass
             self._session_meta.pop(session_id, None)
             self._session_locks.pop(session_id, None)
         finally:
@@ -945,7 +976,19 @@ class AgentPool(AgentRegistry):
                     parts = self._session_strategy.parse(session_id)
                     if not parts.agent_name or parts.agent_name not in self._agents:
                         continue
-                    if self._status.get(parts.agent_name) not in (AgentState.IDLE,):
+                    # Per-session check: skip if session is actively being processed
+                    # (lock held), regardless of the agent-level state. This allows
+                    # inbox delivery to idle sessions even when other sessions are
+                    # keeping the agent in WORKING state.
+                    agent_status = self._status.get(parts.agent_name)
+                    if agent_status in (
+                        AgentState.SHUTTING_DOWN,
+                        AgentState.SHUTDOWN,
+                        AgentState.ERROR,
+                    ):
+                        continue
+                    session_lock = self._session_locks.get(session_id)
+                    if session_lock is not None and session_lock.locked():
                         continue
                     if not await self._agent_bus.has_pending(session_id):
                         continue
@@ -965,43 +1008,35 @@ class AgentPool(AgentRegistry):
                 logger.exception("Error in inbox polling loop")
                 await asyncio.sleep(self._inbox_poll_interval)
 
-    # ── Idle cleanup for dynamic subagents ──
-
-    _SUbagent_IDLE_CLEANUP_DELAY: float = 30.0
+    # ── Dynamic subagent tracking ──
 
     def _mark_dynamic(self, agent_name: str) -> None:
-        """Track this agent as dynamically created (eligible for idle cleanup)."""
+        """Track this agent as dynamically created."""
         if not hasattr(self, "_dynamic_agents"):
             self._dynamic_agents: set[str] = set()
         self._dynamic_agents.add(agent_name)
-        if not hasattr(self, "_cleanup_timers"):
-            self._cleanup_timers: dict[str, asyncio.Task[None]] = {}
 
-    def _cancel_cleanup(self, agent_name: str) -> None:
-        """Cancel pending idle cleanup for this agent (it's being used again)."""
-        timers = getattr(self, "_cleanup_timers", {})
-        task = timers.pop(agent_name, None)
-        if task is not None and not task.done():
-            task.cancel()
-
-    def _schedule_idle_cleanup(self, agent_name: str) -> None:
-        """Schedule delayed shutdown for a dynamic subagent that just went IDLE.
-
-        If the agent is picked up for another task before the delay expires,
-        the cleanup is cancelled via _cancel_cleanup().
-        """
-        dynamic = getattr(self, "_dynamic_agents", set())
-        if agent_name not in dynamic:
+    def _restart_consumer_if_needed(self, agent_name: str) -> None:
+        """Restart consumer task if agent is IDLE and has no consumer running."""
+        if self._status.get(agent_name) != AgentState.IDLE:
             return
-        self._cancel_cleanup(agent_name)
+        consumer_task = self._consumers.get(agent_name)
+        if consumer_task is not None and not consumer_task.done():
+            return
+        instance = self._agents.get(agent_name)
+        if instance is None:
+            return
+        descriptor = instance.descriptor
+        if descriptor is None:
+            return
+        logger.info("Restarting consumer for %s", agent_name)
+        new_task = asyncio.create_task(self._consume_messages(instance, descriptor))
 
-        async def _cleanup_after_delay() -> None:
-            await asyncio.sleep(self._SUbagent_IDLE_CLEANUP_DELAY)
-            if self._status.get(agent_name) == AgentState.IDLE:
-                await self._shutdown_agent(agent_name)
+        def on_consumer_done(task: asyncio.Task[Any], name: str = agent_name) -> None:
+            self._on_consumer_done(task, name)
 
-        timers = getattr(self, "_cleanup_timers", {})
-        timers[agent_name] = asyncio.create_task(_cleanup_after_delay())
+        new_task.add_done_callback(on_consumer_done)
+        self._consumers[agent_name] = new_task
 
     async def _shutdown_agent(self, agent_name: str) -> None:
         """Shut down a single agent and release its resources."""
@@ -1019,10 +1054,9 @@ class AgentPool(AgentRegistry):
                 await instance.stop()
             except Exception:
                 pass
-        self._transition(agent_name, AgentState.SHUTDOWN, reason="idle_cleanup")
+        self._transition(agent_name, AgentState.SHUTDOWN, reason="shutdown")
         self._dynamic_agents.discard(agent_name)
-        self._cleanup_timers.pop(agent_name, None)
-        logger.info("Dynamic subagent %s shut down (idle cleanup)", agent_name)
+        logger.info("Dynamic subagent %s shut down", agent_name)
 
     async def shutdown_all(self, timeout: float = 10.0) -> None:
         if self._inbox_poll_task is not None:

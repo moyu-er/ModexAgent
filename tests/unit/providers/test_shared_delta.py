@@ -326,7 +326,7 @@ class TestParsedResponseFromOpenai:
     def test_malformed_tool_args_empty_string(self):
         """Empty arguments string → degrade to {}."""
         func = MagicMock()
-        func.name = "list_dir"
+        func.name = "ls"
         func.arguments = ""
 
         tc = MagicMock()

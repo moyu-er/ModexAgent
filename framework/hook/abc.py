@@ -5,10 +5,11 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Generic, Protocol
+from typing import TYPE_CHECKING, Any, Generic
 
 from typing_extensions import TypeVar
 
@@ -89,69 +90,84 @@ class HookSpec(Generic[R]):
     on_error: HookErrorPolicy = HookErrorPolicy.LOG
 
 
-class Hook(Protocol, Generic[R]):
-    """Hook 协议 —— 生命周期扩展点。
+class Hook(ABC, Generic[R]):
+    """All hooks' public base class.
 
-    所有方法均为可选，HookRunner 通过 getattr 按 HookPoint 值调度。
-    子类可选择性覆盖所需方法。
+    Replaces the old Protocol. Each concrete hook inherits from one or more
+    per-point ABCs (BeforeTurnHook, AfterTurnHook, etc.).
     """
 
-    async def before_turn(self, ctx: AgentContext[R]) -> None:
-        """在 Agent.run() 开始时、while 循环之前调用，且只调用一次。"""
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """Unique hook name for logging and diagnostics."""
         ...
 
-    async def after_turn(
-        self,
-        ctx: AgentContext[R],
-        result: AgentResult,
-    ) -> None:
-        """在 Agent.run() 结束后调用（无论成功、失败或达到最大迭代次数），且只调用一次。"""
-        ...
 
-    async def before_iteration(self, ctx: AgentContext[R]) -> None:
-        """每次迭代开始前调用。"""
-        ...
+class BeforeTurnHook(Hook[R]):
+    _hook_point = HookPoint.BEFORE_TURN
 
-    async def after_iteration(self, ctx: AgentContext[R]) -> None:
-        """每次迭代结束后调用。"""
-        ...
+    @abstractmethod
+    async def before_turn(self, ctx: AgentContext[R]) -> None: ...
 
+
+class AfterTurnHook(Hook[R]):
+    _hook_point = HookPoint.AFTER_TURN
+
+    @abstractmethod
+    async def after_turn(self, ctx: AgentContext[R], result: AgentResult) -> None: ...
+
+
+class BeforeIterationHook(Hook[R]):
+    _hook_point = HookPoint.BEFORE_ITERATION
+
+    @abstractmethod
+    async def before_iteration(self, ctx: AgentContext[R]) -> None: ...
+
+
+class AfterIterationHook(Hook[R]):
+    _hook_point = HookPoint.AFTER_ITERATION
+
+    @abstractmethod
+    async def after_iteration(self, ctx: AgentContext[R]) -> None: ...
+
+
+class BeforeToolExecutionHook(Hook[R]):
+    _hook_point = HookPoint.BEFORE_TOOL_EXECUTION
+
+    @abstractmethod
     async def before_tool_execution(
-        self,
-        ctx: AgentContext[R],
-        tool_calls: Sequence[ToolCall],
-    ) -> None:
-        """工具执行前调用。"""
-        ...
+        self, ctx: AgentContext[R], tool_calls: Sequence[ToolCall]
+    ) -> None: ...
 
+
+class AfterToolExecutionHook(Hook[R]):
+    _hook_point = HookPoint.AFTER_TOOL_EXECUTION
+
+    @abstractmethod
     async def after_tool_execution(
-        self,
-        ctx: AgentContext[R],
-        results: Sequence[ToolResult],
-    ) -> None:
-        """工具执行后调用。"""
-        ...
+        self, ctx: AgentContext[R], results: Sequence[ToolResult]
+    ) -> None: ...
 
+
+class AfterLLMResponseHook(Hook[R]):
+    _hook_point = HookPoint.AFTER_LLM_RESPONSE
+
+    @abstractmethod
     async def after_llm_response(
-        self,
-        ctx: AgentContext[R],
-        response: LLMResponse,
-    ) -> None:
-        """LLM 完整响应返回后调用。"""
-        ...
+        self, ctx: AgentContext[R], response: LLMResponse
+    ) -> None: ...
 
-    async def on_control_command(
-        self,
-        ctx: AgentContext[R],
-        command: Any,
-    ) -> HookResult:
-        """接收控制命令时调用，可返回 HookResult(veto=True) 拒绝命令。"""
-        ...
 
-    def finalize_content(
-        self,
-        ctx: AgentContext[R],
-        content: str | None,
-    ) -> str | None:
-        """最终内容调整（同步）。"""
-        ...
+class OnControlCommandHook(Hook[R]):
+    _hook_point = HookPoint.ON_CONTROL_COMMAND
+
+    @abstractmethod
+    async def on_control_command(self, ctx: AgentContext[R], command: Any) -> HookResult: ...  # noqa: ANN401
+
+
+class FinalizeContentHook(Hook[R]):
+    _hook_point = HookPoint.FINALIZE_CONTENT
+
+    @abstractmethod
+    def finalize_content(self, ctx: AgentContext[R], content: str | None) -> str | None: ...
