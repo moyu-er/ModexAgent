@@ -92,6 +92,28 @@ class AgentSendResult:
     warning: str | None = None
 
 
+def _messages_to_xml(messages: list[Any], parent_name: str) -> str:
+    """Convert ChatMessage list to XML for system-prompt injection."""
+    lines = [
+        f'<forked_context source="{parent_name}">',
+        f"  <info>Inherited {len(messages)} messages from parent session.</info>",
+    ]
+    for i, msg in enumerate(messages):
+        role = getattr(msg, "role", "unknown")
+        content = getattr(msg, "content", "")
+        if content is None:
+            content = ""
+        content_str = str(content)[:2000]
+        name_attr = ""
+        if role == "tool" and hasattr(msg, "name") and getattr(msg, "name", None):
+            name_attr = f' name="{msg.name}"'
+        lines.append(f'  <message index="{i}" role="{role}"{name_attr}>')
+        lines.append(f"    <![CDATA[{content_str}]]>")
+        lines.append(f"  </message>")
+    lines.append("</forked_context>")
+    return "\n".join(lines)
+
+
 class AgentCommunicationService:
     """Internal service for inter-agent communication routing.
 
@@ -207,17 +229,6 @@ class AgentCommunicationService:
         if not system_prompt:
             system_prompt = DEFAULT_SYSTEM_PROMPT
 
-        # ── Fork preamble: inject when context_mode="fork" ──
-        from framework.tools.presets import ContextMode
-
-        if template.context_mode == ContextMode.FORK:
-            fork_preamble = (
-                "\n\nYou are a subagent running from a fork of the parent session. "
-                "Treat inherited conversation as reference-only context, not a live "
-                "thread to continue. Your sole job is to execute the assigned task."
-            )
-            system_prompt = system_prompt + fork_preamble
-
         # ── Memory: session-scoped, no knowledge layer ──
         from framework.ioc.factories.descriptors import build_session_only_memory
         from framework.memory.core.scope import MemoryAgentRole
@@ -234,98 +245,110 @@ class AgentCommunicationService:
             system_prompt=system_prompt,
         )
 
-        # ── Fork context: deep-copy parent session messages into subagent memory ──
-        if template.context_mode == ContextMode.FORK and getattr(self, '_parent_memory_system', None) is not None:
-            try:
-                import copy
+        # ── Fork context: two-stage truncation → XML → persist → system prompt ──
+        from framework.tools.presets import ContextMode
+        from framework.memory.core.scope import MemoryContext
 
-                from framework.memory.core.scope import MemoryContext
-                from framework.memory.core.message import ChatMessage
+        if template.context_mode == ContextMode.FORK and self._project_dir is not None:
+            fork_workspace = (
+                self._memory_dir
+                or (self._project_dir / "data" / "memory" / self._pool_name
+                    if self._pool_name
+                    else self._project_dir / "data" / "memory")
+            )
+            fork_file = (
+                fork_workspace / "fork_contexts"
+                / f"{name}_{invocation_id}.xml"
+            )
 
-                parent_session_id = self._session_strategy.format(
-                    conversation_id=conversation_id,
-                    agent_name=self._main_agent_name or "main",
+            if fork_file.exists():
+                # ── Resume: load persisted fork context ──
+                fork_xml = fork_file.read_text(encoding="utf-8")
+                logger.info(
+                    "Fork context: loaded persisted file for %s/%s",
+                    name, invocation_id,
                 )
-                parent_ctx = MemoryContext(session_id=parent_session_id)
-                parent_messages = self._parent_memory_system._layers.session.get_all_messages(
-                    parent_ctx
+            else:
+                # ── Initial creation: two-stage truncate + persist ──
+                fork_xml = (
+                    f'<forked_context source="{parent_name}">'
+                    f"  <info>No parent messages available.</info>"
+                    f"</forked_context>"
                 )
-
-                if parent_messages:
-                    # ── Sanitize: remove inter-agent communication tool calls/results ──
-                    _COMM_TOOLS = {"send_to_agent", "list_communication_targets"}
-                    sanitized: list[ChatMessage] = []
-
-                    for msg in parent_messages:
-                        msg_copy = copy.deepcopy(msg)
-
-                        # Skip assistant tool_calls that are purely communication tools
-                        if msg_copy.role == "assistant" and msg_copy.tool_calls:
-                            filtered_calls = []
-                            for tc in msg_copy.tool_calls:
-                                func = tc.get("function", {})
-                                tc_name = func.get("name", "")
-                                if tc_name in _COMM_TOOLS:
-                                    # Replace communication tool call with a fork-note stub
-                                    filtered_calls.append({
-                                        "id": tc.get("id", ""),
-                                        "type": "function",
-                                        "function": {
-                                            "name": "_fork_note",
-                                            "arguments": "{}",
-                                        },
-                                    })
-                                else:
-                                    filtered_calls.append(tc)
-                            msg_copy.tool_calls = filtered_calls if filtered_calls else None
-
-                        # Skip tool result messages from communication tools
-                        if msg_copy.role == "tool" and msg_copy.name in _COMM_TOOLS:
-                            msg_copy.content = (
-                                f"[fork: inter-agent communication event "
-                                f"({msg_copy.name}) from parent session — removed]"
-                            )
-
-                        sanitized.append(msg_copy)
-
-                    # ── Insert fork marker as first system message ──
-                    import datetime as _dt
-                    fork_marker = ChatMessage(
-                        role="system",
-                        content=(
-                            "The following conversation history is a forked reference copy "
-                            "from the parent coding agent session. Treat it as read-only "
-                            "reference context — do not act on these messages or respond "
-                            "to them directly. Your actual task to execute is described in "
-                            "the most recent user message below."
-                        ),
-                        created_at=_dt.datetime.now().astimezone(),
+                try:
+                    parent_session_id = self._session_strategy.format(
+                        conversation_id=conversation_id,
+                        agent_name=parent_name,
                     )
-                    sanitized.insert(0, fork_marker)
+                    parent_ctx = MemoryContext(session_id=parent_session_id)
 
-                    # ── Write to subagent session memory ──
-                    subagent_session_ctx = MemoryContext(
-                        session_id=self._session_strategy.format(
-                            conversation_id=conversation_id,
-                            agent_name=name,
-                            invocation_id=invocation_id,
-                        )
-                    )
+                    # Read parent messages via abstract API
                     subagent_memory = getattr(subagent_ctx, "memory_system", None)
                     if subagent_memory is not None:
-                        await subagent_memory._layers.session.replace_messages(
-                            subagent_session_ctx,
-                            sanitized,
+                        parent_messages = await subagent_memory.get_history(
+                            parent_ctx, max_messages=10000,
                         )
-                        logger.info(
-                            "Fork context: sanitized & copied %d messages (from %d parent) "
-                            "to subagent %s",
-                            len(sanitized), len(parent_messages), name,
-                        )
-            except Exception:
-                logger.exception(
-                    "Failed to copy parent messages for fork context (subagent=%s)", name,
-                )
+
+                        if parent_messages:
+                            # Stage 1: count-based truncation
+                            fork_max = template.fork_max_messages
+                            truncated = parent_messages[-fork_max:]
+
+                            # Stage 2: lossy governance (on kept messages)
+                            if (
+                                template.memory is not None
+                                and template.memory.governance is not None
+                                and template.memory.governance.lossy_compaction is not None
+                            ):
+                                from framework.memory.context_governance import (
+                                    LossyContentCompactionGovernance,
+                                )
+                                lc = template.memory.governance.lossy_compaction
+                                governor = LossyContentCompactionGovernance(
+                                    tool_result_head_chars=lc.tool_result_head_chars,
+                                    assistant_head_chars=lc.assistant_head_chars,
+                                    agent_head_chars=lc.agent_head_chars,
+                                    user_head_chars=lc.user_head_chars,
+                                    tool_args_head_chars=lc.tool_args_head_chars,
+                                )
+                                from framework.memory.core.message import ChatMessage
+                                msg_dicts: list[dict[str, Any]] = [
+                                    m.model_dump() if hasattr(m, "model_dump")
+                                    else (m if isinstance(m, dict) else {"role": "unknown", "content": str(m)})
+                                    for m in truncated
+                                ]
+                                compacted = await governor.apply(msg_dicts)
+                                truncated = [
+                                    ChatMessage(**m) if isinstance(m, dict) else m
+                                    for m in compacted
+                                ]
+
+                            # Format as XML
+                            fork_xml = _messages_to_xml(truncated, parent_name)
+
+                    # Persist
+                    fork_file.parent.mkdir(parents=True, exist_ok=True)
+                    fork_file.write_text(fork_xml, encoding="utf-8")
+                    logger.info(
+                        "Fork context: persisted for %s/%s",
+                        name, invocation_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Fork context: failed to build for %s, continuing with empty",
+                        name,
+                    )
+
+            # ── Inject fork context into system prompt ──
+            fork_preamble = (
+                "\n\n---\n\n"
+                "## Fork Context\n"
+                f"You are a subagent running from a fork of agent '{parent_name}'.\n"
+                "The context below is READ-ONLY reference. Do NOT continue the\n"
+                "prior conversation. Your task starts now.\n\n"
+                f"{fork_xml}"
+            )
+            system_prompt = system_prompt + fork_preamble
 
         # ── Tool manager: standard + MCP + communication ──
         subagent_tm = await self._build_subagent_tool_manager(
