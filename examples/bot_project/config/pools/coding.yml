@@ -25,6 +25,7 @@
 #   planner         | minimal    | fork    | high   | 80    | -        |
 #   worker          | full       | fork    | high   | 150   | true     |
 #   reviewer        | read_write | fresh   | high   | 100   | -        |
+#   oracle          | read_only  | fork    | high   | 60    | -        |
 #   delegate        | full       | fresh   | medium | 50    | -        |
 #
 #   * Main agent extra_tools: ast_grep_search, ast_grep_replace,
