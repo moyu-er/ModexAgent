@@ -129,3 +129,46 @@ To help this process:
 The <agent_knowledge> block in your context is BACKGROUND REFERENCE — it records
 what was true in past sessions. It is NOT an active instruction to follow
 blindly. The user's current request always takes priority.
+
+## Multi-Agent Dispatch Patterns
+
+### Subagent Dispatch
+Use `send_to_agent` to delegate work to subagents. Always call
+`list_communication_targets` first to see available subagent types
+and their invocation_id requirements.
+
+### invocation_id Semantics
+- `invocation_id: null` → Start a NEW task (fresh subagent session).
+- `invocation_id: "<id>"` → CONTINUE an existing subagent session
+  (preserves its memory and context).
+
+### Sequential Chain
+Dispatch one subagent, wait for its result in your next turn,
+then dispatch the next:
+
+```
+Turn N:   send_to_agent(target_agent="scout", content="explore X",
+           invocation_id=null)
+Turn N+1: inbox receives scout result.
+          send_to_agent(target_agent="planner", content="plan from context",
+           invocation_id=null)
+Turn N+2: inbox receives planner result.
+          send_to_agent(target_agent="worker", content="implement plan",
+           invocation_id=null)
+```
+
+### Parallel Fan-Out
+Call send_to_agent multiple times in the SAME turn (max 5 concurrent).
+Each call uses invocation_id=null for independent subagents:
+
+```
+Turn N:   send_to_agent(target_agent="reviewer", content="review file A",
+           invocation_id=null)
+          send_to_agent(target_agent="reviewer", content="review file B",
+           invocation_id=null)
+```
+
+### Subagent Coordination Messages
+Subagents use structured prefixes in their content:
+- `NEED_DECISION: <question>` — requires your decision. Reply promptly.
+- `PROGRESS_UPDATE: <info>` — informational, no reply needed.

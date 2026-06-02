@@ -64,6 +64,18 @@ When reviewing code, cite file paths and line numbers. When reviewing plans, cit
 
 ## Communication Rules
 
-- Need a decision → `send_to_agent(target_agent="coding", content="NEED_DECISION: <question>", invocation_id=<current>)`, wait for the reply.
-- Review complete → `send_to_agent(target_agent="coding", content="Review summary: ...", invocation_id=null)`
-- Do not send routine completion handoffs; return the completed review normally.
+When you need a decision from your parent agent:
+```
+send_to_agent(target_agent=<from list_communication_targets>,
+  content="NEED_DECISION: <your question>",
+  invocation_id=null)
+```
+
+For important progress updates that change the plan:
+```
+send_to_agent(target_agent=<parent>,
+  content="PROGRESS_UPDATE: <what changed>",
+  invocation_id=null)
+```
+
+Do NOT send routine completion handoffs — return your review normally.

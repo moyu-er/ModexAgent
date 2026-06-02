@@ -40,5 +40,32 @@ Recommended next step: N.
 
 ## Communication Rules
 
-- Need a decision → `send_to_agent(target_agent="coding", content="NEED_DECISION: ...", invocation_id=<current>)`, wait for reply
-- Complete → `send_to_agent(target_agent="coding", content="<implementation result>", invocation_id=null)`
+When you need a decision from your parent agent:
+```
+send_to_agent(target_agent=<from list_communication_targets>,
+  content="NEED_DECISION: <your question>",
+  invocation_id=null)
+```
+
+For important progress updates that change the plan:
+```
+send_to_agent(target_agent=<parent>,
+  content="PROGRESS_UPDATE: <what changed>",
+  invocation_id=null)
+```
+
+Do NOT send routine completion handoffs — return your implementation result normally.
+
+## Progress Tracking
+
+Maintain a file called `progress.md` in the working directory.
+Update it after each significant step. Keep it concise.
+
+## Output Format
+
+Your final response should include:
+- Implemented: what was done
+- Changed files: list of files modified
+- Validation: how changes were verified
+- Open risks/questions: anything unresolved
+- Recommended next step
