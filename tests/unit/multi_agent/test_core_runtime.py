@@ -7,15 +7,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from framework.control.policy_registry import SupervisionPolicyRegistry, SupervisionPolicySpec
-from framework.control.task_supervision import (
-    NoOpSupervisionPolicy,
-    SupervisionAction,
-    SupervisionResult,
-    TaskSupervisionPolicy,
-    TaskSupervisor,
-    TimeoutSupervisionPolicy,
-)
 from framework.core.emitter import AgentResult
 from framework.core.tool_manager import InMemoryToolManager
 from framework.messaging.broker_memory import InMemoryMessageBroker
@@ -37,7 +28,6 @@ from framework.multi_agent import (
     SessionRetentionPolicy,
     SingleTurnStrategy,
     SubagentService,
-    TaskCoordinator,
     TaskEvent,
     TaskEventBus,
     TaskEventReporter,
@@ -190,109 +180,12 @@ async def test_in_memory_task_coordinator_ttl_prune():
 
 
 @pytest.mark.asyncio
-async def test_in_memory_task_coordinator_replace_policy():
-    coord = InMemoryTaskCoordinator()
-    record = TaskRecord(task_id="t3", task_type="test", created_at=time.time())
-    await coord.register_task("t3", record)
-    p1 = TimeoutSupervisionPolicy(deadline=time.time() + 10)
-    p2 = TimeoutSupervisionPolicy(deadline=time.time() + 20)
-    await coord.bind_policy("t3", p1)
-    await coord.bind_policy("t3", p2)
-    rec = await coord.get_task_record("t3")
-    assert len(rec.policies) == 1
-    assert rec.policies[0].deadline == p2.deadline
-
-
-@pytest.mark.asyncio
 async def test_null_task_coordinator_noop():
     coord = NullTaskCoordinator()
     await coord.register_task("x", TaskRecord(task_id="x", task_type="t", created_at=0))
     assert await coord.get_task_record("x") is None
     assert await coord.get_task_records_by_conversation("c") == []
     assert await coord.get_task_records_by_status("s") == []
-
-
-# ── 9. Intervention / Supervisor ──
-
-@pytest.mark.asyncio
-async def test_timeout_cancellation_policy():
-    p = TimeoutSupervisionPolicy(deadline=time.time() - 1)
-    rec = TaskRecord(task_id="t", task_type="t", created_at=0)
-    result = await p.check(rec)
-    assert result.action == SupervisionAction.CANCEL
-
-    p2 = TimeoutSupervisionPolicy(deadline=time.time() + 100)
-    result2 = await p2.check(rec)
-    assert result2.action == SupervisionAction.PASS
-
-
-@pytest.mark.asyncio
-async def test_task_supervisor_cancels_main_task():
-    coord = InMemoryTaskCoordinator()
-    record = TaskRecord(task_id="task1", task_type="test", created_at=time.time())
-    await coord.register_task("task1", record)
-    await coord.bind_policy("task1", TimeoutSupervisionPolicy(deadline=time.time() - 0.1))
-
-    supervisor = TaskSupervisor(coord, check_interval=0.05)
-
-    async def _slow():
-        await asyncio.sleep(10)
-        return "done"
-
-    coro = _slow()
-    try:
-        with pytest.raises(asyncio.CancelledError):
-            await supervisor.supervise("task1", coro)
-    finally:
-        coro.close()
-
-
-@pytest.mark.asyncio
-async def test_task_supervisor_fault_tolerant_to_coordinator_failure():
-    class BadCoordinator(TaskCoordinator):
-        @property
-        def event_bus(self):
-            return None
-
-        async def register_task(self, task_id, record):
-            pass
-
-        async def bind_policy(self, task_id, policy):
-            raise RuntimeError("down")
-
-        async def replace_policies(self, task_id, policies):
-            pass
-
-        async def get_task_record(self, task_id):
-            raise RuntimeError("down")
-
-        async def get_task_records_by_conversation(self, conversation_id):
-            return []
-
-        async def get_task_records_by_status(self, status):
-            return []
-
-        async def update_task_status(self, task_id, status, metadata=None):
-            pass
-
-        async def revoke_task(self, task_id):
-            pass
-
-    supervisor = TaskSupervisor(BadCoordinator(), check_interval=0.01)
-
-    async def _quick():
-        return "ok"
-
-    result = await supervisor.supervise("x", _quick())
-    assert result == "ok"
-
-
-@pytest.mark.asyncio
-async def test_no_op_intervention_policy():
-    p = NoOpSupervisionPolicy()
-    rec = TaskRecord(task_id="t", task_type="t", created_at=0)
-    result = await p.check(rec)
-    assert result.action == SupervisionAction.PASS
 
 
 # ── 10. Event Bus / Reporters ──
@@ -329,31 +222,6 @@ async def test_in_memory_coordinator_event_bus_isolation():
     coord = InMemoryTaskCoordinator(event_bus=bus)
     rec = TaskRecord(task_id="t", task_type="t", created_at=time.time())
     await coord.register_task("t", rec)  # should not raise
-
-
-# ── 11. Policy Registry ──
-
-class DummyPolicy(TaskSupervisionPolicy):
-    policy_type = "dummy"
-
-    async def check(self, task_record):
-        return SupervisionResult()
-
-    @classmethod
-    def from_config(cls, config):
-        return cls()
-
-
-def test_policy_registry_register_and_get():
-    SupervisionPolicyRegistry.register("dummy", DummyPolicy)
-    assert SupervisionPolicyRegistry.get("dummy") is DummyPolicy
-
-
-def test_policy_spec_round_trip():
-    SupervisionPolicyRegistry.register("dummy2", DummyPolicy)
-    spec = SupervisionPolicySpec(policy_type="dummy2", config={})
-    policy = spec.to_policy()
-    assert isinstance(policy, DummyPolicy)
 
 
 # ── 12. Hooks / Strategies / InterruptibleRunner ──
@@ -395,39 +263,6 @@ def test_single_turn_strategy_requires_llm_provider():
     agent.provider = None
     with pytest.raises(RuntimeError):
         asyncio.run(strategy.execute(agent, MagicMock(), MagicMock()))
-
-
-@pytest.mark.asyncio
-async def test_control_drain_interceptor_raises_on_cancel():
-    """ControlDrainInterceptor 替代 TaskInterventionHook 的功能。
-
-    在 iteration 边界消费 cancel 命令并抛出 AgentCancelled。
-    """
-    from framework.control.channel import InMemoryControlChannel
-    from framework.control.exceptions import AgentCancelled
-    from framework.control.types import ControlCommand, ControlCommandType, ControlScope
-    from framework.interceptor.abc import IterationContext
-    from framework.interceptor.builtin.control_drain import ControlDrainInterceptor
-
-    channel = InMemoryControlChannel()
-    interceptor = ControlDrainInterceptor(channel=channel)
-    await channel.send(
-        ControlCommand(
-            command_id="cmd-1",
-            type=ControlCommandType.CANCEL_TURN,
-            scope=ControlScope(session_id="s1"),
-        )
-    )
-
-    ctx = MagicMock()
-    ctx.session_id = "s1"
-    ctx.runtime = None
-
-    async def next_call() -> None:
-        pass
-
-    with pytest.raises(AgentCancelled):
-        await interceptor.around_iteration(ctx, IterationContext(iteration=1, turn_id="t1"), next_call)
 
 
 @pytest.mark.asyncio

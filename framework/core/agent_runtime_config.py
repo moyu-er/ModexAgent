@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from framework.control.channel import ControlChannel
     from framework.control.event_bus import ControlEventBus
-    from framework.control.preset import PresetControlRule
     from framework.hook.abc import HookSpec
     from framework.runtime.store import TurnStateStore
 
@@ -32,7 +31,6 @@ class RuntimeControl:
     channel: ControlChannel | None = None
     event_bus: ControlEventBus | None = None
     turn_store: TurnStateStore | None = None
-    preset_rules: list[PresetControlRule] = field(default_factory=list)
     busy_input_mode: BusyInputMode = BusyInputMode.QUEUE
 
 
@@ -46,7 +44,6 @@ class AgentRuntimeConfig:
     Usage:
         runtime = AgentRuntimeConfig(
             hooks=[HookSpec(hook=RunLoggingHook(), on_error=HookErrorPolicy.LOG)],
-            interceptors=[ControlDrainInterceptor(channel=ctrl_channel)],
             control=RuntimeControl(channel=ctrl_channel, turn_store=store),
         )
     """

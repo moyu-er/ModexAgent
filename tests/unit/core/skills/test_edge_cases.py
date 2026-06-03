@@ -274,7 +274,7 @@ class TestBuilderEdgeCases:
         skills = [Skill(name="x", content="body", location="/x.md")]
         b = HybridBuilder(inline_mode="none")
         out = await b.build(skills, ctx)
-        assert "| x |" in out
+        assert '<skill name="x"' in out
         assert "body" not in out
 
     @pytest.mark.asyncio

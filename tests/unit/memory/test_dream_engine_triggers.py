@@ -27,7 +27,7 @@ class TestDreamEngineConfigHasDualTriggerFields:
         assert cfg.max_batch_size == 20
 
 
-def test_dream_engine_default_min_archive_count_is_zero(self) -> None:
+def test_dream_engine_default_min_archive_count_is_zero() -> None:
     """DreamEngine should process any available entries (min=0)."""
     engine = DreamEngine(
         llm_provider=MagicMock(),
@@ -36,19 +36,20 @@ def test_dream_engine_default_min_archive_count_is_zero(self) -> None:
     )
     assert engine.min_archive_count == 0
 
-    def test_dream_engine_config_custom_values(self):
-        cfg = DreamEngineConfig(
-            enabled=True,
-            interval=300,
-            min_archive_count=10,
-            max_archive_count=50,
-            max_batch_size=15,
-        )
-        assert cfg.enabled is True
-        assert cfg.interval == 300
-        assert cfg.min_archive_count == 10
-        assert cfg.max_archive_count == 50
-        assert cfg.max_batch_size == 15
+
+def test_dream_engine_config_custom_values() -> None:
+    cfg = DreamEngineConfig(
+        enabled=True,
+        interval=300,
+        min_archive_count=10,
+        max_archive_count=50,
+        max_batch_size=15,
+    )
+    assert cfg.enabled is True
+    assert cfg.interval == 300
+    assert cfg.min_archive_count == 10
+    assert cfg.max_archive_count == 50
+    assert cfg.max_batch_size == 15
 
 
 def _make_engine(

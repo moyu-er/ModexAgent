@@ -162,7 +162,7 @@ class TestInterceptorChainToolFallback:
     @pytest.mark.asyncio
     async def test_agent_control_error_propagates(self, fake_ctx):
         """AgentControlError base class must propagate."""
-        exc = AgentControlError("generic control", termination="cancelled")
+        exc = AgentControlError("generic control")
         chain = InterceptorChain([ControlErrorInterceptor(exc)])
         call_ctx = _make_tool_call_ctx()
 

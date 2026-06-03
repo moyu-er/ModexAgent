@@ -11,13 +11,12 @@ AOP onion-chain layer wrapping call boundaries. Interceptors form recursive clos
 |------|-------------|
 | `abc.py` | `Interceptor` Protocol, `InterceptorScope` (9 defined, 4 active: TOOL_CALL/TURN/ITERATION/LLM_STREAM), context types (ToolCallContext, TurnContext, IterationContext, LLMStreamContext, LLMStreamChunk), next-call signatures |
 | `chain.py` | `InterceptorChain[R]` -- recursive closure builder per scope, `has_scope()` check, exception handling (AgentControlError propagates, generic -> ToolResult) |
-| `handler.py` | `CommandHandlerRegistry`, `DefaultCancelHandler` -- command handler registration for ControlDrainInterceptor |
 | `__init__.py` | Public API exports |
 
 ## Subdirectories
 | Directory | Purpose |
 |-----------|---------|
-| `builtin/` | 8 interceptors + 1 classification helper -- timeout, watch, drain, steer-inject, result-limit, policy |
+| `builtin/` | 2 interceptors + 1 classification helper -- result-limit, tool_approval |
 
 ## Active Scopes
 | Scope | Method | Chain method | Purpose |

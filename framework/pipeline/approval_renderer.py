@@ -15,7 +15,7 @@ from ..core.types import InputMessage
 from ..runtime.models import ToolArguments, TurnSnapshot
 
 if TYPE_CHECKING:
-    from ..control.ui.abc import ControlUserInterface
+    from ..approval.ui import ApprovalUserInterface
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ class ApprovalRenderer:
         *,
         approval_workspace: Path,
         agent: object | None = None,
-        user_interface: ControlUserInterface | None = None,
+        user_interface: ApprovalUserInterface | None = None,
         on_drain: Callable[[InputMessage], Awaitable[None]] | None = None,
     ) -> None:
         self._approval_workspace = approval_workspace

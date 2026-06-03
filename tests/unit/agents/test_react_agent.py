@@ -182,7 +182,13 @@ class TestReActAgentUnifiedLoop:
     async def test_streaming_calls_after_llm_response_hook(self, streaming_provider, context, streaming_emitter):
         responses: list[str | None] = []
 
-        class TrackingHook:
+        from framework.hook.abc import AfterLLMResponseHook
+
+        class TrackingHook(AfterLLMResponseHook):
+            @property
+            def name(self) -> str:
+                return "tracking"
+
             async def after_llm_response(self, ctx, response):
                 responses.append(response.content)
 
@@ -302,7 +308,13 @@ class TestReActAgentUnifiedLoop:
     async def test_non_streaming_calls_after_llm_response_hook(self, non_streaming_provider, context, emitter):
         responses: list[str | None] = []
 
-        class TrackingHook:
+        from framework.hook.abc import AfterLLMResponseHook
+
+        class TrackingHook(AfterLLMResponseHook):
+            @property
+            def name(self) -> str:
+                return "tracking"
+
             async def after_llm_response(self, ctx, response):
                 responses.append(response.content)
 
