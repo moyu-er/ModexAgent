@@ -21,8 +21,20 @@ logger = logging.getLogger(__name__)
 class InputAdapter(ABC):
     """输入适配器基类
 
-    支持多种输入源：QQ、CLI、HTTP、Webhook、消息队列等
+    支持多种输入源：QQ、CLI、HTTP、Webhook、消息队列等。
+
+    Subclasses that process raw messages before enqueuing (e.g. QQ, Discord)
+    should call ``_try_intercept_control(text, session_id)`` before
+    ``_message_queue.put()`` so that /stop and other control commands bypass
+    Pipeline entirely.
     """
+
+    def __init__(self) -> None:
+        self._control_channel: Any = None
+        self._cmd_processor: Any = None
+        self._ctrl_output_adapter: Any = None
+        self._session_checker: Any = None
+        self._turn_uuid_getter: Any = None
 
     @property
     @abstractmethod
@@ -44,6 +56,131 @@ class InputAdapter(ABC):
     async def receive(self) -> AsyncIterator[InputMessage]:
         """接收输入消息（异步迭代器）"""
         pass
+
+    def configure_control_filter(
+        self,
+        *,
+        control_channel: Any = None,
+        command_processor: Any = None,
+        output_adapter: Any = None,
+        session_checker: Any = None,
+        turn_uuid_getter: Any = None,
+    ) -> None:
+        """Configure control command interception.
+
+        When configured, ``_try_intercept_control`` routes control slash
+        commands (e.g. /stop) to InMemoryControlChannel instead of Pipeline.
+        Call this once after the adapter and command processor are created.
+        """
+        self._control_channel = control_channel
+        self._cmd_processor = command_processor
+        self._ctrl_output_adapter = output_adapter
+        self._session_checker = session_checker
+        self._turn_uuid_getter = turn_uuid_getter
+
+    async def _try_intercept_control(self, text: str, session_id: str) -> bool:
+        """Try to handle *text* as a control command.  Returns True if handled.
+
+        When a control command (e.g. /stop) is detected it is pushed directly
+        into InMemoryControlChannel and acknowledged to the user.  The message
+        does NOT enter Pipeline's queue.
+
+        Subclasses call this before ``_message_queue.put()`` in their
+        message-receive path.  The default implementation is a no-op when
+        ``configure_control_filter`` has not been called.
+        """
+        processor = self._cmd_processor
+        channel = self._control_channel
+        output = self._ctrl_output_adapter
+
+        if processor is None or channel is None:
+            return False
+
+        parse_result = processor.parse(text)
+        if parse_result.invocation is None:
+            return False
+
+        # Normalise to canonical session_id (conversation_id:agent_name)
+        # so the ControlScope matches what the consumer (agent) uses.
+        from framework.multi_agent.session_id import DefaultSessionIdStrategy
+        canonical_sid = DefaultSessionIdStrategy().normalize(session_id)
+
+        from framework.commands.constants import CommandDispatchPolicy
+        from framework.commands.models import CommandContext
+
+        ctx = CommandContext(
+            session_id=canonical_sid,
+            input_msg=InputMessage(content=text, session_id=canonical_sid),
+            agent_name="main",
+        )
+        policy = processor.dispatch_policy(parse_result.invocation, ctx)
+        if policy != CommandDispatchPolicy.BYPASS_QUEUE:
+            return False
+
+        # Dedup: already a pending CANCEL_TURN for this session?
+        from framework.control.types import ControlCommandType, ControlScope
+
+        existing = await channel.peek(
+            ControlScope(session_id=canonical_sid),
+            command_types={ControlCommandType.CANCEL_TURN},
+        )
+        if existing:
+            if output:
+                await output.send(
+                    OutputMessage(
+                        content="⏹ Stop already requested.",
+                        session_id=session_id,
+                    ),
+                    session_id,
+                )
+            return True
+
+        # Activity check: is a turn running?
+        checker = self._session_checker
+        if checker is not None and not checker(session_id):
+            if output:
+                await output.send(
+                    OutputMessage(
+                        content="No running agent turn to stop.",
+                        session_id=session_id,
+                    ),
+                    session_id,
+                )
+            return True
+
+        # Full handling via command processor
+        cmd_result = await processor.handle(text, ctx)
+        if cmd_result.control_command is None:
+            return False
+
+        # Attach turn_uuid
+        uuid_getter = self._turn_uuid_getter
+        if uuid_getter is not None:
+            turn_uuid = uuid_getter(session_id)
+            if turn_uuid is not None:
+                cmd_result.control_command.payload["turn_uuid"] = turn_uuid
+            else:
+                # Turn ended between activity check and UUID fetch.
+                if output:
+                    await output.send(
+                        OutputMessage(
+                            content="No running agent turn to stop.",
+                            session_id=session_id,
+                        ),
+                        session_id,
+                    )
+                return True
+
+        await channel.send(cmd_result.control_command)
+
+        # Ack
+        if cmd_result.notice and output:
+            await output.send(
+                OutputMessage(content=cmd_result.notice, session_id=session_id),
+                session_id,
+            )
+
+        return True
 
 
 class OutputAdapter(ABC):

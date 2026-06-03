@@ -11,7 +11,6 @@ from typing import Any, Literal
 
 from framework.agents.react.state import get_react_state
 from framework.control.exceptions import AgentControlError
-from framework.control.runtime import ControlPhase, ControlRuntime
 from framework.hook import HookPayload, HookPoint
 from framework.interceptor.abc import (
     LLMStreamChunk,
@@ -174,7 +173,6 @@ class ReActAgent(Agent[ReActEvent]):
             context.identity = state.identity
             context.runtime = AgentRuntime(services=AgentRuntimeServices(), state=state)
         runtime = context.runtime
-        runtime.validate()
         ctx_token = current_agent_context.set(context)
 
         result = AgentResult(content="", stop_reason="error")
@@ -183,6 +181,15 @@ class ReActAgent(Agent[ReActEvent]):
             nonlocal result
             if runtime.hooks:
                 await runtime.hooks.dispatch(HookPoint.BEFORE_TURN, context)
+
+            # Drain control commands before starting turn
+            if context.runtime and context.runtime.control_channel:
+                from framework.hook.builtin.control_drain import drain_control_channel
+                await drain_control_channel(
+                    context.runtime.control_channel, context,
+                    turn_uuid=context.runtime.turn_uuid,
+                )
+
             result = await self.engine.run(context)
             if runtime.hooks:
                 await runtime.hooks.dispatch(
@@ -204,9 +211,9 @@ class ReActAgent(Agent[ReActEvent]):
         except GraphInterrupt:
             raise
         except AgentControlError as e:
-            logger.warning(
+            logger.info(
                 "ReActAgent control exit: %s",
-                e.termination.value if e.termination else "error",
+                str(e) or "error",
             )
             raise
         except asyncio.CancelledError:
@@ -301,8 +308,6 @@ class ReActAgent(Agent[ReActEvent]):
         context: AgentContext,
     ) -> ToolResult:
         """执行工具，优先使用 InterceptorChain 包裹。"""
-        if context.runtime and context.runtime.control:
-            await context.runtime.control.drain(context, phase=ControlPhase.BEFORE_TOOL_CALL)
         interceptor_chain = context.runtime.interceptors if context.runtime else None
         if interceptor_chain is not None:
             call_ctx = ToolCallContext(

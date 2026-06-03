@@ -131,4 +131,5 @@ class TurnCustomKey(StrEnum):
     TOOL_USAGE = "usage"
     GRAPH_RESULT = "_graph_result"
     MAX_TOOLS_PER_TURN = "max_tools_per_turn"
+    TURN_UUID = "_turn_uuid"
     INJECTION_CYCLE_COUNT = "_injection_cycle_count"

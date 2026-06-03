@@ -67,6 +67,13 @@ class AgentContext:
     identity: TurnIdentity | None = None
     session_meta: AgentSessionMeta | None = None
 
+    @property
+    def current_turn_uuid(self) -> str | None:
+        """Current turn UUID from runtime state, for control command validation."""
+        if self.runtime is None:
+            return None
+        return self.runtime.turn_uuid
+
     def add_attachment(self, path: str) -> None:
         self.attachments.append(path)
 

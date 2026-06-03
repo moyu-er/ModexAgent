@@ -10,13 +10,14 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from framework.core.llm_struct import RuntimeSafetyPolicy
 
+from .enums import TurnCustomKey
 from .models import TurnStateBase
 
 if TYPE_CHECKING:
     import asyncio
 
     from framework.agents.react.approval import ApprovalRuntime
-    from framework.control.runtime import ControlRuntime
+    from framework.control.channel import InMemoryControlChannel
     from framework.core.runtime_context import RuntimeContextManager
     from framework.hook import HookRunner
     from framework.interceptor.chain import InterceptorChain
@@ -33,7 +34,6 @@ class AgentRuntimeServices:
 
     hooks: HookRunner | None = None
     interceptors: InterceptorChain | None = None
-    control: ControlRuntime | None = None
     approval: ApprovalRuntime | None = None
     governance: ContextGovernance | None = None
     turn_store: TurnStateStore | None = None
@@ -41,16 +41,12 @@ class AgentRuntimeServices:
     pending_input_queue: asyncio.Queue[str] | None = None
     safety: RuntimeSafetyPolicy = field(default_factory=RuntimeSafetyPolicy)
     runtime_context_manager: RuntimeContextManager | None = None
+    control_channel: InMemoryControlChannel | None = None
 
 
 @dataclass
 class AgentRuntime:
-    """Runtime = services (process-local) + state (turn-local, snapshot-able).
-
-    Delegation properties (hooks, interceptors, control, etc.) are provided
-    for backward compatibility with code that accesses services directly on
-    the runtime object.
-    """
+    """Runtime = services (process-local) + state (turn-local, snapshot-able)."""
 
     services: AgentRuntimeServices
     state: TurnStateBase
@@ -63,10 +59,6 @@ class AgentRuntime:
     @property
     def interceptors(self) -> InterceptorChain | None:
         return self.services.interceptors
-
-    @property
-    def control(self) -> ControlRuntime | None:
-        return self.services.control
 
     @property
     def approval(self) -> ApprovalRuntime | None:
@@ -96,16 +88,15 @@ class AgentRuntime:
     def safety(self) -> RuntimeSafetyPolicy:
         return self.services.safety
 
-    def validate(self) -> None:
-        """Validate runtime configuration. No-op for new AgentRuntime."""
-        if self.services.interceptors is not None and self.services.control is None:
-            from framework.interceptor.builtin import ControlDrainInterceptor
-            for interceptor in self.services.interceptors.interceptors:
-                if isinstance(interceptor, ControlDrainInterceptor):
-                    from framework.control.exceptions import PolicyViolation
-                    raise PolicyViolation(
-                        "ControlDrainInterceptor configured but no ControlRuntime present"
-                    )
+    @property
+    def turn_uuid(self) -> str | None:
+        """Current turn UUID for control command scoping."""
+        return self.state.custom.get(TurnCustomKey.TURN_UUID)  # type: ignore[return-value]
+
+    @property
+    def control_channel(self) -> InMemoryControlChannel | None:
+        """InMemoryControlChannel for control command consumption."""
+        return self.services.control_channel
 
 
 def require_runtime_state(runtime: AgentRuntime, state_type: type[TState]) -> TState:
