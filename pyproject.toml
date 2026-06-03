@@ -30,6 +30,8 @@ dependencies = [
   "mcp>=1.0.0,<2",
   "pathvalidate>=3.0.0",
   "typing-extensions>=4.8.0",
+  "ddgs>=9.0.0",
+  "markdownify>=0.13.0",
 ]
 
 [project.optional-dependencies]

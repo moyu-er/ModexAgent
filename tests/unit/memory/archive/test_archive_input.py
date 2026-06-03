@@ -37,12 +37,12 @@ def test_tool_chain_is_grouped_with_assistant_tool_calls() -> None:
     )
 
     assert "[tool-chain]" in result.context_transcript
-    assert "name=shell" in result.context_transcript
+    assert "name=bash" in result.context_transcript
     assert "command=pytest tests/unit -q" in result.context_transcript
     assert "unused" not in result.context_transcript
     assert "truncated" in result.context_transcript
     assert "short summary tail" in result.context_transcript
-    assert "source: shell" in result.knowledge_transcript
+    assert "[user]" in result.knowledge_transcript
 
 
 def test_orphan_tool_result_is_dropped() -> None:

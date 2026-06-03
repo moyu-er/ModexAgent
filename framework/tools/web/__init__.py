@@ -1,5 +1,10 @@
 """Web tools — search and page reader.
 
-WebSearchTool and WebReaderTool are placeholder stubs. Full implementations
-with httpx + DuckDuckGo / custom search API are deferred.
+WebSearchTool provides DuckDuckGo-based web search.
+WebReaderTool fetches URLs and converts HTML to markdown.
 """
+
+from framework.tools.web.reader import WebReaderTool
+from framework.tools.web.search import WebSearchTool
+
+__all__ = ["WebSearchTool", "WebReaderTool"]

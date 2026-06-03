@@ -13,9 +13,9 @@ Core multi-agent framework package (322 Python files, 63 ABCs, 18 Protocols). Al
 | `approval/` | Tiered tool approval — tiers, decisions, response parsing (see `approval/AGENTS.md`) |
 | `pipeline/` | `AgentPipeline` orchestration, I/O adapters, approval renderer, slash commands (see `pipeline/AGENTS.md`) |
 | `session/` | `AgentSession` — request/response mode |
-| `control/` | Runtime control plane — `ControlChannel`, `ControlEventBus`, `ControlRuntime`, `ControlUserInterface` (see `control/AGENTS.md`) |
+| `control/` | Runtime control plane — `InMemoryControlChannel`, `CallbackControlEventBus`, `ControlCommand`, `ControlScope`, termination exceptions (see `control/AGENTS.md`) |
 | `hook/` | Lifecycle hooks — `HookRunner`, `HookPoint`, 10 builtin hooks (see `hook/AGENTS.md`) |
-| `interceptor/` | AOP interceptor chain — `InterceptorChain`, 9 builtin interceptors (see `interceptor/AGENTS.md`) |
+| `interceptor/` | AOP interceptor chain — `InterceptorChain`, 2 builtin interceptors (see `interceptor/AGENTS.md`) |
 | `memory/` | Three-layer memory — session/archive/knowledge, compaction, consolidation, governance, injection (see `memory/AGENTS.md`) |
 | `multi_agent/` | Star-topology orchestration — `AgentPool`, inbox, `CommunicationTracker`, `AgentMessageBus` (see `multi_agent/AGENTS.md`) |
 | `tools/` | Tool subsystem — registry, executor, MCP, terminal (pexpect/tmux/winpty), overflow, standard tools (see `tools/AGENTS.md`) |

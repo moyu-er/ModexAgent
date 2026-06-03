@@ -9,7 +9,6 @@ from framework.agents.react.agent import ReActEvent
 from framework.agents.react.constants import ReActNode, ReActReason
 from framework.agents.react.state import ReActSnapshotPolicy, get_react_state
 from framework.approval.constants import ApprovalDecision, ApprovalTier
-from framework.control.runtime import ControlPhase, ControlRuntime
 from framework.core.agent import AgentContext
 from framework.core.emitter import ToolCall
 from framework.core.graph.interrupt import interrupt
@@ -241,8 +240,6 @@ class ToolNode(Node):
     ) -> NodeTransition:
         decisions = self._normalize_batch_decisions(decisions)
         state = get_react_state(ctx)
-        if ctx.runtime and ctx.runtime.control and isinstance(ctx.runtime.control, ControlRuntime):
-            await ctx.runtime.control.drain(ctx, phase=ControlPhase.BEFORE_TOOL_BATCH)
         if ctx.emitter is not None:
             await ctx.emitter.emit(
                 ReActEvent.PROGRESS,
@@ -253,6 +250,14 @@ class ToolNode(Node):
                 HookPoint.BEFORE_TOOL_EXECUTION,
                 ctx,
                 payload=HookPayload(data={"tool_calls": tool_calls}),
+            )
+
+        # Drain control commands before tool execution
+        if ctx.runtime and ctx.runtime.control_channel:
+            from framework.hook.builtin.control_drain import drain_control_channel
+            await drain_control_channel(
+                ctx.runtime.control_channel, ctx,
+                turn_uuid=ctx.runtime.turn_uuid,
             )
 
         batch = state.active_tool_batch() if state else None

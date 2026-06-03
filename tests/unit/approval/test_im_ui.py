@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from framework.control.channel import ControlChannel
-from framework.control.ui.im import IMUserInterface
+from framework.approval.ui import IMUserInterface
+from framework.control.channel import InMemoryControlChannel
 from framework.core.types import OutputMessage
 from framework.pipeline.adapters import OutputAdapter
 
@@ -29,22 +29,6 @@ class _FakeOutputAdapter(OutputAdapter):
         self.sent.append((message, session_id))
 
 
-class _FakeControlChannel:
-    """Fake control channel matching ControlChannel protocol."""
-
-    async def send(self, command):
-        pass
-
-    async def drain(self, scope, limit=10, command_types=None):
-        return []
-
-    async def peek(self, scope, command_types=None):
-        return []
-
-    async def cleanup_session(self, session_id):
-        pass
-
-
 class TestRenderMessage:
     """IMUserInterface.render_message must log send failures."""
 
@@ -61,10 +45,10 @@ class TestRenderMessage:
         output = _FakeOutputAdapter(should_raise=True)
         ui = IMUserInterface(
             output_adapter=output,
-            channel=_FakeControlChannel(),
+            channel=InMemoryControlChannel(),
         )
 
-        with caplog.at_level(logging.ERROR, logger="framework.control.ui.im"):
+        with caplog.at_level(logging.ERROR, logger="framework.approval.ui"):
             msg_id = await ui.render_message("s1", "approval prompt")
 
         assert msg_id  # still returns a msg_id even on failure
@@ -78,10 +62,10 @@ class TestRenderMessage:
         output = _FakeOutputAdapter(should_raise=False)
         ui = IMUserInterface(
             output_adapter=output,
-            channel=_FakeControlChannel(),
+            channel=InMemoryControlChannel(),
         )
 
-        with caplog.at_level(logging.ERROR, logger="framework.control.ui.im"):
+        with caplog.at_level(logging.ERROR, logger="framework.approval.ui"):
             msg_id = await ui.render_message("s1", "hello")
 
         assert len(output.sent) == 1

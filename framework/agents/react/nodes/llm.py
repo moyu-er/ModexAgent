@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 from framework.agents.react.agent import ReActEvent
 from framework.agents.react.constants import ReActNode, ReActReason
 from framework.agents.react.state import get_react_state
-from framework.control.runtime import ControlPhase, ControlRuntime
 from framework.core.agent import AgentContext
 from framework.core.constants import FinishReason
 from framework.core.graph.node import Node, NodeTransition
@@ -59,6 +58,15 @@ class LLMNode(Node):
 
             if runtime and runtime.hooks:
                 await runtime.hooks.dispatch(HookPoint.BEFORE_ITERATION, ctx)
+
+            # Drain control commands before LLM call
+            if ctx.runtime and ctx.runtime.control_channel:
+                from framework.hook.builtin.control_drain import drain_control_channel
+                await drain_control_channel(
+                    ctx.runtime.control_channel, ctx,
+                    turn_uuid=ctx.runtime.turn_uuid,
+                )
+
             if runtime and runtime.injection_queue:
                 await self._agent._drain_injections(ctx)
 
@@ -69,6 +77,14 @@ class LLMNode(Node):
                 await runtime.hooks.dispatch(
                     HookPoint.AFTER_LLM_RESPONSE, ctx,
                     payload=HookPayload(data={"response": response}),
+                )
+
+            # Drain control commands after LLM response
+            if ctx.runtime and ctx.runtime.control_channel:
+                from framework.hook.builtin.control_drain import drain_control_channel
+                await drain_control_channel(
+                    ctx.runtime.control_channel, ctx,
+                    turn_uuid=ctx.runtime.turn_uuid,
                 )
 
             if response.finish_reason == FinishReason.ERROR.value:
@@ -135,8 +151,6 @@ class LLMNode(Node):
     async def _call_llm(
         self, messages: list[dict[str, object]], ctx: AgentContext,
     ) -> LLMResponse:
-        if ctx.runtime and ctx.runtime.control and isinstance(ctx.runtime.control, ControlRuntime):
-            await ctx.runtime.control.drain(ctx, phase=ControlPhase.BEFORE_LLM)
         emitter = ctx.emitter
         if emitter is not None and emitter.wants_streaming() and isinstance(
             self._agent.provider, StreamingLLMProvider,

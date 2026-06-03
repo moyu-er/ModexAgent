@@ -162,8 +162,63 @@ class InvalidCommandHandler:
         )
 
 
+class ControlCommandHandler:
+    """Handles /stop and future control slash commands.
+
+    Returns CONTROL_COMMAND action for the pipeline to execute immediately
+    via task.cancel() in the pre-lock phase.
+    """
+
+    _COMMAND_MAP: dict[str, str] = {
+        "stop": "cancel_turn",
+    }
+
+    @property
+    def names(self) -> Collection[str]:
+        return tuple(self._COMMAND_MAP.keys())
+
+    def dispatch_policy(
+        self,
+        invocation: SlashCommandInvocation,
+        context: CommandContext,
+    ) -> CommandDispatchPolicy:
+        return CommandDispatchPolicy.BYPASS_QUEUE
+
+    async def handle(
+        self,
+        invocation: SlashCommandInvocation,
+        context: CommandContext,
+    ) -> CommandHandlingResult:
+        from uuid import uuid4
+
+        from framework.control.types import ControlCommand, ControlCommandType, ControlScope
+
+        cmd_type_str = self._COMMAND_MAP[invocation.command]
+        cmd_type = ControlCommandType(cmd_type_str)
+
+        notice_map: dict[str, str] = {
+            "stop": "⏹ Agent turn stopped.",
+        }
+        notice = notice_map.get(invocation.command)
+
+        control_cmd = ControlCommand(
+            command_id=uuid4().hex,
+            type=cmd_type,
+            scope=ControlScope(session_id=context.session_id),
+            source="user:slash",
+        )
+
+        return CommandHandlingResult(
+            action=CommandAction.CONTROL_COMMAND,
+            dispatch_policy=CommandDispatchPolicy.BYPASS_QUEUE,
+            control_command=control_cmd,
+            notice=notice,
+            invocation=invocation,
+        )
+
+
 def build_default_builtin_handlers() -> Sequence[CommandHandler]:
-    return (ApprovalCommandHandler(), ContinueCommandHandler())
+    return (ApprovalCommandHandler(), ContinueCommandHandler(), ControlCommandHandler())
 
 
 class SkillCommandHandler:

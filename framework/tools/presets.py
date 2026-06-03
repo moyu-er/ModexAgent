@@ -26,6 +26,7 @@ class ToolPreset(str, Enum):
     READ_ONLY = "read_only"     # read + grep/find + bash (prompt-constrained read-only)
     MINIMAL = "minimal"         # read + write + list + grep (no edit, no bash)
     NONE = "none"               # no standard tools — communication tools only (MCP still loaded)
+    WEB = "web"                 # web search + web reader (opt-in, not included in FULL)
 
 
 class ContextMode(str, Enum):
@@ -80,6 +81,14 @@ def _make_standard_none() -> list[Tool]:
     return []
 
 
+def _make_web_tools() -> list[Tool]:
+    """Create web tools (web_search + web_reader)."""
+    from framework.tools.web.reader import WebReaderTool
+    from framework.tools.web.search import WebSearchTool
+
+    return [WebSearchTool(), WebReaderTool()]
+
+
 def get_preset_tools(
     preset: ToolPreset,
     *,
@@ -101,6 +110,7 @@ def get_preset_tools(
         ToolPreset.READ_ONLY: _make_standard_read,
         ToolPreset.MINIMAL: _make_standard_minimal,
         ToolPreset.NONE: _make_standard_none,
+        ToolPreset.WEB: _make_web_tools,
     }
 
     factory = tool_lists[preset]

@@ -25,7 +25,7 @@ from ..agents.react.state import ReActSnapshotPolicy
 from ..approval.constants import ApprovalDecision
 from ..approval.response import parse_input_command
 from ..approval.types import ApprovalAction
-from ..control.ui.abc import ControlUserInterface
+from ..approval.ui import ApprovalUserInterface
 from ..core.agent import Agent, AgentContext, AgentSessionMeta
 from ..multi_agent.comm_kind import AgentCommKind
 from ..multi_agent.session_id import DefaultSessionIdStrategy
@@ -34,6 +34,7 @@ from ..core.emitter import AgentResult, StreamingAwareEmitter
 from ..core.graph.interrupt import GraphInterrupt
 from ..core.runtime_context import RuntimeContextManager
 from ..core.tool_manager import ToolManager
+from ..control.exceptions import AgentControlError
 from ..core.types import InputMessage
 from ..memory import ContextGovernance
 from ..memory.consolidation import DreamEngine
@@ -44,7 +45,7 @@ from ..multi_agent import (
     AgentDescriptor,
     AgentMessageRouter,
 )
-from ..runtime.enums import SnapshotReason, TurnPhase
+from ..runtime.enums import SnapshotReason, TurnCustomKey, TurnPhase
 from ..runtime.models import StateQueryScope, TurnSnapshot
 from ..runtime.services import AgentRuntimeServices
 from ..session.agent_session import _dream_locks
@@ -161,7 +162,7 @@ class AgentPipeline:
         control_channel: Any | None = None,
         busy_input_mode: BusyInputMode = BusyInputMode.QUEUE,
         approval_workspace: str = ".modex_approval",
-        user_interface: ControlUserInterface | None = None,
+        user_interface: ApprovalUserInterface | None = None,
         turn_store: Any | None = None,
         command_store: Any | None = None,
         runtime_services: AgentRuntimeServices | None = None,
@@ -232,6 +233,7 @@ class AgentPipeline:
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._session_tasks: dict[str, asyncio.Task] = {}
         self._injection_queues: dict[str, asyncio.Queue[str]] = {}
+        self._turn_uuids: dict[str, str] = {}
 
     @property
     def _user_interface(self):  # delegates to renderer so pool injection reaches handle()
@@ -266,6 +268,26 @@ class AgentPipeline:
                     # _process_message_locked, propagate it rather than
                     # swallowing as a generic error.
                     raise
+                except AgentControlError:
+                    # Controlled exit (e.g. /stop via control side-channel) —
+                    # not a failure; silently pass through.
+                    # Send confirmation that the agent has actually stopped,
+                    # so the user knows the /stop took effect (complementing
+                    # the producer's ack sent when the command was queued).
+                    try:
+                        await self.output_adapter.send(
+                            OutputMessage(
+                                content="⏹ Agent has stopped.",
+                                session_id=input_msg.session_id,
+                            ),
+                            input_msg.session_id,
+                        )
+                    except Exception:
+                        logger.debug(
+                            "Failed to send post-stop notification session=%s",
+                            input_msg.session_id, exc_info=True,
+                        )
+                    pass
                 except Exception as e:
                     logger.exception(f"Failed to process message: {e}")
                     # 发送错误响应
@@ -348,6 +370,17 @@ class AgentPipeline:
         """公共入口：处理单个消息"""
         return await self._process_message(input_msg)
 
+    def is_session_active(self, session_id: str) -> bool:
+        """Check if a turn is currently executing for this session."""
+        task = self._session_tasks.get(session_id)
+        return task is not None and not task.done()
+
+    def get_active_turn_uuid(self, session_id: str) -> str | None:
+        """Get turn UUID for the currently executing turn, or None."""
+        if not self.is_session_active(session_id):
+            return None
+        return self._turn_uuids.get(session_id)
+
     async def _process_message(self, input_msg: InputMessage) -> AgentResult | None:
         """处理单个消息（内部入口）"""
         # 消息路由
@@ -384,7 +417,10 @@ class AgentPipeline:
                     ),
                 )
                 if prelock_dispatch_policy == CommandDispatchPolicy.BYPASS_QUEUE:
-                    logger.info("Bypass slash-command received but no bypass handler is configured")
+                    logger.info(
+                        "Control command /%s received — handled by adapter-level interception",
+                        prelock_parse_result.invocation.command,
+                    )
                     return None
                 if prelock_dispatch_policy == CommandDispatchPolicy.DROP_IF_BUSY:
                     logger.info("Drop-if-busy slash-command received; dropping")
@@ -614,24 +650,6 @@ class AgentPipeline:
                 agent_kind=AgentKind.REACT,
                 phase=RTurnPhase.CREATED,
             )
-            control = base_services.control if base_services is not None else None
-            # In pool mode, base_services may be None. If the interceptor chain
-            # carries a ControlDrainInterceptor, build a ControlRuntime from its
-            # channel so that AgentRuntime.validate() does not raise PolicyViolation.
-            if control is None and self.interceptor_chain is not None:
-                from framework.interceptor.builtin import ControlDrainInterceptor
-
-                for ci in self.interceptor_chain.interceptors:
-                    if isinstance(ci, ControlDrainInterceptor):
-                        from framework.control.runtime import ControlRuntime
-                        from framework.control.store import InMemoryControlStore
-
-                        control = ControlRuntime(
-                            channel=ci._channel,
-                            store=InMemoryControlStore(),
-                            registry=ci._registry,
-                        )
-                        break
             services = AgentRuntimeServices(
                 hooks=base_services.hooks if base_services is not None else self.hook_runner,
                 interceptors=(
@@ -639,7 +657,6 @@ class AgentPipeline:
                     if base_services is not None
                     else self.interceptor_chain
                 ),
-                control=control,
                 approval=base_services.approval if base_services is not None else None,
                 governance=governance,
                 turn_store=(
@@ -660,6 +677,9 @@ class AgentPipeline:
                     and base_services.runtime_context_manager is not None
                     else self.runtime_context_manager
                 ),
+                control_channel=self.control_channel or (
+                    base_services.control_channel if base_services is not None else None
+                ),
             )
             agent_context.runtime = AgentRuntime(services=services, state=react_state)
             agent_context.runtime.state.custom[TurnCustomKey.MAX_TOOLS_PER_TURN] = None
@@ -670,23 +690,13 @@ class AgentPipeline:
             from framework.runtime.enums import TurnPhase as RTurnPhase
             from framework.runtime.services import AgentRuntime
 
-            control = None
-            if self.interceptor_chain is not None:
-                from framework.interceptor.builtin import ControlDrainInterceptor
-
-                for ci in self.interceptor_chain.interceptors:
-                    if isinstance(ci, ControlDrainInterceptor):
-                        from framework.control.runtime import ControlRuntime
-                        from framework.control.store import InMemoryControlStore
-
-                        control = ControlRuntime(
-                            channel=ci._channel,
-                            store=InMemoryControlStore(),
-                            registry=ci._registry,
-                        )
-                        break
             agent_context.runtime = AgentRuntime(
-                services=AgentRuntimeServices(governance=governance, control=control),
+                services=AgentRuntimeServices(
+                    governance=governance,
+                    control_channel=self.control_channel or (
+                        base_services.control_channel if base_services is not None else None
+                    ),
+                ),
                 state=ReActTurnState(
                     identity=turn_identity,
                     agent_kind=AgentKind.REACT,
@@ -741,6 +751,12 @@ class AgentPipeline:
             if turn_task is not None:
                 self._session_tasks[session_id] = turn_task
 
+            # Generate turn UUID for control command scoping
+            if agent_context.runtime is not None:
+                turn_uuid = uuid.uuid4().hex
+                agent_context.runtime.state.custom[TurnCustomKey.TURN_UUID] = turn_uuid
+                self._turn_uuids[session_id] = turn_uuid
+
             try:
                 result = await self.agent.run(agent_context, emitter)
             except GraphInterrupt as interrupt_exc:
@@ -791,6 +807,7 @@ class AgentPipeline:
             current_conversation_id.reset(conv_token)
             # Clean up session task tracking
             self._session_tasks.pop(session_id, None)
+            self._turn_uuids.pop(session_id, None)
             await _safe_flush(ctx_mgr, session_id, timeout=turn.memory_flush_timeout_seconds)
             # Turn 结束时的清理（带 timeout 保护）
             if self.on_session_end is not None:
@@ -1073,6 +1090,7 @@ class AgentPipeline:
         self._session_locks.pop(session_id, None)
         self._injection_queues.pop(session_id, None)
         self._session_tasks.pop(session_id, None)
+        self._turn_uuids.pop(session_id, None)
         self._approval.cleanup_session(session_id)
         if self.control_channel is not None:
             try:

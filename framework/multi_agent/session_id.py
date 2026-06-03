@@ -89,6 +89,25 @@ class DefaultSessionIdStrategy:
             raise ValueError("invocation_id must be non-empty when provided")
         return f"{conversation_id}{self.SEP}{agent_name}{self.SEP}{invocation_id}"
 
+    def normalize(self, session_id: str) -> str:
+        """Ensure *session_id* includes agent_name for canonical form.
+
+        If *session_id* is a raw conversation_id (no ``:`` separator),
+        appends ``:{main_agent_name}``.  Already-canonical IDs are returned
+        as-is — this includes subagent session IDs that carry an
+        ``invocation_id`` segment.
+
+        Returns:
+            ``{conversation_id}:{agent_name}`` or the original if already canonical.
+        """
+        parts = self.parse(session_id)
+        if parts.agent_name is not None:
+            return session_id
+        return self.format(
+            conversation_id=parts.conversation_id,
+            agent_name=self._main_name,
+        )
+
     def parse(self, session_id: str) -> AgentSessionParts:
         """Parse a receiver-owned session ID into its components.
 

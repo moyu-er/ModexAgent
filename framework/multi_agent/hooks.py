@@ -2,7 +2,7 @@
 
 SubagentAutoSendHook 已迁入 framework.hook.builtin。
 SubagentMemoryCleanupHook 已移除（零生产实例化）。
-TaskInterventionHook 已被 ControlDrainInterceptor + ControlCommand 机制替代，已移除。
+TaskInterventionHook 已被 Pipeline pre-lock /stop (task.cancel) 机制替代，已移除。
 本文件仅保留 TaskProgressHook。
 """
 

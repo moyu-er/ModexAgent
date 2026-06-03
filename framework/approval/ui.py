@@ -1,4 +1,4 @@
-"""IMUserInterface — IM 即时通讯交互。"""
+"""Approval system user interface — IM interaction for approval prompts."""
 
 from __future__ import annotations
 
@@ -6,29 +6,72 @@ import asyncio
 import contextlib
 import logging
 import time as _time
+from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from framework.control.channel import ControlChannel
+from framework.control.channel import InMemoryControlChannel
 from framework.control.types import ControlCommandType, ControlScope
-from framework.control.ui.abc import ControlUserInterface
 from framework.core.types import OutputMessage
-from framework.pipeline.adapters import OutputAdapter
+
+if TYPE_CHECKING:
+    from framework.pipeline.adapters import OutputAdapter
 
 logger = logging.getLogger(__name__)
 
 
-class IMUserInterface(ControlUserInterface):
-    """IM 交互（QQ/Discord/Telegram 等）。
+class ApprovalUserInterface(ABC):
+    """User interface for approval scenarios.
 
-    依赖 OutputAdapter 发送消息，ControlChannel 等待命令响应。
+    Renamed from ControlUserInterface — this is approval-specific UI,
+    not control-plane UI.
+    """
+
+    @abstractmethod
+    async def render_message(
+        self,
+        session_id: str,
+        content: str,
+        metadata: Mapping[str, object] | None = None,
+    ) -> str:
+        """Display a message (no reply expected). Returns message_id."""
+        ...
+
+    @abstractmethod
+    async def render_question(
+        self,
+        session_id: str,
+        question: str,
+        options: Sequence[str],
+        timeout: float,
+        metadata: Mapping[str, object] | None = None,
+    ) -> str | None:
+        """Display a question, wait for selection. Returns None on timeout."""
+        ...
+
+    @abstractmethod
+    async def update_message(
+        self,
+        session_id: str,
+        message_id: str,
+        content: str,
+    ) -> None:
+        """Update a previously sent message."""
+        ...
+
+
+class IMUserInterface(ApprovalUserInterface):
+    """IM interaction (QQ/Discord/Telegram etc).
+
+    Uses OutputAdapter for sending, InMemoryControlChannel for polling responses.
     """
 
     def __init__(
         self,
         *,
         output_adapter: OutputAdapter,
-        channel: ControlChannel,
+        channel: InMemoryControlChannel,
     ) -> None:
         self._output = output_adapter
         self._channel = channel
@@ -60,7 +103,6 @@ class IMUserInterface(ControlUserInterface):
         timeout: float,
         metadata: Mapping[str, object] | None = None,
     ) -> str | None:
-        # Send the question as a message first, then poll for response
         await self.render_message(session_id, question, metadata)
         scope = ControlScope(session_id=session_id)
         deadline = _time.monotonic() + timeout
