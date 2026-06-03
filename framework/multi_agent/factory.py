@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
+    from framework.control.channel import InMemoryControlChannel
     from framework.pipeline.pipeline import AgentPipeline
     from framework.session.agent_session import AgentSession
 
@@ -79,6 +80,7 @@ class DefaultAgentFactory(AgentFactory):
         default_hook_runner: Any | None = None,
         default_interceptor_chain: Any | None = None,
         default_turn_store: Any | None = None,
+        control_channel: InMemoryControlChannel | None = None,
     ):
         self._default_llm_provider = default_llm_provider
         self._default_tool_manager = default_tool_manager
@@ -91,6 +93,7 @@ class DefaultAgentFactory(AgentFactory):
         self._default_hook_runner = default_hook_runner
         self._default_interceptor_chain = default_interceptor_chain
         self._default_turn_store = default_turn_store
+        self._control_channel = control_channel
         self._inbox_producer = InboxProducer(inbox_server) if inbox_server else None
         self._inbox_consumer = InboxConsumer(inbox_server) if inbox_server else None
         # Shared runtime-context manager across all agents created by this factory.
@@ -269,6 +272,7 @@ class DefaultAgentFactory(AgentFactory):
                 safety=descriptor.safety_policy,
                 agent_descriptor=descriptor,
                 router=DefaultMeshRouter(),
+                control_channel=self._control_channel,
             )
         elif mode in ("session", "ephemeral"):
             # Auto-inject InboxFlushHook for session-mode agents (BEFORE session construction)

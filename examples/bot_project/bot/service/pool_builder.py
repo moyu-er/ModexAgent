@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from framework.control.channel import InMemoryControlChannel
 from framework.core.llm_struct import RuntimeSafetyPolicy
 from framework.core.tool_manager import InMemoryToolManager, ToolManagerConfig
 from framework.hook import HookErrorPolicy, HookRunner, HookSpec
@@ -74,6 +75,7 @@ async def create_pool(
     shared_hooks: list,
     shared_hook_runner: HookRunner,
     shared_interceptor_chain: Any,
+    control_channel: InMemoryControlChannel | None = None,
 ) -> PoolInstance:
 
     main_cfg = next(a for a in pool_cfg.agents if a.role == "main")
@@ -147,6 +149,7 @@ async def create_pool(
         default_hook_runner=shared_hook_runner,
         default_interceptor_chain=shared_interceptor_chain,
         default_turn_store=turn_store,
+        control_channel=control_channel,
     )
 
     # 8. AgentPool

@@ -68,6 +68,7 @@ class QQInputAdapter(InputAdapter):
         allow_from: list | None = None,
         media_dir: str | None = None,
     ):
+        super().__init__()
         self.app_id = app_id
         self.secret = secret
         self.sandbox = sandbox
@@ -246,6 +247,10 @@ class QQInputAdapter(InputAdapter):
 
             print(f"[QQInputAdapter] Received from {user_id}: {content[:80]}...")
 
+            # --- Control command interception (framework-level) ---
+            if content and await self._try_intercept_control(content, user_id):
+                return  # Handled by control path, don't queue
+
             # 确定 chat_id
             if is_group:
                 chat_id = str(getattr(data, "group_openid", "unknown"))
@@ -288,7 +293,6 @@ class QQInputAdapter(InputAdapter):
             print(f"[QQInputAdapter] Error handling message: {e}")
             import traceback
             traceback.print_exc()
-
 
 class QQOutputAdapter(OutputAdapter):
     """QQ Bot 输出适配器 - V2 架构

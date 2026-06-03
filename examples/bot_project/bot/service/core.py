@@ -26,7 +26,7 @@ from framework import (
     ToolManagerConfig,
 )
 from framework.control.channel import InMemoryControlChannel
-from framework.control.ui.im import IMUserInterface
+from framework.approval.ui import IMUserInterface
 from framework.core.emitter import ContentEmitter
 from framework.core.llm_struct import (
     LLMTimeoutPolicy,
@@ -42,7 +42,6 @@ from framework.core.skills import (
 )
 from framework.hook.builtin import InboxFlushHook
 from framework.interceptor.builtin import (
-    ControlDrainInterceptor,
     ToolResultLimitInterceptor,
 )
 from framework.interceptor.builtin.tool_approval import ArgumentMatcher
@@ -161,6 +160,7 @@ class BotService(AgentBuilderMixin):
 
         # Control plane
         self.control_channel: InMemoryControlChannel | None = None
+        self.command_processor: SlashCommandProcessor | None = None
         self.interceptor_chain: InterceptorChain | None = None
         self._safety_policy_cache: RuntimeSafetyPolicy | None = None
 
@@ -562,6 +562,7 @@ class BotService(AgentBuilderMixin):
         # Build AgentRuntime via framework RuntimeAssembler
         runtime = await self._assemble_runtime(hooks=self._build_hook_runner(pipeline_hooks))
         command_processor = self._build_main_command_processor(main_skill_manager)
+        self.command_processor = command_processor
 
         dream_cfg = self._main_memory_cfg.dream_engine if self._main_memory_cfg else None
         self.pipeline = AgentPipeline(
@@ -586,10 +587,21 @@ class BotService(AgentBuilderMixin):
             turn_store=self._turn_store,
             command_store=self._command_store,
             runtime_services=runtime.services,
+            control_channel=self.control_channel,
             command_processor=command_processor,
             router=DefaultMeshRouter(),
             agent_descriptor=main_descriptor,
         )
+        # Configure control command interception on the input adapter
+        if self.control_channel is not None and self.command_processor is not None:
+            self.input_adapter.configure_control_filter(
+                control_channel=self.control_channel,
+                command_processor=self.command_processor,
+                output_adapter=self.output_adapter,
+                session_checker=self.pipeline.is_session_active if self.pipeline else None,
+                turn_uuid_getter=self.pipeline.get_active_turn_uuid if self.pipeline else None,
+            )
+
         print("[OK] AgentPipeline initialized")
         print(f"   Input: {self.input_adapter.name}")
         print(f"   Output: {self.output_adapter.name}")
@@ -668,6 +680,7 @@ class BotService(AgentBuilderMixin):
                 shared_hooks=shared_hooks,
                 shared_hook_runner=shared_hook_runner,
                 shared_interceptor_chain=shared_interceptor_chain,
+                control_channel=self.control_channel,
             )
             print(f"[OK] Pool '{pool_name}' created")
 
@@ -684,6 +697,19 @@ class BotService(AgentBuilderMixin):
         )
 
         await self._init_pool_dream_engine()
+
+        # Configure control command interception (pool mode)
+        if self.command_processor is None:
+            self.command_processor = self._build_main_command_processor(None)
+        if self.control_channel is not None and self.command_processor is not None:
+            self.input_adapter.configure_control_filter(
+                control_channel=self.control_channel,
+                command_processor=self.command_processor,
+                output_adapter=self.output_adapter,
+                # Pool mode: no per-turn UUID tracking (turn runs in subprocess)
+                session_checker=None,
+                turn_uuid_getter=None,
+            )
 
     def _print_pool_info(self) -> None:
         """Display pool configuration summary."""
@@ -798,19 +824,14 @@ class BotService(AgentBuilderMixin):
         """Build InterceptorChain with default runtime interceptors.
 
         Installed interceptors (in order):
-          1. ControlDrainInterceptor  – consumes cancel/timeout commands
-          2. ToolResultLimitInterceptor – truncates long tool results
+          1. ToolResultLimitInterceptor – truncates long tool results
         """
         if self.interceptor_chain is not None:
             return self.interceptor_chain
 
-        channel = self._build_control_channel()
         chain = InterceptorChain()
 
-        # 1. Control drain – highest priority, processes cancel commands
-        chain.add(ControlDrainInterceptor(channel=channel, max_commands=3))
-
-        # 2. Tool result overflow
+        # 1. Tool result overflow
         from framework.tools.overflow.cleaner import OverflowCleaner
         from framework.tools.overflow.handler import ToolResultOverflowHandler
         from framework.tools.overflow.local import LocalFileToolOverflowStore
@@ -830,6 +851,14 @@ class BotService(AgentBuilderMixin):
                 max_chars=10000,
             )
         )
+
+        # Control drain interceptors (consume commands during tool/LLM execution)
+        from framework.hook.builtin.control_drain import (
+            ControlDrainInterceptor,
+            LlmCancelInterceptor,
+        )
+        chain.add(ControlDrainInterceptor(channel=self.control_channel))
+        chain.add(LlmCancelInterceptor(channel=self.control_channel))
 
         self.interceptor_chain = chain
         return chain
@@ -885,9 +914,6 @@ class BotService(AgentBuilderMixin):
         from framework.agents.react.approval import TieredToolApprovalClassifier
         from framework.agents.react.assembler import RuntimeAssembler, RuntimeServicesConfig
         from framework.approval.config import AgentApprovalConfig, ToolApprovalConfig
-        from framework.control.store import InMemoryControlStore
-        from framework.control.types import ControlCommandType
-        from framework.interceptor.handler import DefaultCancelHandler
 
         # Read agent-level approval config from AppConfig
         main_cfg = self._main_agent_cfg
@@ -915,10 +941,8 @@ class BotService(AgentBuilderMixin):
                     config=approval_config,
                     argument_matcher=ArgumentMatcher(project_root=self._project_dir),
                 ),
-                control_channel=self.control_channel,
-                control_store=InMemoryControlStore(),
-                command_handlers=[(ControlCommandType.CANCEL_TURN, DefaultCancelHandler())],
                 turn_store=self._turn_store,
+                control_channel=self.control_channel,
                 project_root=self._project_dir,
                 governance=create_governance(
                     self._main_memory_cfg, self._app_config.llm.max_tokens
