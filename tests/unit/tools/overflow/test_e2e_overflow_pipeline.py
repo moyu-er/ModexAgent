@@ -37,7 +37,7 @@ def cleaner(store: LocalFileToolOverflowStore) -> OverflowCleaner:
 
 @pytest.fixture
 def handler(store: LocalFileToolOverflowStore, cleaner: OverflowCleaner) -> ToolResultOverflowHandler:
-    return ToolResultOverflowHandler(store=store, cleaner=cleaner, max_chars=1000)
+    return ToolResultOverflowHandler(store=store, cleaner=cleaner)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

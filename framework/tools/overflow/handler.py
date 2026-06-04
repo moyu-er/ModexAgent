@@ -23,15 +23,22 @@ class ToolResultOverflowHandler:
     logic relies on ToolResult.overflow_processed, not this attribute.
     """
 
+    # Template for the instruction element.  Kept as a class constant so the
+    # LLM-facing text is centralised and can be overridden by subclasses.
+    _INSTRUCTION_TEMPLATE = (
+        "This result was too large and has been split into {chunk_count} chunk(s) "
+        "of ~{max_chunk_size} chars each. Use the read tool with "
+        'path="{dir_path}/{chunk_index}.full.txt" to load any chunk. This message itself '
+        "is already processed — no further overflow handling is needed."
+    )
+
     def __init__(
         self,
         store: ToolOverflowStore,
         cleaner: OverflowCleaner,
-        max_chars: int = 10_000,
     ) -> None:
         self._store = store
         self._cleaner = cleaner
-        self.max_chars = max_chars
 
     async def store_overflow(
         self,
@@ -48,6 +55,13 @@ class ToolResultOverflowHandler:
 
         cdata = _wrap_cdata(chunk1)
 
+        instruction = self._INSTRUCTION_TEMPLATE.format(
+            chunk_count=ref.chunk_count,
+            max_chunk_size=ref.max_chunk_size,
+            dir_path=ref.dir_path,
+            chunk_index="N",
+        )
+
         xml = (
             f'<tool_result_overflow tool="{tool_name}" '
             f'total_chars="{ref.total_chars}" '
@@ -57,10 +71,7 @@ class ToolResultOverflowHandler:
             f'skip_overflow="true">\n'
             f'  <storage dir="{ref.dir_path}" session="{session_id}" tool_call="{tool_call_id}" />\n'
             f'  <instruction>\n'
-            f'    This result was too large and has been split into {ref.chunk_count} chunk(s) '
-            f'of ~{ref.max_chunk_size} chars each. Use the read tool with '
-            f'path="{ref.dir_path}/N.full.txt" to load any chunk. This message itself '
-            f'is already processed — no further overflow handling is needed.\n'
+            f'    {instruction}\n'
             f'  </instruction>\n'
             f'  <chunk index="1">{cdata}</chunk>\n'
             f'</tool_result_overflow>'

@@ -845,7 +845,6 @@ class BotService(AgentBuilderMixin):
         overflow_handler = ToolResultOverflowHandler(
             store=overflow_store,
             cleaner=overflow_cleaner,
-            max_chars=max_chars,
         )
         chain.add(
             ToolResultLimitInterceptor(
