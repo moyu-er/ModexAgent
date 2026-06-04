@@ -445,7 +445,7 @@ def _build_pool_skill_manager(main_cfg: Any, project_dir: Path, pool_name: str) 
     from framework.core.skills import (
         DirectorySkillCache,
         FileSkillSource,
-        ProgressiveBuilder,
+        DefaultSkillBuilder,
         SkillManager,
     )
     source = FileSkillSource(
@@ -453,7 +453,7 @@ def _build_pool_skill_manager(main_cfg: Any, project_dir: Path, pool_name: str) 
         skill_filename="SKILL.md",
     )
     cache = DirectorySkillCache(directories=found, layout="directory")
-    builder = ProgressiveBuilder(base_path=project_dir)
+    builder = DefaultSkillBuilder(base_path=project_dir)
     return SkillManager(source=source, builder=builder, cache=cache)
 
 

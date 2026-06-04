@@ -46,7 +46,7 @@ from framework.core.llm_struct import (
 from framework.core.skills import (
     DirectorySkillCache,
     FileSkillSource,
-    ProgressiveBuilder,
+    DefaultSkillBuilder,
     ResolutionContext,
     SkillManager,
 )
@@ -415,7 +415,7 @@ class BotService(AgentBuilderMixin):
                 directories=[main_skills_dir],
                 layout="directory",
             )
-            builder = ProgressiveBuilder(base_path=self._project_dir)
+            builder = DefaultSkillBuilder(base_path=self._project_dir)
             main_skill_manager = SkillManager(
                 source=source,
                 builder=builder,

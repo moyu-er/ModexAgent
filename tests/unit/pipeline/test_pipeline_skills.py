@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from framework.core.skills import InlineBuilder, InlineSkillSource, SkillManager
+from framework.core.skills import DefaultSkillBuilder, InlineSkillSource, SkillManager
 from framework.core.skills.models import Skill
 from framework.pipeline.pipeline import AgentPipeline
 
@@ -104,7 +104,7 @@ class TestAgentPipelineSkills:
         cm = FakeContextManager(base_system_prompt="Base")
         tm = FakeToolManager()
         source = InlineSkillSource([Skill(name="ps1", content="pipeline skill")])
-        sm = SkillManager(source=source, builder=InlineBuilder())
+        sm = SkillManager(source=source, builder=DefaultSkillBuilder())
         pipeline = AgentPipeline(
             agent=FakeAgent(),
             context_manager=cm,

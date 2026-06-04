@@ -18,7 +18,7 @@ from framework.core.skills import (
     CompositeSkillSource,
     DirectorySkillCache,
     FileSkillSource,
-    ProgressiveBuilder,
+    DefaultSkillBuilder,
     SkillManager,
 )
 from framework.core.tool_manager import Tool
@@ -317,7 +317,7 @@ class AgentBuilderMixin:
 
         source = (CompositeSkillSource(sources=sources, merge_strategy="last_wins")
                   if len(sources) > 1 else sources[0])
-        builder = ProgressiveBuilder(base_path=self._project_dir)
+        builder = DefaultSkillBuilder(base_path=self._project_dir)
 
         all_dirs: list[Path] = []
         for s in sources:

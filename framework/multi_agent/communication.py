@@ -418,14 +418,14 @@ class AgentCommunicationService:
             if existing:
                 from framework.core.skills import (
                     FileSkillSource,
-                    ProgressiveBuilder,
+                    DefaultSkillBuilder,
                     SkillManager,
                 )
                 skill_source = FileSkillSource(
                     directories=existing, cache=True, layout="directory",
                     skill_filename="SKILL.md",
                 )
-                builder = ProgressiveBuilder(base_path=self._project_dir)
+                builder = DefaultSkillBuilder(base_path=self._project_dir)
                 subagent_sm = SkillManager(source=skill_source, builder=builder)
 
         # ── Descriptor ──

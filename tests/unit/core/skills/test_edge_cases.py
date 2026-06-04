@@ -5,11 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from framework.core.skills.builder import (
-    HybridBuilder,
-    InlineBuilder,
-    ProgressiveBuilder,
-)
+from framework.core.skills.builder import DefaultSkillBuilder
 from framework.core.skills.manager import SkillManager
 from framework.core.skills.models import (
     ResolutionContext,
@@ -236,70 +232,32 @@ class TestSkillMetadataEdgeCases:
 
 class TestBuilderEdgeCases:
     @pytest.mark.asyncio
-    async def test_inline_builder_empty_skills(self):
-        b = InlineBuilder()
-        assert await b.build([]) == ""
+    async def test_empty_skills_returns_empty(self):
+        assert await DefaultSkillBuilder().build([]) == ""
 
     @pytest.mark.asyncio
-    async def test_progressive_builder_empty_skills(self):
-        b = ProgressiveBuilder()
-        assert await b.build([]) == ""
+    async def test_never_inlines_body_content(self):
+        """Content must never appear — XML metadata only, regardless of metadata.always."""
+        skills = [Skill(name="s", content="SECRET_BODY", metadata=SkillMetadata(always=True))]
+        out = await DefaultSkillBuilder().build(skills)
+        assert "<available_skills>" in out
+        assert "SECRET_BODY" not in out
 
     @pytest.mark.asyncio
-    async def test_progressive_builder_downgrade_when_no_read_tool(self):
-        tm = object()  # no has_tool method
-        ctx = ResolutionContext(tool_manager=tm)
-        skills = [Skill(name="s", content="body")]
-        b = ProgressiveBuilder()
-        out = await b.build(skills, ctx)
-        assert "body" in out
-        assert "| Skill | Description | Location |" not in out
-
-    @pytest.mark.asyncio
-    async def test_hybrid_builder_all_inline_mode(self):
-        skills = [
-            Skill(name="a", content="A", metadata=SkillMetadata(always=False)),
-            Skill(name="b", content="B", metadata=SkillMetadata(always=True)),
-        ]
-        b = HybridBuilder(inline_mode="all")
-        out = await b.build(skills)
-        assert "### a" in out and "### b" in out
-
-    @pytest.mark.asyncio
-    async def test_hybrid_builder_none_mode_with_read_tool(self):
-        class FakeTM:
-            def has_tool(self, _name):
-                return True
-        ctx = ResolutionContext(tool_manager=FakeTM())
-        skills = [Skill(name="x", content="body", location="/x.md")]
-        b = HybridBuilder(inline_mode="none")
-        out = await b.build(skills, ctx)
-        assert '<skill name="x"' in out
+    async def test_context_is_ignored(self):
+        """Context parameter is accepted for backward compat but has no effect."""
+        skills = [Skill(name="s", content="body", location="/tmp/s.md")]
+        out = await DefaultSkillBuilder().build(skills, None)
+        assert 'name="s"' in out
         assert "body" not in out
 
     @pytest.mark.asyncio
-    async def test_hybrid_builder_none_mode_downgrades_without_read_tool(self):
-        skills = [Skill(name="x", content="body")]
-        b = HybridBuilder(inline_mode="none")
-        out = await b.build(skills, None)
-        assert "body" in out
-        assert "| Skill | Description | Location |" not in out
-
-    @pytest.mark.asyncio
-    async def test_hybrid_builder_always_mode_no_always_skills(self):
-        skills = [Skill(name="x", content="body", location="/x.md")]
-        b = HybridBuilder(inline_mode="always")
-        out = await b.build(skills, None)
-        assert "### x" in out
-        assert "body" in out
-
-    @pytest.mark.asyncio
-    async def test_hybrid_builder_always_mode_all_always_skills(self):
-        skills = [Skill(name="x", content="body", metadata=SkillMetadata(always=True))]
-        b = HybridBuilder(inline_mode="always")
-        out = await b.build(skills)
-        assert "### x" in out
-        assert "body" in out
+    async def test_skill_without_location(self):
+        skills = [Skill(name="s", description="d", content="body")]
+        out = await DefaultSkillBuilder().build(skills)
+        assert 'name="s"' in out
+        assert "<description>d</description>" in out
+        assert "body" not in out
 
 
 class TestSkillSummaryEdgeCases:

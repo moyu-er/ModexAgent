@@ -127,7 +127,7 @@ def _build_skill_manager(
     if not skill_roots:
         return None
 
-    from framework.core.skills import FileSkillSource, ProgressiveBuilder, SkillManager
+    from framework.core.skills import FileSkillSource, DefaultSkillBuilder, SkillManager
 
     directories = [project_dir / r for r in skill_roots]
     found = [d for d in directories if d.exists()]
@@ -138,7 +138,7 @@ def _build_skill_manager(
         directories=found, cache=True, layout="directory",
         skill_filename="SKILL.md",
     )
-    builder = ProgressiveBuilder(base_path=project_dir)
+    builder = DefaultSkillBuilder(base_path=project_dir)
     return SkillManager(source=source, builder=builder)
 
 
