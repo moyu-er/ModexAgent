@@ -172,6 +172,25 @@ def test_terminal_result_short_is_unchanged() -> None:
     assert len(result) < 500  # fits, so unchanged
 
 
+# ── overflow XML detection via ToolResult.to_message() ──
+
+def test_tool_result_to_message_detects_overflow_xml() -> None:
+    from framework.core.tool_manager import ToolResult
+
+    xml = (
+        '<tool_result_overflow tool="read_file" total_chars="60000" '
+        'total_chunks="6" current_chunk="1" max_chunk_size="10000" '
+        'skip_overflow="true">\n'
+        '  <chunk index="1"><![CDATA[chunk content]]></chunk>\n'
+        '</tool_result_overflow>'
+    )
+    result = ToolResult(tool_name="read_file", result=xml, call_id="tc_1")
+    msg = result.to_message()
+
+    assert msg.get("content_format") == "xml"
+    assert msg.get("truncatable_paths") == ["chunk", "instruction"]
+
+
 # ── edge case: empty truncatable_paths ──
 
 def test_empty_truncatable_paths_preserves_all() -> None:
