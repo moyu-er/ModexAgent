@@ -92,9 +92,11 @@ class PrunedManager:
                 "pruned content from sessions without IDs will share a single directory"
             )
         if session_id not in self._storages:
+            from pathvalidate import sanitize_filename
             from framework.memory.pruned.storage import FilePrunedStorage
 
-            self._storages[session_id] = FilePrunedStorage(self._base_dir / session_id)
+            safe = sanitize_filename(session_id, replacement_text="_") or "_empty_"
+            self._storages[session_id] = FilePrunedStorage(self._base_dir / safe)
         return self._storages[session_id]
 
     @staticmethod

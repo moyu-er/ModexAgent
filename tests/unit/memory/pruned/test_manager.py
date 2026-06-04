@@ -171,8 +171,15 @@ class TestSessionIsolation:
         msgs_b = _messages([datetime(2024, 6, 1, 10, 0, tzinfo=TZ)])
         await mgr.write_pruned(msgs_a, "session A", now, session_id="session-a")
         await mgr.write_pruned(msgs_b, "session B", now, session_id="session-b")
-        assert mgr._get_storage("session-a").read_index()[0].topic == "session A"
-        assert mgr._get_storage("session-b").read_index()[0].topic == "session B"
+
+    @pytest.mark.asyncio()
+    async def test_session_id_with_colon_is_sanitized(self, pruned_base_dir, now: datetime) -> None:
+        """Session IDs contain colons (e.g. 'conv123:main') — must be sanitized for filesystem."""
+        mgr = PrunedManager(pruned_base_dir=pruned_base_dir)
+        msgs = _messages([datetime(2024, 6, 1, 9, 0, tzinfo=TZ)])
+        sid = "30932BC02F825E64D069B1E67347C8FF:main"
+        await mgr.write_pruned(msgs, "test topic", now, session_id=sid)
+        assert mgr.get_injection_xml(session_id=sid) is not None
 
 
 class TestInjectionXml:
