@@ -11,3 +11,9 @@ Rules:
 6. Output must be under 1500 tokens
 7. Output plain markdown only — no JSON, no thinking tags
 8. If the content is already concise, output it as-is
+
+CRITICAL: Your output will be saved directly as machine-readable knowledge content.
+Do NOT add any introductory phrases like "以下是我的回答", "让我来看看", "Here is the consolidated content", or "Below is the result".
+Do NOT add any concluding remarks, apologies, or offers to help further.
+Do NOT wrap the output in markdown code blocks.
+Output ONLY the consolidated markdown content — nothing else. No extra text before or after.

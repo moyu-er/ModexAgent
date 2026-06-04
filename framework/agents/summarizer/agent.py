@@ -58,6 +58,11 @@ Rules:
 5. Do NOT include any thinking/reasoning tags in output
 6. Write in the same language the conversation was in
 
+CRITICAL: Your output will be saved directly as machine-readable memory content.
+Do NOT add any introductory phrases like "以下是我的回答", "让我来看看", "Here is the summary", or "Below is the analysis".
+Do NOT add any concluding remarks, apologies, or offers to help further.
+Output ONLY the requested structured content — nothing else. No extra text before or after.
+
 If the conversation contains no meaningful content, output exactly: (nothing)"""
 
     PROMPT_FACT_EXTRACTION = """You are a memory analysis assistant.
@@ -86,7 +91,12 @@ Rules:
 - Skip: trivial pleasantries, greetings, acknowledgments
 - Keep output concise — under 500 tokens
 - Do NOT include any thinking/reasoning tags in output
-- If nothing noteworthy: [SKIP] no new information"""
+- If nothing noteworthy: [SKIP] no new information
+
+CRITICAL: Your output will be saved directly as machine-readable fact extraction results.
+Do NOT add any introductory phrases like "以下是我的回答", "让我来看看", "Here is the analysis", or "Below are the findings".
+Do NOT add any concluding remarks, apologies, or offers to help further.
+Output ONLY the requested [SOUL]/[USER]/[MEMORY]/[REMOVE]/[SKIP] lines — nothing else. No extra text before or after."""
 
     PROMPT_MEMORY_UPDATE = """You are a memory editing assistant.
 
@@ -111,6 +121,11 @@ Rules:
 8. Keep output concise — under 1000 tokens total
 9. Return ONLY a valid JSON array. No markdown code blocks, no extra text.
 10. Do NOT include any thinking/reasoning tags in output
+
+CRITICAL: Your output will be saved directly as machine-readable memory update instructions.
+Do NOT add any introductory phrases like "以下是我的回答", "让我来看看", "Here is the updated content", or "Below is the result".
+Do NOT add any concluding remarks, apologies, or offers to help further.
+Output ONLY the valid JSON array — nothing else. No extra text before or after.
 
 Example output:
 [
@@ -146,6 +161,11 @@ Use this exact structure:
 - Paths, files, or artifacts mentioned in the conversation.
 
 This summary is reference context only. The assistant must respond to the latest retained user or agent message outside this summary.
+
+CRITICAL: Your output will be saved directly as machine-readable memory content.
+Do NOT add any introductory phrases like "以下是我的回答", "让我来看看", "Here is the summary", or "Below is the analysis".
+Do NOT add any concluding remarks, apologies, or offers to help further.
+Output ONLY the requested structured content — nothing else. No extra text before or after.
 """
 
     PROMPT_CONTEXT_ARCHIVE = """Context Archive summarization.
@@ -173,6 +193,12 @@ Use exactly this structure:
 
 Output (nothing) if the transcript has no useful context.
 Do not output hidden reasoning or think tags.
+
+CRITICAL: Your output will be saved directly as machine-readable archive content.
+Do NOT add any introductory phrases like "以下是我的回答", "让我来看看", "Here is the summary", or "Below is the analysis".
+Do NOT add any concluding remarks, apologies, or offers to help further.
+Do NOT wrap the output in markdown code blocks unless explicitly requested.
+Output ONLY the requested structured content — nothing else. No extra text before or after.
 """
 
     PROMPT_KNOWLEDGE_ARCHIVE = """Knowledge Archive extraction.
@@ -200,6 +226,12 @@ Use exactly this structure:
 
 Output (nothing) if there are no durable memory candidates.
 Do not output hidden reasoning or think tags.
+
+CRITICAL: Your output will be saved directly as machine-readable archive content.
+Do NOT add any introductory phrases like "以下是我的回答", "让我来看看", "Here is the extraction", or "Below is the analysis".
+Do NOT add any concluding remarks, apologies, or offers to help further.
+Do NOT wrap the output in markdown code blocks unless explicitly requested.
+Output ONLY the requested structured content — nothing else. No extra text before or after.
 """
 
     PROMPT_KNOWLEDGE_CONSOLIDATION = """You are a knowledge consolidation assistant.
@@ -214,7 +246,13 @@ Rules:
 5. Use concise bullet points (- prefix)
 6. Output must be under 1500 tokens
 7. Output plain markdown only — no JSON, no thinking tags
-8. If the content is already concise, output it as-is"""
+8. If the content is already concise, output it as-is
+
+CRITICAL: Your output will be saved directly as machine-readable knowledge content.
+Do NOT add any introductory phrases like "以下是我的回答", "让我来看看", "Here is the consolidated content", or "Below is the result".
+Do NOT add any concluding remarks, apologies, or offers to help further.
+Do NOT wrap the output in markdown code blocks.
+Output ONLY the consolidated markdown content — nothing else. No extra text before or after."""
 
     def __init__(self, provider: LLMProvider) -> None:
         self.provider = provider

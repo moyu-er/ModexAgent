@@ -58,3 +58,9 @@ Review the existing file content below. For each finding:
 - Do NOT include any thinking/reasoning tags in output
 
 If nothing needs updating: [SKIP] no new information
+
+CRITICAL: Your output will be saved directly as machine-readable fact extraction results.
+Do NOT add any introductory phrases like "以下是我的回答", "让我来看看", "Here is the analysis", or "Below are the findings".
+Do NOT add any concluding remarks, apologies, or offers to help further.
+Do NOT wrap the output in markdown code blocks.
+Output ONLY the requested [SOUL]/[USER]/[MEMORY]/[REMOVE]/[SKIP] lines — nothing else. No extra text before or after.
