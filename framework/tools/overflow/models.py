@@ -11,7 +11,6 @@ class OverflowMetadata:
     created_at: str       # ISO 8601
     total_chars: int
     total_chunks: int
-    max_chunk_size: int
 
 
 @dataclass(frozen=True)
@@ -20,7 +19,6 @@ class OverflowRef:
     chunk_count: int
     total_chars: int
     metadata_path: str
-    max_chunk_size: int = 10_000
 
 
 @dataclass

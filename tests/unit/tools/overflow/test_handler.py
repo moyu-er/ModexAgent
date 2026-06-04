@@ -34,7 +34,6 @@ class TestStoreOverflow:
         assert 'total_chars="250"' in xml
         assert 'total_chunks="5"' in xml
         assert 'current_chunk="1"' in xml
-        assert 'skip_overflow="true"' in xml
         assert '<storage dir=' in xml
         assert '<instruction>' in xml
         assert '<chunk index="1"><![CDATA[' in xml
@@ -110,6 +109,4 @@ class TestStoreOverflow:
         )
 
         assert "split into 5 chunk(s)" in xml
-        assert "of ~50 chars each" in xml
         assert f'path="{ref.dir_path}/N.full.txt"' in xml
-        assert "no further overflow handling is needed" in xml

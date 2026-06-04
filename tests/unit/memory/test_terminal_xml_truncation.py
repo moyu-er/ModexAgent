@@ -84,8 +84,7 @@ def test_get_truncatable_paths_detects_overflow_result() -> None:
 
     overflow_xml = (
         '<tool_result_overflow tool="read_file" total_chars="60000" '
-        'total_chunks="6" current_chunk="1" max_chunk_size="10000" '
-        'skip_overflow="true">\n'
+        'total_chunks="6" current_chunk="1">\n'
         '  <chunk index="1"><![CDATA[chunk content]]></chunk>\n'
         '</tool_result_overflow>'
     )
@@ -179,8 +178,7 @@ def test_tool_result_to_message_detects_overflow_xml() -> None:
 
     xml = (
         '<tool_result_overflow tool="read_file" total_chars="60000" '
-        'total_chunks="6" current_chunk="1" max_chunk_size="10000" '
-        'skip_overflow="true">\n'
+        'total_chunks="6" current_chunk="1">\n'
         '  <chunk index="1"><![CDATA[chunk content]]></chunk>\n'
         '</tool_result_overflow>'
     )

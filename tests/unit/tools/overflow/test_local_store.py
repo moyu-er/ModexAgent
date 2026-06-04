@@ -104,7 +104,6 @@ class TestReadMetadata:
         assert meta.session_id == "sess_1"
         assert meta.total_chars == 120
         assert meta.total_chunks == 3
-        assert meta.max_chunk_size == 50
 
     @pytest.mark.asyncio
     async def test_read_metadata_not_found(self, tmp_path: Path) -> None:

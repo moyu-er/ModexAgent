@@ -165,7 +165,6 @@ class TestHandlerEndToEnd:
             content=content,
         )
         assert notice.startswith("<tool_result_overflow")
-        assert 'skip_overflow="true"' in notice
         assert ref.total_chars == 50000
 
 

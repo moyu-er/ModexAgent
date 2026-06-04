@@ -80,7 +80,6 @@ class LocalFileToolOverflowStore(ToolOverflowStore):
             created_at=created_at,
             total_chars=total_chars,
             total_chunks=total_chunks,
-            max_chunk_size=self._max_chunk_size,
         )
 
         async with self._lock.write():
@@ -95,7 +94,6 @@ class LocalFileToolOverflowStore(ToolOverflowStore):
                 "created_at": meta.created_at,
                 "total_chars": meta.total_chars,
                 "total_chunks": meta.total_chunks,
-                "max_chunk_size": meta.max_chunk_size,
             }
             await asyncio.to_thread(meta_path.write_text, json.dumps(meta_dict, ensure_ascii=False), encoding="utf-8")
 
@@ -113,7 +111,6 @@ class LocalFileToolOverflowStore(ToolOverflowStore):
             chunk_count=total_chunks,
             total_chars=total_chars,
             metadata_path=str(meta_path.resolve()),
-            max_chunk_size=self._max_chunk_size,
         )
 
     async def read_chunk(
@@ -153,7 +150,6 @@ class LocalFileToolOverflowStore(ToolOverflowStore):
             created_at=data["created_at"],
             total_chars=data["total_chars"],
             total_chunks=data["total_chunks"],
-            max_chunk_size=data["max_chunk_size"],
         )
 
     async def delete(self, session_id: str, tool_call_id: str) -> bool:

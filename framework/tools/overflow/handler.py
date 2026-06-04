@@ -18,18 +18,15 @@ class ToolResultOverflowHandler:
 
     The returned message is a structured XML document containing chunk 1
     embedded in CDATA, plus metadata instructing the LLM how to read
-    remaining chunks via the read tool. The XML is marked with
-    skip_overflow="true" for human readability; the interceptor's skip
-    logic relies on ToolResult.overflow_processed, not this attribute.
+    remaining chunks via the read tool.
     """
 
     # Template for the instruction element.  Kept as a class constant so the
     # LLM-facing text is centralised and can be overridden by subclasses.
     _INSTRUCTION_TEMPLATE = (
-        "This result was too large and has been split into {chunk_count} chunk(s) "
-        "of ~{max_chunk_size} chars each. Use the read tool with "
-        'path="{dir_path}/{chunk_index}.full.txt" to load any chunk. This message itself '
-        "is already processed — no further overflow handling is needed."
+        "This result was too large and has been split into {chunk_count} chunk(s). "
+        "Use the read tool with "
+        'path="{dir_path}/{chunk_index}.full.txt" to load any chunk.'
     )
 
     def __init__(
@@ -57,7 +54,6 @@ class ToolResultOverflowHandler:
 
         instruction = self._INSTRUCTION_TEMPLATE.format(
             chunk_count=ref.chunk_count,
-            max_chunk_size=ref.max_chunk_size,
             dir_path=ref.dir_path,
             chunk_index="N",
         )
@@ -66,9 +62,7 @@ class ToolResultOverflowHandler:
             f'<tool_result_overflow tool="{tool_name}" '
             f'total_chars="{ref.total_chars}" '
             f'total_chunks="{ref.chunk_count}" '
-            f'current_chunk="1" '
-            f'max_chunk_size="{ref.max_chunk_size}" '
-            f'skip_overflow="true">\n'
+            f'current_chunk="1">\n'
             f'  <storage dir="{ref.dir_path}" session="{session_id}" tool_call="{tool_call_id}" />\n'
             f'  <instruction>\n'
             f'    {instruction}\n'
