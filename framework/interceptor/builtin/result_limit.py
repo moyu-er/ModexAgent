@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_MAX_CHARS = 10000
+_DEFAULT_MAX_CHARS = 50_000
 
 
 class ToolResultLimitInterceptor(ToolCallInterceptor):

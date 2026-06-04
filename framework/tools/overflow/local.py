@@ -28,7 +28,7 @@ class LocalFileToolOverflowStore(ToolOverflowStore):
     def __init__(
         self,
         workspace: Path,
-        max_chunk_size: int = 9800,
+        max_chunk_size: int = 10_000,
         summary_chars: int = 200,
     ) -> None:
         self._workspace = workspace
