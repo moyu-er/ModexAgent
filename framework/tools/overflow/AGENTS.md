@@ -9,13 +9,15 @@ Tool result overflow management — persists oversized tool outputs outside the 
 | File | Description |
 |------|-------------|
 | `store.py` | `ToolOverflowStore` ABC — `initialize()`, `store()`, `retrieve()`, `delete()`, `cleanup()` |
-| `handler.py` | `ToolResultOverflowHandler` — orchestrates store + cleaner; returns brief truncation notice + preview |
+| `handler.py` | `ToolResultOverflowHandler` — orchestrates store + cleaner; returns XML overflow reference with CDATA-wrapped preview chunk |
 | `cleaner.py` | `OverflowCleaner` — manages overflow lifecycle, session cleanup |
 | `local.py` | `LocalFileOverflowStore` — filesystem-backed implementation |
 | `models.py` | `OverflowRef`, `OverflowMetadata`, `CleanRequest` — data models |
 
 ## Design Rules
 
-- Overflow notice is deliberately short to prevent recursive overflow.
+- Overflow notice is XML format with CDATA-wrapped first chunk — agent reads full content via reference ID.
+- Overflow notice is deliberately brief to prevent recursive overflow.
 - Full content persisted on disk; agent retrieves via reference ID.
 - Session-scoped cleanup via `cleanup()` on session end.
+- XML output is detected by `ToolResult.to_message()` for truncatable path registration.
