@@ -7,8 +7,6 @@ import logging
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any
-from xml.sax.saxutils import escape as xml_escape
-
 from framework.memory.archive_generation import ArchiveGenerationStrategy
 from framework.memory.archive_models import ArchiveChannel
 from framework.memory.core.layers import ArchiveMemoryManager, MemoryLayerSet, SessionMemoryManager
@@ -398,94 +396,6 @@ class DefaultMemorySystem(MemorySystem):
             except Exception:
                 logger.debug("Provider prefetch failed", exc_info=True)
         return "\n\n".join(blocks) if blocks else None
-
-    # -- Composition helpers --------------------------------------------
-
-    async def build_system_prompt(
-        self,
-        context: MemoryContext,
-        *,
-        max_history_entries: int = 5,
-        query: str = "",
-    ) -> str:
-        """Build a system prompt from knowledge + archive + provider layers."""
-        sections: list[str] = []
-
-        # Knowledge (SOUL.md, USER.md, MEMORY.md)
-        knowledge = self._layers.knowledge
-        if knowledge is not None:
-            lt = await knowledge.get_all(context)
-            if lt.soul:
-                sections.append(f"## 你的沟通风格\n{lt.soul}")
-            if lt.user:
-                sections.append(f"## 用户画像\n{lt.user}")
-            if lt.memory:
-                sections.append(f"## 相关知识\n{lt.memory}")
-            for key, value in lt.custom.items():
-                sections.append(f"## {key}\n{value}")
-
-        # Archive summaries
-        if max_history_entries > 0:
-            archive = self._layers.archive
-            if archive is not None:
-                if query:
-                    entries = await archive.search(context, query=query, limit=max_history_entries)
-                    if not entries:
-                        entries = await archive.get_recent(context, limit=max_history_entries)
-                else:
-                    entries = await archive.get_recent(context, limit=max_history_entries)
-                if entries:
-                    xml_parts: list[str] = [
-                        "<historical_context>",
-                        "<!-- Summaries of recent conversation segments, generated automatically after",
-                        "     each cleanup. Reference as background context — current request takes priority. -->",
-                    ]
-                    record_count = 0
-                    any_truncated = False
-                    for e in entries:
-                        if not e.summary:
-                            continue
-                        record_count += 1
-                        time_str = ""
-                        if e.created_at is not None:
-                            time_str = f' timestamp="{xml_escape(e.created_at.strftime("%Y-%m-%d %H:%M"))}"'
-                        aid = getattr(e, "entry_id", None)
-                        aid_attr = f' archive_id="{aid}"' if aid is not None else ""
-                        summary = e.summary
-                        if len(summary) > 200:
-                            summary = summary[:200]
-                            any_truncated = True
-                        xml_parts.append(
-                            f'  <record id="{record_count}"{time_str}{aid_attr}>'
-                            f"{xml_escape(summary)}"
-                            f"</record>"
-                        )
-                    if any_truncated:
-                        try:
-                            archive_dir = await self.get_archive_directory(context)
-                        except Exception:
-                            archive_dir = None
-                        if archive_dir:
-                            xml_parts.insert(1,
-                                f'  <!-- Some summaries were truncated. Full records can be'
-                                f' read from: {xml_escape(str(archive_dir))} -->'
-                            )
-                    xml_parts.append("</historical_context>")
-                    if record_count > 0:
-                        sections.append("\n".join(xml_parts))
-
-        return "\n\n---\n\n".join(sections) if sections else ""
-
-    async def ensure_within_budget(self, context: MemoryContext) -> None:
-        """Pre-load budget hook.
-
-        Called by MemorySystemContextManager.load() before every LLM request.
-        It must not emit post-write lifecycle events; explicit budget
-        enforcement should use a dedicated read/check policy.
-        """
-        _ = context
-
-    # -- Internal helpers -----------------------------------------------
 
     async def _resolve_archive_storage(self, context: MemoryContext) -> Any:
         archive = self._layers.archive
