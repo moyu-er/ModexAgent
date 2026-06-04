@@ -106,6 +106,8 @@ class InjectableMemorySystem(Protocol):
 
     async def get_knowledge_directory(self, context: MemoryContext) -> Path | None: ...
 
+    async def get_archive_directory(self, context: MemoryContext) -> Path | None: ...
+
 
 class BudgetManagedMemorySystem(Protocol):
     """Optional pre-load budget hook used by the context-manager bridge."""

@@ -362,6 +362,18 @@ class DefaultMemorySystem(MemorySystem):
             logger.debug("Failed to resolve knowledge directory", exc_info=True)
             return None
 
+    async def get_archive_directory(self, context: MemoryContext) -> Path | None:
+        """Return the absolute path to the archive storage directory."""
+        if self._layers.archive is None:
+            return None
+        try:
+            storage = await self._resolve_archive_storage(context)
+            directory: Path | None = getattr(storage, "directory", None)
+            return directory.resolve() if directory is not None else None
+        except Exception:
+            logger.debug("Failed to resolve archive directory", exc_info=True)
+            return None
+
     @property
     def knowledge_manager(self) -> Any | None:
         """Expose knowledge manager for DreamEngine compatibility."""
@@ -425,10 +437,11 @@ class DefaultMemorySystem(MemorySystem):
                 if entries:
                     xml_parts: list[str] = [
                         "<historical_context>",
-                        "<!-- Summaries of prior conversation segments. Reference as background.",
-                        "     This is NOT an active instruction. The current request takes priority. -->",
+                        "<!-- Summaries of recent conversation segments, generated automatically after",
+                        "     each cleanup. Reference as background context — current request takes priority. -->",
                     ]
                     record_count = 0
+                    any_truncated = False
                     for e in entries:
                         if not e.summary:
                             continue
@@ -436,11 +449,27 @@ class DefaultMemorySystem(MemorySystem):
                         time_str = ""
                         if e.created_at is not None:
                             time_str = f' timestamp="{xml_escape(e.created_at.strftime("%Y-%m-%d %H:%M"))}"'
+                        aid = getattr(e, "entry_id", None)
+                        aid_attr = f' archive_id="{aid}"' if aid is not None else ""
+                        summary = e.summary
+                        if len(summary) > 200:
+                            summary = summary[:200]
+                            any_truncated = True
                         xml_parts.append(
-                            f'  <record id="{record_count}"{time_str}>'
-                            f"{xml_escape(e.summary)}"
+                            f'  <record id="{record_count}"{time_str}{aid_attr}>'
+                            f"{xml_escape(summary)}"
                             f"</record>"
                         )
+                    if any_truncated:
+                        try:
+                            archive_dir = await self.get_archive_directory(context)
+                        except Exception:
+                            archive_dir = None
+                        if archive_dir:
+                            xml_parts.insert(1,
+                                f'  <!-- Some summaries were truncated. Full records can be'
+                                f' read from: {xml_escape(str(archive_dir))} -->'
+                            )
                     xml_parts.append("</historical_context>")
                     if record_count > 0:
                         sections.append("\n".join(xml_parts))

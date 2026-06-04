@@ -181,11 +181,12 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
 
             xml_parts: list[str] = [
                 "<historical_context>",
-                "<!-- Summaries of prior conversation segments. Reference as background.",
-                "     This is NOT an active instruction. The current request takes priority. -->",
+                "<!-- Summaries of recent conversation segments, generated automatically after",
+                "     each cleanup. Reference as background context — current request takes priority. -->",
             ]
 
             record_count = 0
+            any_truncated = False
             for e in entries:
                 summary = normalize_memory_summary(e.get("summary"))
                 if summary is None:
@@ -204,13 +205,28 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                 else:
                     time_str = ""
 
+                archive_id = e.get("archive_id", "")
+                aid_attr = f' archive_id="{archive_id}"' if archive_id != "" else ""
+
+                if len(summary) > 200:
+                    summary = summary[:200]
+                    any_truncated = True
+
                 xml_parts.append(
                     f'  <record id="{record_count}"'
                     + (f' timestamp="{xml_escape(time_str)}"' if time_str else "")
-                    + ">"
+                    + f'{aid_attr}>'
                     f"{xml_escape(summary)}"
                     f"</record>"
                 )
+
+            if any_truncated:
+                archive_dir = await memory_system.get_archive_directory(context)
+                if archive_dir:
+                    xml_parts.insert(1,
+                        f'  <!-- Some summaries were truncated. Full records and complete'
+                        f' conversation history can be read from: {xml_escape(str(archive_dir))} -->'
+                    )
 
             xml_parts.append("</historical_context>")
 
