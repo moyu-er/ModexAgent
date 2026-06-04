@@ -12,7 +12,7 @@ import pytest
 
 from framework.commands.handlers import SkillCommandHandler
 from framework.commands.models import CommandContext, SlashCommandInvocation
-from framework.core.skills import FileSkillSource, ProgressiveBuilder, SkillManager
+from framework.core.skills import FileSkillSource, DefaultSkillBuilder, SkillManager
 from framework.core.skills.cache import DirectorySkillCache
 from framework.core.types import InputMessage
 
@@ -26,7 +26,7 @@ def _make_skill_manager(skill_dir: Path) -> SkillManager:
         skill_filename="SKILL.md",
     )
     cache = DirectorySkillCache(directories=[skill_dir], layout="directory")
-    builder = ProgressiveBuilder(base_path=skill_dir.parent)
+    builder = DefaultSkillBuilder(base_path=skill_dir.parent)
     return SkillManager(source=source, builder=builder, cache=cache)
 
 

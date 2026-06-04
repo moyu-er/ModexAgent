@@ -104,7 +104,7 @@ async def create_pool(
         default_agent_id=main_agent_name,
         default_agent_role="main",
         base_system_prompt=system_prompt,
-        injection_policy=FullInjectionPolicy(),
+        injection_policy=FullInjectionPolicy(pruned_manager=memory_system.pruned_manager),
     )
 
     # 5. Per-pool ToolManager (+ MCP)
@@ -220,6 +220,7 @@ async def create_pool(
         inbox_consumer=inbox_consumer,
         notification_service=notification_service,
         main_agent_name=main_agent_name,
+        pruned_manager=memory_system.pruned_manager,
     )
     tool_manager.register(SendToAgentTool(
         source=main_address, broker=broker, registry=pool,
@@ -444,7 +445,7 @@ def _build_pool_skill_manager(main_cfg: Any, project_dir: Path, pool_name: str) 
     from framework.core.skills import (
         DirectorySkillCache,
         FileSkillSource,
-        ProgressiveBuilder,
+        DefaultSkillBuilder,
         SkillManager,
     )
     source = FileSkillSource(
@@ -452,7 +453,7 @@ def _build_pool_skill_manager(main_cfg: Any, project_dir: Path, pool_name: str) 
         skill_filename="SKILL.md",
     )
     cache = DirectorySkillCache(directories=found, layout="directory")
-    builder = ProgressiveBuilder(base_path=project_dir)
+    builder = DefaultSkillBuilder(base_path=project_dir)
     return SkillManager(source=source, builder=builder, cache=cache)
 
 

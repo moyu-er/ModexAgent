@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from framework.core.context import FileContextManager, InMemoryContextManager
-from framework.core.skills import InlineBuilder, InlineSkillSource, SkillManager
+from framework.core.skills import DefaultSkillBuilder, InlineSkillSource, SkillManager
 from framework.core.skills.models import Skill
 from framework.core.tool_manager import FunctionalTool, InMemoryToolManager
 
@@ -110,16 +110,16 @@ class TestFileContextManagerSkills:
     @pytest.mark.asyncio
     async def test_real_skill_manager_with_inline_builder(self, cm):
         source = InlineSkillSource([Skill(name="s1", content="body")])
-        sm = SkillManager(source=source, builder=InlineBuilder())
+        sm = SkillManager(source=source, builder=DefaultSkillBuilder())
         prompt = await cm.build_system_prompt(tool_manager=None, skill_manager=sm)
         assert "File prompt" in prompt
-        assert "### s1" in prompt
-        assert "body" in prompt
+        assert 'name="s1"' in prompt
+        assert "body" not in prompt
 
     @pytest.mark.asyncio
     async def test_empty_skill_list_omits_skills_header(self, cm):
         source = InlineSkillSource([])
-        sm = SkillManager(source=source, builder=InlineBuilder())
+        sm = SkillManager(source=source, builder=DefaultSkillBuilder())
         prompt = await cm.build_system_prompt(tool_manager=None, skill_manager=sm)
         assert "File prompt" in prompt
         assert "## Skills" not in prompt

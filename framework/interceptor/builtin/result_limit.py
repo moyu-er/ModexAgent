@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from framework.core.tool_manager import ToolResult
+from framework.core.types import MessageRole
 from framework.interceptor.abc import (
     ToolCallContext,
     ToolCallInterceptor,
@@ -18,15 +19,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_MAX_CHARS = 10000
+_DEFAULT_MAX_CHARS = 50_000
 
 
 class ToolResultLimitInterceptor(ToolCallInterceptor):
     """Tool result overflow interceptor.
 
     When a tool result exceeds *max_chars*, the full content is persisted
-    to disk and the model receives a short ``[TOOL_RESULT_TRUNCATED]``
-    notice telling it where to find the complete chunks.  Falls back to
+    to disk and the model receives a structured XML document containing
+    chunk 1 in CDATA, plus metadata for the LLM. Falls back to simple
     truncation when *overflow_handler* is None.
     """
 
@@ -127,10 +128,11 @@ class ToolResultLimitInterceptor(ToolCallInterceptor):
         try:
             messages = await ctx.history.to_list()
             for msg in messages:
-                if msg.role != "tool":
+                if getattr(msg, "role", None) != MessageRole.TOOL.value:
                     continue
-                if msg.tool_call_id:
-                    call_ids.add(msg.tool_call_id)
+                tc_id = getattr(msg, "tool_call_id", None)
+                if tc_id:
+                    call_ids.add(tc_id)
         except Exception:
             logger.warning("Failed to gather kept call_ids from history", exc_info=True)
         return call_ids

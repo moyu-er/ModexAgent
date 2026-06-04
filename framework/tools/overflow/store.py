@@ -45,16 +45,13 @@ class ToolOverflowStore(ABC):
         session_id: str,
         tool_call_id: str,
         chunk_index: int,
-        *,
-        summary: bool = False,
     ) -> str | None:
-        """Read a single chunk by index.
+        """Read a single full chunk by index.
 
         Args:
             session_id: The session identifier.
             tool_call_id: The unique tool call identifier.
             chunk_index: 1-based chunk index.
-            summary: If True, return the summary version; otherwise the full version.
 
         Returns:
             The raw chunk content, or None if not found.

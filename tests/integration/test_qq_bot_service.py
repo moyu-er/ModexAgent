@@ -298,7 +298,7 @@ class TestQQBotServiceIntegration:
 
         from framework.core.skills import (
             FileSkillSource,
-            ProgressiveBuilder,
+            DefaultSkillBuilder,
             ResolutionContext,
             SkillManager,
         )
@@ -313,7 +313,7 @@ class TestQQBotServiceIntegration:
             layout="directory",
             skill_filename="SKILL.md",
         )
-        sm = SkillManager(source=source, builder=ProgressiveBuilder())
+        sm = SkillManager(source=source, builder=DefaultSkillBuilder())
 
         class FakeTM:
             def has_tool(self, name: str) -> bool:

@@ -493,13 +493,13 @@ async def test_subagent_service_admit_dynamic_namespaces_descriptor(any_broker):
 
 @pytest.mark.asyncio
 async def test_default_agent_factory_uses_allowed_skills():
-    from framework.core.skills import FileSkillSource, ProgressiveBuilder, SkillManager
+    from framework.core.skills import FileSkillSource, DefaultSkillBuilder, SkillManager
 
     factory = DefaultAgentFactory()
     skills_dir = Path(__file__).parent / "skills"
     skills_dir.mkdir(exist_ok=True)
     source = FileSkillSource(directories=[skills_dir], cache=False)
-    base_skill_mgr = SkillManager(source=source, builder=ProgressiveBuilder())
+    base_skill_mgr = SkillManager(source=source, builder=DefaultSkillBuilder())
     factory._skill_manager = base_skill_mgr
 
     descriptor = AgentDescriptor(

@@ -1,7 +1,5 @@
 from .builder import (
-    HybridBuilder,
-    InlineBuilder,
-    ProgressiveBuilder,
+    DefaultSkillBuilder,
     SkillPromptBuilder,
 )
 from .cache import (
@@ -46,9 +44,7 @@ __all__ = [
     "DenyListFilter",
     "CompositeFilter",
     "SkillPromptBuilder",
-    "ProgressiveBuilder",
-    "InlineBuilder",
-    "HybridBuilder",
+    "DefaultSkillBuilder",
     "SkillManager",
     "SkillCache",
     "DirectorySkillCache",

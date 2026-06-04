@@ -31,8 +31,11 @@ class DispatchDeadline:
         self._extension: float = extension
 
     def renew(self) -> None:
-        """从当前时刻续期一个 extension 时长。"""
-        self._expires_at = time.monotonic() + self._extension
+        """从当前时刻续期一个 extension 时长，不会缩短已有 deadline。"""
+        self._expires_at = max(
+            self._expires_at,
+            time.monotonic() + self._extension,
+        )
 
     @property
     def is_expired(self) -> bool:

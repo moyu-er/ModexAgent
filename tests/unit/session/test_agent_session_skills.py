@@ -3,7 +3,7 @@
 import pytest
 
 from framework.core.emitter import AgentResult
-from framework.core.skills import InlineBuilder, InlineSkillSource, SkillManager
+from framework.core.skills import DefaultSkillBuilder, InlineSkillSource, SkillManager
 from framework.core.skills.models import Skill
 from framework.core.types import InputMessage
 from framework.session.agent_session import AgentSession
@@ -136,15 +136,15 @@ class TestAgentSessionSkills:
         cm = FakeContextManager(base_system_prompt="")
         tm = FakeToolManager()
         source = InlineSkillSource([Skill(name="s1", content="skill body")])
-        sm = SkillManager(source=source, builder=InlineBuilder())
+        sm = SkillManager(source=source, builder=DefaultSkillBuilder())
         session = AgentSession(agent=agent, context_manager=cm, tool_manager=tm, skill_manager=sm)
         result = await session.process_message(
             InputMessage(content="hello"),
             emitter=MinimalEmitter(),
             session_id="s2",
         )
-        assert "### s1" in result.content
-        assert "skill body" in result.content
+        assert 'name="s1"' in result.content
+        assert "skill body" not in result.content
 
     @pytest.mark.asyncio
     async def test_process_message_with_empty_skills(self):
@@ -152,7 +152,7 @@ class TestAgentSessionSkills:
         cm = FakeContextManager(base_system_prompt="")
         tm = FakeToolManager()
         source = InlineSkillSource([])
-        sm = SkillManager(source=source, builder=InlineBuilder())
+        sm = SkillManager(source=source, builder=DefaultSkillBuilder())
         session = AgentSession(agent=agent, context_manager=cm, tool_manager=tm, skill_manager=sm)
         result = await session.process_message(
             InputMessage(content="hello"),

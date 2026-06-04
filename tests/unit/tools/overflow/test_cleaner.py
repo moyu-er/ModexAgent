@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import pytest
 from pathlib import Path
+
+import pytest
 
 from framework.tools.overflow.cleaner import OverflowCleaner
 from framework.tools.overflow.local import LocalFileToolOverflowStore
@@ -9,7 +10,7 @@ from framework.tools.overflow.local import LocalFileToolOverflowStore
 
 @pytest.fixture
 async def store(tmp_path: Path) -> LocalFileToolOverflowStore:
-    s = LocalFileToolOverflowStore(workspace=tmp_path, max_chunk_size=50, summary_chars=20)
+    s = LocalFileToolOverflowStore(workspace=tmp_path, max_chunk_size=50)
     await s.initialize()
     return s
 

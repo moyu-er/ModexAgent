@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from framework.core.skills.builder import InlineBuilder, ProgressiveBuilder
 from framework.core.skills.cache import DirectorySkillCache
 from framework.core.skills.filter import AllowListFilter
+from framework.core.skills.builder import DefaultSkillBuilder
 from framework.core.skills.manager import SkillManager
 from framework.core.skills.models import ResolutionContext, Skill
 from framework.core.skills.source import FileSkillSource, InlineSkillSource
@@ -31,7 +31,7 @@ class TestSkillManager:
     @pytest.mark.asyncio
     async def test_default_builder_is_progressive(self, source):
         sm = SkillManager(source=source)
-        assert isinstance(sm._builder, ProgressiveBuilder)
+        assert isinstance(sm._builder, DefaultSkillBuilder)
 
     @pytest.mark.asyncio
     async def test_list_skills_no_cache_reloads_from_source(self, manager):
@@ -78,11 +78,11 @@ class TestSkillManager:
 
     @pytest.mark.asyncio
     async def test_build_prompt_uses_builder(self, source):
-        sm = SkillManager(source=source, builder=InlineBuilder())
+        sm = SkillManager(source=source, builder=DefaultSkillBuilder())
         prompt = await sm.build_prompt()
-        assert "## Skills" in prompt
-        assert "ac" in prompt
-        assert "bc" in prompt
+        assert "<available_skills>" in prompt
+        assert 'name="a"' in prompt
+        assert 'name="b"' in prompt
 
     @pytest.mark.asyncio
     async def test_get_skill_from_source(self, manager):

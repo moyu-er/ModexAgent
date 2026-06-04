@@ -99,6 +99,28 @@ _RUNTIME_PREFIX_RE = re.compile(
     re.MULTILINE | re.DOTALL,
 )
 
+# Common preamble/postamble patterns that LLMs add to memory outputs
+_MEMORY_PREAMBLE_PATTERNS = [
+    # Chinese intros
+    r"^(?:以下[是为]|下面[是为]).*?[：:]\s*\n?",
+    r"^(?:让?我?来?看看|让?我?来?分析|让?我?来?总结).*?\n",
+    r"^(?:好[的嗯]|没问题|明白|了解|好的呢|好滴)[，。！]?.*?\n",
+    r"^(?:根据|基于)[^\n]*(?:[。！？]\s*\n?|[：:]\s*\n)",
+    r"^(?:这是|以下就?是).*?(?:回答|结果|总结|分析|内容)[，。：:]?\s*\n?",
+    # English intros
+    r"^(?:Here|Below)\s+(?:is|are)\s+(?:the\s+)?(?:summary|analysis|extraction|result|updated\s+content|consolidated\s+version)[：:.\s]*\n?",
+    r"^(?:I\s+)?(?:have\s+)?(?:analyzed|summarized|extracted|consolidated).*?[.：:]\s*\n?",
+    r"^(?:Let\s+me\s+)?(?:analyze|summarize|extract|look\s+at|check)\s*(?:this)?[.：:]?\s*\n?",
+    # Generic polite wrappers
+    r"^(?:Sure|Certainly|Of\s+course|Okay|Ok)[,!.]?\s*\n?",
+    r"^(?:好的|没问题|可以|行)[，。！]?\s*\n?",
+]
+
+_MEMORY_PREAMBLE_RE = re.compile(
+    "|".join(f"(?:{p})" for p in _MEMORY_PREAMBLE_PATTERNS),
+    re.IGNORECASE | re.MULTILINE,
+)
+
 
 def _msg_to_dict(msg: ChatMessage | dict[str, Any]) -> dict[str, Any]:
     """将 ChatMessage 或 dict 统一转为 dict。"""
@@ -127,11 +149,29 @@ def strip_runtime_prefixes(
     return cleaned
 
 
+def strip_memory_preamble(text: str) -> str:
+    """Remove common LLM preamble/postamble phrases from memory outputs."""
+    result = text.strip()
+    if not result:
+        return result
+    # Iteratively strip leading preamble patterns until stable
+    for _ in range(5):
+        cleaned = _MEMORY_PREAMBLE_RE.sub("", result)
+        cleaned = cleaned.strip()
+        if cleaned == result:
+            break
+        result = cleaned
+    return result
+
+
 def normalize_memory_summary(summary: str | None) -> str | None:
     """Return a trimmed meaningful summary, or None for empty placeholders."""
     if summary is None:
         return None
     normalized = summary.strip()
+    if not normalized:
+        return None
+    normalized = strip_memory_preamble(normalized)
     if not normalized:
         return None
     if normalized.lower() in EMPTY_MEMORY_SUMMARY_MARKERS:

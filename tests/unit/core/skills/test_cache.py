@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from framework.core.skills.builder import InlineBuilder
+from framework.core.skills.builder import DefaultSkillBuilder
 from framework.core.skills.cache import DirectorySkillCache, SkillCache
 from framework.core.skills.source import FileSkillSource, InlineSkillSource
 
@@ -43,7 +43,7 @@ class TestDirectorySkillCache:
         self._add_skill(tmp_dir, "alpha")
         source = self._make_source([tmp_dir])
         cache = DirectorySkillCache(directories=[tmp_dir], layout="directory")
-        builder = InlineBuilder()
+        builder = DefaultSkillBuilder()
 
         skills = await cache.get_skills(source, builder, None, {}, None)
         assert {s.name for s in skills} == {"alpha"}
@@ -60,7 +60,7 @@ class TestDirectorySkillCache:
         self._add_skill(tmp_dir, "beta")
         source = self._make_source([tmp_dir])
         cache = DirectorySkillCache(directories=[tmp_dir], layout="directory")
-        builder = InlineBuilder()
+        builder = DefaultSkillBuilder()
 
         skills = await cache.get_skills(source, builder, None, {}, None)
         assert {s.name for s in skills} == {"alpha", "beta"}
@@ -77,7 +77,7 @@ class TestDirectorySkillCache:
         self._add_skill(tmp_dir, "alpha")
         source = self._make_source([tmp_dir])
         cache = DirectorySkillCache(directories=[tmp_dir], layout="directory")
-        builder = InlineBuilder()
+        builder = DefaultSkillBuilder()
 
         await cache.get_skills(source, builder, None, {}, None)
         state_before = cache._dir_states.get(tmp_dir.resolve())
@@ -96,10 +96,10 @@ class TestDirectorySkillCache:
         d = self._add_skill(tmp_dir, "alpha", "v1")
         source = self._make_source([tmp_dir])
         cache = DirectorySkillCache(directories=[tmp_dir], layout="directory")
-        builder = InlineBuilder()
+        builder = DefaultSkillBuilder()
 
         prompt1 = await cache.build_prompt(source, builder, None, {}, None)
-        assert "v1" in prompt1
+        assert 'name="alpha"' in prompt1
 
         (d / "SKILL.md").write_text(
             "---\nname: alpha\n---\nv2", encoding="utf-8",
@@ -120,7 +120,7 @@ class TestDirectorySkillCache:
 
         source = self._make_source([dir_a, dir_b])
         cache = DirectorySkillCache(directories=[dir_a, dir_b], layout="directory")
-        builder = InlineBuilder()
+        builder = DefaultSkillBuilder()
 
         skills = await cache.get_skills(source, builder, None, {}, None)
         names = [s.name for s in skills]
@@ -139,7 +139,7 @@ class TestDirectorySkillCache:
 
         source = self._make_source([dir_a, dir_b])
         cache = DirectorySkillCache(directories=[dir_a, dir_b], layout="directory")
-        builder = InlineBuilder()
+        builder = DefaultSkillBuilder()
 
         prompt = await cache.build_prompt(source, builder, None, {}, None)
         idx_a = prompt.find("first")
@@ -153,7 +153,7 @@ class TestDirectorySkillCache:
     async def test_empty_directory(self, tmp_dir):
         source = self._make_source([tmp_dir])
         cache = DirectorySkillCache(directories=[tmp_dir], layout="directory")
-        builder = InlineBuilder()
+        builder = DefaultSkillBuilder()
 
         skills = await cache.get_skills(source, builder, None, {}, None)
         assert skills == []
@@ -167,7 +167,7 @@ class TestDirectorySkillCache:
         missing = tmp_dir / "does_not_exist"
         source = self._make_source([missing])  # FileSkillSource handles missing dirs
         cache = DirectorySkillCache(directories=[missing], layout="directory")
-        builder = InlineBuilder()
+        builder = DefaultSkillBuilder()
 
         skills = await cache.get_skills(source, builder, None, {}, None)
         assert skills == []
@@ -179,7 +179,7 @@ class TestDirectorySkillCache:
         self._add_skill(tmp_dir, "alpha")
         source = self._make_source([tmp_dir])
         cache = DirectorySkillCache(directories=[tmp_dir], layout="directory")
-        builder = InlineBuilder()
+        builder = DefaultSkillBuilder()
 
         await cache.get_skills(source, builder, None, {}, None)
         cache.invalidate()
@@ -197,7 +197,7 @@ class TestDirectorySkillCache:
             [Skill(name="x", content="xc")], name="test",
         )
         cache = DirectorySkillCache(directories=[Path("/nonexistent")], layout="directory")
-        builder = InlineBuilder()
+        builder = DefaultSkillBuilder()
 
         skills = await cache.get_skills(inline, builder, None, {}, None)
         assert skills == []  # no dirs match skill locations

@@ -11,7 +11,6 @@ class OverflowMetadata:
     created_at: str       # ISO 8601
     total_chars: int
     total_chunks: int
-    max_chunk_size: int
 
 
 @dataclass(frozen=True)

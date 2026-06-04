@@ -21,3 +21,8 @@ Rules:
 10. Keep output under 1500 tokens
 
 Output the COMPLETE new MEMORY.md content directly. No JSON, no code blocks, no extra text.
+
+CRITICAL: Your output will be saved directly as the MEMORY.md file content.
+Do NOT add any introductory phrases like "以下是我的回答", "让我来看看", "Here is the updated MEMORY.md", or "Below is the content".
+Do NOT add any concluding remarks, apologies, or offers to help further.
+Output ONLY the complete markdown content of MEMORY.md — nothing else. No extra text before or after.

@@ -14,7 +14,6 @@ class TestOverflowMetadata:
             created_at="2026-05-17T10:00:00Z",
             total_chars=15000,
             total_chunks=2,
-            max_chunk_size=9800,
         )
         assert meta.tool_name == "read_file"
         assert meta.tool_call_id == "call_001"
@@ -22,7 +21,6 @@ class TestOverflowMetadata:
         assert meta.created_at == "2026-05-17T10:00:00Z"
         assert meta.total_chars == 15000
         assert meta.total_chunks == 2
-        assert meta.max_chunk_size == 9800
 
     def test_immutable(self) -> None:
         meta = OverflowMetadata(
@@ -32,7 +30,6 @@ class TestOverflowMetadata:
             created_at="2026-05-17T10:00:00Z",
             total_chars=15000,
             total_chunks=2,
-            max_chunk_size=9800,
         )
         with pytest.raises(AttributeError):
             meta.total_chars = 20000  # type: ignore[misc]

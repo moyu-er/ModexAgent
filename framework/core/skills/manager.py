@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .builder import ProgressiveBuilder
+from .builder import DefaultSkillBuilder
 from .models import ResolutionContext, Skill
 
 if TYPE_CHECKING:
@@ -29,7 +29,7 @@ class SkillManager:
     ) -> None:
         self._source = source
         self._filter = skill_filter
-        self._builder = builder or ProgressiveBuilder()
+        self._builder = builder or DefaultSkillBuilder()
         self._cache = cache
         self._overrides: dict[str, Skill] = {}
 

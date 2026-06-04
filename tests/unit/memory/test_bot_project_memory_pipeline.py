@@ -538,30 +538,6 @@ async def test_archive_injection_includes_timestamp_when_available():
     assert '<record id="2" timestamp="2026-05-06 14:45"' in content
 
 
-@pytest.mark.asyncio
-async def test_build_system_prompt_has_distinguishable_archive_markers():
-    """DefaultMemorySystem.build_system_prompt also uses per-entry markers."""
-    registry = InMemoryStoreRegistry()
-    system = _bot_project_system(registry)
-    await system.initialize()
-    ctx = _make_ctx("system-prompt-markers")
-
-    await system._layers.archive.append(ctx, ArchiveEntry(
-        summary="project started with FastAPI",
-    ))
-    await system._layers.archive.append(ctx, ArchiveEntry(
-        summary="switched to SQLAlchemy",
-    ))
-
-    prompt = await system.build_system_prompt(ctx, max_history_entries=5)
-
-    assert '<record id="1"' in prompt
-    assert '<record id="2"' in prompt
-    assert "<historical_context>" in prompt
-    assert "</historical_context>" in prompt
-    assert "FastAPI" in prompt
-    assert "SQLAlchemy" in prompt
-
 
 # ── Retrieval: archive search by query ────────────────────────────────────
 

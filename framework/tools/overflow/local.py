@@ -21,19 +21,16 @@ class LocalFileToolOverflowStore(ToolOverflowStore):
         {workspace}/tool_overflow/{session_id}/{tool_call_id}/
         ├── .meta.json
         ├── 1.full.txt       ← raw content, no header
-        ├── 1.summary.txt    ← first 200 chars, no header
         └── ...
     """
 
     def __init__(
         self,
         workspace: Path,
-        max_chunk_size: int = 9800,
-        summary_chars: int = 200,
+        max_chunk_size: int = 10_000,
     ) -> None:
         self._workspace = workspace
         self._max_chunk_size = max_chunk_size
-        self._summary_chars = summary_chars
         self._lock = AioRWLock()
 
     @staticmethod
@@ -80,7 +77,6 @@ class LocalFileToolOverflowStore(ToolOverflowStore):
             created_at=created_at,
             total_chars=total_chars,
             total_chunks=total_chunks,
-            max_chunk_size=self._max_chunk_size,
         )
 
         async with self._lock.write():
@@ -95,7 +91,6 @@ class LocalFileToolOverflowStore(ToolOverflowStore):
                 "created_at": meta.created_at,
                 "total_chars": meta.total_chars,
                 "total_chunks": meta.total_chunks,
-                "max_chunk_size": meta.max_chunk_size,
             }
             await asyncio.to_thread(meta_path.write_text, json.dumps(meta_dict, ensure_ascii=False), encoding="utf-8")
 
@@ -103,10 +98,6 @@ class LocalFileToolOverflowStore(ToolOverflowStore):
             for idx, chunk in enumerate(chunks if chunks else [""], start=1):
                 full_path = entry_dir / f"{idx}.full.txt"
                 await asyncio.to_thread(full_path.write_text, chunk, encoding="utf-8")
-
-                summary = chunk[: self._summary_chars]
-                summary_path = entry_dir / f"{idx}.summary.txt"
-                await asyncio.to_thread(summary_path.write_text, summary, encoding="utf-8")
 
         return OverflowRef(
             dir_path=str(absolute_dir),
@@ -120,12 +111,9 @@ class LocalFileToolOverflowStore(ToolOverflowStore):
         session_id: str,
         tool_call_id: str,
         chunk_index: int,
-        *,
-        summary: bool = False,
     ) -> str | None:
         entry_dir = self._entry_dir(session_id, tool_call_id)
-        suffix = "summary.txt" if summary else "full.txt"
-        chunk_path = entry_dir / f"{chunk_index}.{suffix}"
+        chunk_path = entry_dir / f"{chunk_index}.full.txt"
 
         async with self._lock.read():
             if not await asyncio.to_thread(chunk_path.exists):
@@ -152,7 +140,6 @@ class LocalFileToolOverflowStore(ToolOverflowStore):
             created_at=data["created_at"],
             total_chars=data["total_chars"],
             total_chunks=data["total_chunks"],
-            max_chunk_size=data["max_chunk_size"],
         )
 
     async def delete(self, session_id: str, tool_call_id: str) -> bool:

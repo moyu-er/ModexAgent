@@ -18,13 +18,14 @@ from framework.core.skills import (
     CompositeSkillSource,
     DirectorySkillCache,
     FileSkillSource,
-    ProgressiveBuilder,
+    DefaultSkillBuilder,
     SkillManager,
 )
 from framework.core.tool_manager import Tool
 from framework.ioc.configs.app import AppConfig
 from framework.memory.core.scope import MemoryAgentRole, MemoryContext, SessionScope
 from framework.memory.injection import RestrictedInjectionPolicy
+from framework.memory.pruned.manager import PrunedManager
 from framework.memory.layers.config import (
     ArchiveMemoryConfig,
     MemoryLayerConfigSet,
@@ -160,6 +161,7 @@ class AgentBuilderMixin:
     context_manager: ContextManager | None
     provider: LLMProvider | None
     plugin_integration: PluginIntegration | None
+    pruned_manager: PrunedManager | None
 
     # Subagent caches
     _subagent_skill_managers: dict[str, SkillManager]
@@ -315,7 +317,7 @@ class AgentBuilderMixin:
 
         source = (CompositeSkillSource(sources=sources, merge_strategy="last_wins")
                   if len(sources) > 1 else sources[0])
-        builder = ProgressiveBuilder(base_path=self._project_dir)
+        builder = DefaultSkillBuilder(base_path=self._project_dir)
 
         all_dirs: list[Path] = []
         for s in sources:
@@ -383,6 +385,7 @@ class AgentBuilderMixin:
             config=self._session_only_memory_config(sub_memory_cfg),
             session_only=False,
             cleanup_config=cleanup_config,
+            pruned_manager=self.pruned_manager,
         )
         await memory_system.initialize()
         if self.plugin_integration:
@@ -392,7 +395,7 @@ class AgentBuilderMixin:
             memory_system=memory_system, default_agent_id=sub_name,
             default_agent_role=MemoryAgentRole.SUBAGENT,
             base_system_prompt=base_system_prompt,
-            injection_policy=RestrictedInjectionPolicy(max_session_messages=20),
+            injection_policy=RestrictedInjectionPolicy(max_session_messages=20, pruned_manager=self.pruned_manager),
         )
 
     # ── Context Routing ──

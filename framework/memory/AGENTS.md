@@ -3,7 +3,7 @@
 
 # memory
 
-Three-layer memory system with scope isolation. Layers: Session (short-term), Archive (history), Knowledge (long-term). Supports compaction, consolidation, governance, context injection, and XML truncation.
+Multi-layer memory system with scope isolation and injection. Layers: Session (short-term), Archive (history), Knowledge (long-term), UserRetentionBuffer (pending context), Pruned (catalog of cleaned-up messages). Supports compaction, consolidation, governance, context injection, and XML truncation.
 
 ## Key Files
 
@@ -16,7 +16,7 @@ Three-layer memory system with scope isolation. Layers: Session (short-term), Ar
 | `archive_generation.py` | `ArchiveGenerationStrategy` (ABC), `DualLLMArchiveGenerationStrategy`, `ArchiveInputMessage`, `SummarizerLike` |
 | `archive_input.py` | Archive input message types |
 | `archive_models.py` | `ArchiveChannelStorage` Protocol, archive data models |
-| `cleanup.py` | `cleanup_session()`, `CleanupResult` — main entry point for session cleanup + archive |
+| `cleanup.py` | `cleanup_session()`, `CleanupResult` — sanitize → prune boundary → archive → write pruned catalog |
 | `sanitizer.py` | `DefaultSessionToolChainSanitizer` — removes invalid tool-chain records |
 | `recorder.py` | `MemoryAppendRecorder` — records what gets appended and from where |
 | `content_transform.py` | `ContentTransformer` ABC — transforms messages for injection |
@@ -34,7 +34,8 @@ Three-layer memory system with scope isolation. Layers: Session (short-term), Ar
 | `core/` | ABCs — `MemorySystem`, `MemoryScope`, `MemoryStorage`, `ChatMessage`, `MemoryContext`, layer managers, consolidation (see `core/AGENTS.md`) |
 | `layers/` | Concrete layer managers — Session, Archive, Knowledge + `MemoryLayerConfigSet` + `MemoryLayerFactory` |
 | `consolidation/` | `DreamEngine` (offline background consolidation) |
-| `injection/` | `MemoryInjectionPolicy` → `ContextState` assembly (`FullInjectionPolicy`, `RestrictedInjectionPolicy`) |
+| `injection/` | `MemoryInjectionPolicy` → `ContextState` assembly (`FullInjectionPolicy`, `RestrictedInjectionPolicy`) — both inject pruned catalog XML when available |
+| `pruned/` | `PrunedManager` + `PrunedStorage` (ABC + FilePrunedStorage) + `PrunedIndexEntry` — catalog of cleaned-up session messages, session-scoped |
 | `registry/` | `MemoryStoreRegistry` — storage provider registry |
 | `stores/` | Storage backend implementations (`FileStorage`, `InMemoryStorage`) |
 
@@ -42,11 +43,13 @@ Three-layer memory system with scope isolation. Layers: Session (short-term), Ar
 
 ### Working In This Directory
 - Memory scopes: Session, User, Tenant, Agent, Channel, Chat, PeerPair, Composite, Global
-- `cleanup_session()` runs after every message append — sanitize → keep/prune boundary → optional archive
+- `cleanup_session()` runs after every message append — sanitize → keep/prune boundary → optional archive → write pruned catalog
+- Pruned catalog is independent of archive: works with archive off/failed. Topic falls back to time range when no CONTEXT archive available.
 - Tool-chain-aware boundary: never split an assistant tool_call from its tool results
 - Governance mutates only LLM input copy, never persisted session data
 - `archive=None` = session-only mode (standard for subagent)
 - `RestrictedInjectionPolicy` is default for subagents — limits session messages to prevent context overflow
+- Pruned injection priority: 85 (between knowledge=100 and archive=70). XML catalog points agent to per-session `pruned/{session_id}/` directory.
 
 ### Subagent Memory Lifecycle
 1. Each subagent gets its own `MemorySystemContextManager` with isolated workspace

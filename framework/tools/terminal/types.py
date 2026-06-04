@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import platform as _platform
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -78,6 +79,7 @@ _TERMINAL_XML_TRUNCATABLE: dict[str, list[str]] = {
     "command_result": ["output"],
     "process_result": ["output"],
     "terminal_result": ["output", "cursor"],
+    "tool_result_overflow": ["chunk", "instruction"],
 }
 
 
@@ -88,7 +90,8 @@ def get_terminal_xml_truncatable_paths(content: str) -> list[str] | None:
     back to content-format-agnostic truncation.
     """
     for root_tag, paths in _TERMINAL_XML_TRUNCATABLE.items():
-        if f"<{root_tag}>" in content:
+        # Match complete tag open: <tag> or <tag attr="..."> but not <tag_extra>
+        if re.search(rf"<{re.escape(root_tag)}\b", content):
             return paths
     return None
 

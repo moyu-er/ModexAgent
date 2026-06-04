@@ -63,6 +63,7 @@ memory:
     lossy_compaction:
       tool_result_head_chars: 2000
       assistant_head_chars: 2000
+  pruned: {enabled: true, max_files: 50, topic_max_chars: 200}
 
 agents:
   - name: coding

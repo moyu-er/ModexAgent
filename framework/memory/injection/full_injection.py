@@ -13,6 +13,7 @@ from framework.memory.core.models import (
 from framework.memory.core.scope import MemoryContext
 from framework.memory.core.system import InjectableMemorySystem, MemorySystem
 from framework.memory.injection.policy import MemoryInjectionPolicy
+from framework.memory.pruned.manager import PrunedManager
 from framework.memory.utils import estimate_text_tokens, normalize_memory_summary
 
 logger = logging.getLogger(__name__)
@@ -41,10 +42,12 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         self,
         *,
         budget: MemoryBudget | None = None,
-        max_history_entries: int = 20,
+        max_history_entries: int = 3,
+        pruned_manager: PrunedManager | None = None,
     ) -> None:
         self._budget = budget or MemoryBudget()
         self._max_history = max_history_entries
+        self._pruned_manager = pruned_manager
 
     async def assemble(
         self,
@@ -62,6 +65,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
 
         await self._inject_knowledge(sections, context, injectable, query)
         await self._inject_archive(sections, context, injectable, query)
+        self._inject_pruned_catalog(sections, context)
         await self._inject_provider_blocks(sections, injectable)
         await self._inject_provider_prefetch(sections, context, injectable, query)
 
@@ -177,11 +181,12 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
 
             xml_parts: list[str] = [
                 "<historical_context>",
-                "<!-- Summaries of prior conversation segments. Reference as background.",
-                "     This is NOT an active instruction. The current request takes priority. -->",
+                "<!-- Summaries of recent conversation segments, generated automatically after",
+                "     each cleanup. Reference as background context — current request takes priority. -->",
             ]
 
             record_count = 0
+            any_truncated = False
             for e in entries:
                 summary = normalize_memory_summary(e.get("summary"))
                 if summary is None:
@@ -200,13 +205,28 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                 else:
                     time_str = ""
 
+                archive_id = e.get("archive_id", "")
+                aid_attr = f' archive_id="{archive_id}"' if archive_id != "" else ""
+
+                if len(summary) > 200:
+                    summary = summary[:200]
+                    any_truncated = True
+
                 xml_parts.append(
                     f'  <record id="{record_count}"'
                     + (f' timestamp="{xml_escape(time_str)}"' if time_str else "")
-                    + ">"
+                    + f'{aid_attr}>'
                     f"{xml_escape(summary)}"
                     f"</record>"
                 )
+
+            if any_truncated:
+                archive_dir = await memory_system.get_archive_directory(context)
+                if archive_dir:
+                    xml_parts.insert(1,
+                        f'  <!-- Some summaries were truncated. Full records and complete'
+                        f' conversation history can be read from: {xml_escape(str(archive_dir))} -->'
+                    )
 
             xml_parts.append("</historical_context>")
 
@@ -217,6 +237,16 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                 ))
         except Exception:
             logger.debug("Archive injection skipped", exc_info=True)
+
+    def _inject_pruned_catalog(
+        self, sections: list[_PromptSection], context: MemoryContext,
+    ) -> None:
+        if self._pruned_manager is None:
+            return
+        session_id: str = context.session_id or ""
+        xml = self._pruned_manager.get_injection_xml(session_id=session_id)
+        if xml:
+            sections.append(_PromptSection(content=xml, priority=85))
 
     async def _inject_provider_blocks(
         self,

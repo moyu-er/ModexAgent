@@ -4,26 +4,38 @@ from framework.tools.overflow.cleaner import OverflowCleaner
 from framework.tools.overflow.models import OverflowRef
 from framework.tools.overflow.store import ToolOverflowStore
 
-_PREVIEW_CHARS = 500
+
+def _wrap_cdata(text: str) -> str:
+    """Wrap text in CDATA, handling embedded ]]> sequences."""
+    if "]]>" not in text:
+        return f"<![CDATA[{text}]]>"
+    escaped = text.replace("]]>", "]]]]><![CDATA[>")
+    return f"<![CDATA[{escaped}]]>"
 
 
 class ToolResultOverflowHandler:
-    """Orchestrates overflow: store full content, return short notice.
+    """Orchestrates overflow: store full content, return XML-wrapped first chunk.
 
-    The returned message is a brief truncation notice + preview —
-    deliberately short so it never triggers another overflow cycle.
-    Full chunks are on disk for retrieval via read_chunk.
+    The returned message is a structured XML document containing chunk 1
+    embedded in CDATA, plus metadata instructing the LLM how to read
+    remaining chunks via the read tool.
     """
+
+    # Template for the instruction element.  Kept as a class constant so the
+    # LLM-facing text is centralised and can be overridden by subclasses.
+    _INSTRUCTION_TEMPLATE = (
+        "This result was too large and has been split into {chunk_count} chunk(s). "
+        "Use the read tool with "
+        'path="{dir_path}/{chunk_index}.full.txt" to load any chunk.'
+    )
 
     def __init__(
         self,
         store: ToolOverflowStore,
         cleaner: OverflowCleaner,
-        max_chars: int = 10000,
     ) -> None:
         self._store = store
         self._cleaner = cleaner
-        self.max_chars = max_chars
 
     async def store_overflow(
         self,
@@ -34,24 +46,31 @@ class ToolResultOverflowHandler:
     ) -> tuple[str, OverflowRef]:
         ref = await self._store.store(session_id, tool_call_id, tool_name, content)
 
-        preview = content[:_PREVIEW_CHARS]
-        if len(content) > _PREVIEW_CHARS:
-            preview += "..."
+        chunk1 = await self._store.read_chunk(session_id, tool_call_id, 1)
+        if chunk1 is None:
+            chunk1 = ""
 
-        notice = (
-            f"[TOOL_RESULT_TRUNCATED]\n"
-            f"The {tool_name} result was too large ({len(content)} chars) "
-            f"and has been truncated.\n"
-            f"Full content saved in {ref.chunk_count} file(s) at:\n"
-            f"  {ref.dir_path}\n"
-            f"Files are named 1.full.txt, 2.full.txt, ... "
-            f"{ref.chunk_count}.full.txt\n"
-            f"Read the content you need by chunk file.\n"
-            f"\n"
-            f"Preview (first {_PREVIEW_CHARS} chars):\n"
-            f"{preview}"
+        cdata = _wrap_cdata(chunk1)
+
+        instruction = self._INSTRUCTION_TEMPLATE.format(
+            chunk_count=ref.chunk_count,
+            dir_path=ref.dir_path,
+            chunk_index="N",
         )
-        return notice, ref
+
+        xml = (
+            f'<tool_result_overflow tool="{tool_name}" '
+            f'total_chars="{ref.total_chars}" '
+            f'total_chunks="{ref.chunk_count}" '
+            f'current_chunk="1">\n'
+            f'  <storage dir="{ref.dir_path}" session="{session_id}" tool_call="{tool_call_id}" />\n'
+            f'  <instruction>\n'
+            f'    {instruction}\n'
+            f'  </instruction>\n'
+            f'  <chunk index="1">{cdata}</chunk>\n'
+            f'</tool_result_overflow>'
+        )
+        return xml, ref
 
     def schedule_cleanup(self, session_id: str, kept_call_ids: set[str]) -> None:
         self._cleaner.schedule_cleanup(session_id, kept_call_ids)

@@ -16,7 +16,6 @@ from framework.tools.overflow.cleaner import OverflowCleaner
 from framework.tools.overflow.handler import ToolResultOverflowHandler
 from framework.tools.overflow.local import LocalFileToolOverflowStore
 
-
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 def _read_meta(entry_dir: Path) -> dict:
@@ -37,7 +36,7 @@ def cleaner(store: LocalFileToolOverflowStore) -> OverflowCleaner:
 
 @pytest.fixture
 def handler(store: LocalFileToolOverflowStore, cleaner: OverflowCleaner) -> ToolResultOverflowHandler:
-    return ToolResultOverflowHandler(store=store, cleaner=cleaner, max_chars=1000)
+    return ToolResultOverflowHandler(store=store, cleaner=cleaner)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -71,7 +70,6 @@ class TestStoreSyncGeneration:
         assert ref.chunk_count == 5
         for idx in range(1, 6):
             assert (entry_dir / f"{idx}.full.txt").exists()
-            assert (entry_dir / f"{idx}.summary.txt").exists()
 
     @pytest.mark.asyncio
     async def test_store_sanitizes_session_id_colon(self, store: LocalFileToolOverflowStore) -> None:
@@ -107,13 +105,13 @@ class TestStoreSyncGeneration:
 
 class TestHandlerEndToEnd:
     @pytest.mark.asyncio
-    async def test_handler_returns_truncation_notice_not_full_chunk(
+    async def test_handler_returns_xml_with_first_chunk(
         self, handler: ToolResultOverflowHandler, tmp_path: Path,
     ) -> None:
-        """store_overflow returns a short [TOOL_RESULT_TRUNCATED] notice,
-        NOT the full first chunk.  This guarantees the returned text is
-        well under the overflow threshold and cannot trigger another
-        overflow cycle."""
+        """store_overflow returns a structured XML document containing
+        the first chunk in CDATA, plus metadata for the LLM. The
+        interceptor's overflow_processed flag (not the XML length)
+        prevents re-overflow."""
         content = "data-" + ("X" * 2000)
         notice, ref = await handler.store_overflow(
             session_id="sid_main",
@@ -122,15 +120,14 @@ class TestHandlerEndToEnd:
             content=content,
         )
 
-        assert "[TOOL_RESULT_TRUNCATED]" in notice
-        assert "truncated" in notice.lower()
+        assert notice.startswith("<tool_result_overflow")
+        assert 'tool="read_file"' in notice
         assert str(ref.total_chars) in notice
         assert str(ref.chunk_count) in notice
         assert ref.dir_path in notice
-        assert "read_file" in notice
-        assert "1.full.txt" in notice
+        assert ".full.txt" in notice
         assert "data-" in notice
-        assert len(notice) < handler.max_chars  # under threshold = no re-overflow
+        assert "<chunk index=\"1\"><![CDATA[" in notice
 
     @pytest.mark.asyncio
     async def test_handler_writes_full_content_to_disk(
@@ -153,10 +150,11 @@ class TestHandlerEndToEnd:
         assert all_text == content
 
     @pytest.mark.asyncio
-    async def test_notice_is_short_enough_to_avoid_re_overflow(
+    async def test_overflow_xml_prevents_re_overflow(
         self, handler: ToolResultOverflowHandler, tmp_path: Path,
     ) -> None:
-        """The returned notice is always < max_chars to prevent infinite overflow."""
+        """The returned XML carries overflow metadata; the interceptor's
+        overflow_processed flag prevents infinite re-processing."""
         content = "Z" * 50000
         notice, ref = await handler.store_overflow(
             session_id="sid_short",
@@ -164,7 +162,7 @@ class TestHandlerEndToEnd:
             tool_name="search",
             content=content,
         )
-        assert len(notice) < handler.max_chars
+        assert notice.startswith("<tool_result_overflow")
         assert ref.total_chars == 50000
 
 

@@ -56,6 +56,7 @@
 - `archive=None` is standard session-only mode for subagent memory.
 - Subagent session memory is temporary; clear after subagent finishes.
 - Memory scopes: Session, User, Tenant, Agent, Channel, Chat, PeerPair, Composite, Global.
+- Pruned catalog: cleanup writes pruned messages to `pruned/{session_id}/`, injection policy injects XML catalog at priority 85. Works independently of archive. All agents (main + subagent) get pruned injection.
 
 ## Multi-Agent Communication Rules
 
