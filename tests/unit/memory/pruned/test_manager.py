@@ -171,14 +171,54 @@ class TestSessionIsolation:
         msgs_b = _messages([datetime(2024, 6, 1, 10, 0, tzinfo=TZ)])
         await mgr.write_pruned(msgs_a, "session A", now, session_id="session-a")
         await mgr.write_pruned(msgs_b, "session B", now, session_id="session-b")
+        assert mgr._get_storage("session-a").read_index()[0].topic == "session A"
+        assert mgr._get_storage("session-b").read_index()[0].topic == "session B"
+
+
+class TestCrossPlatformSessionId:
+    """Session IDs use ``{conversation_id}:{agent_name}`` format — colons and
+    other characters must be sanitized for filesystem-safe directory names."""
 
     @pytest.mark.asyncio()
-    async def test_session_id_with_colon_is_sanitized(self, pruned_base_dir, now: datetime) -> None:
-        """Session IDs contain colons (e.g. 'conv123:main') — must be sanitized for filesystem."""
+    async def test_colon_in_session_id(self, pruned_base_dir, now: datetime) -> None:
         mgr = PrunedManager(pruned_base_dir=pruned_base_dir)
         msgs = _messages([datetime(2024, 6, 1, 9, 0, tzinfo=TZ)])
         sid = "30932BC02F825E64D069B1E67347C8FF:main"
-        await mgr.write_pruned(msgs, "test topic", now, session_id=sid)
+        await mgr.write_pruned(msgs, "test", now, session_id=sid)
+        assert mgr.get_injection_xml(session_id=sid) is not None
+
+    @pytest.mark.asyncio()
+    async def test_multiple_colons_subagent_session(self, pruned_base_dir, now: datetime) -> None:
+        """Subagent sessions: conversation_id:parent_agent:invocation_id."""
+        mgr = PrunedManager(pruned_base_dir=pruned_base_dir)
+        msgs = _messages([datetime(2024, 6, 1, 9, 0, tzinfo=TZ)])
+        sid = "ABC123:main:inv_def456"
+        await mgr.write_pruned(msgs, "sub", now, session_id=sid)
+        assert mgr.get_injection_xml(session_id=sid) is not None
+
+    @pytest.mark.asyncio()
+    async def test_empty_session_id(self, pruned_base_dir, now: datetime) -> None:
+        mgr = PrunedManager(pruned_base_dir=pruned_base_dir)
+        msgs = _messages([datetime(2024, 6, 1, 9, 0, tzinfo=TZ)])
+        await mgr.write_pruned(msgs, "empty", now, session_id="")
+        assert mgr.get_injection_xml(session_id="") is not None
+
+    @pytest.mark.asyncio()
+    async def test_windows_reserved_chars(self, pruned_base_dir, now: datetime) -> None:
+        """Characters < > : \" / \\ | ? * are forbidden in Windows filenames."""
+        mgr = PrunedManager(pruned_base_dir=pruned_base_dir)
+        msgs = _messages([datetime(2024, 6, 1, 9, 0, tzinfo=TZ)])
+        sid = "test<agent>:main\\sub"
+        await mgr.write_pruned(msgs, "reserved", now, session_id=sid)
+        assert mgr.get_injection_xml(session_id=sid) is not None
+
+    @pytest.mark.asyncio()
+    async def test_very_long_session_id(self, pruned_base_dir, now: datetime) -> None:
+        """Session IDs exceeding 100 chars are truncated with MD5 hash suffix."""
+        mgr = PrunedManager(pruned_base_dir=pruned_base_dir)
+        msgs = _messages([datetime(2024, 6, 1, 9, 0, tzinfo=TZ)])
+        sid = "x" * 200 + ":main"
+        await mgr.write_pruned(msgs, "long", now, session_id=sid)
         assert mgr.get_injection_xml(session_id=sid) is not None
 
 
