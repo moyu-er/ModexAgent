@@ -55,8 +55,12 @@ class TestLongResultOverflows:
     @pytest.mark.asyncio
     async def test_long_result_overflows(self) -> None:
         handler = AsyncMock(spec=ToolResultOverflowHandler)
-        handler.max_chars = 10000
-        handler.store_overflow = AsyncMock(return_value=("[PREFIX]\nchunk1_content", MagicMock()))
+        handler.max_chars = 50_000
+        handler.store_overflow = AsyncMock(return_value=(
+            '<tool_result_overflow tool="read_file" total_chars="100" '
+            'total_chunks="2" current_chunk="1">...</tool_result_overflow>',
+            MagicMock(),
+        ))
 
         interceptor = ToolResultLimitInterceptor(overflow_handler=handler, max_chars=50)
         long_content = "a" * 100
@@ -70,7 +74,7 @@ class TestLongResultOverflows:
         out = await interceptor.around_tool_call(ctx, call, next_call)
 
         assert out.overflow_processed is True
-        assert out.result == "[PREFIX]\nchunk1_content"
+        assert out.result.startswith("<tool_result_overflow")
         handler.store_overflow.assert_awaited_once()
         handler.schedule_cleanup.assert_called_once()
 
