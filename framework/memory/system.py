@@ -21,6 +21,7 @@ from framework.memory.layers.config import MemoryLayerConfigSet
 from framework.memory.layers.factory import MemoryLayerFactory
 from framework.memory.archive_generation import ArchiveGenerationStrategy
 from framework.memory.lifecycle import MemoryMaintenancePolicy
+from framework.memory.pruned.manager import PrunedManager
 # UserRetentionBuffer injection moved to framework.memory.user_buffer (Task 6 stub)
 from framework.memory.registry.file import DefaultMemoryStoreRegistry
 
@@ -35,6 +36,7 @@ def create_memory_system(
     archive_strategy: ArchiveGenerationStrategy | None = None,
     cleanup_config: dict[str, int | float] | None = None,
     maintenance_policy: MemoryMaintenancePolicy | None = None,
+    pruned_manager: PrunedManager | None = None,
 ) -> DefaultMemorySystem:
     """Create a production-ready memory system with default local-file registry.
 
@@ -82,6 +84,7 @@ def create_memory_system(
         archive_strategy=archive_strategy,
         cleanup_config=cleanup_config,
         maintenance_policy=maintenance_policy,
+        pruned_manager=pruned_manager,
     )
 
 

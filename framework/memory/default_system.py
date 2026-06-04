@@ -22,6 +22,7 @@ from framework.memory.core.scope import (
 from framework.memory.core.system import MemorySystem
 from framework.memory.history import MessageHistory
 from framework.memory.lifecycle import MemoryMaintenancePolicy
+from framework.memory.pruned.manager import PrunedManager
 from framework.memory.recorder import MemoryAppendRecorder
 from framework.memory.registry.base import MemoryStoreRegistry
 from framework.core.types import MessageRole
@@ -46,6 +47,7 @@ class ScopedMessageHistory(MessageHistory):
         archive_strategy: ArchiveGenerationStrategy | None = None,
         cleanup_config: dict[str, int | float] | None = None,
         user_retention: Any | None = None,
+        pruned_manager: PrunedManager | None = None,
     ) -> None:
         self._manager = manager
         self._context = context
@@ -54,6 +56,7 @@ class ScopedMessageHistory(MessageHistory):
         self._archive_strategy = archive_strategy
         self._cleanup_config: dict[str, int | float] = cleanup_config or {}
         self._user_retention = user_retention
+        self._pruned_manager: PrunedManager | None = pruned_manager
         self._cache: list[ChatMessage] | None = (
             [ChatMessage.coerce(m) for m in initial_messages]
             if initial_messages is not None
@@ -70,6 +73,7 @@ class ScopedMessageHistory(MessageHistory):
             context=self._context,
             archive_strategy=self._archive_strategy,
             user_retention=self._user_retention,
+            pruned_manager=self._pruned_manager,
             **self._cleanup_config,
         )
 
@@ -165,6 +169,7 @@ class DefaultMemorySystem(MemorySystem):
         archive_strategy: ArchiveGenerationStrategy | None = None,
         cleanup_config: dict[str, int | float] | None = None,
         maintenance_policy: MemoryMaintenancePolicy | None = None,
+        pruned_manager: PrunedManager | None = None,
     ) -> None:
         self._layers = layer_set
         self._registry = store_registry
@@ -172,6 +177,7 @@ class DefaultMemorySystem(MemorySystem):
         self._archive_strategy = archive_strategy
         self._cleanup_config: dict[str, int | float] = cleanup_config or {}
         self._maintenance_policy = maintenance_policy
+        self._pruned_manager: PrunedManager | None = pruned_manager
         self._recorder = MemoryAppendRecorder()
         if providers is not None:
             for provider in providers.all():
@@ -202,6 +208,7 @@ class DefaultMemorySystem(MemorySystem):
             archive_strategy=self._archive_strategy,
             cleanup_config=self._cleanup_config,
             user_retention=self._layers.user_retention,
+            pruned_manager=self._pruned_manager,
         )
 
     async def add_messages(
@@ -278,6 +285,10 @@ class DefaultMemorySystem(MemorySystem):
     @property
     def store_registry(self) -> MemoryStoreRegistry:
         return self._registry
+
+    @property
+    def pruned_manager(self) -> PrunedManager | None:
+        return self._pruned_manager
 
     # -- Archive convenience --------------------------------------------
 

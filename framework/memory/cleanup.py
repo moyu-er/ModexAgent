@@ -15,10 +15,13 @@ import logging
 import time as _time
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import datetime
+
+from framework.utils.timezone import get_user_timezone
 from pathlib import Path
 from typing import Any
 
+from framework.memory.archive_models import ArchiveChannel
 from framework.memory.archive_generation import (
     ArchiveGenerationStrategy,
     ArchiveInputMessage,
@@ -31,6 +34,7 @@ from framework.memory.core.layers import (
 from framework.memory.core.models import CompressionReason
 from framework.memory.core.scope import MemoryContext
 from framework.memory.user_buffer import UserBufferEntry
+from framework.memory.pruned.manager import PrunedManager
 from framework.memory.sanitizer import (
     DefaultSessionToolChainSanitizer,
     ToolChainSanitizationMode,
@@ -88,6 +92,7 @@ async def cleanup_session(
     archive_fail_threshold: int = 3,
     max_backups: int = 10,
     user_retention: UserRetentionBuffer | None = None,
+    pruned_manager: PrunedManager | None = None,
 ) -> CleanupResult:
     """Clean up a session by pruning old messages and optionally archiving them.
 
@@ -263,6 +268,7 @@ async def cleanup_session(
     # Each session has an independent failure counter keyed by session_id so
     # one session's archive failures never affect another session.
     archive_skipped = True
+    gen_result = None
 
     if archive is not None and archive_strategy is not None and pruned_messages:
         session_id = context.session_id
@@ -314,6 +320,27 @@ async def cleanup_session(
                         _archive_fail_counters[session_id],
                         exc_info=True,
                     )
+
+    # ── Step 4: Pruned catalog (optional, independent of archive) ────────
+    if pruned_manager is not None and pruned_messages:
+        try:
+            pruned_topic: str | None = None
+            if gen_result is not None:
+                for w in gen_result.writes:
+                    if w.channel is ArchiveChannel.CONTEXT:
+                        pruned_topic = w.summary[:200]
+                        break
+            await pruned_manager.write_pruned(
+                pruned_messages,
+                topic=pruned_topic,
+                cleanup_time=datetime.now(get_user_timezone()),
+                session_id=context.session_id or "",
+            )
+        except Exception:
+            logger.warning(
+                "Pruned catalog write failed: session=%s",
+                context.session_id, exc_info=True,
+            )
 
     return CleanupResult(
         triggered=True,
@@ -493,7 +520,7 @@ async def _backup_session(
         backup_dir = directory / "backups"
         backup_dir.mkdir(parents=True, exist_ok=True)
 
-        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
+        timestamp = datetime.now(get_user_timezone()).strftime("%Y%m%d_%H%M%S_%f")
         backup_path = backup_dir / f"backup_{timestamp}.jsonl"
 
         with backup_path.open("w", encoding="utf-8") as handle:

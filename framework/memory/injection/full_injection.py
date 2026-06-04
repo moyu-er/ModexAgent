@@ -13,6 +13,7 @@ from framework.memory.core.models import (
 from framework.memory.core.scope import MemoryContext
 from framework.memory.core.system import InjectableMemorySystem, MemorySystem
 from framework.memory.injection.policy import MemoryInjectionPolicy
+from framework.memory.pruned.manager import PrunedManager
 from framework.memory.utils import estimate_text_tokens, normalize_memory_summary
 
 logger = logging.getLogger(__name__)
@@ -42,9 +43,11 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         *,
         budget: MemoryBudget | None = None,
         max_history_entries: int = 20,
+        pruned_manager: PrunedManager | None = None,
     ) -> None:
         self._budget = budget or MemoryBudget()
         self._max_history = max_history_entries
+        self._pruned_manager = pruned_manager
 
     async def assemble(
         self,
@@ -62,6 +65,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
 
         await self._inject_knowledge(sections, context, injectable, query)
         await self._inject_archive(sections, context, injectable, query)
+        self._inject_pruned_catalog(sections, context)
         await self._inject_provider_blocks(sections, injectable)
         await self._inject_provider_prefetch(sections, context, injectable, query)
 
@@ -217,6 +221,16 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                 ))
         except Exception:
             logger.debug("Archive injection skipped", exc_info=True)
+
+    def _inject_pruned_catalog(
+        self, sections: list[_PromptSection], context: MemoryContext,
+    ) -> None:
+        if self._pruned_manager is None:
+            return
+        session_id: str = context.session_id or ""
+        xml = self._pruned_manager.get_injection_xml(session_id=session_id)
+        if xml:
+            sections.append(_PromptSection(content=xml, priority=85))
 
     async def _inject_provider_blocks(
         self,

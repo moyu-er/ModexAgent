@@ -19,6 +19,12 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+def _user_tz():
+    """Lazy-import get_user_timezone to avoid circular import via framework.utils."""
+    from framework.utils.timezone import get_user_timezone
+    return get_user_timezone()
+
+
 class ContentFormat(StrEnum):
     """内容格式枚举。
 
@@ -52,8 +58,9 @@ class ChatMessage(BaseModel):
     name: str | None = Field(
         default=None, description="工具名称（OpenAI function calling）"
     )
-    created_at: datetime | None = Field(
-        default=None, description="消息创建时间戳"
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(_user_tz()).replace(microsecond=0),
+        description="消息创建时间戳（用户配置时区，秒级精度）",
     )
     content_format: ContentFormat = Field(
         default=ContentFormat.PLAIN, description="内容格式：plain 或 xml"
@@ -64,21 +71,20 @@ class ChatMessage(BaseModel):
 
     @field_validator("created_at", mode="before")
     @classmethod
-    def _parse_created_at(cls, v: Any) -> datetime | None:
-        """Parse created_at from string ("YYYY-MM-DD HH:MM:SS") or datetime."""
-        if v is None:
-            return None
+    def _parse_created_at(cls, v: Any) -> datetime:
+        """Parse created_at from string ("YYYY-MM-DD HH:MM:SS"), datetime, or int."""
+        tz = _user_tz()
         if isinstance(v, datetime):
             return v
+        if isinstance(v, int | float):
+            return datetime.fromtimestamp(v, tz=tz)
         if isinstance(v, str):
-            # Try "YYYY-MM-DD HH:MM:SS" format
             try:
-                return datetime.strptime(v, "%Y-%m-%d %H:%M:%S")
+                return datetime.strptime(v, "%Y-%m-%d %H:%M:%S").replace(tzinfo=tz)
             except ValueError:
                 pass
-            # Try ISO format
             return datetime.fromisoformat(v)
-        return v
+        return datetime.now(tz)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ChatMessage:
