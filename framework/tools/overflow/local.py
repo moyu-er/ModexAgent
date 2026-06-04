@@ -113,6 +113,7 @@ class LocalFileToolOverflowStore(ToolOverflowStore):
             chunk_count=total_chunks,
             total_chars=total_chars,
             metadata_path=str(meta_path.resolve()),
+            max_chunk_size=self._max_chunk_size,
         )
 
     async def read_chunk(

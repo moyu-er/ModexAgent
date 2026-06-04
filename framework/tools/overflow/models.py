@@ -20,6 +20,7 @@ class OverflowRef:
     chunk_count: int
     total_chars: int
     metadata_path: str
+    max_chunk_size: int = 10_000
 
 
 @dataclass
