@@ -4,22 +4,30 @@ from framework.tools.overflow.cleaner import OverflowCleaner
 from framework.tools.overflow.models import OverflowRef
 from framework.tools.overflow.store import ToolOverflowStore
 
-_PREVIEW_CHARS = 500
+
+def _wrap_cdata(text: str) -> str:
+    """Wrap text in CDATA, handling embedded ]]> sequences."""
+    if "]]>" not in text:
+        return f"<![CDATA[{text}]]>"
+    escaped = text.replace("]]>", "]]]]><![CDATA[>")
+    return f"<![CDATA[{escaped}]]>"
 
 
 class ToolResultOverflowHandler:
-    """Orchestrates overflow: store full content, return short notice.
+    """Orchestrates overflow: store full content, return XML-wrapped first chunk.
 
-    The returned message is a brief truncation notice + preview —
-    deliberately short so it never triggers another overflow cycle.
-    Full chunks are on disk for retrieval via read_chunk.
+    The returned message is a structured XML document containing chunk 1
+    embedded in CDATA, plus metadata instructing the LLM how to read
+    remaining chunks via the read tool. The XML is marked with
+    skip_overflow="true" for human readability; the interceptor's skip
+    logic relies on ToolResult.overflow_processed, not this attribute.
     """
 
     def __init__(
         self,
         store: ToolOverflowStore,
         cleaner: OverflowCleaner,
-        max_chars: int = 10000,
+        max_chars: int = 10_000,
     ) -> None:
         self._store = store
         self._cleaner = cleaner
@@ -34,24 +42,30 @@ class ToolResultOverflowHandler:
     ) -> tuple[str, OverflowRef]:
         ref = await self._store.store(session_id, tool_call_id, tool_name, content)
 
-        preview = content[:_PREVIEW_CHARS]
-        if len(content) > _PREVIEW_CHARS:
-            preview += "..."
+        chunk1 = await self._store.read_chunk(session_id, tool_call_id, 1)
+        if chunk1 is None:
+            chunk1 = ""
 
-        notice = (
-            f"[TOOL_RESULT_TRUNCATED]\n"
-            f"The {tool_name} result was too large ({len(content)} chars) "
-            f"and has been truncated.\n"
-            f"Full content saved in {ref.chunk_count} file(s) at:\n"
-            f"  {ref.dir_path}\n"
-            f"Files are named 1.full.txt, 2.full.txt, ... "
-            f"{ref.chunk_count}.full.txt\n"
-            f"Read the content you need by chunk file.\n"
-            f"\n"
-            f"Preview (first {_PREVIEW_CHARS} chars):\n"
-            f"{preview}"
+        cdata = _wrap_cdata(chunk1)
+
+        xml = (
+            f'<tool_result_overflow tool="{tool_name}" '
+            f'total_chars="{ref.total_chars}" '
+            f'total_chunks="{ref.chunk_count}" '
+            f'current_chunk="1" '
+            f'max_chunk_size="{ref.max_chunk_size}" '
+            f'skip_overflow="true">\n'
+            f'  <storage dir="{ref.dir_path}" session="{session_id}" tool_call="{tool_call_id}" />\n'
+            f'  <instruction>\n'
+            f'    This result was too large and has been split into {ref.chunk_count} chunk(s) '
+            f'of ~{ref.max_chunk_size} chars each. Use the read tool with '
+            f'path="{ref.dir_path}/N.full.txt" to load any chunk. This message itself '
+            f'is already processed — no further overflow handling is needed.\n'
+            f'  </instruction>\n'
+            f'  <chunk index="1">{cdata}</chunk>\n'
+            f'</tool_result_overflow>'
         )
-        return notice, ref
+        return xml, ref
 
     def schedule_cleanup(self, session_id: str, kept_call_ids: set[str]) -> None:
         self._cleaner.schedule_cleanup(session_id, kept_call_ids)
