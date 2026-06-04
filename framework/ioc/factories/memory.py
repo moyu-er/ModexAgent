@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from framework.core.provider import LLMProvider
 from framework.ioc.configs.memory import MemoryConfig
+from framework.memory.default_system import DefaultMemorySystem
 
 if TYPE_CHECKING:
     from framework.memory.layers.config import MemoryLayerConfigSet
@@ -67,7 +68,7 @@ def create_memory(
     cfg: MemoryConfig,
     llm_provider: LLMProvider,
     workspace: Path,
-) -> object:
+) -> DefaultMemorySystem:
     """Create a MemorySystem from config.
 
     Args:
@@ -76,7 +77,7 @@ def create_memory(
         workspace: Root directory for file-based storage.
 
     Returns:
-        Initialized MemorySystem.
+        Initialized DefaultMemorySystem.
     """
     from framework.memory.system import create_memory_system
 
@@ -97,10 +98,22 @@ def create_memory(
         "keep_ratio": st.keep_ratio_for_messages,
     }
 
+    # Pruned catalog manager (independent of archive)
+    pruned_manager = None
+    if cfg.pruned is not None and cfg.pruned.enabled:
+        from framework.memory.pruned.manager import PrunedManager
+
+        pruned_manager = PrunedManager(
+            pruned_base_dir=workspace / "pruned",
+            max_files=cfg.pruned.max_files,
+            topic_max_chars=cfg.pruned.topic_max_chars,
+        )
+
     return create_memory_system(
         workspace=workspace,
         config=layer_config,
         llm_provider=llm_provider,
         archive_strategy=archive_strategy,
         cleanup_config=cleanup_config,
+        pruned_manager=pruned_manager,
     )

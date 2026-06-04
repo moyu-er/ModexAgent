@@ -162,6 +162,7 @@ class AgentCommunicationService:
         inbox_consumer: Any | None = None,
         notification_service: Any | None = None,
         main_agent_name: str | None = None,
+        pruned_manager: Any | None = None,
     ) -> None:
         self._source = source
         self._broker = broker
@@ -181,6 +182,7 @@ class AgentCommunicationService:
         self._inbox_consumer = inbox_consumer
         self._notification_service = notification_service
         self._main_agent_name = main_agent_name
+        self._pruned_manager = pruned_manager
 
     def _resolve_source(self, context: AgentContext) -> AgentAddress:
         """Resolve effective source address from context, fallback to constructor default."""
@@ -275,6 +277,7 @@ class AgentCommunicationService:
             agent_id=name,
             agent_role=MemoryAgentRole.SUBAGENT,
             system_prompt=system_prompt,
+            pruned_manager=self._pruned_manager,
         )
 
         # ── Fork context: two-stage truncation → XML → persist → system prompt ──

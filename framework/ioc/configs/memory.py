@@ -107,6 +107,14 @@ class GovernanceConfig(BaseModel):
     lossy_compaction: LossyConfig | None = None
 
 
+class PrunedCatalogConfig(BaseModel):
+    """Configuration for pruned memory catalog."""
+
+    enabled: bool = True
+    max_files: int = 50
+    topic_max_chars: int = 200
+
+
 class MemoryConfig(BaseModel):
     """Memory system configuration.
 
@@ -128,6 +136,7 @@ class MemoryConfig(BaseModel):
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
     user_retention: UserRetentionConfig = Field(default_factory=UserRetentionConfig)
     governance: GovernanceConfig | None = None
+    pruned: PrunedCatalogConfig | None = None
 
     # Old fields (backward compat, excluded from serialization)
     short_term: ShortTermConfig | None = Field(default_factory=ShortTermConfig, exclude=True)

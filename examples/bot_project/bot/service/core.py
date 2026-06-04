@@ -12,16 +12,26 @@ import contextlib
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from framework.commands.processor import SlashCommandProcessor
 
 from bot.plugins.integration import PluginIntegration
+from framework.control.event_bus import CallbackControlEventBus
+from framework.memory.default_system import DefaultMemorySystem
+from framework.core.context import ContextManager
+from framework.memory.consolidation.dream_engine import DreamEngine
+from framework.multi_agent.bus import AgentMessageBus
+from framework.runtime.services import AgentRuntime
+from framework.runtime.store import TurnStateStore
+from framework.tools.mcp.manager import MCPClientManager
+from framework.tools.terminal.manager import TerminalManager
 from bot.utils.config_loader import ConfigLoader
 from framework import (
     AgentPipeline,
     InMemoryToolManager,
+    LLMProvider,
     ReActAgent,
     ToolManagerConfig,
 )
@@ -41,6 +51,8 @@ from framework.core.skills import (
     SkillManager,
 )
 from framework.hook.builtin import InboxFlushHook
+from framework.hook.runner import HookRunner
+from framework.hook.abc import Hook
 from framework.interceptor.builtin import (
     ToolResultLimitInterceptor,
 )
@@ -121,11 +133,11 @@ class BotService(AgentBuilderMixin):
         self.pipeline: AgentPipeline | None = None
         self.agent_pool: AgentPool | None = None
         self.broker_bridge: BrokerBridgeService | None = None
-        self.agent_bus: Any | None = None
+        self.agent_bus: AgentMessageBus | None = None
         self.tool_manager: InMemoryToolManager | None = None
-        self.mcp_manager: Any | None = None
-        self.memory_system: Any | None = None
-        self.context_manager: Any | None = None
+        self.mcp_manager: MCPClientManager | None = None
+        self.memory_system: DefaultMemorySystem | None = None
+        self.context_manager: ContextManager | None = None
         self.agent: ReActAgent | None = None
         self.agent_factory: AgentFactory | None = None
         self.subagent_service: SubagentService | None = None
@@ -136,21 +148,21 @@ class BotService(AgentBuilderMixin):
         self.inbox_consumer: InboxConsumer | None = None
 
         # Terminal management
-        self.terminal_manager: Any | None = None
+        self.terminal_manager: TerminalManager | None = None
 
         # Runtime components
-        self.provider: Any | None = None
+        self.provider: LLMProvider | None = None
 
         # Multi-pool (for pool mode)
         self._pools: dict[str, PoolInstance] = {}
         self.pool_router: PoolRouter | None = None
-        self.plugin_integration: Any | None = None
-        self.dream_engine: Any | None = None
+        self.plugin_integration: PluginIntegration | None = None
+        self.dream_engine: DreamEngine | None = None
 
         # Subagent caches
         self._subagent_skill_managers: dict[str, SkillManager] = {}
-        self._subagent_memory_systems: dict[str, Any] = {}
-        self._additional_subagent_memory_systems: dict[str, Any] = {}
+        self._subagent_memory_systems: dict[str, DefaultMemorySystem] = {}
+        self._additional_subagent_memory_systems: dict[str, DefaultMemorySystem] = {}
 
         # Maintenance
         self._maintenance_task: asyncio.Task | None = None
@@ -165,14 +177,14 @@ class BotService(AgentBuilderMixin):
         self._safety_policy_cache: RuntimeSafetyPolicy | None = None
 
         # Observability
-        self._event_bus: Any | None = None
-        self._trace_writer: Any | None = None
+        self._event_bus: CallbackControlEventBus | None = None
+        self._trace_writer: object | None = None
 
         # Approval
         self._approval_workspace: Path | None = None
         self._im_ui: IMUserInterface | None = None
-        self._turn_store: Any | None = None
-        self._command_store: Any | None = None
+        self._turn_store: TurnStateStore | None = None
+        self._command_store: object | None = None
 
         # Router task
         self._router_task: asyncio.Task | None = None
@@ -362,12 +374,13 @@ class BotService(AgentBuilderMixin):
         )
         await self.memory_system.initialize()
 
+        self.pruned_manager = self.memory_system.pruned_manager
         self.context_manager = MemorySystemContextManager(
             memory_system=self.memory_system,
             default_agent_id=main_cfg.name if main_cfg else "main",
             default_agent_role="main",
             base_system_prompt=main_cfg.system_prompt if main_cfg else "",
-            injection_policy=FullInjectionPolicy(),
+            injection_policy=FullInjectionPolicy(pruned_manager=self.pruned_manager),
         )
         print(f"[OK] MemorySystem initialized (registry: {memory_dir})")
 
@@ -545,7 +558,7 @@ class BotService(AgentBuilderMixin):
         if self.tool_manager is None:
             raise RuntimeError("ToolManager is not initialized")
 
-        pipeline_hooks: list[Any] = [inbox_flush_hook]
+        pipeline_hooks: list[Hook[Any]] = [inbox_flush_hook]  # type: ignore[type-arg]
         pipeline_hooks.extend(self._collect_run_hooks())
 
         # Pipeline mode observability
@@ -776,7 +789,7 @@ class BotService(AgentBuilderMixin):
         self._safety_policy_cache = policy
         return policy
 
-    def _collect_run_hooks(self) -> list[Any]:
+    def _collect_run_hooks(self) -> list[Hook[Any]]:  # type: ignore[type-arg]
         """Collect optional run hooks configured for this bot service."""
         hooks = self.plugin_integration.collect_hooks()
         obs = self._app_config.observability
@@ -794,7 +807,7 @@ class BotService(AgentBuilderMixin):
             )
         return hooks
 
-    def _build_hook_runner(self, hooks: list[Any]) -> Any:
+    def _build_hook_runner(self, hooks: list[Hook[Any]]) -> HookRunner[Any]:  # type: ignore[type-arg]
         """Build HookRunner from collected hooks with default HookSpec.
 
         Default hooks (always present):
@@ -906,7 +919,7 @@ class BotService(AgentBuilderMixin):
     # Runtime assembly
     # ------------------------------------------------------------------ #
 
-    async def _assemble_runtime(self, hooks: Any = None) -> Any:
+    async def _assemble_runtime(self, hooks: HookRunner[Any] | None = None) -> AgentRuntime:  # type: ignore[type-arg]
         """Build AgentRuntime via framework RuntimeAssembler.
 
         The only difference between pipeline and pool mode is the hooks source.

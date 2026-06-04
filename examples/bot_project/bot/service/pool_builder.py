@@ -104,7 +104,7 @@ async def create_pool(
         default_agent_id=main_agent_name,
         default_agent_role="main",
         base_system_prompt=system_prompt,
-        injection_policy=FullInjectionPolicy(),
+        injection_policy=FullInjectionPolicy(pruned_manager=memory_system.pruned_manager),
     )
 
     # 5. Per-pool ToolManager (+ MCP)
@@ -220,6 +220,7 @@ async def create_pool(
         inbox_consumer=inbox_consumer,
         notification_service=notification_service,
         main_agent_name=main_agent_name,
+        pruned_manager=memory_system.pruned_manager,
     )
     tool_manager.register(SendToAgentTool(
         source=main_address, broker=broker, registry=pool,

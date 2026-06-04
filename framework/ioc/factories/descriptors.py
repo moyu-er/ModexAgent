@@ -76,6 +76,7 @@ def build_session_only_memory(
     agent_id: str,
     agent_role: MemoryAgentRole,
     system_prompt: str = "",
+    pruned_manager: Any | None = None,
 ) -> MemorySystemContextManager:
     """Create a session-only memory system for a subagent."""
     max_messages = 50
@@ -103,6 +104,7 @@ def build_session_only_memory(
         config=layer_config,
         session_only=False,
         cleanup_config=cleanup_config,
+        pruned_manager=pruned_manager,
     )
 
     return MemorySystemContextManager(
@@ -110,7 +112,7 @@ def build_session_only_memory(
         default_agent_id=agent_id,
         default_agent_role=agent_role,
         base_system_prompt=system_prompt,
-        injection_policy=RestrictedInjectionPolicy(max_session_messages=max_messages),
+        injection_policy=RestrictedInjectionPolicy(max_session_messages=max_messages, pruned_manager=pruned_manager),
     )
 
 
