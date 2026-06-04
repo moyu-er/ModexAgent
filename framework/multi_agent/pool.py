@@ -360,6 +360,10 @@ class AgentPool(AgentRegistry):
                 ):
                     self._transition(agent_name, AgentState.IDLE, reason="dispatch_idle")
 
+    # watchdog 最大轮询间隔：避免 sleep(remaining) 一次睡太久，
+    # 导致对 renew() 的响应延迟过大。
+    _WATCHDOG_POLL_INTERVAL: float = 5.0
+
     async def _dispatch_watchdog(
         self, task: asyncio.Task[None], deadline: DispatchDeadline,
     ) -> None:
@@ -370,7 +374,9 @@ class AgentPool(AgentRegistry):
                 if remaining <= 0:
                     task.cancel()
                     return
-                await asyncio.sleep(remaining)
+                # 每轮最多睡 _WATCHDOG_POLL_INTERVAL，确保 renew() 后
+                # 不需要等太久就能被感知到。
+                await asyncio.sleep(min(remaining, self._WATCHDOG_POLL_INTERVAL))
         except asyncio.CancelledError:
             return
 
