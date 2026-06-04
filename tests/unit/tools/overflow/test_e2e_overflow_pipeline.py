@@ -16,7 +16,6 @@ from framework.tools.overflow.cleaner import OverflowCleaner
 from framework.tools.overflow.handler import ToolResultOverflowHandler
 from framework.tools.overflow.local import LocalFileToolOverflowStore
 
-
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 def _read_meta(entry_dir: Path) -> dict:
@@ -71,7 +70,6 @@ class TestStoreSyncGeneration:
         assert ref.chunk_count == 5
         for idx in range(1, 6):
             assert (entry_dir / f"{idx}.full.txt").exists()
-            assert (entry_dir / f"{idx}.summary.txt").exists()
 
     @pytest.mark.asyncio
     async def test_store_sanitizes_session_id_colon(self, store: LocalFileToolOverflowStore) -> None:

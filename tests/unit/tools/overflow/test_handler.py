@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import pytest
 from pathlib import Path
+
+import pytest
 
 from framework.tools.overflow.cleaner import OverflowCleaner
 from framework.tools.overflow.handler import ToolResultOverflowHandler
