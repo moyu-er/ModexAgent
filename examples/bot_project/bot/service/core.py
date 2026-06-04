@@ -837,8 +837,10 @@ class BotService(AgentBuilderMixin):
         from framework.tools.overflow.local import LocalFileToolOverflowStore
 
         overflow_dir = self._project_dir / "data"
-        max_chars = 10000
-        overflow_store = LocalFileToolOverflowStore(workspace=overflow_dir)
+        max_chars = 50_000
+        overflow_store = LocalFileToolOverflowStore(
+            workspace=overflow_dir, max_chunk_size=10_000
+        )
         overflow_cleaner = OverflowCleaner(overflow_store)
         overflow_handler = ToolResultOverflowHandler(
             store=overflow_store,
@@ -848,7 +850,7 @@ class BotService(AgentBuilderMixin):
         chain.add(
             ToolResultLimitInterceptor(
                 overflow_handler=overflow_handler,
-                max_chars=10000,
+                max_chars=50_000,
             )
         )
 
