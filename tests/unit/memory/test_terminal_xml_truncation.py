@@ -79,6 +79,20 @@ def test_get_truncatable_paths_detects_terminal_result() -> None:
     assert "cursor" in paths
 
 
+def test_get_truncatable_paths_detects_overflow_result() -> None:
+    from framework.tools.terminal.types import get_terminal_xml_truncatable_paths
+
+    overflow_xml = (
+        '<tool_result_overflow tool="read_file" total_chars="60000" '
+        'total_chunks="6" current_chunk="1" max_chunk_size="10000" '
+        'skip_overflow="true">\n'
+        '  <chunk index="1"><![CDATA[chunk content]]></chunk>\n'
+        '</tool_result_overflow>'
+    )
+    paths = get_terminal_xml_truncatable_paths(overflow_xml)
+    assert paths == ["chunk", "instruction"]
+
+
 # ── truncation tests: command_result ──
 
 def test_command_result_truncates_output_only() -> None:

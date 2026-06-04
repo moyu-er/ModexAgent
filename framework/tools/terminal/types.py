@@ -78,6 +78,7 @@ _TERMINAL_XML_TRUNCATABLE: dict[str, list[str]] = {
     "command_result": ["output"],
     "process_result": ["output"],
     "terminal_result": ["output", "cursor"],
+    "tool_result_overflow": ["chunk", "instruction"],
 }
 
 
@@ -88,7 +89,7 @@ def get_terminal_xml_truncatable_paths(content: str) -> list[str] | None:
     back to content-format-agnostic truncation.
     """
     for root_tag, paths in _TERMINAL_XML_TRUNCATABLE.items():
-        if f"<{root_tag}>" in content:
+        if f"<{root_tag}>" in content or f"<{root_tag} " in content:
             return paths
     return None
 
