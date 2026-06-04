@@ -42,7 +42,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         self,
         *,
         budget: MemoryBudget | None = None,
-        max_history_entries: int = 20,
+        max_history_entries: int = 3,
         pruned_manager: PrunedManager | None = None,
     ) -> None:
         self._budget = budget or MemoryBudget()
