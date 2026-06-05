@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 from xml.sax.saxutils import escape as xml_escape
 
 from framework.memory.archive_models import ArchiveChannel
@@ -170,6 +171,11 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         query: str,
     ) -> None:
         try:
+            # Try MD archive path first (DirArchiveStorage)
+            if await self._try_inject_md_archives(sections, memory_system, context):
+                return
+
+            # Fall back to existing JSONL path
             entries = await memory_system.get_history_entries(
                 context,
                 limit=self._max_history,
@@ -221,7 +227,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                 )
 
             if any_truncated:
-                archive_dir = await memory_system.get_archive_directory(context)
+                archive_dir = await memory_system.get_storage_path(context)
                 if archive_dir:
                     xml_parts.insert(1,
                         f'  <!-- Some summaries were truncated. Full records and complete'
@@ -237,6 +243,75 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                 ))
         except Exception:
             logger.debug("Archive injection skipped", exc_info=True)
+
+    async def _try_inject_md_archives(
+        self,
+        sections: list[_PromptSection],
+        memory_system: Any,
+        context: MemoryContext,
+    ) -> bool:
+        """Try to inject archive context from MD files via DirArchiveStorage.
+
+        Returns True if MD archives were found and injected, False to fall
+        through to the JSONL path.
+        """
+        # Resolve archive directory path through the public API
+        try:
+            archive_dir = await memory_system.get_storage_path(context)
+        except Exception:
+            return False
+
+        if archive_dir is None:
+            return False
+
+        from framework.memory.stores.dir_archive import DirArchiveStorage
+
+        storage = DirArchiveStorage(archive_dir)
+
+        try:
+            archive_ids = await storage.list_archives(limit=3)
+        except Exception:
+            return False
+
+        if not archive_ids:
+            return False
+
+        # Read context.md from each archive (newest first)
+        records: list[str] = []
+        for aid in sorted(archive_ids, reverse=True)[:3]:
+            try:
+                content = await storage.read_archive_file(aid, "context.md")
+            except Exception:
+                continue
+
+            if not content or not content.strip():
+                continue
+
+            truncated = len(content) > 150
+            display = content[:150] + "..." if truncated else content
+
+            if truncated:
+                records.append(
+                    f'<record archive_id="{aid}"'
+                    f' file="archive/{aid}/context.md">'
+                    f"{xml_escape(display)}</record>"
+                )
+            else:
+                records.append(
+                    f'<record archive_id="{aid}">'
+                    f"{xml_escape(display)}</record>"
+                )
+
+        if not records:
+            return False
+
+        xml = (
+            "<historical_context>\n"
+            + "\n".join(records)
+            + "\n</historical_context>"
+        )
+        sections.append(_PromptSection(content=xml, priority=70))
+        return True
 
     def _inject_pruned_catalog(
         self, sections: list[_PromptSection], context: MemoryContext,

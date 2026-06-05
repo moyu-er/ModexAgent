@@ -27,6 +27,11 @@ class PrunedStorage(ABC):
         ...
 
     @abstractmethod
+    def save_index(self, entries: list[PrunedIndexEntry]) -> None:
+        """Atomically replace the entire index with *entries*."""
+        ...
+
+    @abstractmethod
     def has_content(self) -> bool:
         """Return True if any content file (not the index) exists."""
         ...
@@ -80,14 +85,26 @@ class FilePrunedStorage(PrunedStorage):
                 entries.append(PrunedIndexEntry.from_dict(json.loads(line)))
         return entries
 
+    def save_index(self, entries: list[PrunedIndexEntry]) -> None:
+        self._dir.mkdir(parents=True, exist_ok=True)
+        self._rewrite_index(entries)
+
     def has_content(self) -> bool:
         if not self._dir.exists():
             return False
-        return any(
+        # Check for .jsonl content files (legacy path)
+        if any(
             f.suffix == ".jsonl" and f.name != self._index_filename
             for f in self._dir.iterdir()
             if f.is_file()
-        )
+        ):
+            return True
+        # Check for index entries (new MD archive path — index.jsonl only)
+        if (self._dir / self._index_filename).exists():
+            entries = self.read_index()
+            if entries:
+                return True
+        return False
 
     def prune_oldest(self, keep_count: int) -> None:
         entries = self.read_index()

@@ -177,6 +177,15 @@ class ArchiveMemoryManager(ABC):
     async def clear(self, context: MemoryContext) -> None:
         pass
 
+    async def get_storage_path(self, context: MemoryContext) -> Path | None:
+        """Return the absolute filesystem path to the archive storage directory.
+
+        Default returns None.  Subclasses backed by file storage should
+        override to return the resolved storage directory.
+        """
+        _ = context
+        return None
+
     def get_scope(self) -> MemoryScope:
         """Return the scope used by this manager for storage resolution.
 

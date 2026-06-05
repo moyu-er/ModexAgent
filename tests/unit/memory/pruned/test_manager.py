@@ -248,3 +248,89 @@ class TestInjectionXml:
         assert '<directory path="' in xml
         import html
         assert html.escape(expected_path) in xml
+
+
+class TestRefreshFromArchives:
+    """Tests for PrunedManager.refresh_from_archives()."""
+
+    @pytest.fixture()
+    def archive_base_dir(self, tmp_path):
+        return tmp_path / "archives"
+
+    @pytest.fixture()
+    def archive_storage(self, archive_base_dir):
+        from framework.memory.stores.dir_archive import DirArchiveStorage
+        return DirArchiveStorage(archive_base_dir)
+
+    @pytest.mark.asyncio()
+    async def test_reads_index_md(
+        self, manager: PrunedManager, archive_storage,
+    ) -> None:
+        """refresh_from_archives reads index.md from archive directories."""
+        # Create an archive with index.md
+        await archive_storage.write_archive_file(1, "index.md", "Debugging session topic\nSome details")
+        await archive_storage.write_archive_file(1, "context.md", "context content")
+        await archive_storage.write_archive_file(1, "knowledge.md", "knowledge content")
+
+        count = await manager.refresh_from_archives(archive_storage, session_id=SID)
+        assert count == 1
+
+        storage = manager._get_storage(SID)
+        entries = storage.read_index()
+        assert len(entries) == 1
+        assert entries[0].topic == "Debugging session topic"
+
+    @pytest.mark.asyncio()
+    async def test_skips_empty_index(
+        self, manager: PrunedManager, archive_storage,
+    ) -> None:
+        """Empty index.md causes the archive to be skipped."""
+        await archive_storage.write_archive_file(1, "index.md", "\n\n")
+        await archive_storage.write_archive_file(1, "context.md", "c")
+        await archive_storage.write_archive_file(1, "knowledge.md", "k")
+
+        count = await manager.refresh_from_archives(archive_storage, session_id=SID)
+        assert count == 0
+
+    @pytest.mark.asyncio()
+    async def test_replaces_existing_index(
+        self, manager: PrunedManager, archive_storage, now: datetime,
+    ) -> None:
+        """refresh_from_archives replaces the existing index entirely."""
+        # First, populate via write_pruned (old path)
+        msgs = _messages([datetime(2024, 6, 1, 9, 0, tzinfo=TZ)])
+        await manager.write_pruned(msgs, "old topic", now, session_id=SID)
+
+        # Now create archives with different topics
+        await archive_storage.write_archive_file(1, "index.md", "New topic A\n...")
+        await archive_storage.write_archive_file(1, "context.md", "ctx")
+        await archive_storage.write_archive_file(1, "knowledge.md", "kn")
+
+        await archive_storage.write_archive_file(2, "index.md", "New topic B\n...")
+        await archive_storage.write_archive_file(2, "context.md", "ctx2")
+        await archive_storage.write_archive_file(2, "knowledge.md", "kn2")
+
+        count = await manager.refresh_from_archives(archive_storage, session_id=SID)
+        assert count == 2
+
+        storage = manager._get_storage(SID)
+        entries = storage.read_index()
+        assert len(entries) == 2
+        assert entries[0].topic == "New topic A"
+        assert entries[1].topic == "New topic B"
+
+    @pytest.mark.asyncio()
+    async def test_returns_zero_when_no_archives(
+        self, manager: PrunedManager, archive_storage,
+    ) -> None:
+        """Empty archive directory returns 0."""
+        count = await manager.refresh_from_archives(archive_storage, session_id=SID)
+        assert count == 0
+
+    @pytest.mark.asyncio()
+    async def test_returns_zero_when_none_storage(
+        self, manager: PrunedManager,
+    ) -> None:
+        """None archive_storage returns 0."""
+        count = await manager.refresh_from_archives(None, session_id=SID)
+        assert count == 0

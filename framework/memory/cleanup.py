@@ -1,11 +1,12 @@
-"""Session cleanup function — replaces MemoryCompressionCoordinator.maybe_compress().
+"""Session cleanup function — prunes old messages and optionally archives them.
 
 This is a standalone async function that handles:
 1. Trigger check (message count or token pressure)
-2. Cleanup (sanitize tool chains, compute keep/prune boundary, commit)
-3. Optional archive (generate archive from pruned messages)
-
-It does NOT import from framework.memory.compression or framework.memory.compaction.
+2. Cleanup (sanitize tool chains, compute keep/prune boundary)
+3. Archive agent generation (context.md, knowledge.md, index.md)
+4. Pruned index refresh from archive index.md files
+5. Session commit (replace messages + backup)
+6. Archive_id increment
 """
 
 from __future__ import annotations
@@ -17,15 +18,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 
-from framework.utils.timezone import get_user_timezone
 from pathlib import Path
 from typing import Any
 
-from framework.memory.archive_models import ArchiveChannel
-from framework.memory.archive_generation import (
-    ArchiveGenerationStrategy,
-    ArchiveInputMessage,
-)
+from framework.utils.timezone import get_user_timezone
+
 from framework.memory.core.layers import (
     ArchiveMemoryManager,
     SessionMemoryManager,
@@ -42,31 +39,6 @@ from framework.memory.sanitizer import (
 
 logger = logging.getLogger(__name__)
 
-# Per-session in-memory archive failure counters.
-#
-# Keyed by context.session_id.  Each session has an independent counter so a
-# failing archive in one session never affects another.  The dictionary is
-# bounded in practice by the number of active sessions in the process.
-_archive_fail_counters: dict[str, int] = {}
-
-# Maximum entries before a compaction pass prunes counters for sessions that
-# have been reset (value 0).  This keeps the dictionary from growing without
-# bound in long-running processes with ephemeral session ids.
-_MAX_COUNTER_ENTRIES = 2000
-
-
-def _compact_counters() -> None:
-    """Drop counter entries with value 0 to bound dictionary growth.
-
-    Called after a counter is reset to 0, so stale entries for finished
-    sessions are eventually reclaimed without affecting active counters.
-    """
-    if len(_archive_fail_counters) <= _MAX_COUNTER_ENTRIES:
-        return
-    for key in list(_archive_fail_counters):
-        if _archive_fail_counters[key] == 0:
-            del _archive_fail_counters[key]
-
 
 @dataclass(frozen=True)
 class CleanupResult:
@@ -80,6 +52,27 @@ class CleanupResult:
     user_retention_extracted: int = 0
 
 
+async def _write_pruned_fallback(
+    pruned_manager: Any,
+    pruned_messages: list[dict[str, Any]],
+    context: Any,
+) -> None:
+    """Fallback: write pruned index from messages directly.
+
+    Used when archive agent generation fails — the pruned index is still
+    populated from the raw messages so injection can work.
+    """
+    try:
+        await pruned_manager.write_pruned(
+            pruned_messages,
+            topic=None,
+            cleanup_time=datetime.now(get_user_timezone()),
+            session_id=context.session_id or "",
+        )
+    except Exception:
+        logger.warning("Pruned fallback failed", exc_info=True)
+
+
 async def cleanup_session(
     *,
     session: SessionMemoryManager,
@@ -88,22 +81,20 @@ async def cleanup_session(
     max_messages: int | None = None,
     max_tokens: int | None = None,
     keep_ratio: float = 0.5,
-    archive_strategy: ArchiveGenerationStrategy | None = None,
-    archive_fail_threshold: int = 3,
     max_backups: int = 10,
     user_retention: UserRetentionBuffer | None = None,
     pruned_manager: PrunedManager | None = None,
+    archive_agent: Any | None = None,
+    archive_storage: Any | None = None,
 ) -> CleanupResult:
     """Clean up a session by pruning old messages and optionally archiving them.
 
-    This replaces ``MemoryCompressionCoordinator.maybe_compress()``. It is a
-    standalone async function (not a class) called directly from
-    ``ScopedMessageHistory``.
-
     Flow:
-        1. Trigger check (message count > max_messages OR estimated tokens > max_tokens)
-        2. Cleanup (sanitize, plan boundary, commit)
-        3. Optional archive (generate archive from pruned messages)
+        1. Trigger check + sanitize + boundary computation
+        2. Archive agent generation (context.md, knowledge.md, index.md)
+        3. Pruned index refresh from archive index.md
+        4. Session commit (replace messages + backup)
+        5. Archive_id increment
     """
     # ── Step 1: Trigger check ──────────────────────────────────────────────
     all_messages = await session.get_all_messages(context)
@@ -166,6 +157,89 @@ async def cleanup_session(
 
     # Re-sanitize keep region to guarantee tool chain integrity
     keep_messages = _resanitize_keep(keep_messages)
+
+    # ── Step 1 (NEW): Archive agent generation ──────────────────────────
+    archive_skipped = True
+    archive_generated = False
+    next_archive_id = 0  # stored for reuse in Step 4 (save extra I/O)
+
+    # Resolve archive_storage dynamically from the archive layer if not provided
+    if archive_storage is None and archive is not None and archive_agent is not None:
+        try:
+            archive_dir = await archive.get_storage_path(context)
+            if archive_dir is not None:
+                from framework.memory.stores.dir_archive import DirArchiveStorage
+                archive_storage = DirArchiveStorage(archive_dir)
+        except Exception:
+            logger.debug("Cannot resolve archive directory dynamically", exc_info=True)
+
+    if archive_agent is not None and archive_storage is not None and pruned_messages:
+        session_id = context.session_id
+
+        # Read current archive state (value reused in Step 4)
+        state_data = await archive_storage.read_archive_state() or {}
+        next_archive_id = state_data.get("next_archive_id", 1)
+
+        # Archive skip guarantee
+        is_complete = await archive_storage.is_archive_complete(next_archive_id)
+
+        if is_complete:
+            logger.info(
+                "Archive %d already complete, skipping generation. session=%s",
+                next_archive_id, session_id,
+            )
+            archive_generated = True
+            archive_skipped = False
+        else:
+            # Run agent (retry is internal to ArchiveSummarizer)
+            archive_dir = archive_storage.base_dir / str(next_archive_id)
+
+            try:
+                result = await archive_agent.generate(
+                    pruned_messages=list(pruned_messages),
+                    archive_dir=archive_dir,
+                    archive_id=next_archive_id,
+                )
+                if result.success:
+                    logger.info(
+                        "Archive generated: archive_id=%d session=%s files=%s",
+                        next_archive_id, session_id, result.files_written,
+                    )
+                    archive_generated = True
+                    archive_skipped = False
+                else:
+                    logger.warning(
+                        "Archive generation failed: archive_id=%d session=%s error=%s",
+                        next_archive_id, session_id, result.error,
+                    )
+            except Exception:
+                logger.warning(
+                    "Archive agent crashed: archive_id=%d session=%s",
+                    next_archive_id, session_id, exc_info=True,
+                )
+
+    # ── Step 2 (NEW): Pruned index refresh ─────────────────────────────
+    if pruned_manager is not None and archive_storage is not None and pruned_messages:
+        if archive_generated:
+            # Full refresh from archive index.md files
+            try:
+                count = await pruned_manager.refresh_from_archives(
+                    archive_storage, session_id=context.session_id or "",
+                )
+                logger.info(
+                    "Pruned index refreshed: session=%s entries=%d",
+                    context.session_id, count,
+                )
+            except Exception:
+                logger.warning(
+                    "Pruned index refresh failed: session=%s",
+                    context.session_id, exc_info=True,
+                )
+                # Fallback to old path
+                await _write_pruned_fallback(pruned_manager, pruned_messages, context)
+        else:
+            # Archive failed — fallback
+            await _write_pruned_fallback(pruned_manager, pruned_messages, context)
 
     # Extract user retention entries from pruned messages
     # Walk all sanitized messages; accumulate pruned user/agent messages.
@@ -263,82 +337,19 @@ async def cleanup_session(
                     context.session_id, exc_info=True,
                 )
 
-    # ── Step 3: Archive (optional) ─────────────────────────────────────────
-    #
-    # Each session has an independent failure counter keyed by session_id so
-    # one session's archive failures never affect another session.
-    archive_skipped = True
-    gen_result = None
-
-    if archive is not None and archive_strategy is not None and pruned_messages:
-        session_id = context.session_id
-        # Guard: a valid session_id is required for per-session counting.
-        # Sessions without an id use a one-shot attempt without counter tracking.
-        if not session_id:
-            logger.warning(
-                "Archive skipped: context.session_id is empty — cannot track "
-                "per-session failure counter",
-            )
-        else:
-            fail_count = _archive_fail_counters.get(session_id, 0)
-
-            if fail_count >= archive_fail_threshold:
-                logger.info(
-                    "Archive skipped due to consecutive failures: session=%s "
-                    "fail_count=%d threshold=%d",
-                    session_id, fail_count, archive_fail_threshold,
-                )
-                _archive_fail_counters[session_id] = 0
-                _compact_counters()
-            else:
-                try:
-                    archive_inputs = [
-                        ArchiveInputMessage.from_dict(m) for m in pruned_messages
-                    ]
-                    gen_result = await archive_strategy.generate(
-                        archive_inputs, context, trigger_reason,
-                    )
-                    if gen_result.writes:
-                        await archive.append_bundle(context, gen_result.writes)
-                        channels = [w.channel.value for w in gen_result.writes]
-                        logger.info(
-                            "Archive generated: session=%s entries=%d channels=%s input_messages=%d",
-                            session_id, len(gen_result.writes), channels, len(archive_inputs),
-                        )
-                    else:
-                        logger.warning(
-                            "Archive generation produced no writes: session=%s input_messages=%d",
-                            session_id, len(archive_inputs),
-                        )
-                    _archive_fail_counters[session_id] = 0
-                    archive_skipped = False
-                except Exception:
-                    _archive_fail_counters[session_id] = fail_count + 1
-                    logger.warning(
-                        "Archive generation failed: session=%s fail_count=%d",
-                        session_id,
-                        _archive_fail_counters[session_id],
-                        exc_info=True,
-                    )
-
-    # ── Step 4: Pruned catalog (optional, independent of archive) ────────
-    if pruned_manager is not None and pruned_messages:
+    # ── Step 5: Archive_id increment ──────────────────────────────────────
+    if archive_agent is not None and archive_storage is not None and archive_generated:
         try:
-            pruned_topic: str | None = None
-            if gen_result is not None:
-                for w in gen_result.writes:
-                    if w.channel is ArchiveChannel.CONTEXT:
-                        pruned_topic = w.summary[:200]
-                        break
-            await pruned_manager.write_pruned(
-                pruned_messages,
-                topic=pruned_topic,
-                cleanup_time=datetime.now(get_user_timezone()),
-                session_id=context.session_id or "",
+            await archive_storage.write_archive_state(
+                {"next_archive_id": next_archive_id + 1}
+            )
+            logger.info(
+                "Archive state advanced: next_archive_id=%d session=%s",
+                next_archive_id + 1, context.session_id,
             )
         except Exception:
             logger.warning(
-                "Pruned catalog write failed: session=%s",
+                "Archive state increment failed: session=%s",
                 context.session_id, exc_info=True,
             )
 
