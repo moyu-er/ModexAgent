@@ -25,6 +25,7 @@ class PoolInstance:
     main_agent_name: str
     provider: Any
     notification_service: Any  # AgentNotificationService
+    communication_service: Any  # AgentCommunicationService — updated on workspace switch
 
     @property
     def main_address(self):

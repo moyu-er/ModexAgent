@@ -364,7 +364,8 @@ class AgentBuilderMixin:
 
         subagent_cfg = self._find_subagent_cfg()
         sub_memory_cfg = subagent_cfg.memory if subagent_cfg else None
-        sub_dir = self._resolve_path("memory_dir", "data/memory") / "subagents" / sub_name
+        data_dir = self.workspace_context.data_dir
+        sub_dir = data_dir / "memory" / "subagents" / sub_name
         sub_dir.mkdir(parents=True, exist_ok=True)
 
         # Support both old (short_term) and new (session) config

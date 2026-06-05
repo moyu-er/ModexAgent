@@ -61,6 +61,7 @@ async def create_pool(
     pool_cfg: PoolConfig,
     *,
     project_dir: Path,
+    data_dir: Path,
     broker: Any,
     inbox_server: InboxServer,
     inbox_producer: InboxProducer,
@@ -76,6 +77,7 @@ async def create_pool(
     shared_hook_runner: HookRunner,
     shared_interceptor_chain: Any,
     control_channel: InMemoryControlChannel | None = None,
+    command_processor: Any = None,
 ) -> PoolInstance:
 
     main_cfg = next(a for a in pool_cfg.agents if a.role == "main")
@@ -91,7 +93,7 @@ async def create_pool(
         logger.info("Pool '%s': TerminalManager created (%s, lazy)", pool_name, terminal_manager.visibility.value)
 
     # 3. Per-pool MemorySystem
-    memory_dir = project_dir / "data" / "memory" / pool_name
+    memory_dir = data_dir / "memory" / pool_name
     memory_dir.mkdir(parents=True, exist_ok=True)
     memory_system = create_memory(pool_cfg.memory, provider, memory_dir)
     await memory_system.initialize()
@@ -124,7 +126,7 @@ async def create_pool(
     from framework.runtime.codec import RuntimeStateCodecRegistry
     from framework.runtime.enums import AgentKind
     from framework.runtime.store import JsonFileRuntimeCommandStore, JsonFileTurnStateStore
-    runtime_data_dir = project_dir / "data" / "runtime_state" / pool_name
+    runtime_data_dir = data_dir / "runtime_state" / pool_name
     codec_registry = RuntimeStateCodecRegistry({AgentKind.REACT: ReActRuntimeStateCodec()})
     turn_store = JsonFileTurnStateStore(runtime_data_dir / "turns", codec_registry)
     command_store = JsonFileRuntimeCommandStore(runtime_data_dir / "commands")
@@ -258,8 +260,13 @@ async def create_pool(
         )
         # Wire slash-command processor so /skill_name commands resolve
         # through SkillManager and are injected as context.
-        from framework.commands.processor import SlashCommandProcessor
-        main_instance.pipeline.command_processor = SlashCommandProcessor.default()
+        # When command_processor is provided (e.g., with cd/exit handlers),
+        # use it; otherwise fall back to default built-in handlers only.
+        if command_processor is not None:
+            main_instance.pipeline.command_processor = command_processor
+        else:
+            from framework.commands.processor import SlashCommandProcessor
+            main_instance.pipeline.command_processor = SlashCommandProcessor.default()
         logger.info(
             "Pool '%s': pipeline wired — command_processor=%s, skill_manager=%s",
             pool_name,
@@ -300,6 +307,7 @@ async def create_pool(
         main_agent_name=main_agent_name,
         provider=provider,
         notification_service=notification_service,
+        communication_service=main_service,
     )
 
 

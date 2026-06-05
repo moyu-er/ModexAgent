@@ -10,12 +10,15 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from framework.commands.processor import SlashCommandProcessor
+    from framework.runtime.codec import RuntimeStateCodecRegistry
+    from framework.runtime.store import JsonFileRuntimeCommandStore, JsonFileTurnStateStore
+    from framework.memory.pruned.manager import PrunedManager
 
 from bot.plugins.integration import PluginIntegration
 from framework.control.event_bus import CallbackControlEventBus
@@ -97,6 +100,47 @@ from .pool_router import PoolRouter, PoolSessionStore
 
 logger = logging.getLogger(__name__)
 
+# ── Workspace data subdirectory constants ──────────────────────────────
+# Used by _ws_* helpers so the layout is defined once and shared between
+# initial pool creation and cd/exit rebuilds.
+
+_SUBDIR_MEMORY = "memory"
+_SUBDIR_RUNTIME = "runtime_state"
+_SUBDIR_APPROVAL = "approval"
+_SUBDIR_INBOX = "inbox"
+
+
+def _update_pruned_manager(
+    context_manager: MemorySystemContextManager,
+    pruned_manager: PrunedManager | None,
+) -> None:
+    """Update the cached pruned_manager inside the injection policy.
+
+    After a workspace switch the MemorySystem (and its PrunedManager) are
+    replaced, but ``FullInjectionPolicy`` stores its own reference that is
+    NOT derived from ``memory_system.pruned_manager`` at injection time.
+    This helper keeps the two in sync so pruned catalog injection uses the
+    current data directory.
+    """
+    policy = context_manager.injection_policy
+    if hasattr(policy, "_pruned_manager"):
+        policy._pruned_manager = pruned_manager
+
+
+class _WorkspaceCallbackAdapter:
+    """Adapter that wraps an async method as a WorkspaceSwitchCallback.
+
+    Avoids defining one-shot inner classes in BotService.initialize().
+    """
+
+    __slots__ = ("_fn",)
+
+    def __init__(self, fn: Callable[[Path, Path], Coroutine[Any, Any, None]]) -> None:
+        self._fn = fn
+
+    async def on_workspace_switch(self, old_data_dir: Path, new_data_dir: Path) -> None:
+        await self._fn(old_data_dir, new_data_dir)
+
 
 class BotService(AgentBuilderMixin):
     """Generic bot service supporting arbitrary InputAdapter/OutputAdapter pairs.
@@ -170,6 +214,9 @@ class BotService(AgentBuilderMixin):
         # Overflow cleaner
         self._overflow_cleaner: OverflowCleaner | None = None
 
+        # Runtime codec (stored for workspace switch rebuild)
+        self._runtime_codec_registry: RuntimeStateCodecRegistry | None = None
+
         # Control plane
         self.control_channel: InMemoryControlChannel | None = None
         self.command_processor: SlashCommandProcessor | None = None
@@ -185,6 +232,9 @@ class BotService(AgentBuilderMixin):
         self._im_ui: IMUserInterface | None = None
         self._turn_store: TurnStateStore | None = None
         self._command_store: object | None = None
+
+        # Workspace context (injected via initialize)
+        self.workspace_context: DefaultWorkspaceContext | None = None
 
         # Router task
         self._router_task: asyncio.Task | None = None
@@ -230,6 +280,26 @@ class BotService(AgentBuilderMixin):
     # Path helpers
     # ------------------------------------------------------------------ #
 
+    # -- workspace data subdirectories (single source of truth) --
+    # Both initialize() and workspace-switch callbacks use these so the
+    # on-disk layout never diverges between initial creation and cd/exit.
+
+    @staticmethod
+    def _ws_memory(data_dir: Path) -> Path:
+        return data_dir / _SUBDIR_MEMORY
+
+    @staticmethod
+    def _ws_runtime(data_dir: Path) -> Path:
+        return data_dir / _SUBDIR_RUNTIME
+
+    @staticmethod
+    def _ws_approval(data_dir: Path) -> Path:
+        return data_dir / _SUBDIR_APPROVAL
+
+    @staticmethod
+    def _ws_inbox(data_dir: Path) -> Path:
+        return data_dir / _SUBDIR_INBOX
+
     @property
     def _project_dir(self) -> Path:
         """Project root directory (where bot_service.py lives).
@@ -263,6 +333,29 @@ class BotService(AgentBuilderMixin):
         if self._app_config is None:
             self._app_config = self._load_app_config()
         print(f"[OK] Config loaded ({len(self._app_config.agents)} agents via IOC)")
+
+        # 1.5 Create WorkspaceContext
+        from framework.workspace.context import DefaultWorkspaceContext
+
+        self.workspace_context = DefaultWorkspaceContext(
+            home=self._project_dir,
+            active_checker=self._make_active_checker(),
+        )
+
+        # Restore last workspace
+        restore_result = await self.workspace_context.restore()
+        if restore_result and restore_result.success:
+            print(f"[OK] Restored workspace: {restore_result.current_path}")
+        else:
+            print(f"[OK] Using default workspace: {self._project_dir}")
+
+        # Register workspace switch callbacks
+        self.workspace_context.register_callback(
+            _WorkspaceCallbackAdapter(self._on_ws_stop_and_rebuild)
+        )
+        self.workspace_context.register_callback(
+            _WorkspaceCallbackAdapter(self._on_ws_terminal_reset)
+        )
 
         # 2. Create Broker
         self.broker = InMemoryMessageBroker()
@@ -362,8 +455,8 @@ class BotService(AgentBuilderMixin):
         print(f"[OK] LLM Provider: {self._app_config.llm.model}")
 
         # 5. Initialize MemorySystem using IOC factory
-        data_dir = self._resolve_path("data_dir", "data")
-        memory_dir = self._resolve_path("memory_dir", str(Path(data_dir) / "memory"))
+        data_dir = self.workspace_context.data_dir
+        memory_dir = self._ws_memory(data_dir)
         memory_dir.mkdir(parents=True, exist_ok=True)
         main_cfg = self._main_agent_cfg
         main_memory_cfg = main_cfg.memory if main_cfg else self._app_config.memory
@@ -434,7 +527,7 @@ class BotService(AgentBuilderMixin):
             print(f"[WARN] Skills directory not found: {main_skills_dir}")
 
         # 6.5 Create InboxServer / Producer / Consumer
-        inbox_dir = self._resolve_path("inbox_dir", "data/inbox")
+        inbox_dir = self._ws_inbox(data_dir)
         self.inbox_server = LocalFileInboxServer(workspace=inbox_dir)
         self.inbox_producer = InboxProducer(server=self.inbox_server)
         self.inbox_consumer = InboxConsumer(server=self.inbox_server)
@@ -449,8 +542,6 @@ class BotService(AgentBuilderMixin):
 
         # Start overflow cleaner
         if self.interceptor_chain is not None:
-            from framework.interceptor.builtin.result_limit import ToolResultLimitInterceptor
-
             for interceptor in self.interceptor_chain.interceptors:
                 if isinstance(interceptor, ToolResultLimitInterceptor):
                     if interceptor.handler is not None:
@@ -468,7 +559,7 @@ class BotService(AgentBuilderMixin):
         )
 
         # 7.5 Initialize approval infrastructure
-        self._approval_workspace = self._project_dir / "data/approval"
+        self._approval_workspace = self._ws_approval(data_dir)
         self._im_ui = IMUserInterface(
             output_adapter=self.output_adapter,
             channel=self.control_channel,
@@ -481,8 +572,9 @@ class BotService(AgentBuilderMixin):
         from framework.runtime.enums import AgentKind
         from framework.runtime.store import JsonFileRuntimeCommandStore, JsonFileTurnStateStore
 
-        runtime_data_dir = self._project_dir / "data" / "runtime_state"
+        runtime_data_dir = self._ws_runtime(data_dir)
         codec_registry = RuntimeStateCodecRegistry({AgentKind.REACT: ReActRuntimeStateCodec()})
+        self._runtime_codec_registry = codec_registry
         self._turn_store = JsonFileTurnStateStore(runtime_data_dir / "turns", codec_registry)
         self._command_store = JsonFileRuntimeCommandStore(runtime_data_dir / "commands")
         print("[OK] Typed runtime stores initialized (data/runtime_state/)")
@@ -574,7 +666,10 @@ class BotService(AgentBuilderMixin):
 
         # Build AgentRuntime via framework RuntimeAssembler
         runtime = await self._assemble_runtime(hooks=self._build_hook_runner(pipeline_hooks))
-        command_processor = self._build_main_command_processor(main_skill_manager)
+        command_processor = self._build_main_command_processor(
+            main_skill_manager,
+            workspace_ctx=self.workspace_context,
+        )
         self.command_processor = command_processor
 
         dream_cfg = self._main_memory_cfg.dream_engine if self._main_memory_cfg else None
@@ -626,7 +721,7 @@ class BotService(AgentBuilderMixin):
             raise RuntimeError("No pools defined. Add .yml files to config/pools/")
 
         # 1. Shared infra: Inbox + AgentMessageBus
-        inbox_dir = self._resolve_path("inbox_dir", "data/inbox")
+        inbox_dir = self._ws_inbox(self.workspace_context.data_dir)
         self.inbox_server = LocalFileInboxServer(workspace=inbox_dir)
         self.inbox_producer = InboxProducer(server=self.inbox_server)
         self.inbox_consumer = InboxConsumer(server=self.inbox_server)
@@ -638,7 +733,7 @@ class BotService(AgentBuilderMixin):
         print(f"[OK] Inbox + AgentMessageBus initialized ({inbox_dir})")
 
         # 2. Shared infra: Approval
-        self._approval_workspace = self._project_dir / "data/approval"
+        self._approval_workspace = self._ws_approval(self.workspace_context.data_dir)
         self._im_ui = IMUserInterface(
             output_adapter=self.output_adapter,
             channel=self.control_channel,
@@ -671,14 +766,22 @@ class BotService(AgentBuilderMixin):
         )
         self.communication_tracker = CommunicationTracker()
 
+        # 5.5. Build shared command_processor (with cd/exit handlers for workspace switching)
+        self.command_processor = self._build_main_command_processor(
+            None,
+            workspace_ctx=self.workspace_context,
+        )
+
         # 6. Create all pools
         self._pools = {}
+        data_dir = self.workspace_context.data_dir
         for pool_name, pool_cfg in pool_configs.items():
             print(f"\n[POOL] Creating pool '{pool_name}'...")
             self._pools[pool_name] = await create_pool(
                 pool_name=pool_name,
                 pool_cfg=pool_cfg,
                 project_dir=self._project_dir,
+                data_dir=data_dir,
                 broker=self.broker,
                 inbox_server=self.inbox_server,
                 inbox_producer=self.inbox_producer,
@@ -694,11 +797,11 @@ class BotService(AgentBuilderMixin):
                 shared_hook_runner=shared_hook_runner,
                 shared_interceptor_chain=shared_interceptor_chain,
                 control_channel=self.control_channel,
+                command_processor=self.command_processor,
             )
             print(f"[OK] Pool '{pool_name}' created")
 
         # 7. PoolRouter
-        data_dir = self._resolve_path("data_dir", "data")
         session_store = PoolSessionStore(data_dir=data_dir)
         self.pool_router = PoolRouter(
             input_adapter=self.input_adapter,
@@ -712,8 +815,6 @@ class BotService(AgentBuilderMixin):
         await self._init_pool_dream_engine()
 
         # Configure control command interception (pool mode)
-        if self.command_processor is None:
-            self.command_processor = self._build_main_command_processor(None)
         if self.control_channel is not None and self.command_processor is not None:
             self.input_adapter.configure_control_filter(
                 control_channel=self.control_channel,
@@ -732,6 +833,265 @@ class BotService(AgentBuilderMixin):
             print(f"   {name}: {pi.main_agent_name} + {subagent_count} subagents")
         print(f"[INFO] Switch commands: /{' /'.join(self._pools.keys())}")
         print(f"[INFO] Default pool: {self._app_config.multi_agent.default_pool}")
+
+    def _make_active_checker(self) -> "Callable[[], bool]":
+        """构造活跃 agent 检查器。
+
+        检查所有 Pipeline（主 pipeline + 所有 pool 的 agent）
+        是否有正在运行的 agent turn（含 subagent）。
+        subagent 运行在父 agent 的 session task 中，已被覆盖。
+
+        Returns:
+            True 表示有活跃 agent，应拒绝 cd。
+        """
+        def check() -> bool:
+            if self.pipeline is not None and self.pipeline.has_active_sessions():
+                return True
+            for pool_inst in self._pools.values():
+                if pool_inst.pool.has_active_sessions():
+                    return True
+            return False
+        return check
+
+    # ------------------------------------------------------------------ #
+    # Workspace switch callbacks (registered in initialize)
+    # ------------------------------------------------------------------ #
+
+    async def _on_ws_stop_and_rebuild(self, _old_dir: Path, new_dir: Path) -> None:
+        """① Stop background + rebuild stores (atomic)."""
+        await self._stop_background_tasks()
+        self._clear_subagent_caches()
+        if self.mode == "pool":
+            await self._rebuild_pool_memory(new_dir)
+            self._update_communication_paths(new_dir)
+        else:
+            await self._rebuild_pipeline_memory(new_dir)
+        await self._rebuild_shared_infrastructure(new_dir)
+
+    async def _on_ws_terminal_reset(self, _old_dir: Path, _new_dir: Path) -> None:
+        """② Close all terminal sessions."""
+        await self._close_all_terminals(suppress_errors=False)
+        for pool_inst in self._pools.values():
+            if pool_inst.terminal_manager is not None:
+                for name in list(pool_inst.terminal_manager.list_names()):
+                    await pool_inst.terminal_manager.close(name)
+
+    # ------------------------------------------------------------------ #
+    # Workspace switch helpers
+    # ------------------------------------------------------------------ #
+
+    async def _close_all_terminals(self, *, suppress_errors: bool = True) -> None:
+        """Close every terminal session (self + pools).
+
+        Used by both workspace-switch callbacks and BotService.stop().
+        """
+        for mgr in [self.terminal_manager] + [
+            pi.terminal_manager for pi in self._pools.values()
+        ]:
+            if mgr is None:
+                continue
+            for name in list(mgr.list_names()):
+                try:
+                    await mgr.close(name)
+                except BaseException:
+                    if not suppress_errors:
+                        raise
+
+    def _rebuild_overflow_store(self, new_dir: Path) -> None:
+        """Update overflow store workspace after workspace switch."""
+        from framework.tools.overflow.local import LocalFileToolOverflowStore
+
+        if self.interceptor_chain is None:
+            return
+        for interceptor in self.interceptor_chain.interceptors:
+            if not isinstance(interceptor, ToolResultLimitInterceptor):
+                continue
+            if interceptor.handler is None:
+                continue
+            new_store = LocalFileToolOverflowStore(
+                workspace=new_dir, max_chunk_size=10_000,
+            )
+            interceptor.handler._store = new_store
+            if interceptor.handler._cleaner is not None:
+                interceptor.handler._cleaner._store = new_store
+
+    async def _rebuild_pipeline_memory(self, new_dir: Path) -> None:
+        """Rebuild pipeline-mode memory + stores."""
+        main_cfg = self._main_agent_cfg
+        main_mem = main_cfg.memory if main_cfg else self._app_config.memory
+        if self.provider is None:
+            return
+        self.memory_system, self._turn_store, self._command_store = (
+            await self._rebuild_memory_for_target(
+                new_dir,
+                self._ws_memory(new_dir),
+                self._ws_runtime(new_dir),
+                main_mem,
+                self.provider,
+                self.context_manager,
+                pipeline=self.pipeline,
+            )
+        )
+        self.pruned_manager = self.memory_system.pruned_manager
+
+    async def _rebuild_pool_memory(self, new_dir: Path) -> None:
+        """Rebuild pool-mode memory + runtime stores for every pool."""
+        for pool_inst in self._pools.values():
+            main_inst = pool_inst.pool._agents.get(pool_inst.main_agent_name)
+            pool_inst.memory_system, _, _ = await self._rebuild_memory_for_target(
+                new_dir,
+                self._ws_memory(new_dir) / pool_inst.name,
+                self._ws_runtime(new_dir) / pool_inst.name,
+                pool_inst.config.memory,
+                pool_inst.provider,
+                pool_inst.context_manager,
+                pipeline=main_inst.pipeline if main_inst else None,
+            )
+
+    async def _stop_background_tasks(self) -> None:
+        """停止后台任务：dream task + injection queues。
+
+        必须在重建存储之前调用，确保没有后台任务写入旧路径。
+        """
+        if self._dream_task is not None:
+            self._dream_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._dream_task
+            self._dream_task = None
+        # Collect all pipelines (pipeline mode + pool mode agents)
+        pipelines: list[AgentPipeline] = []
+        if self.pipeline is not None:
+            pipelines.append(self.pipeline)
+        for pi in self._pools.values():
+            for ai in pi.pool._agents.values():
+                if ai.pipeline is not None:
+                    pipelines.append(ai.pipeline)
+        for p in pipelines:
+            p._injection_queues.clear()
+
+    def _clear_subagent_caches(self) -> None:
+        """清空 subagent 缓存的 memory/skill 引用，避免指向旧路径。"""
+        for cache in (
+            self._subagent_memory_systems,
+            self._subagent_skill_managers,
+            self._additional_subagent_memory_systems,
+        ):
+            cache.clear()
+
+    def _start_dream_task(self) -> None:
+        """启动 dream 后台任务（如果 dream engine 已初始化）。"""
+        if self.dream_engine is None:
+            return
+        self._dream_task = asyncio.create_task(
+            self._dream_background_loop(interval=self._dream_interval)
+        )
+        logger.info("DreamEngine task restarted, interval=%ds", self._dream_interval)
+
+    async def _rebuild_memory_for_target(
+        self,
+        new_data_dir: Path,
+        memory_dir: Path,
+        runtime_dir: Path,
+        memory_cfg: IOCMemoryConfig | None,
+        provider: LLMProvider,
+        context_manager: MemorySystemContextManager,
+        *,
+        pipeline: AgentPipeline | None = None,
+    ) -> tuple[DefaultMemorySystem, JsonFileTurnStateStore, JsonFileRuntimeCommandStore]:
+        """重建单个 target 的 memory + runtime stores。
+
+        Pipeline 和 Pool 模式共用此方法，差异通过参数表达。
+
+        Args:
+            new_data_dir: 新的 .modex/ 根目录（用于 approval 路径）
+            memory_dir: memory 创建目录（pipeline: .modex/memory, pool: .modex/memory/{name}）
+            runtime_dir: runtime stores 目录（pipeline: .modex/runtime_state, pool: .modex/runtime_state/{name}）
+            memory_cfg: memory 配置
+            provider: LLM provider
+            context_manager: 需要更新 .memory_system 的 context manager
+            pipeline: 需要更新 store 引用的 pipeline（可选）
+
+        Returns:
+            (new_memory_system, new_turn_store, new_command_store)
+        """
+        from framework.runtime.store import JsonFileRuntimeCommandStore, JsonFileTurnStateStore
+
+        # Close old memory
+        old_memory = context_manager.memory_system
+        if old_memory is not None:
+            await old_memory.close()
+
+        # Create new memory
+        memory_dir.mkdir(parents=True, exist_ok=True)
+        new_memory = create_memory(
+            memory_cfg or IOCMemoryConfig(),
+            provider,
+            memory_dir,
+        )
+        await new_memory.initialize()
+
+        # Update context manager + sync pruned
+        context_manager.memory_system = new_memory
+        _update_pruned_manager(context_manager, new_memory.pruned_manager)
+
+        # Re-inject plugins + long-term defaults
+        await self.plugin_integration.inject_memory_providers(
+            new_memory,
+            init_kwargs={"llm_provider": provider, "workspace": new_data_dir},
+        )
+        self.plugin_integration.inject_memory_system_modifiers(new_memory)
+        await self._init_long_term_defaults(
+            new_data_dir, memory_cfg, memory_system=new_memory,
+        )
+
+        # New runtime stores
+        new_turn_store = JsonFileTurnStateStore(
+            runtime_dir / "turns", self._runtime_codec_registry,
+        )
+        new_cmd_store = JsonFileRuntimeCommandStore(
+            runtime_dir / "commands",
+        )
+
+        # Update pipeline refs if provided
+        if pipeline is not None:
+            pipeline.turn_store = new_turn_store
+            pipeline.command_store = new_cmd_store
+            pipeline._approval_workspace = self._ws_approval(new_data_dir)
+
+        return new_memory, new_turn_store, new_cmd_store
+
+    async def _rebuild_shared_infrastructure(self, new_data_dir: Path) -> None:
+        """更新共享基础设施：inbox + approval + overflow + dream。
+
+        Pipeline 和 Pool 模式共用此方法。
+        """
+        # Inbox
+        inbox_dir = self._ws_inbox(new_data_dir)
+        inbox_dir.mkdir(parents=True, exist_ok=True)
+        self.inbox_server._workspace = inbox_dir
+        # Sync delivered-id tracker workspace so dedup writes to the correct dir
+        if hasattr(self.inbox_server, "_tracker") and hasattr(
+            self.inbox_server._tracker, "_workspace"
+        ):
+            self.inbox_server._tracker._workspace = inbox_dir
+        # Approval
+        self._approval_workspace = self._ws_approval(new_data_dir)
+        # Overflow store
+        self._rebuild_overflow_store(new_data_dir)
+        # Dream engine + task
+        if self.mode == "pool":
+            await self._init_pool_dream_engine()
+        else:
+            self._init_dream()
+        self._start_dream_task()
+
+    def _update_communication_paths(self, new_data_dir: Path) -> None:
+        """更新 pool 模式下 AgentCommunicationService 的路径引用。"""
+        for pool_inst in self._pools.values():
+            svc = pool_inst.communication_service
+            if svc is not None:
+                svc._memory_dir = self._ws_memory(new_data_dir) / pool_inst.name
+                svc._pruned_manager = pool_inst.memory_system.pruned_manager
 
     def _find_subagent_cfg(self) -> IOCAgentConfig | None:
         """Find the first subagent config by role."""
@@ -845,11 +1205,10 @@ class BotService(AgentBuilderMixin):
         chain = InterceptorChain()
 
         # 1. Tool result overflow
-        from framework.tools.overflow.cleaner import OverflowCleaner
         from framework.tools.overflow.handler import ToolResultOverflowHandler
         from framework.tools.overflow.local import LocalFileToolOverflowStore
 
-        overflow_dir = self._project_dir / "data"
+        overflow_dir = self.workspace_context.data_dir
         max_chars = 50_000
         overflow_store = LocalFileToolOverflowStore(
             workspace=overflow_dir, max_chunk_size=10_000
@@ -880,10 +1239,21 @@ class BotService(AgentBuilderMixin):
     def _build_main_command_processor(
         self,
         skill_manager: SkillManager | None,
+        workspace_ctx: DefaultWorkspaceContext | None = None,
     ) -> SlashCommandProcessor:
         from framework.commands.processor import SlashCommandProcessor
 
         _ = skill_manager
+        if workspace_ctx is not None:
+            from framework.workspace.handlers import CdCommandHandler, ExitCommandHandler, PwdCommandHandler
+            from framework.commands.handlers import build_default_builtin_handlers
+
+            handlers = list(build_default_builtin_handlers())
+            handlers.append(CdCommandHandler(workspace_ctx))
+            handlers.append(ExitCommandHandler(workspace_ctx))
+            handlers.append(PwdCommandHandler(workspace_ctx))
+            return SlashCommandProcessor(handlers=handlers)
+
         return SlashCommandProcessor.default()
 
     # ------------------------------------------------------------------ #
@@ -901,15 +1271,7 @@ class BotService(AgentBuilderMixin):
         for pool in self._pools.values():
             await pool.broker_bridge.start()
 
-        if self.dream_engine is not None:
-            self._dream_task = asyncio.create_task(
-                self._dream_background_loop(interval=self._dream_interval)
-            )
-            logger.info(
-                "DreamEngine background loop started, pool=%s interval=%ds",
-                self._default_pool_name,
-                self._dream_interval,
-            )
+        self._start_dream_task()
 
         self._router_task = asyncio.create_task(self.pool_router.run())
         print(f"[OK] PoolRouter running, {len(self._pools)} pools active")
@@ -977,18 +1339,55 @@ class BotService(AgentBuilderMixin):
         self,
         _data_dir: Path,
         main_memory_cfg: IOCMemoryConfig | None,
+        *,
+        memory_system: DefaultMemorySystem | None = None,
     ) -> None:
-        """Initialize default long-term memory files if enabled and not present."""
-        if main_memory_cfg is None or main_memory_cfg.long_term is None:
-            return
-        if not main_memory_cfg.long_term.init_defaults:
-            return
-        if self.memory_system is None:
+        """Initialize default long-term memory files if knowledge is enabled.
+
+        Supports both old ``long_term`` config (deprecated) and new ``knowledge``
+        config from IOC MemoryConfig.  YAML files that use the new ``knowledge``
+        block never populate ``long_term`` (model_post_init only migrates
+        long_term → knowledge, not the reverse), so the check must cover both.
+
+        Template paths in config are relative to the project directory.  We
+        resolve them to absolute paths before calling ``ensure_defaults`` so
+        the knowledge layer finds templates regardless of CWD (critical after
+        ``/cd`` which calls ``os.chdir`` to a different directory).
+        """
+        if main_memory_cfg is None:
             return
 
-        lt_mgr = self.memory_system.knowledge_manager
+        # Check whether knowledge is enabled via either config format
+        knowledge_enabled = False
+        if main_memory_cfg.long_term is not None and main_memory_cfg.long_term.enabled:
+            knowledge_enabled = True
+        if main_memory_cfg.knowledge is not None and main_memory_cfg.knowledge.enabled:
+            knowledge_enabled = True
+        if not knowledge_enabled:
+            return
+
+        ms = memory_system or self.memory_system
+        if ms is None:
+            return
+
+        lt_mgr = ms.knowledge_manager
         if lt_mgr is None:
             return
+
+        # Resolve default_templates_dir to an absolute path so the knowledge
+        # layer finds framework templates regardless of CWD.
+        raw_template_dir: str | None = None
+        if main_memory_cfg.knowledge is not None:
+            raw_template_dir = main_memory_cfg.knowledge.default_templates_dir
+        if not raw_template_dir and main_memory_cfg.long_term is not None:
+            raw_template_dir = main_memory_cfg.long_term.default_templates_dir
+        if raw_template_dir:
+            abs_template_dir = str((self._project_dir / raw_template_dir).resolve())
+            # KnowledgeMemoryConfig is frozen — replace the whole config object
+            from dataclasses import replace as _dc_replace
+            lt_mgr._config = _dc_replace(
+                lt_mgr._config, default_templates_dir=abs_template_dir,
+            )
 
         defaults: dict[str, str] = {
             "soul": (
@@ -1094,13 +1493,10 @@ class BotService(AgentBuilderMixin):
 
     def _build_dream_engine(
         self,
-        *,
-        llm_provider: object,
-        memory_system: object,
-        dream_cfg: object,
-    ) -> object:
-        from framework.memory.consolidation.dream_engine import DreamEngine
-
+        llm_provider: LLMProvider,
+        memory_system: DefaultMemorySystem,
+        dream_cfg: Any,
+    ) -> DreamEngine:
         return DreamEngine(
             llm_provider=llm_provider,
             history_manager=memory_system.archive_manager,
@@ -1159,26 +1555,17 @@ class BotService(AgentBuilderMixin):
         if self.mcp_manager is not None:
             with contextlib.suppress(BaseException):
                 await self.mcp_manager.disconnect_all()
-        for pool in self._pools.values():
-            if pool.mcp_manager is not None:
+        # Shut down all pools in one pass
+        for pi in self._pools.values():
+            if pi.mcp_manager is not None:
                 with contextlib.suppress(BaseException):
-                    await pool.mcp_manager.disconnect_all()
-        for pool in self._pools.values():
+                    await pi.mcp_manager.disconnect_all()
             with contextlib.suppress(BaseException):
-                await pool.pool.shutdown_all()
-        for pool in self._pools.values():
+                await pi.pool.shutdown_all()
             with contextlib.suppress(BaseException):
-                await pool.broker_bridge.stop()
-        # Close all terminal sessions (pool mode + pipeline mode)
-        for pool in self._pools.values():
-            if pool.terminal_manager is not None:
-                for name in pool.terminal_manager.list_names():
-                    with contextlib.suppress(BaseException):
-                        await pool.terminal_manager.close(name)
-        if self.terminal_manager is not None:
-            for name in self.terminal_manager.list_names():
-                with contextlib.suppress(BaseException):
-                    await self.terminal_manager.close(name)
+                await pi.broker_bridge.stop()
+        # Close all terminal sessions
+        await self._close_all_terminals(suppress_errors=True)
         with contextlib.suppress(BaseException):
             await self.input_adapter.stop()
         if self._trace_writer is not None:
