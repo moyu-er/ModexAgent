@@ -83,14 +83,6 @@ def create_memory(
 
     layer_config = _build_memory_layer_config(cfg)
 
-    archive_strategy = None
-    if llm_provider is not None:
-        from framework.agents.summarizer import SummarizerAgent
-        from framework.memory.archive_generation import DualLLMArchiveGenerationStrategy
-
-        summarizer = SummarizerAgent(llm_provider)
-        archive_strategy = DualLLMArchiveGenerationStrategy(summarizer=summarizer)
-
     st = cfg.session
     cleanup_config: dict[str, int | float] = {
         "max_messages": st.max_messages,
@@ -109,11 +101,43 @@ def create_memory(
             topic_max_chars=cfg.pruned.topic_max_chars,
         )
 
+    # Summarizer-agent wiring (new agent-based archive flow)
+    archive_agent = None
+    archive_storage = None
+    knowledge_consolidator = None
+
+    if cfg.summarizer_agent is not None and cfg.summarizer_agent.enabled:
+        from framework.agents.summarizer.archive_agent import (
+            ArchiveSummarizer,
+            ArchiveSummarizerConfig,
+        )
+        from framework.agents.summarizer.consolidator import KnowledgeConsolidator
+
+        archive_config = ArchiveSummarizerConfig(
+            context_max_chars=cfg.summarizer_agent.context_max_chars,
+            knowledge_max_chars=cfg.summarizer_agent.knowledge_max_chars,
+            index_max_chars=cfg.summarizer_agent.index_max_chars,
+            max_iterations=cfg.summarizer_agent.max_iterations,
+        )
+        archive_agent = ArchiveSummarizer(llm_provider, config=archive_config)
+
+        consolidator = KnowledgeConsolidator(
+            provider=llm_provider,
+            max_iterations=cfg.summarizer_agent.max_iterations,
+        )
+
+        # archive_storage is created dynamically in cleanup_session
+        # via archive.get_storage_path(context) — not hardcoded here
+
+        knowledge_consolidator = consolidator
+
     return create_memory_system(
         workspace=workspace,
         config=layer_config,
         llm_provider=llm_provider,
-        archive_strategy=archive_strategy,
         cleanup_config=cleanup_config,
         pruned_manager=pruned_manager,
+        archive_agent=archive_agent,
+        archive_storage=archive_storage,
+        knowledge_consolidator=knowledge_consolidator,
     )

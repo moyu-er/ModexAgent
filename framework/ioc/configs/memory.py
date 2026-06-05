@@ -115,6 +115,16 @@ class PrunedCatalogConfig(BaseModel):
     topic_max_chars: int = 200
 
 
+class SummarizerAgentConfig(BaseModel):
+    """Configuration for the summarizer-as-agent memory system."""
+
+    enabled: bool = False
+    context_max_chars: int = 500
+    knowledge_max_chars: int = 600
+    index_max_chars: int = 100
+    max_iterations: int = 20
+
+
 class MemoryConfig(BaseModel):
     """Memory system configuration.
 
@@ -131,6 +141,9 @@ class MemoryConfig(BaseModel):
     archive: ArchiveConfig | None = Field(default_factory=ArchiveConfig)
     knowledge: KnowledgeConfig | None = None
     dream_engine: DreamEngineConfig | None = None
+
+    # Summarizer-agent wiring (new agent-based archive flow)
+    summarizer_agent: SummarizerAgentConfig | None = None
 
     # Existing fields
     retention: RetentionConfig = Field(default_factory=RetentionConfig)

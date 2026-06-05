@@ -73,6 +73,7 @@ class DreamEngine(ConsolidationEngine):
         min_archive_count: int = 0,
         max_archive_count: int = 30,
         prompts: Any = None,  # PromptRegistry (optional)
+        consolidator: Any | None = None,  # KnowledgeConsolidator (optional)
     ):
         self.history_manager = history_manager
         self.long_term_manager = long_term_manager
@@ -94,6 +95,7 @@ class DreamEngine(ConsolidationEngine):
         self._prompts = prompts
         # Always use SummarizerAgent — auto-construct from llm_provider if needed
         self._summarizer: SummarizerAgent = summarizer or SummarizerAgent(llm_provider)
+        self._consolidator = consolidator
 
     async def run(self, context: MemoryContext) -> bool:
         """处理未处理的历史条目。
@@ -110,82 +112,63 @@ class DreamEngine(ConsolidationEngine):
         if not entries:
             return False
 
-        archive_count = len(entries)
+        # NEW PATH: Use KnowledgeConsolidator agent
+        if self._consolidator is not None:
+            return await self._run_consolidator(unprocessed, context)
+        return False
 
-        scope_info = f"user={context.user_id} agent={context.agent_id}"
+    async def _run_consolidator(
+        self,
+        unprocessed: Any,
+        context: MemoryContext,
+    ) -> bool:
+        """Use KnowledgeConsolidator to process archive entries.
 
-        # Dual trigger: skip if below minimum threshold
-        if archive_count < self.min_archive_count:
-            logger.debug(
-                "DreamEngine: skipping consolidation, archive_count=%d < min=%d, %s",
-                archive_count,
-                self.min_archive_count,
-                scope_info,
+        Args:
+            unprocessed: UnprocessedResult with archive entries.
+            context: Memory scope context.
+
+        Returns:
+            True if consolidation succeeded, False otherwise.
+        """
+        archive_ids = [e.entry_id for e in unprocessed.entries if e.entry_id]
+        if not archive_ids:
+            return False
+
+        # Get knowledge directory path from long_term_manager
+        knowledge_dir = await self.long_term_manager.get_storage_path(context)
+        if knowledge_dir is None:
+            logger.warning(
+                "KnowledgeConsolidator: no knowledge storage path for context=%s",
+                context,
             )
             return False
 
-        # Dual trigger: force trigger if above maximum threshold
-        if archive_count > self.max_archive_count:
-            logger.info(
-                "DreamEngine: archive overflow trigger, archive_count=%d > max=%d, %s",
-                archive_count,
-                self.max_archive_count,
-                scope_info,
+        # Get archive base directory via the public ABC method (not private _storage_factory)
+        archive_base = await self.history_manager.get_storage_path(context)
+        if archive_base is None:
+            logger.warning(
+                "KnowledgeConsolidator: no archive storage path for context=%s",
+                context,
             )
+            return False
 
-        batch = entries[: self.max_batch_size]
-        batch_payload = [self._archive_entry_to_dict(entry) for entry in batch]
         logger.info(
-            "DreamEngine: consolidating %d entries into knowledge (cursor %s, total=%d)",
-            len(batch),
-            unprocessed.cursor,
-            archive_count,
+            "KnowledgeConsolidator: processing %d archive(s) for knowledge update",
+            len(archive_ids),
         )
 
-        # Filter out meaningless entries before processing
-        meaningful = [e for e in batch_payload if self._is_meaningful_entry(e)]
-        final_cursor = max((e.entry_id or 0 for e in batch), default=unprocessed.cursor)
-
-        if not meaningful:
-            logger.debug("DreamEngine: all entries were empty/meaningless — advancing cursor")
-            await self._commit_knowledge_cursor(context, final_cursor)
-            return False
-
-        # Gather existing memories for context
-        existing = await self.long_term_manager.get_all(context)
-        existing_memories = {
-            "SOUL.md": existing.soul,
-            "USER.md": existing.user,
-            "MEMORY.md": existing.memory,
-            **existing.custom,
-        }
-
-        result = await self.consolidate(
-            scope_key="",
-            new_entries=meaningful,
-            existing_memories=existing_memories,
+        success = await self._consolidator.consolidate(
+            archive_ids=archive_ids,
+            archive_base=archive_base,
+            knowledge_dir=knowledge_dir,
         )
 
-        # Apply updates
-        if result.success:
-            applied = 0
-            for update in result.soul_updates + result.user_updates + result.memory_updates:
-                await self.long_term_manager.apply_update(context, update)
-                applied += 1
-            if applied:
-                logger.info(
-                    "DreamEngine: knowledge consolidation complete, applied %d updates (soul=%d user=%d memory=%d)",
-                    applied,
-                    len(result.soul_updates),
-                    len(result.user_updates),
-                    len(result.memory_updates),
-                )
-
-        # Always advance cursor to prevent re-processing (even on failure)
+        # Always commit cursor to prevent re-processing
+        final_cursor = max(archive_ids)
         await self._commit_knowledge_cursor(context, final_cursor)
-        logger.debug("DreamEngine cursor advanced to %s", final_cursor)
 
-        return result.success
+        return success
 
     async def _commit_knowledge_cursor(
         self,
@@ -254,7 +237,7 @@ class DreamEngine(ConsolidationEngine):
         # Phase 1: Fact extraction
         try:
             if self._prompts is not None:
-                system_prompt = self._prompts.get_system("knowledge/fact_extraction")
+                system_prompt = self._prompts.get_system("knowledge/fact_extraction") or SummarizerAgent.PROMPT_FACT_EXTRACTION
                 user_prompt = self._prompts.get_user(
                     "knowledge/fact_extraction",
                     archive_entries=history_text,
@@ -262,6 +245,8 @@ class DreamEngine(ConsolidationEngine):
                     current_user=existing_memories.get("USER.md", ""),
                     current_memory=existing_memories.get("MEMORY.md", ""),
                 )
+                if not user_prompt:
+                    user_prompt = f"## History\n{history_text}\n\n{file_context}"
                 analysis = await self._summarizer.analyze(
                     user_prompt,
                     prompt=system_prompt,
@@ -298,7 +283,7 @@ class DreamEngine(ConsolidationEngine):
 
             try:
                 if self._prompts is not None:
-                    system_prompt = self._prompts.get_system(f"knowledge/{file_key}_update")
+                    system_prompt = self._prompts.get_system(f"knowledge/{file_key}_update") or SummarizerAgent.PROMPT_MEMORY_UPDATE
                     user_vars: dict[str, str] = {
                         f"current_{file_key}": existing_memories.get(file_name, ""),
                         "new_facts": analysis,
@@ -308,9 +293,11 @@ class DreamEngine(ConsolidationEngine):
                         f"knowledge/{file_key}_update",
                         **user_vars,
                     )
+                    if not user_prompt:
+                        user_prompt = f"## Analysis\n{analysis}\n\n{file_context}"
                     phase2_text = await self._summarizer.summarize(
-                        user_prompt,
-                        prompt=system_prompt,
+                        user_prompt or f"## Analysis\n{analysis}\n\n{file_context}",
+                        prompt=system_prompt or SummarizerAgent.PROMPT_MEMORY_UPDATE,
                         max_tokens=2000,
                         temperature=0.2,
                     )

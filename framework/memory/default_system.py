@@ -7,7 +7,6 @@ import logging
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any
-from framework.memory.archive_generation import ArchiveGenerationStrategy
 from framework.memory.archive_models import ArchiveChannel
 from framework.memory.core.layers import ArchiveMemoryManager, MemoryLayerSet, SessionMemoryManager
 from framework.memory.core.message import ChatMessage
@@ -42,19 +41,21 @@ class ScopedMessageHistory(MessageHistory):
         initial_messages: Sequence[ChatMessage | dict[str, Any]] | None = None,
         recorder: MemoryAppendRecorder | None = None,
         archive_manager: ArchiveMemoryManager | None = None,
-        archive_strategy: ArchiveGenerationStrategy | None = None,
         cleanup_config: dict[str, int | float] | None = None,
         user_retention: Any | None = None,
         pruned_manager: PrunedManager | None = None,
+        archive_agent: Any | None = None,
+        archive_storage: Any | None = None,
     ) -> None:
         self._manager = manager
         self._context = context
         self._recorder = recorder
         self._archive_manager = archive_manager
-        self._archive_strategy = archive_strategy
         self._cleanup_config: dict[str, int | float] = cleanup_config or {}
         self._user_retention = user_retention
         self._pruned_manager: PrunedManager | None = pruned_manager
+        self._archive_agent = archive_agent
+        self._archive_storage = archive_storage
         self._cache: list[ChatMessage] | None = (
             [ChatMessage.coerce(m) for m in initial_messages]
             if initial_messages is not None
@@ -69,9 +70,10 @@ class ScopedMessageHistory(MessageHistory):
             session=self._manager,
             archive=self._archive_manager,
             context=self._context,
-            archive_strategy=self._archive_strategy,
             user_retention=self._user_retention,
             pruned_manager=self._pruned_manager,
+            archive_agent=self._archive_agent,
+            archive_storage=self._archive_storage,
             **self._cleanup_config,
         )
 
@@ -164,18 +166,22 @@ class DefaultMemorySystem(MemorySystem):
         layer_set: MemoryLayerSet,
         store_registry: MemoryStoreRegistry,
         providers: Any | None = None,  # MemoryProviderRegistry
-        archive_strategy: ArchiveGenerationStrategy | None = None,
         cleanup_config: dict[str, int | float] | None = None,
         maintenance_policy: MemoryMaintenancePolicy | None = None,
         pruned_manager: PrunedManager | None = None,
+        archive_agent: Any | None = None,
+        archive_storage: Any | None = None,
+        knowledge_consolidator: Any | None = None,
     ) -> None:
         self._layers = layer_set
         self._registry = store_registry
         self._providers = providers
-        self._archive_strategy = archive_strategy
         self._cleanup_config: dict[str, int | float] = cleanup_config or {}
         self._maintenance_policy = maintenance_policy
         self._pruned_manager: PrunedManager | None = pruned_manager
+        self._archive_agent = archive_agent
+        self._archive_storage = archive_storage
+        self._knowledge_consolidator = knowledge_consolidator
         self._recorder = MemoryAppendRecorder()
         if providers is not None:
             for provider in providers.all():
@@ -203,10 +209,11 @@ class DefaultMemorySystem(MemorySystem):
             initial_messages=initial_messages,
             recorder=self._recorder,
             archive_manager=self._layers.archive,
-            archive_strategy=self._archive_strategy,
             cleanup_config=self._cleanup_config,
             user_retention=self._layers.user_retention,
             pruned_manager=self._pruned_manager,
+            archive_agent=self._archive_agent,
+            archive_storage=self._archive_storage,
         )
 
     async def add_messages(
@@ -360,7 +367,7 @@ class DefaultMemorySystem(MemorySystem):
             logger.debug("Failed to resolve knowledge directory", exc_info=True)
             return None
 
-    async def get_archive_directory(self, context: MemoryContext) -> Path | None:
+    async def get_storage_path(self, context: MemoryContext) -> Path | None:
         """Return the absolute path to the archive storage directory."""
         if self._layers.archive is None:
             return None

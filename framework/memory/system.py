@@ -19,7 +19,6 @@ from framework.memory.core.system import (
 from framework.memory.default_system import DefaultMemorySystem
 from framework.memory.layers.config import MemoryLayerConfigSet
 from framework.memory.layers.factory import MemoryLayerFactory
-from framework.memory.archive_generation import ArchiveGenerationStrategy
 from framework.memory.lifecycle import MemoryMaintenancePolicy
 from framework.memory.pruned.manager import PrunedManager
 # UserRetentionBuffer injection moved to framework.memory.user_buffer (Task 6 stub)
@@ -33,10 +32,12 @@ def create_memory_system(
     config: MemoryLayerConfigSet | None = None,
     llm_provider: Any | None = None,
     session_only: bool = False,
-    archive_strategy: ArchiveGenerationStrategy | None = None,
     cleanup_config: dict[str, int | float] | None = None,
     maintenance_policy: MemoryMaintenancePolicy | None = None,
     pruned_manager: PrunedManager | None = None,
+    archive_agent: Any | None = None,
+    archive_storage: Any | None = None,
+    knowledge_consolidator: Any | None = None,
 ) -> DefaultMemorySystem:
     """Create a production-ready memory system with default local-file registry.
 
@@ -62,29 +63,15 @@ def create_memory_system(
             llm_provider=llm_provider,
         )
 
-        # Wire knowledge auto-consolidation
-        if layer_set.knowledge is not None and llm_provider is not None:
-            from framework.agents.summarizer.agent import SummarizerAgent
-            from framework.memory.prompts import create_default_registry
-
-            _summarizer = SummarizerAgent(llm_provider)
-            _registry = create_default_registry()
-
-            async def _consolidate(content: str, _file_name: str) -> str:
-                prompt = _registry.get_system("consolidation/knowledge_consolidation")
-                if not prompt:
-                    prompt = SummarizerAgent.PROMPT_KNOWLEDGE_CONSOLIDATION
-                return await _summarizer.summarize(content, prompt=prompt, max_tokens=2000)
-
-            layer_set.knowledge._consolidation_fn = _consolidate
-
     return DefaultMemorySystem(
         layer_set=layer_set,
         store_registry=registry,
-        archive_strategy=archive_strategy,
         cleanup_config=cleanup_config,
         maintenance_policy=maintenance_policy,
         pruned_manager=pruned_manager,
+        archive_agent=archive_agent,
+        archive_storage=archive_storage,
+        knowledge_consolidator=knowledge_consolidator,
     )
 
 
