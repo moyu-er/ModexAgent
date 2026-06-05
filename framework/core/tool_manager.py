@@ -430,6 +430,17 @@ class ToolManager(ABC):
                     result = await self._execute_sequential(tool, arguments, config)
 
                 execution_time = asyncio.get_event_loop().time() - start_time
+                # If the tool already returned a ToolResult (e.g. scoped tools
+                # that validate paths and return errors), pass it through so
+                # error information reaches the model intact.
+                if type(result) is ToolResult:
+                    return ToolResult(
+                        tool_name=result.tool_name,
+                        result=result.result,
+                        error=result.error,
+                        execution_time=execution_time,
+                        call_id=result.call_id,
+                    )
                 return ToolResult(
                     tool_name=tool_name,
                     result=result,

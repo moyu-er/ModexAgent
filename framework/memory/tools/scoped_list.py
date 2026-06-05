@@ -14,9 +14,14 @@ class ScopedListTool(Tool):
 
     def __init__(self, allowed_dirs: list[Path]) -> None:
         self._allowed_dirs = [d.resolve() for d in allowed_dirs]
+        allowed_list = "\n".join(f"  - {d}" for d in self._allowed_dirs)
         super().__init__(
             name="ls",
-            description="List the contents of a directory.",
+            description=(
+                "List the contents of a directory.\n\n"
+                "You can ONLY list directories under these paths:\n"
+                f"{allowed_list}"
+            ),
             parameters={
                 "type": "object",
                 "properties": {

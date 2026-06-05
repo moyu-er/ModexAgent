@@ -341,9 +341,11 @@ class UserRetentionBufferInjectionGovernance(ContextGovernance):
         self,
         urb,  # UserRetentionBuffer
         context_factory: Callable[[], MemoryContext] | None = None,
+        max_entries: int = 5,
     ) -> None:
         self._urb = urb
         self._context_factory = context_factory
+        self._max_entries = max_entries
 
     async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         context = self._context_factory() if self._context_factory else None
@@ -355,6 +357,10 @@ class UserRetentionBufferInjectionGovernance(ContextGovernance):
             return messages
         if not entries:
             return messages
+
+        # Cap entries to max (default 5) — matches UserRetentionBufferConfig
+        if len(entries) > self._max_entries:
+            entries = entries[-self._max_entries :]
 
         import xml.sax.saxutils as saxutils
         lines = ['<pruned_conversation_context>']

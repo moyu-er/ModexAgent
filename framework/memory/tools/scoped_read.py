@@ -14,9 +14,14 @@ class ScopedReadFileTool(Tool):
 
     def __init__(self, allowed_dirs: list[Path]) -> None:
         self._allowed_dirs = [d.resolve() for d in allowed_dirs]
+        allowed_list = "\n".join(f"  - {d}" for d in self._allowed_dirs)
         super().__init__(
             name="read",
-            description="Read the content of a file.",
+            description=(
+                "Read the content of a file.\n\n"
+                "You can ONLY read files under these directories:\n"
+                f"{allowed_list}"
+            ),
             parameters={
                 "type": "object",
                 "properties": {

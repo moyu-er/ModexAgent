@@ -14,9 +14,14 @@ class ScopedEditFileTool(Tool):
 
     def __init__(self, allowed_dirs: list[Path]) -> None:
         self._allowed_dirs = [d.resolve() for d in allowed_dirs]
+        allowed_list = "\n".join(f"  - {d}" for d in self._allowed_dirs)
         super().__init__(
             name="edit",
-            description="Edit a file by replacing old text with new text.",
+            description=(
+                "Edit a file by replacing old text with new text.\n\n"
+                "You can ONLY edit files under these directories:\n"
+                f"{allowed_list}"
+            ),
             parameters={
                 "type": "object",
                 "properties": {

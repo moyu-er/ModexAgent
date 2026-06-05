@@ -137,6 +137,9 @@ class MemorySystemContextManager(ContextManager):
             CompositeGovernance,
             UserRetentionBufferInjectionGovernance,
         )
+        from framework.memory.layers.config import UserRetentionBufferConfig
+
+        # Mirror the URB layer's default entry limit (5) for injection.
         injector = UserRetentionBufferInjectionGovernance(
             urb=urb,
             context_factory=lambda: (
@@ -148,6 +151,7 @@ class MemorySystemContextManager(ContextManager):
                     agent_role=self.default_agent_role,
                 )
             ),
+            max_entries=UserRetentionBufferConfig().max_entries,
         )
         if governance is not None:
             return CompositeGovernance([governance, injector])

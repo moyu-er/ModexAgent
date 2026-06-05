@@ -143,17 +143,43 @@ class PrunedManager:
         if not storage.has_content():
             return None
         path = escape(storage.get_directory_path())
-        return (
-            "<memory_archives>\n"
-            "<!-- Pruned conversation segments are stored as read-only files in the directory below.\n"
-            "     An index.jsonl in the same directory catalogs each segment with topic, time range,\n"
-            "     and file path.\n"
-            "     NOTE: index.jsonl is editable — you should update it to improve topic descriptions\n"
-            "     or categorization when you have better context. The pruned segment files themselves\n"
-            "     must NOT be modified. -->\n"
-            f'  <directory path="{path}"/>\n'
-            "</memory_archives>"
-        )
+        lines: list[str] = [
+            "<memory_archives>",
+            "<!-- Pruned conversation segments are stored as read-only files in the directory below.",
+            "     An index.jsonl in the same directory catalogs each segment with topic, time range,",
+            "     and file path.",
+            "     NOTE: index.jsonl is editable — you should update it to improve topic descriptions",
+            "     or categorization when you have better context. The pruned segment files themselves",
+            "     must NOT be modified. -->",
+            f'  <directory path="{path}"/>',
+        ]
+
+        # Embed recent index entries so the agent sees what happened
+        # without having to read files first.
+        entries = storage.read_index()
+        recent = entries[-3:] if entries else []
+        if recent:
+            lines.append("  <recent_segments>")
+            for e in recent:
+                time_range = (
+                    f"{e.start_time_display} ~ {e.end_time_display}"
+                    if e.start_time_display and e.end_time_display
+                    else e.cleanup_time_display
+                )
+                topic = e.topic or f"Segment {e.id} ({e.message_count} messages)"
+                if len(topic) > 200:
+                    topic = topic[:200] + "..."
+                lines.append(
+                    f'    <segment id="{e.id}"'
+                    f' messages="{e.message_count}"'
+                    f' time="{escape(time_range)}">'
+                    f"{escape(topic)}"
+                    f"</segment>"
+                )
+            lines.append("  </recent_segments>")
+
+        lines.append("</memory_archives>")
+        return "\n".join(lines)
 
     # -- private helpers -----------------------------------------------------
 

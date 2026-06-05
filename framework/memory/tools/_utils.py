@@ -17,8 +17,8 @@ def validate_scoped_path(raw_path: str, allowed_dirs: list[Path]) -> Path:
             return resolved
         except ValueError:
             continue
-    allowed_str = "\n".join(f"  - {d}" for d in allowed_dirs)
+    allowed_str = "; ".join(str(d) for d in allowed_dirs)
     raise ValueError(
-        f"Path '{raw_path}' is outside allowed directories.\n"
-        f"Allowed directories:\n{allowed_str}"
+        f"ACCESS DENIED — you can ONLY access: {allowed_str}. "
+        f"The path you requested ('{raw_path}') is outside this scope."
     )

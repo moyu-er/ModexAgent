@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape as xml_escape
 
@@ -290,15 +291,17 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
             truncated = len(content) > 150
             display = content[:150] + "..." if truncated else content
 
+            full_path = self._archive_file_path(archive_dir, aid)
             if truncated:
                 records.append(
                     f'<record archive_id="{aid}"'
-                    f' file="archive/{aid}/context.md">'
+                    f' file="{xml_escape(full_path)}">'
                     f"{xml_escape(display)}</record>"
                 )
             else:
                 records.append(
-                    f'<record archive_id="{aid}">'
+                    f'<record archive_id="{aid}"'
+                    f' file="{xml_escape(full_path)}">'
                     f"{xml_escape(display)}</record>"
                 )
 
@@ -312,6 +315,10 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         )
         sections.append(_PromptSection(content=xml, priority=70))
         return True
+
+    def _archive_file_path(self, archive_dir: Path, archive_id: int) -> str:
+        """Return absolute path to archive context.md for injection XML."""
+        return str((archive_dir / str(archive_id) / "context.md").resolve())
 
     def _inject_pruned_catalog(
         self, sections: list[_PromptSection], context: MemoryContext,
