@@ -48,6 +48,6 @@ async def test_write_rejects_outside_dir(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_description_has_no_paths(tmp_path: Path) -> None:
+async def test_description_contains_allowed_paths(tmp_path: Path) -> None:
     tool = ScopedWriteFileTool(allowed_dirs=[tmp_path])
-    assert str(tmp_path) not in tool.description
+    assert str(tmp_path) in tool.description
