@@ -66,11 +66,12 @@ class ProcessStatus(StrEnum):
 class CommandResultStatus(StrEnum):
     """CommandTool return status — used in command_result XML."""
 
-    COMPLETED = "completed"
-    RUNNING = "running"
-    TIMED_OUT = "timed_out"
-    PAGINATED = "paginated"
-    INPUT_WAIT = "input_wait"
+    COMPLETED     = "completed"
+    EXECUTING     = "executing"      # was: running
+    TIMED_OUT     = "timed_out"
+    PAGINATED     = "paginated"
+    WAITING_INPUT = "waiting_input"  # was: input_wait
+    STUCK         = "stuck"          # new
 
 
 class TerminalCommandStatus(StrEnum):

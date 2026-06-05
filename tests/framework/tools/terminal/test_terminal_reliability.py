@@ -188,7 +188,7 @@ class TestCommandOutputIncludesTabIdentity:
 
         result = await ct.execute(command="npm run dev")
 
-        assert "<status>running</status>" in result
+        assert "<status>executing</status>" in result
         # Agent must know which tab the running command is on
         assert "<terminal>" in result or "<tab>" in result or "terminal=" in result
 

@@ -20,6 +20,7 @@ from framework.tools.terminal.managers import TerminalManagerBase
 from framework.tools.terminal.process_registry import ProcessRegistry, RunningSessionRuntime
 from framework.tools.terminal.prompt import (
     detect_pager_entry,
+    is_waiting_for_input,
     resolve_cursor_line,
     sanitize_terminal_output,
 )
@@ -92,9 +93,9 @@ class CommandTool(Tool):
             "to create a new session (it auto-selects).\n\n"
             "Do NOT re-run setup commands (cd, source, export, etc.) that were "
             "already executed in this session.\n\n"
-            "Returns <command_result> XML with <status>: completed, running, "
-            "timed_out, paginated, or input_wait. If <status> is not 'completed', "
-            "use 'process log' or 'terminal current' to check the state.\n\n"
+            "Returns <command_result> XML with <status>: completed, executing, "
+            "timed_out, paginated, waiting_input, or stuck. If <status> is not 'completed', "
+            "use 'terminal current' to check the state.\n\n"
             "IMPORTANT: If a command asks for a password, STOP and ask the user. "
             "NEVER guess or invent passwords."
         )
@@ -223,12 +224,24 @@ class CommandTool(Tool):
                 )
                 return self._format_timed_out(output_parts, timeout_seconds, elapsed_ms, terminal=terminal_name)
 
-            # 4. waiting_for_input hint
-            runtime = self._registry.running_runtime(proc.id)
-            if runtime is not None and runtime.waiting_for_input:
-                return await self._format_running(session, output_parts, runtime, elapsed_ms, terminal=terminal_name)
+            # 4. Content-based input-wait detection (fast path)
+            if output_received:
+                raw_output = "".join(output_parts)
+                if is_waiting_for_input(raw_output):
+                    runtime = self._registry.running_runtime(proc.id)
+                    return await self._format_running(
+                        session, output_parts, runtime, elapsed_ms,
+                        detected_input_wait=True, terminal=terminal_name,
+                    )
 
-            # 5. yield_ms elapsed
+            # 5. Stuck detection: 15s no raw bytes AND no input markers
+            raw_idle_ms = int((time.monotonic() - session._last_byte_at) * 1000)
+            if raw_idle_ms >= 15_000:
+                if not is_waiting_for_input("".join(output_parts)):
+                    runtime = self._registry.running_runtime(proc.id)
+                    return self._format_stuck(output_parts, raw_idle_ms, elapsed_ms, terminal=terminal_name)
+
+            # 6. Yield window — command still executing
             if elapsed_ms >= yield_window_ms:
                 return await self._format_running(session, output_parts, None, elapsed_ms, terminal=terminal_name)
 
@@ -254,29 +267,31 @@ class CommandTool(Tool):
         runtime: RunningSessionRuntime | None,
         elapsed_ms: int,
         *,
+        detected_input_wait: bool = False,
         terminal: str | None = None,
     ) -> str:
         raw = "".join(output_parts)
         output = sanitize_terminal_output(raw).rstrip()
         idle_ms = runtime.idle_ms if runtime else None
 
-        if runtime is not None and runtime.waiting_for_input:
+        is_input_wait = detected_input_wait or (runtime is not None and runtime.waiting_for_input)
+        if is_input_wait:
             message = (
-                f"No new output for {runtime.idle_ms // 1000}s; this session may be "
-                "waiting for input. Use process write, send_keys, submit, or paste "
-                "to provide input."
+                f"No new output for {(runtime.idle_ms if runtime else 0) // 1000}s; "
+                "this session may be waiting for input. "
+                "Use process write, send_keys, submit, or paste to provide input."
             )
             return _build_command_xml(
-                output, CommandResultStatus.INPUT_WAIT, elapsed_ms,
+                output, CommandResultStatus.WAITING_INPUT, elapsed_ms,
                 terminal=terminal, idle_ms=idle_ms, message=message,
             )
 
         message = (
-            "Command still running. Use process log for status, "
+            "Command still executing. Use terminal current to check progress, "
             "process write/send_keys/paste for input."
         )
         xml = _build_command_xml(
-            output, CommandResultStatus.RUNNING, elapsed_ms,
+            output, CommandResultStatus.EXECUTING, elapsed_ms,
             terminal=terminal, idle_ms=idle_ms, message=message,
         )
 
@@ -288,8 +303,37 @@ class CommandTool(Tool):
                     "</command_result>",
                     f"\n<tui_screen>{xml_escape(tui_text)}</tui_screen>\n</command_result>",
                 )
+        else:
+            segment = await terminal_session.current_segment()
+            cursor = resolve_cursor_line(segment)
+            if cursor.strip():
+                cursor_text = sanitize_terminal_output(cursor).rstrip()
+                xml = xml.replace(
+                    "</command_result>",
+                    f"\n<cursor_line>{xml_escape(cursor_text)}</cursor_line>\n</command_result>",
+                )
 
         return xml
+
+    @staticmethod
+    def _format_stuck(
+        output_parts: list[str],
+        raw_idle_ms: int,
+        elapsed_ms: int,
+        *,
+        terminal: str | None = None,
+    ) -> str:
+        raw = "".join(output_parts)
+        output = sanitize_terminal_output(raw).rstrip()
+        message = (
+            f"No terminal activity for {raw_idle_ms // 1000}s. "
+            "The command may be stuck. Use process interrupt to send Ctrl+C, "
+            "or terminal current to check the screen."
+        )
+        return _build_command_xml(
+            output, CommandResultStatus.STUCK, elapsed_ms,
+            terminal=terminal, idle_ms=raw_idle_ms, message=message,
+        )
 
     @staticmethod
     def _format_timed_out(
