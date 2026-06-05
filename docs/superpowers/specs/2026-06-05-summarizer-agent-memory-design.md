@@ -23,6 +23,7 @@ Redesign the memory system's archive and knowledge layers so that:
 | Pruned relationship | index.md is data source for PrunedManager; PrunedManager still handles injection |
 | Cleanup ordering | archive → pruned index refresh → session cleanup → archive_id commit |
 | Idempotency | On retry, check directory completeness; skip if intact, overwrite if partial |
+| Archive skip guarantee | If archive_id dir exists and all 3 MD files present → skip agent generation entirely |
 | Storage format | MD files replace JSONL for all consumption |
 | Tool scoping | System prompt declares allowed dirs + tools validate paths at runtime |
 | Knowledge injection | Unchanged — no truncation changes, only update method changes |
@@ -227,13 +228,21 @@ Target (cleanup_session):
 - Pruned index is ready before session cleanup
 - Archive_id only increments after all steps succeed
 
-### Idempotency
+### Idempotency & Archive Skip Guarantee
+
+**Safety rule: never regenerate a completed archive.**
 
 - `next_archive_id` computed from `state.json` but NOT written until Step 4.
-- Step 1 checks if `archive/{next_archive_id}/` exists and is complete (all three MD files present and non-empty):
-  - Complete → skip agent call, reuse existing files.
-  - Incomplete → overwrite and regenerate.
-- If Steps 2–3 fail, archive_id is not incremented; next retry can reuse the same directory.
+- **Before calling ArchiveSummarizer**, the framework checks `archive/{next_archive_id}/`:
+  - **Directory exists AND all three MD files present AND non-empty** → **SKIP agent generation entirely**. Use existing files. No LLM call, no agent invocation, no token cost.
+  - **Directory missing** → create directory, run agent.
+  - **Directory exists but files incomplete** (missing or empty) → overwrite and regenerate.
+- If Steps 2–3 fail, archive_id is not incremented; next retry finds the complete directory and skips.
+
+This guarantee ensures:
+1. **No duplicate work**: A successful archive is never regenerated, even if subsequent steps fail and trigger retry.
+2. **No token waste**: The LLM agent is only invoked when actually needed.
+3. **Crash safety**: If the process crashes after Step 1 but before Step 4, the next cleanup finds the completed archive and skips straight to Step 2.
 
 ### Failure Handling
 

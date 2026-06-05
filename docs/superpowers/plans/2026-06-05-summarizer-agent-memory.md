@@ -1339,8 +1339,11 @@ In `framework/memory/cleanup.py`, add `archive_agent: ArchiveSummarizer | None =
 
 Key changes:
 1. When `archive_agent is not None`, compute `next_archive_id` from state but do NOT write it.
-2. Check if `archive_dir / str(next_archive_id)` is complete — skip if yes.
-3. Run `archive_agent.generate(pruned_messages, archive_dir)`.
+2. **Archive Skip Guarantee** — Before running the agent, call `is_archive_complete(next_archive_id)`:
+   - **Complete** (directory exists, all 3 MD files present and non-empty) → **SKIP agent entirely**. No LLM call, no token cost. Log: `"Archive {id} already complete, skipping generation"`.
+   - **Directory missing** → create directory, run agent.
+   - **Incomplete** → overwrite and regenerate.
+3. Only if NOT skipped: run `archive_agent.generate(pruned_messages, archive_dir)`.
 4. After session commit, call `_pruned_full_refresh`.
 5. Finally increment `next_archive_id` in state.
 
@@ -1352,7 +1355,8 @@ Add tests in `tests/unit/memory/test_cleanup.py`:
 - `test_cleanup_with_archive_agent_generates_md_files`
 - `test_cleanup_archive_agent_failure_falls_back_to_no_archive`
 - `test_cleanup_archive_id_only_increments_on_success`
-- `test_cleanup_skips_agent_if_archive_dir_complete`
+- `test_cleanup_skips_agent_if_archive_dir_complete` — verifies: no LLM call when archive already exists with all 3 files
+- `test_cleanup_regenerates_if_archive_dir_incomplete` — verifies: agent runs when directory exists but files are missing/empty
 
 - [ ] **Step 4: Run tests**
 
