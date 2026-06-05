@@ -21,3 +21,4 @@ directly, so keep active agent rule files in sync when this file changes.
 6. Avoid dynamic access patterns such as `getattr`, `hasattr`, `*attr` unless they are necessary for a real
    extension boundary or compatibility layer. Prefer explicit typed attributes and
    method calls so contracts stay visible and checkable.
+7. Use ABC (Abstract Base Classes) for defining interfaces and extension points, avoid using Protocols.
