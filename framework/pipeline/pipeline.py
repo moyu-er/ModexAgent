@@ -375,6 +375,15 @@ class AgentPipeline:
         task = self._session_tasks.get(session_id)
         return task is not None and not task.done()
 
+    def has_active_sessions(self) -> bool:
+        """Return True if any session has a running agent turn.
+
+        Used by workspace cd/exit to check whether switching is safe.
+        Subagent turns are covered — they run within their parent
+        session's task and are tracked here.
+        """
+        return any(not task.done() for task in self._session_tasks.values())
+
     def get_active_turn_uuid(self, session_id: str) -> str | None:
         """Get turn UUID for the currently executing turn, or None."""
         if not self.is_session_active(session_id):

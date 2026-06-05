@@ -105,7 +105,7 @@ class InputAdapter(ABC):
         from framework.multi_agent.session_id import DefaultSessionIdStrategy
         canonical_sid = DefaultSessionIdStrategy().normalize(session_id)
 
-        from framework.commands.constants import CommandDispatchPolicy
+        from framework.commands.constants import BuiltinCommand, CommandDispatchPolicy
         from framework.commands.models import CommandContext
 
         ctx = CommandContext(
@@ -113,6 +113,23 @@ class InputAdapter(ABC):
             input_msg=InputMessage(content=text, session_id=canonical_sid),
             agent_name="main",
         )
+
+        # Workspace switch commands (cd/exit) are handled at the adapter
+        # layer — they never trigger agent sessions or change agent state.
+        # This avoids self-blocking: the command's own dispatch would
+        # otherwise appear as an "active agent" in pool mode.
+        if parse_result.invocation.command in (
+            BuiltinCommand.CD.value,
+            BuiltinCommand.EXIT.value,
+        ):
+            result = await processor.handle(text, ctx)
+            if result.notice and output:
+                await output.send(
+                    OutputMessage(content=result.notice, session_id=session_id),
+                    session_id,
+                )
+            return True
+
         policy = processor.dispatch_policy(parse_result.invocation, ctx)
         if policy != CommandDispatchPolicy.BYPASS_QUEUE:
             return False

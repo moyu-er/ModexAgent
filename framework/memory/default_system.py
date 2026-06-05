@@ -397,6 +397,15 @@ class DefaultMemorySystem(MemorySystem):
                 logger.debug("Provider prefetch failed", exc_info=True)
         return "\n\n".join(blocks) if blocks else None
 
+    async def ensure_within_budget(self, context: MemoryContext) -> None:
+        """Pre-load budget hook.
+
+        Called by MemorySystemContextManager.load() before every LLM request.
+        It must not emit post-write lifecycle events; explicit budget
+        enforcement should use a dedicated read/check policy.
+        """
+        _ = context
+
     async def _resolve_archive_storage(self, context: MemoryContext) -> Any:
         archive = self._layers.archive
         from framework.memory.core.scope import UserScope
