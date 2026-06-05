@@ -12,7 +12,6 @@ from typing import Any
 import pytest
 
 from framework.core.types import MessageRole
-from framework.memory.archive_generation import ArchiveGenerationStrategy
 from framework.memory.archive_models import (
     ArchiveChannel,
     ArchiveGenerationInputs,
@@ -29,7 +28,7 @@ from framework.memory.registry.in_memory import InMemoryStoreRegistry
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 
-class MockArchiveGenerationStrategy(ArchiveGenerationStrategy):
+class _MockArchiveGen:  # old archive_strategy path removed
     """Returns a deterministic archive bundle (context + knowledge)."""
 
     def __init__(
@@ -68,7 +67,7 @@ class MockArchiveGenerationStrategy(ArchiveGenerationStrategy):
         )
 
 
-class EmptyArchiveGenerationStrategy(ArchiveGenerationStrategy):
+class _EmptyArchiveGen:  # old archive_strategy path removed
     """Returns an empty archive bundle (used to test all-or-nothing skip)."""
 
     async def generate(self, messages, context, reason):
@@ -92,7 +91,6 @@ def _bot_project_system(
     registry: InMemoryStoreRegistry,
     max_messages: int = 50,
     keep_ratio: float = 0.5,
-    archive_strategy: ArchiveGenerationStrategy | None = None,
 ) -> DefaultMemorySystem:
     """Create a DefaultMemorySystem wired like bot_project (with cleanup_config)."""
     layer_set = MemoryLayerFactory.single_user(registry=registry)
@@ -103,7 +101,7 @@ def _bot_project_system(
     return DefaultMemorySystem(
         layer_set=layer_set,
         store_registry=registry,
-        archive_strategy=archive_strategy,
+        
         cleanup_config=cleanup_config,
     )
 
@@ -120,8 +118,8 @@ async def test_multi_turn_triggers_cleanup_at_threshold():
     """After >50 turns through ScopedMessageHistory, cleanup fires and
     archive is written. Session stays within the max_messages window."""
     registry = InMemoryStoreRegistry()
-    mock = MockArchiveGenerationStrategy()
-    system = _bot_project_system(registry, archive_strategy=mock)
+    mock = _MockArchiveGen()
+    system = _bot_project_system(registry)
     await system.initialize()
     ctx = _make_ctx("multi-turn")
 
@@ -141,8 +139,8 @@ async def test_multi_turn_triggers_cleanup_at_threshold():
 async def test_cleanup_respects_threshold():
     """After cleanup, adding a few more messages does not re-trigger until threshold is exceeded."""
     registry = InMemoryStoreRegistry()
-    mock = MockArchiveGenerationStrategy()
-    system = _bot_project_system(registry, max_messages=10, archive_strategy=mock)
+    mock = _MockArchiveGen()
+    system = _bot_project_system(registry, max_messages=10)
     await system.initialize()
     ctx = _make_ctx("threshold")
 
@@ -170,8 +168,8 @@ async def test_cleanup_respects_threshold():
 async def test_second_cleanup_fires_when_over_threshold():
     """After sufficiently many new messages past threshold, cleanup re-fires."""
     registry = InMemoryStoreRegistry()
-    mock = MockArchiveGenerationStrategy()
-    system = _bot_project_system(registry, max_messages=10, archive_strategy=mock)
+    mock = _MockArchiveGen()
+    system = _bot_project_system(registry, max_messages=10)
     await system.initialize()
     ctx = _make_ctx("recompress")
 
@@ -197,8 +195,8 @@ async def test_second_cleanup_fires_when_over_threshold():
 async def test_tool_chains_intact_after_cascade():
     """After multi-turn cleanup, kept suffix has no orphan tool results."""
     registry = InMemoryStoreRegistry()
-    mock = MockArchiveGenerationStrategy()
-    system = _bot_project_system(registry, max_messages=8, archive_strategy=mock)
+    mock = _MockArchiveGen()
+    system = _bot_project_system(registry, max_messages=8)
     await system.initialize()
     ctx = _make_ctx("tool-chain-cascade")
 
@@ -234,11 +232,11 @@ async def test_tool_chains_intact_after_cascade():
 async def test_archive_uses_mock_summarizer_output():
     """When archive strategy is wired, archive content matches mock output."""
     registry = InMemoryStoreRegistry()
-    mock = MockArchiveGenerationStrategy(
+    mock = _MockArchiveGen(
         canned_context="[MOCK] compressed to archive",
         canned_knowledge="[MOCK] compressed to archive",
     )
-    system = _bot_project_system(registry, max_messages=5, archive_strategy=mock)
+    system = _bot_project_system(registry, max_messages=5)
     await system.initialize()
     ctx = _make_ctx("mock-summary")
 
@@ -258,8 +256,8 @@ async def test_archive_uses_mock_summarizer_output():
 async def test_archive_skips_empty_generation():
     """Empty archive generation should not produce archive entries."""
     registry = InMemoryStoreRegistry()
-    mock = EmptyArchiveGenerationStrategy()
-    system = _bot_project_system(registry, max_messages=5, archive_strategy=mock)
+    mock = _EmptyArchiveGen()
+    system = _bot_project_system(registry, max_messages=5)
     await system.initialize()
     ctx = _make_ctx("nothing-sentinel")
 
@@ -403,11 +401,11 @@ async def test_knowledge_replace_text_updates_in_place():
 async def test_archive_merges_multiple_cleanup_rounds():
     """Multiple cleanup rounds produce cumulative archive entries."""
     registry = InMemoryStoreRegistry()
-    mock = MockArchiveGenerationStrategy(
+    mock = _MockArchiveGen(
         canned_context="[MOCK] round context",
         canned_knowledge="[MOCK] round knowledge",
     )
-    system = _bot_project_system(registry, max_messages=10, archive_strategy=mock)
+    system = _bot_project_system(registry, max_messages=10)
     await system.initialize()
     ctx = _make_ctx("multi-compress")
 
@@ -454,8 +452,8 @@ async def test_empty_session_no_cleanup():
 async def test_session_only_messages_no_duplicate_cleanup_trigger():
     """Cleanup does not fire on every single message -- threshold-based trigger works."""
     registry = InMemoryStoreRegistry()
-    mock = MockArchiveGenerationStrategy()
-    system = _bot_project_system(registry, max_messages=10, archive_strategy=mock)
+    mock = _MockArchiveGen()
+    system = _bot_project_system(registry, max_messages=10)
     await system.initialize()
     ctx = _make_ctx("no-dupe")
 
@@ -744,11 +742,11 @@ async def test_injection_preserves_tool_messages_by_default():
 async def test_three_tier_memory_cascade_preserves_tool_context():
     """Full cascade: add tool-heavy messages -> cleanup -> archive with tool context."""
     registry = InMemoryStoreRegistry()
-    mock = MockArchiveGenerationStrategy(
+    mock = _MockArchiveGen(
         canned_context="[ARCHIVE] user asked about weather, used shell+web_search, got sunny 28C",
         canned_knowledge="[ARCHIVE] user asked about weather, used shell+web_search, got sunny 28C",
     )
-    system = _bot_project_system(registry, max_messages=5, archive_strategy=mock)
+    system = _bot_project_system(registry, max_messages=5)
     await system.initialize()
     ctx = _make_ctx("three-tier")
 
@@ -786,13 +784,13 @@ async def test_archive_entries_are_meaningful_for_dream_engine():
     from framework.memory.consolidation.dream_engine import DreamEngine
 
     registry = InMemoryStoreRegistry()
-    mock = MockArchiveGenerationStrategy(
+    mock = _MockArchiveGen(
         canned_context="[ARCHIVE] user: fix login bug | tools: read_file(auth.py), shell(git log) | "
                      "decision: use JWT instead of session | state: branch fix/auth, tests fail",
         canned_knowledge="[ARCHIVE] user: fix login bug | tools: read_file(auth.py), shell(git log) | "
                         "decision: use JWT instead of session | state: branch fix/auth, tests fail",
     )
-    system = _bot_project_system(registry, max_messages=3, archive_strategy=mock)
+    system = _bot_project_system(registry, max_messages=3)
     await system.initialize()
     ctx = _make_ctx("dream-input")
 
