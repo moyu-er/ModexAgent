@@ -436,6 +436,27 @@ class BufferingEmitter(ContentEmitter[E]):
         return result
 
 
+class NoOpEmitter(ContentEmitter[Any]):
+    """Discards all emissions. Use when agent output is not needed.
+
+    Useful for background agents (archive summarizer, knowledge consolidator)
+    where the side-effects (file writes via tools) are the important output,
+    not the agent's textual response.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+
+    async def emit_delta(self, delta: str) -> None:
+        pass
+
+    async def emit_complete(self, result: AgentResult) -> None:
+        pass
+
+    async def emit_error(self, error: str) -> None:
+        pass
+
+
 class LoggingEmitter(ContentEmitter[E]):
     """日志发送器 - 仅记录日志，不发送
 
