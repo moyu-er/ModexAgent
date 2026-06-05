@@ -73,6 +73,19 @@ class CommandResultStatus(StrEnum):
     INPUT_WAIT = "input_wait"
 
 
+class TerminalCommandStatus(StrEnum):
+    """Unified terminal status — used by terminal current, CommandTool, and session layer."""
+
+    UNKNOWN       = "unknown"
+    IDLE          = "idle"
+    EXECUTING     = "executing"
+    WAITING_INPUT = "waiting_input"
+    STUCK         = "stuck"
+    COMPLETED     = "completed"
+    TIMED_OUT     = "timed_out"
+    PAGINATED     = "paginated"
+
+
 # XML root tag → list of element names whose text content is safe to truncate.
 # Defined once here so governance code does not hard-code element names.
 _TERMINAL_XML_TRUNCATABLE: dict[str, list[str]] = {
