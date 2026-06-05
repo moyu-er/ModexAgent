@@ -16,6 +16,7 @@ class FakeTerminal:
         self.cursor_key_mode = "unknown"
         self.bracketed_paste_enabled = False
         self._segment = None
+        self._last_byte_at: float = 0.0
 
     async def write(self, data: str) -> None:
         self.writes.append(data)

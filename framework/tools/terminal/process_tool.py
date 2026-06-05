@@ -49,58 +49,22 @@ async def _drain_terminal_after_action(
     session_id: str,
     config: TerminalRuntimeConfig,
 ) -> str:
-    """Read terminal output after write/submit. Reuses CommandTool timing:
+    """Read terminal output after write/submit. Uses shared poll_until_settled:
     yield_ms as soft deadline, default_command_timeout as hard timeout,
     prompt detection for early completion.
     """
+    from framework.tools.terminal.poll_loop import poll_until_settled
     from framework.tools.terminal.prompt import sanitize_terminal_output
-    import asyncio as _asyncio
-    import time as _time
 
-    yield_window_ms = config.default_yield_ms
-    hard_timeout_s = config.default_command_timeout_seconds
-    start = _time.monotonic()
+    result = await poll_until_settled(
+        terminal_session, registry, session_id, config,
+        yield_ms=config.default_yield_ms,
+        timeout_seconds=config.default_command_timeout_seconds,
+        check_input_wait=False,
+    )
 
-    output_parts: list[str] = []
-    output_received = False
-    prompt_stable_since: float | None = None
-
-    while True:
-        elapsed_ms = int((_time.monotonic() - start) * 1000)
-
-        read = await terminal_session.poll_once(timeout=0.05)
-        if read.stdout:
-            registry.append_output(session_id, "stdout", read.stdout)
-            output_parts.append(read.stdout)
-            output_received = True
-            prompt_stable_since = None
-        if read.stderr:
-            registry.append_output(session_id, "stderr", read.stderr)
-            output_parts.append(read.stderr)
-
-        # Hard timeout
-        if elapsed_ms >= hard_timeout_s * 1000:
-            break
-
-        # Prompt detection (same as CommandTool)
-        if output_received:
-            segment = await terminal_session.current_segment()
-            if segment.is_empty_prompt:
-                if prompt_stable_since is None:
-                    prompt_stable_since = _time.monotonic()
-                elif (_time.monotonic() - prompt_stable_since) * 1000 >= config.prompt_stabilize_ms:
-                    break
-            else:
-                prompt_stable_since = None
-
-        # Yield window
-        if elapsed_ms >= yield_window_ms:
-            break
-
-        await _asyncio.sleep(0.05)
-
-    if output_parts:
-        return sanitize_terminal_output("".join(output_parts)).rstrip()
+    if result.output_parts:
+        return sanitize_terminal_output("".join(result.output_parts)).rstrip()
     return ""
 
 
