@@ -13,7 +13,7 @@ from typing import Any
 
 from framework.agents.react.agent import ReActAgent
 from framework.core.agent import AgentContext
-from framework.core.emitter import NoOpEmitter
+from framework.agents.summarizer.emitter import SummarizerTrajectoryEmitter
 from framework.core.tool_manager import InMemoryToolManager
 from framework.memory.history import ListMessageHistory
 from framework.memory.tools import (
@@ -52,7 +52,7 @@ class KnowledgeConsolidator:
     def __init__(
         self,
         provider: Any,
-        max_iterations: int = 20,
+        max_iterations: int = 25,
     ) -> None:
         from framework.core.provider import LLMProvider
 
@@ -176,13 +176,23 @@ class KnowledgeConsolidator:
 
         user_msg = (
             "Read the archive knowledge.md files listed in the system prompt.\n"
-            "Analyze them and update the knowledge files (SOUL.md/USER.md/MEMORY.md).\n\n"
+            "Analyze them and update the knowledge files (SOUL.md/USER.md/MEMORY.md).\n"
+            "Use ONLY the read/write/edit/ls tools. Do NOT call bash, shell, python, "
+            "or any other tool.\n\n"
             + "\n\n".join(knowledge_context)
         )
 
+        trace_key = "_".join(str(aid) for aid in archive_ids) or "none"
+
         # Retry once on failure
         for attempt in range(2):
-            if await self._run_agent(archive_dirs, knowledge_dir, user_msg):
+            if await self._run_agent(
+                archive_dirs,
+                knowledge_dir,
+                user_msg,
+                archive_base=archive_base,
+                trace_key=trace_key,
+            ):
                 return True
             logger.warning(
                 "KnowledgeConsolidator attempt %d failed for archive_ids=%s",
@@ -197,6 +207,8 @@ class KnowledgeConsolidator:
         archive_dirs: list[Path],
         knowledge_dir: Path,
         user_msg: str,
+        archive_base: Path,
+        trace_key: str,
     ) -> bool:
         """Run the ReAct agent once. Returns True on success, False on failure.
 
@@ -229,7 +241,12 @@ class KnowledgeConsolidator:
             temperature=0.2,
         )
 
-        emitter = NoOpEmitter()
+        trace_path = archive_base / "traces" / f"consolidator-{trace_key}.jsonl"
+        emitter = SummarizerTrajectoryEmitter(
+            session_id=f"knowledge-consolidator-{trace_key}",
+            agent_name="KnowledgeConsolidator",
+            trace_path=trace_path,
+        )
 
         try:
             await self._react_agent.run(context, emitter)

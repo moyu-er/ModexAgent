@@ -12,7 +12,7 @@ from typing import Any, Sequence
 
 from framework.agents.react.agent import ReActAgent
 from framework.core.agent import AgentContext
-from framework.core.emitter import NoOpEmitter
+from framework.agents.summarizer.emitter import SummarizerTrajectoryEmitter
 from framework.core.tool_manager import InMemoryToolManager
 from framework.memory.history import ListMessageHistory
 from framework.memory.tools import (
@@ -25,6 +25,16 @@ from framework.memory.tools import (
 logger = logging.getLogger(__name__)
 
 _ARCHIVE_FILES = ("context.md", "knowledge.md", "index.md")
+
+# Max chars to keep per message role when feeding transcript to the archive agent.
+# Tool outputs can be huge; user/assistant content is usually more concise.
+_CONTENT_LIMITS: dict[str, int] = {
+    "user": 4000,
+    "assistant": 4000,
+    "agent": 4000,
+    "tool": 1200,
+    "system": 800,
+}
 
 # Cached PromptRegistry — created once at module load
 _prompt_registry = None
@@ -46,7 +56,7 @@ class ArchiveSummarizerConfig:
     context_max_chars: int = 500
     knowledge_max_chars: int = 600
     index_max_chars: int = 100
-    max_iterations: int = 20
+    max_iterations: int = 25
 
 
 @dataclass(frozen=True)
@@ -133,6 +143,65 @@ class ArchiveSummarizer:
         return prompt
 
     @staticmethod
+    def filter_messages(messages: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Strip pruned messages to only fields the archive agent needs.
+
+        Removes tool_calls, tool_call_id, metadata and other internal fields
+        so the LLM does not confuse raw JSON with available tools or try to
+        reproduce tool invocation protocol.
+        """
+        filtered: list[dict[str, Any]] = []
+        for msg in messages:
+            role = str(msg.get("role", "unknown"))
+            content = msg.get("content")
+            if content is None:
+                content = ""
+            elif isinstance(content, list):
+                # Extract text from multi-part content
+                content = " ".join(
+                    str(part.get("text", ""))
+                    for part in content
+                    if isinstance(part, dict)
+                )
+            else:
+                content = str(content)
+
+            # Drop empty messages (unless tool result has a name)
+            name = msg.get("name")
+            if not content.strip() and not name:
+                continue
+
+            # Truncate oversized content
+            limit = _CONTENT_LIMITS.get(role, 2000)
+            if len(content) > limit:
+                content = content[:limit] + f"\n... ({len(content)} chars total)"
+
+            clean: dict[str, Any] = {
+                "role": role,
+                "content": content,
+            }
+            if role == "tool" and name:
+                clean["name"] = str(name)
+
+            # Preserve created_at for time-range context
+            created_at = msg.get("created_at")
+            if created_at is not None:
+                clean["created_at"] = created_at
+
+            # Preserve a simple hint that assistant used tools, but NOT the raw tool_calls JSON
+            if role == "assistant" and msg.get("tool_calls"):
+                tool_names: list[str] = []
+                for tc in msg.get("tool_calls", []):
+                    if isinstance(tc, dict):
+                        fn = tc.get("function", {})
+                        tool_names.append(fn.get("name", "?"))
+                if tool_names:
+                    clean["tool_names"] = tool_names
+
+            filtered.append(clean)
+        return filtered
+
+    @staticmethod
     def format_transcript(messages: Sequence[dict[str, Any]]) -> str:
         """Format messages into a plain-text transcript with timestamps.
 
@@ -168,11 +237,15 @@ class ArchiveSummarizer:
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
 
-            if role == "assistant" and msg.get("tool_calls"):
+            if role == "assistant" and (msg.get("tool_names") or msg.get("tool_calls")):
+                raw_names = msg.get("tool_names") or msg.get("tool_calls", [])
                 tool_names: list[str] = []
-                for tc in msg.get("tool_calls", []):
-                    fn = tc.get("function", {}) if isinstance(tc, dict) else {}
-                    tool_names.append(fn.get("name", "?"))
+                for tc in raw_names:
+                    if isinstance(tc, str):
+                        tool_names.append(tc)
+                    elif isinstance(tc, dict):
+                        fn = tc.get("function", {}) if isinstance(tc, dict) else {}
+                        tool_names.append(fn.get("name", "?"))
                 if content:
                     lines.append(f"[assistant -> tools: {', '.join(tool_names)}] {content}")
                 else:
@@ -221,6 +294,9 @@ class ArchiveSummarizer:
             f"  3. index.md — 1-line topic description for the pruned catalog"
             f" (max {self._config.index_max_chars} chars)\n"
             f"\n"
+            f"Use ONLY the read/write/edit/ls tools. Do NOT call bash, shell, python, "
+            f"or any other tool.\n"
+            f"\n"
             f"Archive ID: {archive_id}\n"
             f"Directory: {archive_dir}\n"
             f"Write all three files then stop. No further interaction is needed.\n"
@@ -249,8 +325,11 @@ class ArchiveSummarizer:
         # Ensure directory exists
         archive_dir.mkdir(parents=True, exist_ok=True)
 
+        # Strip internal fields so the LLM never sees raw tool_calls / metadata
+        filtered_messages = self.filter_messages(pruned_messages)
+
         # Format transcript
-        transcript = self.format_transcript(pruned_messages)
+        transcript = self.format_transcript(filtered_messages)
 
         # Empty transcript: write 3 empty files
         if not transcript.strip():
@@ -325,7 +404,12 @@ class ArchiveSummarizer:
             max_iterations=self._config.max_iterations,
         )
 
-        emitter = NoOpEmitter()
+        trace_path = archive_dir.parent / "traces" / f"archive-{archive_id}.jsonl"
+        emitter = SummarizerTrajectoryEmitter(
+            session_id=f"archive-summarizer-{archive_id}",
+            agent_name="ArchiveSummarizer",
+            trace_path=trace_path,
+        )
 
         try:
             await self._react_agent.run(context, emitter)
@@ -345,6 +429,6 @@ class ArchiveSummarizer:
 
         return ArchiveSummarizerResult(
             success=True,
-            archive_id=0,
+            archive_id=archive_id,
             files_written=tuple(files_written),
         )

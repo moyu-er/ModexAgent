@@ -104,7 +104,7 @@ class CompressionResult:
 class MemoryBudget:
     max_system_prompt_tokens: int | None = None
     max_total_tokens: int | None = None
-    max_history_messages: int = 50
+    max_history_messages: int | None = None
 
 
 @dataclass(frozen=True)

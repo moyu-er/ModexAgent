@@ -22,7 +22,7 @@ class TestArchiveSummarizerConfig:
         assert config.context_max_chars == 500
         assert config.knowledge_max_chars == 600
         assert config.index_max_chars == 100
-        assert config.max_iterations == 20
+        assert config.max_iterations == 25
 
     def test_custom_config(self) -> None:
         config = ArchiveSummarizerConfig(
@@ -134,6 +134,83 @@ class TestBuildTools:
 
 
 # ---------------------------------------------------------------------------
+# filter_messages
+# ---------------------------------------------------------------------------
+
+class TestFilterMessages:
+    def test_keeps_only_essential_fields(self) -> None:
+        messages = [
+            {
+                "role": "user",
+                "content": "hello",
+                "metadata": {"extra": "data"},
+                "unknown_field": "should be removed",
+            },
+            {
+                "role": "assistant",
+                "content": "hi",
+                "tool_calls": [
+                    {"function": {"name": "read"}, "id": "tc1"}
+                ],
+            },
+            {
+                "role": "tool",
+                "name": "bash",
+                "content": "output",
+                "tool_call_id": "tc1",
+            },
+        ]
+        result = ArchiveSummarizer.filter_messages(messages)
+        assert len(result) == 3
+
+        user_msg = result[0]
+        assert user_msg["role"] == "user"
+        assert user_msg["content"] == "hello"
+        assert "metadata" not in user_msg
+        assert "unknown_field" not in user_msg
+
+        asst_msg = result[1]
+        assert asst_msg["role"] == "assistant"
+        assert "tool_calls" not in asst_msg
+        assert asst_msg.get("tool_names") == ["read"]
+
+        tool_msg = result[2]
+        assert tool_msg["role"] == "tool"
+        assert tool_msg.get("name") == "bash"
+        assert "tool_call_id" not in tool_msg
+
+    def test_truncates_long_content(self) -> None:
+        long_text = "x" * 5000
+        messages = [{"role": "user", "content": long_text}]
+        result = ArchiveSummarizer.filter_messages(messages)
+        assert len(result) == 1
+        assert "... (5000 chars total)" in result[0]["content"]
+        assert len(result[0]["content"]) < 4500
+
+    def test_drops_empty_messages(self) -> None:
+        messages = [
+            {"role": "user", "content": ""},
+            {"role": "assistant", "content": "visible"},
+        ]
+        result = ArchiveSummarizer.filter_messages(messages)
+        assert len(result) == 1
+        assert result[0]["role"] == "assistant"
+
+    def test_handles_list_content(self) -> None:
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "hello"},
+                    {"type": "text", "text": "world"},
+                ],
+            }
+        ]
+        result = ArchiveSummarizer.filter_messages(messages)
+        assert result[0]["content"] == "hello world"
+
+
+# ---------------------------------------------------------------------------
 # format_transcript
 # ---------------------------------------------------------------------------
 
@@ -223,6 +300,50 @@ class TestFormatTranscript:
         result = ArchiveSummarizer.format_transcript(messages)
         assert "read_file" in result
         assert "write_file" in result
+
+
+# ---------------------------------------------------------------------------
+# Trajectory emitter
+# ---------------------------------------------------------------------------
+
+class TestSummarizerTrajectoryEmitter:
+    def test_logs_and_writes_trace(self, tmp_path: Path) -> None:
+        import asyncio
+        import json
+
+        from framework.agents.summarizer.emitter import SummarizerTrajectoryEmitter
+        from framework.agents.react.agent import ReActEvent
+
+        trace_path = tmp_path / "trace.jsonl"
+        emitter = SummarizerTrajectoryEmitter(
+            session_id="s1",
+            agent_name="TestAgent",
+            trace_path=trace_path,
+        )
+
+        async def _run() -> None:
+            await emitter.emit(ReActEvent.ITERATION_START, {"iteration": 1})
+            await emitter.emit(ReActEvent.MODEL_OUTPUT, "hello")
+            from framework.core.emitter import ToolCall
+            from framework.core.tool_manager import ToolResult
+            await emitter.emit(ReActEvent.TOOL_CALL_START, ToolCall(tool_name="write", arguments={"path": "/tmp/f.txt"}))
+            await emitter.emit(
+                ReActEvent.TOOL_CALL_END,
+                (ToolCall(tool_name="write", arguments={}), ToolResult(tool_name="write", result="ok")),
+            )
+            from framework.core.emitter import AgentResult
+            await emitter.emit_complete(AgentResult(content="done", stop_reason="completed"))
+
+        asyncio.run(_run())
+
+        assert trace_path.exists()
+        lines = trace_path.read_text(encoding="utf-8").strip().splitlines()
+        assert len(lines) >= 4
+        phases = {json.loads(line)["phase"] for line in lines}
+        assert "iteration_start" in phases
+        assert "tool_call_start" in phases
+        assert "tool_call_end" in phases
+        assert "turn_complete" in phases
 
 
 # ---------------------------------------------------------------------------

@@ -163,6 +163,23 @@ async def cleanup_session(
     archive_generated = False
     next_archive_id = 0  # stored for reuse in Step 4 (save extra I/O)
 
+    # Trace: explain why archive step may be skipped
+    if archive is None:
+        logger.debug(
+            "Archive generation skipped: archive layer is disabled. session=%s",
+            context.session_id,
+        )
+    elif archive_agent is None:
+        logger.info(
+            "Archive generation skipped: archive_agent not configured. session=%s",
+            context.session_id,
+        )
+    elif not pruned_messages:
+        logger.info(
+            "Archive generation skipped: no pruned messages. session=%s",
+            context.session_id,
+        )
+
     # Resolve archive_storage dynamically from the archive layer if not provided
     if archive_storage is None and archive is not None and archive_agent is not None:
         try:
@@ -170,18 +187,45 @@ async def cleanup_session(
             if archive_dir is not None:
                 from framework.memory.stores.dir_archive import DirArchiveStorage
                 archive_storage = DirArchiveStorage(archive_dir)
+                logger.info(
+                    "Archive storage resolved dynamically: session=%s path=%s",
+                    context.session_id, archive_dir,
+                )
+            else:
+                logger.warning(
+                    "Archive storage resolution returned None: session=%s",
+                    context.session_id,
+                )
         except Exception:
-            logger.debug("Cannot resolve archive directory dynamically", exc_info=True)
+            logger.warning(
+                "Cannot resolve archive directory dynamically: session=%s",
+                context.session_id, exc_info=True,
+            )
 
     if archive_agent is not None and archive_storage is not None and pruned_messages:
         session_id = context.session_id
 
         # Read current archive state (value reused in Step 4)
-        state_data = await archive_storage.read_archive_state() or {}
-        next_archive_id = state_data.get("next_archive_id", 1)
+        try:
+            state_data = await archive_storage.read_archive_state() or {}
+            next_archive_id = state_data.get("next_archive_id", 1)
+        except Exception:
+            logger.warning(
+                "Failed to read archive state: session=%s",
+                session_id, exc_info=True,
+            )
+            state_data = {}
+            next_archive_id = 1
 
         # Archive skip guarantee
-        is_complete = await archive_storage.is_archive_complete(next_archive_id)
+        try:
+            is_complete = await archive_storage.is_archive_complete(next_archive_id)
+        except Exception:
+            logger.warning(
+                "Archive completeness check failed: archive_id=%d session=%s",
+                next_archive_id, session_id, exc_info=True,
+            )
+            is_complete = False
 
         if is_complete:
             logger.info(
@@ -193,6 +237,10 @@ async def cleanup_session(
         else:
             # Run agent (retry is internal to ArchiveSummarizer)
             archive_dir = archive_storage.base_dir / str(next_archive_id)
+            logger.info(
+                "Starting archive generation: archive_id=%d session=%s",
+                next_archive_id, session_id,
+            )
 
             try:
                 result = await archive_agent.generate(
@@ -217,11 +265,20 @@ async def cleanup_session(
                     "Archive agent crashed: archive_id=%d session=%s",
                     next_archive_id, session_id, exc_info=True,
                 )
+    elif archive_agent is not None and archive_storage is None:
+        logger.warning(
+            "Archive generation skipped: archive_agent present but storage unresolved. session=%s",
+            context.session_id,
+        )
 
     # ── Step 2 (NEW): Pruned index refresh ─────────────────────────────
     if pruned_manager is not None and archive_storage is not None and pruned_messages:
         if archive_generated:
             # Full refresh from archive index.md files
+            logger.info(
+                "Refreshing pruned index from archives: session=%s",
+                context.session_id,
+            )
             try:
                 count = await pruned_manager.refresh_from_archives(
                     archive_storage, session_id=context.session_id or "",
@@ -235,11 +292,21 @@ async def cleanup_session(
                     "Pruned index refresh failed: session=%s",
                     context.session_id, exc_info=True,
                 )
-                # Fallback to old path
+                # Fallback to raw-message path
                 await _write_pruned_fallback(pruned_manager, pruned_messages, context)
         else:
             # Archive failed — fallback
+            logger.info(
+                "Pruned index using fallback (archive not generated): session=%s",
+                context.session_id,
+            )
             await _write_pruned_fallback(pruned_manager, pruned_messages, context)
+    elif pruned_manager is not None and pruned_messages:
+        logger.info(
+            "Pruned index using fallback (archive storage unavailable): session=%s",
+            context.session_id,
+        )
+        await _write_pruned_fallback(pruned_manager, pruned_messages, context)
 
     # Extract user retention entries from pruned messages
     # Walk all sanitized messages; accumulate pruned user/agent messages.

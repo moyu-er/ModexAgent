@@ -102,34 +102,46 @@ def create_memory(
         )
 
     # Summarizer-agent wiring (new agent-based archive flow)
+    # Archive generation is enabled whenever the archive layer is enabled.
+    # Explicit summarizer_agent config overrides defaults.
     archive_agent = None
     archive_storage = None
     knowledge_consolidator = None
 
-    if cfg.summarizer_agent is not None and cfg.summarizer_agent.enabled:
+    archive_enabled = cfg.archive is not None and cfg.archive.enabled
+    summarizer_enabled = cfg.summarizer_agent is not None and cfg.summarizer_agent.enabled
+
+    if archive_enabled or summarizer_enabled:
         from framework.agents.summarizer.archive_agent import (
             ArchiveSummarizer,
             ArchiveSummarizerConfig,
         )
         from framework.agents.summarizer.consolidator import KnowledgeConsolidator
 
-        archive_config = ArchiveSummarizerConfig(
-            context_max_chars=cfg.summarizer_agent.context_max_chars,
-            knowledge_max_chars=cfg.summarizer_agent.knowledge_max_chars,
-            index_max_chars=cfg.summarizer_agent.index_max_chars,
-            max_iterations=cfg.summarizer_agent.max_iterations,
-        )
+        if cfg.summarizer_agent is not None:
+            archive_config = ArchiveSummarizerConfig(
+                context_max_chars=cfg.summarizer_agent.context_max_chars,
+                knowledge_max_chars=cfg.summarizer_agent.knowledge_max_chars,
+                index_max_chars=cfg.summarizer_agent.index_max_chars,
+                max_iterations=cfg.summarizer_agent.max_iterations,
+            )
+            max_iterations = cfg.summarizer_agent.max_iterations
+        else:
+            archive_config = ArchiveSummarizerConfig()
+            max_iterations = ArchiveSummarizerConfig().max_iterations
+
         archive_agent = ArchiveSummarizer(llm_provider, config=archive_config)
 
-        consolidator = KnowledgeConsolidator(
-            provider=llm_provider,
-            max_iterations=cfg.summarizer_agent.max_iterations,
-        )
+        # Knowledge consolidator is created when knowledge layer is enabled
+        knowledge_enabled = cfg.knowledge is not None and cfg.knowledge.enabled
+        if knowledge_enabled:
+            knowledge_consolidator = KnowledgeConsolidator(
+                provider=llm_provider,
+                max_iterations=max_iterations,
+            )
 
         # archive_storage is created dynamically in cleanup_session
         # via archive.get_storage_path(context) — not hardcoded here
-
-        knowledge_consolidator = consolidator
 
     return create_memory_system(
         workspace=workspace,

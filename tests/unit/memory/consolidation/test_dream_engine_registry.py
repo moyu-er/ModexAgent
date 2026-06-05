@@ -13,24 +13,34 @@ from framework.memory.core.scope import MemoryAgentRole, MemoryContext, MemoryLa
 from framework.memory.prompts import PromptRegistry
 
 
+class _FakePath:
+    """Minimal Path stand-in for dummy managers."""
+
+    def __init__(self, value: str):
+        self._value = value
+
+    def resolve(self):
+        return Path(self._value)
+
+    def __str__(self):
+        return self._value
+
+
 class DummyLLM:
     async def chat_with_retry(self, **kwargs):
         return "[SKIP] no new information"
 
 
 class DummyArchiveManager:
-    def __init__(self):
-        self.seen_contexts = []
-        self.committed = []
-        self.pruned_contexts = []
-        self.unprocessed_channels = []
-
     def __init__(self, entry_count: int = 6):
         self.seen_contexts = []
         self.committed = []
         self.pruned_contexts = []
         self.unprocessed_channels = []
         self._entry_count = entry_count
+
+    async def get_storage_path(self, context):
+        return _FakePath("/tmp/archive")
 
     async def get_unprocessed(self, context, cursor_name, limit=100, *, channel=ArchiveChannel.KNOWLEDGE):
         self.seen_contexts.append(context)
@@ -51,6 +61,9 @@ class DummyArchiveManager:
 
 
 class DummyKnowledgeManager:
+    async def get_storage_path(self, context):
+        return _FakePath("/tmp/knowledge")
+
     async def get_all(self, context):
         return LongTermMemory()
 
@@ -82,11 +95,14 @@ async def test_dream_engine_scan_all_uses_registry_records() -> None:
         ]
     )
     archive = DummyArchiveManager()
+    mock_consolidator = AsyncMock()
+    mock_consolidator.consolidate.return_value = True
     engine = DreamEngine(
         llm_provider=DummyLLM(),
         history_manager=archive,
         long_term_manager=DummyKnowledgeManager(),
         registry=registry,
+        consolidator=mock_consolidator,
     )
 
     processed = await engine.scan_all()

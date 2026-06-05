@@ -118,11 +118,11 @@ class PrunedCatalogConfig(BaseModel):
 class SummarizerAgentConfig(BaseModel):
     """Configuration for the summarizer-as-agent memory system."""
 
-    enabled: bool = False
+    enabled: bool = True
     context_max_chars: int = 500
     knowledge_max_chars: int = 600
     index_max_chars: int = 100
-    max_iterations: int = 20
+    max_iterations: int = 25
 
 
 class MemoryConfig(BaseModel):
