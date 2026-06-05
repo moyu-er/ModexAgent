@@ -12,8 +12,11 @@ from xml.sax.saxutils import escape as xml_escape
 from framework.tools.terminal.prompt import (
     INPUT_PROMPT_MARKERS,
     _strip_ansi_and_da1,
+    detect_pager_entry,
+    extract_last_command_output,
     is_prompt_ready,
     is_waiting_for_input,
+    resolve_cursor_line,
     sanitize_terminal_output,
 )
 from framework.tools.terminal.pty_keys import (
@@ -25,6 +28,8 @@ from framework.tools.terminal.pty_keys import (
     strip_smkx_rmkx,
 )
 from framework.tools.terminal.results import TerminalRead, TerminalSegment
+
+from framework.tools.terminal.types import TerminalCommandStatus
 
 if TYPE_CHECKING:
     from framework.tools.terminal.backends.base import TerminalBackend
@@ -89,6 +94,7 @@ class TerminalSession:
         self._last_status: str | None = None
         self.cursor_key_mode: CursorKeyMode = CursorKeyMode.UNKNOWN
         self.bracketed_paste_enabled: bool = False
+        self._last_byte_at: float = time.monotonic()
 
     async def ensure_started(self) -> None:
         """Start the backend immediately if not already started.
@@ -429,6 +435,9 @@ class TerminalSession:
         if not read.raw:
             return read
 
+        # Track raw byte activity for stuck/executing detection
+        self._last_byte_at = time.monotonic()
+
         raw_bytes = read.raw.encode("utf-8", errors="replace")
 
         # Detect and update cursor key mode
@@ -461,6 +470,66 @@ class TerminalSession:
     async def current_segment(self) -> TerminalSegment:
         """Get the current visible terminal segment."""
         return await self._backend.current_segment()
+
+    async def refresh_output(self, timeout: float = 0.1) -> TerminalRead:
+        """Read fresh PTY data into internal buffers.
+
+        Safe to call when the backend is dead. Cross-backend: buffer-based
+        backends flush socket data, tmux updates diff tracker.
+        """
+        if not await self.is_alive():
+            return TerminalRead()
+        return await self.poll_once(timeout=timeout)
+
+    async def command_status(self) -> TerminalCommandStatus:
+        """Compute current terminal status using the detection priority rules.
+
+        Priority: COMPLETED > WAITING_INPUT > IDLE > PAGINATED > EXECUTING > STUCK > UNKNOWN
+        """
+        # 1. Process exit
+        if not await self.is_alive():
+            return TerminalCommandStatus.COMPLETED
+
+        # Refresh to get latest data
+        read = await self.refresh_output(timeout=0.05)
+
+        # 2. Content marker → WAITING_INPUT (fast path)
+        segment = await self.current_segment()
+        full_text = segment.text if segment.text else ""
+        if full_text and is_waiting_for_input(full_text):
+            return TerminalCommandStatus.WAITING_INPUT
+
+        # 3. Prompt stable → IDLE
+        if segment.is_empty_prompt:
+            return TerminalCommandStatus.IDLE
+
+        # 4. Pager detection
+        cursor = resolve_cursor_line(segment)
+        if detect_pager_entry(cursor):
+            return TerminalCommandStatus.PAGINATED
+
+        # 5. Raw bytes flowing → EXECUTING
+        raw_idle_ms = (time.monotonic() - self._last_byte_at) * 1000
+        if read.stdout or raw_idle_ms < 15000:
+            return TerminalCommandStatus.EXECUTING
+
+        # 6. 15s no bytes → STUCK
+        return TerminalCommandStatus.STUCK
+
+    async def last_command_output(self) -> str:
+        """Get complete output from the last command to current terminal state.
+
+        Calls refresh_output() first to ensure fresh data, then extracts
+        from the second-to-last prompt to the end of the buffer.
+        """
+        await self.refresh_output(timeout=0.1)
+        # Access backend's output buffer for the full text
+        raw_text = self._backend.output_buffer_text()
+        if not raw_text:
+            # Fallback for tmux (no buffer) or empty backends
+            segment = await self.current_segment()
+            raw_text = segment.text
+        return extract_last_command_output(raw_text)
 
     async def interrupt(self) -> None:
         """Send Ctrl+C to the terminal."""

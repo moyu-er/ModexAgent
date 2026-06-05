@@ -209,3 +209,7 @@ class TmuxPtyBackend(TerminalBackend):
 
     def stdin_writable(self) -> bool:
         return self._pane is not None
+
+    def output_buffer_text(self) -> str:
+        """Return the last captured pane text."""
+        return self._last_capture or ""
