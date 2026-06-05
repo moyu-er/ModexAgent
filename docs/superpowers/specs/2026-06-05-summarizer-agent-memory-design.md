@@ -510,6 +510,16 @@ Target:
 - `RestrictedInjectionPolicy` — subagent injection unchanged
 - Existing tests for unchanged parts continue to pass
 
+### Workspace Switching (cd/exit) Compatibility
+
+Archive and knowledge storage paths are rooted at `workspace_context.data_dir` (`current / .modex`).
+
+When workspace switches via `cd`/`exit`:
+1. **Agent idle guarantee**: `active_checker` ensures no agents are running during switch — ArchiveSummarizer and KnowledgeConsolidator cannot be mid-execution.
+2. **Memory system rebuild**: `_on_ws_stop_and_rebuild` rebuilds the entire `DefaultMemorySystem`, including new `ArchiveStorage`, `ArchiveSummarizer`, and `KnowledgeConsolidator` instances pointing at the new `data_dir`.
+3. **ScopedFileTools allowed_dirs are dynamic**: Built at invocation time (`archive_base / str(archive_id)`), not at construction time — automatically correct after rebuild.
+4. **No design changes needed**: The existing callback-based switch mechanism fully covers the new components.
+
 ### Transition Strategy
 
 - `cleanup_session`: if `archive_agent` parameter provided → new four-step flow; otherwise → old strategy
