@@ -74,6 +74,49 @@ All injection, DreamEngine consumption, and cleanup code depend on this protocol
 - Old JSONL files are not migrated; only new archives use MD directories.
 - Transition: `cleanup_session` checks `archive_agent` parameter; if present, new path; otherwise old strategy.
 
+## Section 1.5: Summarizer Isolated Memory
+
+### Principle
+
+The summarizer agent has its **own isolated session storage**, completely separate from the multi-level memory system (archive/knowledge/session). This memory is:
+
+- **Not stored inside** the archive, knowledge, or session layers
+- **Only accessible by the summarizer itself** (via scoped tools)
+- **Session-level only** — no archive/knowledge hierarchy for the summarizer
+- **Keyed by invocation_id** (archive_id) for each invocation
+
+### Storage Layout
+
+```
+{data_dir}/summarizer/{archive_id}/
+  session.jsonl        ← ReAct session log (tool calls + LLM responses)
+```
+
+This path is derived from `data_dir` (same as `.modex/` or `MODEX_DATA_DIR`), NOT nested under `memory/`. The summarizer's memory area is a peer of `memory/`, `runtime_state/`, `inbox/`, etc.
+
+### Why Separate
+
+1. **No circular dependency**: The summarizer manages the memory system; it should not store its working data inside the system it manages.
+2. **Isolation**: The summarizer's session data is for its own use (debugging, auditing, potential resumption), not for the main agent or other subsystems.
+3. **Workspace switching**: On `cd`/`exit`, the `data_dir` changes, and the summarizer naturally gets a new isolated area — same mechanism as all other storage.
+
+### Scoped Tool Access
+
+The summarizer's scoped tools do **NOT** include the session directory. Session data is framework-managed only.
+
+**ArchiveSummarizer tools** only access:
+- `archive/{scope}/{archive_id}/` — to write context.md, knowledge.md, index.md
+
+**KnowledgeConsolidator tools** only access:
+- `archive/{id}/` (read-only) — to read knowledge.md files
+- `knowledge/` (read-write) — to update SOUL.md, USER.md, MEMORY.md
+
+The agent cannot read or write its own session data. The session.jsonl is written by framework code wrapping the agent execution — it records tool calls and LLM responses for debugging/auditing, but the agent is unaware of it.
+
+### KnowledgeConsolidator Session
+
+Same pattern: `{data_dir}/consolidator/{cursor}/session.jsonl` — framework-managed, isolated from the memory system, keyed by dream cursor position. Agent cannot access it.
+
 ## Section 2: ScopedFileTools
 
 Four tools for MemoryAgent, each constructed with `allowed_dirs: list[Path]`:
@@ -136,6 +179,7 @@ tools = [
     ScopedEditFileTool(allowed_dirs=[archive_dir]),
     ScopedListTool(allowed_dirs=[archive_dir]),
 ]
+# session.jsonl written by framework, NOT accessible via tools
 ```
 
 **KnowledgeConsolidator:**
@@ -148,9 +192,10 @@ tools = [
     ScopedEditFileTool(allowed_dirs=[knowledge_dir]),
     ScopedListTool(allowed_dirs=archive_dirs + [knowledge_dir]),
 ]
+# session.jsonl written by framework, NOT accessible via tools
 ```
 
-Note: KnowledgeConsolidator has different read vs write scopes — can read archive dirs, can only write knowledge dir.
+Note: Session storage (`{data_dir}/summarizer/{id}/`, `{data_dir}/consolidator/{cursor}/`) is framework-managed only — never added to scoped tool allowed_dirs.
 
 ## Section 3: Cleanup Four-Step Flow
 

@@ -1146,7 +1146,7 @@ class ArchiveSummarizer:
 
     @staticmethod
     def build_tools(archive_dir: Path) -> list:
-        """Build scoped file tools for the given archive directory."""
+        """Build scoped file tools for the given archive directory only."""
         resolved = archive_dir.resolve()
         return [
             ScopedReadFileTool(allowed_dirs=[resolved]),
@@ -1154,6 +1154,7 @@ class ArchiveSummarizer:
             ScopedEditFileTool(allowed_dirs=[resolved]),
             ScopedListTool(allowed_dirs=[resolved]),
         ]
+        # Note: session_dir is NOT in allowed_dirs — framework manages session.jsonl
 
     @staticmethod
     def build_system_prompt(
@@ -1902,40 +1903,43 @@ git commit -m "test(memory): verify full test suite passes with summarizer agent
 
 ## Summarizer Session Storage
 
-Each agent invocation (ArchiveSummarizer, KnowledgeConsolidator) persists its ReAct session log alongside its output files.
+Summarizer agents have their **own isolated session storage**, completely separate from the multi-level memory system. NOT stored inside archive/knowledge/session layers. Only the summarizer itself can read/write this area.
 
 ### ArchiveSummarizer Session
 
 ```
-{data_dir}/memory/{agent}/archive/{scope}/{archive_id}/
-  context.md               ← output
-  knowledge.md             ← output
-  index.md                 ← output
-  _agent_session.jsonl     ← ReAct session log (tool calls + LLM responses)
+{data_dir}/summarizer/{archive_id}/
+  session.jsonl           ← ReAct session log (tool calls + LLM responses)
 ```
 
-The `_agent_session.jsonl` is written by the `ArchiveSummarizer.generate()` method during execution. It records each tool call and LLM response for debugging and auditing. On retry, the framework checks both file completeness AND session log to determine if the archive is valid.
+This is a peer of `memory/`, `runtime_state/`, etc. — NOT nested inside the memory hierarchy. Path derived from `data_dir` (same as `MODEX_DATA_DIR`), so workspace switching (cd/exit) naturally redirects.
+
+**IMPORTANT**: The agent's scoped tools do NOT include this directory. Session.jsonl is written by framework code wrapping the agent execution — the agent is unaware of it and cannot read/write it.
+
+The summarizer's scoped tools only access:
+- `archive/{scope}/{archive_id}/` — to write output files (context.md, knowledge.md, index.md)
 
 ### KnowledgeConsolidator Session
 
 ```
-{data_dir}/memory/{agent}/consolidator/
-  {cursor}.jsonl           ← ReAct session log keyed by dream cursor position
+{data_dir}/consolidator/{cursor}/
+  session.jsonl           ← ReAct session log keyed by dream cursor position
 ```
 
-The consolidator's session log is keyed by the dream cursor value at the time of processing. This allows tracing which archives were consumed in each consolidation run.
+Same pattern — framework-managed only, agent cannot access.
 
 ### Implementation
 
 In `ArchiveSummarizer.generate()`:
-- Create a `_SessionLogger` that wraps the emitter
-- Each tool call and LLM response is appended to `_agent_session.jsonl`
+- Framework creates `{data_dir}/summarizer/{archive_id}/` directory
+- A `_SessionLogger` wrapper intercepts tool calls and LLM responses, appends to session.jsonl
 - On completion, a final `{"status": "completed"}` entry is written
 - On error, a `{"status": "error", "message": "..."}` entry is written
+- ScopedFileTools `allowed_dirs` does NOT include session dir
 
 In `DirArchiveStorage.is_archive_complete()`:
-- Also check `_agent_session.jsonl` for a completion marker
-- If files exist but session shows error, treat as incomplete (trigger retry)
+- Only checks output files (context.md, knowledge.md, index.md)
+- Session log is checked by framework independently for retry decisions
 
 ---
 
