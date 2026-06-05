@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from framework.tools.terminal.process_registry import ProcessRegistry
@@ -16,7 +18,11 @@ class FakeTerminal:
         self.cursor_key_mode = "unknown"
         self.bracketed_paste_enabled = False
         self._segment = None
-        self._last_byte_at: float = 0.0
+        self._last_byte_at: float = time.monotonic()
+
+    @property
+    def last_byte_at(self) -> float:
+        return self._last_byte_at
 
     async def write(self, data: str) -> None:
         self.writes.append(data)

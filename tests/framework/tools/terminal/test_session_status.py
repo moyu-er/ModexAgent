@@ -174,6 +174,20 @@ async def test_command_status_waiting_input_when_marker() -> None:
 
 
 @pytest.mark.asyncio
+async def test_command_status_unknown_when_no_bytes_ever_received() -> None:
+    manager = _make_session()
+    session = await manager.get_default()
+    backend: FakeBackend = session._backend
+    backend._segment = TerminalSegment(
+        text="downloading...", cursor_line="downloading...", is_empty_prompt=False
+    )
+    # No bytes ever received → _ever_received_bytes is False
+
+    status = await session.command_status()
+    assert status == TerminalCommandStatus.UNKNOWN
+
+
+@pytest.mark.asyncio
 async def test_command_status_executing_when_bytes_flowing() -> None:
     manager = _make_session()
     session = await manager.get_default()
@@ -181,6 +195,9 @@ async def test_command_status_executing_when_bytes_flowing() -> None:
     backend._segment = TerminalSegment(
         text="downloading...", cursor_line="downloading...", is_empty_prompt=False
     )
+    # Simulate byte activity
+    backend._next_reads = [TerminalRead(stdout="building...\n", raw="building...\n")]
+    await session.poll_once(timeout=0.1)
 
     status = await session.command_status()
     assert status == TerminalCommandStatus.EXECUTING
@@ -194,6 +211,9 @@ async def test_command_status_stuck_when_silent_15s() -> None:
     backend._segment = TerminalSegment(
         text="frozen output", cursor_line="frozen output", is_empty_prompt=False
     )
+    # Simulate bytes were received 16s ago, then silence
+    backend._next_reads = [TerminalRead(stdout="frozen output", raw="frozen output")]
+    await session.poll_once(timeout=0.1)
     # Wind back _last_byte_at to simulate 16s of silence
     session._last_byte_at = time.monotonic() - 16.0
 

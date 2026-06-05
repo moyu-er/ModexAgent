@@ -95,6 +95,7 @@ class TerminalSession:
         self.cursor_key_mode: CursorKeyMode = CursorKeyMode.UNKNOWN
         self.bracketed_paste_enabled: bool = False
         self._last_byte_at: float = time.monotonic()
+        self._ever_received_bytes: bool = False
 
     async def ensure_started(self) -> None:
         """Start the backend immediately if not already started.
@@ -338,6 +339,7 @@ class TerminalSession:
             chunk = await self._backend.read(timeout=0.05, max_size=65536)
             if chunk:
                 self._last_byte_at = time.monotonic()
+                self._ever_received_bytes = True
                 empty_reads = 0
             else:
                 empty_reads += 1
@@ -443,6 +445,7 @@ class TerminalSession:
 
         # Track raw byte activity for stuck/executing detection
         self._last_byte_at = time.monotonic()
+        self._ever_received_bytes = True
 
         raw_bytes = read.raw.encode("utf-8", errors="replace")
 
@@ -498,7 +501,10 @@ class TerminalSession:
             return TerminalCommandStatus.COMPLETED
 
         # 2. No data ever received → UNKNOWN (safety net)
-        if self._last_byte_at == self.created_at:
+        #    Use _ever_received_bytes flag rather than comparing
+        #    _last_byte_at (time.monotonic) vs created_at (time.time)
+        #    since they come from different clocks.
+        if not self._ever_received_bytes:
             return TerminalCommandStatus.UNKNOWN
 
         # Refresh to get latest data
