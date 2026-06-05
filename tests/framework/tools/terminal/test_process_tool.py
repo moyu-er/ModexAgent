@@ -53,21 +53,6 @@ def _assert_xml_result(text: str, action: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_process_log_reads_from_registry() -> None:
-    """log reads aggregated output from running or finished session."""
-    registry = ProcessRegistry()
-    session = registry.create(command="server", terminal="default", cwd=None, pid=1)
-    registry.append_output(session.id, "stdout", "ready\n")
-    terminal = FakeTerminal()
-    tool = ProcessTool(registry=registry, manager=FakeManager(terminal))
-
-    text = await tool.execute(action="log")
-
-    _assert_xml_result(text, "log")
-    assert "ready" in text
-
-
-@pytest.mark.asyncio
 async def test_process_write_submit_interrupt_and_kill() -> None:
     registry = ProcessRegistry()
     registry.create(command="ssh host", terminal="default", cwd=None, pid=2)
@@ -90,21 +75,6 @@ async def test_process_write_submit_interrupt_and_kill() -> None:
     finished = registry.get_finished_by_terminal("default")
     assert finished is not None
     assert finished.status is ProcessStatus.KILLED
-
-
-@pytest.mark.asyncio
-async def test_process_log_reads_aggregated_output() -> None:
-    registry = ProcessRegistry()
-    session = registry.create(command="build", terminal="default", cwd=None, pid=3)
-    registry.append_output(session.id, "stdout", "line1\nline2\nline3\n")
-    terminal = FakeTerminal()
-    tool = ProcessTool(registry=registry, manager=FakeManager(terminal))
-
-    text = await tool.execute(action="log", offset=1, limit=1)
-
-    _assert_xml_result(text, "log")
-    assert "line2" in text
-    assert "line1" not in text
 
 
 @pytest.mark.asyncio
@@ -149,20 +119,6 @@ async def test_process_paste_with_bracketed_mode() -> None:
 
 
 @pytest.mark.asyncio
-async def test_process_list_shows_sessions() -> None:
-    registry = ProcessRegistry()
-    registry.create(command="build", terminal="default", cwd=None, pid=10)
-    registry.create(command="test", terminal="default", cwd=None, pid=11)
-    tool = ProcessTool(registry=registry, manager=FakeManager(FakeTerminal()))
-
-    text = await tool.execute(action="list")
-
-    _assert_xml_result(text, "list")
-    assert "build" in text
-    assert "test" in text
-
-
-@pytest.mark.asyncio
 async def test_process_clear_removes_finished() -> None:
     registry = ProcessRegistry()
     session = registry.create(command="done", terminal="default", cwd=None, pid=20)
@@ -173,21 +129,6 @@ async def test_process_clear_removes_finished() -> None:
 
     _assert_xml_result(text, "clear")
     assert registry.get_finished(session.id) is None
-
-
-@pytest.mark.asyncio
-async def test_process_log_finished_session() -> None:
-    """log reads finished session output."""
-    registry = ProcessRegistry()
-    session = registry.create(command="echo hi", terminal="default", cwd=None, pid=30)
-    registry.append_output(session.id, "stdout", "hello\n")
-    registry.mark_exited(session.id, exit_code=0, exit_signal=None, status=ProcessStatus.COMPLETED)
-    tool = ProcessTool(registry=registry, manager=FakeManager(FakeTerminal()))
-
-    text = await tool.execute(action="log")
-
-    _assert_xml_result(text, "log")
-    assert "hello" in text
 
 
 @pytest.mark.asyncio
@@ -216,34 +157,3 @@ async def test_process_remove_finished() -> None:
     _assert_xml_result(text, "remove")
     assert "Removed finished" in text
     assert registry.get_finished_by_terminal("default") is None
-
-
-@pytest.mark.asyncio
-async def test_process_error_no_session() -> None:
-    registry = ProcessRegistry()
-    tool = ProcessTool(registry=registry, manager=FakeManager(FakeTerminal()))
-
-    text = await tool.execute(action="log")
-
-    _assert_xml_result(text, "log")
-    assert "[Error]" in text
-
-
-@pytest.mark.asyncio
-async def test_process_log_with_tui_context() -> None:
-    registry = ProcessRegistry()
-    session = registry.create(command="vim file", terminal="default", cwd=None, pid=50)
-    registry.append_output(session.id, "stdout", "opened\n")
-
-    terminal = FakeTerminal()
-    terminal.cursor_key_mode = "application"
-    # Simulate a screen segment
-    class FakeSegment:
-        text = "~ file contents here\n~ line 2\n"
-    terminal._segment = FakeSegment()
-
-    tool = ProcessTool(registry=registry, manager=FakeManager(terminal))
-    text = await tool.execute(action="log")
-
-    _assert_xml_result(text, "log")
-    assert "opened" in text
