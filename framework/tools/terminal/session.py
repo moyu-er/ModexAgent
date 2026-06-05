@@ -125,6 +125,11 @@ class TerminalSession:
         return self._backend.window_title
 
     @property
+    def last_byte_at(self) -> float:
+        """Monotonic timestamp of the last raw byte received from the PTY."""
+        return self._last_byte_at
+
+    @property
     def busy_after_timeout(self) -> bool:
         """True if the previous command timed out and may still be running."""
         return self._busy_after_timeout
@@ -332,6 +337,7 @@ class TerminalSession:
         while time.monotonic() < deadline and empty_reads < 3:
             chunk = await self._backend.read(timeout=0.05, max_size=65536)
             if chunk:
+                self._last_byte_at = time.monotonic()
                 empty_reads = 0
             else:
                 empty_reads += 1
@@ -484,36 +490,41 @@ class TerminalSession:
     async def command_status(self) -> TerminalCommandStatus:
         """Compute current terminal status using the detection priority rules.
 
-        Priority: COMPLETED > WAITING_INPUT > IDLE > PAGINATED > EXECUTING > STUCK > UNKNOWN
+        Priority: COMPLETED > UNKNOWN > WAITING_INPUT > IDLE > PAGINATED >
+                  EXECUTING > STUCK
         """
         # 1. Process exit
         if not await self.is_alive():
             return TerminalCommandStatus.COMPLETED
 
+        # 2. No data ever received → UNKNOWN (safety net)
+        if self._last_byte_at == self.created_at:
+            return TerminalCommandStatus.UNKNOWN
+
         # Refresh to get latest data
         read = await self.refresh_output(timeout=0.05)
 
-        # 2. Content marker → WAITING_INPUT (fast path)
+        # 3. Content marker → WAITING_INPUT (fast path)
         segment = await self.current_segment()
         full_text = segment.text if segment.text else ""
         if full_text and is_waiting_for_input(full_text):
             return TerminalCommandStatus.WAITING_INPUT
 
-        # 3. Prompt stable → IDLE
+        # 4. Prompt stable → IDLE
         if segment.is_empty_prompt:
             return TerminalCommandStatus.IDLE
 
-        # 4. Pager detection
+        # 5. Pager detection
         cursor = resolve_cursor_line(segment)
         if detect_pager_entry(cursor):
             return TerminalCommandStatus.PAGINATED
 
-        # 5. Raw bytes flowing → EXECUTING
+        # 6. Raw bytes flowing → EXECUTING
         raw_idle_ms = (time.monotonic() - self._last_byte_at) * 1000
         if read.stdout or raw_idle_ms < 15000:
             return TerminalCommandStatus.EXECUTING
 
-        # 6. 15s no bytes → STUCK
+        # 7. 15s no bytes → STUCK
         return TerminalCommandStatus.STUCK
 
     async def last_command_output(self) -> str:

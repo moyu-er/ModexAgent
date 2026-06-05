@@ -257,11 +257,33 @@ def resolve_cursor_line(segment: TerminalSegment) -> str:
     return ""
 
 
+def _is_prompt_with_command(line: str) -> bool:
+    """Detect lines like 'PS F:\\project> npm install' where a prompt
+    marker and command text appear on the same line.
+
+    Extracts the prefix before the first prompt-marker + space and
+    delegates to ``is_prompt_ready`` for accurate detection.
+    """
+    stripped = line.rstrip()
+    for marker in ("> ", "$ ", "# "):
+        idx = stripped.find(marker)
+        if idx < 0:
+            continue
+        prefix = stripped[:idx + 1]  # include the marker character
+        if is_prompt_ready(prefix):
+            return True
+    return False
+
+
 def extract_last_command_output(text: str) -> str:
     """Extract terminal output from the second-to-last prompt to the end.
 
-    Finds all lines that look like shell prompts (ending with >, $, #, %)
-    and returns from the second-to-last one to the end. This captures:
+    Finds all lines that look like shell prompts and returns from the
+    second-to-last one to the end.  Uses ``is_prompt_ready`` for bare
+    prompts and ``_is_prompt_with_command`` for lines where the prompt
+    marker and command text share a line.
+
+    This captures:
     - The prompt before the command
     - The command output
     - The next prompt (if the command completed)
@@ -275,18 +297,9 @@ def extract_last_command_output(text: str) -> str:
     if not lines:
         return ""
 
-    prompt_suffixes = ("> ", "$ ", "# ", "% ")
-
-    def _is_prompt_line(line: str) -> bool:
-        stripped = line.rstrip()
-        # Bare prompt (no command): ends with > $ # %
-        if stripped.endswith((">", "$", "#", "%")):
-            return True
-        # Prompt with command: prompt marker followed by space + command text
-        return any(suffix in stripped for suffix in prompt_suffixes)
-
     prompt_indexes = [
-        idx for idx, line in enumerate(lines) if _is_prompt_line(line)
+        idx for idx, line in enumerate(lines)
+        if is_prompt_ready(line) or _is_prompt_with_command(line)
     ]
 
     if len(prompt_indexes) >= 2:

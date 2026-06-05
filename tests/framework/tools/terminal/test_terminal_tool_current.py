@@ -14,6 +14,14 @@ class FakeSession:
     created_at = 0.0
     _last_byte_at: float = 0.0
 
+    @property
+    def last_byte_at(self) -> float:
+        return self._last_byte_at
+
+    @last_byte_at.setter
+    def last_byte_at(self, value: float) -> None:
+        self._last_byte_at = value
+
     async def command_status(self) -> TerminalCommandStatus:
         return TerminalCommandStatus.IDLE
 
@@ -83,7 +91,7 @@ async def test_terminal_current_returns_unknown_when_no_session() -> None:
 @pytest.mark.asyncio
 async def test_terminal_current_shows_idle_ms() -> None:
     session = FakeSession()
-    session._last_byte_at = time.monotonic() - 2.0  # 2 seconds ago
+    session.last_byte_at = time.monotonic() - 2.0  # 2 seconds ago
 
     class Manager(FakeManager):
         async def get_default_session(self):
@@ -98,7 +106,7 @@ async def test_terminal_current_shows_idle_ms() -> None:
 @pytest.mark.asyncio
 async def test_terminal_current_omits_idle_ms_when_zero() -> None:
     session = FakeSession()
-    session._last_byte_at = time.monotonic()  # just now, idle_ms could be 0
+    session.last_byte_at = time.monotonic()  # just now, idle_ms could be 0
 
     class Manager(FakeManager):
         async def get_default_session(self):

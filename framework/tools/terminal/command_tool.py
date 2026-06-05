@@ -160,7 +160,7 @@ class CommandTool(Tool):
                     detected_input_wait=True, terminal=terminal_name,
                 )
             case PollOutcome.STUCK:
-                raw_idle_ms = int((time.monotonic() - session._last_byte_at) * 1000)
+                raw_idle_ms = int((time.monotonic() - session.last_byte_at) * 1000)
                 return self._format_stuck(result.output_parts, raw_idle_ms, result.elapsed_ms, terminal=terminal_name)
             case PollOutcome.YIELDED:
                 return await self._format_running(

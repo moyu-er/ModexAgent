@@ -86,7 +86,7 @@ async def poll_until_settled(
                 prompt_stable_since = None
 
         # 4. Stuck detection
-        raw_idle_ms = int((time.monotonic() - session._last_byte_at) * 1000)
+        raw_idle_ms = int((time.monotonic() - session.last_byte_at) * 1000)
         if raw_idle_ms >= 15_000:
             if not is_waiting_for_input("".join(output_parts)):
                 return PollResult(PollOutcome.STUCK, output_parts, elapsed_ms)

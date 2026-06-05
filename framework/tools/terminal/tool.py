@@ -190,7 +190,7 @@ class TerminalTool(Tool):
             segment = await session.current_segment()
             cursor = resolve_cursor_line(segment).strip()
 
-            raw_idle_ms = int((time.monotonic() - session._last_byte_at) * 1000)
+            raw_idle_ms = int((time.monotonic() - session.last_byte_at) * 1000)
             idle_ms_str = str(raw_idle_ms) if raw_idle_ms > 0 else None
 
             default_session = await self._manager.get_default_session()
