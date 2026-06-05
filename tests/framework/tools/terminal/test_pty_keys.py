@@ -50,8 +50,6 @@ class TestCursorKeyMode:
 class TestProcessAction:
     def test_all_action_values(self) -> None:
         expected = {
-            "list": "list",
-            "log": "log",
             "write": "write",
             "submit": "submit",
             "send_keys": "send_keys",
@@ -65,7 +63,7 @@ class TestProcessAction:
             assert ProcessAction[attr.upper()].value == value
 
     def test_is_str_enum(self) -> None:
-        assert isinstance(ProcessAction.LIST, str)
+        assert isinstance(ProcessAction.WRITE, str)
 
 
 # ---------------------------------------------------------------------------

@@ -10,7 +10,6 @@ Returns structured <command_result> XML with CommandResultStatus.
 
 from __future__ import annotations
 
-import asyncio
 import time
 from xml.sax.saxutils import escape as xml_escape
 
@@ -285,86 +284,3 @@ class CommandTool(Tool):
             terminal=terminal, message=message,
         )
 
-    @staticmethod
-    def _format_paginated(
-        output_parts: list[str],
-        pages_scrolled: int,
-        elapsed_ms: int,
-        total_chars: int,
-        max_chars: int,
-        *,
-        terminal: str | None = None,
-    ) -> str:
-        raw = "".join(output_parts)
-        output = sanitize_terminal_output(raw).rstrip()
-        truncated = total_chars >= max_chars
-        message = (
-            "Output was displayed through a pager and automatically scrolled. "
-            'If content was cut off, use process send_keys keys=[" "] to continue '
-            'scrolling, or process send_keys keys=["q"] to exit the pager.'
-        )
-        return _build_command_xml(
-            output, CommandResultStatus.PAGINATED, elapsed_ms,
-            terminal=terminal,
-            pages_scrolled=pages_scrolled,
-            truncated=truncated,
-            message=message,
-        )
-
-    # ------------------------------------------------------------------
-    # Pager auto-scroll
-    # ------------------------------------------------------------------
-
-    async def _auto_scroll_pager(
-        self,
-        session: TerminalSession,
-        initial_output: list[str],
-        proc_id: str,
-    ) -> tuple[list[str], int]:
-        """Auto-scroll through a pager by sending space characters.
-
-        Returns the collected output parts and number of pages scrolled.
-        """
-        output_parts = list(initial_output)
-        total_chars = sum(len(p) for p in output_parts)
-        pages_scrolled = 0
-        idle_timeout = self._config.pager_idle_detect_seconds
-
-        for _ in range(self._config.pager_auto_scroll_max_pages):
-            await session.write(" ")
-
-            new_output = False
-            deadline = time.monotonic() + idle_timeout
-            while time.monotonic() < deadline:
-                read = await session.poll_once(timeout=0.3)
-                if read.stdout:
-                    self._registry.append_output(proc_id, "stdout", read.stdout)
-                    output_parts.append(read.stdout)
-                    total_chars += len(read.stdout)
-                    new_output = True
-                    break
-                if not await session.is_alive():
-                    break
-
-            if not new_output:
-                break
-
-            pages_scrolled += 1
-            if total_chars >= self._config.pager_auto_scroll_max_chars:
-                break
-
-            segment = await session.current_segment()
-            if segment.is_empty_prompt:
-                return output_parts, pages_scrolled
-
-        # Exit the pager
-        if await session.is_alive():
-            await session.write("q")
-        await asyncio.sleep(0.5)
-        while True:
-            read = await session.poll_once(timeout=0.3)
-            if not read.stdout:
-                break
-            output_parts.append(read.stdout)
-
-        return output_parts, pages_scrolled

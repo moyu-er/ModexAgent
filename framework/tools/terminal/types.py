@@ -90,7 +90,7 @@ class TerminalCommandStatus(StrEnum):
 # XML root tag → list of element names whose text content is safe to truncate.
 # Defined once here so governance code does not hard-code element names.
 _TERMINAL_XML_TRUNCATABLE: dict[str, list[str]] = {
-    "command_result": ["output"],
+    "command_result": ["output", "tui_screen", "cursor_line"],
     "process_result": ["output"],
     "terminal_result": ["output", "cursor"],
     "tool_result_overflow": ["chunk", "instruction"],

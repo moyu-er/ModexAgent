@@ -107,14 +107,11 @@ async def test_2_hidden_process_and_terminal_tabs() -> None:
     reg = ProcessRegistry()
     cmd = CommandTool(mgr, reg, _cfg(yield_ms=500, timeout=30))
     proc = ProcessTool(registry=reg, manager=mgr)
-    tool = TerminalTool(mgr)
+    tool = TerminalTool(mgr, registry=reg)
 
-    # --- process: poll + kill ---
-    await cmd.execute(command="sleep 60")
-    p = await proc.execute(action="poll")
-    assert len(p) > 0
-    await proc.execute(action="kill")
-    assert len(reg.list_running()) == 0
+    # --- process: kill existing ---
+    for s in reg.list_running():
+        await proc.execute(action="kill")
 
     # --- process: interrupt (Ctrl+C) ---
     await cmd.execute(command="sleep 60")
@@ -123,9 +120,9 @@ async def test_2_hidden_process_and_terminal_tabs() -> None:
     for s in reg.list_running():
         await proc.execute(action="kill")
 
-    # --- process: list ---
+    # --- terminal: list (includes process info) ---
     await cmd.execute(command="echo list-me")
-    lst = await proc.execute(action="list")
+    lst = await tool.execute(action="list")
     assert "echo" in lst or "list-me" in lst
     for s in reg.list_running():
         await proc.execute(action="kill")

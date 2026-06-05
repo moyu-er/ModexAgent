@@ -108,6 +108,9 @@ class FakeBackend:
     def mark_command_boundary(self) -> None:
         pass
 
+    def output_buffer_text(self) -> str:
+        return ""
+
     async def read(self, timeout: float, max_size: int) -> str:
         r = await self.read_pending(timeout, max_size)
         return r.raw
@@ -142,7 +145,7 @@ def _make_tool_set(
     registry = ProcessRegistry(config=cfg)
     ct = CommandTool(manager=manager, registry=registry, config=cfg)
     pt = ProcessTool(registry=registry, manager=manager, config=cfg)
-    tt = TerminalTool(manager=manager)
+    tt = TerminalTool(manager=manager, registry=registry)
     return ct, pt, tt, registry
 
 
@@ -218,28 +221,26 @@ class TestProcessOutputIncludesTabIdentity:
     """process_result XML must tell the agent which terminal tab is involved."""
 
     @pytest.mark.asyncio
-    async def test_process_log_includes_terminal_name(self) -> None:
+    async def test_terminal_current_includes_terminal_name(self) -> None:
         manager = await _manager_with_tabs("deploy")
-        _, pt, _, registry = _make_tool_set(manager)
+        _, _, tt, registry = _make_tool_set(manager)
         session = registry.create(command="deploy.sh", terminal="deploy", cwd=None, pid=1)
-        registry.append_output(session.id, "stdout", "deploying...\n")
 
-        result = await pt.execute(action="log")
+        result = await tt.execute(action="current")
 
-        assert "<process_result>" in result
-        # BUG: process output has session_id but no terminal name
-        assert "terminal=" in result or "<terminal>" in result or "deploy" in result
+        assert "<terminal_result>" in result
+        assert "deploy" in result or "<terminal>" in result
 
     @pytest.mark.asyncio
-    async def test_process_list_includes_terminal_names(self) -> None:
+    async def test_terminal_list_includes_terminal_names(self) -> None:
         manager = await _manager_with_tabs("tab-a", "tab-b")
-        _, pt, _, registry = _make_tool_set(manager)
+        _, _, tt, registry = _make_tool_set(manager)
         registry.create(command="job-a", terminal="tab-a", cwd=None, pid=1)
         registry.create(command="job-b", terminal="tab-b", cwd=None, pid=2)
 
-        result = await pt.execute(action="list")
+        result = await tt.execute(action="list")
 
-        assert "<process_result>" in result
+        assert "<terminal_result>" in result
         assert "tab-a" in result
         assert "tab-b" in result
 
