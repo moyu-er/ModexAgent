@@ -41,3 +41,41 @@ def test_resolve_cursor_line_falls_back_to_last_nonempty_line() -> None:
 def test_resolve_cursor_line_empty_segment() -> None:
     seg = TerminalSegment(text="", cursor_line="", is_empty_prompt=True)
     assert resolve_cursor_line(seg) == ""
+
+
+# ---------------------------------------------------------------------------
+# Input-prompt detection (extracted from session.py)
+# ---------------------------------------------------------------------------
+
+from framework.tools.terminal.prompt import is_waiting_for_input, INPUT_PROMPT_MARKERS
+
+
+def test_input_prompt_markers_is_public_tuple() -> None:
+    assert isinstance(INPUT_PROMPT_MARKERS, tuple)
+    assert len(INPUT_PROMPT_MARKERS) > 0
+    assert "password" in INPUT_PROMPT_MARKERS
+    assert "[y/n]" in INPUT_PROMPT_MARKERS
+
+
+def test_is_waiting_for_input_password() -> None:
+    assert is_waiting_for_input("Enter password: ") is True
+
+
+def test_is_waiting_for_input_yes_no() -> None:
+    assert is_waiting_for_input("Continue? [y/n] ") is True
+
+
+def test_is_waiting_for_input_normal_output() -> None:
+    assert is_waiting_for_input("Build complete. 42 files compiled.") is False
+
+
+def test_is_waiting_for_input_empty() -> None:
+    assert is_waiting_for_input("") is False
+
+
+def test_is_waiting_for_input_with_ansi_codes() -> None:
+    assert is_waiting_for_input("\x1b[32mPassword:\x1b[0m ") is True
+
+
+def test_is_waiting_for_input_case_insensitive() -> None:
+    assert is_waiting_for_input("PASSWORD: ") is True

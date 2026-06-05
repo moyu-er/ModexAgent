@@ -56,6 +56,40 @@ def sanitize_terminal_output(text: str) -> str:
     lines = [line.rsplit("\r", 1)[-1] for line in lines]
     return "\n".join(lines)
 
+
+# ---------------------------------------------------------------------------
+# Input-prompt detection
+# ---------------------------------------------------------------------------
+
+INPUT_PROMPT_MARKERS: tuple[str, ...] = (
+    "password", "passphrase", "login:", "username:",
+    "user name:", "enter password", "enter passphrase",
+    "[y/n]", "[Y/n]", "[yes/no]", "(yes/no)",
+    "pin:", "token:", "passcode", "code:",
+    "verification code:", "2fa code:", "otp:",
+    "press any key to continue",
+    "overwrite", "replace",
+    "confirm",
+    "current password", "new password", "retype password", "repeat password",
+    "(y/n)", "[y/N]", "(Y/n)",
+)
+
+
+def is_waiting_for_input(output: str) -> bool:
+    """Check if the last non-empty line of *output* contains an input prompt marker.
+
+    Strips ANSI escape sequences before checking. Case-insensitive.
+    """
+    if not output:
+        return False
+    plain = _strip_ansi_and_da1(output)
+    lines = [ln for ln in plain.splitlines() if ln.strip()]
+    if not lines:
+        return False
+    last = lines[-1].lower()
+    return any(marker in last for marker in INPUT_PROMPT_MARKERS)
+
+
 PROMPT_SUFFIXES: tuple[str, ...] = (
     "$ ",  "# ",  "> ",  "% ",  ": ",
     "$",   "#",   ">",   "%",   ":",

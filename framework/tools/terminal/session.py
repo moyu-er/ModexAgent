@@ -10,8 +10,10 @@ from typing import TYPE_CHECKING, Any
 from xml.sax.saxutils import escape as xml_escape
 
 from framework.tools.terminal.prompt import (
+    INPUT_PROMPT_MARKERS,
     _strip_ansi_and_da1,
     is_prompt_ready,
+    is_waiting_for_input,
     sanitize_terminal_output,
 )
 from framework.tools.terminal.pty_keys import (
@@ -311,37 +313,11 @@ class TerminalSession:
 
     # Common prompt strings that indicate a command is waiting for user input.
     # Checked case-insensitively against the last non-empty output line.
-    _INPUT_PROMPT_MARKERS: tuple[str, ...] = (
-        "password", "passphrase", "login:", "username:",
-        "user name:", "enter password", "enter passphrase",
-        "[y/n]", "[Y/n]", "[yes/no]", "(yes/no)",
-        # PIN / token / passcode variants
-        "pin:", "token:", "passcode", "code:",
-        # 2FA / verification
-        "verification code:", "2fa code:", "otp:",
-        # Key press / confirmation
-        "press any key to continue",
-        # File overwrite / replace
-        "overwrite", "replace",
-        # General confirmation prompts
-        "confirm",
-        # Password re-entry prompts (already covered by "password" but explicit is clearer)
-        "current password", "new password", "retype password", "repeat password",
-        # Short yes/no forms
-        "(y/n)", "[y/N]", "(Y/n)",
-    )
+    _INPUT_PROMPT_MARKERS: tuple[str, ...] = INPUT_PROMPT_MARKERS
 
     def _is_waiting_for_input(self, output: str) -> bool:
         """Check if the last non-empty line looks like an input prompt."""
-        if not output:
-            return False
-        # Strip ANSI/DA1 so colour codes don't hide the real last line.
-        plain = _strip_ansi_and_da1(output)
-        lines = [ln for ln in plain.splitlines() if ln.strip()]
-        if not lines:
-            return False
-        last = lines[-1].lower()
-        return any(marker in last for marker in self._INPUT_PROMPT_MARKERS)
+        return is_waiting_for_input(output)
 
     async def _discard_pending_output(self, timeout: float = 0.8) -> None:
         """Discard already-buffered PTY output before opening a command window."""
