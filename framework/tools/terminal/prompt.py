@@ -255,3 +255,45 @@ def resolve_cursor_line(segment: TerminalSegment) -> str:
         if line.strip():
             return line
     return ""
+
+
+def extract_last_command_output(text: str) -> str:
+    """Extract terminal output from the second-to-last prompt to the end.
+
+    Finds all lines that look like shell prompts (ending with >, $, #, %)
+    and returns from the second-to-last one to the end. This captures:
+    - The prompt before the command
+    - The command output
+    - The next prompt (if the command completed)
+
+    Falls back to the only prompt or the full text.
+    """
+    if not text:
+        return ""
+    clean = _strip_ansi_and_da1(text)
+    lines = clean.splitlines()
+    if not lines:
+        return ""
+
+    prompt_suffixes = ("> ", "$ ", "# ", "% ")
+
+    def _is_prompt_line(line: str) -> bool:
+        stripped = line.rstrip()
+        # Bare prompt (no command): ends with > $ # %
+        if stripped.endswith((">", "$", "#", "%")):
+            return True
+        # Prompt with command: prompt marker followed by space + command text
+        return any(suffix in stripped for suffix in prompt_suffixes)
+
+    prompt_indexes = [
+        idx for idx, line in enumerate(lines) if _is_prompt_line(line)
+    ]
+
+    if len(prompt_indexes) >= 2:
+        start = prompt_indexes[-2]
+    elif len(prompt_indexes) == 1:
+        start = prompt_indexes[0]
+    else:
+        start = max(0, len(lines) - 1)
+
+    return "\n".join(lines[start:])

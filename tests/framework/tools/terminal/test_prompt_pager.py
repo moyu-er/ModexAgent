@@ -79,3 +79,49 @@ def test_is_waiting_for_input_with_ansi_codes() -> None:
 
 def test_is_waiting_for_input_case_insensitive() -> None:
     assert is_waiting_for_input("PASSWORD: ") is True
+
+
+# ---------------------------------------------------------------------------
+# extract_last_command_output
+# ---------------------------------------------------------------------------
+
+from framework.tools.terminal.prompt import extract_last_command_output
+
+
+def test_extract_last_command_output_command_running() -> None:
+    """Only one prompt — return from that prompt to end."""
+    text = "PS F:\\project> npm install\ndownloading...\n"
+    result = extract_last_command_output(text)
+    assert "PS F:\\project>" in result
+    assert "npm install" in result
+    assert "downloading" in result
+
+
+def test_extract_last_command_output_command_completed() -> None:
+    """Two prompts — return from second-to-last (includes command + output + new prompt)."""
+    text = "PS F:\\project> echo hello\nhello\nPS F:\\project> "
+    result = extract_last_command_output(text)
+    assert result.startswith("PS F:\\project>")
+    assert "echo hello" in result
+    assert "hello" in result
+    assert result.rstrip().endswith(">")
+
+
+def test_extract_last_command_output_idle_no_command() -> None:
+    """Single prompt, no command — return it."""
+    text = "PS F:\\project> "
+    result = extract_last_command_output(text)
+    assert "PS F:\\project>" in result
+
+
+def test_extract_last_command_output_empty() -> None:
+    result = extract_last_command_output("")
+    assert result == ""
+
+
+def test_extract_last_command_output_bash_prompt() -> None:
+    text = "user@host:~$ ls\nfile1.txt\nfile2.txt\nuser@host:~$ "
+    result = extract_last_command_output(text)
+    assert "ls" in result
+    assert "file1.txt" in result
+    assert result.count("$") >= 2
