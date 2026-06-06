@@ -136,6 +136,7 @@ class KnowledgeConsolidator(KnowledgeConsolidatorBase):
         knowledge_dir: Path,
         *,
         max_iterations: int | None = None,
+        invocation_id: str = "",
     ) -> bool:
         """Main entry: read knowledge.md from archives, update knowledge files.
 
@@ -145,6 +146,7 @@ class KnowledgeConsolidator(KnowledgeConsolidatorBase):
             knowledge_dir: Directory containing knowledge files to update.
             max_iterations: Optional override for max ReAct iterations.
                 When ``None``, ``self.max_iterations`` is used.
+            invocation_id: Caller-supplied UUID for trace correlation.
 
         Returns:
             True if the agent ran successfully, False otherwise.
@@ -180,7 +182,12 @@ class KnowledgeConsolidator(KnowledgeConsolidatorBase):
             + "\n\n".join(knowledge_context)
         )
 
-        trace_key = "_".join(str(aid) for aid in archive_ids) or "none"
+        # Use invocation_id for trace correlation; fall back to archive IDs
+        trace_key = invocation_id or "_".join(str(aid) for aid in archive_ids) or "none"
+        logger.info(
+            "KnowledgeConsolidator starting: archives=%s invocation=%s",
+            archive_ids, invocation_id or trace_key,
+        )
 
         # Retry once on failure
         for attempt in range(2):
@@ -192,11 +199,14 @@ class KnowledgeConsolidator(KnowledgeConsolidatorBase):
                 trace_key=trace_key,
                 max_iterations=effective_max_iterations,
             ):
+                logger.info(
+                    "KnowledgeConsolidator succeeded: archives=%s invocation=%s attempt=%d",
+                    archive_ids, invocation_id or trace_key, attempt + 1,
+                )
                 return True
             logger.warning(
-                "KnowledgeConsolidator attempt %d failed for archive_ids=%s",
-                attempt + 1,
-                archive_ids,
+                "KnowledgeConsolidator attempt %d failed for archive_ids=%s invocation=%s",
+                attempt + 1, archive_ids, invocation_id or trace_key,
             )
 
         return False

@@ -51,10 +51,17 @@ class DreamEngine:
 
     async def run(self, context: MemoryContext) -> bool:
         if self._lock.locked():
-            logger.info("DreamEngine skipped: already running for session=%s", context.session_id)
+            logger.info(
+                "DreamEngine skipped: already running session=%s",
+                context.session_id,
+            )
             return False
 
         async with self._lock:
+            # Acquire invocation ID from archive state (self-incrementing counter,
+            # same pattern as next_archive_id). Must be inside the lock to avoid
+            # races on the counter.
+            invocation_id = await self._next_invocation_id(context)
             unprocessed = await self.history_manager.get_unprocessed(
                 context,
                 cursor_name="dream",
@@ -62,20 +69,37 @@ class DreamEngine:
             )
             entries = unprocessed.entries
             if not entries:
+                logger.debug(
+                    "DreamEngine: no unprocessed archives session=%s invocation=%d",
+                    context.session_id, invocation_id,
+                )
                 return False
 
             # Limit per run
             entries = entries[:self.max_consume_per_run]
+            archive_ids = [e.entry_id for e in entries if e.entry_id]
 
-            # NEW PATH: Use KnowledgeConsolidator agent
+            logger.info(
+                "DreamEngine started: %d archive(s) ids=%s session=%s invocation=%d",
+                len(archive_ids), archive_ids, context.session_id, invocation_id,
+            )
+
             if self._consolidator is not None:
-                return await self._run_consolidator_limited(entries, context)
+                result = await self._run_consolidator_limited(
+                    entries, context, str(invocation_id),
+                )
+                logger.info(
+                    "DreamEngine finished: success=%s session=%s invocation=%d",
+                    result, context.session_id, invocation_id,
+                )
+                return result
             return False
 
     async def _run_consolidator_limited(
         self,
         entries: list[ArchiveEntry],
         context: MemoryContext,
+        invocation_id: str = "",
     ) -> bool:
         """Run consolidator on a pre-sliced entry list."""
         assert self._consolidator is not None  # guarded by caller
@@ -86,16 +110,16 @@ class DreamEngine:
         knowledge_dir = await self.long_term_manager.get_storage_path(context)
         if knowledge_dir is None:
             logger.warning(
-                "KnowledgeConsolidator: no knowledge storage path for context=%s",
-                context,
+                "DreamEngine: no knowledge storage path session=%s invocation=%s",
+                context.session_id, invocation_id,
             )
             return False
 
         archive_base = await self.history_manager.get_storage_path(context)
         if archive_base is None:
             logger.warning(
-                "KnowledgeConsolidator: no archive storage path for context=%s",
-                context,
+                "DreamEngine: no archive storage path session=%s invocation=%s",
+                context.session_id, invocation_id,
             )
             return False
 
@@ -106,8 +130,8 @@ class DreamEngine:
         )
 
         logger.info(
-            "KnowledgeConsolidator: processing %d archive(s) for knowledge update, max_iterations=%d",
-            len(archive_ids), dynamic_iterations,
+            "DreamEngine consolidating: archive_ids=%s max_iterations=%d invocation=%s",
+            archive_ids, dynamic_iterations, invocation_id,
         )
 
         success = await self._consolidator.consolidate(
@@ -115,10 +139,16 @@ class DreamEngine:
             archive_base=archive_base,
             knowledge_dir=knowledge_dir,
             max_iterations=dynamic_iterations,
+            invocation_id=invocation_id,
         )
 
-        final_cursor = max(archive_ids)
-        await self._commit_knowledge_cursor(context, final_cursor)
+        if success:
+            final_cursor = max(archive_ids)
+            await self._commit_knowledge_cursor(context, final_cursor)
+            logger.info(
+                "DreamEngine cursor advanced: knowledge_consumed_archive_id=%d invocation=%s",
+                final_cursor, invocation_id,
+            )
 
         return success
 
@@ -134,6 +164,35 @@ class DreamEngine:
             channel=ArchiveChannel.KNOWLEDGE,
         )
         await self.history_manager.prune_consumed_pairs(context)
+
+    async def _next_invocation_id(self, context: MemoryContext) -> int:
+        """Read and increment the knowledge invocation counter in archive state.
+
+        Uses the same ``state.json`` as the archive layer — the counter is
+        stored as ``knowledge_invocation_id`` alongside ``next_archive_id``
+        and ``knowledge_consumed_archive_id``.
+
+        Falls back to ``0`` when file-based storage is unavailable
+        (e.g. in-memory backends for tests).
+        """
+        try:
+            storage = await self.history_manager.get_storage_path(context)
+        except Exception:
+            return 0
+        if storage is None:
+            return 0
+        try:
+            from framework.memory.stores.dir_archive import DirArchiveStorage
+            dir_storage = DirArchiveStorage(storage)
+            state = await dir_storage.read_archive_state() or {}
+            current: int = state.get("knowledge_invocation_id", 0)
+            next_id = current + 1
+            state["knowledge_invocation_id"] = next_id
+            await dir_storage.write_archive_state(state)
+            return next_id
+        except Exception:
+            logger.debug("Failed to read/write invocation counter", exc_info=True)
+            return 0
 
     async def scan_all(self) -> list[MemoryContext]:
         """Scan archive layer scope records, return processed MemoryContext list.

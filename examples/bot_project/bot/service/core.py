@@ -495,7 +495,7 @@ class BotService(AgentBuilderMixin):
         self._init_dream()
 
         # Wire archive trigger callback so cleanup_session can check archive
-        # count and trigger DreamEngine when max_archive_count is reached.
+        # and trigger DreamEngine whenever unprocessed archives exist.
         if self.memory_system is not None:
             self.memory_system.set_archive_trigger_callback(self._archive_trigger)
 
@@ -1521,8 +1521,8 @@ class BotService(AgentBuilderMixin):
     async def _archive_trigger(self, context: MemoryContext) -> None:
         """Callback invoked after each archive is generated.
 
-        Checks unprocessed archive count against max_archive_count threshold
-        and triggers DreamEngine.run() if exceeded.
+        Triggers DreamEngine.run() whenever there are unprocessed archive entries.
+        DreamEngine.run() handles its own locking and no-op when idle.
         """
         if self.dream_engine is None:
             return
@@ -1531,12 +1531,10 @@ class BotService(AgentBuilderMixin):
         except Exception:
             logger.debug("Archive trigger: failed to get unprocessed count", exc_info=True)
             return
-        archive_cfg = self._main_memory_cfg.archive if self._main_memory_cfg else None
-        threshold = archive_cfg.max_archive_count if archive_cfg else 10
-        if count >= threshold:
+        if count > 0:
             logger.info(
-                "Archive trigger: count=%d >= threshold=%d, running DreamEngine",
-                count, threshold,
+                "Archive trigger: %d unprocessed archive(s), running DreamEngine session=%s",
+                count, context.session_id,
             )
             try:
                 await self.dream_engine.run(context)

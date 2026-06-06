@@ -97,6 +97,7 @@ class KnowledgeConsolidatorBase(ABC):
         knowledge_dir: Path,
         *,
         max_iterations: int | None = None,
+        invocation_id: str = "",
     ) -> bool:
         """Read knowledge.md from archives and update knowledge files.
 
@@ -106,6 +107,7 @@ class KnowledgeConsolidatorBase(ABC):
             knowledge_dir: Directory containing knowledge files to update.
             max_iterations: Optional override for max ReAct iterations.
                 When ``None``, the consolidator's default is used.
+            invocation_id: Caller-supplied UUID for trace correlation.
 
         Returns:
             ``True`` if the agent ran successfully, ``False`` otherwise.
