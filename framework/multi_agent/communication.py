@@ -18,6 +18,7 @@ from framework.multi_agent.envelope import AgentMessageEnvelope
 from framework.multi_agent.session_id import DefaultSessionIdStrategy
 from framework.multi_agent.template import AgentTemplate
 from framework.multi_agent.template_registry import AgentTemplateRegistry
+from framework.multi_agent.tools import CommunicationTarget, CommunicationTargetStore
 
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
@@ -163,6 +164,7 @@ class AgentCommunicationService:
         notification_service: Any | None = None,
         main_agent_name: str | None = None,
         pruned_manager: Any | None = None,
+        target_store: CommunicationTargetStore | None = None,
     ) -> None:
         self._source = source
         self._broker = broker
@@ -183,6 +185,7 @@ class AgentCommunicationService:
         self._notification_service = notification_service
         self._main_agent_name = main_agent_name
         self._pruned_manager = pruned_manager
+        self._target_store = target_store
 
     def _resolve_source(self, context: AgentContext) -> AgentAddress:
         """Resolve effective source address from context, fallback to constructor default."""
@@ -510,6 +513,14 @@ class AgentCommunicationService:
             name, template.agent_type, invocation_id,
         )
 
+        # Add to target store (no-op if template target already exists from init)
+        if self._target_store is not None:
+            self._target_store.add(CommunicationTarget(
+                name=name,
+                kind=AgentCommKind.SUBAGENT,
+                description=template.description,
+            ))
+
         return AgentSendResult(
             target_agent=name,
             target_kind=AgentCommKind.SUBAGENT,
@@ -565,7 +576,8 @@ class AgentCommunicationService:
         from framework.core.tool_manager import InMemoryToolManager, ToolManagerConfig
         from framework.multi_agent.address import AgentAddress
         from framework.multi_agent.tools import (
-            ListCommunicationTargetsTool,
+            CommunicationTarget,
+            CommunicationTargetStore,
             SendToAgentTool,
         )
         from framework.tools.presets import get_preset_tools
@@ -596,27 +608,21 @@ class AgentCommunicationService:
                         agent_name, mcp_json,
                     )
 
-        # Communication tools — always included so subagent can reply to parent
+        # Communication tools — subagent sees only parent (name only, no kind/desc)
+        subagent_store = CommunicationTargetStore(for_subagent=True)
+        subagent_store.add(CommunicationTarget(
+            name=parent_name, kind=AgentCommKind.NORMAL,
+        ))
         subagent_address = AgentAddress(name=agent_name)
-        # Dynamic target visibility: subagents default to parent-only
-        visible = template.visible_targets
-        if visible is None:
-            visible = [parent_name]
 
         tm.register(SendToAgentTool(
+            store=subagent_store,
             source=subagent_address,
             broker=self._broker,
             registry=self._registry,
             agent_bus=self._agent_bus,
             service=self,
             comm_tracker=self._comm_tracker,
-        ))
-        tm.register(ListCommunicationTargetsTool(
-            self_address=subagent_address,
-            registry=self._registry,
-            template_registry=self._template_registry,
-            pool_name=self._pool_name,
-            visible_targets=visible,
         ))
 
         return tm
@@ -914,18 +920,3 @@ class AgentCommunicationService:
             invocation_id=normalized_invocation_id,
             created_new_task=created_new_task,
         )
-
-    def build_targets_description(self) -> str:
-        """Build a description of available targets with their kind for the LLM."""
-        profiles = self._registry.list_profiles()
-        if not profiles:
-            return "No agents available."
-
-        lines = ["Available targets:"]
-        for p in profiles:
-            lines.append(f"- {p.name} ({p.comm_kind.value})")
-        lines.append("")
-        lines.append("Use invocation_id=null when sending to a normal agent.")
-        lines.append('Use invocation_id="" when starting a new task for a subagent.')
-        lines.append('Use invocation_id="<existing invocation_id>" when continuing a subagent task.')
-        return "\n".join(lines)

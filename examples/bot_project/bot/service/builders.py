@@ -41,7 +41,7 @@ from framework.multi_agent import (
     SubagentService, AgentMessageBus,
 )
 from framework.multi_agent.session_id import DefaultSessionIdStrategy
-from framework.multi_agent.tools import ListCommunicationTargetsTool, SendToAgentTool
+from framework.multi_agent.tools import CommunicationTarget, CommunicationTargetStore, SendToAgentTool
 from framework.pipeline.adapters import OutputAdapter
 from framework.tools import MCPClientManager
 
@@ -240,7 +240,16 @@ class AgentBuilderMixin:
         strategy = DefaultSessionIdStrategy(main_agent_name=parent_name)
 
         if self.agent_bus is not None:
+            from framework.multi_agent.comm_kind import AgentCommKind
             from framework.multi_agent.communication import AgentCommunicationService
+            comm_store = CommunicationTargetStore()
+            # Populate from other configured agents
+            for a in agents:
+                if a.name != parent_name:
+                    comm_store.add(CommunicationTarget(
+                        name=a.name, kind=AgentCommKind.SUBAGENT,
+                        description=getattr(a, "description", ""),
+                    ))
             service = AgentCommunicationService(
                 source=parent_address,
                 broker=self.broker,
@@ -248,20 +257,15 @@ class AgentBuilderMixin:
                 agent_bus=self.agent_bus,
                 session_strategy=strategy,
                 comm_tracker=self.communication_tracker,
+                target_store=comm_store,
             )
             self.tool_manager.register(SendToAgentTool(
+                store=comm_store,
                 source=parent_address, broker=self.broker, registry=self.agent_pool,
                 agent_bus=self.agent_bus, service=service,
                 comm_tracker=self.communication_tracker,
             ))
             print("   [OK] send_to_agent registered")
-
-            self.tool_manager.register(ListCommunicationTargetsTool(
-                self_address=parent_address,
-                registry=self.agent_pool,
-                # template_registry and pool_name not available in old mode
-            ))
-            print("   [OK] list_communication_targets registered")
 
     # ── Subagent Tool Manager (code-driven) ──
 

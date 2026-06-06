@@ -34,8 +34,10 @@ from framework.multi_agent.inbox.consumer import InboxConsumer
 from framework.multi_agent.inbox.producer import InboxProducer
 from framework.multi_agent.inbox.server import InboxServer
 from framework.multi_agent.session_id import DefaultSessionIdStrategy
+from framework.multi_agent.comm_kind import AgentCommKind
 from framework.multi_agent.tools import (
-    ListCommunicationTargetsTool,
+    CommunicationTarget,
+    CommunicationTargetStore,
     SendToAgentTool,
 )
 from framework.pipeline.adapters import OutputAdapter
@@ -224,17 +226,39 @@ async def create_pool(
         main_agent_name=main_agent_name,
         pruned_manager=memory_system.pruned_manager,
     )
+    # Communication target store — shared between SendToAgentTool and AgentCommunicationService
+    main_store = CommunicationTargetStore()
+
+    # Populate from registered pool agents (exclude self)
+    for p in pool.list_profiles():
+        if p.name != main_agent_name:
+            main_store.add(CommunicationTarget(
+                name=p.name, kind=p.comm_kind,
+                description=p.role_description,
+            ))
+
+    # Populate from templates
+    for t in templates:
+        main_store.add(CommunicationTarget(
+            name=t.agent_type, kind=AgentCommKind.SUBAGENT,
+            description=t.description,
+        ))
+
+    logger.info(
+        "Pool '%s': communication store populated (%d targets)",
+        pool_name, len(main_store.list()),
+    )
+
     tool_manager.register(SendToAgentTool(
+        store=main_store,
         source=main_address, broker=broker, registry=pool,
         agent_bus=agent_bus, service=main_service,
         comm_tracker=comm_tracker,
     ))
-    tool_manager.register(ListCommunicationTargetsTool(
-        self_address=main_address, registry=pool,
-        template_registry=template_registry,
-        pool_name=pool_name,
-    ))
-    logger.info("Pool '%s': communication tools registered for main agent", pool_name)
+
+    # Inject store into service for runtime target lifecycle
+    main_service._target_store = main_store
+    logger.info("Pool '%s': communication tool registered for main agent (list tool deprecated)", pool_name)
 
     # 10. Hooks
     max_iter_hook = MaxIterationNotifyHook(notification_service=notification_service)
