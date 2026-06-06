@@ -166,6 +166,37 @@ def test_truncatable_paths_missing_large_content_still_leaf_truncated():
     )
 
 
+def test_phase2_only_truncates_leaf_elements_not_parents():
+    """Phase 2 must ONLY truncate leaf elements (no child elements).
+    Parent elements containing nested XML children are never touched —
+    this guarantees XML structure is never destroyed.
+
+    Uses a path that matches a small field but misses the large leaf
+    element, so Phase 1 runs (text_nodes non-empty) and Phase 2 catches
+    the unlisted large leaf.
+    """
+    xml = (
+        "<root>"
+        "<small_field>tiny</small_field>"
+        "<parent>"
+        "<child1>short</child1>"
+        "<child2>" + "x" * 8000 + "</child2>"
+        "</parent>"
+        "</root>"
+    )
+    # Paths include small_field but NOT child2 — Phase 1 truncates
+    # small_field (no-op, it's short), Phase 2 catches child2 leaf.
+    result = truncate_xml_safe(xml, max_chars=200, truncatable_paths=["small_field"])
+
+    # XML structure must be intact — parent not touched
+    assert result.count("<parent>") == result.count("</parent>"), "parent tags mismatch"
+    assert "<child1>short</child1>" in result, "short child should be untouched"
+    assert result.count("<child2>") == result.count("</child2>"), "child2 tags mismatch"
+    # child2 text was truncated (leaf, 8000 chars > 200)
+    assert len(result) < len(xml), "Phase 2 should have truncated child2"
+    assert "x" * 8000 not in result
+
+
 def test_empty_paths_still_bounded_via_boundary():
     """Empty truncatable_paths hits boundary fallback (no text_nodes → early
     return via _truncate_xml_boundary).  Result is cut at max_chars."""
