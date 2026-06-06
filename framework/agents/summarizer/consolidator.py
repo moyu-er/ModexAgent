@@ -131,24 +131,15 @@ class KnowledgeConsolidator(ScopedFileAgent, KnowledgeConsolidatorBase):
                 max_iterations=effective_max_iterations,
             )
             if ok:
-                # Verify at least one knowledge file exists (sanity check —
-                # the agent may have run without actually writing anything).
-                any_exists = any(
-                    (knowledge_dir / fname).exists()
-                    and (knowledge_dir / fname).stat().st_size > 0
-                    for fname in _KNOWLEDGE_FILES
-                )
-                if any_exists:
-                    logger.info(
-                        "KnowledgeConsolidator succeeded: archives=%s invocation=%s attempt=%d",
-                        archive_ids, invocation_id or trace_key, attempt + 1,
-                    )
-                    return True
-                logger.warning(
-                    "KnowledgeConsolidator agent ran but no knowledge files found, retrying. "
-                    "archives=%s invocation=%s attempt=%d",
+                # Unlike ArchiveSummarizer (which writes files from scratch
+                # and must verify they exist), knowledge files are already
+                # present via ensure_defaults.  The agent may legitimately
+                # decide no updates are needed — that is still success.
+                logger.info(
+                    "KnowledgeConsolidator succeeded: archives=%s invocation=%s attempt=%d",
                     archive_ids, invocation_id or trace_key, attempt + 1,
                 )
+                return True
             logger.warning(
                 "KnowledgeConsolidator attempt %d failed archive_ids=%s invocation=%s",
                 attempt + 1, archive_ids, invocation_id or trace_key,

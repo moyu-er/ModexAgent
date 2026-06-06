@@ -7,6 +7,8 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from framework.memory.archive_models import ArchiveChannelStorage
+
 if TYPE_CHECKING:
     from framework.memory.core.lock import AioRWLock
 
@@ -17,7 +19,7 @@ _REQUIRED_ARCHIVE_FILES: frozenset[str] = frozenset(
 )
 
 
-class DirArchiveStorage:
+class DirArchiveStorage(ArchiveChannelStorage):
     """Archive storage backed by a directory tree of markdown files.
 
     Layout::

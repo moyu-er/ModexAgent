@@ -9,6 +9,7 @@ from framework.memory.registry.file import DefaultMemoryStoreRegistry
 
 
 async def test_file_registry_writes_context_and_knowledge_archive_files(tmp_path) -> None:
+    """ARCHIVE layer resolves to DirArchiveStorage — append_bundle writes MD files."""
     registry = DefaultMemoryStoreRegistry(tmp_path)
     await registry.initialize()
     factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.ARCHIVE)
@@ -20,16 +21,17 @@ async def test_file_registry_writes_context_and_knowledge_archive_files(tmp_path
         ArchiveWrite(channel=ArchiveChannel.KNOWLEDGE, summary="knowledge"),
     ))
 
+    # DirArchiveStorage writes content as {archive_id}/{channel}.md
     archive_root = tmp_path / "archive" / "default"
-    assert (archive_root / "context_archive.jsonl").exists()
-    assert (archive_root / "knowledge_archive.jsonl").exists()
-    assert (archive_root / ".archive_state.json").exists()
-    assert "context" in (archive_root / "context_archive.jsonl").read_text(encoding="utf-8")
-    assert "knowledge" in (archive_root / "knowledge_archive.jsonl").read_text(encoding="utf-8")
+    assert (archive_root / "1" / "context.md").exists()
+    assert (archive_root / "1" / "knowledge.md").exists()
+    assert (archive_root / "state.json").exists()
+    assert "context" in (archive_root / "1" / "context.md").read_text(encoding="utf-8")
+    assert "knowledge" in (archive_root / "1" / "knowledge.md").read_text(encoding="utf-8")
 
-    # V2: no per-channel cursor files — archive_state.json is the single coordinate
-    assert not (archive_root / ".cursor_context_archive").exists()
-    assert not (archive_root / ".cursor_knowledge_archive").exists()
+    # No JSONL files in MD-only architecture
+    assert not (archive_root / "context_archive.jsonl").exists()
+    assert not (archive_root / "knowledge_archive.jsonl").exists()
 
 
 async def test_append_channel_log_uses_archive_id_as_cursor() -> None:
