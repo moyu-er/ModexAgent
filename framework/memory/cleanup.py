@@ -103,6 +103,7 @@ class _ArchiveOutcome:
     generated: bool
     skipped: bool
     next_archive_id: int
+    resolved_storage: DirArchiveStorage | None = None
 
 
 # ── Phase helpers ──────────────────────────────────────────────────────────────
@@ -467,26 +468,41 @@ async def _register_archive_with_layer(
     try:
         from framework.memory.archive_models import ArchiveChannel, ArchiveWrite
 
+        writes: list[ArchiveWrite] = []
+
         context_md = await archive_storage.read_archive_file(
             next_archive_id, "context.md",
         )
         if context_md and context_md.strip():
-            await archive.append_bundle(
-                context,
-                [
-                    ArchiveWrite(
-                        channel=ArchiveChannel.CONTEXT,
-                        summary=context_md,
-                        metadata={
-                            "archive_id": next_archive_id,
-                            "source": "archive_agent",
-                        },
-                    ),
-                ],
-            )
+            writes.append(ArchiveWrite(
+                channel=ArchiveChannel.CONTEXT,
+                summary=context_md,
+                metadata={
+                    "archive_id": next_archive_id,
+                    "source": "archive_agent",
+                },
+            ))
+
+        knowledge_md = await archive_storage.read_archive_file(
+            next_archive_id, "knowledge.md",
+        )
+        if knowledge_md and knowledge_md.strip():
+            writes.append(ArchiveWrite(
+                channel=ArchiveChannel.KNOWLEDGE,
+                summary=knowledge_md,
+                metadata={
+                    "archive_id": next_archive_id,
+                    "source": "archive_agent",
+                },
+            ))
+
+        if writes:
+            await archive.append_bundle(context, writes)
             logger.debug(
-                "Archive registered with layer: archive_id=%d session=%s",
-                next_archive_id, context.session_id,
+                "Archive registered with layer: archive_id=%d channels=%s session=%s",
+                next_archive_id,
+                [w.channel.value for w in writes],
+                context.session_id,
             )
     except Exception:
         logger.warning(
