@@ -1,7 +1,7 @@
 """Tests for lifecycle and maintenance policies (Phase 6).
 
 Covers: MemoryMaintenancePolicy, retention policies,
-DreamEngine cursor semantics, and ConsolidationEngine ABC.
+and DreamEngine cursor semantics.
 """
 from __future__ import annotations
 
@@ -305,38 +305,7 @@ class TestMaintenanceResult:
         assert result.detail == "error msg"
 
 
-# ── ConsolidationEngine ABC ─────────────────────────────────────────────────
-
-
-class TestConsolidationEngineABC:
-    def test_cannot_instantiate_directly(self):
-        from framework.memory.core.consolidation import ConsolidationEngine
-
-        with pytest.raises(TypeError):
-            ConsolidationEngine()
-
-    def test_concrete_impl_must_implement_run(self):
-        from framework.memory.core.consolidation import ConsolidationEngine
-
-        class Incomplete(ConsolidationEngine):
-            pass
-
-        with pytest.raises(TypeError):
-            Incomplete()
-
-    def test_concrete_impl_works(self):
-        from framework.memory.core.consolidation import ConsolidationEngine
-
-        class Complete(ConsolidationEngine):
-            async def run(self, context):
-                return True
-
-            async def consolidate(self, scope_key, new_entries, existing_memories):
-                from framework.memory.core.consolidation import ConsolidationResult
-                return ConsolidationResult.empty()
-
-        engine = Complete()
-        assert engine is not None
+# ── Archive FIFO eviction ───────────────────────────────────────────────────
 
 
 class TestArchiveRetentionFifoEviction:

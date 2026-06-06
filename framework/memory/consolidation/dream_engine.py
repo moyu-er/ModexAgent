@@ -8,16 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
 
 from framework.agents.summarizer.abc import KnowledgeConsolidatorBase
 from framework.memory.archive_models import (
     KNOWLEDGE_ARCHIVE_FILE_KEY,
     ArchiveChannel,
-)
-from framework.memory.core.consolidation import (
-    ConsolidationEngine,
-    ConsolidationResult,
 )
 from framework.memory.core.layers import ArchiveMemoryManager, KnowledgeMemoryManager
 from framework.memory.core.models import ArchiveEntry
@@ -31,7 +26,7 @@ from framework.memory.registry.base import MemoryStoreRegistry
 logger = logging.getLogger(__name__)
 
 
-class DreamEngine(ConsolidationEngine):
+class DreamEngine:
     """Offline DreamEngine: memory consolidation via KnowledgeConsolidator.
 
     Processes unprocessed archive entries through a ReAct-based
@@ -170,15 +165,3 @@ class DreamEngine(ConsolidationEngine):
             except Exception as e:
                 logger.warning("DreamEngine failed for scope %s: %s", record.scope_key, e)
         return processed
-
-    async def consolidate(
-        self,
-        scope_key: str,
-        new_entries: list[dict[str, Any]],
-        existing_memories: dict[str, str],
-    ) -> ConsolidationResult:
-        """Legacy two-phase path -- removed. Use :meth:`run` instead."""
-        raise NotImplementedError(
-            "DreamEngine.consolidate() has been removed. "
-            "Use DreamEngine.run() with a KnowledgeConsolidator."
-        )

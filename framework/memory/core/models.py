@@ -139,7 +139,6 @@ class LongTermMemory:
 
 
 from framework.memory.core.consolidation import (  # noqa: E402
-    ConsolidationResult,
     MemoryUpdate,
     MemoryUpdateMode,
 )
@@ -160,7 +159,6 @@ __all__ = [
     "CompressionPlan",
     "CompressionReason",
     "CompressionTrigger",
-    "ConsolidationResult",
     "LongTermMemory",
     "InjectionResult",
     "KnowledgeBudget",

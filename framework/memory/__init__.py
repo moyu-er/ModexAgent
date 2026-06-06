@@ -22,8 +22,6 @@ from framework.memory.context_governance import (
     UserRetentionBufferInjectionGovernance,
 )
 from framework.memory.core.consolidation import (
-    ConsolidationEngine,
-    ConsolidationResult,
     MemoryUpdate,
     MemoryUpdateMode,
 )
@@ -168,8 +166,6 @@ __all__ = [
     "ToolChainSanitizationReason",
     "ToolChainSanitizationResult",
     # Consolidation
-    "ConsolidationEngine",
-    "ConsolidationResult",
     "MemoryUpdate",
     "MemoryUpdateMode",
     # Injection

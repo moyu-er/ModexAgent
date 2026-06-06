@@ -114,18 +114,3 @@ async def test_dream_engine_scan_all_uses_registry_records() -> None:
     assert archive.committed[0][2] == 3  # max_consume_per_run=3 limits to 3 entries
     assert archive.committed[0][3] == ArchiveChannel.KNOWLEDGE
     assert archive.pruned_contexts == [context]
-
-
-@pytest.mark.asyncio
-async def test_consolidate_raises_not_implemented() -> None:
-    """consolidate() raises NotImplementedError — legacy path removed."""
-    engine = DreamEngine(
-        history_manager=MagicMock(),
-        long_term_manager=MagicMock(),
-    )
-    with pytest.raises(NotImplementedError, match="has been removed"):
-        await engine.consolidate(
-            scope_key="",
-            new_entries=[{"summary": "test"}],
-            existing_memories={},
-        )
