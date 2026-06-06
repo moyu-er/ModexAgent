@@ -101,6 +101,7 @@ class KnowledgeConsolidator(ScopedFileAgent, KnowledgeConsolidatorBase):
 
         user_msg = (
             "The archive knowledge.md extracts below contain facts for review.\n"
+            "Archives are listed oldest→newest (ascending archive IDs).\n"
             "Compare them with the current knowledge files and apply updates.\n"
             "Use ONLY the read/write/edit/ls tools. Do NOT call bash, shell, "
             "python, or any other tool.\n\n"
@@ -130,11 +131,24 @@ class KnowledgeConsolidator(ScopedFileAgent, KnowledgeConsolidatorBase):
                 max_iterations=effective_max_iterations,
             )
             if ok:
-                logger.info(
-                    "KnowledgeConsolidator succeeded: archives=%s invocation=%s attempt=%d",
+                # Verify at least one knowledge file exists (sanity check —
+                # the agent may have run without actually writing anything).
+                any_exists = any(
+                    (knowledge_dir / fname).exists()
+                    and (knowledge_dir / fname).stat().st_size > 0
+                    for fname in _KNOWLEDGE_FILES
+                )
+                if any_exists:
+                    logger.info(
+                        "KnowledgeConsolidator succeeded: archives=%s invocation=%s attempt=%d",
+                        archive_ids, invocation_id or trace_key, attempt + 1,
+                    )
+                    return True
+                logger.warning(
+                    "KnowledgeConsolidator agent ran but no knowledge files found, retrying. "
+                    "archives=%s invocation=%s attempt=%d",
                     archive_ids, invocation_id or trace_key, attempt + 1,
                 )
-                return True
             logger.warning(
                 "KnowledgeConsolidator attempt %d failed archive_ids=%s invocation=%s",
                 attempt + 1, archive_ids, invocation_id or trace_key,

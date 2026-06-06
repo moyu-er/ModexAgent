@@ -117,10 +117,15 @@ class DirArchiveStorage:
         if not self._base.exists():
             return []
 
+        # Sort numerically by archive ID (oldest first)
+        numeric_dirs = [
+            child for child in self._base.iterdir()
+            if child.is_dir() and child.name.isdigit()
+        ]
+        numeric_dirs.sort(key=lambda p: int(p.name))
+
         results: list[dict[str, Any]] = []
-        for child in sorted(self._base.iterdir(), key=lambda p: p.name):
-            if not child.is_dir() or not child.name.isdigit():
-                continue
+        for child in numeric_dirs:
             aid = int(child.name)
             if aid <= since_archive_id:
                 continue
