@@ -58,9 +58,7 @@ class DreamEngineConfig(BaseModel):
 
     enabled: bool = False
     interval: int = 1200
-    min_archive_count: int = 0        # process any available entries
-    max_archive_count: int = 30      # trigger immediately if exceeded
-    max_batch_size: int = 20         # process up to N archives per run
+    max_consume_per_run: int = 3   # process up to N archives per run
 
 
 class LossyConfig(BaseModel):
@@ -88,6 +86,9 @@ class ArchiveConfig(BaseModel):
     enabled: bool = False
     max_entries: int = 1000
     retained_consumed_pairs: int = 3
+    max_archive_count: int = 10    # trigger knowledge update when this many undigested
+    max_archive_total: int = 20    # max archive dirs on disk (FIFO eviction)
+    max_archive_inject: int = 3    # how many recent archives to inject into system prompt
 
 
 class KnowledgeConfig(BaseModel):

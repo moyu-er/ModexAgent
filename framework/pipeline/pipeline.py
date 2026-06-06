@@ -140,7 +140,6 @@ class AgentPipeline:
         emitter_factory: Any | None = None,
         dream_engine: DreamEngine | None = None,
         dream_interval: float | None = None,
-        dream_threshold: int = 5,
         max_iterations: int = 10,
         incremental_flush: bool = True,
         skill_manager: SkillManager | None = None,
@@ -190,7 +189,6 @@ class AgentPipeline:
         self.emitter_factory = emitter_factory
         self.dream_engine = dream_engine
         self.dream_interval = dream_interval
-        self.dream_threshold = dream_threshold
         self.max_iterations = max_iterations
         self.incremental_flush = incremental_flush
         self.skill_manager = skill_manager
@@ -342,15 +340,14 @@ class AgentPipeline:
                 except Exception as scan_err:
                     logger.debug("DreamEngine scan error for %s: %s", ctx.session_id, scan_err)
                     continue
-                if count >= self.dream_threshold:
+                if count > 0:
                     scope_key = f"{ctx.session_id or ''}:{ctx.user_id or ''}:{ctx.tenant_id or ''}"
                     lock = _dream_locks.setdefault(scope_key, asyncio.Lock())
 
                     logger.info(
-                        "DreamEngine timer trigger, scope=%s, count=%d, threshold=%d",
+                        "DreamEngine timer trigger, scope=%s, count=%d",
                         scope_key,
                         count,
-                        self.dream_threshold,
                     )
 
                     async def _run_dream(

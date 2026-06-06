@@ -46,10 +46,14 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         budget: MemoryBudget | None = None,
         max_history_entries: int = 3,
         pruned_manager: PrunedManager | None = None,
+        archive_inject_count: int = 3,
+        archive_inject_max_chars: int = 1000,
     ) -> None:
         self._budget = budget or MemoryBudget()
         self._max_history = max_history_entries
         self._pruned_manager = pruned_manager
+        self._archive_inject_count = archive_inject_count
+        self._archive_inject_max_chars = archive_inject_max_chars
 
     async def assemble(
         self,
@@ -270,16 +274,16 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         storage = DirArchiveStorage(archive_dir)
 
         try:
-            archive_ids = await storage.list_archives(limit=3)
+            archive_ids = await storage.list_archives(limit=self._archive_inject_count)
         except Exception:
             return False
 
         if not archive_ids:
             return False
 
-        # Read context.md from each archive (newest first)
+        # Read context.md from each archive (ascending by archive_id: oldest first)
         records: list[str] = []
-        for aid in sorted(archive_ids, reverse=True)[:3]:
+        for aid in sorted(archive_ids)[:self._archive_inject_count]:
             try:
                 content = await storage.read_archive_file(aid, "context.md")
             except Exception:
@@ -288,22 +292,15 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
             if not content or not content.strip():
                 continue
 
-            truncated = len(content) > 150
-            display = content[:150] + "..." if truncated else content
+            truncated = len(content) > self._archive_inject_max_chars
+            display = content[:self._archive_inject_max_chars] + "..." if truncated else content
 
             full_path = self._archive_file_path(archive_dir, aid)
-            if truncated:
-                records.append(
-                    f'<record archive_id="{aid}"'
-                    f' file="{xml_escape(full_path)}">'
-                    f"{xml_escape(display)}</record>"
-                )
-            else:
-                records.append(
-                    f'<record archive_id="{aid}"'
-                    f' file="{xml_escape(full_path)}">'
-                    f"{xml_escape(display)}</record>"
-                )
+            records.append(
+                f'<record archive_id="{aid}"'
+                f' file="{xml_escape(full_path)}">'
+                f"{xml_escape(display)}</record>"
+            )
 
         if not records:
             return False

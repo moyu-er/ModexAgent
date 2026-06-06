@@ -6,12 +6,14 @@ If no SummarizerAgent is provided, one is auto-constructed from llm_provider.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 from typing import Any
 
 from framework.agents.summarizer.agent import SummarizerAgent
+from framework.agents.summarizer.abc import KnowledgeConsolidatorBase
 from framework.core.provider import LLMProvider
 from framework.memory.archive_models import (
     KNOWLEDGE_ARCHIVE_FILE_KEY,
@@ -32,6 +34,7 @@ from framework.memory.core.scope import (
     MemoryLayerName,
 )
 from framework.memory.core.storage import MemoryStorage
+from framework.memory.prompts import PromptRegistry
 from framework.memory.registry.base import MemoryStoreRegistry
 
 logger = logging.getLogger(__name__)
@@ -63,28 +66,26 @@ class DreamEngine(ConsolidationEngine):
         llm_provider: LLMProvider,
         history_manager: ArchiveMemoryManager,
         long_term_manager: KnowledgeMemoryManager,
-        max_batch_size: int = 20,
         max_iterations: int = 10,
         storage: MemoryStorage | None = None,
         registry: MemoryStoreRegistry | None = None,
         schedule_mode: str = "manual",
         idle_threshold_entries: int = 5,
         summarizer: SummarizerAgent | None = None,
-        min_archive_count: int = 0,
-        max_archive_count: int = 30,
-        prompts: Any = None,  # PromptRegistry (optional)
-        consolidator: Any | None = None,  # KnowledgeConsolidator (optional)
+        prompts: PromptRegistry | None = None,
+        consolidator: KnowledgeConsolidatorBase | None = None,
+        max_consume_per_run: int = 3,
+        per_archive_iterations: int = 10,
     ):
         self.history_manager = history_manager
         self.long_term_manager = long_term_manager
-        self.max_batch_size = max_batch_size
         self.max_iterations = max_iterations
         self.storage = storage
         self.registry = registry
         self.schedule_mode = schedule_mode
         self.idle_threshold_entries = idle_threshold_entries
-        self.min_archive_count = min_archive_count
-        self.max_archive_count = max_archive_count
+        self.max_consume_per_run = max_consume_per_run
+        self.per_archive_iterations = per_archive_iterations
         if prompts is None:
             from framework.memory.prompts import create_default_registry
 
@@ -93,49 +94,44 @@ class DreamEngine(ConsolidationEngine):
             except Exception:
                 pass
         self._prompts = prompts
-        # Always use SummarizerAgent — auto-construct from llm_provider if needed
         self._summarizer: SummarizerAgent = summarizer or SummarizerAgent(llm_provider)
         self._consolidator = consolidator
+        self._lock = asyncio.Lock()
 
     async def run(self, context: MemoryContext) -> bool:
-        """处理未处理的历史条目。
-
-        Returns:
-            如果实际处理了条目则返回 True，否则返回 False
-        """
-        unprocessed = await self.history_manager.get_unprocessed(
-            context,
-            cursor_name="dream",
-            channel=ArchiveChannel.KNOWLEDGE,
-        )
-        entries = unprocessed.entries
-        if not entries:
+        if self._lock.locked():
+            logger.info("DreamEngine skipped: already running for session=%s", context.session_id)
             return False
 
-        # NEW PATH: Use KnowledgeConsolidator agent
-        if self._consolidator is not None:
-            return await self._run_consolidator(unprocessed, context)
-        return False
+        async with self._lock:
+            unprocessed = await self.history_manager.get_unprocessed(
+                context,
+                cursor_name="dream",
+                channel=ArchiveChannel.KNOWLEDGE,
+            )
+            entries = unprocessed.entries
+            if not entries:
+                return False
 
-    async def _run_consolidator(
+            # Limit per run
+            entries = entries[:self.max_consume_per_run]
+
+            # NEW PATH: Use KnowledgeConsolidator agent
+            if self._consolidator is not None:
+                return await self._run_consolidator_limited(entries, context)
+            return False
+
+    async def _run_consolidator_limited(
         self,
-        unprocessed: Any,
+        entries: list[ArchiveEntry],
         context: MemoryContext,
     ) -> bool:
-        """Use KnowledgeConsolidator to process archive entries.
-
-        Args:
-            unprocessed: UnprocessedResult with archive entries.
-            context: Memory scope context.
-
-        Returns:
-            True if consolidation succeeded, False otherwise.
-        """
-        archive_ids = [e.entry_id for e in unprocessed.entries if e.entry_id]
+        """Run consolidator on a pre-sliced entry list."""
+        assert self._consolidator is not None  # guarded by caller
+        archive_ids = [e.entry_id for e in entries if e.entry_id]
         if not archive_ids:
             return False
 
-        # Get knowledge directory path from long_term_manager
         knowledge_dir = await self.long_term_manager.get_storage_path(context)
         if knowledge_dir is None:
             logger.warning(
@@ -144,7 +140,6 @@ class DreamEngine(ConsolidationEngine):
             )
             return False
 
-        # Get archive base directory via the public ABC method (not private _storage_factory)
         archive_base = await self.history_manager.get_storage_path(context)
         if archive_base is None:
             logger.warning(
@@ -153,18 +148,24 @@ class DreamEngine(ConsolidationEngine):
             )
             return False
 
+        # Dynamic max_iterations: consolidator default + per-archive increment
+        dynamic_iterations = (
+            self._consolidator.max_iterations
+            + len(archive_ids) * self.per_archive_iterations
+        )
+
         logger.info(
-            "KnowledgeConsolidator: processing %d archive(s) for knowledge update",
-            len(archive_ids),
+            "KnowledgeConsolidator: processing %d archive(s) for knowledge update, max_iterations=%d",
+            len(archive_ids), dynamic_iterations,
         )
 
         success = await self._consolidator.consolidate(
             archive_ids=archive_ids,
             archive_base=archive_base,
             knowledge_dir=knowledge_dir,
+            max_iterations=dynamic_iterations,
         )
 
-        # Always commit cursor to prevent re-processing
         final_cursor = max(archive_ids)
         await self._commit_knowledge_cursor(context, final_cursor)
 
@@ -217,7 +218,13 @@ class DreamEngine(ConsolidationEngine):
         new_entries: list[dict[str, Any]],
         existing_memories: dict[str, str],
     ) -> ConsolidationResult:
-        """整合新历史条目到长期记忆。"""
+        """Legacy two-phase SummarizerAgent path (kept for backward compat).
+
+        New code should use :meth:`run` which delegates to
+        :meth:`_run_consolidator_limited` and the
+        :class:`~framework.agents.summarizer.consolidator.KnowledgeConsolidator`
+        agent.
+        """
         _ = scope_key
         if not new_entries:
             return ConsolidationResult.empty()

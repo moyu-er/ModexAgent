@@ -2,8 +2,12 @@
 from __future__ import annotations
 
 import json
+import logging
+import shutil
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 _REQUIRED_ARCHIVE_FILES: frozenset[str] = frozenset(
     {"context.md", "knowledge.md", "index.md"}
@@ -121,8 +125,50 @@ class DirArchiveStorage:
     async def save_channel_logs(
         self, channel: str, entries: list[dict[str, Any]]
     ) -> None:
-        """No-op for the directory model (kept for protocol compliance)."""
-        _ = channel, entries
+        """Remove archive directories not present in *entries*."""
+        if not self._base.exists():
+            return
+        kept_ids: set[int] = {
+            int(e.get("archive_id", 0))
+            for e in entries
+            if e.get("archive_id")
+        }
+        for child in list(self._base.iterdir()):
+            if child.is_dir() and child.name.isdigit():
+                aid = int(child.name)
+                if aid not in kept_ids and aid > 0:
+                    shutil.rmtree(child, ignore_errors=True)
+
+    async def prune_to_max(self, max_total: int, min_safe_id: int = 0) -> int:
+        """Delete oldest archive dirs exceeding max_total, but never below min_safe_id.
+
+        min_safe_id is typically knowledge_consumed_archive_id — archives at or below
+        this ID are already consumed and safe to delete. Archives above it are preserved
+        for pending knowledge digestion.
+        """
+        ids = await self.list_archives(limit=10_000)
+        deletable = [aid for aid in ids if aid <= min_safe_id] if min_safe_id > 0 else []
+        if len(deletable) <= max_total:
+            return 0
+        ascending = sorted(deletable)
+        to_delete = ascending[:-max_total]
+        for aid in to_delete:
+            shutil.rmtree(self._base / str(aid), ignore_errors=True)
+        return len(to_delete)
+
+    async def cleanup_empty_dirs(self) -> int:
+        """Remove archive directories with no non-empty required files."""
+        count = 0
+        for child in list(self._base.iterdir()):
+            if child.is_dir() and child.name.isdigit():
+                has_content = any(
+                    (child / f).exists() and (child / f).stat().st_size > 0
+                    for f in _REQUIRED_ARCHIVE_FILES
+                )
+                if not has_content:
+                    shutil.rmtree(child, ignore_errors=True)
+                    count += 1
+        return count
 
     # -- MD-file-specific methods --------------------------------------------
 

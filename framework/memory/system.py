@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from framework.core.context import ContextManager, ContextState
 from framework.core.emitter import AgentResult
@@ -24,20 +25,26 @@ from framework.memory.pruned.manager import PrunedManager
 # UserRetentionBuffer injection moved to framework.memory.user_buffer (Task 6 stub)
 from framework.memory.registry.file import DefaultMemoryStoreRegistry
 
+if TYPE_CHECKING:
+    from framework.agents.summarizer.abc import ArchiveGenerator, KnowledgeConsolidatorBase
+    from framework.core.provider import LLMProvider
+    from framework.memory.stores.dir_archive import DirArchiveStorage
+
 logger = logging.getLogger(__name__)
 
 
 def create_memory_system(
     workspace: Path,
     config: MemoryLayerConfigSet | None = None,
-    llm_provider: Any | None = None,
+    llm_provider: LLMProvider | None = None,
     session_only: bool = False,
     cleanup_config: dict[str, int | float] | None = None,
     maintenance_policy: MemoryMaintenancePolicy | None = None,
     pruned_manager: PrunedManager | None = None,
-    archive_agent: Any | None = None,
-    archive_storage: Any | None = None,
-    knowledge_consolidator: Any | None = None,
+    archive_agent: ArchiveGenerator | None = None,
+    archive_storage: DirArchiveStorage | None = None,
+    knowledge_consolidator: KnowledgeConsolidatorBase | None = None,
+    archive_trigger_callback: Callable[[MemoryContext], Awaitable[None]] | None = None,
 ) -> DefaultMemorySystem:
     """Create a production-ready memory system with default local-file registry.
 
@@ -72,6 +79,7 @@ def create_memory_system(
         archive_agent=archive_agent,
         archive_storage=archive_storage,
         knowledge_consolidator=knowledge_consolidator,
+        archive_trigger_callback=archive_trigger_callback,
     )
 
 
@@ -97,18 +105,6 @@ class MemorySystemContextManager(ContextManager):
         # layers.user_retention is not None (via ScopedMessageHistory);
         # injection is wired when wrap_governance sees a non-None URB.
         # We validate here that both paths agree.
-        if isinstance(memory_system, DefaultMemorySystem):
-            urb_present = memory_system.layers.user_retention is not None
-            # The hook is present when URB layer is not None.
-            # Injection governance will be wired in wrap_governance().
-            # If someone bypasses DefaultMemorySystem and wires only one side,
-            # the mismatch is logged but not fatal (custom wiring may be intentional).
-            if urb_present and injection_policy is not None:
-                # Both present — binding is consistent.
-                pass
-            elif not urb_present and injection_policy is None:
-                # Both absent — binding is consistent.
-                pass
         from framework.memory.injection import FullInjectionPolicy
 
         self.memory_system: ContextManagedMemorySystem = memory_system
