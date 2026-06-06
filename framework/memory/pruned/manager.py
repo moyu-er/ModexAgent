@@ -87,10 +87,14 @@ class PrunedManager:
         # Embed recent index entries so the agent sees what happened
         # without having to read files first.
         entries = storage.read_index()
-        recent = entries[-3:] if entries else []
-        if recent:
-            lines.append("  <available>")
-            for e in recent:
+        recent_entries = entries[-3:] if entries else []
+        if recent_entries:
+            history = PrunedTag.HISTORY.value
+            lines.append(f"  <{history}>")
+            lines.append("    <!-- Only the most recent history conversations are shown here.")
+            lines.append("         Read the directory above for all stored previous transcript files.")
+            lines.append("         Its index.jsonl lists every transcript with topic and time range. -->")
+            for e in recent_entries:
                 time_range = (
                     f"{e.start_time_display} ~ {e.end_time_display}"
                     if e.start_time_display and e.end_time_display
@@ -105,7 +109,7 @@ class PrunedManager:
                     f"{escape(topic)}"
                     f"</{tt}>"
                 )
-            lines.append("  </available>")
+            lines.append(f"  </{history}>")
 
         lines.append(f"</{ct}>")
         return "\n".join(lines)

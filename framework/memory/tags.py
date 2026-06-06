@@ -35,6 +35,7 @@ class PrunedTag(StrEnum):
     """XML element tag names for injected pruned transcript catalog."""
 
     CONTAINER = "full_transcripts"
+    HISTORY = "history"
     TRANSCRIPT = "transcript"
 
 
