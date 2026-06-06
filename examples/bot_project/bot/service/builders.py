@@ -389,7 +389,7 @@ class AgentBuilderMixin:
             main_memory = getattr(self.context_manager, "memory_system", None)
             if main_memory is not None:
                 archive_agent = getattr(main_memory, "_archive_agent", None)
-                knowledge_consolidator = getattr(main_memory, "_knowledge_consolidator", None)
+                knowledge_consolidator = main_memory.knowledge_consolidator
 
         memory_system = create_memory_system(
             workspace=sub_dir,

@@ -410,6 +410,11 @@ class DefaultMemorySystem(MemorySystem):
         """Expose knowledge manager for DreamEngine compatibility."""
         return self._layers.knowledge
 
+    @property
+    def knowledge_consolidator(self) -> KnowledgeConsolidatorBase | None:
+        """Expose knowledge consolidator for DreamEngine wiring."""
+        return self._knowledge_consolidator
+
     # -- Provider fan-out -----------------------------------------------
 
     async def search_memories(

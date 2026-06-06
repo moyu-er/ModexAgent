@@ -1515,6 +1515,7 @@ class BotService(AgentBuilderMixin):
             long_term_manager=memory_system.knowledge_manager,
             registry=memory_system.store_registry,
             max_consume_per_run=dream_cfg.max_consume_per_run,
+            consolidator=memory_system.knowledge_consolidator,
         )
 
     async def _archive_trigger(self, context: MemoryContext) -> None:
