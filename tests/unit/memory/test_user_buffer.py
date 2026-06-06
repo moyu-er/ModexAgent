@@ -369,3 +369,96 @@ async def test_urb_mark_all_completed_truncates_assistant_content(
     assert len(entries[0].completing_assistant_content) <= 110, (
         f"Expected <= 110 chars, got {len(entries[0].completing_assistant_content)}"
     )
+
+
+@pytest.mark.asyncio
+async def test_urb_xml_truncation_fallback_when_paths_dont_cover_large_content(
+    registry: InMemoryStoreRegistry,
+):
+    """When truncatable_paths don't include the actual large content area,
+    XML-structured truncation may produce output that still exceeds max_chars.
+    The enforcement must fall back to bounded truncation.
+
+    Regression: content_format='xml' with truncatable_paths=['user_input'],
+    but the 30KB content is inside <skill> which is NOT in the paths.
+    truncate_xml_safe only truncated <user_input> (small) and left <skill>
+    intact — result was still ~34KB, way over max_user_chars=4000.
+    """
+    from framework.memory.core.message import ContentFormat
+
+    layer_set = _make_layer_set(registry)
+    ctx = MemoryContext(session_id="test-xml-fallback")
+
+    # Real-world scenario: skill XML with <skill> containing ~30KB,
+    # but truncatable_paths only lists 'user_input' — <skill> is missed.
+    skill_body = "<step>" + ("long instruction text. " * 1000) + "</step>"
+    xml_msg = (
+        f'<command_context type="skill" name="huashu-design">\n'
+        f"<skill>\n{skill_body}\n</skill>\n"
+        f"</command_context>\n\n"
+        f"<user_input>\nshort question here\n</user_input>"
+    )
+    assert len(xml_msg) > 5000, f"Test pre-condition failed: xml too short ({len(xml_msg)})"
+
+    entry = UserBufferEntry.from_message(
+        {
+            "role": "user",
+            "content": xml_msg,
+            "content_format": ContentFormat.XML,
+            # BUG: only 'user_input' listed — the real bulk is in <skill>
+            "truncatable_paths": ["user_input"],
+        },
+        pruned_at=time.time(),
+    )
+
+    await layer_set.user_retention.upsert_pruned_user(ctx, entry)
+    entries = await layer_set.user_retention.get_entries(ctx)
+    assert len(entries) == 1
+
+    truncated = entries[0].pruned_user_content
+    # Phase 2 leaf-element safety net must have caught the large <step>
+    # element that was not in truncatable_paths=['user_input'].
+    # <step> is a leaf (no child elements) so it gets truncated to max_user_chars.
+    assert len(truncated) < len(xml_msg), (
+        f"Leaf-element safety net should have reduced content, "
+        f"still {len(truncated)} chars (original {len(xml_msg)})"
+    )
+    # No single leaf element should exceed max_user_chars (4000)
+    assert len(truncated) <= 5000, (
+        f"Content should be around max_user_chars + XML overhead, "
+        f"got {len(truncated)}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_urb_xml_truncation_empty_paths_still_bounded(
+    registry: InMemoryStoreRegistry,
+):
+    """When truncatable_paths is empty on an XML entry with leaf elements,
+    Phase 2 leaf-element safety net still catches the large leaves."""
+    from framework.memory.core.message import ContentFormat
+
+    layer_set = _make_layer_set(registry)
+    ctx = MemoryContext(session_id="test-xml-nopath")
+
+    huge_xml = "<root><data>" + ("A" * 8000) + "</data></root>"
+    assert len(huge_xml) > 5000
+
+    entry = UserBufferEntry.from_message(
+        {
+            "role": "user",
+            "content": huge_xml,
+            "content_format": ContentFormat.XML,
+            "truncatable_paths": [],  # empty — Phase 1 returns early (boundary)
+        },
+        pruned_at=time.time(),
+    )
+
+    await layer_set.user_retention.upsert_pruned_user(ctx, entry)
+    entries = await layer_set.user_retention.get_entries(ctx)
+    assert len(entries) == 1
+
+    truncated = entries[0].pruned_user_content
+    assert len(truncated) <= 5000, (
+        f"Empty paths: content should be bounded, got {len(truncated)}"
+    )

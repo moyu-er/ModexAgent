@@ -137,6 +137,52 @@ def test_skill_xml_preserves_command_context_attributes():
     assert 'name="test-skill"' in result
 
 
+def test_truncatable_paths_missing_large_content_still_leaf_truncated():
+    """When truncatable_paths don't cover the large content, Phase 2
+    leaf-element truncation catches it.  Non-listed leaf elements whose
+    text exceeds max_chars are truncated — preventing obscenely large
+    single elements from surviving untouched.
+
+    This reproduces the real-world case: content_format='xml' with
+    truncatable_paths=['user_input'], but the real large content is
+    inside <skill> which is NOT in the paths list.  <skill> is a leaf
+    element (no child elements), so Phase 2 must catch it.
+    """
+    xml = _make_skill_xml(
+        skill_content="x" * 30000,    # large content NOT in paths — leaf
+        user_content="short question",  # small content IS in paths
+    )
+    paths = ["user_input"]
+
+    result = truncate_xml_safe(xml, max_chars=4000, truncatable_paths=paths)
+
+    # <skill> was a leaf with 30KB text — must have been truncated
+    assert len(result) < len(xml), (
+        f"Leaf-element safety net should have truncated <skill> text"
+    )
+    # No single leaf element should exceed max_chars
+    assert "x" * 4000 not in result, (
+        "No leaf element should have text > max_chars"
+    )
+
+
+def test_empty_paths_still_bounded_via_boundary():
+    """Empty truncatable_paths hits boundary fallback (no text_nodes → early
+    return via _truncate_xml_boundary).  Result is cut at max_chars."""
+    xml = _make_skill_xml(
+        skill_content="y" * 10000,
+        user_content="z" * 5000,
+    )
+
+    result = truncate_xml_safe(xml, max_chars=2000, truncatable_paths=[])
+
+    # Boundary truncation cuts at max_chars (<r> wrapper was not used
+    # here, so no unwrap overhead)
+    assert len(result) <= 2300, (
+        f"Boundary truncation with empty paths should be bounded, got {len(result)}"
+    )
+
+
 # ── List elements: governance URB XML ────────────────────────────────────
 # The governance injection assembles <pruned_conversation_context> with
 # multiple <entry> wrappers.  truncatable_paths uses recursive iter() so

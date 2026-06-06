@@ -93,10 +93,19 @@ def _truncate_xml_structured(
     if not text_nodes:
         return _truncate_xml_boundary(content, max_chars)
 
-    # Truncate each element independently to max_chars — no budget split
+    # Phase 1: Targeted truncation via truncatable_paths — no budget split.
     for elem, original_text in text_nodes:
         if len(original_text) > max_chars:
             elem.text = original_text[:max_chars]
+
+    # Phase 2: Safety net — truncate ALL leaf elements (no child elements)
+    # whose text exceeds *max_chars*.  This catches large fields not listed
+    # in *truncatable_paths* which would otherwise survive untouched.
+    # Soft constraint: does NOT guarantee the total result fits max_chars
+    # (multiple leaves + XML overhead), only that no single leaf dominates.
+    for elem in root.iter():
+        if not len(elem) and elem.text and len(elem.text) > max_chars:
+            elem.text = elem.text[:max_chars]
 
     result = ET.tostring(root, encoding="unicode")
     if unwrap_root:
