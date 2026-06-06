@@ -1100,3 +1100,166 @@ class TestArchiveAgentIntegration:
         from pathlib import Path
         archive_path = Path(str(archive_dir))
         assert (archive_path / "index.md").exists()
+
+
+class TestArchiveSuccessPrunedContent:
+    """Regression: when archive agent succeeds, pruned raw content must still be written.
+
+    Bug: cleanup_session used refresh_from_archives() on the archive-success path,
+    which only wrote index.jsonl pointing to archive layer files. Raw pruned messages
+    were lost and content_filename was a cross-layer reference that didn't resolve.
+    """
+
+    @pytest.mark.asyncio
+    async def test_pruned_writes_raw_content_when_archive_succeeds(
+        self, registry: InMemoryStoreRegistry, tmp_path,
+    ) -> None:
+        """Pruned content file must exist with raw messages, not just an index."""
+        from framework.memory.pruned.manager import PrunedManager
+
+        layer_set = _make_layer_set(registry)
+        context = _ctx("pruned-archive-session")
+        session = layer_set.session
+
+        msgs = []
+        for i in range(5):
+            msgs.append(_user_msg(f"u-{i}"))
+            msgs.append(_assistant_msg(f"a-{i}"))
+        await _add_messages(session, context, msgs)
+
+        agent = _MockArchiveAgent()
+        storage = _DirArchiveStorageFactory.create(tmp_path)
+        pruned_mgr = PrunedManager(pruned_base_dir=tmp_path / "pruned")
+
+        result = await cleanup_session(
+            session=session,
+            archive=layer_set.archive,
+            context=context,
+            max_messages=5,
+            max_tokens=None,
+            keep_ratio=0.5,
+            archive_agent=agent,
+            archive_storage=storage,
+            pruned_manager=pruned_mgr,
+        )
+
+        assert result.triggered is True
+        assert result.messages_pruned > 0
+
+        # Pruned index must have entries
+        pruned_storage = pruned_mgr._get_storage(context.session_id)
+        entries = pruned_storage.read_index()
+        assert len(entries) >= 1
+
+        entry = entries[-1]
+
+        # Bug 1: content_filename must resolve to a real file in pruned dir
+        from pathlib import Path
+        pruned_dir = Path(pruned_storage.get_directory_path())
+        content_path = pruned_dir / entry.content_filename
+        assert content_path.exists(), (
+            f"content_filename '{entry.content_filename}' does not exist at {content_path}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_pruned_content_contains_raw_messages(
+        self, registry: InMemoryStoreRegistry, tmp_path,
+    ) -> None:
+        """Pruned content file must contain the raw pruned messages (JSONL)."""
+        import json
+        from framework.memory.pruned.manager import PrunedManager
+
+        layer_set = _make_layer_set(registry)
+        context = _ctx("pruned-raw-session")
+        session = layer_set.session
+
+        msgs = []
+        for i in range(5):
+            msgs.append(_user_msg(f"unique-content-{i}"))
+            msgs.append(_assistant_msg(f"reply-{i}"))
+        await _add_messages(session, context, msgs)
+
+        agent = _MockArchiveAgent()
+        storage = _DirArchiveStorageFactory.create(tmp_path)
+        pruned_mgr = PrunedManager(pruned_base_dir=tmp_path / "pruned")
+
+        await cleanup_session(
+            session=session,
+            archive=layer_set.archive,
+            context=context,
+            max_messages=5,
+            max_tokens=None,
+            keep_ratio=0.5,
+            archive_agent=agent,
+            archive_storage=storage,
+            pruned_manager=pruned_mgr,
+        )
+
+        pruned_storage = pruned_mgr._get_storage(context.session_id)
+        entries = pruned_storage.read_index()
+        assert len(entries) >= 1
+
+        entry = entries[-1]
+        from pathlib import Path
+        content_path = Path(pruned_storage.get_directory_path()) / entry.content_filename
+        assert content_path.exists()
+
+        # Raw messages must be readable as JSONL
+        raw_lines = content_path.read_text(encoding="utf-8").strip().split("\n")
+        assert len(raw_lines) > 0
+        parsed = [json.loads(line) for line in raw_lines]
+        # At least one user message from our input should be in the pruned content
+        user_contents = [m.get("content", "") for m in parsed if m.get("role") == "user"]
+        assert any("unique-content-" in c for c in user_contents), (
+            "Pruned content should contain raw user messages from the pruned session region"
+        )
+
+    @pytest.mark.asyncio
+    async def test_pruned_entry_has_correct_message_count_and_times(
+        self, registry: InMemoryStoreRegistry, tmp_path,
+    ) -> None:
+        """Pruned index entry must have message_count > 0 and non-empty time fields."""
+        from framework.memory.pruned.manager import PrunedManager
+
+        layer_set = _make_layer_set(registry)
+        context = _ctx("pruned-fields-session")
+        session = layer_set.session
+
+        msgs = []
+        for i in range(5):
+            msgs.append(_user_msg(f"u-{i}"))
+            msgs.append(_assistant_msg(f"a-{i}"))
+        await _add_messages(session, context, msgs)
+
+        agent = _MockArchiveAgent()
+        storage = _DirArchiveStorageFactory.create(tmp_path)
+        pruned_mgr = PrunedManager(pruned_base_dir=tmp_path / "pruned")
+
+        await cleanup_session(
+            session=session,
+            archive=layer_set.archive,
+            context=context,
+            max_messages=5,
+            max_tokens=None,
+            keep_ratio=0.5,
+            archive_agent=agent,
+            archive_storage=storage,
+            pruned_manager=pruned_mgr,
+        )
+
+        pruned_storage = pruned_mgr._get_storage(context.session_id)
+        entries = pruned_storage.read_index()
+        assert len(entries) >= 1
+
+        entry = entries[-1]
+        # Bug 3: message_count must reflect actual pruned messages
+        assert entry.message_count > 0, (
+            f"message_count should be > 0, got {entry.message_count}"
+        )
+        # Time display fields must be populated
+        assert entry.start_time_display != "", (
+            "start_time_display should not be empty"
+        )
+        assert entry.cleanup_time_display != "", (
+            "cleanup_time_display should not be empty"
+        )

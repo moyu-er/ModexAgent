@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 
 from framework.memory.pruned.models import PrunedIndexEntry
+
+logger = logging.getLogger(__name__)
 
 
 class PrunedStorage(ABC):
@@ -73,16 +76,37 @@ class FilePrunedStorage(PrunedStorage):
             fh.write(json.dumps(entry.to_dict(), ensure_ascii=False) + "\n")
 
     def read_index(self) -> list[PrunedIndexEntry]:
+        """Read all index entries, skipping malformed lines.
+
+        index.jsonl is editable by the agent (as stated in the system prompt).
+        A corrupted line (invalid JSON, missing required fields) is logged and
+        skipped so the remaining valid entries are still available for injection.
+        """
         index_path = self._dir / self._index_filename
         if not index_path.exists():
             return []
         entries: list[PrunedIndexEntry] = []
         with open(index_path, "r", encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
+            for line_no, raw in enumerate(fh, start=1):
+                line = raw.strip()
                 if not line:
                     continue
-                entries.append(PrunedIndexEntry.from_dict(json.loads(line)))
+                try:
+                    parsed = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    logger.warning(
+                        "Skipping malformed index line %d in %s: %.80s...",
+                        line_no, index_path, line,
+                    )
+                    continue
+                try:
+                    entries.append(PrunedIndexEntry.from_dict(parsed))
+                except (TypeError, ValueError) as exc:
+                    logger.warning(
+                        "Skipping invalid index entry at line %d in %s: %s",
+                        line_no, index_path, exc,
+                    )
+                    continue
         return entries
 
     def save_index(self, entries: list[PrunedIndexEntry]) -> None:

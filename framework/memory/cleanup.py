@@ -52,25 +52,28 @@ class CleanupResult:
     user_retention_extracted: int = 0
 
 
-async def _write_pruned_fallback(
+async def _write_pruned_content(
     pruned_manager: Any,
     pruned_messages: list[dict[str, Any]],
     context: Any,
+    *,
+    topic: str | None = None,
 ) -> None:
-    """Fallback: write pruned index from messages directly.
+    """Write raw pruned messages to the pruned store.
 
-    Used when archive agent generation fails — the pruned index is still
-    populated from the raw messages so injection can work.
+    Always called when messages are pruned, regardless of archive success.
+    When *topic* is provided (e.g. from archive index.md), it is used as
+    the index entry topic instead of the default time-range fallback.
     """
     try:
         await pruned_manager.write_pruned(
             pruned_messages,
-            topic=None,
+            topic=topic,
             cleanup_time=datetime.now(get_user_timezone()),
             session_id=context.session_id or "",
         )
     except Exception:
-        logger.warning("Pruned fallback failed", exc_info=True)
+        logger.warning("Pruned content write failed", exc_info=True)
 
 
 async def cleanup_session(
@@ -92,7 +95,7 @@ async def cleanup_session(
     Flow:
         1. Trigger check + sanitize + boundary computation
         2. Archive agent generation (context.md, knowledge.md, index.md)
-        3. Pruned index refresh from archive index.md
+        3. Pruned raw content write (always, with archive topic if available)
         4. Session commit (replace messages + backup)
         5. Archive_id increment
     """
@@ -271,42 +274,28 @@ async def cleanup_session(
             context.session_id,
         )
 
-    # ── Step 2 (NEW): Pruned index refresh ─────────────────────────────
-    if pruned_manager is not None and archive_storage is not None and pruned_messages:
-        if archive_generated:
-            # Full refresh from archive index.md files
-            logger.info(
-                "Refreshing pruned index from archives: session=%s",
-                context.session_id,
-            )
+    # ── Step 2 (NEW): Pruned content write ─────────────────────────────
+    # Always write raw pruned messages so the pruned layer has real content.
+    # When archive succeeded, extract the topic from index.md for a richer
+    # index entry; otherwise the time-range fallback is used.
+    if pruned_manager is not None and pruned_messages:
+        pruned_topic: str | None = None
+        if archive_generated and archive_storage is not None:
             try:
-                count = await pruned_manager.refresh_from_archives(
-                    archive_storage, session_id=context.session_id or "",
+                index_md = await archive_storage.read_archive_file(
+                    next_archive_id, "index.md",
                 )
-                logger.info(
-                    "Pruned index refreshed: session=%s entries=%d",
-                    context.session_id, count,
-                )
+                if index_md and index_md.strip():
+                    pruned_topic = index_md.strip().split("\n")[0].strip() or None
             except Exception:
-                logger.warning(
-                    "Pruned index refresh failed: session=%s",
+                logger.debug(
+                    "Failed to read archive topic for pruned entry: session=%s",
                     context.session_id, exc_info=True,
                 )
-                # Fallback to raw-message path
-                await _write_pruned_fallback(pruned_manager, pruned_messages, context)
-        else:
-            # Archive failed — fallback
-            logger.info(
-                "Pruned index using fallback (archive not generated): session=%s",
-                context.session_id,
-            )
-            await _write_pruned_fallback(pruned_manager, pruned_messages, context)
-    elif pruned_manager is not None and pruned_messages:
-        logger.info(
-            "Pruned index using fallback (archive storage unavailable): session=%s",
-            context.session_id,
+
+        await _write_pruned_content(
+            pruned_manager, pruned_messages, context, topic=pruned_topic,
         )
-        await _write_pruned_fallback(pruned_manager, pruned_messages, context)
 
     # Extract user retention entries from pruned messages
     # Walk all sanitized messages; accumulate pruned user/agent messages.
