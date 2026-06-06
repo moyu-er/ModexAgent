@@ -19,9 +19,9 @@ from framework.agents.summarizer.archive_agent import (
 class TestArchiveSummarizerConfig:
     def test_default_config(self) -> None:
         config = ArchiveSummarizerConfig()
-        assert config.context_max_chars == 500
-        assert config.knowledge_max_chars == 600
-        assert config.index_max_chars == 100
+        assert config.context_max_chars == 2000
+        assert config.knowledge_max_chars == 3000
+        assert config.index_max_chars == 200
         assert config.max_iterations == 25
 
     def test_custom_config(self) -> None:
@@ -150,7 +150,7 @@ class TestFilterMessages:
                 "role": "assistant",
                 "content": "hi",
                 "tool_calls": [
-                    {"function": {"name": "read"}, "id": "tc1"}
+                    {"function": {"name": "read", "arguments": '{"path": "src/main.py"}'}, "id": "tc1"}
                 ],
             },
             {
@@ -172,7 +172,7 @@ class TestFilterMessages:
         asst_msg = result[1]
         assert asst_msg["role"] == "assistant"
         assert "tool_calls" not in asst_msg
-        assert asst_msg.get("tool_names") == ["read"]
+        assert asst_msg.get("tool_names") == ["read({\"path\": \"src/main.py\"})"]
 
         tool_msg = result[2]
         assert tool_msg["role"] == "tool"
@@ -209,6 +209,49 @@ class TestFilterMessages:
         result = ArchiveSummarizer.filter_messages(messages)
         assert result[0]["content"] == "hello world"
 
+    def test_filter_messages_preserves_tool_args(self) -> None:
+        """Tool call arguments should be preserved (truncated to 200 chars) in tool_names."""
+        long_args = '{"path": "src/main.py", "content": "' + "x" * 400 + '"}'
+        messages = [
+            {
+                "role": "assistant",
+                "content": "writing files",
+                "tool_calls": [
+                    {
+                        "function": {"name": "write", "arguments": long_args},
+                        "id": "tc1",
+                    },
+                    {
+                        "function": {"name": "read", "arguments": '{"path": "short.py"}'},
+                        "id": "tc2",
+                    },
+                ],
+            },
+        ]
+        result = ArchiveSummarizer.filter_messages(messages)
+        assert len(result) == 1
+        tool_names = result[0]["tool_names"]
+        assert len(tool_names) == 2
+        # Long args are truncated to 200 chars
+        assert tool_names[0].startswith("write(")
+        assert "..." in tool_names[0]
+        # Short args are preserved fully
+        assert tool_names[1] == 'read({"path": "short.py"})'
+
+    def test_filter_messages_tool_without_args(self) -> None:
+        """Tool calls without arguments should just show the tool name."""
+        messages = [
+            {
+                "role": "assistant",
+                "content": "listing files",
+                "tool_calls": [
+                    {"function": {"name": "ls"}, "id": "tc1"},
+                ],
+            },
+        ]
+        result = ArchiveSummarizer.filter_messages(messages)
+        assert result[0]["tool_names"] == ["ls"]
+
 
 # ---------------------------------------------------------------------------
 # format_transcript
@@ -242,7 +285,8 @@ class TestFormatTranscript:
             },
         ]
         result = ArchiveSummarizer.format_transcript(messages)
-        assert "[assistant -> tools: read_file]" in result
+        assert "[assistant -> tools: read_file" in result
+        assert "/tmp/f.txt" in result
         assert "Let me read the file." in result
 
     def test_tool_call_without_content(self) -> None:
@@ -259,7 +303,7 @@ class TestFormatTranscript:
             },
         ]
         result = ArchiveSummarizer.format_transcript(messages)
-        assert "[assistant -> tools: write_file]" in result
+        assert "[assistant -> tools: write_file({})]" in result
 
     def test_tool_result_messages(self) -> None:
         messages = [
@@ -269,13 +313,23 @@ class TestFormatTranscript:
         assert "[tool:read_file] file contents here" in result
 
     def test_tool_result_truncation(self) -> None:
-        long_content = "x" * 1000
+        # 1000 chars is under the 1500 threshold — should NOT be truncated
+        medium_content = "x" * 1000
         messages = [
-            {"role": "tool", "name": "shell", "content": long_content},
+            {"role": "tool", "name": "shell", "content": medium_content},
         ]
         result = ArchiveSummarizer.format_transcript(messages)
-        assert "1000 chars total)" in result
-        assert len(result) < 700
+        assert "chars total)" not in result
+        assert "x" * 1000 in result
+
+        # 2000 chars exceeds the 1500 threshold — should be truncated
+        long_content = "y" * 2000
+        messages_long = [
+            {"role": "tool", "name": "shell", "content": long_content},
+        ]
+        result_long = ArchiveSummarizer.format_transcript(messages_long)
+        assert "2000 chars total)" in result_long
+        assert len(result_long) < 1700
 
     def test_empty_content_skipped(self) -> None:
         messages = [
@@ -370,4 +424,4 @@ class TestArchiveSummarizerInit:
 
         mock_provider = MagicMock(spec=LLMProvider)
         agent = ArchiveSummarizer(provider=mock_provider)
-        assert agent._config.context_max_chars == 500
+        assert agent._config.context_max_chars == 2000

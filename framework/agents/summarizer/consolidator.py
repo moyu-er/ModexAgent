@@ -104,15 +104,15 @@ class KnowledgeConsolidator(ScopedFileAgent, KnowledgeConsolidatorBase):
                     f"## Archive {aid} — knowledge.md\n(empty)"
                 )
 
-        # Current knowledge files (first 500 chars each for context)
+        # Current knowledge files (first 2000 chars each for context)
         knowledge_context: list[str] = []
         for fname in _KNOWLEDGE_FILES:
             fpath = knowledge_dir / fname
             if fpath.exists():
                 content = fpath.read_text(encoding="utf-8")
-                if len(content) > 500:
+                if len(content) > 2000:
                     content = (
-                        content[:500]
+                        content[:2000]
                         + f"\n... ({len(content)} chars total)"
                     )
                 knowledge_context.append(f"## Current {fname}\n{content}")

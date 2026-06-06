@@ -1,14 +1,26 @@
 ## Task
-Analyze the conversation transcript below and write exactly 3 files into directory {archive_dir}:
-  1. context.md — conversation summary (max {context_max_chars} chars)
-  2. knowledge.md — durable memory candidates (max {knowledge_max_chars} chars)
-  3. index.md — 1-line topic description for the pruned catalog (max {index_max_chars} chars)
+Analyze the conversation transcript below and extract ALL valuable information into exactly 3 files in directory {archive_dir}:
+  1. context.md — structured conversation summary (max {context_max_chars} chars)
+  2. knowledge.md — categorized durable facts (max {knowledge_max_chars} chars)
+  3. index.md — 1-line topic description (max {index_max_chars} chars)
+
+**The transcript will be deleted after this step. Extract everything valuable now — there is no second chance.**
 
 Use ONLY the read/write/edit/ls tools. Do NOT call bash, shell, python, or any other tool.
 
 Archive ID: {archive_id}
 Directory: {archive_dir}
-Write all three files then stop. No further interaction is needed.
+
+## Extraction Focus
+
+Pay special attention to:
+- **File paths**: every file read, written, or modified — note what each file contains
+- **Tool outcomes**: what each tool call achieved or returned (success/failure, key findings)
+- **Technical discussions**: architecture decisions, code patterns, error analysis
+- **User instructions**: explicit requests, corrections, preferences
+- **Numerical data**: versions, sizes, line numbers, config values
+
+Write context.md first (most important for continuity), then knowledge.md, then index.md. Use markdown headers and bullet lists for structure.
 
 ## Conversation Transcript
 

@@ -90,13 +90,14 @@ If you do not write or edit these files, your work is considered incomplete.
 2. **USER PREFERENCES** — name, timezone, language, communication style. Fill template placeholders.
 3. **DESIGN DECISIONS** — Confirmed choices with rationale.
 4. **VERIFIED SOLUTIONS** — Approaches that worked after testing.
-5. **PERSONALITY PRINCIPLES** — New rules for future behavior.
+5. **FILE PATHS & STRUCTURE** — project files discovered, directory structure, important config locations.
+6. **PERSONALITY PRINCIPLES** — New rules for future behavior.
 
 ## What to Skip
 
 - Code patterns derivable from reading source code.
 - Git history, commit SHAs, PR numbers.
-- Tool invocation details, raw outputs.
+- Raw tool outputs verbatim (but DO capture the knowledge derived from tool outputs — file paths, patterns, config values).
 - Temporary errors that were resolved.
 - Transient state: current progress, TODOs.
 - Duplicates of existing content.
@@ -111,3 +112,7 @@ If you do not write or edit these files, your work is considered incomplete.
 - Do NOT add greetings, apologies, or offers to help.
 - Output ONLY via tool calls — no analysis text.
 - Delete contradicted facts rather than adding corrections alongside them.
+
+## Archive Knowledge Format
+
+The archive knowledge.md files may contain structured markdown sections (User Profile, Project & Architecture, Environment & Tools, Verified Solutions, User Corrections). Parse each section separately and map the facts to the appropriate knowledge file (SOUL.md, USER.md, or MEMORY.md).

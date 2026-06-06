@@ -28,7 +28,7 @@ _CONTENT_LIMITS: dict[str, int] = {
     MessageRole.USER: 4000,
     MessageRole.ASSISTANT: 4000,
     MessageRole.AGENT: 4000,
-    MessageRole.TOOL: 1200,
+    MessageRole.TOOL: 3000,
     MessageRole.SYSTEM: 800,
 }
 
@@ -37,9 +37,9 @@ _CONTENT_LIMITS: dict[str, int] = {
 class ArchiveSummarizerConfig:
     """Configuration for ArchiveSummarizer."""
 
-    context_max_chars: int = 500
-    knowledge_max_chars: int = 600
-    index_max_chars: int = 100
+    context_max_chars: int = 2000
+    knowledge_max_chars: int = 3000
+    index_max_chars: int = 200
     max_iterations: int = 25
 
 
@@ -64,9 +64,9 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
     @staticmethod
     def build_system_prompt(
         archive_dir: Path,
-        context_max_chars: int = 500,
-        knowledge_max_chars: int = 600,
-        index_max_chars: int = 100,
+        context_max_chars: int = 2000,
+        knowledge_max_chars: int = 3000,
+        index_max_chars: int = 200,
     ) -> str:
         """Build the system prompt from the template with variable substitution."""
         prompt = _get_registry().get_system(
@@ -119,13 +119,19 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
                 clean["created_at"] = created_at
 
             if role == MessageRole.ASSISTANT and msg.get("tool_calls"):
-                tool_names: list[str] = []
+                tool_summaries: list[str] = []
                 for tc in msg.get("tool_calls", []):
                     if isinstance(tc, dict):
                         fn = tc.get("function", {})
-                        tool_names.append(fn.get("name", "?"))
-                if tool_names:
-                    clean["tool_names"] = tool_names
+                        name = fn.get("name", "?")
+                        args_str = fn.get("arguments", "")
+                        if args_str and len(args_str) > 200:
+                            args_str = args_str[:200] + "..."
+                        tool_summaries.append(
+                            f"{name}({args_str})" if args_str else name
+                        )
+                if tool_summaries:
+                    clean["tool_names"] = tool_summaries
 
             filtered.append(clean)
         return filtered
@@ -165,7 +171,13 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
                         tool_names.append(tc)
                     elif isinstance(tc, dict):
                         fn = tc.get("function", {}) if isinstance(tc, dict) else {}
-                        tool_names.append(fn.get("name", "?"))
+                        name = fn.get("name", "?")
+                        args_str = fn.get("arguments", "")
+                        if args_str and len(args_str) > 200:
+                            args_str = args_str[:200] + "..."
+                        tool_names.append(
+                            f"{name}({args_str})" if args_str else name
+                        )
                 if content:
                     lines.append(f"[assistant -> tools: {', '.join(tool_names)}] {content}")
                 else:
@@ -174,8 +186,8 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
 
             if role == MessageRole.TOOL:
                 name = msg.get("name", "unknown")
-                if isinstance(content, str) and len(content) > 500:
-                    content = content[:500] + f"... ({len(msg.get('content', ''))} chars total)"
+                if isinstance(content, str) and len(content) > 1500:
+                    content = content[:1500] + f"... ({len(msg.get('content', ''))} chars total)"
                 lines.append(f"[tool:{name}] {content}")
                 continue
 
@@ -190,9 +202,9 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
         transcript: str,
         archive_id: int,
         archive_dir: Path,
-        context_max_chars: int = 500,
-        knowledge_max_chars: int = 600,
-        index_max_chars: int = 100,
+        context_max_chars: int = 2000,
+        knowledge_max_chars: int = 3000,
+        index_max_chars: int = 200,
     ) -> str:
         """Build the user message from the template with variable substitution.
 

@@ -225,7 +225,7 @@ class FileStorage:
             data = read_json_robust(kv_path)
             if not data or key not in data:
                 return False
-            del data[key]
+            data.pop(key)
             _atomic_json_write(kv_path, data)
             return True
 
