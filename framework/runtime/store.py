@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+
+from framework.utils.file_io import read_json_robust
 import logging
 import re
 from abc import ABC, abstractmethod
@@ -157,9 +159,9 @@ class JsonFileTurnStateStore(TurnStateStore):
 
     async def load_turn(self, identity: TurnIdentity) -> TurnSnapshot | None:
         path = self._path(identity)
-        if not path.exists():
+        data = read_json_robust(path)
+        if not data:
             return None
-        data = json.loads(path.read_text(encoding="utf-8"))
         agent_kind_raw = data.get("agent_kind", "react")
         from .enums import AgentKind as AK
         agent_kind = AK(agent_kind_raw)
@@ -207,8 +209,10 @@ class JsonFileTurnStateStore(TurnStateStore):
         return None
 
     async def _load_file(self, path: Path) -> TurnSnapshot | None:
+        data = read_json_robust(path)
+        if not data:
+            return None
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
             agent_kind_raw = data.get("agent_kind", "react")
             from .enums import AgentKind as AK
             agent_kind = AK(agent_kind_raw)
@@ -323,8 +327,10 @@ class JsonFileRuntimeCommandStore(RuntimeCommandStore):
     async def load_pending_commands(self, scope: StateQueryScope) -> list[ControlCommandState]:
         result: list[ControlCommandState] = []
         for f in self._workspace.glob("*.json"):
+            data = read_json_robust(f)
+            if not data:
+                continue
             try:
-                data = json.loads(f.read_text(encoding="utf-8"))
                 if data.get("status") == "completed":
                     continue
                 if scope.agent_id is not None and data.get("agent_id") != scope.agent_id:
@@ -350,8 +356,8 @@ class JsonFileRuntimeCommandStore(RuntimeCommandStore):
     async def mark_command_applied(self, command_id: str) -> None:
         import time
         path = self._path(command_id)
-        if path.exists():
-            data = json.loads(path.read_text(encoding="utf-8"))
+        data = read_json_robust(path)
+        if data is not None:
             data["status"] = "completed"
             data["applied_at"] = time.time()
             path.write_text(json.dumps(data, ensure_ascii=False, default=str), encoding="utf-8")

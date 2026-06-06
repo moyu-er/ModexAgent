@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 
 from framework.memory.pruned.models import PrunedIndexEntry
+from framework.utils.file_io import read_jsonl_robust
 
 logger = logging.getLogger(__name__)
 
@@ -88,30 +89,16 @@ class FilePrunedStorage(PrunedStorage):
         skipped so the remaining valid entries are still available for injection.
         """
         index_path = self._dir / self._index_filename
-        if not index_path.exists():
-            return []
+        raw_entries = read_jsonl_robust(index_path)
         entries: list[PrunedIndexEntry] = []
-        with open(index_path, "r", encoding="utf-8") as fh:
-            for line_no, raw in enumerate(fh, start=1):
-                line = raw.strip()
-                if not line:
-                    continue
-                try:
-                    parsed = json.loads(line)
-                except (json.JSONDecodeError, ValueError):
-                    logger.warning(
-                        "Skipping malformed index line %d in %s: %.80s...",
-                        line_no, index_path, line,
-                    )
-                    continue
-                try:
-                    entries.append(PrunedIndexEntry.from_dict(parsed))
-                except (TypeError, ValueError) as exc:
-                    logger.warning(
-                        "Skipping invalid index entry at line %d in %s: %s",
-                        line_no, index_path, exc,
-                    )
-                    continue
+        for parsed in raw_entries:
+            try:
+                entries.append(PrunedIndexEntry.from_dict(parsed))
+            except (TypeError, ValueError) as exc:
+                logger.warning(
+                    "Skipping invalid index entry in %s: %s",
+                    index_path, exc,
+                )
         return entries
 
     def save_index(self, entries: list[PrunedIndexEntry]) -> None:

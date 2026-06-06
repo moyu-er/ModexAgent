@@ -141,7 +141,10 @@ class TestDirArchiveStorage:
         store.base_dir.mkdir(parents=True, exist_ok=True)
         (store.base_dir / "state.json").write_text("not json", encoding="utf-8")
         result = await store.read_archive_state()
-        assert result is None
+        # Corrupted state is backed up and empty dict returned (so callers
+        # get a fresh start instead of silently losing state).
+        assert result == {}
+        assert (store.base_dir / "state.json.bak").exists()
 
     async def test_save_channel_logs_deletes_missing_dirs(
         self, store: DirArchiveStorage

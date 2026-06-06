@@ -4,6 +4,8 @@ import json
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+from framework.utils.file_io import read_json_robust
+
 MAX_DELIVERED_IDS = 10000
 
 
@@ -48,13 +50,10 @@ class FileDeliveredIdTracker(DeliveredIdTracker):
         return session_dir / "delivered_ids.json"
 
     def _load(self, delivered_path: Path) -> set[str]:
-        if not delivered_path.exists():
+        data = read_json_robust(delivered_path)
+        if not data:
             return set()
-        try:
-            data = json.loads(delivered_path.read_text(encoding="utf-8"))
-            return set(data.get("ids", []))
-        except Exception:
-            return set()
+        return set(data.get("ids", []))
 
     def _save(self, delivered_path: Path, ids: set[str]) -> None:
         delivered_path.parent.mkdir(parents=True, exist_ok=True)

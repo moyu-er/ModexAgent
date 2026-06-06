@@ -108,25 +108,25 @@ class TestBuildSystemPrompt:
 class TestBuildTools:
     def test_returns_four_tools(self, tmp_path: Path) -> None:
         archive_dir = tmp_path / "archive"
-        tools = ArchiveSummarizer.build_tools(archive_dir)
+        tools = ArchiveSummarizer.build_tools([archive_dir])
         assert len(tools) == 4
 
     def test_tool_names(self, tmp_path: Path) -> None:
         archive_dir = tmp_path / "archive"
-        tools = ArchiveSummarizer.build_tools(archive_dir)
+        tools = ArchiveSummarizer.build_tools([archive_dir])
         names = {t.name for t in tools}
         assert names == {"read", "write", "edit", "ls"}
 
     def test_tools_have_descriptions(self, tmp_path: Path) -> None:
         archive_dir = tmp_path / "archive"
-        tools = ArchiveSummarizer.build_tools(archive_dir)
+        tools = ArchiveSummarizer.build_tools([archive_dir])
         for tool in tools:
             assert tool.description
             assert isinstance(tool.description, str)
 
     def test_tools_have_parameters(self, tmp_path: Path) -> None:
         archive_dir = tmp_path / "archive"
-        tools = ArchiveSummarizer.build_tools(archive_dir)
+        tools = ArchiveSummarizer.build_tools([archive_dir])
         for tool in tools:
             assert tool.parameters
             assert isinstance(tool.parameters, dict)

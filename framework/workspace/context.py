@@ -9,6 +9,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from pathlib import Path
 
+from framework.utils.file_io import read_json_robust
 from framework.workspace.models import CdError, CdResult, WorkspaceSwitchCallback
 from framework.workspace.parse import parse_user_path
 
@@ -139,12 +140,12 @@ class DefaultWorkspaceContext(WorkspaceContext):
 
     async def restore(self) -> CdResult | None:
         """启动时恢复上次持久化的工作路径。"""
-        if not self._cwd_path.exists():
+        data = read_json_robust(self._cwd_path)
+        if not data:
             return None
         try:
-            data = json.loads(self._cwd_path.read_text(encoding="utf-8"))
             target = Path(data["path"])
-        except (json.JSONDecodeError, KeyError, OSError):
+        except (KeyError, OSError):
             logger.warning("Failed to read cwd.json, skipping restore")
             return None
         if not target.is_dir():

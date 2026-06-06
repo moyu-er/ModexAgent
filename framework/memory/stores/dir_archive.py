@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from framework.memory.archive_models import ArchiveChannelStorage
+from framework.utils.file_io import read_json_robust
 
 if TYPE_CHECKING:
     from framework.memory.core.lock import AioRWLock
@@ -66,13 +67,7 @@ class DirArchiveStorage(ArchiveChannelStorage):
 
     async def read_archive_state(self) -> dict[str, Any] | None:
         """Return the persisted archive state, or ``None`` if absent."""
-        state_path = self._base / "state.json"
-        if not state_path.exists():
-            return None
-        try:
-            return json.loads(state_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return None
+        return read_json_robust(self._base / "state.json")
 
     async def write_archive_state(self, state: dict[str, Any]) -> None:
         """Persist the archive state atomically."""
