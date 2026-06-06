@@ -337,3 +337,111 @@ class TestConsolidationEngineABC:
 
         engine = Complete()
         assert engine is not None
+
+
+class TestArchiveRetentionFifoEviction:
+    """FIFO eviction via DirArchiveStorage (max_archive_total)."""
+
+    @pytest.mark.asyncio
+    async def test_scan_once_fifo_eviction_deletes_oldest_consumed(self, tmp_path):
+        """Oldest consumed archives are deleted when total exceeds max_archive_total."""
+        from framework.memory.stores.dir_archive import DirArchiveStorage
+
+        archive_dir = tmp_path / "archives"
+        storage = DirArchiveStorage(archive_dir)
+
+        # Create 5 archives with content
+        for aid in [1, 2, 3, 4, 5]:
+            d = archive_dir / str(aid)
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "context.md").write_text(f"entry {aid}", encoding="utf-8")
+            (d / "knowledge.md").write_text(f"knowledge {aid}", encoding="utf-8")
+            (d / "index.md").write_text(f"index {aid}", encoding="utf-8")
+
+        # consumed=3 means archives 1,2,3 are safe to delete
+        await storage.write_archive_state({
+            "next_archive_id": 6,
+            "knowledge_consumed_archive_id": 3,
+        })
+
+        # Mock registry returns a non-DirArchiveStorage (simulating DefaultScopedStorage)
+        registry = AsyncMock(spec=InMemoryStoreRegistry)
+        registry.list_records = AsyncMock(return_value=[
+            ScopeRecord(
+                scope_key="u1",
+                layer=MemoryLayerName.ARCHIVE,
+                context=MemoryContext(session_id="s1", user_id="u1"),
+                storage_path=str(archive_dir),
+            )
+        ])
+        # Return something that is NOT DirArchiveStorage
+        registry.resolve = AsyncMock(return_value=AsyncMock())
+
+        # Mock archive layer that returns the directory path
+        mock_archive = AsyncMock()
+        mock_archive.get_storage_path = AsyncMock(return_value=archive_dir)
+
+        layers = MagicMock(spec=MemoryLayerSet)
+        layers.archive = mock_archive
+
+        retention = DefaultArchiveRetentionPolicy(max_archive_total=2)
+        policy = DefaultMemoryMaintenancePolicy(archive_retention_policy=retention)
+
+        results = await policy.scan_once(registry=registry, layers=layers)
+
+        assert any(r.task == "archive_retention" and r.success for r in results)
+
+        # Deletable IDs <= consumed (3): [1, 2, 3]
+        # max_total=2 means keep newest 2, delete oldest: 1
+        assert not (archive_dir / "1").exists()
+        assert (archive_dir / "2").exists()
+        assert (archive_dir / "3").exists()
+        assert (archive_dir / "4").exists()
+        assert (archive_dir / "5").exists()
+
+    @pytest.mark.asyncio
+    async def test_scan_once_fifo_preserves_unconsumed_archives(self, tmp_path):
+        """Archives above the consumed cursor are never deleted."""
+        from framework.memory.stores.dir_archive import DirArchiveStorage
+
+        archive_dir = tmp_path / "archives"
+        storage = DirArchiveStorage(archive_dir)
+
+        for aid in [1, 2, 3, 4, 5]:
+            d = archive_dir / str(aid)
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "context.md").write_text(f"entry {aid}", encoding="utf-8")
+            (d / "knowledge.md").write_text(f"knowledge {aid}", encoding="utf-8")
+            (d / "index.md").write_text(f"index {aid}", encoding="utf-8")
+
+        # consumed=0 means NONE are safe to delete
+        await storage.write_archive_state({
+            "next_archive_id": 6,
+            "knowledge_consumed_archive_id": 0,
+        })
+
+        registry = AsyncMock(spec=InMemoryStoreRegistry)
+        registry.list_records = AsyncMock(return_value=[
+            ScopeRecord(
+                scope_key="u1",
+                layer=MemoryLayerName.ARCHIVE,
+                context=MemoryContext(session_id="s1", user_id="u1"),
+                storage_path=str(archive_dir),
+            )
+        ])
+        registry.resolve = AsyncMock(return_value=AsyncMock())
+
+        mock_archive = AsyncMock()
+        mock_archive.get_storage_path = AsyncMock(return_value=archive_dir)
+
+        layers = MagicMock(spec=MemoryLayerSet)
+        layers.archive = mock_archive
+
+        retention = DefaultArchiveRetentionPolicy(max_archive_total=2)
+        policy = DefaultMemoryMaintenancePolicy(archive_retention_policy=retention)
+
+        results = await policy.scan_once(registry=registry, layers=layers)
+
+        # No archives deleted because none are consumed
+        for aid in [1, 2, 3, 4, 5]:
+            assert (archive_dir / str(aid)).exists(), f"archive {aid} should be preserved"

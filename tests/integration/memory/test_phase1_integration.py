@@ -33,9 +33,7 @@ async def test_phase1_config_to_template_initialization(tmp_path):
         dream_engine=DreamEngineConfig(
             enabled=True,
             interval=600,
-            min_archive_count=5,
-            max_archive_count=30,
-            max_batch_size=20,
+            max_consume_per_run=20,
         ),
     )
 
@@ -47,9 +45,7 @@ async def test_phase1_config_to_template_initialization(tmp_path):
     assert layer_config.knowledge.default_templates_dir == str(templates_dir)
 
     # Verify DreamEngineConfig values
-    assert cfg.dream_engine.min_archive_count == 5
-    assert cfg.dream_engine.max_archive_count == 30
-    assert cfg.dream_engine.max_batch_size == 20
+    assert cfg.dream_engine.max_consume_per_run == 20
 
     # Create mock storage
     storage = AsyncMock()

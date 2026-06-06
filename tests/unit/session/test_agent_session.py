@@ -364,7 +364,7 @@ class TestAgentSessionDreamEngine:
         dream = _FakeDreamEngine()
         agent = _FakeAgent()
         tm = InMemoryToolManager()
-        session = AgentSession(agent=agent, context_manager=adapter, tool_manager=tm, dream_engine=dream, dream_threshold=2)
+        session = AgentSession(agent=agent, context_manager=adapter, tool_manager=tm, dream_engine=dream)
 
         emitter = _FakeEmitter()
         msg = InputMessage(content="hi")
@@ -396,7 +396,7 @@ class TestAgentSessionDreamEngine:
         dream = _FakeDreamEngine()
         agent = _FakeAgent()
         tm = InMemoryToolManager()
-        session = AgentSession(agent=agent, context_manager=adapter, tool_manager=tm, dream_engine=dream, dream_threshold=5)
+        session = AgentSession(agent=agent, context_manager=adapter, tool_manager=tm, dream_engine=dream)
 
         emitter = _FakeEmitter()
         msg = InputMessage(content="hi")

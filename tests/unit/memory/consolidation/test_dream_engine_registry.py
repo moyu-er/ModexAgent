@@ -116,7 +116,11 @@ async def test_dream_engine_scan_all_uses_registry_records() -> None:
         }
     ]
     assert archive.unprocessed_channels == [ArchiveChannel.KNOWLEDGE]
-    assert archive.committed == [(context, "dream", 6, ArchiveChannel.KNOWLEDGE)]
+    assert len(archive.committed) == 1
+    assert archive.committed[0][0] == context
+    assert archive.committed[0][1] == "dream"
+    assert archive.committed[0][2] == 3  # max_consume_per_run=3 limits to 3 entries
+    assert archive.committed[0][3] == ArchiveChannel.KNOWLEDGE
     assert archive.pruned_contexts == [context]
 
 

@@ -10,52 +10,42 @@ from framework.memory.consolidation.dream_engine import DreamEngine
 from framework.memory.core.models import ArchiveEntry, UnprocessedResult
 
 
-class TestDreamEngineConfigHasDualTriggerFields:
-    """Verify the three new trigger/batch fields exist on DreamEngineConfig."""
+class TestDreamEngineConfigHasConsumePerRunField:
+    """Verify max_consume_per_run field exists on DreamEngineConfig."""
 
-    def test_dream_engine_config_has_dual_trigger_fields(self):
+    def test_dream_engine_config_has_consume_per_run_field(self):
         cfg = DreamEngineConfig()
-        assert hasattr(cfg, "min_archive_count"), "missing min_archive_count"
-        assert hasattr(cfg, "max_archive_count"), "missing max_archive_count"
-        assert hasattr(cfg, "max_batch_size"), "missing max_batch_size"
+        assert hasattr(cfg, "max_consume_per_run"), "missing max_consume_per_run"
 
     def test_dream_engine_config_defaults(self):
         cfg = DreamEngineConfig()
         assert cfg.interval == 1200
-        assert cfg.min_archive_count == 0
-        assert cfg.max_archive_count == 30
-        assert cfg.max_batch_size == 20
+        assert cfg.max_consume_per_run == 3
 
 
-def test_dream_engine_default_min_archive_count_is_zero() -> None:
-    """DreamEngine should process any available entries (min=0)."""
+def test_dream_engine_default_max_consume_per_run() -> None:
+    """DreamEngine defaults to max_consume_per_run=3."""
     engine = DreamEngine(
         llm_provider=MagicMock(),
         history_manager=MagicMock(),
         long_term_manager=MagicMock(),
     )
-    assert engine.min_archive_count == 0
+    assert engine.max_consume_per_run == 3
 
 
 def test_dream_engine_config_custom_values() -> None:
     cfg = DreamEngineConfig(
         enabled=True,
         interval=300,
-        min_archive_count=10,
-        max_archive_count=50,
-        max_batch_size=15,
+        max_consume_per_run=15,
     )
     assert cfg.enabled is True
     assert cfg.interval == 300
-    assert cfg.min_archive_count == 10
-    assert cfg.max_archive_count == 50
-    assert cfg.max_batch_size == 15
+    assert cfg.max_consume_per_run == 15
 
 
 def _make_engine(
-    min_archive_count: int = 5,
-    max_archive_count: int = 30,
-    max_batch_size: int = 20,
+    max_consume_per_run: int = 20,
 ) -> DreamEngine:
     """Create a DreamEngine with mocked providers for trigger testing."""
     llm = MagicMock()
@@ -66,9 +56,7 @@ def _make_engine(
         llm_provider=llm,
         history_manager=history_mgr,
         long_term_manager=long_term_mgr,
-        max_batch_size=max_batch_size,
-        min_archive_count=min_archive_count,
-        max_archive_count=max_archive_count,
+        max_consume_per_run=max_consume_per_run,
         summarizer=summarizer,
     )
 
@@ -85,17 +73,13 @@ def _make_entries(count: int, start_id: int = 1) -> list[ArchiveEntry]:
     ]
 
 
-class TestDreamEngineDualTrigger:
-    """Test dual trigger logic: skip below min, trigger above max, normal in between."""
+class TestDreamEngineRun:
+    """Test DreamEngine.run() — no-op when no consolidator, processes with consolidator, batch limits."""
 
     @pytest.mark.asyncio
-    async def test_dream_engine_skips_below_min_threshold(self):
-        """When archive_count < min_archive_count, should return False WITHOUT advancing cursor or pruning.
-
-        The purpose of the min threshold is to accumulate enough data before consolidating.
-        Advancing the cursor would discard entries that were never processed.
-        """
-        engine = _make_engine(min_archive_count=5, max_archive_count=30)
+    async def test_run_returns_false_when_no_consolidator(self):
+        """Without a consolidator, run() returns False immediately."""
+        engine = _make_engine()
         entries = _make_entries(3)
         unprocessed = UnprocessedResult(cursor=3, entries=entries)
         engine.history_manager.get_unprocessed = AsyncMock(return_value=unprocessed)
@@ -106,67 +90,57 @@ class TestDreamEngineDualTrigger:
         result = await engine.run(context)
 
         assert result is False
-        # Cursor must NOT advance — entries should remain unprocessed for next run
         engine.history_manager.commit_cursor.assert_not_awaited()
         engine.history_manager.prune_consumed_pairs.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_dream_engine_triggers_above_max_threshold(self):
-        """When archive_count > max_archive_count, should proceed to consolidation."""
-        engine = _make_engine(min_archive_count=5, max_archive_count=30, max_batch_size=20)
-        entries = _make_entries(35)
-        unprocessed = UnprocessedResult(cursor=35, entries=entries)
+    async def test_run_processes_with_consolidator(self):
+        """With a consolidator, run() processes entries and advances cursor."""
+        mock_consolidator = AsyncMock()
+        mock_consolidator.consolidate.return_value = True
+        engine = _make_engine()
+        engine._consolidator = mock_consolidator
+
+        entries = _make_entries(5)
+        unprocessed = UnprocessedResult(cursor=5, entries=entries)
         engine.history_manager.get_unprocessed = AsyncMock(return_value=unprocessed)
         engine.history_manager.commit_cursor = AsyncMock()
         engine.history_manager.prune_consumed_pairs = AsyncMock()
 
-        # Mock consolidate to avoid LLM calls
-        from framework.memory.core.consolidation import ConsolidationResult
-        engine.consolidate = AsyncMock(
-            return_value=ConsolidationResult(success=True, reasoning="test")
-        )
-
-        # Mock long_term_manager.get_all for the normal path
-        engine.long_term_manager.get_all = AsyncMock()
-        engine.long_term_manager.get_all.return_value = MagicMock(
-            soul="", user="", memory="", custom={}
-        )
-        engine.long_term_manager.apply_update = AsyncMock()
+        engine.long_term_manager.get_storage_path = AsyncMock()
+        engine.long_term_manager.get_storage_path.return_value = MagicMock()
+        engine.history_manager.get_storage_path = AsyncMock()
+        engine.history_manager.get_storage_path.return_value = MagicMock()
 
         context = MagicMock()
         result = await engine.run(context)
 
-        # Should have called consolidate (normal processing path was entered)
-        engine.consolidate.assert_awaited_once()
         assert result is True
+        mock_consolidator.consolidate.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_dream_engine_respects_batch_size(self):
-        """When entries exceed max_batch_size, only max_batch_size entries should be processed."""
-        engine = _make_engine(min_archive_count=5, max_archive_count=100, max_batch_size=20)
-        entries = _make_entries(50)
-        unprocessed = UnprocessedResult(cursor=50, entries=entries)
+    async def test_run_respects_max_consume_per_run(self):
+        """Only max_consume_per_run entries are processed per invocation."""
+        mock_consolidator = AsyncMock()
+        mock_consolidator.consolidate.return_value = True
+        engine = _make_engine(max_consume_per_run=2)
+        engine._consolidator = mock_consolidator
+
+        entries = _make_entries(5)
+        unprocessed = UnprocessedResult(cursor=5, entries=entries)
         engine.history_manager.get_unprocessed = AsyncMock(return_value=unprocessed)
         engine.history_manager.commit_cursor = AsyncMock()
         engine.history_manager.prune_consumed_pairs = AsyncMock()
 
-        # Mock consolidate to inspect what entries were passed
-        from framework.memory.core.consolidation import ConsolidationResult
-        engine.consolidate = AsyncMock(
-            return_value=ConsolidationResult(success=True, reasoning="test")
-        )
-
-        # Mock long_term_manager.get_all for the normal path
-        engine.long_term_manager.get_all = AsyncMock()
-        engine.long_term_manager.get_all.return_value = MagicMock(
-            soul="", user="", memory="", custom={}
-        )
-        engine.long_term_manager.apply_update = AsyncMock()
+        engine.long_term_manager.get_storage_path = AsyncMock()
+        engine.long_term_manager.get_storage_path.return_value = MagicMock()
+        engine.history_manager.get_storage_path = AsyncMock()
+        engine.history_manager.get_storage_path.return_value = MagicMock()
 
         context = MagicMock()
         result = await engine.run(context)
 
-        # consolidate should be called with at most max_batch_size entries
-        assert engine.consolidate.await_count == 1
-        new_entries_arg = engine.consolidate.call_args[1]["new_entries"]
-        assert len(new_entries_arg) <= 20
+        mock_consolidator.consolidate.assert_awaited_once()
+        archive_ids_arg = mock_consolidator.consolidate.call_args[1]["archive_ids"]
+        assert len(archive_ids_arg) == 2
+        assert archive_ids_arg == [1, 2]

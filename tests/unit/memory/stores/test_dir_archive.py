@@ -143,11 +143,88 @@ class TestDirArchiveStorage:
         result = await store.read_archive_state()
         assert result is None
 
-    async def test_save_channel_logs_is_noop(
+    async def test_save_channel_logs_deletes_missing_dirs(
         self, store: DirArchiveStorage
     ) -> None:
-        # Should not raise
-        await store.save_channel_logs("context", [{"summary": "irrelevant"}])
+        for aid in [1, 2, 3]:
+            d = store.base_dir / str(aid)
+            d.mkdir(parents=True, exist_ok=True)
+            for name in ("context.md", "knowledge.md", "index.md"):
+                (d / name).write_text("content", encoding="utf-8")
+
+        await store.save_channel_logs("context", [
+            {"archive_id": 2},
+            {"archive_id": 3},
+        ])
+
+        assert not (store.base_dir / "1").exists()
+        assert (store.base_dir / "2").exists()
+        assert (store.base_dir / "3").exists()
+
+    async def test_prune_to_max_deletes_oldest(self, store: DirArchiveStorage) -> None:
+        for aid in [1, 2, 3, 4, 5]:
+            d = store.base_dir / str(aid)
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "context.md").write_text(f"entry {aid}", encoding="utf-8")
+
+        # min_safe_id=5 means all archives are consumed and eligible for deletion
+        deleted = await store.prune_to_max(3, min_safe_id=5)
+
+        assert deleted == 2
+        assert not (store.base_dir / "1").exists()
+        assert not (store.base_dir / "2").exists()
+        assert (store.base_dir / "3").exists()
+        assert (store.base_dir / "4").exists()
+        assert (store.base_dir / "5").exists()
+
+    async def test_prune_to_max_respects_min_safe_id(self, store: DirArchiveStorage) -> None:
+        for aid in [1, 2, 3, 4, 5]:
+            d = store.base_dir / str(aid)
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "context.md").write_text(f"entry {aid}", encoding="utf-8")
+
+        deleted = await store.prune_to_max(2, min_safe_id=3)
+
+        assert deleted == 1
+        assert not (store.base_dir / "1").exists()
+        assert (store.base_dir / "2").exists()
+        assert (store.base_dir / "3").exists()
+        assert (store.base_dir / "4").exists()
+        assert (store.base_dir / "5").exists()
+
+    async def test_prune_to_max_noop_when_under_limit(
+        self, store: DirArchiveStorage
+    ) -> None:
+        for aid in [1, 2]:
+            d = store.base_dir / str(aid)
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "context.md").write_text("content", encoding="utf-8")
+
+        deleted = await store.prune_to_max(5)
+        assert deleted == 0
+        assert (store.base_dir / "1").exists()
+
+    async def test_cleanup_empty_dirs_removes_empty(
+        self, store: DirArchiveStorage
+    ) -> None:
+        empty = store.base_dir / "1"
+        empty.mkdir(parents=True, exist_ok=True)
+
+        almost_empty = store.base_dir / "2"
+        almost_empty.mkdir(parents=True, exist_ok=True)
+        (almost_empty / "context.md").write_text("", encoding="utf-8")
+        (almost_empty / "knowledge.md").write_text("", encoding="utf-8")
+
+        valid = store.base_dir / "3"
+        valid.mkdir(parents=True, exist_ok=True)
+        (valid / "context.md").write_text("has content", encoding="utf-8")
+
+        count = await store.cleanup_empty_dirs()
+
+        assert count == 2
+        assert not empty.exists()
+        assert not almost_empty.exists()
+        assert valid.exists()
 
     async def test_append_skips_empty_summary(
         self, store: DirArchiveStorage
