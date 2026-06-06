@@ -12,9 +12,14 @@ from pathlib import Path
 from typing import Any
 
 from framework.agents.react.agent import ReActAgent
+from framework.agents.summarizer.abc import (
+    _get_registry,
+    KnowledgeConsolidatorBase,
+)
 from framework.core.agent import AgentContext
 from framework.agents.summarizer.emitter import SummarizerTrajectoryEmitter
 from framework.core.tool_manager import InMemoryToolManager
+from framework.core.types import MessageRole
 from framework.memory.history import ListMessageHistory
 from framework.memory.tools import (
     ScopedEditFileTool,
@@ -27,20 +32,8 @@ logger = logging.getLogger(__name__)
 
 _KNOWLEDGE_FILES = ("SOUL.md", "USER.md", "MEMORY.md")
 
-# Cached PromptRegistry — created once at module load
-_registry: Any | None = None
 
-
-def _get_registry() -> Any:
-    """Return cached PromptRegistry, loading on first access."""
-    global _registry
-    if _registry is None:
-        from framework.memory.prompts import create_default_registry
-        _registry = create_default_registry()
-    return _registry
-
-
-class KnowledgeConsolidator:
+class KnowledgeConsolidator(KnowledgeConsolidatorBase):
     """Reads archive knowledge.md files and updates knowledge files.
 
     The agent uses a ReAct loop with scoped file tools:
@@ -62,7 +55,7 @@ class KnowledgeConsolidator:
             )
 
         self._provider = provider
-        self._max_iterations = max_iterations
+        self.max_iterations: int = max_iterations
         self._react_agent = ReActAgent(provider=self._provider, mode="clean")
 
     @staticmethod
@@ -102,8 +95,6 @@ class KnowledgeConsolidator:
         Returns:
             Fully resolved system prompt string.
         """
-        from framework.memory.prompts import create_default_registry
-
         prompt = _get_registry().get_system("knowledge/consolidator")
 
         # Build allowed directories section
@@ -143,6 +134,8 @@ class KnowledgeConsolidator:
         archive_ids: list[int],
         archive_base: Path,
         knowledge_dir: Path,
+        *,
+        max_iterations: int | None = None,
     ) -> bool:
         """Main entry: read knowledge.md from archives, update knowledge files.
 
@@ -150,6 +143,8 @@ class KnowledgeConsolidator:
             archive_ids: List of archive IDs to process.
             archive_base: Base directory containing archive subdirectories.
             knowledge_dir: Directory containing knowledge files to update.
+            max_iterations: Optional override for max ReAct iterations.
+                When ``None``, ``self.max_iterations`` is used.
 
         Returns:
             True if the agent ran successfully, False otherwise.
@@ -157,6 +152,9 @@ class KnowledgeConsolidator:
         if not archive_ids:
             return True  # Nothing to do
 
+        effective_max_iterations = (
+            max_iterations if max_iterations is not None else self.max_iterations
+        )
         archive_dirs = [archive_base / str(aid) for aid in archive_ids]
 
         # Build user message with current knowledge files content
@@ -192,6 +190,7 @@ class KnowledgeConsolidator:
                 user_msg,
                 archive_base=archive_base,
                 trace_key=trace_key,
+                max_iterations=effective_max_iterations,
             ):
                 return True
             logger.warning(
@@ -209,6 +208,8 @@ class KnowledgeConsolidator:
         user_msg: str,
         archive_base: Path,
         trace_key: str,
+        *,
+        max_iterations: int,
     ) -> bool:
         """Run the ReAct agent once. Returns True on success, False on failure.
 
@@ -216,6 +217,7 @@ class KnowledgeConsolidator:
             archive_dirs: Archive directories to read from.
             knowledge_dir: Knowledge directory to write to.
             user_msg: User message with current knowledge content.
+            max_iterations: Max ReAct iterations for this run.
 
         Returns:
             True if agent completed successfully, False otherwise.
@@ -230,14 +232,14 @@ class KnowledgeConsolidator:
 
         # Build context
         history = ListMessageHistory([
-            {"role": "user", "content": user_msg},
+            {"role": MessageRole.USER, "content": user_msg},
         ])
         context = AgentContext(
             system_prompt=system_prompt,
             history=history,
             tool_manager=tool_manager,
             session_id="knowledge-consolidator",
-            max_iterations=self._max_iterations,
+            max_iterations=max_iterations,
             temperature=0.2,
         )
 

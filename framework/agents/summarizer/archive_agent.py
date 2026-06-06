@@ -11,9 +11,15 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from framework.agents.react.agent import ReActAgent
+from framework.agents.summarizer.abc import (
+    _get_registry,
+    ArchiveGenerator,
+    ArchiveSummarizerResult,
+)
 from framework.core.agent import AgentContext
 from framework.agents.summarizer.emitter import SummarizerTrajectoryEmitter
 from framework.core.tool_manager import InMemoryToolManager
+from framework.core.types import MessageRole
 from framework.memory.history import ListMessageHistory
 from framework.memory.tools import (
     ScopedEditFileTool,
@@ -29,24 +35,12 @@ _ARCHIVE_FILES = ("context.md", "knowledge.md", "index.md")
 # Max chars to keep per message role when feeding transcript to the archive agent.
 # Tool outputs can be huge; user/assistant content is usually more concise.
 _CONTENT_LIMITS: dict[str, int] = {
-    "user": 4000,
-    "assistant": 4000,
-    "agent": 4000,
-    "tool": 1200,
-    "system": 800,
+    MessageRole.USER: 4000,
+    MessageRole.ASSISTANT: 4000,
+    MessageRole.AGENT: 4000,
+    MessageRole.TOOL: 1200,
+    MessageRole.SYSTEM: 800,
 }
-
-# Cached PromptRegistry — created once at module load
-_prompt_registry = None
-
-
-def _get_registry() -> Any:
-    """Return cached PromptRegistry, loading on first access."""
-    global _prompt_registry
-    if _prompt_registry is None:
-        from framework.memory.prompts import create_default_registry
-        _prompt_registry = create_default_registry()
-    return _prompt_registry
 
 
 @dataclass(frozen=True)
@@ -59,17 +53,7 @@ class ArchiveSummarizerConfig:
     max_iterations: int = 25
 
 
-@dataclass(frozen=True)
-class ArchiveSummarizerResult:
-    """Result of archive generation."""
-
-    success: bool
-    archive_id: int = 0
-    files_written: tuple[str, ...] = ()
-    error: str | None = None
-
-
-class ArchiveSummarizer:
+class ArchiveSummarizer(ArchiveGenerator):
     """Generates archive summary files from pruned messages using a ReAct agent.
 
     The agent receives a transcript and uses scoped file tools to write
@@ -180,7 +164,7 @@ class ArchiveSummarizer:
                 "role": role,
                 "content": content,
             }
-            if role == "tool" and name:
+            if role == MessageRole.TOOL and name:
                 clean["name"] = str(name)
 
             # Preserve created_at for time-range context
@@ -189,7 +173,7 @@ class ArchiveSummarizer:
                 clean["created_at"] = created_at
 
             # Preserve a simple hint that assistant used tools, but NOT the raw tool_calls JSON
-            if role == "assistant" and msg.get("tool_calls"):
+            if role == MessageRole.ASSISTANT and msg.get("tool_calls"):
                 tool_names: list[str] = []
                 for tc in msg.get("tool_calls", []):
                     if isinstance(tc, dict):
@@ -237,7 +221,7 @@ class ArchiveSummarizer:
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
 
-            if role == "assistant" and (msg.get("tool_names") or msg.get("tool_calls")):
+            if role == MessageRole.ASSISTANT and (msg.get("tool_names") or msg.get("tool_calls")):
                 raw_names = msg.get("tool_names") or msg.get("tool_calls", [])
                 tool_names: list[str] = []
                 for tc in raw_names:
@@ -252,7 +236,7 @@ class ArchiveSummarizer:
                     lines.append(f"[assistant -> tools: {', '.join(tool_names)}]")
                 continue
 
-            if role == "tool":
+            if role == MessageRole.TOOL:
                 name = msg.get("name", "unknown")
                 if isinstance(content, str) and len(content) > 500:
                     content = content[:500] + f"... ({len(msg.get('content', ''))} chars total)"
@@ -394,7 +378,7 @@ class ArchiveSummarizer:
 
         # Build context
         history = ListMessageHistory([
-            {"role": "user", "content": user_message},
+            {"role": MessageRole.USER, "content": user_message},
         ])
         context = AgentContext(
             system_prompt=system_prompt,
