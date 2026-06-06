@@ -242,7 +242,7 @@ async def _generate_archive_phase(
             "Archive generation skipped: archive_agent present but storage unresolved. session=%s",
             context.session_id,
         )
-        return _ArchiveOutcome(generated=False, skipped=True, next_archive_id=0)
+        return _ArchiveOutcome(generated=False, skipped=True, next_archive_id=0, resolved_storage=None)
 
     session_id = context.session_id
     try:
@@ -270,6 +270,7 @@ async def _generate_archive_phase(
         )
         return _ArchiveOutcome(
             generated=True, skipped=False, next_archive_id=next_archive_id,
+            resolved_storage=resolved_storage,
         )
 
     archive_dir = resolved_storage.base_dir / str(next_archive_id)
@@ -291,6 +292,7 @@ async def _generate_archive_phase(
             )
             return _ArchiveOutcome(
                 generated=True, skipped=False, next_archive_id=next_archive_id,
+                resolved_storage=resolved_storage,
             )
         logger.warning(
             "Archive generation failed: archive_id=%d session=%s error=%s",
@@ -304,6 +306,7 @@ async def _generate_archive_phase(
 
     return _ArchiveOutcome(
         generated=False, skipped=True, next_archive_id=next_archive_id,
+        resolved_storage=resolved_storage,
     )
 
 
@@ -605,10 +608,13 @@ async def cleanup_session(
         archive_agent, archive_storage, archive, plan.pruned_messages, context,
     )
 
+    # Use resolved_storage from Phase 2 (may have been dynamically created)
+    effective_storage = archive_outcome.resolved_storage or archive_storage
+
     # Phase 3: pruned content write
     await _write_pruned_phase(
         pruned_manager,
-        archive_storage,
+        effective_storage,
         plan.pruned_messages,
         archive_outcome.generated,
         archive_outcome.next_archive_id,
@@ -645,7 +651,7 @@ async def cleanup_session(
     # Phase 6: register archive with layer
     await _register_archive_with_layer(
         archive,
-        archive_storage,
+        effective_storage,
         archive_outcome.generated,
         archive_outcome.next_archive_id,
         context,
@@ -654,7 +660,7 @@ async def cleanup_session(
     # Phase 7: advance archive state + trigger
     await _advance_archive_phase(
         archive_agent,
-        archive_storage,
+        effective_storage,
         archive_outcome.generated,
         archive_outcome.next_archive_id,
         context,
