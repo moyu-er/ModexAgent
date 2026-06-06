@@ -16,7 +16,7 @@ from ..core.emitter import AgentResult, ContentEmitter
 from ..core.events import AgentEvent
 from ..core.graph.interrupt import GraphInterrupt
 from ..core.tool_manager import ToolManager
-from ..core.types import InputMessage
+from ..core.types import InputMessage, MessageRole
 from ..memory.core.scope import MemoryContext
 from ..memory.history import (
     ListMessageHistory,
@@ -69,7 +69,6 @@ class AgentSession(Generic[E]):
         skill_manager: SkillManager | None = None,
         memory_system: Any | None = None,
         dream_engine: Any | None = None,
-        dream_threshold: int = 5,
         hooks: list[Any] | None = None,
         router: Any | None = None,
         deduplicator: Any | None = None,
@@ -116,7 +115,7 @@ class AgentSession(Generic[E]):
         self._tool_manager = tool_manager
         self._skill_manager = skill_manager
         self._dream_engine = dream_engine
-        self._dream_threshold = dream_threshold
+        self._dream_engine = dream_engine
         self._hooks = list(hooks) if hooks else []
         self._router = router
         self._deduplicator = deduplicator
@@ -239,14 +238,14 @@ class AgentSession(Generic[E]):
                 multimodal_content = sanitized_content
 
             user_message: dict[str, Any] = {
-                "role": "user",
+                "role": MessageRole.USER,
                 "content": multimodal_content,
             }
             # Propagate source_agent / content_format from input message
             # so governance can protect XML structure (agent messages, etc.)
             _msg_meta = message.metadata or {}
             if _msg_meta.get("source_agent"):
-                user_message["role"] = "agent"
+                user_message["role"] = MessageRole.AGENT
                 user_message["source_agent"] = _msg_meta["source_agent"]
             if message.content_format is not None:
                 user_message["content_format"] = message.content_format
@@ -312,17 +311,17 @@ class AgentSession(Generic[E]):
                     metadata=message.metadata or {},
                 )
                 base_history = await history_to_list(context_state.history)
-                if base_history and base_history[-1].get("role") == "user":
+                if base_history and base_history[-1].get("role") == MessageRole.USER:
                     base_history = base_history[:-1]
                 built_messages = self._context_builder.build_messages(
                     history=base_history,
                     current_envelope=envelope,
                     agent_descriptor=self._agent_descriptor,
                 )
-                system_msgs = [m for m in built_messages if m.get("role") == "system"]
+                system_msgs = [m for m in built_messages if m.get("role") == MessageRole.SYSTEM]
                 if system_msgs:
                     context_state.system_prompt = "\n\n".join(m.get("content", "") for m in system_msgs)
-                non_system = [m for m in built_messages if m.get("role") != "system"]
+                non_system = [m for m in built_messages if m.get("role") != MessageRole.SYSTEM]
                 # Write built non-system messages back into the underlying MessageHistory
                 if isinstance(context_state.history, MessageHistory) and not isinstance(
                     context_state.history, ListMessageHistory
@@ -455,9 +454,6 @@ class AgentSession(Generic[E]):
             count = await memory_system.get_unprocessed_history_count(ctx)
         except Exception:
             return
-        if count < self._dream_threshold:
-            return
-
         scope_key = f"{ctx.session_id or ''}:{ctx.user_id or ''}:{ctx.tenant_id or ''}"
         lock = _dream_locks.setdefault(scope_key, asyncio.Lock())
 
