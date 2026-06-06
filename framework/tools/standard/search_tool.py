@@ -180,7 +180,14 @@ class SearchFilesTool(Tool):
         for d in DEFAULT_EXCLUDES:
             cmd.extend(["--glob", f"!{d}"])
         if file_pattern != "*":
-            cmd.extend(["--glob", file_pattern])
+            # ripgrep --glob matches against the full relative path.
+            # A pattern like "sub/*.py" does NOT match "search_root/sub/x.py"
+            # unless prefixed with "**/".  Python rglob("sub/*.py") *does* match
+            # nested "sub/*.py" paths, so we normalise to keep backends consistent.
+            rg_pattern = file_pattern
+            if "/" in rg_pattern and not rg_pattern.startswith("**/"):
+                rg_pattern = f"**/{rg_pattern}"
+            cmd.extend(["--glob", rg_pattern])
         if not regex:
             cmd.append("--fixed-strings")
         cmd.extend([query, str(search_path)])
@@ -199,16 +206,21 @@ class SearchFilesTool(Tool):
         except Exception as e:
             return f"Error: ripgrep execution failed: {e}"
 
+    # Pre-compiled regex for vimgrep output: matches :lnum:col:text from the
+    # right so Windows absolute paths (e.g. F:\path\file.py) are handled.
+    _VIMGREP_RE = re.compile(r":(\d+):(\d+):(.*)$")
+
     def _parse_vimgrep(self, line: str) -> tuple[str, int, str] | None:
         """Parse one line of --vimgrep output: file:lnum:col:text"""
-        parts = line.split(":", 3)
-        if len(parts) < 4:
+        m = self._VIMGREP_RE.search(line)
+        if not m:
             return None
         try:
-            lnum = int(parts[1])
+            lnum = int(m.group(1))
         except ValueError:
             return None
-        return parts[0], lnum, parts[3].rstrip("\n\r")
+        file_path = line[: m.start()]
+        return file_path, lnum, m.group(3).rstrip("\n\r")
 
     def _parse_vimgrep_output(self, stdout: str, max_results: int) -> str:
         """Parse --vimgrep output into grouped results.
@@ -323,38 +335,47 @@ class SearchFilesTool(Tool):
 
         return self._format_vimgrep_entries(entries, max_results)
 
+    # Pre-compiled regex for git grep match lines: :lnum:text from the right.
+    _GIT_GREP_RE = re.compile(r":(\d+):(.*)$")
+
     @staticmethod
     def _parse_git_grep_line(raw_line: str) -> tuple[str, int, str] | None:
         """Parse git grep -C output line.
 
         Match lines:  file:lnum:text
         Context lines: file-lnum-text  (dash separator, negative lnum marker)
-        """
-        # Match format: file:lnum:text
-        colon_idx = raw_line.find(":")
-        if colon_idx < 0:
-            # Context format: file-lnum-text
-            dash_idx = raw_line.find("-")
-            if dash_idx < 0:
-                return None
-            try:
-                lnum = abs(int(raw_line[dash_idx + 1:raw_line.find("-", dash_idx + 1)]))
-            except (ValueError, IndexError):
-                return None
-            file_path = raw_line[:dash_idx]
-            text = raw_line[raw_line.find("-", dash_idx + 1) + 1:]
-            return file_path, lnum, text.rstrip("\n\r")
 
-        file_path = raw_line[:colon_idx]
-        rest = raw_line[colon_idx + 1:]
-        colon2 = rest.find(":")
-        if colon2 < 0:
+        Uses regex so Windows absolute paths (e.g. ``F:\\path\\file.py:lnum:text``)
+        are parsed correctly and colons inside the text are preserved.
+        """
+        # Try match format first (file:lnum:text)
+        m = SearchFilesTool._GIT_GREP_RE.search(raw_line)
+        if m:
+            try:
+                lnum = int(m.group(1))
+            except ValueError:
+                return None
+            file_path = raw_line[: m.start()]
+            return file_path, lnum, m.group(2).rstrip("\n\r")
+
+        # Context format: file-lnum-text  or  file--lnum-text (negative lnum)
+        dash_idx = raw_line.find("-")
+        if dash_idx < 0:
+            return None
+        # Skip past the first dash; if the next char is also a dash it means
+        # a negative line number (context before the match) — skip that too.
+        num_start = dash_idx + 1
+        if num_start < len(raw_line) and raw_line[num_start] == "-":
+            num_start += 1
+        second_dash = raw_line.find("-", num_start)
+        if second_dash < 0:
             return None
         try:
-            lnum = int(rest[:colon2])
-        except ValueError:
+            lnum = abs(int(raw_line[num_start:second_dash]))
+        except (ValueError, IndexError):
             return None
-        text = rest[colon2 + 1:]
+        file_path = raw_line[:dash_idx]
+        text = raw_line[second_dash + 1:]
         return file_path, lnum, text.rstrip("\n\r")
 
     # ------------------------------------------------------------------

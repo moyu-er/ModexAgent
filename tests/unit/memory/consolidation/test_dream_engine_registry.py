@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from framework.memory.archive_models import KNOWLEDGE_ARCHIVE_FILE_KEY, ArchiveChannel
+from framework.memory.archive_models import ArchiveChannel
 from framework.memory.consolidation.dream_engine import DreamEngine
 from framework.memory.core.models import ArchiveEntry, LongTermMemory, UnprocessedResult
 from framework.memory.core.scope import MemoryAgentRole, MemoryContext, MemoryLayerName, ScopeRecord
@@ -103,7 +103,6 @@ async def test_dream_engine_scan_all_uses_registry_records() -> None:
     assert registry.calls == [
         {
             "layer": MemoryLayerName.ARCHIVE,
-            "has_file": KNOWLEDGE_ARCHIVE_FILE_KEY,
             "agent_roles": {MemoryAgentRole.MAIN},
         }
     ]

@@ -10,10 +10,7 @@ import asyncio
 import logging
 
 from framework.agents.summarizer.abc import KnowledgeConsolidatorBase
-from framework.memory.archive_models import (
-    KNOWLEDGE_ARCHIVE_FILE_KEY,
-    ArchiveChannel,
-)
+from framework.memory.archive_models import ArchiveChannel
 from framework.memory.core.layers import ArchiveMemoryManager, KnowledgeMemoryManager
 from framework.memory.core.models import ArchiveEntry
 from framework.memory.core.scope import (
@@ -151,7 +148,6 @@ class DreamEngine:
 
         records = await self.registry.list_records(
             layer=MemoryLayerName.ARCHIVE,
-            has_file=KNOWLEDGE_ARCHIVE_FILE_KEY,
             agent_roles={MemoryAgentRole.MAIN},
         )
         for record in records:
