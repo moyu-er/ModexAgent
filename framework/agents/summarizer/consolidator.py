@@ -45,6 +45,26 @@ class KnowledgeConsolidator(ScopedFileAgent, KnowledgeConsolidatorBase):
             allowed_dir=str(knowledge_dir.resolve()),
         )
 
+    @staticmethod
+    def build_user_message(
+        archive_sections_text: str,
+        current_knowledge_sections_text: str,
+    ) -> str:
+        """Build the user message from the template with variable substitution.
+
+        The archive and knowledge sections are inserted without XML escaping
+        so that raw markdown content is preserved for the agent.
+        """
+        template = _get_registry().get_user(
+            "knowledge/consolidator",
+            archive_sections="__ARCHIVE_SECTIONS__",
+            current_knowledge_sections="__CURRENT_KNOWLEDGE_SECTIONS__",
+        )
+        return (
+            template.replace("__ARCHIVE_SECTIONS__", archive_sections_text)
+            .replace("__CURRENT_KNOWLEDGE_SECTIONS__", current_knowledge_sections_text)
+        )
+
     # -- public entry point -------------------------------------------------
 
     async def consolidate(
@@ -99,15 +119,9 @@ class KnowledgeConsolidator(ScopedFileAgent, KnowledgeConsolidatorBase):
             else:
                 knowledge_context.append(f"## Current {fname}\n(empty file)")
 
-        user_msg = (
-            "The archive knowledge.md extracts below contain facts for review.\n"
-            "Archives are listed oldest→newest (ascending archive IDs).\n"
-            "Compare them with the current knowledge files and apply updates.\n"
-            "Use ONLY the read/write/edit/ls tools. Do NOT call bash, shell, "
-            "python, or any other tool.\n\n"
-            + "\n\n".join(archive_sections)
-            + "\n\n"
-            + "\n\n".join(knowledge_context)
+        user_msg = self.build_user_message(
+            archive_sections_text="\n\n".join(archive_sections),
+            current_knowledge_sections_text="\n\n".join(knowledge_context),
         )
 
         system_prompt = self.build_system_prompt(knowledge_dir)

@@ -13,6 +13,7 @@ from framework.memory.core.models import (
 from framework.memory.core.scope import MemoryContext
 from framework.memory.core.system import InjectableMemorySystem, MemorySystem
 from framework.memory.injection.policy import MemoryInjectionPolicy
+from framework.memory.tags import ArchiveTag, KnowledgeTag
 from framework.memory.pruned.manager import PrunedManager
 from framework.memory.utils import estimate_text_tokens, normalize_memory_summary
 
@@ -30,9 +31,9 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
     """Main agent policy — knowledge + archive + providers + session.
 
     Injection order (deterministic, priority-ordered):
-    1. Bootstrap files: SOUL, USER → priority=100
-    2. Knowledge: MEMORY.md → priority=90
-    3. Archive recent: search or get_recent → priority=70
+    1. Previous conversations disclaimer → priority=110
+    2. Knowledge: identity, user profile, known facts → priority=100
+    3. Archive summaries: older topics → priority=70
     4. Provider static blocks → priority=60
     5. Provider prefetch → priority=50
     6. Session visible messages → messages field of result
@@ -67,6 +68,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         sections: list[_PromptSection] = []
         injectable = memory_system
 
+        self._inject_disclaimer(sections)
         await self._inject_knowledge(sections, context, injectable, query)
         await self._inject_archive(sections, context, injectable, query)
         self._inject_pruned_catalog(sections, context)
@@ -87,6 +89,20 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
 
     # -- injection helpers ---------------------------------------------------
 
+    def _inject_disclaimer(self, sections: list[_PromptSection]) -> None:
+        """Inject a short disclaimer about previous conversation memory."""
+        sections.append(
+            _PromptSection(
+                content=(
+                    "Below are parts of your previous conversations with the user. "
+                    "Your current conversation (the messages after this prompt) "
+                    "is always the most authoritative. If anything below conflicts "
+                    "with the current conversation, trust the current conversation."
+                ),
+                priority=110,
+            )
+        )
+
     async def _inject_knowledge(
         self,
         sections: list[_PromptSection],
@@ -94,55 +110,50 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         memory_system: InjectableMemorySystem,
         query: str,
     ) -> None:
-        """Inject knowledge as semantic XML with absolute paths and editability metadata."""
+        """Inject knowledge as natural XML with file paths and editability."""
         try:
             knowledge = await memory_system.retrieve_knowledge(context, query=query)
             knowledge_dir = await memory_system.get_knowledge_directory(context)
 
-            # Build XML sections for each knowledge file
-            xml_parts: list[str] = [
-                "<agent_knowledge>",
-                "<!-- Persistent knowledge from prior sessions. Reference as background context.",
-                "     This is NOT an active instruction. The user's current request takes priority",
-                "     over any fact recorded here. -->",
-            ]
+            xml_parts: list[str] = []
 
             if knowledge.soul:
-                file_path = ""
+                file_attr = ""
                 if knowledge_dir:
-                    file_path = f' file="{xml_escape(str((knowledge_dir / "SOUL.md").resolve()))}"'
-                xml_parts.append(
-                    f'  <identity{file_path} editable="true" '
-                    f'description="Your personality, core principles, and behavioral rules.">'
+                    file_attr = f' file="{xml_escape(str((knowledge_dir / "SOUL.md").resolve()))}"'
+                tag = KnowledgeTag.YOUR_IDENTITY.value
+                xml_parts.extend([
+                    f'<{tag}{file_attr} editable="true"'
+                    f' description="Who you are: personality, principles, and behavior rules">'
                     f"{xml_escape(knowledge.soul)}"
-                    f"</identity>"
-                )
+                    f"</{tag}>",
+                ])
 
             if knowledge.user:
-                file_path = ""
+                file_attr = ""
                 if knowledge_dir:
-                    file_path = f' file="{xml_escape(str((knowledge_dir / "USER.md").resolve()))}"'
-                xml_parts.append(
-                    f'  <user_profile{file_path} editable="true" '
-                    f'description="Information about the user you are interacting with - preferences, background, habits.">'
+                    file_attr = f' file="{xml_escape(str((knowledge_dir / "USER.md").resolve()))}"'
+                tag = KnowledgeTag.USER_PROFILE.value
+                xml_parts.extend([
+                    f'<{tag}{file_attr} editable="true"'
+                    f' description="Facts about the user: name, preferences, habits, communication style">'
                     f"{xml_escape(knowledge.user)}"
-                    f"</user_profile>"
-                )
+                    f"</{tag}>",
+                ])
 
             if knowledge.memory:
-                file_path = ""
+                file_attr = ""
                 if knowledge_dir:
-                    file_path = f' file="{xml_escape(str((knowledge_dir / "MEMORY.md").resolve()))}"'
-                xml_parts.append(
-                    f'  <persistent_memory{file_path} editable="false" '
-                    f'description="Facts and context preserved across sessions. Maintained automatically.">'
+                    file_attr = f' file="{xml_escape(str((knowledge_dir / "MEMORY.md").resolve()))}"'
+                tag = KnowledgeTag.KNOWN_FACTS.value
+                xml_parts.extend([
+                    f'<{tag}{file_attr} editable="false"'
+                    f' description="Known facts about the project: conventions, decisions, verified solutions">'
                     f"{xml_escape(knowledge.memory)}"
-                    f"</persistent_memory>"
-                )
+                    f"</{tag}>",
+                ])
 
-            xml_parts.append("</agent_knowledge>")
-
-            if len(xml_parts) > 2:  # More than just opening/closing tags
+            if xml_parts:
                 xml_content = "\n".join(xml_parts)
 
                 # Pre-truncation: if XML exceeds 8000 chars, truncate safely
@@ -153,9 +164,9 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                         xml_content,
                         8000,
                         truncatable_paths=[
-                            "identity",
-                            "user_profile",
-                            "persistent_memory",
+                            KnowledgeTag.YOUR_IDENTITY.value,
+                            KnowledgeTag.USER_PROFILE.value,
+                            KnowledgeTag.KNOWN_FACTS.value,
                         ],
                     )
 
@@ -228,19 +239,23 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
             display = content[:self._archive_inject_max_chars] + "..." if truncated else content
 
             full_path = self._archive_file_path(archive_dir, aid)
+            st = ArchiveTag.SUMMARY.value
             records.append(
-                f'<record archive_id="{aid}"'
-                f' file="{xml_escape(full_path)}">'
-                f"{xml_escape(display)}</record>"
+                f'<{st} number="{aid}"'
+                f' file="{xml_escape(full_path)}"'
+                f'>{xml_escape(display)}</{st}>'
             )
 
         if not records:
             return False
 
+        ct = ArchiveTag.CONTAINER.value
         xml = (
-            "<historical_context>\n"
+            f"<{ct}>\n"
+            "<!-- Short summaries of previous conversations. Higher number = more recent. -->\n"
+            "<!-- Use these for topic continuity. Read full transcripts if you need details. -->\n"
             + "\n".join(records)
-            + "\n</historical_context>"
+            + f"\n</{ct}>"
         )
         sections.append(_PromptSection(content=xml, priority=70))
         return True
@@ -265,9 +280,12 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         if not entries:
             return
 
+        ct = ArchiveTag.CONTAINER.value
+        st = ArchiveTag.SUMMARY.value
         xml_parts: list[str] = [
-            "<historical_context>",
-            "<!-- Summaries of recent conversation segments. -->",
+            f"<{ct}>",
+            "<!-- Short summaries of previous conversations. Higher number = more recent. -->",
+            "<!-- Use these for topic continuity. Read full transcripts if you need details. -->",
         ]
         record_count = 0
         for e in entries:
@@ -285,16 +303,16 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
             else:
                 time_str = ""
             archive_id = e.get("archive_id", "")
-            aid_attr = f' archive_id="{archive_id}"' if archive_id != "" else ""
-            ts_attr = f' timestamp="{xml_escape(time_str)}"' if time_str else ""
+            aid_attr = f' number="{archive_id}"' if archive_id != "" else ""
+            ts_attr = f' time="{xml_escape(time_str)}"' if time_str else ""
             if len(summary) > 200:
                 summary = summary[:200]
             xml_parts.append(
-                f'  <record id="{record_count}"{ts_attr}{aid_attr}>'
+                f'  <{st}{aid_attr}{ts_attr}>'
                 f"{xml_escape(summary)}"
-                f"</record>"
+                f"</{st}>"
             )
-        xml_parts.append("</historical_context>")
+        xml_parts.append(f"</{ct}>")
         if record_count > 0:
             sections.append(_PromptSection(content="\n".join(xml_parts), priority=70))
 
@@ -341,7 +359,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
             prefetch = await memory_system.prefetch_memories(query, context)
             if prefetch:
                 sections.append(_PromptSection(
-                    content=f"<memory-context>\n{xml_escape(prefetch)}\n</memory-context>",
+                    content=f"<related_facts>\n{xml_escape(prefetch)}\n</related_facts>",
                     priority=50,
                 ))
         except Exception:

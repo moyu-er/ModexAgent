@@ -214,51 +214,60 @@ def test_empty_paths_still_bounded_via_boundary():
     )
 
 
+from framework.memory.tags import UrbTag
+
 # ── List elements: governance URB XML ────────────────────────────────────
-# The governance injection assembles <pruned_conversation_context> with
-# multiple <entry> wrappers.  truncatable_paths uses recursive iter() so
-# <pruned_user_content> and <completing_assistant_content> inside every
-# <entry> are found.
+# The governance injection assembles <recent_messages> with multiple <entry>
+# wrappers.  truncatable_paths uses recursive iter() so <user> and <you>
+# inside every <entry> are found.
 
 
 def _make_urb_xml(*entries: str) -> str:
-    lines = ["<pruned_conversation_context>"]
+    ct = UrbTag.CONTAINER.value
+    et = UrbTag.ENTRY.value
+    lines = [f"<{ct}>"]
     for i, body in enumerate(entries):
         role_attr = ""
         if i % 2 == 0:
             role_attr = ' role="agent"'
-        lines.append(f"  <entry{role_attr}>")
+        lines.append(f"  <{et}{role_attr}>")
         lines.append(body)
-        lines.append("  </entry>")
-    lines.append("</pruned_conversation_context>")
+        lines.append(f"  </{et}>")
+    lines.append(f"</{ct}>")
     return "\n".join(lines)
 
 
-def _urb_entry_body(pruned_content: str, completing: str | None = None) -> str:
-    body = f"    <pruned_user_content>{pruned_content}</pruned_user_content>"
+def _urb_entry_body(user_content: str, completing: str | None = None) -> str:
+    ut = UrbTag.USER_MSG.value
+    yt = UrbTag.YOU_RESPONSE.value
+    body = f"    <{ut}>{user_content}</{ut}>"
     if completing:
-        body += f"\n    <completing_assistant_content>{completing}</completing_assistant_content>"
+        body += f"\n    <{yt}>{completing}</{yt}>"
     return body
 
 
 def test_urb_xml_finds_nested_fields_across_multiple_entries():
-    """<pruned_user_content> inside every <entry> is found via recursive iter."""
+    """<user> inside every <entry> is found via recursive iter."""
     xml = _make_urb_xml(
         _urb_entry_body("u" * 3000),
         _urb_entry_body("v" * 3000, "a" * 2000),
         _urb_entry_body("w" * 3000),
     )
-    paths = ["pruned_user_content", "completing_assistant_content"]
+    paths = [UrbTag.USER_MSG.value, UrbTag.YOU_RESPONSE.value]
 
     result = truncate_xml_safe(xml, max_chars=600, truncatable_paths=paths)
 
-    assert result.count("<pruned_conversation_context>") == 1
-    assert result.count("</pruned_conversation_context>") == 1
-    assert result.count("<entry") == 3
-    assert result.count("</entry>") == 3
-    assert result.count("<pruned_user_content>") == result.count("</pruned_user_content>")
-    assert result.count("<completing_assistant_content>") == result.count("</completing_assistant_content>")
-    assert result.count("<pruned_user_content>") == 3
+    ct = UrbTag.CONTAINER.value
+    et = UrbTag.ENTRY.value
+    ut = UrbTag.USER_MSG.value
+    yt = UrbTag.YOU_RESPONSE.value
+    assert result.count(f"<{ct}>") == 1
+    assert result.count(f"</{ct}>") == 1
+    assert result.count(f"<{et}") == 3
+    assert result.count(f"</{et}>") == 3
+    assert result.count(f"<{ut}>") == result.count(f"</{ut}>")
+    assert result.count(f"<{yt}>") == result.count(f"</{yt}>")
+    assert result.count(f"<{ut}>") == 3
     assert len(result) < len(xml)
 
 
@@ -268,12 +277,12 @@ def test_urb_xml_preserves_entry_role_attributes():
         _urb_entry_body("a" * 4000),
         _urb_entry_body("b" * 4000, "c" * 4000),
     )
-    paths = ["pruned_user_content", "completing_assistant_content"]
+    paths = [UrbTag.USER_MSG.value, UrbTag.YOU_RESPONSE.value]
 
     result = truncate_xml_safe(xml, max_chars=500, truncatable_paths=paths)
 
     assert 'role="agent"' in result
-    assert result.count("<entry") == 2
+    assert result.count(f"<{UrbTag.ENTRY.value}") == 2
 
 
 def test_urb_xml_per_element_independent_truncation():
@@ -282,29 +291,35 @@ def test_urb_xml_per_element_independent_truncation():
         _urb_entry_body("p" * 4000),
         _urb_entry_body("q" * 4000, "r" * 4000),
     )
-    paths = ["pruned_user_content", "completing_assistant_content"]
+    paths = [UrbTag.USER_MSG.value, UrbTag.YOU_RESPONSE.value]
 
     result = truncate_xml_safe(xml, max_chars=800, truncatable_paths=paths)
 
+    ut = UrbTag.USER_MSG.value
+    yt = UrbTag.YOU_RESPONSE.value
     assert len(result) < len(xml)
-    assert result.count("<pruned_user_content>") == 2
-    assert result.count("<completing_assistant_content>") == 1
+    assert result.count(f"<{ut}>") == 2
+    assert result.count(f"<{yt}>") == 1
     # All elements are present in the output — none starved
 
 
 def test_urb_xml_mixed_completed_unfinished():
-    """Entries without completing_assistant_content only contribute user text."""
+    """Entries without completing response only contribute user text."""
     xml = _make_urb_xml(
         _urb_entry_body("long_q" * 500),
         _urb_entry_body("done_q" * 500, "answer" * 500),
     )
-    paths = ["pruned_user_content", "completing_assistant_content"]
+    paths = [UrbTag.USER_MSG.value, UrbTag.YOU_RESPONSE.value]
 
     result = truncate_xml_safe(xml, max_chars=400, truncatable_paths=paths)
 
-    assert result.count("<pruned_user_content>") == 2
-    assert result.count("<completing_assistant_content>") == 1
-    for tag in ["pruned_user_content", "entry", "pruned_conversation_context"]:
+    ut = UrbTag.USER_MSG.value
+    yt = UrbTag.YOU_RESPONSE.value
+    et = UrbTag.ENTRY.value
+    ct = UrbTag.CONTAINER.value
+    assert result.count(f"<{ut}>") == 2
+    assert result.count(f"<{yt}>") == 1
+    for tag in [ut, yt, et, ct]:
         assert result.count(f"<{tag}") == result.count(f"</{tag}>"), (
             f"Mismatched {tag} tags"
         )

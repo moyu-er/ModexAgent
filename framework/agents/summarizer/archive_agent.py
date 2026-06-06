@@ -185,32 +185,30 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
 
         return "\n".join(lines)
 
+    @staticmethod
     def build_user_message(
-        self, transcript: str, archive_id: int, archive_dir: Path,
+        transcript: str,
+        archive_id: int,
+        archive_dir: Path,
+        context_max_chars: int = 500,
+        knowledge_max_chars: int = 600,
+        index_max_chars: int = 100,
     ) -> str:
-        """Build the user message wrapping the transcript with instructions."""
-        return (
-            f"## Task\n"
-            f"Analyze the conversation transcript below and write exactly 3 files "
-            f"into directory {archive_dir}:\n"
-            f"  1. context.md — conversation summary"
-            f" (max {self._config.context_max_chars} chars)\n"
-            f"  2. knowledge.md — durable memory candidates"
-            f" (max {self._config.knowledge_max_chars} chars)\n"
-            f"  3. index.md — 1-line topic description for the pruned catalog"
-            f" (max {self._config.index_max_chars} chars)\n"
-            f"\n"
-            f"Use ONLY the read/write/edit/ls tools. Do NOT call bash, shell, python, "
-            f"or any other tool.\n"
-            f"\n"
-            f"Archive ID: {archive_id}\n"
-            f"Directory: {archive_dir}\n"
-            f"Write all three files then stop. No further interaction is needed.\n"
-            f"\n"
-            f"## Conversation Transcript\n"
-            f"\n"
-            f"{transcript}"
+        """Build the user message from the template with variable substitution.
+
+        The transcript is inserted without XML escaping so that raw message
+        content (including special characters) is preserved for the agent.
+        """
+        template = _get_registry().get_user(
+            "archive/agent",
+            archive_dir=str(archive_dir.resolve()),
+            archive_id=str(archive_id),
+            context_max_chars=str(context_max_chars),
+            knowledge_max_chars=str(knowledge_max_chars),
+            index_max_chars=str(index_max_chars),
+            transcript="__TRANSCRIPT__",
         )
+        return template.replace("__TRANSCRIPT__", transcript)
 
     # -- public entry point -------------------------------------------------
 
@@ -233,7 +231,14 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
                 success=True, archive_id=archive_id, files_written=_ARCHIVE_FILES,
             )
 
-        user_msg = self.build_user_message(transcript, archive_id, archive_dir)
+        user_msg = self.build_user_message(
+            transcript,
+            archive_id,
+            archive_dir,
+            context_max_chars=self._config.context_max_chars,
+            knowledge_max_chars=self._config.knowledge_max_chars,
+            index_max_chars=self._config.index_max_chars,
+        )
         system_prompt = self.build_system_prompt(
             archive_dir,
             context_max_chars=self._config.context_max_chars,

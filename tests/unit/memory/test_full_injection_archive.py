@@ -7,6 +7,7 @@ from framework.memory.core.scope import MemoryContext
 from framework.memory.core.system import InjectableMemorySystem
 from framework.memory.injection.full_injection import FullInjectionPolicy
 from framework.memory.stores.dir_archive import DirArchiveStorage
+from framework.memory.tags import ArchiveTag
 
 
 class _FakeInjectableMemorySystem(InjectableMemorySystem):
@@ -57,7 +58,7 @@ async def test_inject_md_archives_truncates_at_configured_chars(tmp_path):
         memory_system=fake,
     )
 
-    assert "historical_context" in result.system_prompt
+    assert ArchiveTag.CONTAINER.value in result.system_prompt
     assert "A" * 1000 in result.system_prompt
     assert "..." in result.system_prompt
     assert "A" * 1100 not in result.system_prompt
@@ -83,9 +84,9 @@ async def test_inject_md_archives_ascending_order(tmp_path):
         memory_system=fake,
     )
 
-    first_pos = result.system_prompt.find('archive_id="1"')
-    second_pos = result.system_prompt.find('archive_id="2"')
-    third_pos = result.system_prompt.find('archive_id="3"')
+    first_pos = result.system_prompt.find('number="1"')
+    second_pos = result.system_prompt.find('number="2"')
+    third_pos = result.system_prompt.find('number="3"')
     assert first_pos < second_pos < third_pos
 
 
@@ -108,10 +109,10 @@ async def test_inject_md_archives_respects_count_limit(tmp_path):
         memory_system=fake,
     )
 
-    assert 'archive_id="4"' in result.system_prompt
-    assert 'archive_id="5"' in result.system_prompt
-    assert 'archive_id="3"' not in result.system_prompt
-    assert 'archive_id="1"' not in result.system_prompt
+    assert 'number="4"' in result.system_prompt
+    assert 'number="5"' in result.system_prompt
+    assert 'number="3"' not in result.system_prompt
+    assert 'number="1"' not in result.system_prompt
 
 
 @pytest.mark.asyncio
@@ -133,5 +134,5 @@ async def test_inject_md_archives_skips_empty_context(tmp_path):
         memory_system=fake,
     )
 
-    assert 'archive_id="1"' in result.system_prompt
-    assert 'archive_id="2"' not in result.system_prompt
+    assert 'number="1"' in result.system_prompt
+    assert 'number="2"' not in result.system_prompt

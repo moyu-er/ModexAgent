@@ -12,6 +12,7 @@ from html import escape
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from framework.memory.tags import PrunedTag
 from framework.memory.pruned.models import PrunedIndexEntry
 from framework.utils.timezone import get_user_timezone
 
@@ -71,14 +72,15 @@ class PrunedManager:
         if not storage.has_content():
             return None
         path = escape(storage.get_directory_path())
+        ct = PrunedTag.CONTAINER.value
+        tt = PrunedTag.TRANSCRIPT.value
         lines: list[str] = [
-            "<memory_archives>",
-            "<!-- Pruned conversation segments are stored as read-only files in the directory below.",
-            "     An index.jsonl in the same directory catalogs each segment with topic, time range,",
-            "     and file path.",
-            "     NOTE: index.jsonl is editable — you should update it to improve topic descriptions",
-            "     or categorization when you have better context. The pruned segment files themselves",
-            "     must NOT be modified. -->",
+            f"<{ct}>",
+            "<!-- Complete transcripts of earlier conversations are stored in the directory below.",
+            "     An index.jsonl in that directory lists each transcript file with its topic,",
+            "     time range, and message count — use it to find relevant past conversations.",
+            "     The transcripts themselves are read-only. The index.jsonl is editable —",
+            "     you may update topic descriptions there when you understand the content better. -->",
             f'  <directory path="{path}"/>',
         ]
 
@@ -87,26 +89,25 @@ class PrunedManager:
         entries = storage.read_index()
         recent = entries[-3:] if entries else []
         if recent:
-            lines.append("  <recent_segments>")
+            lines.append("  <available>")
             for e in recent:
                 time_range = (
                     f"{e.start_time_display} ~ {e.end_time_display}"
                     if e.start_time_display and e.end_time_display
                     else e.cleanup_time_display
                 )
-                topic = e.topic or f"Segment {e.id} ({e.message_count} messages)"
+                topic = e.topic or f"Conversation {e.id} ({e.message_count} messages)"
                 if len(topic) > 200:
                     topic = topic[:200] + "..."
                 lines.append(
-                    f'    <segment id="{e.id}"'
-                    f' messages="{e.message_count}"'
-                    f' time="{escape(time_range)}">'
+                    f'    <{tt} time="{escape(time_range)}"'
+                    f' messages="{e.message_count}">'
                     f"{escape(topic)}"
-                    f"</segment>"
+                    f"</{tt}>"
                 )
-            lines.append("  </recent_segments>")
+            lines.append("  </available>")
 
-        lines.append("</memory_archives>")
+        lines.append(f"</{ct}>")
         return "\n".join(lines)
 
     # -- private helpers -----------------------------------------------------

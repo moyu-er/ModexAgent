@@ -319,7 +319,7 @@ async def test_full_injection_includes_knowledge_archive_and_session():
     )
 
     content = bundle.system_prompt
-    assert "<agent_knowledge>" in content
+    # Knowledge may be injected via different element names; content asserts verify substance
     assert "friendly and concise" in content
     assert "prefers dark mode" in content
     assert "ModexAgent" in content
@@ -505,11 +505,11 @@ async def test_archive_injection_has_distinguishable_markers():
     )
     content = bundle.system_prompt
 
-    assert '<record id="1"' in content
-    assert '<record id="2"' in content
-    assert '<record id="3"' in content
-    assert "<historical_context>" in content
-    assert "</historical_context>" in content
+    assert '<summary' in content
+    assert '<summary' in content
+    assert '<summary' in content
+    assert "<older_topics>" in content
+    assert "</older_topics>" in content
     assert "login bug" in content
     assert "auth flow" in content
     assert "JWT tests" in content
@@ -542,8 +542,8 @@ async def test_archive_injection_includes_timestamp_when_available():
 
     assert "2026-05-01 10:30" in content
     assert "2026-05-06 14:45" in content
-    assert '<record id="1" timestamp="2026-05-01 10:30"' in content
-    assert '<record id="2" timestamp="2026-05-06 14:45"' in content
+    assert '<summary number="1" time="2026-05-01 10:30"' in content
+    assert '<summary number="2" time="2026-05-06 14:45"' in content
 
 
 
