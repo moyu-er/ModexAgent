@@ -70,23 +70,8 @@ def test_prompt_registry_missing_directory() -> None:
 
 
 
-def test_dream_engine_auto_loads_prompts() -> None:
-    """DreamEngine auto-loads prompts when none provided."""
-    from unittest.mock import MagicMock
-
-    from framework.memory.consolidation.dream_engine import DreamEngine
-
-    engine = DreamEngine(
-        llm_provider=MagicMock(),
-        history_manager=MagicMock(),
-        long_term_manager=MagicMock(),
-    )
-    # Should auto-create a PromptRegistry (or at least not crash)
-    assert engine._prompts is not None, "Should auto-load default prompts"
-
-
 # ---------------------------------------------------------------------------
-# NEW: Completeness tests — every .md file must be loadable
+# Completeness tests — every .md file must be loadable
 # ---------------------------------------------------------------------------
 
 

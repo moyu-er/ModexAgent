@@ -790,8 +790,6 @@ async def test_three_tier_memory_cascade_preserves_tool_context(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_archive_entries_are_meaningful_for_dream_engine(tmp_path: Path):
     """Archive summaries contain enough context for DreamEngine fact extraction."""
-    from framework.memory.consolidation.dream_engine import DreamEngine
-
     registry = InMemoryStoreRegistry()
     mock = _MockArchiveGenerator(
         canned_context="[ARCHIVE] user: fix login bug | tools: read_file(auth.py), shell(git log) | "
@@ -813,8 +811,9 @@ async def test_archive_entries_are_meaningful_for_dream_engine(tmp_path: Path):
     assert len(entries) > 0
 
     for e in entries:
-        assert DreamEngine._is_meaningful_entry(e), \
-            f"archive entry should be meaningful: {e.get('summary', '')[:80]}"
+        summary = e.get("summary", "")
+        assert summary and summary.strip(), \
+            f"archive entry should have non-empty summary"
 
     summary = str(entries[0].get("summary", ""))
     assert "user:" in summary or "tools:" in summary or "decision:" in summary or "[ARCHIVE]" in summary

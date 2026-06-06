@@ -26,7 +26,6 @@ class TestDreamEngineConfigHasConsumePerRunField:
 def test_dream_engine_default_max_consume_per_run() -> None:
     """DreamEngine defaults to max_consume_per_run=3."""
     engine = DreamEngine(
-        llm_provider=MagicMock(),
         history_manager=MagicMock(),
         long_term_manager=MagicMock(),
     )
@@ -48,16 +47,12 @@ def _make_engine(
     max_consume_per_run: int = 20,
 ) -> DreamEngine:
     """Create a DreamEngine with mocked providers for trigger testing."""
-    llm = MagicMock()
     history_mgr = AsyncMock()
     long_term_mgr = AsyncMock()
-    summarizer = AsyncMock()
     return DreamEngine(
-        llm_provider=llm,
         history_manager=history_mgr,
         long_term_manager=long_term_mgr,
         max_consume_per_run=max_consume_per_run,
-        summarizer=summarizer,
     )
 
 

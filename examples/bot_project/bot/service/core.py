@@ -1473,7 +1473,6 @@ class BotService(AgentBuilderMixin):
         dream_cfg = self._main_memory_cfg.dream_engine
         self._dream_interval = dream_cfg.interval
         self.dream_engine = self._build_dream_engine(
-            llm_provider=self.provider,
             memory_system=self.memory_system,
             dream_cfg=dream_cfg,
         )
@@ -1497,7 +1496,6 @@ class BotService(AgentBuilderMixin):
         dream_cfg = pool_cfg.memory.dream_engine
         self._dream_interval = dream_cfg.interval
         self.dream_engine = self._build_dream_engine(
-            llm_provider=default_pool.provider,
             memory_system=ms,
             dream_cfg=dream_cfg,
         )
@@ -1509,17 +1507,14 @@ class BotService(AgentBuilderMixin):
 
     def _build_dream_engine(
         self,
-        llm_provider: LLMProvider,
         memory_system: DefaultMemorySystem,
         dream_cfg: Any,
     ) -> DreamEngine:
         return DreamEngine(
-            llm_provider=llm_provider,
             history_manager=memory_system.archive_manager,
             long_term_manager=memory_system.knowledge_manager,
             registry=memory_system.store_registry,
             max_consume_per_run=dream_cfg.max_consume_per_run,
-            max_iterations=10,
         )
 
     async def _archive_trigger(self, context: MemoryContext) -> None:
