@@ -53,9 +53,9 @@ class CleanupResult:
 
 
 async def _write_pruned_content(
-    pruned_manager: Any,
+    pruned_manager: PrunedManager,
     pruned_messages: list[dict[str, Any]],
-    context: Any,
+    context: MemoryContext,
     *,
     topic: str | None = None,
 ) -> None:

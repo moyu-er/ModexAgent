@@ -26,7 +26,12 @@ class PrunedStorage(ABC):
 
     @abstractmethod
     def read_index(self) -> list[PrunedIndexEntry]:
-        """Read all index entries. Returns an empty list if no index exists."""
+        """Read all index entries. Returns an empty list if no index exists.
+
+        Implementations should be resilient to individual malformed entries
+        (invalid JSON, missing required fields): log and skip them rather than
+        raising, so callers always receive the valid subset.
+        """
         ...
 
     @abstractmethod
@@ -123,12 +128,9 @@ class FilePrunedStorage(PrunedStorage):
             if f.is_file()
         ):
             return True
-        # Check for index entries (new MD archive path — index.jsonl only)
-        if (self._dir / self._index_filename).exists():
-            entries = self.read_index()
-            if entries:
-                return True
-        return False
+        # Index file existence is sufficient — get_injection_xml will
+        # handle the case where it exists but has no valid entries.
+        return (self._dir / self._index_filename).exists()
 
     def prune_oldest(self, keep_count: int) -> None:
         entries = self.read_index()

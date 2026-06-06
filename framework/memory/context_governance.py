@@ -335,6 +335,12 @@ class UserRetentionBufferInjectionGovernance(ContextGovernance):
     last system message (before conversation history).  This is
     semantically correct — the entries represent pruned user/agent
     dialogue, not system instructions.
+
+    Content is truncated before injection to keep the URB message within
+    a reasonable token budget.  XML-formatted entries (``content_format ==
+    "xml"``) use :func:`truncate_xml_safe` with the entry's
+    ``truncatable_paths`` to preserve XML structure; plain-text entries
+    use simple head truncation.
     """
 
     def __init__(
@@ -342,10 +348,14 @@ class UserRetentionBufferInjectionGovernance(ContextGovernance):
         urb,  # UserRetentionBuffer
         context_factory: Callable[[], MemoryContext] | None = None,
         max_entries: int = 5,
+        max_user_content_chars: int = 800,
+        max_assistant_content_chars: int = 400,
     ) -> None:
         self._urb = urb
         self._context_factory = context_factory
         self._max_entries = max_entries
+        self._max_user_chars = max_user_content_chars
+        self._max_assistant_chars = max_assistant_content_chars
 
     async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         context = self._context_factory() if self._context_factory else None
@@ -363,15 +373,33 @@ class UserRetentionBufferInjectionGovernance(ContextGovernance):
             entries = entries[-self._max_entries :]
 
         import xml.sax.saxutils as saxutils
+
         lines = ['<pruned_conversation_context>']
         for e in entries:
+            user_text = self._truncate_entry_content(
+                e.pruned_user_content, self._max_user_chars,
+                e.content_format, e.truncatable_paths,
+            )
+            assistant_text = ""
+            if e.completing_assistant_content:
+                assistant_text = self._truncate_entry_content(
+                    e.completing_assistant_content, self._max_assistant_chars,
+                    e.content_format, e.truncatable_paths,
+                )
+            if not user_text and not assistant_text:
+                continue
+
             role_attr = ' role="agent"' if e.pruned_user_role == str(MessageRole.AGENT) else ""
             lines.append(f'  <entry{role_attr}>')
-            lines.append(f'    <pruned_user_content>{saxutils.escape(e.pruned_user_content)}</pruned_user_content>')
-            if e.completing_assistant_content:
-                lines.append(f'    <completing_assistant_content>{saxutils.escape(e.completing_assistant_content)}</completing_assistant_content>')
+            lines.append(f'    <pruned_user_content>{saxutils.escape(user_text)}</pruned_user_content>')
+            if assistant_text:
+                lines.append(f'    <completing_assistant_content>{saxutils.escape(assistant_text)}</completing_assistant_content>')
             lines.append('  </entry>')
         lines.append('</pruned_conversation_context>')
+
+        # Only emit the message if we have at least one non-empty entry
+        if len(lines) <= 2:  # only opening + closing tags
+            return messages
 
         urb_msg = {
             "role": str(MessageRole.USER),
@@ -382,6 +410,20 @@ class UserRetentionBufferInjectionGovernance(ContextGovernance):
         }
         insert_at = self._after_system_messages(messages)
         return [*messages[:insert_at], urb_msg, *messages[insert_at:]]
+
+    @staticmethod
+    def _truncate_entry_content(
+        content: str,
+        max_chars: int,
+        content_format: str | None,
+        truncatable_paths: list[str] | None,
+    ) -> str:
+        """Truncate entry content, preserving XML structure when applicable."""
+        if not content or len(content) <= max_chars:
+            return content
+        if content_format == "xml":
+            return truncate_xml_safe(content, max_chars, truncatable_paths or [])
+        return content[:max_chars] + f"\n[...truncated, {len(content)} chars total]"
 
     @staticmethod
     def _after_system_messages(messages):

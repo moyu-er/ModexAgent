@@ -10,7 +10,7 @@ import logging
 from datetime import datetime
 from html import escape
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from framework.memory.pruned.models import PrunedIndexEntry
 from framework.utils.timezone import get_user_timezone
@@ -65,78 +65,6 @@ class PrunedManager:
         )
         storage.append_index(entry)
         storage.prune_oldest(self._max_files)
-
-    async def refresh_from_archives(
-        self,
-        archive_storage: Any,
-        *,
-        session_id: str = "",
-    ) -> int:
-        """Full refresh pruned index from all archive index.md files.
-
-        Traverses all archive directories, reads index.md, rebuilds the pruned index.
-        On failure or empty archives, returns 0 (caller falls back).
-
-        Returns: number of index entries loaded.
-        """
-        if archive_storage is None:
-            return 0
-
-        try:
-            archive_ids = await archive_storage.list_archives()
-        except Exception:
-            logger.warning("Failed to list archives for index refresh", exc_info=True)
-            return 0
-
-        if not archive_ids:
-            return 0
-
-        # Process in ascending order so id=1 is the oldest archive
-        entries: list[PrunedIndexEntry] = []
-        now_ts = int(datetime.now(get_user_timezone()).timestamp())
-        now_display = datetime.now(get_user_timezone()).strftime("%Y-%m-%d %H:%M")
-
-        for aid in sorted(archive_ids):
-            try:
-                content = await archive_storage.read_archive_file(aid, "index.md")
-                if not content or not content.strip():
-                    continue
-                # First non-empty line becomes the topic
-                topic = content.strip().split("\n")[0].strip()
-                if not topic:
-                    continue
-            except Exception:
-                logger.debug(
-                    "Skipping archive %d — failed to read index.md", aid, exc_info=True,
-                )
-                continue
-
-            entries.append(PrunedIndexEntry(
-                id=aid,
-                cleanup_time=now_ts,
-                cleanup_time_display=now_display,
-                message_count=0,
-                content_filename=f"archive/{aid}/context.md",
-                topic=topic,
-            ))
-
-        if not entries:
-            return 0
-
-        storage = self._get_storage(session_id)
-        try:
-            storage.save_index(entries)
-        except Exception:
-            logger.warning(
-                "Failed to save refreshed index: session=%s", session_id, exc_info=True,
-            )
-            return 0
-
-        logger.info(
-            "Pruned index refreshed from archives: entries=%d session=%s",
-            len(entries), session_id,
-        )
-        return len(entries)
 
     def get_injection_xml(self, *, session_id: str = "") -> str | None:
         storage = self._get_storage(session_id)

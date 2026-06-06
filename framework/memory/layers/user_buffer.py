@@ -1,10 +1,12 @@
 """User retention buffer layer — storage-backed lifecycle for pruned user context."""
 from __future__ import annotations
 
-import time
+import logging
 from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from framework.memory.core.layers import UserRetentionBuffer as _CoreURB
 from framework.memory.core.scope import MemoryContext
@@ -126,20 +128,33 @@ class ScopedUserRetentionBuffer(UserRetentionBuffer):
     # ------------------------------------------------------------------
 
     async def _load_entries(self, context: MemoryContext) -> list[UserBufferEntry]:
-        """Load entries from scoped storage."""
-        storage = await self._storage_factory(context)
-        raw = await storage.get(self._STORAGE_KEY)
-        if raw is None:
+        """Load entries from scoped storage.
+
+        Resilient to JSON parse errors, malformed entries, and I/O failures:
+        returns an empty list instead of propagating exceptions so that URB
+        injection is safely skipped on corruption.
+        """
+        try:
+            storage = await self._storage_factory(context)
+            raw = await storage.get(self._STORAGE_KEY)
+            if raw is None:
+                return []
+            if not isinstance(raw, list):
+                return []
+            entries: list[UserBufferEntry] = []
+            for item in raw:
+                try:
+                    if isinstance(item, dict):
+                        parsed = UserBufferEntry.from_dict(item)
+                        if parsed is not None:
+                            entries.append(parsed)
+                except Exception:
+                    logger.debug("Skipping malformed URB entry", exc_info=True)
+                    continue
+            return entries
+        except Exception:
+            logger.warning("Failed to load URB entries", exc_info=True)
             return []
-        if not isinstance(raw, list):
-            return []
-        entries: list[UserBufferEntry] = []
-        for item in raw:
-            if isinstance(item, dict):
-                parsed = UserBufferEntry.from_dict(item)
-                if parsed is not None:
-                    entries.append(parsed)
-        return entries
 
     async def _save_entries(
         self,
@@ -172,44 +187,26 @@ class ScopedUserRetentionBuffer(UserRetentionBuffer):
         if len(entries) > max_entries:
             entries = entries[len(entries) - max_entries:]
 
-        # Per-entry content truncation
+        # Per-entry content truncation (deferred imports to avoid circular deps)
+        is_xml = str(ContentFormat.XML)
         result: list[UserBufferEntry] = []
         for entry in entries:
-            truncated_user = self._truncate_field(
-                entry.pruned_user_content, max_user,
-                entry.content_format, entry.truncatable_paths,
-                truncate_xml_safe, ContentFormat,
-            )
-            truncated_assistant = None
-            if entry.completing_assistant_content is not None:
-                truncated_assistant = self._truncate_field(
-                    entry.completing_assistant_content, max_assistant,
-                    entry.content_format, entry.truncatable_paths,
-                    truncate_xml_safe, ContentFormat,
-                )
-            if truncated_user != entry.pruned_user_content or truncated_assistant != entry.completing_assistant_content:
-                result.append(
-                    replace(
-                        entry,
-                        pruned_user_content=truncated_user,
-                        completing_assistant_content=truncated_assistant,
-                    )
-                )
+            user = entry.pruned_user_content
+            if len(user) > max_user:
+                if entry.content_format == is_xml:
+                    user = truncate_xml_safe(user, max_user, entry.truncatable_paths or [])
+                else:
+                    user = user[:max_user]
+
+            assistant = entry.completing_assistant_content
+            if assistant is not None and len(assistant) > max_assistant:
+                if entry.content_format == is_xml:
+                    assistant = truncate_xml_safe(assistant, max_assistant, entry.truncatable_paths or [])
+                else:
+                    assistant = assistant[:max_assistant]
+
+            if user != entry.pruned_user_content or assistant != entry.completing_assistant_content:
+                result.append(replace(entry, pruned_user_content=user, completing_assistant_content=assistant))
             else:
                 result.append(entry)
         return result
-
-    @staticmethod
-    def _truncate_field(
-        content: str,
-        max_chars: int,
-        content_format: str | None,
-        truncatable_paths: list[str] | None,
-        truncate_xml_safe: Any,
-        ContentFormat: Any,
-    ) -> str:
-        if len(content) <= max_chars:
-            return content
-        if content_format is not None and content_format == str(ContentFormat.XML):
-            return truncate_xml_safe(content, max_chars, truncatable_paths or [])
-        return content[:max_chars]

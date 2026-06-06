@@ -32,10 +32,12 @@ class TestFilePrunedStorage:
         # Index entries count as content (supports MD-archive-based pruned)
         assert storage.has_content() is True
 
-    def test_has_content_false_when_index_empty(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_has_content_true_when_index_file_exists(self, tmp_path) -> None:
+        """An index.jsonl file (even empty) counts as content — get_injection_xml
+        handles the empty-valid-entries case internally."""
         storage = FilePrunedStorage(tmp_path / "pruned")
-        storage.save_index([])  # creates index.jsonl but with empty entries
-        assert storage.has_content() is False
+        storage.save_index([])  # creates index.jsonl but with no entries
+        assert storage.has_content() is True
 
     def test_has_content_true_after_write(self, tmp_path: pytest.TempPathFactory) -> None:
         storage = FilePrunedStorage(tmp_path / "pruned")
