@@ -1,8 +1,5 @@
 # Type Safety Rules
 
-This file is the shared source for type-safety guidance. Tools do not necessarily load it
-directly, so keep active agent rule files in sync when this file changes.
-
 1. Use enums and constants instead of raw strings for categories, roles, states, and
    protocol values. Examples include `MessageRole`, `MessageType`, `FinishReason`, and
    `DefaultValues`.
