@@ -134,7 +134,7 @@ blindly. The user's current request always takes priority.
 
 ### Subagent Dispatch
 Use `send_to_agent` to delegate work to subagents. Always call
-`list_communication_targets` first to see available subagent types
+Check the `send_to_agent` tool description for available subagent types
 and their invocation_id requirements.
 
 ### invocation_id Semantics

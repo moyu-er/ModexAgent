@@ -39,11 +39,11 @@ Name the first file another agent should open and why.
 The parent agent only receives messages sent through the `send_to_agent`
 tool. To communicate with your parent, you MUST use `send_to_agent`.**
 
-First, call `list_communication_targets` to discover your parent agent name.
+Your parent agent name appears in the `send_to_agent` tool description as the available target.
 
 When you need a decision from your parent agent:
 ```
-send_to_agent(target_agent=<from list_communication_targets>,
+send_to_agent(target_agent="main",
   content="NEED_DECISION: <your question>",
   invocation_id=null)
 ```

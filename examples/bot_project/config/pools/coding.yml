@@ -1,7 +1,7 @@
 # config/pools/coding.yml — Coding Agent pool
 #
 # ── Tool Preset Reference ──
-# Communication tools (send_to_agent + list_communication_targets)
+# Communication tools (send_to_agent — list tool deprecated)
 # are always auto-injected for every preset.
 #
 #   Preset      | Read | Write | Edit | List | Search | Find | Bash | Terminal |

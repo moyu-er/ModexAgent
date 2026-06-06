@@ -21,7 +21,7 @@ Primary end-to-end reference for the ModexAgent framework. Demonstrates Pool mod
 - `main` is a normal agent with all MCP tools, file/shell tools, and communication tools.
 - `office-expert` is a subagent with file/shell tools and docx/pdf/pptx/xlsx skills.
 - `query-12306` is a subagent with MCP tools (12306-mcp, fetch).
-- Communication tools: `send_to_agent` (sync), `send_to_agent_async` (inbox-based), `list_communication_targets`.
+- Communication tools: `send_to_agent` (async inbox-based — description shows all available targets).
 - The old `send_message`, `send_message_async`, and `dispatch_task` tools are **not used**.
 - `SubagentAutoSendHook` auto-forwards subagent output to parent if LLM forgets communication tools.
 - Session ID format: `{conversation_id}:{agent_name}[:{invocation_id}]` (via `DefaultSessionIdStrategy`).
