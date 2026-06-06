@@ -1,6 +1,7 @@
-"""ArchiveSummarizer — ReAct-based agent that generates context.md, knowledge.md, index.md from pruned messages.
+"""ArchiveSummarizer — ReAct-based agent that generates context.md, knowledge.md,
+index.md from pruned messages.
 
-Uses ReActAgent with scoped file tools so the LLM can write archive files directly.
+Extends :class:`ScopedFileAgent` for common ReAct wiring.
 """
 
 from __future__ import annotations
@@ -10,30 +11,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
-from framework.agents.react.agent import ReActAgent
 from framework.agents.summarizer.abc import (
     _get_registry,
     ArchiveGenerator,
     ArchiveSummarizerResult,
 )
-from framework.core.agent import AgentContext
-from framework.agents.summarizer.emitter import SummarizerTrajectoryEmitter
-from framework.core.tool_manager import InMemoryToolManager
+from framework.agents.summarizer.scoped_file_agent import ScopedFileAgent
 from framework.core.types import MessageRole
-from framework.memory.history import ListMessageHistory
-from framework.memory.tools import (
-    ScopedEditFileTool,
-    ScopedListTool,
-    ScopedReadFileTool,
-    ScopedWriteFileTool,
-)
 
 logger = logging.getLogger(__name__)
 
 _ARCHIVE_FILES = ("context.md", "knowledge.md", "index.md")
 
 # Max chars to keep per message role when feeding transcript to the archive agent.
-# Tool outputs can be huge; user/assistant content is usually more concise.
 _CONTENT_LIMITS: dict[str, int] = {
     MessageRole.USER: 4000,
     MessageRole.ASSISTANT: 4000,
@@ -53,7 +43,7 @@ class ArchiveSummarizerConfig:
     max_iterations: int = 25
 
 
-class ArchiveSummarizer(ArchiveGenerator):
+class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
     """Generates archive summary files from pruned messages using a ReAct agent.
 
     The agent receives a transcript and uses scoped file tools to write
@@ -65,32 +55,11 @@ class ArchiveSummarizer(ArchiveGenerator):
         provider: Any,
         config: ArchiveSummarizerConfig | None = None,
     ) -> None:
-        from framework.core.provider import LLMProvider
+        cfg = config or ArchiveSummarizerConfig()
+        super().__init__(provider=provider, max_iterations=cfg.max_iterations)
+        self._config = cfg
 
-        if not isinstance(provider, LLMProvider):
-            raise TypeError(f"provider must be LLMProvider, got {type(provider).__name__}")
-
-        self._provider = provider
-        self._config = config or ArchiveSummarizerConfig()
-        self._react_agent = ReActAgent(provider=self._provider, mode="clean")
-
-    @staticmethod
-    def build_tools(archive_dir: Path) -> list[Any]:
-        """Create the 4 scoped file tools for the given archive directory.
-
-        Args:
-            archive_dir: Directory that tools are allowed to read/write.
-
-        Returns:
-            List of 4 Tool instances (read, write, edit, list).
-        """
-        allowed = [archive_dir.resolve()]
-        return [
-            ScopedReadFileTool(allowed),
-            ScopedWriteFileTool(allowed),
-            ScopedEditFileTool(allowed),
-            ScopedListTool(allowed),
-        ]
+    # -- prompt & transcript helpers ----------------------------------------
 
     @staticmethod
     def build_system_prompt(
@@ -99,24 +68,13 @@ class ArchiveSummarizer(ArchiveGenerator):
         knowledge_max_chars: int = 600,
         index_max_chars: int = 100,
     ) -> str:
-        """Build the system prompt from the template with variable substitution.
-
-        Args:
-            archive_dir: Allowed directory path appended to the prompt.
-            context_max_chars: Max chars for context.md.
-            knowledge_max_chars: Max chars for knowledge.md.
-            index_max_chars: Max chars for index.md.
-
-        Returns:
-            Fully resolved system prompt string.
-        """
+        """Build the system prompt from the template with variable substitution."""
         prompt = _get_registry().get_system(
             "archive/agent",
             context_max_chars=str(context_max_chars),
             knowledge_max_chars=str(knowledge_max_chars),
             index_max_chars=str(index_max_chars),
         )
-
         # Append allowed directory information
         dir_line = f"\n- {archive_dir.resolve()}\n"
         prompt = prompt.replace(
@@ -128,12 +86,7 @@ class ArchiveSummarizer(ArchiveGenerator):
 
     @staticmethod
     def filter_messages(messages: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Strip pruned messages to only fields the archive agent needs.
-
-        Removes tool_calls, tool_call_id, metadata and other internal fields
-        so the LLM does not confuse raw JSON with available tools or try to
-        reproduce tool invocation protocol.
-        """
+        """Strip pruned messages to only fields the archive agent needs."""
         filtered: list[dict[str, Any]] = []
         for msg in messages:
             role = str(msg.get("role", "unknown"))
@@ -141,7 +94,6 @@ class ArchiveSummarizer(ArchiveGenerator):
             if content is None:
                 content = ""
             elif isinstance(content, list):
-                # Extract text from multi-part content
                 content = " ".join(
                     str(part.get("text", ""))
                     for part in content
@@ -150,29 +102,22 @@ class ArchiveSummarizer(ArchiveGenerator):
             else:
                 content = str(content)
 
-            # Drop empty messages (unless tool result has a name)
             name = msg.get("name")
             if not content.strip() and not name:
                 continue
 
-            # Truncate oversized content
             limit = _CONTENT_LIMITS.get(role, 2000)
             if len(content) > limit:
                 content = content[:limit] + f"\n... ({len(content)} chars total)"
 
-            clean: dict[str, Any] = {
-                "role": role,
-                "content": content,
-            }
+            clean: dict[str, Any] = {"role": role, "content": content}
             if role == MessageRole.TOOL and name:
                 clean["name"] = str(name)
 
-            # Preserve created_at for time-range context
             created_at = msg.get("created_at")
             if created_at is not None:
                 clean["created_at"] = created_at
 
-            # Preserve a simple hint that assistant used tools, but NOT the raw tool_calls JSON
             if role == MessageRole.ASSISTANT and msg.get("tool_calls"):
                 tool_names: list[str] = []
                 for tc in msg.get("tool_calls", []):
@@ -187,19 +132,10 @@ class ArchiveSummarizer(ArchiveGenerator):
 
     @staticmethod
     def format_transcript(messages: Sequence[dict[str, Any]]) -> str:
-        """Format messages into a plain-text transcript with timestamps.
-
-        Args:
-            messages: Sequence of message dicts with role/content/created_at fields.
-
-        Returns:
-            Formatted transcript string with time context.
-        """
+        """Format messages into a plain-text transcript with timestamps."""
         from datetime import datetime
 
         lines: list[str] = []
-
-        # Extract time range from message timestamps for context header
         timestamps: list[datetime] = []
         for msg in messages:
             raw = msg.get("created_at")
@@ -250,23 +186,9 @@ class ArchiveSummarizer(ArchiveGenerator):
         return "\n".join(lines)
 
     def build_user_message(
-        self,
-        transcript: str,
-        archive_id: int,
-        archive_dir: Path,
+        self, transcript: str, archive_id: int, archive_dir: Path,
     ) -> str:
-        """Build the user message wrapping the transcript with clear instructions.
-
-        Uses the configured size limits from self._config.
-
-        Args:
-            transcript: Formatted message transcript.
-            archive_id: Archive ID for this generation.
-            archive_dir: Target archive directory path.
-
-        Returns:
-            Full user message string.
-        """
+        """Build the user message wrapping the transcript with instructions."""
         return (
             f"## Task\n"
             f"Analyze the conversation transcript below and write exactly 3 files "
@@ -290,129 +212,63 @@ class ArchiveSummarizer(ArchiveGenerator):
             f"{transcript}"
         )
 
+    # -- public entry point -------------------------------------------------
+
     async def generate(
         self,
         pruned_messages: Sequence[dict[str, Any]],
         archive_dir: Path,
         archive_id: int = 0,
     ) -> ArchiveSummarizerResult:
-        """Generate archive files from pruned messages.
-
-        Args:
-            pruned_messages: Messages to summarize into archive files.
-            archive_dir: Target directory for archive files.
-            archive_id: Numeric ID for the archive slot.
-
-        Returns:
-            ArchiveSummarizerResult with success status and file list.
-        """
-        # Ensure directory exists
+        """Generate archive files from pruned messages."""
         archive_dir.mkdir(parents=True, exist_ok=True)
 
-        # Strip internal fields so the LLM never sees raw tool_calls / metadata
         filtered_messages = self.filter_messages(pruned_messages)
-
-        # Format transcript
         transcript = self.format_transcript(filtered_messages)
 
-        # Empty transcript: write 3 empty files
         if not transcript.strip():
             for fname in _ARCHIVE_FILES:
                 (archive_dir / fname).write_text("", encoding="utf-8")
             return ArchiveSummarizerResult(
-                success=True,
-                archive_id=archive_id,
-                files_written=_ARCHIVE_FILES,
+                success=True, archive_id=archive_id, files_written=_ARCHIVE_FILES,
             )
 
-        # Build user message with transcript + instructions
         user_msg = self.build_user_message(transcript, archive_id, archive_dir)
-
-        # Run with retry
-        for attempt in range(2):
-            result = await self._run_agent(user_msg, archive_dir, archive_id)
-            if result is not None:
-                return result
-
-            logger.warning(
-                "ArchiveSummarizer attempt %d failed for archive_id=%d",
-                attempt + 1,
-                archive_id,
-            )
-
-        # Both attempts failed — return failure
-        return ArchiveSummarizerResult(
-            success=False,
-            archive_id=archive_id,
-            error="Agent failed to write archive files after 2 attempts",
-        )
-
-    async def _run_agent(
-        self,
-        user_message: str,
-        archive_dir: Path,
-        archive_id: int,
-    ) -> ArchiveSummarizerResult | None:
-        """Run the ReAct agent once. Returns None on failure.
-
-        Args:
-            user_message: Full user message with transcript and instructions.
-            archive_dir: Target directory for archive files.
-            archive_id: Numeric ID for this archive.
-
-        Returns:
-            ArchiveSummarizerResult on success, None on failure.
-        """
         system_prompt = self.build_system_prompt(
             archive_dir,
             context_max_chars=self._config.context_max_chars,
             knowledge_max_chars=self._config.knowledge_max_chars,
             index_max_chars=self._config.index_max_chars,
         )
-
-        # Build tools and register them
-        tools = self.build_tools(archive_dir)
-        tool_manager = InMemoryToolManager()
-        for tool in tools:
-            tool_manager.register(tool)
-
-        # Build context
-        history = ListMessageHistory([
-            {"role": MessageRole.USER, "content": user_message},
-        ])
-        context = AgentContext(
-            system_prompt=system_prompt,
-            history=history,
-            tool_manager=tool_manager,
-            session_id="archive-summarizer",
-            max_iterations=self._config.max_iterations,
-        )
-
         trace_path = archive_dir.parent / "traces" / f"archive-{archive_id}.jsonl"
-        emitter = SummarizerTrajectoryEmitter(
-            session_id=f"archive-summarizer-{archive_id}",
-            agent_name="ArchiveSummarizer",
-            trace_path=trace_path,
-        )
 
-        try:
-            await self._react_agent.run(context, emitter)
-        except Exception:
-            logger.exception("ArchiveSummarizer agent execution error")
-            return None
-
-        # Check if files were written
-        files_written: list[str] = []
-        for fname in _ARCHIVE_FILES:
-            fpath = archive_dir / fname
-            if fpath.exists() and fpath.stat().st_size > 0:
-                files_written.append(fname)
-
-        if not files_written:
-            return None
+        for attempt in range(2):
+            ok = await self._run_agent(
+                system_prompt=system_prompt,
+                user_msg=user_msg,
+                allowed_dirs=[archive_dir],
+                session_id=f"archive-summarizer-{archive_id}",
+                agent_name="ArchiveSummarizer",
+                trace_path=trace_path,
+                max_iterations=self._config.max_iterations,
+            )
+            if ok:
+                files_written: list[str] = []
+                for fname in _ARCHIVE_FILES:
+                    fpath = archive_dir / fname
+                    if fpath.exists() and fpath.stat().st_size > 0:
+                        files_written.append(fname)
+                if files_written:
+                    return ArchiveSummarizerResult(
+                        success=True, archive_id=archive_id,
+                        files_written=tuple(files_written),
+                    )
+            logger.warning(
+                "ArchiveSummarizer attempt %d failed for archive_id=%d",
+                attempt + 1, archive_id,
+            )
 
         return ArchiveSummarizerResult(
-            success=True,
-            archive_id=archive_id,
-            files_written=tuple(files_written),
+            success=False, archive_id=archive_id,
+            error="Agent failed to write archive files after 2 attempts",
         )

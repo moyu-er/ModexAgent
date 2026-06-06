@@ -2,9 +2,7 @@
 knowledge.md extracts and updates long-term knowledge files
 (SOUL.md, USER.md, MEMORY.md).
 
-Archive content is provided directly in the user message — the agent only
-needs scoped file tools for the knowledge directory (read existing files,
-write/update SOUL.md / USER.md / MEMORY.md).  No archive directory access.
+Extends :class:`ScopedFileAgent` for common ReAct wiring.
 """
 
 from __future__ import annotations
@@ -13,22 +11,11 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from framework.agents.react.agent import ReActAgent
 from framework.agents.summarizer.abc import (
     _get_registry,
     KnowledgeConsolidatorBase,
 )
-from framework.core.agent import AgentContext
-from framework.agents.summarizer.emitter import SummarizerTrajectoryEmitter
-from framework.core.tool_manager import InMemoryToolManager
-from framework.core.types import MessageRole
-from framework.memory.history import ListMessageHistory
-from framework.memory.tools import (
-    ScopedEditFileTool,
-    ScopedListTool,
-    ScopedReadFileTool,
-    ScopedWriteFileTool,
-)
+from framework.agents.summarizer.scoped_file_agent import ScopedFileAgent
 
 logger = logging.getLogger(__name__)
 
@@ -36,60 +23,29 @@ _KNOWLEDGE_FILES = ("SOUL.md", "USER.md", "MEMORY.md")
 _ARCHIVE_KNOWLEDGE_FILE = "knowledge.md"
 
 
-class KnowledgeConsolidator(KnowledgeConsolidatorBase):
+class KnowledgeConsolidator(ScopedFileAgent, KnowledgeConsolidatorBase):
     """Knowledge consolidation agent — scoped to the knowledge directory only.
 
-    The agent uses a ReAct loop with file tools scoped to *knowledge_dir*:
-    - Read / List: knowledge directory (SOUL.md, USER.md, MEMORY.md)
-    - Write / Edit: knowledge directory (SOUL.md, USER.md, MEMORY.md)
-
-    Archive ``knowledge.md`` content is pre-read by the caller and provided
-    inline in the user message — the agent never touches archive directories.
+    The agent uses a ReAct loop with file tools scoped to *knowledge_dir*.
+    Archive ``knowledge.md`` content is pre-read by :meth:`consolidate`
+    and provided inline in the user message — the agent never touches
+    archive directories.
     """
 
-    def __init__(
-        self,
-        provider: Any,
-        max_iterations: int = 25,
-    ) -> None:
-        from framework.core.provider import LLMProvider
+    def __init__(self, provider: Any, max_iterations: int = 25) -> None:
+        super().__init__(provider=provider, max_iterations=max_iterations)
 
-        if not isinstance(provider, LLMProvider):
-            raise TypeError(
-                f"provider must be LLMProvider, got {type(provider).__name__}"
-            )
-
-        self._provider = provider
-        self.max_iterations: int = max_iterations
-        self._react_agent = ReActAgent(provider=self._provider, mode="clean")
-
-    @staticmethod
-    def build_tools(knowledge_dir: Path) -> list[Any]:
-        """Create scoped file tools restricted to the knowledge directory.
-
-        All four tools (read, write, edit, list) are limited to
-        *knowledge_dir* — the agent has no access to archive directories.
-        """
-        allowed = [knowledge_dir.resolve()]
-        return [
-            ScopedReadFileTool(allowed),
-            ScopedWriteFileTool(allowed),
-            ScopedEditFileTool(allowed),
-            ScopedListTool(allowed),
-        ]
+    # -- prompt builder -----------------------------------------------------
 
     @staticmethod
     def build_system_prompt(knowledge_dir: Path) -> str:
-        """Build the system prompt with the knowledge directory injected.
-
-        The template has a placeholder ``{allowed_dir}`` that is replaced
-        with the resolved knowledge directory path.
-        """
-        prompt = _get_registry().get_system(
+        """Build the system prompt with the knowledge directory injected."""
+        return _get_registry().get_system(
             "knowledge/consolidator",
             allowed_dir=str(knowledge_dir.resolve()),
         )
-        return prompt
+
+    # -- public entry point -------------------------------------------------
 
     async def consolidate(
         self,
@@ -102,23 +58,11 @@ class KnowledgeConsolidator(KnowledgeConsolidatorBase):
     ) -> bool:
         """Main entry: process knowledge.md extracts, update knowledge files.
 
-        Reads ``knowledge.md`` from each archive directory and provides the
-        content inline in the user message.  The agent never sees archive
-        paths or filesystem layout.
-
-        Args:
-            archive_ids: List of archive IDs to process.
-            archive_base: Base directory containing archive subdirectories.
-            knowledge_dir: Directory containing knowledge files to update.
-            max_iterations: Optional override for max ReAct iterations.
-                When ``None``, ``self.max_iterations`` is used.
-            invocation_id: Caller-supplied UUID for trace correlation.
-
-        Returns:
-            True if the agent ran successfully, False otherwise.
+        Pre-reads ``knowledge.md`` from each archive directory and provides
+        the content inline in the user message.
         """
         if not archive_ids:
-            return True  # Nothing to do
+            return True
 
         effective_max_iterations = (
             max_iterations if max_iterations is not None else self.max_iterations
@@ -137,8 +81,7 @@ class KnowledgeConsolidator(KnowledgeConsolidatorBase):
                 )
             else:
                 archive_sections.append(
-                    f"## Archive {aid} — knowledge.md\n"
-                    f"(empty)"
+                    f"## Archive {aid} — knowledge.md\n(empty)"
                 )
 
         # Current knowledge files (first 500 chars each for context)
@@ -166,17 +109,27 @@ class KnowledgeConsolidator(KnowledgeConsolidatorBase):
             + "\n\n".join(knowledge_context)
         )
 
+        system_prompt = self.build_system_prompt(knowledge_dir)
         trace_key = invocation_id or "_".join(str(aid) for aid in archive_ids) or "none"
+        session_id = f"knowledge-consolidator-{trace_key}"
+        trace_path = archive_base / "traces" / f"consolidator-{trace_key}.jsonl"
+
         logger.info(
             "KnowledgeConsolidator starting: archives=%s invocation=%s",
             archive_ids, invocation_id or trace_key,
         )
 
         for attempt in range(2):
-            if await self._run_agent(
-                knowledge_dir, user_msg, archive_base,
-                trace_key, effective_max_iterations,
-            ):
+            ok = await self._run_agent(
+                system_prompt=system_prompt,
+                user_msg=user_msg,
+                allowed_dirs=[knowledge_dir],
+                session_id=session_id,
+                agent_name="KnowledgeConsolidator",
+                trace_path=trace_path,
+                max_iterations=effective_max_iterations,
+            )
+            if ok:
                 logger.info(
                     "KnowledgeConsolidator succeeded: archives=%s invocation=%s attempt=%d",
                     archive_ids, invocation_id or trace_key, attempt + 1,
@@ -188,45 +141,3 @@ class KnowledgeConsolidator(KnowledgeConsolidatorBase):
             )
 
         return False
-
-    async def _run_agent(
-        self,
-        knowledge_dir: Path,
-        user_msg: str,
-        archive_base: Path,
-        trace_key: str,
-        max_iterations: int,
-    ) -> bool:
-        """Run the ReAct agent once. Returns True on success."""
-        system_prompt = self.build_system_prompt(knowledge_dir)
-
-        tools = self.build_tools(knowledge_dir)
-        tool_manager = InMemoryToolManager()
-        for tool in tools:
-            tool_manager.register(tool)
-
-        history = ListMessageHistory([
-            {"role": MessageRole.USER, "content": user_msg},
-        ])
-        context = AgentContext(
-            system_prompt=system_prompt,
-            history=history,
-            tool_manager=tool_manager,
-            session_id="knowledge-consolidator",
-            max_iterations=max_iterations,
-            temperature=0.2,
-        )
-
-        trace_path = archive_base / "traces" / f"consolidator-{trace_key}.jsonl"
-        emitter = SummarizerTrajectoryEmitter(
-            session_id=f"knowledge-consolidator-{trace_key}",
-            agent_name="KnowledgeConsolidator",
-            trace_path=trace_path,
-        )
-
-        try:
-            await self._react_agent.run(context, emitter)
-            return True
-        except Exception:
-            logger.exception("KnowledgeConsolidator agent execution error")
-            return False
