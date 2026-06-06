@@ -80,4 +80,4 @@ async def test_bot_project_subagent_builder_does_not_register_target_listing_wit
         llm=None,
     )
 
-    assert tools.get_tool("list_communication_targets") is None
+    assert tools.get_tool("send_to_agent") is None

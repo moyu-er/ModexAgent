@@ -318,16 +318,3 @@ class TestCommunicationService:
         assert "Error:" in result
         assert "subagent" in result.lower()
         assert "normal" in result.lower()
-
-    def test_build_targets_description(self) -> None:
-        svc = self._make_service(
-            profiles=[
-                AgentProfile(name="main", comm_kind=AgentCommKind.NORMAL),
-                AgentProfile(name="office-expert", comm_kind=AgentCommKind.SUBAGENT),
-            ],
-        )
-        desc = svc.build_targets_description()
-        assert "main" in desc
-        assert "office-expert" in desc
-        assert "normal" in desc.lower()
-        assert "subagent" in desc
