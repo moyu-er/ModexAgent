@@ -16,7 +16,7 @@ from framework.memory.archive_models import (
     ArchiveInputStats,
     ArchiveWrite,
 )
-from framework.memory.cleanup import CleanupResult, cleanup_session, _register_archive_with_layer
+from framework.memory.cleanup import CleanupResult, cleanup_session
 from framework.memory.core.layers import MemoryLayerSet, SessionMemoryManager
 from framework.memory.core.models import CompressionReason
 from framework.memory.core.scope import MemoryContext
@@ -1266,212 +1266,6 @@ class TestArchiveSuccessPrunedContent:
 
 
 # ---------------------------------------------------------------------------
-# Phase 6: _register_archive_with_layer — KNOWLEDGE channel registration
-# ---------------------------------------------------------------------------
-
-
-class _MockArchiveMemoryManager:
-    """Mock ArchiveMemoryManager that records append_bundle calls."""
-
-    def __init__(self) -> None:
-        self.bundles: list[list[ArchiveWrite]] = []
-
-    async def append_bundle(
-        self,
-        context: MemoryContext,
-        writes: Sequence[ArchiveWrite],
-    ) -> ArchiveBundleResult:
-        self.bundles.append(list(writes))
-        channels = tuple(w.channel for w in writes)
-        return ArchiveBundleResult(archive_id=42, written_channels=channels)
-
-
-class _MockDirArchiveStorage:
-    """Mock DirArchiveStorage with configurable file contents."""
-
-    def __init__(self, files: dict[str, str | None]) -> None:
-        self._files = files
-
-    async def read_archive_file(self, archive_id: int, filename: str) -> str | None:
-        return self._files.get(filename)
-
-
-class TestRegisterArchiveWithLayer:
-    """Tests for _register_archive_with_layer — both CONTEXT and KNOWLEDGE channels."""
-
-    @pytest.mark.asyncio
-    async def test_both_channels_registered(self) -> None:
-        """When both context.md and knowledge.md exist, both channels are registered."""
-        archive = _MockArchiveMemoryManager()
-        storage = _MockDirArchiveStorage({
-            "context.md": "context summary",
-            "knowledge.md": "knowledge summary",
-        })
-        context = _ctx("reg-both")
-
-        await _register_archive_with_layer(
-            archive=archive,
-            archive_storage=storage,
-            archive_generated=True,
-            next_archive_id=5,
-            context=context,
-        )
-
-        assert len(archive.bundles) == 1
-        writes = archive.bundles[0]
-        assert len(writes) == 2
-
-        channels = [w.channel for w in writes]
-        assert ArchiveChannel.CONTEXT in channels
-        assert ArchiveChannel.KNOWLEDGE in channels
-
-        # Verify metadata carries the same archive_id
-        for w in writes:
-            assert w.metadata["archive_id"] == 5
-            assert w.metadata["source"] == "archive_agent"
-
-    @pytest.mark.asyncio
-    async def test_only_context_registered(self) -> None:
-        """When only context.md exists, only CONTEXT channel is registered."""
-        archive = _MockArchiveMemoryManager()
-        storage = _MockDirArchiveStorage({
-            "context.md": "context summary",
-            "knowledge.md": None,
-        })
-        context = _ctx("reg-ctx-only")
-
-        await _register_archive_with_layer(
-            archive=archive,
-            archive_storage=storage,
-            archive_generated=True,
-            next_archive_id=3,
-            context=context,
-        )
-
-        assert len(archive.bundles) == 1
-        writes = archive.bundles[0]
-        assert len(writes) == 1
-        assert writes[0].channel == ArchiveChannel.CONTEXT
-
-    @pytest.mark.asyncio
-    async def test_only_knowledge_registered(self) -> None:
-        """When only knowledge.md exists, only KNOWLEDGE channel is registered."""
-        archive = _MockArchiveMemoryManager()
-        storage = _MockDirArchiveStorage({
-            "context.md": None,
-            "knowledge.md": "knowledge summary",
-        })
-        context = _ctx("reg-know-only")
-
-        await _register_archive_with_layer(
-            archive=archive,
-            archive_storage=storage,
-            archive_generated=True,
-            next_archive_id=7,
-            context=context,
-        )
-
-        assert len(archive.bundles) == 1
-        writes = archive.bundles[0]
-        assert len(writes) == 1
-        assert writes[0].channel == ArchiveChannel.KNOWLEDGE
-
-    @pytest.mark.asyncio
-    async def test_no_bundle_when_no_content(self) -> None:
-        """When neither file has content, no bundle is written."""
-        archive = _MockArchiveMemoryManager()
-        storage = _MockDirArchiveStorage({
-            "context.md": None,
-            "knowledge.md": None,
-        })
-        context = _ctx("reg-none")
-
-        await _register_archive_with_layer(
-            archive=archive,
-            archive_storage=storage,
-            archive_generated=True,
-            next_archive_id=1,
-            context=context,
-        )
-
-        assert len(archive.bundles) == 0
-
-    @pytest.mark.asyncio
-    async def test_no_bundle_when_content_is_whitespace(self) -> None:
-        """Whitespace-only files are treated as empty — no bundle written."""
-        archive = _MockArchiveMemoryManager()
-        storage = _MockDirArchiveStorage({
-            "context.md": "   \n\t  ",
-            "knowledge.md": "\n\n",
-        })
-        context = _ctx("reg-ws")
-
-        await _register_archive_with_layer(
-            archive=archive,
-            archive_storage=storage,
-            archive_generated=True,
-            next_archive_id=2,
-            context=context,
-        )
-
-        assert len(archive.bundles) == 0
-
-    @pytest.mark.asyncio
-    async def test_early_return_when_not_generated(self) -> None:
-        """archive_generated=False → no reads, no writes."""
-        archive = _MockArchiveMemoryManager()
-        storage = _MockDirArchiveStorage({
-            "context.md": "content",
-            "knowledge.md": "content",
-        })
-        context = _ctx("reg-notgen")
-
-        await _register_archive_with_layer(
-            archive=archive,
-            archive_storage=storage,
-            archive_generated=False,
-            next_archive_id=1,
-            context=context,
-        )
-
-        assert len(archive.bundles) == 0
-
-    @pytest.mark.asyncio
-    async def test_early_return_when_archive_is_none(self) -> None:
-        """archive=None → early return, no bundle written."""
-        storage = _MockDirArchiveStorage({
-            "context.md": "content",
-            "knowledge.md": "content",
-        })
-        context = _ctx("reg-no-archive")
-
-        await _register_archive_with_layer(
-            archive=None,
-            archive_storage=storage,
-            archive_generated=True,
-            next_archive_id=1,
-            context=context,
-        )
-        # No assertion needed — just must not crash
-
-    @pytest.mark.asyncio
-    async def test_early_return_when_storage_is_none(self) -> None:
-        """archive_storage=None → early return, no bundle written."""
-        archive = _MockArchiveMemoryManager()
-        context = _ctx("reg-no-storage")
-
-        await _register_archive_with_layer(
-            archive=archive,
-            archive_storage=None,
-            archive_generated=True,
-            next_archive_id=1,
-            context=context,
-        )
-
-        assert len(archive.bundles) == 0
-
-
-# ---------------------------------------------------------------------------
 # Phase 5: Resolved storage propagation regression tests
 # ---------------------------------------------------------------------------
 
@@ -1482,7 +1276,7 @@ class TestResolvedStoragePropagation:
     Root cause: _generate_archive_phase dynamically resolves storage into a
     local variable but subsequent phases receive the original ``None``.  The
     fix carries ``resolved_storage`` via ``_ArchiveOutcome`` so that Phases
-    3/6/7 can use it.
+    3/5/6 can use it.
     """
 
     @pytest.mark.asyncio
@@ -1742,8 +1536,11 @@ class TestResolvedStoragePropagation:
         assert result.triggered is True
         assert result.archive_skipped is False
 
-        # Verify the archive was registered with the JSONL layer
-        archive_entries = await layer_set.archive.get_recent(context, limit=5)
-        assert len(archive_entries) >= 1
-        # The registered entry should contain the context.md content
-        assert archive_entries[0].summary == "context summary"
+        # In the MD-only architecture, archives are written directly to disk
+        # by the ArchiveSummarizer. Verify the MD files exist in the archive dir.
+        from framework.memory.stores.dir_archive import DirArchiveStorage
+        dir_storage = DirArchiveStorage(tmp_path / "archives")
+        archive_ids = await dir_storage.list_archives()
+        assert len(archive_ids) >= 1
+        content = await dir_storage.read_archive_file(archive_ids[0], "context.md")
+        assert content == "context summary"

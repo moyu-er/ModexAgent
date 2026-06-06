@@ -457,63 +457,6 @@ async def _commit_session_phase(
     return keep_count, prune_count
 
 
-async def _register_archive_with_layer(
-    archive: ArchiveMemoryManager | None,
-    archive_storage: DirArchiveStorage | None,
-    archive_generated: bool,
-    next_archive_id: int,
-    context: MemoryContext,
-) -> None:
-    """Phase 6: bridge MD archive files to the JSONL layer for DreamEngine discovery."""
-    if not archive_generated or archive is None or archive_storage is None or next_archive_id <= 0:
-        return
-
-    try:
-        from framework.memory.archive_models import ArchiveChannel, ArchiveWrite
-
-        writes: list[ArchiveWrite] = []
-
-        context_md = await archive_storage.read_archive_file(
-            next_archive_id, "context.md",
-        )
-        if context_md and context_md.strip():
-            writes.append(ArchiveWrite(
-                channel=ArchiveChannel.CONTEXT,
-                summary=context_md,
-                metadata={
-                    "archive_id": next_archive_id,
-                    "source": "archive_agent",
-                },
-            ))
-
-        knowledge_md = await archive_storage.read_archive_file(
-            next_archive_id, "knowledge.md",
-        )
-        if knowledge_md and knowledge_md.strip():
-            writes.append(ArchiveWrite(
-                channel=ArchiveChannel.KNOWLEDGE,
-                summary=knowledge_md,
-                metadata={
-                    "archive_id": next_archive_id,
-                    "source": "archive_agent",
-                },
-            ))
-
-        if writes:
-            await archive.append_bundle(context, writes)
-            logger.debug(
-                "Archive registered with layer: archive_id=%d channels=%s session=%s",
-                next_archive_id,
-                [w.channel.value for w in writes],
-                context.session_id,
-            )
-    except Exception:
-        logger.warning(
-            "Failed to register archive with layer: archive_id=%d session=%s",
-            next_archive_id, context.session_id, exc_info=True,
-        )
-
-
 async def _advance_archive_phase(
     archive_agent: ArchiveGenerator | None,
     archive_storage: DirArchiveStorage | None,
@@ -522,7 +465,7 @@ async def _advance_archive_phase(
     context: MemoryContext,
     on_archive_generated: Callable[[], Awaitable[None]] | None,
 ) -> None:
-    """Phase 7: increment archive state and fire post-archive trigger."""
+    """Phase 6: increment archive state and fire post-archive trigger."""
     if archive_agent is not None and archive_storage is not None and archive_generated:
         try:
             await archive_storage.write_archive_state(
@@ -565,14 +508,13 @@ async def cleanup_session(
 ) -> CleanupResult:
     """Clean up a session by pruning old messages and optionally archiving them.
 
-    Orchestrates 7 phases:
+    Orchestrates 6 phases:
         1. Prepare (trigger, backup, sanitize, boundary)
         2. Archive generation (optional)
         3. Pruned content write
         4. Retention extraction
         5. Session commit + retention persistence
-        6. Archive layer registration
-        7. Archive state advance + trigger
+        6. Archive state advance + trigger
     """
     # Phase 1: prepare
     plan = await _prepare_cleanup_phase(
@@ -648,16 +590,7 @@ async def cleanup_session(
         )
     keep_count, prune_count = commit_result
 
-    # Phase 6: register archive with layer
-    await _register_archive_with_layer(
-        archive,
-        effective_storage,
-        archive_outcome.generated,
-        archive_outcome.next_archive_id,
-        context,
-    )
-
-    # Phase 7: advance archive state + trigger
+    # Phase 6: advance archive state + trigger
     await _advance_archive_phase(
         archive_agent,
         effective_storage,

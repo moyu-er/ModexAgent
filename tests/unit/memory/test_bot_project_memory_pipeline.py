@@ -132,8 +132,9 @@ async def test_multi_turn_triggers_cleanup_at_threshold(tmp_path: Path):
     remaining = await system.get_history(ctx, max_messages=None)
     assert len(remaining) <= 65, f"should compress to <=65, got {len(remaining)}"
 
-    archive = await system.get_history_entries(ctx, limit=20)
-    assert len(archive) > 0, "archive should have cleanup entries"
+    # Archives are MD-based (DirArchiveStorage); verify directly
+    archive_ids = await storage.list_archives()
+    assert len(archive_ids) > 0, "archive should have cleanup entries"
 
 
 @pytest.mark.asyncio
@@ -152,7 +153,7 @@ async def test_cleanup_respects_threshold(tmp_path: Path):
         await history.append({"role": "assistant", "content": f"a{i}"})
 
     compressed_count = len(await system.get_history(ctx, max_messages=None))
-    archive_count_1 = len(await system.get_history_entries(ctx, limit=20))
+    archive_count_1 = len(await storage.list_archives())
 
     # Add only 2 more turns (4 messages)
     for i in range(2):
@@ -160,7 +161,7 @@ async def test_cleanup_respects_threshold(tmp_path: Path):
         await history.append({"role": "assistant", "content": f"post-a{i}"})
 
     new_count = len(await system.get_history(ctx, max_messages=None))
-    archive_count_2 = len(await system.get_history_entries(ctx, limit=20))
+    archive_count_2 = len(await storage.list_archives())
 
     assert new_count <= compressed_count + 10
     assert archive_count_2 <= archive_count_1 + 2
@@ -181,13 +182,13 @@ async def test_second_cleanup_fires_when_over_threshold(tmp_path: Path):
         await history.append({"role": "user", "content": f"q{i}"})
         await history.append({"role": "assistant", "content": f"a{i}"})
 
-    archive_first = len(await system.get_history_entries(ctx, limit=20))
+    archive_first = len(await storage.list_archives())
     assert archive_first > 0, "first cleanup should produce archive"
 
     for i in range(30):
         await history.append({"role": "user", "content": f"round2-{i}"})
 
-    archive_second = len(await system.get_history_entries(ctx, limit=20))
+    archive_second = len(await storage.list_archives())
     assert archive_second >= archive_first
 
 
@@ -252,14 +253,15 @@ async def test_archive_uses_mock_summarizer_output(tmp_path: Path):
 
     assert len(mock.calls) > 0, "mock archive generation should have been called"
 
-    entries = await system.get_history_entries(ctx, limit=10)
-    assert len(entries) > 0, "archive should have entries from mock generation"
-    assert any("[MOCK]" in (e.get("summary") or "") for e in entries)
+    archive_ids = await storage.list_archives()
+    assert len(archive_ids) > 0, "archive should have mock-generated entries"
+    content = await storage.read_archive_file(archive_ids[0], "context.md") or ""
+    assert "[MOCK]" in content
 
 
 @pytest.mark.asyncio
 async def test_archive_skips_empty_generation(tmp_path: Path):
-    """Empty archive generation should not produce archive entries."""
+    """Empty archive generation should not produce archive files."""
     registry = InMemoryStoreRegistry()
     mock = _EmptyArchiveGenerator()
     storage = DirArchiveStorage(tmp_path / "archives")
@@ -272,8 +274,8 @@ async def test_archive_skips_empty_generation(tmp_path: Path):
         await history.append({"role": "user", "content": f"q{i}"})
         await history.append({"role": "assistant", "content": f"a{i}"})
 
-    entries = await system.get_history_entries(ctx, limit=10)
-    assert len(entries) == 0, "empty archive generation should produce no entries"
+    archive_ids = await storage.list_archives()
+    assert len(archive_ids) == 0, "empty archive generation should produce no dirs"
     # Session IS cleaned even when archive generation is empty
     remaining = len(await system.get_history(ctx, max_messages=None))
     assert remaining < 24, (
@@ -425,8 +427,8 @@ async def test_archive_merges_multiple_cleanup_rounds(tmp_path: Path):
     for i in range(40):
         await history.append({"role": "user", "content": f"r2-{i}"})
 
-    entries = await system.get_history_entries(ctx, limit=50)
-    assert len(entries) >= 1
+    archive_ids = await storage.list_archives()
+    assert len(archive_ids) >= 1
 
     remaining = len(await system.get_history(ctx, max_messages=None))
     assert remaining <= 25, f"multiple rounds should keep session small, got {remaining}"
@@ -771,10 +773,12 @@ async def test_three_tier_memory_cascade_preserves_tool_context(tmp_path: Path):
     remaining = await system.get_history(ctx, max_messages=None)
     assert len(remaining) <= 10, f"old prefix compressed, got {len(remaining)} remaining"
 
-    archive_entries = await system.get_history_entries(ctx, limit=10)
-    assert len(archive_entries) > 0
-    assert any("[ARCHIVE]" in str(e.get("summary", "")) for e in archive_entries)
+    archive_ids = await storage.list_archives()
+    assert len(archive_ids) > 0
+    context_md = await storage.read_archive_file(archive_ids[0], "context.md") or ""
+    assert "[ARCHIVE]" in context_md
 
+    # In-memory archive additions still work through the fallback path
     await system._layers.archive.append(ctx, ArchiveEntry(
         summary="[ARCHIVE] user prefers dark mode for all UIs",
     ))
@@ -807,15 +811,14 @@ async def test_archive_entries_are_meaningful_for_dream_engine(tmp_path: Path):
         await history.append({"role": "user", "content": f"msg {i}"})
         await history.append({"role": "assistant", "content": f"reply {i}"})
 
-    entries = await system.get_history_entries(ctx, limit=20)
-    assert len(entries) > 0
+    archive_ids = await storage.list_archives()
+    assert len(archive_ids) > 0
 
-    for e in entries:
-        summary = e.get("summary", "")
-        assert summary and summary.strip(), \
-            f"archive entry should have non-empty summary"
+    for aid in archive_ids:
+        context_md = await storage.read_archive_file(aid, "context.md") or ""
+        assert context_md.strip(), f"archive {aid} should have non-empty context.md"
 
-    summary = str(entries[0].get("summary", ""))
+    summary = await storage.read_archive_file(archive_ids[0], "context.md") or ""
     assert "user:" in summary or "tools:" in summary or "decision:" in summary or "[ARCHIVE]" in summary
 
 

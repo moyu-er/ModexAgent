@@ -5,7 +5,10 @@ import json
 import logging
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from framework.memory.core.lock import AioRWLock
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +34,20 @@ class DirArchiveStorage:
 
     def __init__(self, base_dir: Path) -> None:
         self._base = base_dir
+        from framework.memory.core.lock import AioRWLock
+        self._lock = AioRWLock()
+
+    async def initialize(self) -> None:
+        """Ensure base directory exists."""
+        self._base.mkdir(parents=True, exist_ok=True)
+
+    async def close(self) -> None:
+        """No-op close — directory storage is stateless."""
+
+    def get_lock(self):
+        """Return the read-write lock for this storage instance."""
+        from framework.memory.core.lock import AioRWLock
+        return self._lock
 
     # -- properties ----------------------------------------------------------
 

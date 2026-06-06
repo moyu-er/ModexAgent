@@ -36,7 +36,7 @@ class DefaultMemoryStoreRegistry(MemoryStoreRegistry):
 
     def __init__(self, root: Path | str) -> None:
         self.root = Path(root)
-        self._stores: dict[tuple[MemoryLayerName, str], DefaultScopedStorage] = {}
+        self._stores: dict[tuple[MemoryLayerName, str], MemoryStorage] = {}
 
     async def initialize(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -121,6 +121,9 @@ class DefaultMemoryStoreRegistry(MemoryStoreRegistry):
             if layer == MemoryLayerName.KNOWLEDGE:
                 from framework.memory.stores.markdown_knowledge import MarkdownKnowledgeStorage
                 storage = MarkdownKnowledgeStorage(scope_dir, layer=layer)
+            elif layer == MemoryLayerName.ARCHIVE:
+                from framework.memory.stores.dir_archive import DirArchiveStorage
+                storage: MemoryStorage = DirArchiveStorage(scope_dir)  # type: ignore[assignment]
             else:
                 storage = DefaultScopedStorage(scope_dir, layer=layer)
             await storage.initialize()

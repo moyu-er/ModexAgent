@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape as xml_escape
 
-from framework.memory.archive_models import ArchiveChannel
 from framework.memory.core.models import (
     InjectionResult,
     MemoryBudget,
@@ -176,76 +174,10 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         query: str,
     ) -> None:
         try:
-            # Try MD archive path first (DirArchiveStorage)
-            if await self._try_inject_md_archives(sections, memory_system, context):
-                return
-
-            # Fall back to existing JSONL path
-            entries = await memory_system.get_history_entries(
-                context,
-                limit=self._max_history,
-                query=query,
-                channel=ArchiveChannel.CONTEXT,
-            )
-            if not entries:
-                return
-
-            xml_parts: list[str] = [
-                "<historical_context>",
-                "<!-- Summaries of recent conversation segments, generated automatically after",
-                "     each cleanup. Reference as background context — current request takes priority. -->",
-            ]
-
-            record_count = 0
-            any_truncated = False
-            for e in entries:
-                summary = normalize_memory_summary(e.get("summary"))
-                if summary is None:
-                    continue
-                if e.get("metadata", {}).get("source") == "empty":
-                    continue
-                if e.get("metadata", {}).get("semantic_count") == 0:
-                    continue
-                record_count += 1
-
-                created_at = e.get("created_at")
-                if isinstance(created_at, str):
-                    time_str = created_at.replace("T", " ")[:16]
-                elif isinstance(created_at, datetime):
-                    time_str = created_at.strftime("%Y-%m-%d %H:%M")
-                else:
-                    time_str = ""
-
-                archive_id = e.get("archive_id", "")
-                aid_attr = f' archive_id="{archive_id}"' if archive_id != "" else ""
-
-                if len(summary) > 200:
-                    summary = summary[:200]
-                    any_truncated = True
-
-                xml_parts.append(
-                    f'  <record id="{record_count}"'
-                    + (f' timestamp="{xml_escape(time_str)}"' if time_str else "")
-                    + f'{aid_attr}>'
-                    f"{xml_escape(summary)}"
-                    f"</record>"
-                )
-
-            if any_truncated:
-                archive_dir = await memory_system.get_storage_path(context)
-                if archive_dir:
-                    xml_parts.insert(1,
-                        f'  <!-- Some summaries were truncated. Full records and complete'
-                        f' conversation history can be read from: {xml_escape(str(archive_dir))} -->'
-                    )
-
-            xml_parts.append("</historical_context>")
-
-            if record_count > 0:
-                sections.append(_PromptSection(
-                    content="\n".join(xml_parts),
-                    priority=70,
-                ))
+            # Read archive context from MD files (DirArchiveStorage, primary path).
+            # Falls back to JSONL channel logs for in-memory / compat backends.
+            if not await self._try_inject_md_archives(sections, memory_system, context):
+                await self._inject_archive_jsonl(sections, context, memory_system, query)
         except Exception:
             logger.debug("Archive injection skipped", exc_info=True)
 
@@ -312,6 +244,59 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         )
         sections.append(_PromptSection(content=xml, priority=70))
         return True
+
+    async def _inject_archive_jsonl(
+        self,
+        sections: list[_PromptSection],
+        context: MemoryContext,
+        memory_system: InjectableMemorySystem,
+        query: str,
+    ) -> None:
+        """JSONL-fallback for in-memory / compat backends without MD directory."""
+        from datetime import datetime
+        from framework.memory.archive_models import ArchiveChannel
+
+        entries = await memory_system.get_history_entries(
+            context,
+            limit=self._max_history,
+            query=query,
+            channel=ArchiveChannel.CONTEXT,
+        )
+        if not entries:
+            return
+
+        xml_parts: list[str] = [
+            "<historical_context>",
+            "<!-- Summaries of recent conversation segments. -->",
+        ]
+        record_count = 0
+        for e in entries:
+            summary = normalize_memory_summary(e.get("summary"))
+            if summary is None:
+                continue
+            if e.get("metadata", {}).get("source") == "empty":
+                continue
+            record_count += 1
+            created_at = e.get("created_at")
+            if isinstance(created_at, str):
+                time_str = created_at.replace("T", " ")[:16]
+            elif isinstance(created_at, datetime):
+                time_str = created_at.strftime("%Y-%m-%d %H:%M")
+            else:
+                time_str = ""
+            archive_id = e.get("archive_id", "")
+            aid_attr = f' archive_id="{archive_id}"' if archive_id != "" else ""
+            ts_attr = f' timestamp="{xml_escape(time_str)}"' if time_str else ""
+            if len(summary) > 200:
+                summary = summary[:200]
+            xml_parts.append(
+                f'  <record id="{record_count}"{ts_attr}{aid_attr}>'
+                f"{xml_escape(summary)}"
+                f"</record>"
+            )
+        xml_parts.append("</historical_context>")
+        if record_count > 0:
+            sections.append(_PromptSection(content="\n".join(xml_parts), priority=70))
 
     def _archive_file_path(self, archive_dir: Path, archive_id: int) -> str:
         """Return absolute path to archive context.md for injection XML."""
