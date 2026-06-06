@@ -55,6 +55,22 @@ class SubagentAutoSendHook(AfterTurnHook):
         # happened in a session, subsequent turns should not auto-forward.
         self._communicated: set[str] = set()
 
+    async def _already_sent_in_history(self, history: Any) -> bool:
+        """Check if history already contains an inbox message from this agent.
+
+        This is a fallback detection mechanism used when RuntimeContext
+        tool-call tracking is unavailable or incomplete.
+        """
+        try:
+            history_list = await history.to_list()
+        except Exception:
+            return False
+        safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", self._self_name)[:64] or "agent"
+        for msg in history_list:
+            if getattr(msg, "meta_inbox", None) and getattr(msg, "source_agent", None) == safe_name:
+                return True
+        return False
+
     async def before_turn(self, ctx: AgentContext) -> None:
         """No-op kept for backward compatibility with existing callers."""
         pass
@@ -84,6 +100,18 @@ class SubagentAutoSendHook(AfterTurnHook):
                     self._self_name,
                 )
                 return
+
+        # Fallback: check history for evidence that this agent already sent
+        # an inbox message (e.g. via send_to_agent tool). This catches the
+        # case where RuntimeContext tool-call tracking is unavailable or
+        # failed to record the send_to_agent call.
+        if await self._already_sent_in_history(ctx.history):
+            self._communicated.add(ctx.session_id)
+            logger.debug(
+                "SubagentAutoSendHook: skipped, inbox message found in history (agent=%s)",
+                self._self_name,
+            )
+            return
 
         # Already communicated in this session — skip auto-forward
         if ctx.session_id in self._communicated:
