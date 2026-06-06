@@ -58,7 +58,7 @@ memory:
     keep_ratio_for_token: 0.3
   archive: {enabled: true}
   knowledge: {enabled: true, default_templates_dir: "templates/knowledge"}
-  dream_engine: {enabled: true, interval: 600, min_archive_count: 1, max_archive_count: 50, max_batch_size: 25}
+  dream_engine: {enabled: true, interval: 600, max_consume_per_run: 3}
   governance:
     lossy_compaction:
       tool_result_head_chars: 2000

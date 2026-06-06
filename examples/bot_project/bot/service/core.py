@@ -494,6 +494,11 @@ class BotService(AgentBuilderMixin):
         await self._init_maintenance_task(main_memory_cfg)
         self._init_dream()
 
+        # Wire archive trigger callback so cleanup_session can check archive
+        # count and trigger DreamEngine when max_archive_count is reached.
+        if self.memory_system is not None:
+            self.memory_system.set_archive_trigger_callback(self._archive_trigger)
+
         # 6. Create SkillManager (main agent has its own)
         main_skill_manager: SkillManager | None = None
         main_skills_dir = self._resolve_path("skills_dir", "skills/main")
@@ -682,7 +687,6 @@ class BotService(AgentBuilderMixin):
             emitter_factory=self.emitter_factory,
             dream_engine=self.dream_engine,
             dream_interval=self._dream_interval,
-            dream_threshold=dream_cfg.min_archive_count if dream_cfg else 5,
             max_iterations=main_cfg.max_steps if main_cfg else 40,
             skill_manager=main_skill_manager,  # type: ignore[arg-type]
             hook_runner=self._build_hook_runner(pipeline_hooks),
@@ -1415,9 +1419,21 @@ class BotService(AgentBuilderMixin):
         if self.memory_system is None:
             return
 
-        from framework.memory.lifecycle import DefaultMemoryMaintenancePolicy
+        from framework.memory.lifecycle import (
+            DefaultMemoryMaintenancePolicy,
+            DefaultArchiveRetentionPolicy,
+        )
 
-        self._maintenance_policy = DefaultMemoryMaintenancePolicy()
+        # Wire archive retention with max_archive_total for FIFO eviction
+        archive_retention = None
+        if main_memory_cfg is not None and main_memory_cfg.archive is not None:
+            max_total = main_memory_cfg.archive.max_archive_total
+            if max_total is not None and max_total > 0:
+                archive_retention = DefaultArchiveRetentionPolicy(max_archive_total=max_total)
+
+        self._maintenance_policy = DefaultMemoryMaintenancePolicy(
+            archive_retention_policy=archive_retention,
+        )
 
         scan_interval = 300
         self._maintenance_task = asyncio.create_task(self._maintenance_loop(scan_interval))
@@ -1502,11 +1518,34 @@ class BotService(AgentBuilderMixin):
             history_manager=memory_system.archive_manager,
             long_term_manager=memory_system.knowledge_manager,
             registry=memory_system.store_registry,
-            max_batch_size=dream_cfg.max_batch_size,
+            max_consume_per_run=dream_cfg.max_consume_per_run,
             max_iterations=10,
-            min_archive_count=dream_cfg.min_archive_count,
-            max_archive_count=dream_cfg.max_archive_count,
         )
+
+    async def _archive_trigger(self, context: MemoryContext) -> None:
+        """Callback invoked after each archive is generated.
+
+        Checks unprocessed archive count against max_archive_count threshold
+        and triggers DreamEngine.run() if exceeded.
+        """
+        if self.dream_engine is None:
+            return
+        try:
+            count = await self.memory_system.get_unprocessed_history_count(context)
+        except Exception:
+            logger.debug("Archive trigger: failed to get unprocessed count", exc_info=True)
+            return
+        archive_cfg = self._main_memory_cfg.archive if self._main_memory_cfg else None
+        threshold = archive_cfg.max_archive_count if archive_cfg else 10
+        if count >= threshold:
+            logger.info(
+                "Archive trigger: count=%d >= threshold=%d, running DreamEngine",
+                count, threshold,
+            )
+            try:
+                await self.dream_engine.run(context)
+            except Exception:
+                logger.warning("Archive trigger: DreamEngine.run() failed", exc_info=True)
 
     async def _dream_background_loop(self, interval: int = 300) -> None:
         if self.dream_engine is None:
