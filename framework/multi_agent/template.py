@@ -14,8 +14,8 @@ from framework.tools.presets import ContextMode, SystemPromptMode, ThinkingBudge
 class AgentTemplate:
     """Preset definition for a dynamically creatable subagent type.
 
-    Communication tools (send_to_agent + list_communication_targets) are
-    auto-injected by the framework — they must not appear in template config.
+    Communication tools (send_to_agent) are auto-injected by the framework —
+    they must not appear in template config.
 
     Pi-aligned fields (tool_preset, context_mode, thinking_budget,
     default_reads, progress_tracking) were added for the coding pool
