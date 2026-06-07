@@ -15,11 +15,14 @@ from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+from framework.workspace import DefaultWorkspaceContext
+
 if TYPE_CHECKING:
     from framework.commands.processor import SlashCommandProcessor
     from framework.runtime.codec import RuntimeStateCodecRegistry
     from framework.runtime.store import JsonFileRuntimeCommandStore, JsonFileTurnStateStore
     from framework.memory.pruned.manager import PrunedManager
+    from framework.core.experience.manager import ExperienceManager
 
 from bot.plugins.integration import PluginIntegration
 from framework.control.event_bus import CallbackControlEventBus
@@ -242,6 +245,11 @@ class BotService(AgentBuilderMixin):
         self._dream_task: asyncio.Task | None = None
         self._dream_interval: int = 600
 
+        # Experience layer (initialized lazily in initialize())
+        self._experience_manager: ExperienceManager | None = None
+        self._experience_hook: object | None = None  # ExperienceReviewHook when initialized
+        self._experience_curator: object | None = None
+
         # Runtime control
         self._shutdown_event = asyncio.Event()
         self._tasks: list[asyncio.Task] = []
@@ -300,6 +308,14 @@ class BotService(AgentBuilderMixin):
     @staticmethod
     def _ws_inbox(data_dir: Path) -> Path:
         return data_dir / _SUBDIR_INBOX
+
+    @staticmethod
+    def _ws_experience(data_dir: Path, pool_name: str = "main", agent_name: str = "main") -> Path:
+        """Experience directory = data_dir / experiences / pool_name / agent_name.
+
+        Resides under .modex/ alongside memory/, runtime_state/, etc.
+        """
+        return data_dir / "experiences" / pool_name / agent_name
 
     @property
     def _project_dir(self) -> Path:
@@ -532,6 +548,69 @@ class BotService(AgentBuilderMixin):
         else:
             print(f"[WARN] Skills directory not found: {main_skills_dir}")
 
+        # ---- Experience Manager (only for agents with experience.enabled) ----
+        main_cfg = self._main_agent_cfg
+        if main_cfg is not None and main_cfg.experience is not None:
+            exp_cfg = main_cfg.experience
+            if exp_cfg.enabled:
+                from framework.core.experience.manager import ExperienceManager
+                from framework.core.experience.source import FileExperienceSource
+                from framework.core.experience.meta import PerFileExperienceMetaStore
+                from framework.agents.experience.review_agent import ExperienceReviewAgent
+                from framework.hook.builtin.experience_review import ExperienceReviewHook
+
+                # Shared dynamic path lambda — workspace-safe via workspace_context
+                def _exp_path() -> Path:
+                    return BotService._ws_experience(
+                        self.workspace_context.data_dir,
+                        pool_name=self._default_pool_name,
+                        agent_name=main_cfg.name,
+                    )
+
+                _exp_path().mkdir(parents=True, exist_ok=True)
+
+                exp_source = FileExperienceSource(directories=[_exp_path()])
+                self._experience_manager = ExperienceManager(source=exp_source)
+
+                if self.context_manager is not None:
+                    self.context_manager._experience_manager = self._experience_manager
+
+                exp_meta = PerFileExperienceMetaStore(_exp_path)
+                exp_review_agent = ExperienceReviewAgent(
+                    provider=self.provider,
+                    max_iterations=exp_cfg.max_iterations,
+                )
+                exp_review_hook = ExperienceReviewHook(
+                    review_agent=exp_review_agent,
+                    experience_dir=_exp_path,
+                    meta_store=exp_meta,
+                    review_interval=exp_cfg.review_interval,
+                )
+
+                self._experience_hook = exp_review_hook
+                self._experience_review_agent = exp_review_agent
+
+                # ---- Experience Tool (dynamic path via lambda — workspace-safe) ----
+                from framework.memory.tools.experience import ExperienceTool
+                self.tool_manager.register(ExperienceTool(_exp_path, exp_meta))
+                print("   [OK] experience tool registered (action=read/write/edit/list/rename)")
+
+                # ---- Experience Curator (background lifecycle) ----
+                from framework.core.experience.curator import ExperienceCurator
+
+                exp_curator = ExperienceCurator(
+                    experience_dir=_exp_path,
+                    meta_store=exp_meta,
+                    max_experiences=exp_cfg.max_experiences,
+                )
+                self._experience_curator = exp_curator
+                self._experience_curator_task = asyncio.create_task(
+                    self._curator_background_loop(exp_curator, exp_cfg.curator_interval),
+                )
+                self._tasks.append(self._experience_curator_task)
+
+                print(f"[OK] Experience layer initialized (dir: {_exp_path()})")
+
         # 6.5 Create InboxServer / Producer / Consumer
         inbox_dir = self._ws_inbox(data_dir)
         self.inbox_server = LocalFileInboxServer(workspace=inbox_dir)
@@ -657,6 +736,10 @@ class BotService(AgentBuilderMixin):
             raise RuntimeError("ToolManager is not initialized")
 
         pipeline_hooks: list[Hook[Any]] = [inbox_flush_hook]  # type: ignore[type-arg]
+
+        if self._experience_hook is not None:
+            pipeline_hooks.append(self._experience_hook)
+
         pipeline_hooks.extend(self._collect_run_hooks())
 
         # Pipeline mode observability
@@ -803,6 +886,7 @@ class BotService(AgentBuilderMixin):
                 shared_interceptor_chain=shared_interceptor_chain,
                 control_channel=self.control_channel,
                 command_processor=self.command_processor,
+                workspace_context=self.workspace_context,
             )
             print(f"[OK] Pool '{pool_name}' created")
 
@@ -921,7 +1005,7 @@ class BotService(AgentBuilderMixin):
                 interceptor.handler._cleaner._store = new_store
 
     async def _rebuild_pipeline_memory(self, new_dir: Path) -> None:
-        """Rebuild pipeline-mode memory + stores."""
+        """Rebuild pipeline-mode memory + stores + experience."""
         main_cfg = self._main_agent_cfg
         main_mem = main_cfg.memory if main_cfg else self._app_config.memory
         if self.provider is None:
@@ -938,9 +1022,10 @@ class BotService(AgentBuilderMixin):
             )
         )
         self.pruned_manager = self.memory_system.pruned_manager
+        await self._rebuild_experience(new_dir)
 
     async def _rebuild_pool_memory(self, new_dir: Path) -> None:
-        """Rebuild pool-mode memory + runtime stores for every pool."""
+        """Rebuild pool-mode memory + runtime stores + experience for every pool."""
         for pool_inst in self._pools.values():
             main_inst = pool_inst.pool._agents.get(pool_inst.main_agent_name)
             pool_inst.memory_system, _, _ = await self._rebuild_memory_for_target(
@@ -952,6 +1037,7 @@ class BotService(AgentBuilderMixin):
                 pool_inst.context_manager,
                 pipeline=main_inst.pipeline if main_inst else None,
             )
+        await self._rebuild_experience(new_dir)
 
     async def _stop_background_tasks(self) -> None:
         """停止后台任务：dream task + injection queues。
@@ -1064,6 +1150,48 @@ class BotService(AgentBuilderMixin):
             pipeline._approval_workspace = self._ws_approval(new_data_dir)
 
         return new_memory, new_turn_store, new_cmd_store
+
+    async def _rebuild_experience(self, new_data_dir: Path) -> None:
+        """Rebuild the injection-side experience manager on workspace switch.
+
+        Tools, meta_store, and curator resolve lazily (via lambda capturing
+        workspace_context.data_dir) so they need no rebuild — PerFileExperienceMetaStore
+        auto-resolves to the new path after /cd.  Only the prompt-injection
+        ExperienceManager needs a fresh FileExperienceSource pointing at the new
+        data directory.
+        """
+        if self._experience_manager is None:
+            return
+        from framework.core.experience.manager import ExperienceManager
+        from framework.core.experience.source import FileExperienceSource
+
+        def _new_manager(pool_name: str, agent_name: str) -> ExperienceManager:
+            exp_dir = BotService._ws_experience(new_data_dir, pool_name=pool_name, agent_name=agent_name)
+            exp_dir.mkdir(parents=True, exist_ok=True)
+            return ExperienceManager(source=FileExperienceSource(directories=[exp_dir]))
+
+        # Pipeline mode
+        main_cfg = self._main_agent_cfg
+        if self.context_manager is not None:
+            agent_name = main_cfg.name if main_cfg else "main"
+            mgr = _new_manager(self._default_pool_name, agent_name)
+            self._experience_manager = mgr
+            if hasattr(self.context_manager, "_experience_manager"):
+                self.context_manager._experience_manager = mgr
+
+        # Pool mode — each pool's context_manager gets its own manager
+        for pool_inst in self._pools.values():
+            main_agent_name = "main"
+            agents = getattr(pool_inst.config, "agents", []) or []
+            for a in agents:
+                if getattr(a, "role", None) == "main":
+                    main_agent_name = a.name
+                    break
+            mgr = _new_manager(pool_inst.name, main_agent_name)
+            if hasattr(pool_inst.context_manager, "_experience_manager"):
+                pool_inst.context_manager._experience_manager = mgr
+
+        print(f"[OK] Experience injection rebuilt for workspace: {new_data_dir}")
 
     async def _rebuild_shared_infrastructure(self, new_data_dir: Path) -> None:
         """更新共享基础设施：inbox + approval + overflow + dream。
@@ -1541,6 +1669,25 @@ class BotService(AgentBuilderMixin):
                 await self.dream_engine.run(context)
             except Exception:
                 logger.warning("Archive trigger: DreamEngine.run() failed", exc_info=True)
+
+    async def _curator_background_loop(self, curator: object, interval: int) -> None:
+        """Periodically run the ExperienceCurator to manage experience lifecycle."""
+        logger.info("ExperienceCurator background loop starting, interval=%ds", interval)
+        while not self._shutdown_event.is_set():
+            try:
+                await asyncio.sleep(interval)
+                if self._shutdown_event.is_set():
+                    break
+                result = await curator.run()
+                logger.info(
+                    "ExperienceCurator: checked=%d evicted=%d",
+                    result.get("checked", 0),
+                    result.get("evicted", 0),
+                )
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("ExperienceCurator scan error")
 
     async def _dream_background_loop(self, interval: int = 300) -> None:
         if self.dream_engine is None:

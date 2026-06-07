@@ -201,6 +201,9 @@ class AgentBuilderMixin:
         self.tool_manager.register(SendFileToUserTool(output_adapter=self.output_adapter))
         print("   [OK] send_file_to_user registered")
 
+        # Experience tool is registered in BotService.initialize() alongside
+        # the hook/curator so all three share the same ExperienceMetaStore.
+
     async def _register_mcp_tools(self) -> None:
         if self.tool_manager is None:
             return

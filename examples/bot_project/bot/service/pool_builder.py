@@ -80,6 +80,7 @@ async def create_pool(
     shared_interceptor_chain: Any,
     control_channel: InMemoryControlChannel | None = None,
     command_processor: Any = None,
+    workspace_context: Any = None,
 ) -> PoolInstance:
 
     main_cfg = next(a for a in pool_cfg.agents if a.role == "main")
@@ -103,17 +104,22 @@ async def create_pool(
 
     # 4. Per-pool ContextManager
     system_prompt = resolve_system_prompt(main_cfg, project_dir)
+    exp_manager = _build_pool_experience_manager(main_cfg, data_dir, pool_name)
     context_manager = MemorySystemContextManager(
         memory_system=memory_system,
         default_agent_id=main_agent_name,
         default_agent_role="main",
         base_system_prompt=system_prompt,
         injection_policy=FullInjectionPolicy(pruned_manager=memory_system.pruned_manager),
+        experience_manager=exp_manager,
     )
+    if exp_manager is not None:
+        logger.info("Pool '%s': experience manager injected", pool_name)
 
     # 5. Per-pool ToolManager (+ MCP)
     tool_manager, mcp_manager = await _build_pool_tool_manager(
         pool_cfg, main_cfg, terminal_manager, project_dir, output_adapter,
+        pool_name=pool_name, data_dir=data_dir, workspace_context=workspace_context,
     )
     logger.info("Pool '%s': ToolManager ready (%d tools)", pool_name, len(tool_manager.list_tools()))
 
@@ -415,6 +421,10 @@ async def _build_pool_tool_manager(
     terminal_manager: TerminalManagerBase | None,
     project_dir: Path,
     output_adapter: OutputAdapter,
+    *,
+    pool_name: str = "main",
+    data_dir: Path,
+    workspace_context: Any = None,
 ) -> tuple[InMemoryToolManager, Any | None]:
     tm = InMemoryToolManager(config=ToolManagerConfig(
         max_workers=10, enable_parallel=True, parallel_max_workers=5,
@@ -443,12 +453,48 @@ async def _build_pool_tool_manager(
     from bot.tools.custom import SendFileToUserTool
     tm.register(SendFileToUserTool(output_adapter=output_adapter))
 
+    # Experience tool (if enabled in agent config)
+    exp_cfg = getattr(main_cfg, "experience", None)
+    if exp_cfg is not None and getattr(exp_cfg, "enabled", False):
+        from framework.memory.tools.experience import ExperienceTool
+        from framework.core.experience.meta import PerFileExperienceMetaStore
+
+        assert data_dir is not None  # always provided by create_pool()
+        # Dynamic path — resolves to current workspace each call
+        if workspace_context is not None:
+            def _exp_path() -> Path:
+                return workspace_context.data_dir / "experiences" / pool_name / main_cfg.name
+        else:
+            # Fallback for tests or non-workspace usage
+            _fixed_dir = data_dir
+            def _exp_path() -> Path:
+                return _fixed_dir / "experiences" / pool_name / main_cfg.name
+        _exp_path().mkdir(parents=True, exist_ok=True)
+        exp_meta = PerFileExperienceMetaStore(_exp_path)
+        tm.register(ExperienceTool(_exp_path, exp_meta))
+        logger.info("Pool '%s': experience tool registered (action=read/write/edit/list/rename)", pool_name)
+
     # MCP: load per-agent config from config/mcp/{agentName}.json
     mcp_tools, mcp_manager = await _load_agent_mcp_tools(main_cfg.name, project_dir)
     for tool in mcp_tools:
         tm.register(tool)
 
     return tm, mcp_manager
+
+
+def _build_pool_experience_manager(
+    main_cfg: AgentConfig, data_dir: Path, pool_name: str,
+) -> Any | None:
+    """Create an ExperienceManager for prompt injection if experience is enabled."""
+    exp_cfg = getattr(main_cfg, "experience", None)
+    if exp_cfg is None or not getattr(exp_cfg, "enabled", False):
+        return None
+    from framework.core.experience.manager import ExperienceManager
+    from framework.core.experience.source import FileExperienceSource
+
+    exp_dir = data_dir / "experiences" / pool_name / main_cfg.name
+    exp_dir.mkdir(parents=True, exist_ok=True)
+    return ExperienceManager(source=FileExperienceSource(directories=[exp_dir]))
 
 
 def _build_pool_skill_manager(main_cfg: Any, project_dir: Path, pool_name: str) -> Any | None:

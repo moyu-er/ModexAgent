@@ -45,6 +45,8 @@ agents:
     max_steps: 50
     use_terminal: true
     terminal_visibility: true
+    experience:
+      enabled: true
     approval:
       tools:
         command: {allowed_paths: ["*"]}

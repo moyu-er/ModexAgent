@@ -71,4 +71,6 @@ agents:
     max_steps: 100
     standard_tools: true
     use_terminal: false
+    experience:
+      enabled: true
     extra_tools: ["ast_grep_search", "ast_grep_replace", "lsp_diagnostics", "lsp_navigation"]
