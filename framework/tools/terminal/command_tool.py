@@ -21,9 +21,10 @@ from framework.tools.terminal.prompt import (
     sanitize_terminal_output,
 )
 from framework.tools.terminal.pty_keys import CursorKeyMode
+from framework.tools.terminal.guard import check_terminal_writable
 from framework.tools.terminal.session import TerminalSession
-from framework.tools.terminal.types import CommandResultStatus, ProcessStatus
 from framework.utils.xml import xml_text
+from framework.tools.terminal.types import CommandResultStatus, ProcessStatus, TerminalCommandStatus
 
 
 def _build_command_xml(
@@ -117,6 +118,12 @@ class CommandTool(Tool):
     ) -> str:
         session = await self._manager.get_default()
         terminal_name = session.name
+
+        # Guard: check terminal is writable before proceeding
+        guard_result = await check_terminal_writable(session, config=self._config)
+        if guard_result is not None:
+            return self._format_rejected(guard_result, terminal=terminal_name)
+
         await session.ensure_started()
 
         proc = self._registry.create(
@@ -158,6 +165,12 @@ class CommandTool(Tool):
                 return await self._format_running(
                     session, result.output_parts, runtime, result.elapsed_ms,
                     detected_input_wait=True, terminal=terminal_name,
+                )
+            case PollOutcome.LONG_RUNNING:
+                runtime = self._registry.running_runtime(proc.id)
+                return await self._format_running(
+                    session, result.output_parts, runtime, result.elapsed_ms,
+                    terminal=terminal_name,
                 )
             case PollOutcome.STUCK:
                 raw_idle_ms = int((time.monotonic() - session.last_byte_at) * 1000)
@@ -283,4 +296,36 @@ class CommandTool(Tool):
             output, CommandResultStatus.TIMED_OUT, elapsed_ms,
             terminal=terminal, message=message,
         )
+
+    @staticmethod
+    def _format_rejected(
+        guard_result: "TerminalGuardResult",
+        *,
+        terminal: str | None = None,
+    ) -> str:
+        from framework.tools.terminal.guard import TerminalGuardResult
+        snap = guard_result.snapshot
+        parts = [
+            "<command_result>",
+            "<status>rejected</status>",
+            f"<message>{xml_text(guard_result.message)}</message>",
+        ]
+        if terminal is not None:
+            parts.append(f"<terminal>{xml_text(terminal)}</terminal>")
+        parts.extend([
+            "<diagnostic>",
+            f"<status>{snap.status.value}</status>",
+            f"<idle_ms>{snap.idle_ms}</idle_ms>",
+        ])
+        if snap.elapsed_ms is not None:
+            parts.append(f"<elapsed_ms>{snap.elapsed_ms}</elapsed_ms>")
+        if snap.cursor_line:
+            parts.append(f"<cursor>{xml_text(snap.cursor_line)}</cursor>")
+        if snap.last_output:
+            parts.append(f"<last_output>{xml_text(snap.last_output)}</last_output>")
+        if snap.suggestion:
+            parts.append(f"<suggestion>{xml_text(snap.suggestion)}</suggestion>")
+        parts.append("</diagnostic>")
+        parts.append("</command_result>")
+        return "\n".join(parts)
 
