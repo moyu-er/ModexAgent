@@ -26,6 +26,8 @@ class PoolInstance:
     provider: Any
     notification_service: Any  # AgentNotificationService
     communication_service: Any  # AgentCommunicationService — updated on workspace switch
+    experience_curator: Any | None = None  # ExperienceCurator background task
+    experience_curator_task: Any | None = None  # asyncio.Task for curator loop
 
     @property
     def main_address(self):

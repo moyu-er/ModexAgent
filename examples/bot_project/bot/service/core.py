@@ -1405,6 +1405,25 @@ class BotService(AgentBuilderMixin):
         await self.input_adapter.start()
         for pool in self._pools.values():
             await pool.broker_bridge.start()
+            # Start per-pool experience curator background loop
+            if pool.experience_curator is not None:
+
+                # Derive interval from pool config
+                interval = 3600
+                main_cfg = next(
+                    (a for a in pool.config.agents if getattr(a, "role", None) == "main"),
+                    None,
+                )
+                if main_cfg is not None:
+                    exp_cfg = getattr(main_cfg, "experience", None)
+                    if exp_cfg is not None:
+                        interval = getattr(exp_cfg, "curator_interval", 3600)
+
+                pool.experience_curator_task = asyncio.create_task(
+                    self._curator_background_loop(pool.experience_curator, interval),
+                )
+                self._tasks.append(pool.experience_curator_task)
+                print(f"   [OK] Pool '{pool.name}': ExperienceCurator started (interval={interval}s)")
 
         self._start_dream_task()
 
@@ -1744,6 +1763,10 @@ class BotService(AgentBuilderMixin):
                 await self.mcp_manager.disconnect_all()
         # Shut down all pools in one pass
         for pi in self._pools.values():
+            if pi.experience_curator_task is not None:
+                pi.experience_curator_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await pi.experience_curator_task
             if pi.mcp_manager is not None:
                 with contextlib.suppress(BaseException):
                     await pi.mcp_manager.disconnect_all()

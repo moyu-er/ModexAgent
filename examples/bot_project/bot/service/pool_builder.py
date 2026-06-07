@@ -266,8 +266,44 @@ async def create_pool(
     main_service._target_store = main_store
     logger.info("Pool '%s': communication tool registered for main agent (list tool deprecated)", pool_name)
 
-    # 10. Hooks
+    # 10. Hooks + Experience Review
     max_iter_hook = MaxIterationNotifyHook(notification_service=notification_service)
+
+    # Experience layer (review hook + curator) — mirrors pipeline-mode setup in core.py
+    exp_review_hook = None
+    exp_curator = None
+    exp_cfg = getattr(main_cfg, "experience", None)
+    if exp_cfg is not None and getattr(exp_cfg, "enabled", False):
+        from framework.agents.experience.review_agent import ExperienceReviewAgent
+        from framework.core.experience.meta import PerFileExperienceMetaStore
+        from framework.hook.builtin.experience_review import ExperienceReviewHook
+
+        def _exp_path() -> Path:
+            return data_dir / "experiences" / pool_name / main_agent_name
+
+        _exp_path().mkdir(parents=True, exist_ok=True)
+        exp_meta = PerFileExperienceMetaStore(_exp_path)
+        exp_review_agent = ExperienceReviewAgent(
+            provider=provider,
+            max_iterations=getattr(exp_cfg, "max_iterations", 50),
+        )
+        exp_review_hook = ExperienceReviewHook(
+            review_agent=exp_review_agent,
+            experience_dir=_exp_path,
+            meta_store=exp_meta,
+            min_messages=getattr(exp_cfg, "min_messages", 6),
+            exp_cooldown_turns=getattr(exp_cfg, "exp_cooldown_turns", 3),
+        )
+        logger.info("Pool '%s': ExperienceReviewHook created", pool_name)
+
+        # ExperienceCurator for lifecycle management
+        from framework.core.experience.curator import ExperienceCurator
+        exp_curator = ExperienceCurator(
+            experience_dir=_exp_path,
+            meta_store=exp_meta,
+            max_experiences=getattr(exp_cfg, "max_experiences", 20),
+        )
+        logger.info("Pool '%s': ExperienceCurator created", pool_name)
 
     # Wire hooks on main agent's pipeline
     main_instance = pool._agents.get(main_agent_name)
@@ -277,6 +313,9 @@ async def create_pool(
             consumer=inbox_consumer, agent_name=main_agent_name,
         ))
         _add_hook(main_pipeline, max_iter_hook)
+        if exp_review_hook is not None:
+            _add_hook(main_pipeline, exp_review_hook)
+            logger.info("Pool '%s': ExperienceReviewHook wired to main pipeline", pool_name)
 
     # 12. Wire main agent runtime
     main_instance = pool._agents.get(main_agent_name)
@@ -338,6 +377,8 @@ async def create_pool(
         provider=provider,
         notification_service=notification_service,
         communication_service=main_service,
+        experience_curator=exp_curator,
+        experience_curator_task=None,
     )
 
 
