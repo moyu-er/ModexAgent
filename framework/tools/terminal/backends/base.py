@@ -19,8 +19,16 @@ def extract_current_segment_from_buffer(text: str) -> TerminalSegment:
     Strips ANSI/CSI sequences before checking for prompt endings so that
     terminal control codes (e.g. \\x1b[0K, \\x1b[?25h) after the prompt
     do not prevent empty-prompt detection.
+
+    Uses the same strict prompt detection as ``extract_last_command_output``
+    (``is_prompt_ready`` + ``_is_prompt_with_command``) to avoid false
+    positives where command output happens to end with ``$`` / ``>`` / ``#``.
     """
-    from framework.tools.terminal.prompt import _strip_ansi_and_da1
+    from framework.tools.terminal.prompt import (
+        _is_prompt_with_command,
+        _strip_ansi_and_da1,
+        is_prompt_ready,
+    )
 
     clean = _strip_ansi_and_da1(text)
     lines = clean.splitlines()
@@ -30,14 +38,17 @@ def extract_current_segment_from_buffer(text: str) -> TerminalSegment:
     prompt_indexes = [
         index
         for index, line in enumerate(lines)
-        if line.rstrip().endswith((">", "$", "#", "%"))
+        if is_prompt_ready(line) or _is_prompt_with_command(line)
     ]
     start = prompt_indexes[-1] if prompt_indexes else max(0, len(lines) - 1)
     segment_text = "\n".join(lines[start:])
+    # is_empty_prompt: only ``is_prompt_ready`` — ``_is_prompt_with_command``
+    # matches lines like "PS C:\\> npm install" which are *not* an empty
+    # prompt (a command is already typed after the prompt).
     return TerminalSegment(
         text=segment_text,
         cursor_line=cursor_line,
-        is_empty_prompt=cursor_line.rstrip().endswith((">", "$", "#", "%")),
+        is_empty_prompt=is_prompt_ready(cursor_line),
     )
 
 

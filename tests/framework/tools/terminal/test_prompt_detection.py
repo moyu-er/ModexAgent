@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from framework.tools.terminal.backends.base import extract_current_segment_from_buffer
 from framework.tools.terminal.prompt import (
     extract_last_command_output,
     is_prompt_ready,
@@ -53,6 +54,35 @@ class TestIsPromptReady:
 
     def test_empty_not_prompt(self) -> None:
         assert is_prompt_ready("") is False
+
+
+class TestExtractCurrentSegment:
+    """Verify extract_current_segment_from_buffer correctness."""
+
+    def test_real_prompt_detected(self) -> None:
+        segment = extract_current_segment_from_buffer("$ ")
+        assert segment.is_empty_prompt is True
+        assert segment.cursor_line == "$ "
+
+    def test_command_output_not_prompt(self) -> None:
+        """Plain command output must NOT be an empty prompt."""
+        segment = extract_current_segment_from_buffer("Building package...")
+        assert segment.is_empty_prompt is False
+
+    def test_command_output_with_path_not_prompt(self) -> None:
+        """Path-like output must NOT be an empty prompt."""
+        segment = extract_current_segment_from_buffer("Installing to C:\\Program Files\\app")
+        assert segment.is_empty_prompt is False
+
+    def test_running_command_no_prompt(self) -> None:
+        segment = extract_current_segment_from_buffer("$ npm install\nFetching packages...")
+        assert segment.is_empty_prompt is False
+        assert "Fetching packages" in segment.text
+
+    def test_completed_command_with_prompt(self) -> None:
+        segment = extract_current_segment_from_buffer("$ npm install\nDone\n$ ")
+        assert segment.is_empty_prompt is True
+        assert segment.cursor_line == "$ "
 
 
 class TestExtractLastCommandOutput:
