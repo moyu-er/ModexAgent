@@ -56,7 +56,7 @@ scenario: <when-this-experience-applies>
 
 **Required fields in frontmatter:**
 - `name`: non-empty string (should match the directory name)
-- `description`: non-empty string
+- `description`: one-line summary, strictly ≤ 200 words. Keep it dense and specific — this is the primary text used for semantic retrieval.
 
 **Optional but recommended:**
 - `tags`: list of keywords for search/discovery (e.g. `[debug, network, timeout]`)

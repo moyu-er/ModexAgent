@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import uuid
 from pathlib import Path
-from typing import Any
 
 from framework.agents.summarizer.abc import _get_registry
 from framework.agents.summarizer.scoped_file_agent import ScopedFileAgent
@@ -137,11 +136,18 @@ class ExperienceReviewAgent(ScopedFileAgent):
         temperature: float = 0.2,
     ) -> bool:
         """Run ReAct agent with experience-specific tools."""
+        from framework.agents.react.state import ReActTurnState
         from framework.agents.summarizer.emitter import SummarizerTrajectoryEmitter
         from framework.core.agent import AgentContext
         from framework.core.tool_manager import InMemoryToolManager
         from framework.core.types import MessageRole
+        from framework.hook.abc import HookErrorPolicy, HookSpec
+        from framework.hook.builtin import RunLoggingHook
+        from framework.hook.runner import HookRunner
         from framework.memory.history import ListMessageHistory
+        from framework.runtime.enums import AgentKind, TurnPhase
+        from framework.runtime.models import TurnIdentity
+        from framework.runtime.services import AgentRuntime, AgentRuntimeServices
 
         tools = [
             ExperienceReadTool(experience_dir, meta_store),
@@ -159,6 +165,36 @@ class ExperienceReviewAgent(ScopedFileAgent):
         history = ListMessageHistory([
             {"role": MessageRole.USER, "content": user_msg},
         ])
+
+        # HookRunner with RunLoggingHook so ReActAgent dispatches
+        # BEFORE_TURN / AFTER_TURN / tool hooks for observability.
+        hook_runner = HookRunner()
+        hook_runner.add(HookSpec(
+            hook=RunLoggingHook(
+                logger_name="experience.review.agent",
+                level=logging.DEBUG,
+                max_content_chars=2000,
+                max_result_chars=2000,
+            ),
+            on_error=HookErrorPolicy.LOG,
+        ))
+
+        # Pre-built runtime — ReActAgent.run() will use it directly
+        # instead of creating a default empty one.
+        state = ReActTurnState(
+            identity=TurnIdentity(
+                agent_id="experience-review",
+                session_id=session_id,
+                turn_id="default",
+            ),
+            agent_kind=AgentKind.REACT,
+            phase=TurnPhase.CREATED,
+        )
+        runtime = AgentRuntime(
+            services=AgentRuntimeServices(hooks=hook_runner),
+            state=state,
+        )
+
         context = AgentContext(
             system_prompt=system_prompt,
             history=history,
@@ -166,6 +202,7 @@ class ExperienceReviewAgent(ScopedFileAgent):
             session_id=session_id,
             max_iterations=max_iterations,
             temperature=temperature,
+            runtime=runtime,
         )
 
         trace_path.parent.mkdir(parents=True, exist_ok=True)
