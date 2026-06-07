@@ -1,6 +1,8 @@
 """ReAct graph constants — node names, transition reasons, metadata keys."""
 from enum import StrEnum
 
+from framework.core.constants import StopReason
+
 
 class ReActNode(StrEnum):
     START = "start"
@@ -14,8 +16,9 @@ class ReActReason(StrEnum):
     RESUME_TOOLS = "resume_tools"
     HAS_TOOLS = "has_tools"
     NO_TOOLS = "no_tools"
-    MAX_ITERATIONS = "max_iterations"
-    LLM_ERROR = "llm_error"
     TOOLS_DONE = "tools_done"
-    TURN_CANCELLED = "turn_cancelled"
+    LLM_ERROR = "llm_error"
     DONE = "done"
+    # Turn-ending reasons aligned with StopReason
+    MAX_ITERATIONS = StopReason.MAX_ITERATIONS
+    TURN_CANCELLED = StopReason.TURN_CANCELLED

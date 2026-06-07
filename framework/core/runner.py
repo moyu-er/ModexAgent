@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, TypeVar
 
+from .constants import StopReason
 from .emitter import AgentResult
 from .events import AgentEvent
 
@@ -37,7 +38,7 @@ class InterruptibleRunner:
             history = await context.history.to_list()
             return AgentResult(
                 content=partial or "Task was cancelled before completion.",
-                stop_reason="cancelled",
+                stop_reason=StopReason.CANCELLED,
                 messages=history,
                 partial_content=partial,
             )

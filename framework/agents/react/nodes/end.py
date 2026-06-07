@@ -7,7 +7,7 @@ from framework.agents.react.agent import ReActEvent
 from framework.agents.react.constants import ReActNode, ReActReason
 from framework.agents.react.state import get_react_state
 from framework.core.agent import AgentContext
-from framework.core.constants import FinishReason
+from framework.core.constants import FinishReason, StopReason
 from framework.core.emitter import AgentResult
 from framework.core.graph.constants import GraphNode
 from framework.core.graph.node import Node, NodeTransition
@@ -35,14 +35,14 @@ class EndNode(Node):
         if state is not None and state.phase == TurnPhase.CANCELLED:
             result = AgentResult(
                 content="turn cancelled",
-                stop_reason=ReActReason.TURN_CANCELLED.value,
+                stop_reason=StopReason.TURN_CANCELLED,
                 messages=messages,
                 attachments=ctx.attachments,
             )
         elif response is not None and response.finish_reason == FinishReason.ERROR.value:
             error_text = response.error or response.content or "LLM request failed"
             result = AgentResult(
-                error=error_text, stop_reason="error",
+                error=error_text, stop_reason=StopReason.ERROR,
                 messages=messages, attachments=ctx.attachments,
             )
             if ctx.emitter is not None:
@@ -57,7 +57,7 @@ class EndNode(Node):
                 await ctx.emitter.emit(ReActEvent.FINAL_OUTPUT, result)
         else:
             result = AgentResult(
-                content="max iterations reached", stop_reason="max_iterations",
+                content="max iterations reached", stop_reason=StopReason.MAX_ITERATIONS,
                 messages=messages, attachments=ctx.attachments,
             )
 

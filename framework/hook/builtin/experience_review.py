@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from framework.core.agent import AgentContext
+from framework.core.constants import StopReason
 from framework.core.emitter import AgentResult
 from framework.hook.abc import AfterTurnHook
 
@@ -295,7 +296,7 @@ class ExperienceReviewHook(AfterTurnHook):
         Gate 4: Non-empty snapshot (checked separately in after_turn).
         """
         # Gate 1: Plain completion
-        if result.stop_reason != "completed":
+        if result.stop_reason != StopReason.COMPLETED:
             return False
 
         # Gate 2: Experience tool usage this turn → cooldown

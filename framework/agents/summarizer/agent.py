@@ -11,7 +11,7 @@ from enum import Enum
 from typing import Any
 
 from framework.core.agent import Agent, AgentContext, AgentResult
-from framework.core.constants import FinishReason
+from framework.core.constants import FinishReason, StopReason
 from framework.core.emitter import ContentEmitter
 from framework.core.events import AgentEvent
 from framework.core.provider import LLMProvider
@@ -204,7 +204,7 @@ Output ONLY the consolidated markdown content — nothing else. No extra text be
         """Standard Agent.run() — single LLM call, no tools."""
         messages = await context.to_messages()
         if not messages:
-            return AgentResult(content="", stop_reason="completed")
+            return AgentResult(content="", stop_reason=StopReason.COMPLETED)
 
         try:
             await emitter.emit(SummarizerEvent.START)
@@ -215,11 +215,11 @@ Output ONLY the consolidated markdown content — nothing else. No extra text be
                 await emitter.emit(SummarizerEvent.CONTENT, content)
             await emitter.emit(SummarizerEvent.COMPLETE)
 
-            return AgentResult(content=content, stop_reason="completed")
+            return AgentResult(content=content, stop_reason=StopReason.COMPLETED)
         except Exception as e:
             logger.warning("SummarizerAgent.run failed: %s", e)
             await emitter.emit(SummarizerEvent.ERROR, str(e))
-            return AgentResult(error=str(e), stop_reason="error")
+            return AgentResult(error=str(e), stop_reason=StopReason.ERROR)
 
     # -- Convenience API -------------------------------------------------------
 

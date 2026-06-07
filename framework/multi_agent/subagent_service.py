@@ -19,6 +19,7 @@ import logging
 import uuid
 from typing import Any, cast
 
+from framework.core.constants import StopReason
 from framework.core.emitter import AgentResult
 from framework.core.types import InputMessage
 from framework.messaging.broker import MessageBroker
@@ -171,7 +172,7 @@ class SubagentService:
         except TimeoutError:
             logger.warning("create_and_wait timed out for %s after %.0fs", name, timeout)
             self._pool.pop_sync_future(correlation_id)
-            return AgentResult(error=f"Subagent {name} timed out after {timeout}s", stop_reason="timeout")
+            return AgentResult(error=f"Subagent {name} timed out after {timeout}s", stop_reason=StopReason.TIMEOUT)
         finally:
             self._pool.pop_sync_future(correlation_id)
             await instance.stop()

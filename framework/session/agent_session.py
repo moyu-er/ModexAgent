@@ -11,6 +11,7 @@ from typing import Any, Generic, TypeVar
 from framework.core.skills import SkillManager
 
 from ..core.agent import Agent, AgentContext
+from ..core.constants import StopReason
 from ..core.context import ContextManager
 from ..core.emitter import AgentResult, ContentEmitter
 from ..core.events import AgentEvent
@@ -169,7 +170,7 @@ class AgentSession(Generic[E]):
             if self._deduplicator.is_duplicate(message_id):
                 logger = logging.getLogger(__name__)
                 logger.info("Duplicate message skipped: %s", message_id)
-                return AgentResult(content="", stop_reason="duplicate")
+                return AgentResult(content="", stop_reason=StopReason.DUPLICATE)
 
         # 输入内容清洗
         sanitized_content = message.content
@@ -217,7 +218,7 @@ class AgentSession(Generic[E]):
                 logger.exception("CommandInterceptor failed for session %s", session_id)
                 intercept_result = None
             if intercept_result is not None:
-                return AgentResult(content=intercept_result, stop_reason="command_intercepted")
+                return AgentResult(content=intercept_result, stop_reason=StopReason.COMMAND_INTERCEPTED)
 
         try:
             # 1. 加载上下文状态
@@ -432,7 +433,7 @@ class AgentSession(Generic[E]):
             await emitter.emit_error(str(e))
             return AgentResult(
                 content="",
-                stop_reason="error",
+                stop_reason=StopReason.ERROR,
                 error=str(e),
             )
         finally:
