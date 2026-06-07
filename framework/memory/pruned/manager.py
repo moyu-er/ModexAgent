@@ -74,13 +74,17 @@ class PrunedManager:
         path = escape(storage.get_directory_path())
         ct = PrunedTag.CONTAINER.value
         tt = PrunedTag.TRANSCRIPT.value
+        heading = (
+            "### Conversation Transcripts\n\n"
+            "Complete transcripts of **previous** conversations (not the current one). "
+            "The directory below contains all stored transcript files — read its "
+            "`index.jsonl` to browse every conversation by topic, time range, and "
+            "message count. Transcripts are read-only; you may update topic descriptions "
+            "in `index.jsonl`.\n\n"
+        )
         lines: list[str] = [
+            heading,
             f"<{ct}>",
-            "<!-- Complete transcripts of earlier conversations are stored in the directory below.",
-            "     An index.jsonl in that directory lists each transcript file with its topic,",
-            "     time range, and message count — use it to find relevant past conversations.",
-            "     The transcripts themselves are read-only. The index.jsonl is editable —",
-            "     you may update topic descriptions there when you understand the content better. -->",
             f'  <directory path="{path}"/>',
         ]
 
@@ -91,9 +95,6 @@ class PrunedManager:
         if recent_entries:
             history = PrunedTag.HISTORY.value
             lines.append(f"  <{history}>")
-            lines.append("    <!-- Only the most recent history conversations are shown here.")
-            lines.append("         Read the directory above for all stored previous transcript files.")
-            lines.append("         Its index.jsonl lists every transcript with topic and time range. -->")
             for e in recent_entries:
                 time_range = (
                     f"{e.start_time_display} ~ {e.end_time_display}"
@@ -106,7 +107,7 @@ class PrunedManager:
                 lines.append(
                     f'    <{tt} time="{escape(time_range)}"'
                     f' messages="{e.message_count}">'
-                    f"{escape(topic)}"
+                    f"\n{escape(topic)}\n"
                     f"</{tt}>"
                 )
             lines.append(f"  </{history}>")

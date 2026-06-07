@@ -15,7 +15,7 @@ from framework.memory.core.system import InjectableMemorySystem, MemorySystem
 from framework.memory.injection.policy import MemoryInjectionPolicy
 from framework.memory.tags import ArchiveTag, KnowledgeTag
 from framework.memory.pruned.manager import PrunedManager
-from framework.memory.utils import estimate_text_tokens, normalize_memory_summary
+from framework.memory.utils import estimate_text_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +70,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
 
         self._inject_disclaimer(sections)
         await self._inject_knowledge(sections, context, injectable, query)
-        await self._inject_archive(sections, context, injectable, query)
+        await self._inject_archive(sections, context, injectable)
         self._inject_pruned_catalog(sections, context)
         await self._inject_provider_blocks(sections, injectable)
         await self._inject_provider_prefetch(sections, context, injectable, query)
@@ -90,14 +90,18 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
     # -- injection helpers ---------------------------------------------------
 
     def _inject_disclaimer(self, sections: list[_PromptSection]) -> None:
-        """Inject a short disclaimer about previous conversation memory."""
+        """Inject a header and disclaimer about injected memory sections."""
         sections.append(
             _PromptSection(
                 content=(
-                    "Below are parts of your previous conversations with the user. "
-                    "Your current conversation (the messages after this prompt) "
-                    "is always the most authoritative. If anything below conflicts "
-                    "with the current conversation, trust the current conversation."
+                    "## Memory & Past Sessions\n\n"
+                    "Below is your persistent memory (identity, user info, learned facts) "
+                    "and previous conversation history (transcripts and summaries). "
+                    "These are from **past** sessions — they are NOT part of the current "
+                    "conversation.\n\n"
+                    "**Your current conversation always takes priority.** If anything "
+                    "below conflicts with the current conversation, trust the current "
+                    "conversation."
                 ),
                 priority=110,
             )
@@ -125,7 +129,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                 xml_parts.extend([
                     f'<{tag}{file_attr} editable="true"'
                     f' description="Who you are: personality, principles, and behavior rules">'
-                    f"{xml_escape(knowledge.soul)}"
+                    f"\n{xml_escape(knowledge.soul)}\n"
                     f"</{tag}>",
                 ])
 
@@ -137,7 +141,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                 xml_parts.extend([
                     f'<{tag}{file_attr} editable="true"'
                     f' description="Facts about the user: name, preferences, habits, communication style">'
-                    f"{xml_escape(knowledge.user)}"
+                    f"\n{xml_escape(knowledge.user)}\n"
                     f"</{tag}>",
                 ])
 
@@ -149,7 +153,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                 xml_parts.extend([
                     f'<{tag}{file_attr} editable="false"'
                     f' description="Known facts about the project: conventions, decisions, verified solutions">'
-                    f"{xml_escape(knowledge.memory)}"
+                    f"\n{xml_escape(knowledge.memory)}\n"
                     f"</{tag}>",
                 ])
 
@@ -170,8 +174,14 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                         ],
                     )
 
+                heading = (
+                    "### Knowledge Files\n\n"
+                    "Self-maintained files storing your personality, user preferences, "
+                    "and learned facts. Files with `editable=\"true\"` can be updated "
+                    "via file tools to evolve your knowledge over time.\n\n"
+                )
                 sections.append(_PromptSection(
-                    content=xml_content,
+                    content=heading + xml_content,
                     priority=100,
                 ))
         except Exception:
@@ -182,35 +192,26 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         sections: list[_PromptSection],
         context: MemoryContext,
         memory_system: InjectableMemorySystem,
-        query: str,
     ) -> None:
         try:
-            # Read archive context from MD files (DirArchiveStorage, primary path).
-            # Falls back to JSONL channel logs for in-memory / compat backends.
-            if not await self._try_inject_md_archives(sections, memory_system, context):
-                await self._inject_archive_jsonl(sections, context, memory_system, query)
+            await self._inject_md_archives(sections, memory_system, context)
         except Exception:
             logger.debug("Archive injection skipped", exc_info=True)
 
-    async def _try_inject_md_archives(
+    async def _inject_md_archives(
         self,
         sections: list[_PromptSection],
         memory_system: Any,
         context: MemoryContext,
-    ) -> bool:
-        """Try to inject archive context from MD files via DirArchiveStorage.
-
-        Returns True if MD archives were found and injected, False to fall
-        through to the JSONL path.
-        """
-        # Resolve archive directory path through the public API
+    ) -> None:
+        """Inject archive summaries from DirArchiveStorage (MD files on disk)."""
         try:
             archive_dir = await memory_system.get_storage_path(context)
         except Exception:
-            return False
+            return
 
         if archive_dir is None:
-            return False
+            return
 
         from framework.memory.stores.dir_archive import DirArchiveStorage
 
@@ -219,10 +220,10 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         try:
             archive_ids = await storage.list_archives(limit=self._archive_inject_count)
         except Exception:
-            return False
+            return
 
         if not archive_ids:
-            return False
+            return
 
         # Read context.md from each archive (ascending by archive_id: oldest first)
         records: list[str] = []
@@ -243,78 +244,24 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
             records.append(
                 f'<{st} number="{aid}"'
                 f' file="{xml_escape(full_path)}"'
-                f'>{xml_escape(display)}</{st}>'
+                f'>\n{xml_escape(display)}\n</{st}>'
             )
 
         if not records:
-            return False
+            return
 
+        heading = (
+            "### Earlier Conversation Summaries\n\n"
+            "Short summaries of older conversations. Higher number = more recent. "
+            "Read the `context.md` file at each path for the full details.\n\n"
+        )
         ct = ArchiveTag.CONTAINER.value
         xml = (
             f"<{ct}>\n"
-            "<!-- Short summaries of previous conversations. Higher number = more recent. -->\n"
-            "<!-- Use these for topic continuity. Read full transcripts if you need details. -->\n"
             + "\n".join(records)
             + f"\n</{ct}>"
         )
-        sections.append(_PromptSection(content=xml, priority=70))
-        return True
-
-    async def _inject_archive_jsonl(
-        self,
-        sections: list[_PromptSection],
-        context: MemoryContext,
-        memory_system: InjectableMemorySystem,
-        query: str,
-    ) -> None:
-        """JSONL-fallback for in-memory / compat backends without MD directory."""
-        from datetime import datetime
-        from framework.memory.archive_models import ArchiveChannel
-
-        entries = await memory_system.get_history_entries(
-            context,
-            limit=self._max_history,
-            query=query,
-            channel=ArchiveChannel.CONTEXT,
-        )
-        if not entries:
-            return
-
-        ct = ArchiveTag.CONTAINER.value
-        st = ArchiveTag.SUMMARY.value
-        xml_parts: list[str] = [
-            f"<{ct}>",
-            "<!-- Short summaries of previous conversations. Higher number = more recent. -->",
-            "<!-- Use these for topic continuity. Read full transcripts if you need details. -->",
-        ]
-        record_count = 0
-        for e in entries:
-            summary = normalize_memory_summary(e.get("summary"))
-            if summary is None:
-                continue
-            if e.get("metadata", {}).get("source") == "empty":
-                continue
-            record_count += 1
-            created_at = e.get("created_at")
-            if isinstance(created_at, str):
-                time_str = created_at.replace("T", " ")[:16]
-            elif isinstance(created_at, datetime):
-                time_str = created_at.strftime("%Y-%m-%d %H:%M")
-            else:
-                time_str = ""
-            archive_id = e.get("archive_id", "")
-            aid_attr = f' number="{archive_id}"' if archive_id != "" else ""
-            ts_attr = f' time="{xml_escape(time_str)}"' if time_str else ""
-            if len(summary) > 200:
-                summary = summary[:200]
-            xml_parts.append(
-                f'  <{st}{aid_attr}{ts_attr}>'
-                f"{xml_escape(summary)}"
-                f"</{st}>"
-            )
-        xml_parts.append(f"</{ct}>")
-        if record_count > 0:
-            sections.append(_PromptSection(content="\n".join(xml_parts), priority=70))
+        sections.append(_PromptSection(content=heading + xml, priority=70))
 
     def _archive_file_path(self, archive_dir: Path, archive_id: int) -> str:
         """Return absolute path to archive context.md for injection XML."""
