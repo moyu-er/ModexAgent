@@ -86,11 +86,16 @@ async def poll_until_settled(
             else:
                 prompt_stable_since = None
 
-        # 4. Stuck detection
+        # 4. No-output timeout → STUCK (replaces old 15s hardcoded check)
         raw_idle_ms = int((time.monotonic() - session.last_byte_at) * 1000)
-        if raw_idle_ms >= 15_000:
+        if raw_idle_ms >= config.no_output_timeout_ms:
             if not is_waiting_for_input("".join(output_parts)):
                 return PollResult(PollOutcome.STUCK, output_parts, elapsed_ms)
+
+        # 4.5 Long-running detection (before yield)
+        if elapsed_ms >= config.long_running_threshold_ms:
+            if output_received and await session.is_alive():
+                return PollResult(PollOutcome.LONG_RUNNING, output_parts, elapsed_ms)
 
         # 5. Yield window
         if elapsed_ms >= yield_ms:
