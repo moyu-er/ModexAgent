@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import traceback
 from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -1572,6 +1573,10 @@ class BotService(AgentBuilderMixin):
                 logger.exception("DreamEngine background loop error")
 
     async def stop(self) -> None:
+        logger.info(
+            "BotService.stop() called — shutdown trigger:\n%s",
+            "".join(traceback.format_stack()[-5:-1]),
+        )
         self._shutdown_event.set()
         if self._maintenance_task is not None:
             self._maintenance_task.cancel()
