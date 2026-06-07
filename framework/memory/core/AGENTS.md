@@ -14,7 +14,7 @@ Foundational memory abstractions — ABCs, Protocols, data models, and scope sys
 | `message.py` | `ChatMessage` (Pydantic model), `ContentFormat(StrEnum)` — PLAIN/XML |
 | `models.py` | `LongTermMemory`, `MemoryContextDict` — data models |
 | `layers.py` | `SessionMemoryManager`, `ArchiveMemoryManager`, `KnowledgeMemoryManager`, `UserRetentionBuffer` ABCs |
-| `consolidation.py` | `ConsolidationEngine` ABC — long-term memory consolidation |
+| `consolidation.py` | `MemoryUpdateMode` (StrEnum), `MemoryUpdate` (dataclass) — long-term memory update types |
 | `lock.py` | `StorageLock` ABC — concurrency control |
 | `__init__.py` | Re-exports key abstractions |
 

@@ -13,7 +13,7 @@ Abstract base classes and shared types forming the framework's type-safe foundat
 | `emitter.py` | `ContentEmitter[E]` ABC, `AgentResult`, `StreamingAwareEmitter`, `BufferingEmitter`, `LoggingEmitter` |
 | `events.py` | `AgentEvent` base, `EmitterConfig` — event filtering/truncation |
 | `provider.py` | `LLMProvider` / `StreamingLLMProvider` ABCs |
-| `tool.py` | `DynamicSchemaProvider` protocol (context-aware schema). `Tool` class lives in `tool_manager.py` |
+| `tool.py` | `DynamicSchemaProvider` ABC (context-aware schema). `Tool` class lives in `tool_manager.py` |
 | `tool_manager.py` | `Tool` class (dual-mode init), `ToolManager` ABC, `InMemoryToolManager`, `ToolResult`, `FunctionalTool`, `ToolConfig`, `ToolManagerConfig`, `ToolExecutionMode` |
 | `tool_call_accumulator.py` | `ToolCallChunk`, `AccumulatingToolCall`, `ToolCallAccumulator`, `parse_tool_call_chunks_from_delta` |
 | `context.py` | `ContextState`, `ContextManager` ABC, `InMemoryContextManager`, `EphemeralContextManager`, `FileContextManager` |

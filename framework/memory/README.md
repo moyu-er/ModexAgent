@@ -23,7 +23,7 @@ Short-term Memory ──► History Archive ──► Long-term Memory
 - **`MemoryScope`** — extracts a scope key from a context (Session, User, Tenant, Agent, Global, Composite)
 - **`MemoryStorage`** — unified async interface for messages, logs, KV, and cursors
 - **`CompressionStrategy`** — pluggable short-term memory compression
-- **`ConsolidationEngine`** / **`DreamEngine`** — online and offline long-term memory processing
+- **`KnowledgeConsolidatorBase`** / **`DreamEngine`** — offline long-term memory consolidation via ReAct-based agent
 
 ## Usage
 
@@ -182,4 +182,4 @@ This pattern cleanly separates the **storage backend** (ChromaDB), the **retriev
 
 This memory package documents conversation and long-term memory. ReAct
 suspend/resume persistence is runtime state, not user memory; use the
-`RuntimeStateStore` aliases described in `docs/current-runtime.md`.
+`TurnStateStore` from `framework.runtime`.
