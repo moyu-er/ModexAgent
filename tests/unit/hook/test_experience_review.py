@@ -147,19 +147,15 @@ async def test_hook_skips_when_mutex_busy(hook: ExperienceReviewHook):
 
 
 def test_capture_snapshot_empty(hook: ExperienceReviewHook):
-    ctx = MagicMock()
-    ctx.history = ListMessageHistory([])
-    snapshot = hook._capture_snapshot(ctx)
+    snapshot = hook._capture_snapshot([])
     assert snapshot == ""
 
 
 def test_capture_snapshot_with_messages(hook: ExperienceReviewHook):
-    ctx = MagicMock()
-    ctx.history = ListMessageHistory([
+    snapshot = hook._capture_snapshot([
         {"role": "user", "content": "Hello there"},
         {"role": "assistant", "content": "Hi!"},
     ])
-    snapshot = hook._capture_snapshot(ctx)
     assert "[user]: Hello there" in snapshot
     assert "[assistant]: Hi!" in snapshot
 

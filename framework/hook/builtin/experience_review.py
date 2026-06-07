@@ -34,8 +34,8 @@ from framework.core.experience.validation import validate_experience_md
 
 logger = logging.getLogger(__name__)
 
-_SNAPSHOT_MAX_MESSAGES = 20
-_SNAPSHOT_MAX_CONTENT_LEN = 1200
+_SNAPSHOT_MAX_MESSAGES = 100
+_SNAPSHOT_MAX_CONTENT_LEN = 2000
 
 
 class ExperienceReviewHook(AfterTurnHook):
@@ -58,7 +58,7 @@ class ExperienceReviewHook(AfterTurnHook):
         review_agent: ExperienceReviewAgent,
         experience_dir: Path | Callable[[], Path],
         meta_store: ExperienceMetaStore,
-        min_messages: int = 6,
+        min_messages: int = 10,
         exp_cooldown_turns: int = 3,
     ) -> None:
         self._agent = review_agent
@@ -85,24 +85,42 @@ class ExperienceReviewHook(AfterTurnHook):
     ) -> None:
         self._turn_counter += 1
 
+        # Get history via async to_list() — MessageHistory has no __len__ / __iter__
+        try:
+            history_list = await ctx.history.to_list()
+        except Exception:
+            logger.info(
+                "ExperienceReviewHook: skipped (history_to_list_error) turn=%s",
+                self._turn_counter,
+            )
+            return
+        history_len = len(history_list)
+
+        logger.info(
+            "ExperienceReviewHook: ENTERED turn=%s stop_reason=%s history_len=%s pending=%s",
+            self._turn_counter, result.stop_reason, history_len, bool(self._pending),
+        )
+
         # Gate 0: async mutex
         if self._pending:
-            logger.debug(
-                "ExperienceReviewHook: skipped — review already in progress"
+            logger.info(
+                "ExperienceReviewHook: skipped (mutex) — review already in progress turn=%s",
+                self._turn_counter,
             )
             return
 
         tool_names = self._extract_tool_names(result)
-        if not self._should_review(ctx, result, tool_names):
-            logger.debug(
-                "ExperienceReviewHook: skipped turn=%s min_messages=%s",
-                self._turn_counter, self._min_messages,
+        skip_reason = self._should_review(result, tool_names, history_len)
+        if skip_reason:
+            logger.info(
+                "ExperienceReviewHook: skipped (%s) turn=%s",
+                skip_reason, self._turn_counter,
             )
             return
 
-        snapshot = self._capture_snapshot(ctx)
+        snapshot = self._capture_snapshot(history_list)
         if not snapshot:
-            logger.debug(
+            logger.info(
                 "ExperienceReviewHook: skipped (empty snapshot) turn=%s",
                 self._turn_counter,
             )
@@ -277,17 +295,16 @@ class ExperienceReviewHook(AfterTurnHook):
 
     def _should_review(
         self,
-        ctx: AgentContext,
         result: AgentResult,
         tool_names: set[str],
-    ) -> bool:
+        msg_count: int,
+    ) -> str:
         """Gate check before triggering review.
+
+        Returns empty string if all gates pass, or a skip reason string.
 
         Gate 1: Turn completed with a plain assistant response
                 (stop_reason == "completed").
-                Detects "conversation segment completion" — the agent
-                finished a conversational exchange without requesting
-                tool execution in its final response.
         Gate 2: Detect experience write/edit usage this turn.
                 Sets cooldown and returns False so the review doesn't
                 run immediately after the agent edits experiences.
@@ -297,32 +314,33 @@ class ExperienceReviewHook(AfterTurnHook):
         """
         # Gate 1: Plain completion
         if result.stop_reason != StopReason.COMPLETED:
-            return False
+            return f"stop_reason={result.stop_reason}, need=completed"
 
         # Gate 2: Experience tool usage this turn → cooldown
         if self._detect_exp_edit(tool_names, result):
-            logger.debug(
-                "ExperienceReviewHook: exp write/edit detected, starting cooldown"
-            )
             self._last_exp_tool_turn = self._turn_counter
-            return False
+            logger.info(
+                "ExperienceReviewHook: exp write/edit detected, cooldown started turn=%s",
+                self._turn_counter,
+            )
+            return f"exp_edit_detected cooldown_start_turn={self._turn_counter}"
 
         # Gate 3: Sufficient conversation length
-        try:
-            msg_count = len(ctx.history)
-        except Exception:
-            return False
-
         effective_threshold = self._min_messages
         if self._last_exp_tool_turn > 0:
             turns_since = self._turn_counter - self._last_exp_tool_turn
             if turns_since <= self._exp_cooldown_turns:
                 effective_threshold = self._min_messages * 2
+                if msg_count < effective_threshold:
+                    return (
+                        f"cooldown msg_count={msg_count} < {effective_threshold} "
+                        f"(turns_since={turns_since}/{self._exp_cooldown_turns})"
+                    )
 
         if msg_count < effective_threshold:
-            return False
+            return f"msg_count={msg_count} < {effective_threshold}"
 
-        return True
+        return ""
 
     def _extract_tool_names(self, result: AgentResult) -> set[str]:
         """Extract tool names from this turn's result messages.
@@ -391,11 +409,9 @@ class ExperienceReviewHook(AfterTurnHook):
 
         return False
 
-    def _capture_snapshot(self, ctx: AgentContext) -> str:
+    def _capture_snapshot(self, messages: list) -> str:
         """Extract recent user/assistant messages as a text snapshot."""
-        try:
-            messages = list(ctx.history)
-        except Exception:
+        if not messages:
             return ""
 
         recent = (

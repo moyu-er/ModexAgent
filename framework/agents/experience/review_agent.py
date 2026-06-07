@@ -28,7 +28,7 @@ class ExperienceReviewAgent(ScopedFileAgent):
     Observability via SummarizerTrajectoryEmitter (JSONL trace + logging).
     """
 
-    DEFAULT_MAX_ITERATIONS = 50  # must match ExperienceConfig.max_iterations
+    DEFAULT_MAX_ITERATIONS = 100
 
     def __init__(
         self,
@@ -66,6 +66,7 @@ class ExperienceReviewAgent(ScopedFileAgent):
         *,
         existing_experiences: str = "",
         invocation_id: str = "",
+        traces_dir: Path | None = None,
     ) -> bool:
         """Main entry: review conversation and create/update experiences.
 
@@ -75,6 +76,9 @@ class ExperienceReviewAgent(ScopedFileAgent):
             meta_store: Metadata store for lifecycle management.
             existing_experiences: Pre-formatted XML of existing experiences.
             invocation_id: Caller-supplied UUID for trace correlation.
+            traces_dir: Directory for JSONL trace files.  If None, defaults to
+                ``experience_dir.parent / "review_traces"`` so traces never
+                pollute the experience data directory.
 
         Returns:
             True if agent ran successfully, False otherwise.
@@ -87,7 +91,8 @@ class ExperienceReviewAgent(ScopedFileAgent):
 
         trace_key = invocation_id or uuid.uuid4().hex[:8]
         session_id = f"experience-review-{trace_key}"
-        trace_path = experience_dir / "traces" / f"review-{trace_key}.jsonl"
+        _td = traces_dir or (experience_dir.parent / "review_traces")
+        trace_path = _td / f"review-{trace_key}.jsonl"
 
         logger.info(
             "ExperienceReviewAgent starting: invocation=%s session=%s",
@@ -203,6 +208,7 @@ class ExperienceReviewAgent(ScopedFileAgent):
             max_iterations=max_iterations,
             temperature=temperature,
             runtime=runtime,
+            identity=state.identity,
         )
 
         trace_path.parent.mkdir(parents=True, exist_ok=True)
