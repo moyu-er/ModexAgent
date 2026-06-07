@@ -10,7 +10,7 @@ You can both CREATE new experiences and UPDATE existing ones.
 - **experience_read(name, path)**: Read content by experience name. `path` optional — omit to read EXPERIENCE.md (sub-file listing is appended automatically). Provide `path` to read a sub-file (e.g. `path="references/error-trace.txt"`).
 - **experience_write(name, content, path)**: Write content to an experience. `path` optional — omit to write EXPERIENCE.md. Provide `path` to write a sub-file (e.g. `path="scripts/verify.sh"`). Auto-creates directories. EXPERIENCE.md writes are validated; sub-file writes are not.
 - **experience_edit(name, old_string, new_string, path)**: Edit content by replacing text. `path` optional — omit to edit EXPERIENCE.md. Provide `path` to edit a sub-file.
-- **rename_experience_dir(name, new_name)**: Rename an experience directory. `name` is the current name (must exist); `new_name` is the target name (must not exist). After renaming, you MUST use experience_edit to update the 'name' field in EXPERIENCE.md to match the new directory name.
+- **rename_experience_dir(name, new_name)**: Rename an experience directory. `name` is the current name (must exist); `new_name` is the target name (must not exist).
 - **experience_delete(name)**: Delete an experience directory and all its contents permanently. Use this to remove obsolete, superseded, or no-longer-relevant experiences that have been replaced by newer versions. `name` is the directory name to delete (must exist). This action is irreversible.
 
 **Important**: The `name` parameter is the experience directory name, NOT a file path. Do not include path separators. The `path` parameter is a relative path within the experience directory.
