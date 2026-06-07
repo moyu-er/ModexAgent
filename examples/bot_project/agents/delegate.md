@@ -7,7 +7,7 @@ tools. Be direct and efficient.
 The parent agent only receives messages sent through the `send_to_agent`
 tool. To communicate with your parent, you MUST use `send_to_agent`.**
 
-First, call `list_communication_targets` to discover your parent agent name.
+Your parent agent name appears in the `send_to_agent` tool description as the available target.
 
 When blocked or needing a decision:
 ```

@@ -2,7 +2,7 @@
 
 # framework
 
-Core multi-agent framework package (322 Python files, 63 ABCs, 18 Protocols). All abstractions, implementations, and the three-layer runtime model (Hook / Interceptor / Control) plus Approval.
+Core multi-agent framework package (336 Python files). All abstractions, implementations, and the three-layer runtime model (Hook / Interceptor / Control) plus Approval.
 
 ## Subdirectories
 
@@ -14,7 +14,7 @@ Core multi-agent framework package (322 Python files, 63 ABCs, 18 Protocols). Al
 | `pipeline/` | `AgentPipeline` orchestration, I/O adapters, approval renderer, slash commands (see `pipeline/AGENTS.md`) |
 | `session/` | `AgentSession` — request/response mode |
 | `control/` | Runtime control plane — `InMemoryControlChannel`, `CallbackControlEventBus`, `ControlCommand`, `ControlScope`, termination exceptions (see `control/AGENTS.md`) |
-| `hook/` | Lifecycle hooks — `HookRunner`, `HookPoint`, 10 builtin hooks (see `hook/AGENTS.md`) |
+| `hook/` | Lifecycle hooks — `HookRunner`, `HookPoint`, 6 builtin hooks (see `hook/AGENTS.md`) |
 | `interceptor/` | AOP interceptor chain — `InterceptorChain`, 2 builtin interceptors (see `interceptor/AGENTS.md`) |
 | `memory/` | Three-layer memory — session/archive/knowledge, compaction, consolidation, governance, injection (see `memory/AGENTS.md`) |
 | `multi_agent/` | Star-topology orchestration — `AgentPool`, inbox, `CommunicationTracker`, `AgentMessageBus` (see `multi_agent/AGENTS.md`) |
@@ -30,6 +30,7 @@ Core multi-agent framework package (322 Python files, 63 ABCs, 18 Protocols). Al
 | `adapters/` | `PlatformAdapter` ABC, `AdapterRegistry`, `StreamingMode` (see `adapters/AGENTS.md`) |
 | `registry/` | Shared registry utilities (see `registry/AGENTS.md`) |
 | `utils/` | tokenizer, context_builder, deduplicator, sanitizer, media_utils, helpers (see `utils/AGENTS.md`) |
+| `workspace/` | `WorkspaceContext` ABC, `DefaultWorkspaceContext` — cd/exit/restore workspace switching with callback notification and persistence (see `workspace/` directory) |
 
 ## For AI Agents
 
@@ -37,7 +38,7 @@ Core multi-agent framework package (322 Python files, 63 ABCs, 18 Protocols). Al
 - `from __future__ import annotations` in all modules
 - Generic type bindings: `Agent[E]`, `ContentEmitter[E]` via `TypeVar("E", bound=AgentEvent)`
 - Enums/constants over raw strings, dataclasses over dicts for config
-- Every cross-cutting concern needs an ABC (63) or Protocol (18)
+- Every cross-cutting concern needs an ABC or Protocol — prefer ABC per project rules
 - Frozen dataclasses for config/value objects; runtime objects hold state/connections
 
 ### Type Safety (from rules/type-safety.md)

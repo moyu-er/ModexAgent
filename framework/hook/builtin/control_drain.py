@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 async def drain_control_channel(
-    channel: InMemoryControlChannel,
+    channel: InMemoryControlChannel | None,
     ctx: AgentContext,
     command_types: set[ControlCommandType] | None = None,
     *,

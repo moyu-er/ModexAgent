@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from framework.core.context import ContextManager, ContextState
 from framework.core.emitter import AgentResult
@@ -19,11 +20,16 @@ from framework.memory.core.system import (
 from framework.memory.default_system import DefaultMemorySystem
 from framework.memory.layers.config import MemoryLayerConfigSet
 from framework.memory.layers.factory import MemoryLayerFactory
-from framework.memory.archive_generation import ArchiveGenerationStrategy
 from framework.memory.lifecycle import MemoryMaintenancePolicy
 from framework.memory.pruned.manager import PrunedManager
 # UserRetentionBuffer injection moved to framework.memory.user_buffer (Task 6 stub)
 from framework.memory.registry.file import DefaultMemoryStoreRegistry
+
+if TYPE_CHECKING:
+    from framework.agents.summarizer.abc import ArchiveGenerator, KnowledgeConsolidatorBase
+    from framework.core.experience.manager import ExperienceManager
+    from framework.core.provider import LLMProvider
+    from framework.memory.stores.dir_archive import DirArchiveStorage
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +37,15 @@ logger = logging.getLogger(__name__)
 def create_memory_system(
     workspace: Path,
     config: MemoryLayerConfigSet | None = None,
-    llm_provider: Any | None = None,
+    llm_provider: LLMProvider | None = None,
     session_only: bool = False,
-    archive_strategy: ArchiveGenerationStrategy | None = None,
     cleanup_config: dict[str, int | float] | None = None,
     maintenance_policy: MemoryMaintenancePolicy | None = None,
     pruned_manager: PrunedManager | None = None,
+    archive_agent: ArchiveGenerator | None = None,
+    archive_storage: DirArchiveStorage | None = None,
+    knowledge_consolidator: KnowledgeConsolidatorBase | None = None,
+    archive_trigger_callback: Callable[[MemoryContext], Awaitable[None]] | None = None,
 ) -> DefaultMemorySystem:
     """Create a production-ready memory system with default local-file registry.
 
@@ -62,38 +71,35 @@ def create_memory_system(
             llm_provider=llm_provider,
         )
 
-        # Wire knowledge auto-consolidation
-        if layer_set.knowledge is not None and llm_provider is not None:
-            from framework.agents.summarizer.agent import SummarizerAgent
-            from framework.memory.prompts import create_default_registry
-
-            _summarizer = SummarizerAgent(llm_provider)
-            _registry = create_default_registry()
-
-            async def _consolidate(content: str, _file_name: str) -> str:
-                prompt = _registry.get_system("consolidation/knowledge_consolidation")
-                if not prompt:
-                    prompt = SummarizerAgent.PROMPT_KNOWLEDGE_CONSOLIDATION
-                return await _summarizer.summarize(content, prompt=prompt, max_tokens=2000)
-
-            layer_set.knowledge._consolidation_fn = _consolidate
-
     return DefaultMemorySystem(
         layer_set=layer_set,
         store_registry=registry,
-        archive_strategy=archive_strategy,
         cleanup_config=cleanup_config,
         maintenance_policy=maintenance_policy,
         pruned_manager=pruned_manager,
+        archive_agent=archive_agent,
+        archive_storage=archive_storage,
+        knowledge_consolidator=knowledge_consolidator,
+        archive_trigger_callback=archive_trigger_callback,
     )
 
 
 class MemorySystemContextManager(ContextManager):
     """Adapter that wraps a ``MemorySystem`` behind the ``ContextManager`` interface.
 
-    This is a bridge so the existing pipeline can consume the new memory
-    system without being rewritten.  New code should depend on
-    ``MemorySystem`` directly.
+    Prompt assembly order (in :meth:`load`):
+      1. Runtime metadata (date, platform)
+      2. Base system prompt (agent personality / system.md)
+      3. Memory layers via ``injection_policy.assemble()`` — session, archive,
+         knowledge, user-retention (subject to budget & pruning)
+      4. Experiences — persistent reference knowledge (NOT a memory layer)
+      5. Skills — persistent reference knowledge (NOT a memory layer)
+
+    Skills and experiences are intentionally kept OUTSIDE the memory
+    injection pipeline because they are static reference content — they
+    do not participate in memory lifecycle (no budget enforcement, no
+    truncation, no eviction at the injection level).  Their own managers
+    handle freshness / validity independently.
     """
 
     def __init__(
@@ -104,24 +110,13 @@ class MemorySystemContextManager(ContextManager):
         default_agent_role: str | MemoryAgentRole | None = None,
         base_system_prompt: str = "",
         injection_policy: Any | None = None,
+        experience_manager: ExperienceManager | None = None,
     ):
         # Invariant: URB completion hook and injection governance must be
         # both enabled or both disabled. The hook is wired when
         # layers.user_retention is not None (via ScopedMessageHistory);
         # injection is wired when wrap_governance sees a non-None URB.
         # We validate here that both paths agree.
-        if isinstance(memory_system, DefaultMemorySystem):
-            urb_present = memory_system.layers.user_retention is not None
-            # The hook is present when URB layer is not None.
-            # Injection governance will be wired in wrap_governance().
-            # If someone bypasses DefaultMemorySystem and wires only one side,
-            # the mismatch is logged but not fatal (custom wiring may be intentional).
-            if urb_present and injection_policy is not None:
-                # Both present — binding is consistent.
-                pass
-            elif not urb_present and injection_policy is None:
-                # Both absent — binding is consistent.
-                pass
         from framework.memory.injection import FullInjectionPolicy
 
         self.memory_system: ContextManagedMemorySystem = memory_system
@@ -135,6 +130,7 @@ class MemorySystemContextManager(ContextManager):
         self._last_session_id: str | None = None
         self._context_cache: dict[str, MemoryContext] = {}
         self._max_context_cache_size = 1000
+        self._experience_manager = experience_manager
 
     def wrap_governance(
         self,
@@ -150,6 +146,9 @@ class MemorySystemContextManager(ContextManager):
             CompositeGovernance,
             UserRetentionBufferInjectionGovernance,
         )
+        from framework.memory.layers.config import UserRetentionBufferConfig
+
+        # Mirror the URB layer's default entry limit (5) for injection.
         injector = UserRetentionBufferInjectionGovernance(
             urb=urb,
             context_factory=lambda: (
@@ -161,6 +160,7 @@ class MemorySystemContextManager(ContextManager):
                     agent_role=self.default_agent_role,
                 )
             ),
+            max_entries=UserRetentionBufferConfig().max_entries,
         )
         if governance is not None:
             return CompositeGovernance([governance, injector])
@@ -214,8 +214,25 @@ class MemorySystemContextManager(ContextManager):
             query=query,
         )
 
-        # Build complete system_prompt in one pass
-        # Order: Runtime → Agent Rules → Knowledge & Archive → Skills
+        # ── Prompt assembly ────────────────────────────────────────────
+        # Layers are joined with "---" separators.  Order matters:
+        #   1. Runtime metadata       — date, platform (ephemeral)
+        #   2. Base system prompt     — agent personality (static)
+        #   3. Memory layers          — session / archive / knowledge /
+        #                              user-retention (managed by
+        #                              injection_policy.assemble;
+        #                              subject to budget & pruning)
+        #   4. Experiences            — persistent reference knowledge
+        #                              (NOT a memory layer — no pruning)
+        #   5. Skills                 — persistent reference knowledge
+        #                              (NOT a memory layer — no pruning)
+        #
+        # Skills and experiences are kept OUTSIDE injection_policy.assemble
+        # because they are static reference content — they do not
+        # participate in memory lifecycle (no budget enforcement, no
+        # truncation, no eviction at the injection level).  Their own
+        # managers handle freshness / validity independently.
+        # ────────────────────────────────────────────────────────────────
         parts: list[str] = []
         if runtime_info:
             runtime_text = self._format_runtime_info(runtime_info)
@@ -225,6 +242,14 @@ class MemorySystemContextManager(ContextManager):
             parts.append(self.base_system_prompt)
         if result.system_prompt:
             parts.append(result.system_prompt)
+        if self._experience_manager is not None:
+            try:
+                experience_prompt = await self._experience_manager.build_prompt()
+            except Exception:
+                logger.debug("Failed to build experience prompt", exc_info=True)
+            else:
+                if experience_prompt:
+                    parts.append(experience_prompt)
         if skill_manager is not None:
             from framework.core.skills import ResolutionContext
             skill_prompt = await skill_manager.build_prompt(

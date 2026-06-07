@@ -233,10 +233,12 @@ class TestInjectionXml:
         await manager.write_pruned(msgs, "test", now, session_id=SID)
         xml = manager.get_injection_xml(session_id=SID)
         assert xml is not None
-        assert xml.startswith("<memory_archives>")
-        assert xml.strip().endswith("</memory_archives>")
-        assert "<!-- Pruned conversation segments" in xml
-        assert "index.jsonl is editable" in xml
+        from framework.memory.tags import PrunedTag
+
+        assert f"<{PrunedTag.CONTAINER.value}>" in xml
+        assert xml.strip().endswith(f"</{PrunedTag.CONTAINER.value}>")
+        assert "### Conversation Transcripts" in xml
+        assert "index.jsonl" in xml
 
     @pytest.mark.asyncio()
     async def test_contains_absolute_path(self, manager: PrunedManager, pruned_base_dir, now: datetime) -> None:

@@ -125,8 +125,8 @@ async def test_command_returns_running_when_yield_window_expires() -> None:
     assert len(running) == 1
     assert running[0].command == "npm run dev"
     assert "<command_result>" in result
-    assert "<status>running</status>" in result
-    assert "Command still running" in result
+    assert "<status>executing</status>" in result
+    assert "Command still executing" in result
 
 
 @pytest.mark.asyncio
@@ -174,7 +174,7 @@ async def test_command_returns_running_with_waiting_for_input_hint() -> None:
     result = await tool.execute(command="ssh host")
 
     assert "<command_result>" in result
-    assert "<status>input_wait</status>" in result
+    assert "<status>waiting_input</status>" in result
     assert "waiting for input" in result.lower()
     assert "password:" in result
 

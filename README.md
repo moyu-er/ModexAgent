@@ -162,7 +162,6 @@ docs/                # Framework documentation
 | Extra     | Includes                                                                     | Use Case              |
 | --------- | ---------------------------------------------------------------------------- | --------------------- |
 | `llm`     | `litellm`, `openai`                                                          | LLM Provider          |
-| `storage` | `faiss-cpu`, `chromadb`, `sentence-transformers`                             | Vector storage & semantic memory |
 | `session` | `sqlalchemy[asyncio]`                                                        | Session persistence   |
 | `sandbox` | `docker`, `e2b-code-interpreter`                                             | Sandbox execution     |
 | `gateway` | `qq-botpy`, `aiohttp`                                                        | QQ Bot adapter        |

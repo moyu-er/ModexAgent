@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Iterator, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Sequence
 from pathlib import Path
-from typing import Any
-from framework.memory.archive_generation import ArchiveGenerationStrategy
+from typing import TYPE_CHECKING, Any
+
 from framework.memory.archive_models import ArchiveChannel
 from framework.memory.core.layers import ArchiveMemoryManager, MemoryLayerSet, SessionMemoryManager
 from framework.memory.core.message import ChatMessage
@@ -19,6 +19,10 @@ from framework.memory.core.scope import (
 )
 from framework.memory.core.system import MemorySystem
 from framework.memory.history import MessageHistory
+
+if TYPE_CHECKING:
+    from framework.agents.summarizer.abc import ArchiveGenerator, KnowledgeConsolidatorBase
+    from framework.memory.stores.dir_archive import DirArchiveStorage
 from framework.memory.lifecycle import MemoryMaintenancePolicy
 from framework.memory.pruned.manager import PrunedManager
 from framework.memory.recorder import MemoryAppendRecorder
@@ -42,19 +46,23 @@ class ScopedMessageHistory(MessageHistory):
         initial_messages: Sequence[ChatMessage | dict[str, Any]] | None = None,
         recorder: MemoryAppendRecorder | None = None,
         archive_manager: ArchiveMemoryManager | None = None,
-        archive_strategy: ArchiveGenerationStrategy | None = None,
         cleanup_config: dict[str, int | float] | None = None,
         user_retention: Any | None = None,
         pruned_manager: PrunedManager | None = None,
+        archive_agent: ArchiveGenerator | None = None,
+        archive_storage: DirArchiveStorage | None = None,
+        archive_trigger_callback: Callable[[MemoryContext], Awaitable[None]] | None = None,
     ) -> None:
         self._manager = manager
         self._context = context
         self._recorder = recorder
         self._archive_manager = archive_manager
-        self._archive_strategy = archive_strategy
         self._cleanup_config: dict[str, int | float] = cleanup_config or {}
         self._user_retention = user_retention
         self._pruned_manager: PrunedManager | None = pruned_manager
+        self._archive_agent = archive_agent
+        self._archive_storage = archive_storage
+        self._archive_trigger_callback = archive_trigger_callback
         self._cache: list[ChatMessage] | None = (
             [ChatMessage.coerce(m) for m in initial_messages]
             if initial_messages is not None
@@ -65,13 +73,19 @@ class ScopedMessageHistory(MessageHistory):
     async def _run_cleanup(self) -> None:
         from framework.memory.cleanup import cleanup_session
 
+        async def _trigger() -> None:
+            if self._archive_trigger_callback is not None:
+                await self._archive_trigger_callback(self._context)
+
         await cleanup_session(
             session=self._manager,
             archive=self._archive_manager,
             context=self._context,
-            archive_strategy=self._archive_strategy,
             user_retention=self._user_retention,
             pruned_manager=self._pruned_manager,
+            archive_agent=self._archive_agent,
+            archive_storage=self._archive_storage,
+            on_archive_generated=_trigger if self._archive_trigger_callback is not None else None,
             **self._cleanup_config,
         )
 
@@ -163,19 +177,25 @@ class DefaultMemorySystem(MemorySystem):
         *,
         layer_set: MemoryLayerSet,
         store_registry: MemoryStoreRegistry,
-        providers: Any | None = None,  # MemoryProviderRegistry
-        archive_strategy: ArchiveGenerationStrategy | None = None,
+        providers: Any | None = None,
         cleanup_config: dict[str, int | float] | None = None,
         maintenance_policy: MemoryMaintenancePolicy | None = None,
         pruned_manager: PrunedManager | None = None,
+        archive_agent: ArchiveGenerator | None = None,
+        archive_storage: DirArchiveStorage | None = None,
+        knowledge_consolidator: KnowledgeConsolidatorBase | None = None,
+        archive_trigger_callback: Callable[[MemoryContext], Awaitable[None]] | None = None,
     ) -> None:
         self._layers = layer_set
         self._registry = store_registry
         self._providers = providers
-        self._archive_strategy = archive_strategy
         self._cleanup_config: dict[str, int | float] = cleanup_config or {}
         self._maintenance_policy = maintenance_policy
         self._pruned_manager: PrunedManager | None = pruned_manager
+        self._archive_agent = archive_agent
+        self._archive_storage = archive_storage
+        self._knowledge_consolidator = knowledge_consolidator
+        self._archive_trigger_callback = archive_trigger_callback
         self._recorder = MemoryAppendRecorder()
         if providers is not None:
             for provider in providers.all():
@@ -192,6 +212,17 @@ class DefaultMemorySystem(MemorySystem):
         if self._providers is not None:
             await self._providers.shutdown_all()
 
+    def set_archive_trigger_callback(
+        self,
+        callback: Callable[[MemoryContext], Awaitable[None]] | None,
+    ) -> None:
+        """Set a callback invoked after each archive is generated.
+
+        The callback receives the MemoryContext so the caller can check
+        unprocessed archive counts and trigger DreamEngine if needed.
+        """
+        self._archive_trigger_callback = callback
+
     def create_message_history(
         self,
         context: MemoryContext,
@@ -203,10 +234,12 @@ class DefaultMemorySystem(MemorySystem):
             initial_messages=initial_messages,
             recorder=self._recorder,
             archive_manager=self._layers.archive,
-            archive_strategy=self._archive_strategy,
             cleanup_config=self._cleanup_config,
             user_retention=self._layers.user_retention,
             pruned_manager=self._pruned_manager,
+            archive_agent=self._archive_agent,
+            archive_storage=self._archive_storage,
+            archive_trigger_callback=self._archive_trigger_callback,
         )
 
     async def add_messages(
@@ -360,7 +393,7 @@ class DefaultMemorySystem(MemorySystem):
             logger.debug("Failed to resolve knowledge directory", exc_info=True)
             return None
 
-    async def get_archive_directory(self, context: MemoryContext) -> Path | None:
+    async def get_storage_path(self, context: MemoryContext) -> Path | None:
         """Return the absolute path to the archive storage directory."""
         if self._layers.archive is None:
             return None
@@ -376,6 +409,11 @@ class DefaultMemorySystem(MemorySystem):
     def knowledge_manager(self) -> Any | None:
         """Expose knowledge manager for DreamEngine compatibility."""
         return self._layers.knowledge
+
+    @property
+    def knowledge_consolidator(self) -> KnowledgeConsolidatorBase | None:
+        """Expose knowledge consolidator for DreamEngine wiring."""
+        return self._knowledge_consolidator
 
     # -- Provider fan-out -----------------------------------------------
 
@@ -396,6 +434,15 @@ class DefaultMemorySystem(MemorySystem):
             except Exception:
                 logger.debug("Provider prefetch failed", exc_info=True)
         return "\n\n".join(blocks) if blocks else None
+
+    async def ensure_within_budget(self, context: MemoryContext) -> None:
+        """Pre-load budget hook.
+
+        Called by MemorySystemContextManager.load() before every LLM request.
+        It must not emit post-write lifecycle events; explicit budget
+        enforcement should use a dedicated read/check policy.
+        """
+        _ = context
 
     async def _resolve_archive_storage(self, context: MemoryContext) -> Any:
         archive = self._layers.archive

@@ -10,7 +10,7 @@ Agent reasoning pattern implementations. Each sub-package implements a specific 
 | Directory | Purpose |
 |-----------|---------|
 | `react/` | `ReActAgent` — Thought→Action→Observation loop with `ReActEvent` events (see `react/AGENTS.md`) |
-| `summarizer/` | `SummarizerAgent` — single-turn tool-free summarization with predefined prompts |
+| `summarizer/` | `SummarizerAgent` — single-turn tool-free summarization; `ArchiveSummarizer` (MD archive generation); `KnowledgeConsolidator` (ReAct-based knowledge consolidation via `ScopedFileAgent` base class); `KnowledgeConsolidatorBase` ABC |
 
 ## For AI Agents
 

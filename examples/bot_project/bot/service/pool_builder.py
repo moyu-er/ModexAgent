@@ -34,8 +34,10 @@ from framework.multi_agent.inbox.consumer import InboxConsumer
 from framework.multi_agent.inbox.producer import InboxProducer
 from framework.multi_agent.inbox.server import InboxServer
 from framework.multi_agent.session_id import DefaultSessionIdStrategy
+from framework.multi_agent.comm_kind import AgentCommKind
 from framework.multi_agent.tools import (
-    ListCommunicationTargetsTool,
+    CommunicationTarget,
+    CommunicationTargetStore,
     SendToAgentTool,
 )
 from framework.pipeline.adapters import OutputAdapter
@@ -61,6 +63,7 @@ async def create_pool(
     pool_cfg: PoolConfig,
     *,
     project_dir: Path,
+    data_dir: Path,
     broker: Any,
     inbox_server: InboxServer,
     inbox_producer: InboxProducer,
@@ -76,6 +79,8 @@ async def create_pool(
     shared_hook_runner: HookRunner,
     shared_interceptor_chain: Any,
     control_channel: InMemoryControlChannel | None = None,
+    command_processor: Any = None,
+    workspace_context: Any = None,
 ) -> PoolInstance:
 
     main_cfg = next(a for a in pool_cfg.agents if a.role == "main")
@@ -91,7 +96,7 @@ async def create_pool(
         logger.info("Pool '%s': TerminalManager created (%s, lazy)", pool_name, terminal_manager.visibility.value)
 
     # 3. Per-pool MemorySystem
-    memory_dir = project_dir / "data" / "memory" / pool_name
+    memory_dir = data_dir / "memory" / pool_name
     memory_dir.mkdir(parents=True, exist_ok=True)
     memory_system = create_memory(pool_cfg.memory, provider, memory_dir)
     await memory_system.initialize()
@@ -99,17 +104,22 @@ async def create_pool(
 
     # 4. Per-pool ContextManager
     system_prompt = resolve_system_prompt(main_cfg, project_dir)
+    exp_manager = _build_pool_experience_manager(main_cfg, data_dir, pool_name)
     context_manager = MemorySystemContextManager(
         memory_system=memory_system,
         default_agent_id=main_agent_name,
         default_agent_role="main",
         base_system_prompt=system_prompt,
         injection_policy=FullInjectionPolicy(pruned_manager=memory_system.pruned_manager),
+        experience_manager=exp_manager,
     )
+    if exp_manager is not None:
+        logger.info("Pool '%s': experience manager injected", pool_name)
 
     # 5. Per-pool ToolManager (+ MCP)
     tool_manager, mcp_manager = await _build_pool_tool_manager(
         pool_cfg, main_cfg, terminal_manager, project_dir, output_adapter,
+        pool_name=pool_name, data_dir=data_dir, workspace_context=workspace_context,
     )
     logger.info("Pool '%s': ToolManager ready (%d tools)", pool_name, len(tool_manager.list_tools()))
 
@@ -124,7 +134,7 @@ async def create_pool(
     from framework.runtime.codec import RuntimeStateCodecRegistry
     from framework.runtime.enums import AgentKind
     from framework.runtime.store import JsonFileRuntimeCommandStore, JsonFileTurnStateStore
-    runtime_data_dir = project_dir / "data" / "runtime_state" / pool_name
+    runtime_data_dir = data_dir / "runtime_state" / pool_name
     codec_registry = RuntimeStateCodecRegistry({AgentKind.REACT: ReActRuntimeStateCodec()})
     turn_store = JsonFileTurnStateStore(runtime_data_dir / "turns", codec_registry)
     command_store = JsonFileRuntimeCommandStore(runtime_data_dir / "commands")
@@ -222,20 +232,78 @@ async def create_pool(
         main_agent_name=main_agent_name,
         pruned_manager=memory_system.pruned_manager,
     )
+    # Communication target store — shared between SendToAgentTool and AgentCommunicationService
+    main_store = CommunicationTargetStore()
+
+    # Populate from registered pool agents (exclude self)
+    for p in pool.list_profiles():
+        if p.name != main_agent_name:
+            main_store.add(CommunicationTarget(
+                name=p.name, kind=p.comm_kind,
+                description=p.role_description,
+            ))
+
+    # Populate from templates
+    for t in templates:
+        main_store.add(CommunicationTarget(
+            name=t.agent_type, kind=AgentCommKind.SUBAGENT,
+            description=t.description,
+        ))
+
+    logger.info(
+        "Pool '%s': communication store populated (%d targets)",
+        pool_name, len(main_store.list()),
+    )
+
     tool_manager.register(SendToAgentTool(
+        store=main_store,
         source=main_address, broker=broker, registry=pool,
         agent_bus=agent_bus, service=main_service,
         comm_tracker=comm_tracker,
     ))
-    tool_manager.register(ListCommunicationTargetsTool(
-        self_address=main_address, registry=pool,
-        template_registry=template_registry,
-        pool_name=pool_name,
-    ))
-    logger.info("Pool '%s': communication tools registered for main agent", pool_name)
 
-    # 10. Hooks
+    # Inject store into service for runtime target lifecycle
+    main_service._target_store = main_store
+    logger.info("Pool '%s': communication tool registered for main agent (list tool deprecated)", pool_name)
+
+    # 10. Hooks + Experience Review
     max_iter_hook = MaxIterationNotifyHook(notification_service=notification_service)
+
+    # Experience layer (review hook + curator) — mirrors pipeline-mode setup in core.py
+    exp_review_hook = None
+    exp_curator = None
+    exp_cfg = getattr(main_cfg, "experience", None)
+    if exp_cfg is not None and getattr(exp_cfg, "enabled", False):
+        from framework.agents.experience.review_agent import ExperienceReviewAgent
+        from framework.core.experience.meta import PerFileExperienceMetaStore
+        from framework.hook.builtin.experience_review import ExperienceReviewHook
+
+        def _exp_path() -> Path:
+            return data_dir / "experiences" / pool_name / main_agent_name
+
+        _exp_path().mkdir(parents=True, exist_ok=True)
+        exp_meta = PerFileExperienceMetaStore(_exp_path)
+        exp_review_agent = ExperienceReviewAgent(
+            provider=provider,
+            max_iterations=getattr(exp_cfg, "max_iterations", 50),
+        )
+        exp_review_hook = ExperienceReviewHook(
+            review_agent=exp_review_agent,
+            experience_dir=_exp_path,
+            meta_store=exp_meta,
+            min_messages=getattr(exp_cfg, "min_messages", 6),
+            exp_cooldown_turns=getattr(exp_cfg, "exp_cooldown_turns", 3),
+        )
+        logger.info("Pool '%s': ExperienceReviewHook created", pool_name)
+
+        # ExperienceCurator for lifecycle management
+        from framework.core.experience.curator import ExperienceCurator
+        exp_curator = ExperienceCurator(
+            experience_dir=_exp_path,
+            meta_store=exp_meta,
+            max_experiences=getattr(exp_cfg, "max_experiences", 20),
+        )
+        logger.info("Pool '%s': ExperienceCurator created", pool_name)
 
     # Wire hooks on main agent's pipeline
     main_instance = pool._agents.get(main_agent_name)
@@ -245,6 +313,9 @@ async def create_pool(
             consumer=inbox_consumer, agent_name=main_agent_name,
         ))
         _add_hook(main_pipeline, max_iter_hook)
+        if exp_review_hook is not None:
+            _add_hook(main_pipeline, exp_review_hook)
+            logger.info("Pool '%s': ExperienceReviewHook wired to main pipeline", pool_name)
 
     # 12. Wire main agent runtime
     main_instance = pool._agents.get(main_agent_name)
@@ -258,8 +329,13 @@ async def create_pool(
         )
         # Wire slash-command processor so /skill_name commands resolve
         # through SkillManager and are injected as context.
-        from framework.commands.processor import SlashCommandProcessor
-        main_instance.pipeline.command_processor = SlashCommandProcessor.default()
+        # When command_processor is provided (e.g., with cd/exit handlers),
+        # use it; otherwise fall back to default built-in handlers only.
+        if command_processor is not None:
+            main_instance.pipeline.command_processor = command_processor
+        else:
+            from framework.commands.processor import SlashCommandProcessor
+            main_instance.pipeline.command_processor = SlashCommandProcessor.default()
         logger.info(
             "Pool '%s': pipeline wired — command_processor=%s, skill_manager=%s",
             pool_name,
@@ -300,6 +376,9 @@ async def create_pool(
         main_agent_name=main_agent_name,
         provider=provider,
         notification_service=notification_service,
+        communication_service=main_service,
+        experience_curator=exp_curator,
+        experience_curator_task=None,
     )
 
 
@@ -383,6 +462,10 @@ async def _build_pool_tool_manager(
     terminal_manager: TerminalManagerBase | None,
     project_dir: Path,
     output_adapter: OutputAdapter,
+    *,
+    pool_name: str = "main",
+    data_dir: Path,
+    workspace_context: Any = None,
 ) -> tuple[InMemoryToolManager, Any | None]:
     tm = InMemoryToolManager(config=ToolManagerConfig(
         max_workers=10, enable_parallel=True, parallel_max_workers=5,
@@ -411,12 +494,48 @@ async def _build_pool_tool_manager(
     from bot.tools.custom import SendFileToUserTool
     tm.register(SendFileToUserTool(output_adapter=output_adapter))
 
+    # Experience tool (if enabled in agent config)
+    exp_cfg = getattr(main_cfg, "experience", None)
+    if exp_cfg is not None and getattr(exp_cfg, "enabled", False):
+        from framework.memory.tools.experience import ExperienceTool
+        from framework.core.experience.meta import PerFileExperienceMetaStore
+
+        assert data_dir is not None  # always provided by create_pool()
+        # Dynamic path — resolves to current workspace each call
+        if workspace_context is not None:
+            def _exp_path() -> Path:
+                return workspace_context.data_dir / "experiences" / pool_name / main_cfg.name
+        else:
+            # Fallback for tests or non-workspace usage
+            _fixed_dir = data_dir
+            def _exp_path() -> Path:
+                return _fixed_dir / "experiences" / pool_name / main_cfg.name
+        _exp_path().mkdir(parents=True, exist_ok=True)
+        exp_meta = PerFileExperienceMetaStore(_exp_path)
+        tm.register(ExperienceTool(_exp_path, exp_meta))
+        logger.info("Pool '%s': experience tool registered (action=read/write/edit/list/rename)", pool_name)
+
     # MCP: load per-agent config from config/mcp/{agentName}.json
     mcp_tools, mcp_manager = await _load_agent_mcp_tools(main_cfg.name, project_dir)
     for tool in mcp_tools:
         tm.register(tool)
 
     return tm, mcp_manager
+
+
+def _build_pool_experience_manager(
+    main_cfg: AgentConfig, data_dir: Path, pool_name: str,
+) -> Any | None:
+    """Create an ExperienceManager for prompt injection if experience is enabled."""
+    exp_cfg = getattr(main_cfg, "experience", None)
+    if exp_cfg is None or not getattr(exp_cfg, "enabled", False):
+        return None
+    from framework.core.experience.manager import ExperienceManager
+    from framework.core.experience.source import FileExperienceSource
+
+    exp_dir = data_dir / "experiences" / pool_name / main_cfg.name
+    exp_dir.mkdir(parents=True, exist_ok=True)
+    return ExperienceManager(source=FileExperienceSource(directories=[exp_dir]))
 
 
 def _build_pool_skill_manager(main_cfg: Any, project_dir: Path, pool_name: str) -> Any | None:

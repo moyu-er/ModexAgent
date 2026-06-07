@@ -29,6 +29,9 @@ class BuiltinCommand(StrEnum):
     APPROVE = "approve"
     DENY = "deny"
     CONTINUE = "continue"
+    CD = "cd"
+    EXIT = "exit"
+    PWD = "pwd"
 
 
 NOTICE_INVALID_COMMAND = "Invalid command syntax. Commands must look like /command or /command text."

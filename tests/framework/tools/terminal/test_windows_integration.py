@@ -60,7 +60,7 @@ async def test_echo_completes(manager: TerminalManager) -> None:
 async def test_slow_yields_running(manager: TerminalManager) -> None:
     cfg = _cfg(yield_ms=500, default_command_timeout_seconds=30)
     r = await CommandTool(manager, ProcessRegistry(), cfg).execute(command="ping 127.0.0.1 -n 10")
-    assert "Command still running" in r
+    assert "Command still executing" in r
 
 
 @pytest.mark.asyncio
@@ -90,7 +90,7 @@ async def test_write_and_interrupt(manager: TerminalManager) -> None:
         command="bash -c \"read -r x && echo got:$x\""
     )
     proc = ProcessTool(registry=reg, manager=manager)
-    if "Command still running" in r:
+    if "Command still executing" in r:
         await proc.execute(action="write", data="hello\n")
         await proc.execute(action="submit")
     for s in reg.list_running():

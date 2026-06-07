@@ -26,7 +26,19 @@ def _render_skill_xml(skills: list[Skill]) -> str:
         """Escape a value for use in an XML attribute."""
         return _xml_escape(v).replace('"', "&quot;")
 
-    parts: list[str] = ["<available_skills>"]
+    parts: list[str] = [
+        "## Skills",
+        "",
+        "Skills are reusable agent capabilities — each skill is a self-contained "
+        "module with instructions, scripts, and references that extend what you can "
+        "do. The XML block below lists installed skills with their name, directory, "
+        "and a short description. **The XML only carries metadata, not the full "
+        "instructions.** To use a skill, first read its `SKILL.md` file (e.g., via "
+        "a file-reading tool pointed at the skill's directory), then follow the "
+        "instructions exactly.",
+        "",
+        "<available_skills>",
+    ]
     for skill in skills:
         dir_path = str(Path(skill.location).parent.resolve()) if skill.location else ""
         parts.append(

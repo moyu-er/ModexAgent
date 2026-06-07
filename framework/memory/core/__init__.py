@@ -1,6 +1,6 @@
 """Memory system core abstractions."""
 
-from .consolidation import ConsolidationEngine, ConsolidationResult, MemoryUpdate
+from .consolidation import MemoryUpdate
 from .layers import (
     ArchiveMemoryManager,
     KnowledgeMemoryManager,
@@ -40,8 +40,6 @@ __all__ = [
     "CompressionPlan",
     "CompressionReason",
     "CompressionTrigger",
-    "ConsolidationEngine",
-    "ConsolidationResult",
     "MemoryUpdate",
     "InjectionResult",
     "MemoryBudget",

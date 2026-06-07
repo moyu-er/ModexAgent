@@ -41,8 +41,8 @@ class FilteredToolManager(ToolManager):
     def is_registered(self, tool_name: str) -> bool:
         return self._base.is_registered(tool_name) and self._is_allowed(tool_name)
 
-    def get_tool_descriptions(self, caller_context: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-        return [d for d in self._base.get_tool_descriptions(caller_context) if self._is_allowed(d.get("function", {}).get("name"))]
+    def get_tool_descriptions(self) -> list[dict[str, Any]]:
+        return [d for d in self._base.get_tool_descriptions() if self._is_allowed(d.get("function", {}).get("name"))]
 
     async def execute(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult:
         if not self._is_allowed(tool_name):

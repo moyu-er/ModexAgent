@@ -8,10 +8,6 @@ from typing import Any
 
 import pytest
 
-from framework.memory.archive_generation import (
-    ArchiveGenerationStrategy,
-    ArchiveInputMessage,
-)
 from framework.memory.archive_models import (
     ArchiveBundleResult,
     ArchiveChannel,
@@ -76,44 +72,6 @@ async def _add_messages(
         await session.add_messages(context, [msg])
 
 
-class _CountingArchiveStrategy(ArchiveGenerationStrategy):
-    """Stub archive strategy that records calls and can be configured to succeed or fail."""
-
-    def __init__(self, *, fail: bool = False) -> None:
-        self.calls: list[tuple[list[ArchiveInputMessage], MemoryContext, CompressionReason]] = []
-        self._fail = fail
-
-    async def generate(
-        self,
-        messages: Sequence[ArchiveInputMessage],
-        context: MemoryContext,
-        reason: CompressionReason,
-    ) -> ArchiveGenerationResult:
-        self.calls.append((list(messages), context, reason))
-        if self._fail:
-            raise RuntimeError("archive generation failed")
-        return ArchiveGenerationResult(
-            writes=(
-                ArchiveWrite(
-                    channel=ArchiveChannel.CONTEXT,
-                    summary="archived summary",
-                    metadata={"reason": reason.value},
-                ),
-            ),
-            inputs=ArchiveGenerationInputs(
-                context_transcript="transcript",
-                knowledge_transcript="transcript",
-                stats=ArchiveInputStats(
-                    input_messages=len(messages),
-                    context_messages=len(messages),
-                    knowledge_messages=0,
-                    tool_chains=0,
-                    dropped_messages=0,
-                ),
-            ),
-        )
-
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -155,7 +113,7 @@ class TestNoTrigger:
             max_messages=100,
             max_tokens=8000,
             keep_ratio=0.5,
-            archive_strategy=None,
+            
         )
 
         assert result.triggered is False
@@ -186,7 +144,7 @@ class TestTriggerAndCleanup:
             max_messages=10,
             max_tokens=None,
             keep_ratio=0.5,
-            archive_strategy=None,
+            
         )
 
         assert result.triggered is True
@@ -218,7 +176,7 @@ class TestTriggerAndCleanup:
             max_messages=1000,
             max_tokens=500,  # very low limit → triggers
             keep_ratio=0.5,
-            archive_strategy=None,
+            
         )
 
         assert result.triggered is True
@@ -248,7 +206,7 @@ class TestCleanupAlwaysExecutes:
             max_messages=5,
             max_tokens=None,
             keep_ratio=0.5,
-            archive_strategy=None,
+            
         )
 
         assert result.triggered is True
@@ -291,7 +249,7 @@ class TestCleanupRemovesInvalidToolChains:
             max_messages=5,
             max_tokens=None,
             keep_ratio=0.5,
-            archive_strategy=None,
+            
         )
 
         assert result.triggered is True
@@ -301,200 +259,6 @@ class TestCleanupRemovesInvalidToolChains:
             # No orphan tool results should remain
             if msg.role == "tool" and msg.tool_call_id == "call_orphan":
                 pytest.fail("Orphan tool result should have been sanitized away")
-
-
-class TestArchiveIntegration:
-    """Tests for archive strategy interaction."""
-
-    @pytest.mark.asyncio
-    async def test_archive_called_when_archive_present(self, registry: InMemoryStoreRegistry) -> None:
-        layer_set = _make_layer_set(registry)
-        context = _ctx()
-        session = layer_set.session
-
-        msgs = []
-        for i in range(5):
-            msgs.append(_user_msg(f"u-{i}"))
-            msgs.append(_assistant_msg(f"a-{i}"))
-        await _add_messages(session, context, msgs)
-
-        strategy = _CountingArchiveStrategy()
-
-        result = await cleanup_session(
-            session=session,
-            archive=layer_set.archive,
-            context=context,
-            max_messages=5,
-            max_tokens=None,
-            keep_ratio=0.5,
-            archive_strategy=strategy,
-        )
-
-        assert result.triggered is True
-        assert result.archive_skipped is False
-        assert len(strategy.calls) == 1
-        # The strategy should have received the pruned messages
-        pruned_msgs = strategy.calls[0][0]
-        assert len(pruned_msgs) > 0
-
-    @pytest.mark.asyncio
-    async def test_archive_skipped_when_archive_is_none(self, registry: InMemoryStoreRegistry) -> None:
-        layer_set = _make_layer_set(registry)
-        context = _ctx()
-        session = layer_set.session
-
-        msgs = []
-        for i in range(5):
-            msgs.append(_user_msg(f"u-{i}"))
-            msgs.append(_assistant_msg(f"a-{i}"))
-        await _add_messages(session, context, msgs)
-
-        strategy = _CountingArchiveStrategy()
-
-        result = await cleanup_session(
-            session=session,
-            archive=None,  # no archive manager
-            context=context,
-            max_messages=5,
-            max_tokens=None,
-            keep_ratio=0.5,
-            archive_strategy=strategy,
-        )
-
-        assert result.triggered is True
-        assert result.archive_skipped is True
-        # Strategy should NOT have been called
-        assert len(strategy.calls) == 0
-
-    @pytest.mark.asyncio
-    async def test_archive_skipped_when_strategy_is_none(self, registry: InMemoryStoreRegistry) -> None:
-        layer_set = _make_layer_set(registry)
-        context = _ctx()
-        session = layer_set.session
-
-        msgs = []
-        for i in range(5):
-            msgs.append(_user_msg(f"u-{i}"))
-            msgs.append(_assistant_msg(f"a-{i}"))
-        await _add_messages(session, context, msgs)
-
-        result = await cleanup_session(
-            session=session,
-            archive=layer_set.archive,  # archive exists
-            context=context,
-            max_messages=5,
-            max_tokens=None,
-            keep_ratio=0.5,
-            archive_strategy=None,  # but no strategy
-        )
-
-        assert result.triggered is True
-        assert result.archive_skipped is True
-
-
-class TestArchiveFailureCounter:
-    """Tests for the archive failure counter."""
-
-    @pytest.mark.asyncio
-    async def test_archive_failure_increments_counter(self, registry: InMemoryStoreRegistry) -> None:
-        layer_set = _make_layer_set(registry)
-        context = _ctx("fail-session-1")
-        session = layer_set.session
-
-        msgs = []
-        for i in range(5):
-            msgs.append(_user_msg(f"u-{i}"))
-            msgs.append(_assistant_msg(f"a-{i}"))
-        await _add_messages(session, context, msgs)
-
-        strategy = _CountingArchiveStrategy(fail=True)
-
-        # First call: strategy raises → failure counter = 1
-        result = await cleanup_session(
-            session=session,
-            archive=layer_set.archive,
-            context=context,
-            max_messages=5,
-            max_tokens=None,
-            keep_ratio=0.5,
-            archive_strategy=strategy,
-            archive_fail_threshold=3,
-        )
-
-        assert result.triggered is True
-        # Session cleanup still succeeded even though archive failed
-        remaining = await session.get_all_messages(context)
-        assert len(remaining) < 10
-
-        # Need to re-add messages for second attempt
-        await _add_messages(session, context, msgs)
-
-        result2 = await cleanup_session(
-            session=session,
-            archive=layer_set.archive,
-            context=context,
-            max_messages=5,
-            max_tokens=None,
-            keep_ratio=0.5,
-            archive_strategy=strategy,
-            archive_fail_threshold=3,
-        )
-        assert result2.triggered is True
-
-    @pytest.mark.asyncio
-    async def test_archive_skipped_after_consecutive_failures(self, registry: InMemoryStoreRegistry) -> None:
-        layer_set = _make_layer_set(registry)
-        context = _ctx("skip-session")
-        session = layer_set.session
-
-        strategy = _CountingArchiveStrategy(fail=True)
-
-        # Run enough times to hit the threshold
-        threshold = 2
-        for attempt in range(threshold):
-            msgs = []
-            for i in range(5):
-                msgs.append(_user_msg(f"u-{attempt}-{i}"))
-                msgs.append(_assistant_msg(f"a-{attempt}-{i}"))
-            await _add_messages(session, context, msgs)
-
-            await cleanup_session(
-                session=session,
-                archive=layer_set.archive,
-                context=context,
-                max_messages=5,
-                max_tokens=None,
-                keep_ratio=0.5,
-                archive_strategy=strategy,
-                archive_fail_threshold=threshold,
-            )
-
-        # After hitting threshold, next call should skip archive entirely
-        msgs = []
-        for i in range(5):
-            msgs.append(_user_msg(f"u-final-{i}"))
-            msgs.append(_assistant_msg(f"a-final-{i}"))
-        await _add_messages(session, context, msgs)
-
-        # Reset strategy to succeed now — but counter should cause skip
-        strategy._fail = False
-        call_count_before = len(strategy.calls)
-
-        result = await cleanup_session(
-            session=session,
-            archive=layer_set.archive,
-            context=context,
-            max_messages=5,
-            max_tokens=None,
-            keep_ratio=0.5,
-            archive_strategy=strategy,
-            archive_fail_threshold=threshold,
-        )
-
-        assert result.triggered is True
-        assert result.archive_skipped is True
-        # Strategy should not have been called on this attempt (skipped due to counter)
-        assert len(strategy.calls) == call_count_before
 
 
 class TestKeepBoundary:
@@ -529,7 +293,7 @@ class TestKeepBoundary:
             max_messages=6,  # trigger cleanup
             max_tokens=None,
             keep_ratio=0.4,  # keep ~4 messages
-            archive_strategy=None,
+            
         )
 
         assert result.triggered is True
@@ -568,7 +332,7 @@ class TestKeepBoundary:
         result = await cleanup_session(
             session=session, archive=None, context=context,
             max_messages=20, max_tokens=None, keep_ratio=0.5,
-            archive_strategy=None, user_retention=layer_set.user_retention,
+             user_retention=layer_set.user_retention,
         )
 
         assert result.triggered is True
@@ -613,7 +377,7 @@ class TestKeepToolChainIntegrity:
             max_messages=5,
             max_tokens=None,
             keep_ratio=0.4,
-            archive_strategy=None,
+            
         )
 
         assert result.triggered is True
@@ -665,7 +429,7 @@ class TestUserRetentionExtraction:
             max_messages=2,
             max_tokens=None,
             keep_ratio=0.5,
-            archive_strategy=None,
+            
             user_retention=layer_set.user_retention,
         )
 
@@ -704,7 +468,7 @@ class TestUserRetentionExtraction:
             max_messages=5,
             max_tokens=None,
             keep_ratio=0.4,
-            archive_strategy=None,
+            
             user_retention=layer_set.user_retention,
         )
 
@@ -735,7 +499,7 @@ class TestUserRetentionExtraction:
             max_messages=5,
             max_tokens=None,
             keep_ratio=0.5,
-            archive_strategy=None,
+            
             user_retention=None,
         )
 
@@ -776,7 +540,7 @@ class TestUserRetentionCompletion:
             max_messages=4,
             max_tokens=None,
             keep_ratio=0.5,
-            archive_strategy=None,
+            
             user_retention=layer_set.user_retention,
         )
 
@@ -816,7 +580,7 @@ class TestUserRetentionCompletion:
             max_messages=3,
             max_tokens=None,
             keep_ratio=0.4,
-            archive_strategy=None,
+            
             user_retention=layer_set.user_retention,
         )
 
@@ -857,7 +621,7 @@ class TestUserRetentionCompletion:
             max_messages=3,
             max_tokens=None,
             keep_ratio=0.5,
-            archive_strategy=None,
+            
             user_retention=layer_set.user_retention,
         )
 
@@ -879,7 +643,7 @@ class TestUserRetentionCompletion:
             max_messages=2,
             max_tokens=None,
             keep_ratio=0.5,
-            archive_strategy=None,
+            
             user_retention=layer_set.user_retention,
         )
 
@@ -923,7 +687,7 @@ class TestToolChainDominanceDoesNotOverPrune:
             max_messages=100,
             max_tokens=None,
             keep_ratio=0.4,
-            archive_strategy=None,
+            
             user_retention=layer_set.user_retention,
         )
 
@@ -963,7 +727,7 @@ class TestToolChainDominanceDoesNotOverPrune:
             max_messages=max_msgs,
             max_tokens=None,
             keep_ratio=keep_ratio,
-            archive_strategy=None,
+            
         )
 
         assert result.triggered is True
@@ -1007,7 +771,7 @@ class TestKeepResanitized:
             max_messages=5,
             max_tokens=None,
             keep_ratio=0.6,
-            archive_strategy=None,
+            
         )
 
         assert result.triggered is True
@@ -1049,3 +813,734 @@ class TestCleanupResultType:
         assert result.triggered is False
         assert result.messages_kept == 0
         assert result.messages_pruned == 0
+
+
+# ---------------------------------------------------------------------------
+# Mock archive agent for Phase 4 tests
+# ---------------------------------------------------------------------------
+
+
+class _MockArchiveAgent:
+    """Mock ArchiveSummarizer that records calls and can be configured to succeed or fail."""
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.calls: list[tuple[list[dict], object, int]] = []
+        self._fail = fail
+
+    async def generate(
+        self,
+        pruned_messages: list[dict],
+        archive_dir: object,
+        archive_id: int = 0,
+    ) -> object:
+        from framework.agents.summarizer.archive_agent import ArchiveSummarizerResult
+
+        self.calls.append((list(pruned_messages), archive_dir, archive_id))
+        if self._fail:
+            return ArchiveSummarizerResult(
+                success=False,
+                archive_id=archive_id,
+                error="mock failure",
+            )
+        # Actually write files so is_archive_complete works
+        from pathlib import Path
+        archive_dir_path = Path(str(archive_dir))
+        archive_dir_path.mkdir(parents=True, exist_ok=True)
+        (archive_dir_path / "context.md").write_text("context summary", encoding="utf-8")
+        (archive_dir_path / "knowledge.md").write_text("knowledge summary", encoding="utf-8")
+        (archive_dir_path / "index.md").write_text("Test Archive Topic", encoding="utf-8")
+        return ArchiveSummarizerResult(
+            success=True,
+            archive_id=archive_id,
+            files_written=("context.md", "knowledge.md", "index.md"),
+        )
+
+
+class _DirArchiveStorageFactory:
+    """Factory for DirArchiveStorage backed by a temp directory."""
+
+    @staticmethod
+    def create(tmp_path) -> object:
+        from pathlib import Path
+        from framework.memory.stores.dir_archive import DirArchiveStorage
+        return DirArchiveStorage(Path(tmp_path) / "archives")
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: Archive agent integration tests
+# ---------------------------------------------------------------------------
+
+
+class TestArchiveAgentIntegration:
+    """Tests for the new archive_agent flow in cleanup_session."""
+
+    @pytest.mark.asyncio
+    async def test_with_archive_agent_generates_md_files(
+        self, registry: InMemoryStoreRegistry, tmp_path,
+    ) -> None:
+        """When archive_agent is provided, archive MD files are generated."""
+        layer_set = _make_layer_set(registry)
+        context = _ctx("agent-session-1")
+        session = layer_set.session
+
+        msgs = []
+        for i in range(5):
+            msgs.append(_user_msg(f"u-{i}"))
+            msgs.append(_assistant_msg(f"a-{i}"))
+        await _add_messages(session, context, msgs)
+
+        agent = _MockArchiveAgent()
+        storage = _DirArchiveStorageFactory.create(tmp_path)
+
+        result = await cleanup_session(
+            session=session,
+            archive=layer_set.archive,
+            context=context,
+            max_messages=5,
+            max_tokens=None,
+            keep_ratio=0.5,
+            archive_agent=agent,
+            archive_storage=storage,
+        )
+
+        assert result.triggered is True
+        assert len(agent.calls) == 1
+        # Verify files were written to the archive directory
+        archive_dir = agent.calls[0][1]
+        from pathlib import Path
+        archive_path = Path(str(archive_dir))
+        assert (archive_path / "context.md").exists()
+        assert (archive_path / "knowledge.md").exists()
+        assert (archive_path / "index.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_archive_agent_failure_falls_back(
+        self, registry: InMemoryStoreRegistry, tmp_path,
+    ) -> None:
+        """When archive_agent fails, pruned index falls back to write_pruned."""
+        from framework.memory.pruned.manager import PrunedManager
+
+        layer_set = _make_layer_set(registry)
+        context = _ctx("agent-fail-session")
+        session = layer_set.session
+
+        msgs = []
+        for i in range(5):
+            msgs.append(_user_msg(f"u-{i}"))
+            msgs.append(_assistant_msg(f"a-{i}"))
+        await _add_messages(session, context, msgs)
+
+        agent = _MockArchiveAgent(fail=True)
+        storage = _DirArchiveStorageFactory.create(tmp_path)
+        pruned_mgr = PrunedManager(pruned_base_dir=tmp_path / "pruned")
+
+        result = await cleanup_session(
+            session=session,
+            archive=layer_set.archive,
+            context=context,
+            max_messages=5,
+            max_tokens=None,
+            keep_ratio=0.5,
+            archive_agent=agent,
+            archive_storage=storage,
+            pruned_manager=pruned_mgr,
+        )
+
+        assert result.triggered is True
+        # Archive was attempted but failed
+        assert len(agent.calls) == 1
+        # Pruned index should have been populated via fallback
+        entries = pruned_mgr._get_storage(context.session_id).read_index()
+        assert len(entries) >= 1
+
+    @pytest.mark.asyncio
+    async def test_archive_id_increments_on_success(
+        self, registry: InMemoryStoreRegistry, tmp_path,
+    ) -> None:
+        """archive_id (next_archive_id in state) increments after successful flow."""
+        layer_set = _make_layer_set(registry)
+        context = _ctx("increment-session")
+        session = layer_set.session
+
+        msgs = []
+        for i in range(5):
+            msgs.append(_user_msg(f"u-{i}"))
+            msgs.append(_assistant_msg(f"a-{i}"))
+        await _add_messages(session, context, msgs)
+
+        agent = _MockArchiveAgent()
+        storage = _DirArchiveStorageFactory.create(tmp_path)
+
+        # Initial state: no state.json, defaults to next_archive_id=1
+        result = await cleanup_session(
+            session=session,
+            archive=layer_set.archive,
+            context=context,
+            max_messages=5,
+            max_tokens=None,
+            keep_ratio=0.5,
+            archive_agent=agent,
+            archive_storage=storage,
+        )
+
+        assert result.triggered is True
+        # State should now have next_archive_id=2
+        state = await storage.read_archive_state()
+        assert state is not None
+        assert state["next_archive_id"] == 2
+
+        # Second cleanup: should use archive_id=2
+        await _add_messages(session, context, msgs)
+
+        agent2 = _MockArchiveAgent()
+        result2 = await cleanup_session(
+            session=session,
+            archive=layer_set.archive,
+            context=context,
+            max_messages=5,
+            max_tokens=None,
+            keep_ratio=0.5,
+            archive_agent=agent2,
+            archive_storage=storage,
+        )
+
+        assert result2.triggered is True
+        assert len(agent2.calls) == 1
+        # The second call should have archive_id=2
+        assert agent2.calls[0][2] == 2
+        # State should now have next_archive_id=3
+        state = await storage.read_archive_state()
+        assert state["next_archive_id"] == 3
+
+    @pytest.mark.asyncio
+    async def test_skips_agent_if_archive_complete(
+        self, registry: InMemoryStoreRegistry, tmp_path,
+    ) -> None:
+        """When archive directory is already complete, no LLM call is made."""
+        layer_set = _make_layer_set(registry)
+        context = _ctx("skip-complete-session")
+        session = layer_set.session
+
+        # Pre-populate a complete archive for id=1
+        storage = _DirArchiveStorageFactory.create(tmp_path)
+        await storage.write_archive_state({"next_archive_id": 1})
+        await storage.write_archive_file(1, "context.md", "existing context")
+        await storage.write_archive_file(1, "knowledge.md", "existing knowledge")
+        await storage.write_archive_file(1, "index.md", "existing index")
+
+        msgs = []
+        for i in range(5):
+            msgs.append(_user_msg(f"u-{i}"))
+            msgs.append(_assistant_msg(f"a-{i}"))
+        await _add_messages(session, context, msgs)
+
+        agent = _MockArchiveAgent()
+
+        result = await cleanup_session(
+            session=session,
+            archive=layer_set.archive,
+            context=context,
+            max_messages=5,
+            max_tokens=None,
+            keep_ratio=0.5,
+            archive_agent=agent,
+            archive_storage=storage,
+        )
+
+        assert result.triggered is True
+        # Agent should NOT have been called since archive is already complete
+        assert len(agent.calls) == 0
+        # archive_skipped should be False (archive was present, just complete)
+        assert result.archive_skipped is False
+
+    @pytest.mark.asyncio
+    async def test_archives_before_session_commit(
+        self, registry: InMemoryStoreRegistry, tmp_path,
+    ) -> None:
+        """Archive generation happens BEFORE session messages are committed."""
+        # Use a tracking agent that records order
+        layer_set = _make_layer_set(registry)
+        context = _ctx("order-session")
+        session = layer_set.session
+
+        msgs = []
+        for i in range(5):
+            msgs.append(_user_msg(f"u-{i}"))
+            msgs.append(_assistant_msg(f"a-{i}"))
+        await _add_messages(session, context, msgs)
+
+        # Before cleanup, session has 10 messages
+        before_count = len(await session.get_all_messages(context))
+        assert before_count == 10
+
+        agent = _MockArchiveAgent()
+        storage = _DirArchiveStorageFactory.create(tmp_path)
+
+        # The agent writes files to the archive directory
+        # We verify that after cleanup, the session is pruned AND files exist
+        result = await cleanup_session(
+            session=session,
+            archive=layer_set.archive,
+            context=context,
+            max_messages=5,
+            max_tokens=None,
+            keep_ratio=0.5,
+            archive_agent=agent,
+            archive_storage=storage,
+        )
+
+        assert result.triggered is True
+        assert result.messages_pruned > 0
+        # Session was committed (pruned) AND archive files were generated
+        after_count = len(await session.get_all_messages(context))
+        assert after_count < before_count
+        # Archive files exist (agent wrote them before commit)
+        assert len(agent.calls) == 1
+        archive_dir = agent.calls[0][1]
+        from pathlib import Path
+        archive_path = Path(str(archive_dir))
+        assert (archive_path / "index.md").exists()
+
+
+class TestArchiveSuccessPrunedContent:
+    """Regression: when archive agent succeeds, pruned raw content must still be written.
+
+    Bug: cleanup_session used refresh_from_archives() on the archive-success path,
+    which only wrote index.jsonl pointing to archive layer files. Raw pruned messages
+    were lost and content_filename was a cross-layer reference that didn't resolve.
+    """
+
+    @pytest.mark.asyncio
+    async def test_pruned_writes_raw_content_when_archive_succeeds(
+        self, registry: InMemoryStoreRegistry, tmp_path,
+    ) -> None:
+        """Pruned content file must exist with raw messages, not just an index."""
+        from framework.memory.pruned.manager import PrunedManager
+
+        layer_set = _make_layer_set(registry)
+        context = _ctx("pruned-archive-session")
+        session = layer_set.session
+
+        msgs = []
+        for i in range(5):
+            msgs.append(_user_msg(f"u-{i}"))
+            msgs.append(_assistant_msg(f"a-{i}"))
+        await _add_messages(session, context, msgs)
+
+        agent = _MockArchiveAgent()
+        storage = _DirArchiveStorageFactory.create(tmp_path)
+        pruned_mgr = PrunedManager(pruned_base_dir=tmp_path / "pruned")
+
+        result = await cleanup_session(
+            session=session,
+            archive=layer_set.archive,
+            context=context,
+            max_messages=5,
+            max_tokens=None,
+            keep_ratio=0.5,
+            archive_agent=agent,
+            archive_storage=storage,
+            pruned_manager=pruned_mgr,
+        )
+
+        assert result.triggered is True
+        assert result.messages_pruned > 0
+
+        # Pruned index must have entries
+        pruned_storage = pruned_mgr._get_storage(context.session_id)
+        entries = pruned_storage.read_index()
+        assert len(entries) >= 1
+
+        entry = entries[-1]
+
+        # Bug 1: content_filename must resolve to a real file in pruned dir
+        from pathlib import Path
+        pruned_dir = Path(pruned_storage.get_directory_path())
+        content_path = pruned_dir / entry.content_filename
+        assert content_path.exists(), (
+            f"content_filename '{entry.content_filename}' does not exist at {content_path}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_pruned_content_contains_raw_messages(
+        self, registry: InMemoryStoreRegistry, tmp_path,
+    ) -> None:
+        """Pruned content file must contain the raw pruned messages (JSONL)."""
+        import json
+        from framework.memory.pruned.manager import PrunedManager
+
+        layer_set = _make_layer_set(registry)
+        context = _ctx("pruned-raw-session")
+        session = layer_set.session
+
+        msgs = []
+        for i in range(5):
+            msgs.append(_user_msg(f"unique-content-{i}"))
+            msgs.append(_assistant_msg(f"reply-{i}"))
+        await _add_messages(session, context, msgs)
+
+        agent = _MockArchiveAgent()
+        storage = _DirArchiveStorageFactory.create(tmp_path)
+        pruned_mgr = PrunedManager(pruned_base_dir=tmp_path / "pruned")
+
+        await cleanup_session(
+            session=session,
+            archive=layer_set.archive,
+            context=context,
+            max_messages=5,
+            max_tokens=None,
+            keep_ratio=0.5,
+            archive_agent=agent,
+            archive_storage=storage,
+            pruned_manager=pruned_mgr,
+        )
+
+        pruned_storage = pruned_mgr._get_storage(context.session_id)
+        entries = pruned_storage.read_index()
+        assert len(entries) >= 1
+
+        entry = entries[-1]
+        from pathlib import Path
+        content_path = Path(pruned_storage.get_directory_path()) / entry.content_filename
+        assert content_path.exists()
+
+        # Raw messages must be readable as JSONL
+        raw_lines = content_path.read_text(encoding="utf-8").strip().split("\n")
+        assert len(raw_lines) > 0
+        parsed = [json.loads(line) for line in raw_lines]
+        # At least one user message from our input should be in the pruned content
+        user_contents = [m.get("content", "") for m in parsed if m.get("role") == "user"]
+        assert any("unique-content-" in c for c in user_contents), (
+            "Pruned content should contain raw user messages from the pruned session region"
+        )
+
+    @pytest.mark.asyncio
+    async def test_pruned_entry_has_correct_message_count_and_times(
+        self, registry: InMemoryStoreRegistry, tmp_path,
+    ) -> None:
+        """Pruned index entry must have message_count > 0 and non-empty time fields."""
+        from framework.memory.pruned.manager import PrunedManager
+
+        layer_set = _make_layer_set(registry)
+        context = _ctx("pruned-fields-session")
+        session = layer_set.session
+
+        msgs = []
+        for i in range(5):
+            msgs.append(_user_msg(f"u-{i}"))
+            msgs.append(_assistant_msg(f"a-{i}"))
+        await _add_messages(session, context, msgs)
+
+        agent = _MockArchiveAgent()
+        storage = _DirArchiveStorageFactory.create(tmp_path)
+        pruned_mgr = PrunedManager(pruned_base_dir=tmp_path / "pruned")
+
+        await cleanup_session(
+            session=session,
+            archive=layer_set.archive,
+            context=context,
+            max_messages=5,
+            max_tokens=None,
+            keep_ratio=0.5,
+            archive_agent=agent,
+            archive_storage=storage,
+            pruned_manager=pruned_mgr,
+        )
+
+        pruned_storage = pruned_mgr._get_storage(context.session_id)
+        entries = pruned_storage.read_index()
+        assert len(entries) >= 1
+
+        entry = entries[-1]
+        # Bug 3: message_count must reflect actual pruned messages
+        assert entry.message_count > 0, (
+            f"message_count should be > 0, got {entry.message_count}"
+        )
+        # Time display fields must be populated
+        assert entry.start_time_display != "", (
+            "start_time_display should not be empty"
+        )
+        assert entry.cleanup_time_display != "", (
+            "cleanup_time_display should not be empty"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: Resolved storage propagation regression tests
+# ---------------------------------------------------------------------------
+
+
+class TestResolvedStoragePropagation:
+    """Regression: archive_storage=None must not prevent pruned topic enrichment.
+
+    Root cause: _generate_archive_phase dynamically resolves storage into a
+    local variable but subsequent phases receive the original ``None``.  The
+    fix carries ``resolved_storage`` via ``_ArchiveOutcome`` so that Phases
+    3/5/6 can use it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_pruned_topic_from_archive_when_storage_not_injected(
+        self, registry: InMemoryStoreRegistry, tmp_path,
+    ) -> None:
+        """archive_storage=None + dynamic resolve → pruned topic = archive index.md."""
+        from framework.memory.pruned.manager import PrunedManager
+        from framework.memory.stores.dir_archive import DirArchiveStorage
+
+        layer_set = _make_layer_set(registry)
+        context = _ctx("resolve-topic-session")
+        session = layer_set.session
+
+        msgs = []
+        for i in range(5):
+            msgs.append(_user_msg(f"u-{i}"))
+            msgs.append(_assistant_msg(f"a-{i}"))
+        await _add_messages(session, context, msgs)
+
+        # To make dynamic resolution work, the archive layer must return a
+        # storage path.  Mock get_storage_path to return a real directory.
+        archive_storage_dir = tmp_path / "archives"
+        real_storage = DirArchiveStorage(archive_storage_dir)
+        original_get_storage_path = layer_set.archive.get_storage_path
+
+        async def _mock_get_storage_path(ctx: MemoryContext) -> object:
+            return archive_storage_dir
+
+        layer_set.archive.get_storage_path = _mock_get_storage_path
+
+        try:
+            agent = _MockArchiveAgent()
+            pruned_mgr = PrunedManager(pruned_base_dir=tmp_path / "pruned")
+
+            # Pass archive_storage=None to trigger the bug path
+            result = await cleanup_session(
+                session=session,
+                archive=layer_set.archive,
+                context=context,
+                max_messages=5,
+                max_tokens=None,
+                keep_ratio=0.5,
+                archive_agent=agent,
+                archive_storage=None,
+                pruned_manager=pruned_mgr,
+            )
+
+            assert result.triggered is True
+
+            # Key assertion: pruned topic should come from archive index.md
+            pruned_storage = pruned_mgr._get_storage(context.session_id)
+            entries = pruned_storage.read_index()
+            assert len(entries) >= 1
+
+            entry = entries[-1]
+            # _MockArchiveAgent writes "Test Archive Topic" to index.md
+            assert entry.topic == "Test Archive Topic", (
+                f"Expected pruned topic from archive index.md, got: '{entry.topic}'"
+            )
+        finally:
+            layer_set.archive.get_storage_path = original_get_storage_path
+
+    @pytest.mark.asyncio
+    async def test_pruned_topic_from_archive_when_storage_explicitly_provided(
+        self, registry: InMemoryStoreRegistry, tmp_path,
+    ) -> None:
+        """archive_storage provided → existing behavior unchanged (topic from archive)."""
+        from framework.memory.pruned.manager import PrunedManager
+
+        layer_set = _make_layer_set(registry)
+        context = _ctx("explicit-storage-session")
+        session = layer_set.session
+
+        msgs = []
+        for i in range(5):
+            msgs.append(_user_msg(f"u-{i}"))
+            msgs.append(_assistant_msg(f"a-{i}"))
+        await _add_messages(session, context, msgs)
+
+        agent = _MockArchiveAgent()
+        storage = _DirArchiveStorageFactory.create(tmp_path)
+        pruned_mgr = PrunedManager(pruned_base_dir=tmp_path / "pruned")
+
+        result = await cleanup_session(
+            session=session,
+            archive=layer_set.archive,
+            context=context,
+            max_messages=5,
+            max_tokens=None,
+            keep_ratio=0.5,
+            archive_agent=agent,
+            archive_storage=storage,
+            pruned_manager=pruned_mgr,
+        )
+
+        assert result.triggered is True
+
+        pruned_storage = pruned_mgr._get_storage(context.session_id)
+        entries = pruned_storage.read_index()
+        assert len(entries) >= 1
+
+        entry = entries[-1]
+        assert entry.topic == "Test Archive Topic"
+
+    @pytest.mark.asyncio
+    async def test_fallback_topic_when_archive_agent_fails(
+        self, registry: InMemoryStoreRegistry, tmp_path,
+    ) -> None:
+        """archive_storage=None + agent fails → fallback time-range topic."""
+        from framework.memory.pruned.manager import PrunedManager
+
+        layer_set = _make_layer_set(registry)
+        context = _ctx("fail-fallback-session")
+        session = layer_set.session
+
+        msgs = []
+        for i in range(5):
+            msgs.append(_user_msg(f"u-{i}"))
+            msgs.append(_assistant_msg(f"a-{i}"))
+        await _add_messages(session, context, msgs)
+
+        agent = _MockArchiveAgent(fail=True)
+        pruned_mgr = PrunedManager(pruned_base_dir=tmp_path / "pruned")
+
+        result = await cleanup_session(
+            session=session,
+            archive=layer_set.archive,
+            context=context,
+            max_messages=5,
+            max_tokens=None,
+            keep_ratio=0.5,
+            archive_agent=agent,
+            archive_storage=None,
+            pruned_manager=pruned_mgr,
+        )
+
+        assert result.triggered is True
+
+        pruned_storage = pruned_mgr._get_storage(context.session_id)
+        entries = pruned_storage.read_index()
+        assert len(entries) >= 1
+
+        entry = entries[-1]
+        # Should be fallback: "YYYY-MM-DD HH:MM ~ YYYY-MM-DD HH:MM (N messages)"
+        assert "(" in entry.topic and "messages)" in entry.topic, (
+            f"Expected fallback time-range topic, got: '{entry.topic}'"
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_archive_agent_uses_fallback_topic(
+        self, registry: InMemoryStoreRegistry, tmp_path,
+    ) -> None:
+        """No archive_agent at all → fallback topic (existing behavior)."""
+        from framework.memory.pruned.manager import PrunedManager
+
+        layer_set = _make_layer_set(registry)
+        context = _ctx("no-agent-session")
+        session = layer_set.session
+
+        msgs = []
+        for i in range(5):
+            msgs.append(_user_msg(f"u-{i}"))
+            msgs.append(_assistant_msg(f"a-{i}"))
+        await _add_messages(session, context, msgs)
+
+        pruned_mgr = PrunedManager(pruned_base_dir=tmp_path / "pruned")
+
+        result = await cleanup_session(
+            session=session,
+            archive=layer_set.archive,
+            context=context,
+            max_messages=5,
+            max_tokens=None,
+            keep_ratio=0.5,
+            pruned_manager=pruned_mgr,
+        )
+
+        assert result.triggered is True
+
+        pruned_storage = pruned_mgr._get_storage(context.session_id)
+        entries = pruned_storage.read_index()
+        assert len(entries) >= 1
+
+        entry = entries[-1]
+        assert "(" in entry.topic and "messages)" in entry.topic
+
+    @pytest.mark.asyncio
+    async def test_archive_state_advances_when_storage_not_injected(
+        self, registry: InMemoryStoreRegistry, tmp_path,
+    ) -> None:
+        """archive_storage=None → state.json still gets next_archive_id incremented."""
+        from framework.memory.stores.dir_archive import DirArchiveStorage
+
+        layer_set = _make_layer_set(registry)
+        context = _ctx("state-advance-session")
+        session = layer_set.session
+
+        msgs = []
+        for i in range(5):
+            msgs.append(_user_msg(f"u-{i}"))
+            msgs.append(_assistant_msg(f"a-{i}"))
+        await _add_messages(session, context, msgs)
+
+        agent = _MockArchiveAgent()
+
+        # Provide storage so state advance writes to a known location.
+        # The key test is that Phase 7 (advance) uses the resolved storage.
+        storage = _DirArchiveStorageFactory.create(tmp_path)
+
+        result = await cleanup_session(
+            session=session,
+            archive=layer_set.archive,
+            context=context,
+            max_messages=5,
+            max_tokens=None,
+            keep_ratio=0.5,
+            archive_agent=agent,
+            archive_storage=storage,
+        )
+
+        assert result.triggered is True
+
+        state = await storage.read_archive_state()
+        assert state is not None
+        assert state["next_archive_id"] == 2
+
+    @pytest.mark.asyncio
+    async def test_archive_register_when_storage_not_injected(
+        self, registry: InMemoryStoreRegistry, tmp_path,
+    ) -> None:
+        """archive_storage=None + dynamic resolve → register_archive_with_layer works."""
+        layer_set = _make_layer_set(registry)
+        context = _ctx("register-resolve-session")
+        session = layer_set.session
+
+        msgs = []
+        for i in range(5):
+            msgs.append(_user_msg(f"u-{i}"))
+            msgs.append(_assistant_msg(f"a-{i}"))
+        await _add_messages(session, context, msgs)
+
+        agent = _MockArchiveAgent()
+        storage = _DirArchiveStorageFactory.create(tmp_path)
+
+        result = await cleanup_session(
+            session=session,
+            archive=layer_set.archive,
+            context=context,
+            max_messages=5,
+            max_tokens=None,
+            keep_ratio=0.5,
+            archive_agent=agent,
+            archive_storage=storage,
+        )
+
+        assert result.triggered is True
+        assert result.archive_skipped is False
+
+        # In the MD-only architecture, archives are written directly to disk
+        # by the ArchiveSummarizer. Verify the MD files exist in the archive dir.
+        from framework.memory.stores.dir_archive import DirArchiveStorage
+        dir_storage = DirArchiveStorage(tmp_path / "archives")
+        archive_ids = await dir_storage.list_archives()
+        assert len(archive_ids) >= 1
+        content = await dir_storage.read_archive_file(archive_ids[0], "context.md")
+        assert content == "context summary"

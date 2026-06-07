@@ -72,9 +72,8 @@ def pool_mode_config_with_dream() -> AppConfig:
                 memory=MemoryConfig(
                     dream_engine=DreamEngineConfig(
                         enabled=True,
-                        interval=1,  # 1 second for fast test
-                        min_archive_count=1,
-                        max_archive_count=30,
+                        interval=1,
+                        max_consume_per_run=3,
                     )
                 ),
                 agents=[{"name": "main", "role": "main", "max_steps": 5}],

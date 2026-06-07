@@ -10,5 +10,6 @@ memory:
     keep_ratio_for_token: 0.5
   archive: {enabled: true}
   knowledge: {enabled: true}
+  pruned: {enabled: true, max_files: 50, topic_max_chars: 200}
 skills:
   roots: ["skills/main/office-expert"]

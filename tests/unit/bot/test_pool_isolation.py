@@ -173,6 +173,7 @@ class TestPoolInstanceStructure:
             main_agent_name="coding",
             provider=None,
             notification_service=None,
+            communication_service=None,
         )
         addr = pi.main_address
         assert addr.kind == "agent"

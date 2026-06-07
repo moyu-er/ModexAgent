@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from ..adapters.platform import StreamingMode
 from ..memory.core.message import ChatMessage
+from .constants import StopReason
 from .events import AgentEvent, EmitterConfig
 from .tool_manager import ToolResult
 from .types import ToolCall
@@ -34,7 +35,7 @@ class AgentResult:
     """
     content: str | None = None  # 最终输出内容
     reasoning: str | None = None  # 推理/思考过程（新增）
-    stop_reason: str = "completed"  # completed, max_iterations, error
+    stop_reason: StopReason = StopReason.COMPLETED
     error: str | None = None
     usage: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -393,7 +394,7 @@ class BufferingEmitter(ContentEmitter[E]):
         self._result = result
 
     async def emit_error(self, error: str) -> None:
-        self._result = AgentResult(error=error, stop_reason="error")
+        self._result = AgentResult(error=error, stop_reason=StopReason.ERROR)
 
     def get_content(self) -> str:
         """获取收集的完整内容"""
@@ -434,6 +435,27 @@ class BufferingEmitter(ContentEmitter[E]):
             if isinstance(e, Enum) and e.name == name or isinstance(e, str) and e == name:
                 result.append((e, d))
         return result
+
+
+class NoOpEmitter(ContentEmitter[Any]):
+    """Discards all emissions. Use when agent output is not needed.
+
+    Useful for background agents (archive summarizer, knowledge consolidator)
+    where the side-effects (file writes via tools) are the important output,
+    not the agent's textual response.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+
+    async def emit_delta(self, delta: str) -> None:
+        pass
+
+    async def emit_complete(self, result: AgentResult) -> None:
+        pass
+
+    async def emit_error(self, error: str) -> None:
+        pass
 
 
 class LoggingEmitter(ContentEmitter[E]):

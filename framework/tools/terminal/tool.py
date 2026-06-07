@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
+import time
 from enum import StrEnum
 from typing import Any
 from xml.sax.saxutils import escape as xml_escape
 
 from framework.core.tool_manager import Tool
 from framework.tools.terminal.managers import TerminalManagerBase
-from framework.tools.terminal.prompt import (
-    detect_pager_entry,
-    resolve_cursor_line,
-    sanitize_terminal_output,
-)
+from framework.tools.terminal.process_registry import ProcessRegistry
+from framework.tools.terminal.prompt import resolve_cursor_line
 
 
 class TerminalAction(StrEnum):
@@ -36,9 +34,10 @@ class TerminalTool(Tool):
         cwd: Initial working directory (only for open).
     """
 
-    def __init__(self, manager: TerminalManagerBase):
+    def __init__(self, manager: TerminalManagerBase, registry: ProcessRegistry | None = None):
         super().__init__()
         self._manager = manager
+        self._registry = registry
 
     @property
     def name(self) -> str:
@@ -129,9 +128,14 @@ class TerminalTool(Tool):
             for s in sessions:
                 default_attr = ' default="true"' if s.is_default else ""
                 alive_attr = ' alive="false"' if not s.is_alive else ""
+                proc_attr = ""
+                if self._registry:
+                    running = self._registry.get_running_by_terminal(s.name)
+                    if running:
+                        proc_attr = f' process="{xml_escape(running.command)}"'
                 lines.append(
                     f'  <tab name="{xml_escape(s.name)}" shell="{s.shell_type}" '
-                    f'created_at="{int(s.created_at)}" commands="{s.command_count}"{default_attr}{alive_attr} />'
+                    f'created_at="{int(s.created_at)}" commands="{s.command_count}"{default_attr}{alive_attr}{proc_attr} />'
                 )
             lines.append("</tabs>")
             lines.append("</terminal_result>")
@@ -176,41 +180,37 @@ class TerminalTool(Tool):
                 return (
                     "<terminal_result>\n"
                     "<action>current</action>\n"
-                    "<status>none</status>\n"
+                    "<status>unknown</status>\n"
                     "<output>No terminal is active. Use terminal open to create one.</output>\n"
                     "</terminal_result>"
                 )
+
+            status = await session.command_status()
+            output = await session.last_command_output()
             segment = await session.current_segment()
-            cleaned = sanitize_terminal_output(segment.text).rstrip()
+            cursor = resolve_cursor_line(segment).strip()
 
-            if segment.is_empty_prompt:
-                status = "idle"
-            elif session.busy_after_timeout:
-                status = "busy"
-            elif session.last_status == "waiting_input":
-                status = "waiting_input"
-            elif detect_pager_entry(resolve_cursor_line(segment)):
-                status = "pager"
-            else:
-                status = "active"
-
-            cursor = segment.cursor_line.strip() if segment.cursor_line else ""
-            output_lines = cleaned.splitlines()[-30:] if cleaned else []
-            output_text = "\n".join(output_lines) if output_lines else "(terminal is idle — no output yet)"
+            raw_idle_ms = int((time.monotonic() - session.last_byte_at) * 1000)
+            idle_ms_str = str(raw_idle_ms) if raw_idle_ms > 0 else None
 
             default_session = await self._manager.get_default_session()
             is_default = default_session is not None and session.name == default_session.name
-            return (
-                "<terminal_result>\n"
-                "<action>current</action>\n"
-                f"<terminal>{xml_escape(session.name)}</terminal>\n"
-                f"<created_at>{int(session.created_at)}</created_at>\n"
-                f"<default>{str(is_default).lower()}</default>\n"
-                f"<status>{status}</status>\n"
-                f"<cursor>{xml_escape(cursor)}</cursor>\n"
-                f"<output>{xml_escape(output_text)}</output>\n"
-                "</terminal_result>"
-            )
+
+            parts = [
+                "<terminal_result>",
+                "<action>current</action>",
+                f"<terminal>{xml_escape(session.name)}</terminal>",
+                f"<created_at>{int(session.created_at)}</created_at>",
+                f"<default>{str(is_default).lower()}</default>",
+                f"<status>{status.value}</status>",
+            ]
+            if cursor:
+                parts.append(f"<cursor>{xml_escape(cursor)}</cursor>")
+            if idle_ms_str:
+                parts.append(f"<idle_ms>{idle_ms_str}</idle_ms>")
+            parts.append(f"<output>{xml_escape(output or '(no output yet)')}</output>")
+            parts.append("</terminal_result>")
+            return "\n".join(parts)
 
         return f"Error: Unhandled action '{action}'"
 

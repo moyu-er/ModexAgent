@@ -20,7 +20,7 @@ from framework.interceptor.abc import (
 from framework.runtime.enums import TurnCustomKey, TurnPhase
 
 from ...core.agent import Agent, AgentContext, current_agent_context
-from ...core.constants import DefaultValues
+from ...core.constants import DefaultValues, StopReason
 from ...core.emitter import AgentResult, ContentEmitter, ToolCall
 from ...core.events import AgentEvent
 from ...core.provider import LLMProvider, StreamingLLMProvider
@@ -175,7 +175,7 @@ class ReActAgent(Agent[ReActEvent]):
         runtime = context.runtime
         ctx_token = current_agent_context.set(context)
 
-        result = AgentResult(content="", stop_reason="error")
+        result = AgentResult(content="", stop_reason=StopReason.ERROR)
 
         async def actual_turn():
             nonlocal result
@@ -224,7 +224,7 @@ class ReActAgent(Agent[ReActEvent]):
             await emitter.emit(ReActEvent.ERROR, str(e))
             all_new = _get_turn_messages(context)
             result = AgentResult(
-                error=str(e), stop_reason="error",
+                error=str(e), stop_reason=StopReason.ERROR,
                 messages=all_new, attachments=context.attachments,
             )
             # TODO: Dispatch AFTER_TURN hooks here so SubagentAutoSendHook

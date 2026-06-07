@@ -146,15 +146,28 @@ class QQInputAdapter(InputAdapter):
         print(f"[QQInputAdapter] Started, media_dir={self._media_dir}")
 
     async def _run_bot(self) -> None:
-        """Run bot with auto-reconnect"""
+        """Run bot with auto-reconnect.
+
+        Catches BaseException (SystemExit, GeneratorExit, etc.) from the
+        botpy SDK to prevent SDK internal errors from killing the event
+        loop.  Only CancelledError (graceful shutdown) and KeyboardInterrupt
+        are allowed to propagate.
+        """
         while self._running:
             try:
                 await self._client.start(
                     appid=self.app_id,
                     secret=self.secret,
                 )
-            except Exception as e:
-                print(f"[QQInputAdapter] Error: {e}")
+            except asyncio.CancelledError:
+                raise
+            except KeyboardInterrupt:
+                raise
+            except BaseException as e:
+                # botpy SDK may throw SystemExit / GeneratorExit on fatal
+                # internal errors — reconnect instead of letting it kill
+                # the process.
+                print(f"[QQInputAdapter] SDK error ({type(e).__name__}): {e}")
 
             if self._running:
                 print("[QQInputAdapter] Reconnecting in 5 seconds...")

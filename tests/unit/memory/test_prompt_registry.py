@@ -68,35 +68,10 @@ def test_prompt_registry_missing_directory() -> None:
     assert result == ""
 
 
-def test_dual_llm_strategy_auto_loads_prompts() -> None:
-    """DualLLMArchiveGenerationStrategy auto-loads prompts when none provided."""
-    from unittest.mock import MagicMock
-
-    from framework.memory.archive_generation import DualLLMArchiveGenerationStrategy
-
-    summarizer = MagicMock()
-    strategy = DualLLMArchiveGenerationStrategy(summarizer=summarizer)
-    # Should auto-create a PromptRegistry (or at least not crash)
-    assert strategy._prompts is not None, "Should auto-load default prompts"
-
-
-def test_dream_engine_auto_loads_prompts() -> None:
-    """DreamEngine auto-loads prompts when none provided."""
-    from unittest.mock import MagicMock
-
-    from framework.memory.consolidation.dream_engine import DreamEngine
-
-    engine = DreamEngine(
-        llm_provider=MagicMock(),
-        history_manager=MagicMock(),
-        long_term_manager=MagicMock(),
-    )
-    # Should auto-create a PromptRegistry (or at least not crash)
-    assert engine._prompts is not None, "Should auto-load default prompts"
 
 
 # ---------------------------------------------------------------------------
-# NEW: Completeness tests — every .md file must be loadable
+# Completeness tests — every .md file must be loadable
 # ---------------------------------------------------------------------------
 
 
@@ -105,8 +80,8 @@ def test_all_prompt_md_files_are_loadable() -> None:
     registry = create_default_registry()
 
     all_md_files = list(PROMPTS_ROOT.rglob("*.md"))
-    assert len(all_md_files) >= 13, (
-        f"Expected at least 13 prompt files, found {len(all_md_files)}"
+    assert len(all_md_files) >= 2, (
+        f"Expected at least 2 prompt files, found {len(all_md_files)}"
     )
 
     loaded_keys = set(registry._defaults.keys())
@@ -187,23 +162,10 @@ def test_prompt_registry_no_escape_when_no_special_chars() -> None:
 # ---------------------------------------------------------------------------
 
 EXPECTED_PROMPT_KEYS = {
-    # Archive generation (archive_generation.py)
-    "archive/context_archive_system",
-    "archive/context_archive_user",
-    "archive/knowledge_archive_system",
-    "archive/knowledge_archive_user",
-    # DreamEngine Phase 1 (dream_engine.py consolidate)
-    "knowledge/fact_extraction_system",
-    "knowledge/fact_extraction_user",
-    # DreamEngine Phase 2 — per-file updates
-    "knowledge/soul_update_system",
-    "knowledge/soul_update_user",
-    "knowledge/user_update_system",
-    "knowledge/user_update_user",
-    "knowledge/memory_update_system",
-    "knowledge/memory_update_user",
-    # Oversized file compaction (knowledge.py _do_consolidate)
-    "consolidation/knowledge_consolidation_system",
+    # Archive generation via ReAct agent (archive_agent.py)
+    "archive/agent_system",
+    # Knowledge consolidation via ReAct agent (consolidator.py)
+    "knowledge/consolidator_system",
 }
 
 
@@ -223,18 +185,13 @@ def test_all_expected_prompt_keys_are_present() -> None:
 
 
 def test_archive_prompts_contain_expected_content() -> None:
-    """Archive prompts must contain the expected XML structure."""
+    """Archive prompts must contain expected agent instructions."""
     registry = create_default_registry()
 
-    ctx_user = registry._defaults.get("archive/context_archive_user", "")
-    assert "<archive_request>" in ctx_user
-    assert "{reason}" in ctx_user
-    assert "{transcript}" in ctx_user
-
-    kn_user = registry._defaults.get("archive/knowledge_archive_user", "")
-    assert "<archive_request>" in kn_user
-    assert "{reason}" in kn_user
-    assert "{transcript}" in kn_user
+    system = registry._defaults.get("archive/agent_system", "")
+    assert "context.md" in system
+    assert "knowledge.md" in system
+    assert "index.md" in system
 
 
 # ---------------------------------------------------------------------------
@@ -245,5 +202,28 @@ def test_archive_prompts_contain_expected_content() -> None:
 def test_consolidation_prompt_is_loadable() -> None:
     """Consolidation prompt must be loadable via the registry."""
     registry = create_default_registry()
-    system = registry.get_system("consolidation/knowledge_consolidation")
+    system = registry.get_system("knowledge/consolidator")
     assert len(system) > 0, "Consolidation system prompt must not be empty"
+
+
+def test_archive_prompt_forbids_bash_and_lists_exact_tools() -> None:
+    """Archive agent prompt must explicitly forbid bash and list only 4 tools."""
+    registry = create_default_registry()
+    system = registry.get_system("archive/agent")
+    assert "Do NOT call `bash`" in system
+    assert "`read`" in system
+    assert "`write`" in system
+    assert "`edit`" in system
+    assert "`ls`" in system
+    assert "edit_file" not in system
+    assert "write_file" not in system
+
+
+def test_consolidator_prompt_forbids_bash_and_uses_correct_tool_names() -> None:
+    """Knowledge consolidator prompt must forbid bash and reference actual tool names."""
+    registry = create_default_registry()
+    system = registry.get_system("knowledge/consolidator")
+    assert "Do NOT call `bash`" in system
+    assert "`edit`" in system or "edit_file" not in system
+    assert "edit_file" not in system
+    assert "write_file" not in system

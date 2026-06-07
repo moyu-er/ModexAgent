@@ -240,7 +240,7 @@ When an agent invokes a sensitive tool, the ReAct graph engine automatically sus
 
 ### Multi-Agent Collaboration
 
-The main agent distributes tasks to subagents via `send_to_agent` (sync) or `send_to_agent_async` (async inbox). `list_communication_targets` dynamically injects visible subagent names to help the LLM decide who to contact:
+The main agent distributes tasks to subagents via `send_to_agent` (async inbox-based). The tool description dynamically shows all available targets so the LLM can decide who to contact:
 
 <img src="../../assets/office_subagent.jpg" alt="Multi-agent collaboration" width="800">
 
@@ -341,9 +341,9 @@ agents:
 
 | Agent | File | Shell | MCP | Communication | Skills |
 |-------|:----:|:-----:|:---:|---------------|--------|
-| **main** | ✅ | ✅ | ✅ (all) | `send_to_agent`, `send_to_agent_async`, `list_communication_targets` | `skills/main/*` |
-| **office-expert** | ✅ | ✅ | — | `send_to_agent_async`(→main), `list_communication_targets` | docx/pdf/pptx/xlsx |
-| **query-12306** | ✅ | ✅ | ✅ (12306-mcp, fetch) | `send_to_agent_async`(→main), `list_communication_targets` | — |
+| **main** | ✅ | ✅ | ✅ (all) | `send_to_agent`, `send_to_agent_async` | `skills/main/*` |
+| **office-expert** | ✅ | ✅ | — | `send_to_agent_async`(→main) | docx/pdf/pptx/xlsx |
+| **query-12306** | ✅ | ✅ | ✅ (12306-mcp, fetch) | `send_to_agent_async`(→main) | — |
 | **helper-sync** | ✅ | ✅ | — | — (spawn sync return) | `skills/subagents/*` |
 
 ## Adapting to Other IM Platforms

@@ -25,12 +25,15 @@ async def test_default_registry_uses_layer_first_file_layout(tmp_path: Path) -> 
     )
 
     await session_storage.append_message({"role": "user", "content": "hello"})
-    stored_entry = await archive_storage.append_log({"summary": "compressed"})
+    # ARCHIVE layer uses DirArchiveStorage — append via channel method
+    stored_entry = await archive_storage.append_channel_log(
+        "context", {"summary": "compressed"},
+    )
 
     assert (tmp_path / "session" / "s1" / "messages.jsonl").exists()
-    assert (tmp_path / "archive" / "u1" / "context_archive.jsonl").exists()
-    assert stored_entry["cursor"] == 1
-    assert stored_entry["entry_id"] == 1
+    # DirArchiveStorage writes MD files: {archive_id}/{channel}.md
+    assert (tmp_path / "archive" / "u1" / "1" / "context.md").exists()
+    assert stored_entry["archive_id"] == 1
 
 
 @pytest.mark.asyncio

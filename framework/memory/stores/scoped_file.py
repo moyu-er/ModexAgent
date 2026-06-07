@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,9 @@ from framework.memory.core.models import StorageRevision
 from framework.memory.core.scope import MemoryLayerName
 from framework.memory.core.storage import MemoryStorage
 from framework.memory.utils import safe_atomic_replace
+from framework.utils.file_io import read_json_robust, read_jsonl_robust
+
+logger = logging.getLogger(__name__)
 
 _KV_FILE = "kv.json"
 _MESSAGES_FILE = "messages.jsonl"
@@ -108,33 +112,20 @@ class DefaultScopedStorage(MemoryStorage):
 
     async def get(self, key: str) -> Any | None:
         async with self.get_lock().read():
-            if not self._kv_path.exists():
-                return None
-            try:
-                data = json.loads(self._kv_path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
-                return None
-            return data.get(key)
+            data = read_json_robust(self._kv_path)
+            return data.get(key) if data else None
 
     async def set(self, key: str, value: Any) -> None:
         async with self.get_lock().write():
-            data: dict[str, Any] = {}
-            if self._kv_path.exists():
-                with contextlib.suppress(json.JSONDecodeError):
-                    data = json.loads(self._kv_path.read_text(encoding="utf-8"))
+            data = read_json_robust(self._kv_path) or {}
             data[key] = value
             self._atomic_json_write(self._kv_path, data)
             self._touch()
 
     async def delete(self, key: str) -> bool:
         async with self.get_lock().write():
-            if not self._kv_path.exists():
-                return False
-            try:
-                data = json.loads(self._kv_path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
-                return False
-            if key not in data:
+            data = read_json_robust(self._kv_path)
+            if not data or key not in data:
                 return False
             del data[key]
             self._atomic_json_write(self._kv_path, data)
@@ -143,25 +134,14 @@ class DefaultScopedStorage(MemoryStorage):
 
     async def list_keys(self, prefix: str = "") -> list[str]:
         async with self.get_lock().read():
-            if not self._kv_path.exists():
-                return []
-            try:
-                data = json.loads(self._kv_path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
+            data = read_json_robust(self._kv_path)
+            if not data:
                 return []
             return [key for key in data if key.startswith(prefix)]
 
     async def load_messages(self) -> list[dict[str, Any]]:
         async with self.get_lock().read():
-            if not self._messages_path.exists():
-                return []
-            messages: list[dict[str, Any]] = []
-            with self._messages_path.open(encoding="utf-8") as handle:
-                for line in handle:
-                    line = line.strip()
-                    if line:
-                        messages.append(json.loads(line))
-            return messages
+            return read_jsonl_robust(self._messages_path)
 
     async def save_messages(self, messages: list[dict[str, Any]]) -> StorageRevision:
         async with self.get_lock().write():
@@ -187,13 +167,7 @@ class DefaultScopedStorage(MemoryStorage):
             return self._get_revision_unsafe()
 
     def _get_revision_unsafe(self) -> StorageRevision:
-        messages: list[dict[str, Any]] = []
-        if self._messages_path.exists():
-            with self._messages_path.open(encoding="utf-8") as handle:
-                for line in handle:
-                    line = line.strip()
-                    if line:
-                        messages.append(json.loads(line))
+        messages = read_jsonl_robust(self._messages_path)
         return StorageRevision(
             message_count=len(messages),
             updated_at=self._updated_at,
@@ -235,19 +209,13 @@ class DefaultScopedStorage(MemoryStorage):
 
     async def read_logs(self, since_cursor: int = 0, limit: int = 1000) -> list[dict[str, Any]]:
         async with self.get_lock().read():
-            if not self._log_path.exists():
-                return []
+            all_entries = read_jsonl_robust(self._log_path)
             entries: list[dict[str, Any]] = []
-            with self._log_path.open(encoding="utf-8") as handle:
-                for line in handle:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    entry = json.loads(line)
-                    if entry.get("cursor", 0) > since_cursor:
-                        entries.append(entry)
-                        if len(entries) >= limit:
-                            break
+            for entry in all_entries:
+                if entry.get("cursor", 0) > since_cursor:
+                    entries.append(entry)
+                    if len(entries) >= limit:
+                        break
             return entries
 
     async def read_channel_logs(
@@ -258,19 +226,13 @@ class DefaultScopedStorage(MemoryStorage):
     ) -> list[dict[str, Any]]:
         async with self.get_lock().read():
             path = self._channel_log_path(channel)
-            if not path.exists():
-                return []
+            all_entries = read_jsonl_robust(path)
             entries: list[dict[str, Any]] = []
-            with path.open(encoding="utf-8") as handle:
-                for line in handle:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    entry = json.loads(line)
-                    if int(entry.get("archive_id", 0) or 0) > since_archive_id:
-                        entries.append(entry)
-                        if limit and len(entries) >= limit:
-                            break
+            for entry in all_entries:
+                if int(entry.get("archive_id", 0) or 0) > since_archive_id:
+                    entries.append(entry)
+                    if limit and len(entries) >= limit:
+                        break
             return entries
 
     async def save_logs(self, entries: list[dict[str, Any]]) -> None:
@@ -300,15 +262,7 @@ class DefaultScopedStorage(MemoryStorage):
 
     async def read_archive_state(self) -> dict[str, Any] | None:
         async with self.get_lock().read():
-            if not self._archive_state_path.exists():
-                return None
-            try:
-                data: dict[str, Any] = json.loads(
-                    self._archive_state_path.read_text(encoding="utf-8")
-                )
-                return data
-            except json.JSONDecodeError:
-                return None
+            return read_json_robust(self._archive_state_path)
 
     async def write_archive_state(self, state: dict[str, Any]) -> None:
         async with self.get_lock().write():

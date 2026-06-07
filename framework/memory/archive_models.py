@@ -5,7 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Protocol, runtime_checkable
+from abc import ABC, abstractmethod
+from typing import Any
 
 from framework.runtime.models import JsonValue
 
@@ -72,29 +73,32 @@ class ArchiveGenerationResult:
     inputs: ArchiveGenerationInputs
 
 
-@runtime_checkable
-class ArchiveChannelStorage(Protocol):
-    """Protocol for storage backends that support channel-separated archive logs.
+class ArchiveChannelStorage(ABC):
+    """ABC for storage backends that support channel-separated archive logs.
 
     Implementors provide per-channel append/read/save operations alongside
     typed archive-state persistence.  This replaces the previous dynamic
     ``getattr`` dispatch in ``ScopedArchiveMemoryManager``.
     """
 
+    @abstractmethod
     async def read_archive_state(self) -> dict[str, Any] | None:
         """Return the persisted archive state, or ``None`` if absent."""
         ...
 
+    @abstractmethod
     async def write_archive_state(self, state: dict[str, Any]) -> None:
         """Persist the archive state atomically."""
         ...
 
+    @abstractmethod
     async def append_channel_log(
         self, channel: str, entry: dict[str, Any]
     ) -> dict[str, Any]:
         """Append ``entry`` to the log for ``channel`` and return the stored record."""
         ...
 
+    @abstractmethod
     async def read_channel_logs(
         self,
         channel: str,
@@ -104,6 +108,7 @@ class ArchiveChannelStorage(Protocol):
         """Read logs for ``channel`` with ``archive_id`` > ``since_archive_id``."""
         ...
 
+    @abstractmethod
     async def save_channel_logs(
         self, channel: str, entries: list[dict[str, Any]]
     ) -> None:

@@ -14,10 +14,17 @@ from framework.ioc.factories.memory import create_memory, _build_memory_layer_co
 
 def _make_provider():
     """Create a mock LLMProvider with get_default_model()."""
-    from unittest.mock import AsyncMock
-    provider = AsyncMock()
-    provider.get_default_model.return_value = "test-model"
-    return provider
+    from framework.core.provider import LLMProvider
+
+    class MockProvider(LLMProvider):
+        async def chat(self, messages, **kwargs):
+            from framework.core.types import LLMResponse
+            return LLMResponse(content="ok")
+
+        def get_default_model(self):
+            return "test-model"
+
+    return MockProvider()
 
 
 class TestCreateMemoryCleanupConfig:
@@ -44,17 +51,35 @@ class TestCreateMemoryCleanupConfig:
         system = create_memory(cfg, _make_provider(), tmp_path)
         assert not hasattr(system, "compression_coordinator")
 
-    def test_archive_strategy_none_when_no_llm(self, tmp_path: Path) -> None:
-        """When llm_provider is None, archive_strategy should be None."""
-        cfg = MemoryConfig()
-        system = create_memory(cfg, None, tmp_path)
-        assert system._archive_strategy is None
-
-    def test_archive_strategy_created_with_llm(self, tmp_path: Path) -> None:
-        """When llm_provider is provided, archive_strategy should be created."""
+    def test_archive_agent_none_when_archive_disabled(self, tmp_path: Path) -> None:
+        """When archive layer is disabled, archive_agent should be None."""
         cfg = MemoryConfig()
         system = create_memory(cfg, _make_provider(), tmp_path)
-        assert system._archive_strategy is not None
+        assert system._archive_agent is None
+
+    def test_archive_agent_created_when_archive_enabled(self, tmp_path: Path) -> None:
+        """When archive layer is enabled, archive_agent should be created."""
+        from framework.ioc.configs.memory import ArchiveConfig
+
+        cfg = MemoryConfig(archive=ArchiveConfig(enabled=True))
+        system = create_memory(cfg, _make_provider(), tmp_path)
+        assert system._archive_agent is not None
+
+    def test_knowledge_consolidator_created_when_knowledge_enabled(
+        self, tmp_path: Path,
+    ) -> None:
+        """When knowledge layer is enabled, knowledge_consolidator should be created."""
+        from framework.ioc.configs.memory import (
+            ArchiveConfig,
+            KnowledgeConfig,
+        )
+
+        cfg = MemoryConfig(
+            archive=ArchiveConfig(enabled=True),
+            knowledge=KnowledgeConfig(enabled=True),
+        )
+        system = create_memory(cfg, _make_provider(), tmp_path)
+        assert system._knowledge_consolidator is not None
 
 
 class TestBuildMemoryLayerConfigNewSchema:

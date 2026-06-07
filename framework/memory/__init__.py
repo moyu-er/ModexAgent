@@ -9,15 +9,9 @@ Key abstractions:
 - MemorySystem: unified entry point
 - MemoryContext: scope dimensions (session, user, tenant, etc.)
 - MemoryScope: isolation strategy per layer
-- ArchiveGenerationStrategy: how pruned messages become archive channel records
 - MemoryInjectionPolicy: maps memory layers to LLM ContextState
 """
 
-from framework.memory.archive_generation import (
-    ArchiveGenerationStrategy,
-    ArchiveInputMessage,
-    DualLLMArchiveGenerationStrategy,
-)
 from framework.memory.cleanup import CleanupResult, cleanup_session
 from framework.memory.context_governance import (
     CompositeGovernance,
@@ -28,8 +22,6 @@ from framework.memory.context_governance import (
     UserRetentionBufferInjectionGovernance,
 )
 from framework.memory.core.consolidation import (
-    ConsolidationEngine,
-    ConsolidationResult,
     MemoryUpdate,
     MemoryUpdateMode,
 )
@@ -174,14 +166,8 @@ __all__ = [
     "ToolChainSanitizationReason",
     "ToolChainSanitizationResult",
     # Consolidation
-    "ConsolidationEngine",
-    "ConsolidationResult",
     "MemoryUpdate",
     "MemoryUpdateMode",
-    # Archiving
-    "ArchiveGenerationStrategy",
-    "ArchiveInputMessage",
-    "DualLLMArchiveGenerationStrategy",
     # Injection
     "MemoryInjectionPolicy",
     "FullInjectionPolicy",

@@ -101,3 +101,21 @@ class TestShellInfo:
             platform=Platform.DARWIN,
         )
         assert info_a != info_b
+
+
+def test_terminal_command_status_values() -> None:
+    from framework.tools.terminal.types import TerminalCommandStatus
+
+    expected = {
+        "unknown", "idle", "executing", "waiting_input",
+        "stuck", "completed", "timed_out", "paginated",
+    }
+    actual = {s.value for s in TerminalCommandStatus}
+    assert actual == expected
+
+
+def test_terminal_command_status_is_string() -> None:
+    from framework.tools.terminal.types import TerminalCommandStatus
+
+    assert TerminalCommandStatus.EXECUTING == "executing"
+    assert isinstance(TerminalCommandStatus.UNKNOWN, str)

@@ -204,44 +204,6 @@ async def test_subagent_replies_to_main_via_communication_service():
 
 
 @pytest.mark.asyncio
-async def test_list_targets_shows_all_agents_in_pool():
-    """ListCommunicationTargetsTool shows all agents in the same pool."""
-    from framework.multi_agent.tools import ListCommunicationTargetsTool
-
-    broker, _bus, pool, _strategy = await _create_pool_with_bus()
-
-    pool._agents["main"] = _make_fake_instance("main", AgentCommKind.NORMAL)[0]
-    pool._status["main"] = AgentState.IDLE
-    pool._agents["worker"] = _make_fake_instance("worker", AgentCommKind.SUBAGENT)[0]
-    pool._status["worker"] = AgentState.IDLE
-
-    tool = ListCommunicationTargetsTool(
-        self_address=AgentAddress(name="main"),
-        registry=pool,
-    )
-    result = await tool.execute()
-
-    assert "worker" in result
-    assert "SUBAGENT" in result.upper()
-    assert "main" not in result.split("## ")[1:]  # main excluded (self)
-
-    # Subagent's view: only sees NORMAL agents
-    tool_sub = ListCommunicationTargetsTool(
-        self_address=AgentAddress(name="worker"),
-        registry=pool,
-    )
-    result_sub = await tool_sub.execute()
-
-    assert "main" in result_sub
-    assert "NORMAL" in result_sub.upper()
-    # Worker should NOT see other subagents
-    assert "worker" not in [line for line in result_sub.split("\n") if line.startswith("## ")]
-
-    await pool.shutdown_all()
-    await broker.stop()
-
-
-@pytest.mark.asyncio
 async def test_subagent_cannot_send_to_another_subagent():
     """Subagent-to-subagent communication is blocked."""
     broker, bus, pool, strategy = await _create_pool_with_bus()

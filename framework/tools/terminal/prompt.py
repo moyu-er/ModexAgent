@@ -56,6 +56,80 @@ def sanitize_terminal_output(text: str) -> str:
     lines = [line.rsplit("\r", 1)[-1] for line in lines]
     return "\n".join(lines)
 
+
+# ---------------------------------------------------------------------------
+# Input-prompt detection
+# ---------------------------------------------------------------------------
+
+INPUT_PROMPT_MARKERS: tuple[str, ...] = (
+    "password", "passphrase", "login:", "username:",
+    "user name:", "enter password", "enter passphrase",
+    "[y/n]", "[Y/n]", "[yes/no]", "(yes/no)",
+    "pin:", "token:", "passcode", "code:",
+    "verification code:", "2fa code:", "otp:",
+    "press any key to continue",
+    "overwrite", "replace",
+    "confirm",
+    "current password", "new password", "retype password", "repeat password",
+    "(y/n)", "[y/N]", "(Y/n)",
+)
+
+# Markers that can coincidentally appear in legitimate output
+# (e.g. "Hashing password: 50% done" or "Confirming transaction...").
+# These need extra validation: the line must end with prompt-ending
+# punctuation (':', '?', ']', ')') — otherwise it's likely output, not a prompt.
+_AMBIGUOUS_MARKERS: frozenset[str] = frozenset({
+    "password", "passphrase", "confirm", "overwrite", "replace", "passcode",
+})
+
+# Characters that typically terminate an input prompt line.
+_PROMPT_ENDING_CHARS: tuple[str, ...] = (":", "?", "]", ")")
+
+
+def is_waiting_for_input(output: str) -> bool:
+    """Check if the last non-empty line of *output* contains an input prompt marker.
+
+    Strips ANSI escape sequences before checking.  Case-insensitive.
+
+    Handles ``\\r`` repaint lines (progress bars, download indicators) by
+    only inspecting the most-recently-painted segment — the text after the
+    last ``\\r``.  This prevents old progress states that happen to contain
+    a marker word from triggering a false positive.
+
+    Ambiguous markers (words like "password" or "confirm" that can appear
+    in ordinary output) require the last line to end with prompt-ending
+    punctuation (``:``, ``?``, ``]``, ``)``).
+    """
+    if not output:
+        return False
+    plain = _strip_ansi_and_da1(output)
+    lines = plain.splitlines()
+    if not lines:
+        return False
+
+    last = lines[-1].lower()
+
+    # For \\r repaints, keep only text after the last \\r — the
+    # most-recently-painted screen line, which is what a user sees.
+    if "\r" in last:
+        last = last.rsplit("\r", 1)[-1]
+
+    if not last.strip():
+        return False
+
+    for marker in INPUT_PROMPT_MARKERS:
+        if marker not in last:
+            continue
+        # Ambiguous markers need extra context: the line must look like
+        # an actual input prompt, not a progress / status message.
+        if marker in _AMBIGUOUS_MARKERS:
+            stripped = last.rstrip()
+            if not stripped.endswith(_PROMPT_ENDING_CHARS) and stripped != marker:
+                continue
+        return True
+    return False
+
+
 PROMPT_SUFFIXES: tuple[str, ...] = (
     "$ ",  "# ",  "> ",  "% ",  ": ",
     "$",   "#",   ">",   "%",   ":",
@@ -221,3 +295,70 @@ def resolve_cursor_line(segment: TerminalSegment) -> str:
         if line.strip():
             return line
     return ""
+
+
+def _is_prompt_with_command(line: str) -> bool:
+    """Detect lines like 'PS F:\\project> npm install' where a prompt
+    marker and command text appear on the same line.
+
+    Extracts the prefix before the first prompt-marker + space and
+    delegates to ``is_prompt_ready`` for accurate detection.
+
+    Guard: text immediately after the marker+space must look like a real
+    command (starts with a letter, dot, slash, or dash), not a number.
+    This prevents false positives on output lines like
+    "Total cost: $ 42.50" or "  step # 3 complete".
+    """
+    stripped = line.rstrip()
+    for marker in ("> ", "$ ", "# "):
+        idx = stripped.find(marker)
+        if idx < 0:
+            continue
+        prefix = stripped[:idx + 1]  # include the marker character
+        if not is_prompt_ready(prefix):
+            continue
+        # Text after the marker must look like a real command.
+        # Digits immediately after "$ " suggest currency/number output,
+        # not a command (e.g. "Total cost: $ 42.50").
+        after = stripped[idx + len(marker):]
+        if after and after[0].isdigit():
+            continue
+        return True
+    return False
+
+
+def extract_last_command_output(text: str) -> str:
+    """Extract terminal output from the second-to-last prompt to the end.
+
+    Finds all lines that look like shell prompts and returns from the
+    second-to-last one to the end.  Uses ``is_prompt_ready`` for bare
+    prompts and ``_is_prompt_with_command`` for lines where the prompt
+    marker and command text share a line.
+
+    This captures:
+    - The prompt before the command
+    - The command output
+    - The next prompt (if the command completed)
+
+    Falls back to the only prompt or the full text.
+    """
+    if not text:
+        return ""
+    clean = _strip_ansi_and_da1(text)
+    lines = clean.splitlines()
+    if not lines:
+        return ""
+
+    prompt_indexes = [
+        idx for idx, line in enumerate(lines)
+        if is_prompt_ready(line) or _is_prompt_with_command(line)
+    ]
+
+    if len(prompt_indexes) >= 2:
+        start = prompt_indexes[-2]
+    elif len(prompt_indexes) == 1:
+        start = prompt_indexes[0]
+    else:
+        start = max(0, len(lines) - 1)
+
+    return "\n".join(lines[start:])

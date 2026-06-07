@@ -58,9 +58,7 @@ class DreamEngineConfig(BaseModel):
 
     enabled: bool = False
     interval: int = 1200
-    min_archive_count: int = 0        # process any available entries
-    max_archive_count: int = 30      # trigger immediately if exceeded
-    max_batch_size: int = 20         # process up to N archives per run
+    max_consume_per_run: int = 3   # process up to N archives per run
 
 
 class LossyConfig(BaseModel):
@@ -88,6 +86,9 @@ class ArchiveConfig(BaseModel):
     enabled: bool = False
     max_entries: int = 1000
     retained_consumed_pairs: int = 3
+    max_archive_count: int = 10    # trigger knowledge update when this many undigested
+    max_archive_total: int = 20    # max archive dirs on disk (FIFO eviction)
+    max_archive_inject: int = 3    # how many recent archives to inject into system prompt
 
 
 class KnowledgeConfig(BaseModel):
@@ -115,6 +116,16 @@ class PrunedCatalogConfig(BaseModel):
     topic_max_chars: int = 200
 
 
+class SummarizerAgentConfig(BaseModel):
+    """Configuration for the summarizer-as-agent memory system."""
+
+    enabled: bool = True
+    context_max_chars: int = 2000
+    knowledge_max_chars: int = 3000
+    index_max_chars: int = 200
+    max_iterations: int = 50
+
+
 class MemoryConfig(BaseModel):
     """Memory system configuration.
 
@@ -131,6 +142,9 @@ class MemoryConfig(BaseModel):
     archive: ArchiveConfig | None = Field(default_factory=ArchiveConfig)
     knowledge: KnowledgeConfig | None = None
     dream_engine: DreamEngineConfig | None = None
+
+    # Summarizer-agent wiring (new agent-based archive flow)
+    summarizer_agent: SummarizerAgentConfig | None = None
 
     # Existing fields
     retention: RetentionConfig = Field(default_factory=RetentionConfig)

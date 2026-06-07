@@ -1,4 +1,4 @@
-"""Tests for SendToAgentTool and ListCommunicationTargetsTool."""
+"""Tests for SendToAgentTool."""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ import pytest
 from framework.core.agent import AgentContext, current_agent_context
 from framework.multi_agent.address import AgentAddress
 from framework.multi_agent.comm_kind import AgentCommKind
-from framework.multi_agent.registry import AgentProfile
 from framework.multi_agent.tools import (
-    ListCommunicationTargetsTool,
+    CommunicationTarget,
+    CommunicationTargetStore,
     SendToAgentTool,
 )
 
@@ -30,18 +30,6 @@ class _RecordingService:
         self.async_invocation_id = invocation_id
         return "ok"
 
-    def build_targets_description(self) -> str:
-        return "Available targets:\n- office-expert (subagent)"
-
-
-class _Registry:
-    def __init__(self, profiles: list[AgentProfile]) -> None:
-        self._profiles = profiles
-
-    def list_profiles(self, caller: str | None = None) -> list[AgentProfile]:
-        _ = caller
-        return self._profiles
-
 
 def _context() -> AgentContext:
     return AgentContext(
@@ -49,6 +37,15 @@ def _context() -> AgentContext:
         history=object(),  # type: ignore[arg-type]
         tool_manager=object(),  # type: ignore[arg-type]
     )
+
+
+def _store_with_target() -> CommunicationTargetStore:
+    """Pre-populated store for tests that need a valid target."""
+    store = CommunicationTargetStore()
+    store.add(CommunicationTarget(
+        name="office-expert", kind=AgentCommKind.SUBAGENT,
+    ))
+    return store
 
 
 class TestSendToAgentToolNames:
@@ -73,38 +70,36 @@ class TestNewToolExports:
         assert SendToAgentTool is not None
 
 
-class TestListCommunicationTargetsTool:
-    @pytest.mark.asyncio
-    async def test_subagent_lists_only_normal_reply_targets(self) -> None:
-        registry = _Registry([
-            AgentProfile(name="main", comm_kind=AgentCommKind.NORMAL),
-            AgentProfile(name="office-expert", comm_kind=AgentCommKind.SUBAGENT),
-            AgentProfile(name="query-12306", comm_kind=AgentCommKind.SUBAGENT),
-        ])
-        tool = ListCommunicationTargetsTool(
-            self_address=AgentAddress(name="office-expert"),
-            registry=registry,  # type: ignore[arg-type]
-        )
-
-        result = await tool.execute()
-
-        assert "main" in result
-        assert "query-12306" not in result
-
-
 class TestSchema:
-    def test_tool_has_required_invocation_id(self) -> None:
-        service = _RecordingService()
+    def test_normal_tool_has_invocation_id_param(self) -> None:
+        """NORMAL agent tool: invocation_id is required for session management."""
+        store = CommunicationTargetStore()  # for_subagent=False
+        store.add(CommunicationTarget(name="office-expert", kind=AgentCommKind.SUBAGENT))
         tool = SendToAgentTool(
+            store=store,
             source=AgentAddress(name="main"),
             broker=object(),  # type: ignore[arg-type]
             registry=object(),  # type: ignore[arg-type]
             agent_bus=object(),  # type: ignore[arg-type]
-            service=service,  # type: ignore[arg-type]
+            service=_RecordingService(),  # type: ignore[arg-type]
         )
-
         assert "invocation_id" in tool.parameters["properties"]
         assert "invocation_id" in tool.parameters["required"]
+
+    def test_subagent_tool_has_no_invocation_id_param(self) -> None:
+        """Subagent tool: no invocation_id — parent comm doesn't need sessions."""
+        store = CommunicationTargetStore(for_subagent=True)
+        store.add(CommunicationTarget(name="main", kind=AgentCommKind.NORMAL))
+        tool = SendToAgentTool(
+            store=store,
+            source=AgentAddress(name="worker"),
+            broker=object(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            agent_bus=object(),  # type: ignore[arg-type]
+            service=_RecordingService(),  # type: ignore[arg-type]
+        )
+        assert "invocation_id" not in tool.parameters["properties"]
+        assert "invocation_id" not in tool.parameters["required"]
 
 
 class TestToolInvocationIdForwarding:
@@ -112,6 +107,7 @@ class TestToolInvocationIdForwarding:
     async def test_tool_forwards_invocation_id_to_service(self) -> None:
         service = _RecordingService()
         tool = SendToAgentTool(
+            store=_store_with_target(),
             source=AgentAddress(name="main"),
             broker=object(),  # type: ignore[arg-type]
             registry=object(),  # type: ignore[arg-type]
@@ -145,6 +141,7 @@ class TestToolInvocationIdNullStringNormalization:
     async def test_string_null_treated_as_none(self, null_value: str) -> None:
         service = _RecordingService()
         tool = SendToAgentTool(
+            store=_store_with_target(),
             source=AgentAddress(name="main"),
             broker=object(),  # type: ignore[arg-type]
             registry=object(),  # type: ignore[arg-type]
@@ -174,6 +171,7 @@ class TestToolInvocationIdNullStringNormalization:
         """Python None (from JSON null) must still work as before."""
         service = _RecordingService()
         tool = SendToAgentTool(
+            store=_store_with_target(),
             source=AgentAddress(name="main"),
             broker=object(),  # type: ignore[arg-type]
             registry=object(),  # type: ignore[arg-type]
@@ -193,3 +191,271 @@ class TestToolInvocationIdNullStringNormalization:
 
         assert result == "ok"
         assert service.async_invocation_id is None
+
+
+class TestSendToAgentToolTargetValidation:
+    @pytest.mark.asyncio
+    async def test_rejects_unknown_target(self) -> None:
+        service = _RecordingService()
+        store = CommunicationTargetStore()
+        store.add(CommunicationTarget(
+            name="office-expert", kind=AgentCommKind.SUBAGENT,
+        ))
+        tool = SendToAgentTool(
+            store=store,
+            source=AgentAddress(name="main"),
+            broker=object(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            agent_bus=object(),  # type: ignore[arg-type]
+            service=service,  # type: ignore[arg-type]
+        )
+        token = current_agent_context.set(_context())
+        try:
+            result = await tool.execute(
+                target_agent="nonexistent",
+                content="test",
+                invocation_id=None,
+            )
+        finally:
+            current_agent_context.reset(token)
+        assert "Error" in result
+        assert "nonexistent" in result
+
+    @pytest.mark.asyncio
+    async def test_accepts_known_target(self) -> None:
+        service = _RecordingService()
+        store = _store_with_target()
+        tool = SendToAgentTool(
+            store=store,
+            source=AgentAddress(name="main"),
+            broker=object(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            agent_bus=object(),  # type: ignore[arg-type]
+            service=service,  # type: ignore[arg-type]
+        )
+        token = current_agent_context.set(_context())
+        try:
+            result = await tool.execute(
+                target_agent="office-expert",
+                content="test",
+                invocation_id=None,
+            )
+        finally:
+            current_agent_context.reset(token)
+        assert result == "ok"
+
+
+class TestToolManagerIntegration:
+    """ToolManager.get_tool_descriptions() MUST use get_dynamic_schema().
+
+    The bug: _get_tool_schema() checks isinstance(tool, DynamicSchemaProvider).
+    Tool base class does not inherit from DynamicSchemaProvider, so every tool
+    falls through to get_schema() and returns the static constructor description.
+    """
+
+    def test_tool_manager_descriptions_use_dynamic_schema(self) -> None:
+        from framework.core.tool_manager import InMemoryToolManager
+        store = CommunicationTargetStore()
+        store.add(CommunicationTarget(
+            name="scout", kind=AgentCommKind.SUBAGENT, description="Fast recon",
+        ))
+        store.add(CommunicationTarget(
+            name="worker", kind=AgentCommKind.SUBAGENT, description="Implementation",
+        ))
+        tool = SendToAgentTool(
+            store=store,
+            source=AgentAddress(name="main"),
+            broker=object(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            agent_bus=object(),  # type: ignore[arg-type]
+            service=_RecordingService(),  # type: ignore[arg-type]
+        )
+
+        tm = InMemoryToolManager()
+        tm.register(tool)
+        schemas = tm.get_tool_descriptions()
+        assert len(schemas) == 1
+        desc = schemas[0]["function"]["description"]
+
+        # Must contain dynamic target info, NOT the static fallback
+        assert "scout" in desc, f"expected 'scout' in description, got: {desc}"
+        assert "Fast recon" in desc, f"expected 'Fast recon' in description, got: {desc}"
+        assert "worker" in desc, f"expected 'worker' in description, got: {desc}"
+        assert "Dispatch a task" in desc  # base instruction preserved
+
+
+class TestSendToAgentToolDescription:
+    """tool.description is the single source of truth — dynamically updated
+    by the store on add_target / pop_target_by_name. No external refresh needed."""
+
+    def test_description_contains_targets(self) -> None:
+        store = _store_with_target()
+        tool = SendToAgentTool(
+            store=store,
+            source=AgentAddress(name="main"),
+            broker=object(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            agent_bus=object(),  # type: ignore[arg-type]
+            service=_RecordingService(),  # type: ignore[arg-type]
+        )
+        assert "office-expert" in tool.description
+
+    def test_description_updates_after_add_target(self) -> None:
+        store = CommunicationTargetStore()
+        tool = SendToAgentTool(
+            store=store,
+            source=AgentAddress(name="main"),
+            broker=object(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            agent_bus=object(),  # type: ignore[arg-type]
+            service=_RecordingService(),  # type: ignore[arg-type]
+        )
+        assert "No targets" in tool.description
+
+        tool.add_target(CommunicationTarget(
+            name="scout", kind=AgentCommKind.SUBAGENT, description="Fast recon",
+        ))
+        assert "scout" in tool.description
+        assert "Fast recon" in tool.description
+        assert "No targets" not in tool.description
+
+    def test_description_updates_after_pop_target(self) -> None:
+        store = CommunicationTargetStore()
+        store.add(CommunicationTarget(
+            name="scout", kind=AgentCommKind.SUBAGENT, description="Recon",
+        ))
+        store.add(CommunicationTarget(
+            name="worker", kind=AgentCommKind.SUBAGENT, description="Impl",
+        ))
+        tool = SendToAgentTool(
+            store=store,
+            source=AgentAddress(name="main"),
+            broker=object(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            agent_bus=object(),  # type: ignore[arg-type]
+            service=_RecordingService(),  # type: ignore[arg-type]
+        )
+        assert "scout" in tool.description
+        assert "worker" in tool.description
+
+        tool.pop_target_by_name("scout")
+        assert "scout" not in tool.description
+        assert "worker" in tool.description
+
+    def test_duplicate_add_does_not_change_description(self) -> None:
+        store = _store_with_target()
+        tool = SendToAgentTool(
+            store=store,
+            source=AgentAddress(name="main"),
+            broker=object(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            agent_bus=object(),  # type: ignore[arg-type]
+            service=_RecordingService(),  # type: ignore[arg-type]
+        )
+        before = tool.description
+        tool.add_target(CommunicationTarget(
+            name="office-expert", kind=AgentCommKind.SUBAGENT,
+        ))
+        assert tool.description is before  # same object, no refresh
+
+    def test_pop_nonexistent_does_not_change_description(self) -> None:
+        store = _store_with_target()
+        tool = SendToAgentTool(
+            store=store,
+            source=AgentAddress(name="main"),
+            broker=object(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            agent_bus=object(),  # type: ignore[arg-type]
+            service=_RecordingService(),  # type: ignore[arg-type]
+        )
+        before = tool.description
+        tool.pop_target_by_name("nonexistent")
+        assert tool.description is before
+
+    def test_multiple_adds_and_pops(self) -> None:
+        store = CommunicationTargetStore()
+        tool = SendToAgentTool(
+            store=store,
+            source=AgentAddress(name="main"),
+            broker=object(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            agent_bus=object(),  # type: ignore[arg-type]
+            service=_RecordingService(),  # type: ignore[arg-type]
+        )
+        assert "No targets" in tool.description
+
+        # add agents one at a time
+        tool.add_target(CommunicationTarget(name="alpha", kind=AgentCommKind.SUBAGENT))
+        assert "alpha" in tool.description
+        assert "beta" not in tool.description
+
+        tool.add_target(CommunicationTarget(name="beta", kind=AgentCommKind.SUBAGENT))
+        assert "alpha" in tool.description and "beta" in tool.description
+
+        # pop alpha → only beta
+        tool.pop_target_by_name("alpha")
+        assert "alpha" not in tool.description
+        assert "beta" in tool.description
+
+        # pop beta → empty
+        tool.pop_target_by_name("beta")
+        assert "No targets" in tool.description
+
+    def test_list_targets_returns_copy(self) -> None:
+        """External code cannot mutate the internal target list."""
+        store = _store_with_target()
+        tool = SendToAgentTool(
+            store=store,
+            source=AgentAddress(name="main"),
+            broker=object(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            agent_bus=object(),  # type: ignore[arg-type]
+            service=_RecordingService(),  # type: ignore[arg-type]
+        )
+        targets = tool.list_targets()
+        targets.clear()
+        assert tool.has_target("office-expert")  # internal list untouched
+
+    def test_description_via_tool_manager(self) -> None:
+        """ToolManager.get_tool_descriptions() returns dynamic description."""
+        from framework.core.tool_manager import InMemoryToolManager
+        store = CommunicationTargetStore()
+        store.add(CommunicationTarget(
+            name="scout", kind=AgentCommKind.SUBAGENT, description="Fast recon",
+        ))
+        store.add(CommunicationTarget(
+            name="worker", kind=AgentCommKind.SUBAGENT, description="Implementation",
+        ))
+        tool = SendToAgentTool(
+            store=store,
+            source=AgentAddress(name="main"),
+            broker=object(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            agent_bus=object(),  # type: ignore[arg-type]
+            service=_RecordingService(),  # type: ignore[arg-type]
+        )
+        tm = InMemoryToolManager()
+        tm.register(tool)
+        schemas = tm.get_tool_descriptions()
+        desc = schemas[0]["function"]["description"]
+        assert "scout" in desc
+        assert "Fast recon" in desc
+        assert "worker" in desc
+        assert "Implementation" in desc
+
+
+class TestSendToAgentToolDynamicSchema:
+    def test_schema_name_and_parameters_intact(self) -> None:
+        store = _store_with_target()
+        tool = SendToAgentTool(
+            store=store,
+            source=AgentAddress(name="main"),
+            broker=object(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            agent_bus=object(),  # type: ignore[arg-type]
+            service=_RecordingService(),  # type: ignore[arg-type]
+        )
+        schema = tool.get_dynamic_schema()
+        assert schema["function"]["name"] == "send_to_agent"
+        assert "target_agent" in schema["function"]["parameters"]["properties"]
+        assert "invocation_id" in schema["function"]["parameters"]["properties"]

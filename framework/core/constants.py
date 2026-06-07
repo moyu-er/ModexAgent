@@ -3,7 +3,7 @@
 集中管理所有硬编码字符串、枚举值和默认配置，避免分散在各个模块中。
 """
 
-from enum import Enum
+from enum import Enum, StrEnum
 
 
 class ToolCallType(str, Enum):
@@ -26,6 +26,23 @@ class FinishReason(str, Enum):
     CONTENT_FILTER = "content_filter"
     ERROR = "error"
     CANCELLED = "cancelled"
+
+
+class StopReason(StrEnum):
+    """Agent turn 结束原因枚举。
+
+    统一所有 turn-level 的停止原因，消除分散在各处的硬编码字符串。
+    """
+
+    COMPLETED = "completed"
+    ERROR = "error"
+    MAX_ITERATIONS = "max_iterations"
+    TURN_CANCELLED = "turn_cancelled"
+    TIMEOUT = "timeout"
+    CANCELLED = "cancelled"
+    MISSED_COMMUNICATION = "missed_communication"
+    COMMAND_INTERCEPTED = "command_intercepted"
+    DUPLICATE = "duplicate"
 
 
 class ErrorMessages:

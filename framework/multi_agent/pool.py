@@ -733,6 +733,13 @@ class AgentPool(AgentRegistry):
         instance = self._agents.get(name)
         return instance.descriptor if instance else None
 
+    def has_active_sessions(self) -> bool:
+        """Return True if any agent has an in-progress dispatch.
+
+        Used by workspace cd/exit to check whether switching is safe.
+        """
+        return any(count > 0 for count in self._active_session_counts.values())
+
     def get_status(self, name: str) -> AgentState:
         return self._status.get(name, AgentState.SHUTDOWN)
 

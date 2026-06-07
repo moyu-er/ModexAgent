@@ -14,6 +14,7 @@ from framework.memory.core.models import StorageRevision
 from framework.memory.core.scope import MemoryAgentRole, MemoryContext, ScopeRecord
 from framework.memory.stores.utils import ensure_scope_dir
 from framework.memory.utils import safe_atomic_replace
+from framework.utils.file_io import read_json_robust, read_jsonl_robust
 
 logger = logging.getLogger(__name__)
 
@@ -118,19 +119,19 @@ class FileStorage:
 
     def _read_scope_record(self, scope_dir: Path) -> ScopeRecord | None:
         path = self._scope_metadata_path(scope_dir)
-        if not path.exists():
+        data = read_json_robust(path)
+        if not data:
             return None
         try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
             return ScopeRecord(
-                scope_key=raw["scope_key"],
-                layer=raw["layer"],
-                context=MemoryContext.from_dict(raw.get("context")),
-                storage_path=raw.get("storage_path") or str(scope_dir),
-                agent_role=raw.get("agent_role", "main"),
-                agent_id=raw.get("agent_id"),
-                created_at=raw.get("created_at"),
-                updated_at=raw.get("updated_at"),
+                scope_key=data["scope_key"],
+                layer=data["layer"],
+                context=MemoryContext.from_dict(data.get("context")),
+                storage_path=data.get("storage_path") or str(scope_dir),
+                agent_role=data.get("agent_role", "main"),
+                agent_id=data.get("agent_id"),
+                created_at=data.get("created_at"),
+                updated_at=data.get("updated_at"),
             )
         except Exception as e:
             logger.warning("Failed to read scope metadata from %s: %s", path, e)
@@ -205,93 +206,42 @@ class FileStorage:
     async def get(self, scope_key: str, key: str) -> Any | None:
         async with self.get_lock().read():
             scope_dir = self._scope_dir(scope_key)
-            kv_path = self._kv_path(scope_dir)
-            if not kv_path.exists():
-                return None
-            try:
-                data = json.loads(kv_path.read_text(encoding="utf-8"))
-                return data.get(key)
-            except Exception as e:
-                logger.warning(f"Failed to read kv for {scope_key}: {e}")
-                return None
+            data = read_json_robust(self._kv_path(scope_dir))
+            return data.get(key) if data else None
 
     async def set(self, scope_key: str, key: str, value: Any) -> None:
         async with self.get_lock().write():
             scope_dir = self._scope_dir(scope_key)
             kv_path = self._kv_path(scope_dir)
             scope_dir.mkdir(parents=True, exist_ok=True)
-
-            if not kv_path.exists():
-                _atomic_json_write(kv_path, {key: value})
-                return
-
-            try:
-                with open(kv_path, "r+", encoding="utf-8") as f:
-                    try:
-                        data = json.load(f)
-                    except json.JSONDecodeError:
-                        data = {}
-                    data[key] = value
-                    f.seek(0)
-                    f.truncate()
-                    json.dump(data, f, ensure_ascii=False, indent=2)
-            except Exception as e:
-                logger.error(f"Failed to set kv key {key} for {scope_key}: {e}")
-                raise
+            data = read_json_robust(kv_path) or {}
+            data[key] = value
+            _atomic_json_write(kv_path, data)
 
     async def delete(self, scope_key: str, key: str) -> bool:
         async with self.get_lock().write():
             scope_dir = self._scope_dir(scope_key)
             kv_path = self._kv_path(scope_dir)
-            if not kv_path.exists():
+            data = read_json_robust(kv_path)
+            if not data or key not in data:
                 return False
-
-            try:
-                with open(kv_path, "r+", encoding="utf-8") as f:
-                    try:
-                        data = json.load(f)
-                    except json.JSONDecodeError:
-                        return False
-                    if key in data:
-                        del data[key]
-                        f.seek(0)
-                        f.truncate()
-                        json.dump(data, f, ensure_ascii=False, indent=2)
-                        return True
-                    return False
-            except Exception as e:
-                logger.warning(f"Failed to delete kv key {key} for {scope_key}: {e}")
-            return False
+            data.pop(key)
+            _atomic_json_write(kv_path, data)
+            return True
 
     async def list_keys(self, scope_key: str, prefix: str = "") -> list[str]:
         async with self.get_lock().read():
             scope_dir = self._scope_dir(scope_key)
-            kv_path = self._kv_path(scope_dir)
-            if not kv_path.exists():
+            data = read_json_robust(self._kv_path(scope_dir))
+            if not data:
                 return []
-            try:
-                data = json.loads(kv_path.read_text(encoding="utf-8"))
-                return [k for k in data if k.startswith(prefix)]
-            except Exception:
-                return []
+            return [k for k in data if k.startswith(prefix)]
 
     # --- Messages ---
     async def load_messages(self, scope_key: str) -> list[dict[str, Any]]:
         async with self.get_lock().read():
             scope_dir = self._scope_dir(scope_key)
-            path = self._messages_path(scope_dir)
-            if not path.exists():
-                return []
-            messages = []
-            try:
-                with open(path, encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if line:
-                            messages.append(json.loads(line))
-            except Exception as e:
-                logger.warning(f"Failed to load messages for {scope_key}: {e}")
-            return messages
+            return read_jsonl_robust(self._messages_path(scope_dir))
 
     async def save_messages(self, scope_key: str, messages: list[dict[str, Any]]) -> None:
         """原子覆盖写入 messages.jsonl（使用临时文件 + replace）"""
@@ -369,23 +319,13 @@ class FileStorage:
     ) -> list[dict[str, Any]]:
         async with self.get_lock().read():
             scope_dir = self._scope_dir(scope_key)
-            path = self._history_path(scope_dir)
-            if not path.exists():
-                return []
-            logs = []
-            try:
-                with open(path, encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        entry = json.loads(line)
-                        if entry.get("cursor", 0) > since_cursor:
-                            logs.append(entry)
-                            if len(logs) >= limit:
-                                break
-            except Exception as e:
-                logger.warning(f"Failed to read logs for {scope_key}: {e}")
+            all_entries = read_jsonl_robust(self._history_path(scope_dir))
+            logs: list[dict[str, Any]] = []
+            for entry in all_entries:
+                if entry.get("cursor", 0) > since_cursor:
+                    logs.append(entry)
+                    if len(logs) >= limit:
+                        break
             return logs
 
     async def save_logs(self, scope_key: str, entries: list[dict[str, Any]]) -> None:
@@ -419,20 +359,9 @@ class FileStorage:
 
             # 若 cursor 文件缺失或损坏，尝试从 history.jsonl 最后一行恢复
             if cursor_val == 0 and cursor_name == "default":
-                history_path = self._history_path(scope_dir)
-                if history_path.exists():
-                    try:
-                        with open(history_path, encoding="utf-8") as f:
-                            last_line = ""
-                            for line in f:
-                                line = line.strip()
-                                if line:
-                                    last_line = line
-                            if last_line:
-                                recovered = json.loads(last_line).get("cursor", 0)
-                                cursor_val = recovered
-                    except Exception:
-                        pass
+                entries = read_jsonl_robust(self._history_path(scope_dir))
+                if entries:
+                    cursor_val = entries[-1].get("cursor", 0)
             return cursor_val
 
     async def set_last_cursor(self, scope_key: str, cursor_name: str, cursor: int) -> None:

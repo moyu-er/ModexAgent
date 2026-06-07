@@ -12,6 +12,7 @@ from html import escape
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from framework.memory.tags import PrunedTag
 from framework.memory.pruned.models import PrunedIndexEntry
 from framework.utils.timezone import get_user_timezone
 
@@ -71,17 +72,48 @@ class PrunedManager:
         if not storage.has_content():
             return None
         path = escape(storage.get_directory_path())
-        return (
-            "<memory_archives>\n"
-            "<!-- Pruned conversation segments are stored as read-only files in the directory below.\n"
-            "     An index.jsonl in the same directory catalogs each segment with topic, time range,\n"
-            "     and file path.\n"
-            "     NOTE: index.jsonl is editable — you should update it to improve topic descriptions\n"
-            "     or categorization when you have better context. The pruned segment files themselves\n"
-            "     must NOT be modified. -->\n"
-            f'  <directory path="{path}"/>\n'
-            "</memory_archives>"
+        ct = PrunedTag.CONTAINER.value
+        tt = PrunedTag.TRANSCRIPT.value
+        heading = (
+            "### Conversation Transcripts\n\n"
+            "Complete transcripts of **previous** conversations (not the current one). "
+            "The directory below contains all stored transcript files — read its "
+            "`index.jsonl` to browse every conversation by topic, time range, and "
+            "message count. Transcripts are read-only; you may update topic descriptions "
+            "in `index.jsonl`.\n\n"
         )
+        lines: list[str] = [
+            heading,
+            f"<{ct}>",
+            f'  <directory path="{path}"/>',
+        ]
+
+        # Embed recent index entries so the agent sees what happened
+        # without having to read files first.
+        entries = storage.read_index()
+        recent_entries = entries[-3:] if entries else []
+        if recent_entries:
+            history = PrunedTag.HISTORY.value
+            lines.append(f"  <{history}>")
+            for e in recent_entries:
+                time_range = (
+                    f"{e.start_time_display} ~ {e.end_time_display}"
+                    if e.start_time_display and e.end_time_display
+                    else e.cleanup_time_display
+                )
+                topic = e.topic or f"Conversation {e.id} ({e.message_count} messages)"
+                if len(topic) > 200:
+                    topic = topic[:200] + "..."
+                lines.append(
+                    f'    <{tt} time="{escape(time_range)}"'
+                    f' messages="{e.message_count}">'
+                    f"\n{escape(topic)}\n"
+                    f"</{tt}>"
+                )
+            lines.append(f"  </{history}>")
+
+        lines.append(f"</{ct}>")
+        return "\n".join(lines)
 
     # -- private helpers -----------------------------------------------------
 

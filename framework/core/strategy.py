@@ -9,6 +9,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, TypeVar
 
+from .constants import StopReason
 from .events import AgentEvent
 
 if TYPE_CHECKING:
@@ -63,7 +64,7 @@ class SingleTurnStrategy(ExecutionStrategy):
             temperature=context.temperature or 0.7,
             max_tokens=context.max_tokens,
         )
-        result = AgentResult(content=response.content or "", stop_reason="completed")
+        result = AgentResult(content=response.content or "", stop_reason=StopReason.COMPLETED)
         await context.history.append({"role": "assistant", "content": result.content})
         await emitter.emit_complete(result)
         return result

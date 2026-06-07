@@ -7,7 +7,7 @@ import logging
 import os
 from typing import Any
 
-from framework.tools.terminal.backends.base import TerminalBackend
+from framework.tools.terminal.backends.base import TerminalBackend, extract_current_segment_from_buffer
 from framework.tools.terminal.prompt import is_prompt_ready
 from framework.tools.terminal.results import TerminalRead, TerminalSegment
 from framework.tools.terminal.types import Platform, TerminalVisibility
@@ -202,10 +202,14 @@ class TmuxPtyBackend(TerminalBackend):
         text = await loop.run_in_executor(
             None, lambda: "\n".join(self._pane.capture_pane())
         )
-        return TerminalSegment(text=text)
+        return extract_current_segment_from_buffer(text)
 
     async def interrupt(self) -> None:
         await self.write("\x03")
 
     def stdin_writable(self) -> bool:
         return self._pane is not None
+
+    def output_buffer_text(self) -> str:
+        """Return the last captured pane text."""
+        return self._last_capture or ""

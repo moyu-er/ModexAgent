@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Any
 
+from framework.core.tool import DynamicSchemaProvider
+
 logger = logging.getLogger(__name__)
 
 
@@ -42,7 +44,7 @@ class ToolManagerConfig:
     parallel_max_workers: int = 5            # 并行执行时的最大并发数
 
 
-class Tool:
+class Tool(DynamicSchemaProvider):
     """工具基类
 
     所有工具应继承此类并实现 execute 方法。
@@ -50,6 +52,9 @@ class Tool:
     支持两种使用方式：
     1. 新方式：直接传入参数到 __init__
     2. 旧方式（兼容）：继承后通过 @property 定义 name, description, parameters
+
+    Implements DynamicSchemaProvider — override get_dynamic_schema()
+    for context-aware descriptions. Default returns static get_schema().
     """
 
     def __init__(
@@ -127,6 +132,12 @@ class Tool:
                 "parameters": self.parameters,
             },
         }
+
+    def get_dynamic_schema(self) -> dict[str, Any]:
+        """DynamicSchemaProvider impl — returns static schema by default.
+        Override in subclasses for context-aware descriptions.
+        """
+        return self.get_schema()
 
     def clone(self) -> "Tool":
         """创建工具的深拷贝副本。
@@ -430,6 +441,17 @@ class ToolManager(ABC):
                     result = await self._execute_sequential(tool, arguments, config)
 
                 execution_time = asyncio.get_event_loop().time() - start_time
+                # If the tool already returned a ToolResult (e.g. scoped tools
+                # that validate paths and return errors), pass it through so
+                # error information reaches the model intact.
+                if type(result) is ToolResult:
+                    return ToolResult(
+                        tool_name=result.tool_name,
+                        result=result.result,
+                        error=result.error,
+                        execution_time=execution_time,
+                        call_id=result.call_id,
+                    )
                 return ToolResult(
                     tool_name=tool_name,
                     result=result,
@@ -542,11 +564,8 @@ class ToolManager(ABC):
 
     # ---- 工具描述生成 ----
 
-    def get_tool_descriptions(self, caller_context: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    def get_tool_descriptions(self) -> list[dict[str, Any]]:
         """获取所有工具的描述（供 LLM 使用）
-
-        Args:
-            caller_context: 可选的调用者上下文，用于动态 Schema 生成。
 
         Returns:
             OpenAI 格式的工具定义列表
@@ -557,19 +576,10 @@ class ToolManager(ABC):
             if tool is None or not hasattr(tool, 'config'):
                 continue
             if tool.config.enabled:
-                schema = self._get_tool_schema(tool, caller_context)
-                descriptions.append(schema)
+                descriptions.append(tool.get_dynamic_schema())
         return descriptions
 
-    @staticmethod
-    def _get_tool_schema(tool: Tool, caller_context: dict[str, Any] | None = None) -> dict[str, Any]:
-        """获取单个工具的 Schema，支持动态 Schema 提供者。"""
-        from framework.core.tool import DynamicSchemaProvider
-        if isinstance(tool, DynamicSchemaProvider):
-            return tool.get_dynamic_schema(caller_context)
-        return tool.get_schema()
-
-    def get_tools_section(self, caller_context: dict[str, Any] | None = None) -> str:
+    def get_tools_section(self) -> str:
         """生成工具描述文本（用于系统提示词）"""
         lines = ["# Available Tools", ""]
 
@@ -579,7 +589,7 @@ class ToolManager(ABC):
                 continue
             if tool.config.enabled:
                 lines.append(f"## {tool.name}")
-                schema = self._get_tool_schema(tool, caller_context)
+                schema = tool.get_dynamic_schema()
                 desc = schema.get("function", {}).get("description", tool.description)
                 lines.append(f"{desc}")
                 lines.append("")
@@ -604,7 +614,7 @@ class InMemoryToolManager(ToolManager):
     def unregister(self, tool_name: str) -> bool:
         """注销工具"""
         if tool_name in self._tools:
-            del self._tools[tool_name]
+            self._tools.pop(tool_name)
             logger.debug(f"Tool unregistered: {tool_name}")
             return True
         return False
@@ -624,6 +634,15 @@ class InMemoryToolManager(ToolManager):
     def has_tool(self, tool_name: str) -> bool:
         """检查工具是否已注册"""
         return self.is_registered(tool_name)
+
+    @property
+    def tools(self) -> dict[str, Tool]:
+        """所有已注册的工具（按名称索引）。调试用，修改 dict 不影响管理器。"""
+        return dict(self._tools)
+
+    def list_tool_instances(self) -> list[Tool]:
+        """列出所有工具实例。"""
+        return list(self._tools.values())
 
     def __contains__(self, tool_name: str) -> bool:
         """支持 'tool_name in tool_manager' 语法"""

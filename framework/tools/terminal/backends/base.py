@@ -52,6 +52,12 @@ class TerminalBackend(ABC):
         if self._output_buffer is not None:
             self._output_buffer.mark_command_boundary()
 
+    def output_buffer_text(self) -> str:
+        """Return the full output buffer text, or empty string if no buffer."""
+        if self._output_buffer is not None:
+            return self._output_buffer.text
+        return ""
+
     def _append_to_buffer(self, text: str) -> None:
         """Append output text to the sliding output buffer."""
         if self._output_buffer is not None:

@@ -386,6 +386,91 @@ class TestSubagentAutoSendHook:
         # Must not raise
         await hook.after_turn(ctx, result)
 
+    # ------------------------------------------------------------------
+    # 17. Skip when history already has inbox message from self (no runtime_mgr)
+    # ------------------------------------------------------------------
+
+    async def test_skips_when_history_has_inbox_message_from_self__no_runtime_mgr(self):
+        """RuntimeContextManager is None but history already contains an inbox
+        message sent by this subagent → bus.send is NOT called.
+
+        This reproduces the duplicate-send bug: when RuntimeContext is unavailable,
+        the hook should fall back to checking history for evidence that the agent
+        already communicated via send_to_agent.
+        """
+        bus = self._make_bus()
+        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
+        # No runtime_mgr → rc will be None
+        history_entries = [
+            {
+                "role": "agent",
+                "source_agent": "office-expert",
+                "content": "<agent_message>Already sent</agent_message>",
+                "meta_inbox": True,
+                "meta_source": "office-expert",
+                "meta_target_agent": "main",
+            }
+        ]
+        ctx = self._make_ctx(history_entries, runtime_mgr=None)
+        result = AgentResult(content="Task completed successfully.")
+
+        await hook.after_turn(ctx, result)
+        bus.send.assert_not_awaited()
+
+    # ------------------------------------------------------------------
+    # 18. Skip when history already has inbox message from self (empty tool_calls)
+    # ------------------------------------------------------------------
+
+    async def test_skips_when_history_has_inbox_message_from_self__empty_tool_calls(self):
+        """RuntimeContext exists but get_tool_calls() is empty (e.g. hook missed
+        recording), and history already contains an inbox message from this
+        subagent → bus.send is NOT called.
+        """
+        bus = self._make_bus()
+        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
+        mgr = RuntimeContextManager()
+        history_entries = [
+            {
+                "role": "agent",
+                "source_agent": "office-expert",
+                "content": "<agent_message>Already sent</agent_message>",
+                "meta_inbox": True,
+                "meta_source": "office-expert",
+                "meta_target_agent": "main",
+            }
+        ]
+        ctx = self._make_ctx(history_entries, runtime_mgr=mgr)
+        result = AgentResult(content="Task completed successfully.")
+
+        # RuntimeContext is empty (no tool calls recorded)
+        await hook.after_turn(ctx, result)
+        bus.send.assert_not_awaited()
+
+    # ------------------------------------------------------------------
+    # 19. Still forwards when inbox message is from a DIFFERENT agent
+    # ------------------------------------------------------------------
+
+    async def test_auto_forwards_when_history_has_inbox_message_from_other_agent(self):
+        """History has an inbox message but from a different agent → bus.send IS
+        called (this subagent has not yet communicated)."""
+        bus = self._make_bus()
+        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
+        history_entries = [
+            {
+                "role": "agent",
+                "source_agent": "query_12306",
+                "content": "<agent_message>12306 result</agent_message>",
+                "meta_inbox": True,
+                "meta_source": "query-12306",
+                "meta_target_agent": "main",
+            }
+        ]
+        ctx = self._make_ctx(history_entries, runtime_mgr=None)
+        result = AgentResult(content="Task completed successfully.")
+
+        await hook.after_turn(ctx, result)
+        bus.send.assert_awaited_once()
+
 
 # ── MaxIterationNotifyHook + SubagentAutoSendHook non-overlap tests ──
 

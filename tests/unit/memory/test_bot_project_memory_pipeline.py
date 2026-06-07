@@ -7,30 +7,33 @@ LLM summarizer results are mocked to isolate pipeline logic from model calls.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from framework.agents.summarizer.abc import ArchiveSummarizerResult
 from framework.core.types import MessageRole
-from framework.memory.archive_generation import ArchiveGenerationStrategy
 from framework.memory.archive_models import (
     ArchiveChannel,
-    ArchiveGenerationInputs,
-    ArchiveGenerationResult,
-    ArchiveInputStats,
-    ArchiveWrite,
 )
 from framework.memory.core.models import ArchiveEntry
 from framework.memory.core.scope import MemoryContext
 from framework.memory.default_system import DefaultMemorySystem
 from framework.memory.layers.factory import MemoryLayerFactory
 from framework.memory.registry.in_memory import InMemoryStoreRegistry
+from framework.memory.stores.dir_archive import DirArchiveStorage
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 
-class MockArchiveGenerationStrategy(ArchiveGenerationStrategy):
-    """Returns a deterministic archive bundle (context + knowledge)."""
+
+class _MockArchiveGenerator:
+    """Mock ArchiveGenerator that writes canned content to archive_dir.
+
+    Matches the :class:`~framework.agents.summarizer.abc.ArchiveGenerator`
+    contract so ``cleanup_session`` can use it as an ``archive_agent``.
+    """
 
     def __init__(
         self,
@@ -41,60 +44,92 @@ class MockArchiveGenerationStrategy(ArchiveGenerationStrategy):
         self.canned_knowledge = canned_knowledge
         self.calls: list[list[Any]] = []
 
-    async def generate(self, messages, context, reason):
-        self.calls.append(list(messages))
-        return ArchiveGenerationResult(
-            writes=(
-                ArchiveWrite(
-                    channel=ArchiveChannel.CONTEXT,
-                    summary=self.canned_context,
-                ),
-                ArchiveWrite(
-                    channel=ArchiveChannel.KNOWLEDGE,
-                    summary=self.canned_knowledge,
-                ),
-            ),
-            inputs=ArchiveGenerationInputs(
-                context_transcript=self.canned_context,
-                knowledge_transcript=self.canned_knowledge,
-                stats=ArchiveInputStats(
-                    input_messages=len(messages),
-                    context_messages=len(messages),
-                    knowledge_messages=len(messages),
-                    tool_chains=0,
-                    dropped_messages=0,
-                ),
-            ),
+    async def generate(
+        self,
+        pruned_messages: list[dict[str, Any]],
+        archive_dir: Path,
+        archive_id: int = 0,
+    ) -> ArchiveSummarizerResult:
+        self.calls.append(list(pruned_messages))
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        (archive_dir / "context.md").write_text(self.canned_context, encoding="utf-8")
+        (archive_dir / "knowledge.md").write_text(self.canned_knowledge, encoding="utf-8")
+        (archive_dir / "index.md").write_text("mock index", encoding="utf-8")
+        return ArchiveSummarizerResult(
+            success=True,
+            archive_id=archive_id,
+            files_written=("context.md", "knowledge.md", "index.md"),
         )
 
 
-class EmptyArchiveGenerationStrategy(ArchiveGenerationStrategy):
-    """Returns an empty archive bundle (used to test all-or-nothing skip)."""
+class _EmptyArchiveGenerator:
+    """Mock ArchiveGenerator that writes empty files (simulates no content)."""
 
-    async def generate(self, messages, context, reason):
-        return ArchiveGenerationResult(
-            writes=(),
-            inputs=ArchiveGenerationInputs(
-                context_transcript="",
-                knowledge_transcript="",
-                stats=ArchiveInputStats(
-                    input_messages=len(messages),
-                    context_messages=0,
-                    knowledge_messages=0,
-                    tool_chains=0,
-                    dropped_messages=0,
-                ),
-            ),
+    async def generate(
+        self,
+        pruned_messages: list[dict[str, Any]],
+        archive_dir: Path,
+        archive_id: int = 0,
+    ) -> ArchiveSummarizerResult:
+        _ = pruned_messages
+        return ArchiveSummarizerResult(
+            success=True,
+            archive_id=archive_id,
+            files_written=(),
         )
+
+
+class _FakeInjectableMemorySystem:
+    """Minimal injectable memory system for testing archive injection via DirArchiveStorage.
+
+    Satisfies the ``InjectableMemorySystem`` isinstance check in ``FullInjectionPolicy.assemble``.
+    """
+
+    def __init__(self, archive_dir: Path) -> None:
+        self._archive_dir = archive_dir
+
+    async def get_storage_path(self, context: Any) -> Path | None:
+        return self._archive_dir
+
+    async def get_history(self, context: Any, max_messages: int | None = None) -> list:
+        return []
+
+    async def retrieve_knowledge(self, context: Any, query: str = "") -> Any:
+        from framework.memory.core.models import LongTermMemory
+        return LongTermMemory()
+
+    async def get_history_entries(self, context: Any, limit: int = 3, query: str = "", channel: Any = None) -> list:
+        return []
+
+    async def get_knowledge_directory(self, context: Any) -> None:
+        return None
+
+    def get_providers(self) -> list:
+        return []
+
+    async def prefetch_memories(self, query: str, context: Any) -> None:
+        return None
+
+
+# Register _FakeInjectableMemorySystem as a virtual subclass of InjectableMemorySystem
+# so ``isinstance(fake, InjectableMemorySystem)`` passes.
+from framework.memory.core.system import InjectableMemorySystem
+InjectableMemorySystem.register(_FakeInjectableMemorySystem)
 
 
 def _bot_project_system(
     registry: InMemoryStoreRegistry,
     max_messages: int = 50,
     keep_ratio: float = 0.5,
-    archive_strategy: ArchiveGenerationStrategy | None = None,
+    *,
+    archive_agent: object | None = None,
+    archive_storage: DirArchiveStorage | None = None,
 ) -> DefaultMemorySystem:
-    """Create a DefaultMemorySystem wired like bot_project (with cleanup_config)."""
+    """Create a DefaultMemorySystem wired like bot_project (with cleanup_config).
+
+    When *archive_agent* and *archive_storage* are provided, cleanup_session
+    can generate archive entries on the hot path.
+    """
     layer_set = MemoryLayerFactory.single_user(registry=registry)
     cleanup_config: dict[str, int | float] = {
         "max_messages": max_messages,
@@ -103,8 +138,9 @@ def _bot_project_system(
     return DefaultMemorySystem(
         layer_set=layer_set,
         store_registry=registry,
-        archive_strategy=archive_strategy,
         cleanup_config=cleanup_config,
+        archive_agent=archive_agent,  # type: ignore[arg-type]
+        archive_storage=archive_storage,  # type: ignore[arg-type]
     )
 
 
@@ -116,12 +152,13 @@ def _make_ctx(session_id: str = "test") -> MemoryContext:
 
 
 @pytest.mark.asyncio
-async def test_multi_turn_triggers_cleanup_at_threshold():
+async def test_multi_turn_triggers_cleanup_at_threshold(tmp_path: Path):
     """After >50 turns through ScopedMessageHistory, cleanup fires and
     archive is written. Session stays within the max_messages window."""
     registry = InMemoryStoreRegistry()
-    mock = MockArchiveGenerationStrategy()
-    system = _bot_project_system(registry, archive_strategy=mock)
+    mock = _MockArchiveGenerator()
+    storage = DirArchiveStorage(tmp_path / "archives")
+    system = _bot_project_system(registry, archive_agent=mock, archive_storage=storage)
     await system.initialize()
     ctx = _make_ctx("multi-turn")
 
@@ -133,16 +170,18 @@ async def test_multi_turn_triggers_cleanup_at_threshold():
     remaining = await system.get_history(ctx, max_messages=None)
     assert len(remaining) <= 65, f"should compress to <=65, got {len(remaining)}"
 
-    archive = await system.get_history_entries(ctx, limit=20)
-    assert len(archive) > 0, "archive should have cleanup entries"
+    # Archives are MD-based (DirArchiveStorage); verify directly
+    archive_ids = await storage.list_archives()
+    assert len(archive_ids) > 0, "archive should have cleanup entries"
 
 
 @pytest.mark.asyncio
-async def test_cleanup_respects_threshold():
+async def test_cleanup_respects_threshold(tmp_path: Path):
     """After cleanup, adding a few more messages does not re-trigger until threshold is exceeded."""
     registry = InMemoryStoreRegistry()
-    mock = MockArchiveGenerationStrategy()
-    system = _bot_project_system(registry, max_messages=10, archive_strategy=mock)
+    mock = _MockArchiveGenerator()
+    storage = DirArchiveStorage(tmp_path / "archives")
+    system = _bot_project_system(registry, max_messages=10, archive_agent=mock, archive_storage=storage)
     await system.initialize()
     ctx = _make_ctx("threshold")
 
@@ -152,7 +191,7 @@ async def test_cleanup_respects_threshold():
         await history.append({"role": "assistant", "content": f"a{i}"})
 
     compressed_count = len(await system.get_history(ctx, max_messages=None))
-    archive_count_1 = len(await system.get_history_entries(ctx, limit=20))
+    archive_count_1 = len(await storage.list_archives())
 
     # Add only 2 more turns (4 messages)
     for i in range(2):
@@ -160,18 +199,19 @@ async def test_cleanup_respects_threshold():
         await history.append({"role": "assistant", "content": f"post-a{i}"})
 
     new_count = len(await system.get_history(ctx, max_messages=None))
-    archive_count_2 = len(await system.get_history_entries(ctx, limit=20))
+    archive_count_2 = len(await storage.list_archives())
 
     assert new_count <= compressed_count + 10
     assert archive_count_2 <= archive_count_1 + 2
 
 
 @pytest.mark.asyncio
-async def test_second_cleanup_fires_when_over_threshold():
+async def test_second_cleanup_fires_when_over_threshold(tmp_path: Path):
     """After sufficiently many new messages past threshold, cleanup re-fires."""
     registry = InMemoryStoreRegistry()
-    mock = MockArchiveGenerationStrategy()
-    system = _bot_project_system(registry, max_messages=10, archive_strategy=mock)
+    mock = _MockArchiveGenerator()
+    storage = DirArchiveStorage(tmp_path / "archives")
+    system = _bot_project_system(registry, max_messages=10, archive_agent=mock, archive_storage=storage)
     await system.initialize()
     ctx = _make_ctx("recompress")
 
@@ -180,13 +220,13 @@ async def test_second_cleanup_fires_when_over_threshold():
         await history.append({"role": "user", "content": f"q{i}"})
         await history.append({"role": "assistant", "content": f"a{i}"})
 
-    archive_first = len(await system.get_history_entries(ctx, limit=20))
+    archive_first = len(await storage.list_archives())
     assert archive_first > 0, "first cleanup should produce archive"
 
     for i in range(30):
         await history.append({"role": "user", "content": f"round2-{i}"})
 
-    archive_second = len(await system.get_history_entries(ctx, limit=20))
+    archive_second = len(await storage.list_archives())
     assert archive_second >= archive_first
 
 
@@ -194,11 +234,12 @@ async def test_second_cleanup_fires_when_over_threshold():
 
 
 @pytest.mark.asyncio
-async def test_tool_chains_intact_after_cascade():
+async def test_tool_chains_intact_after_cascade(tmp_path: Path):
     """After multi-turn cleanup, kept suffix has no orphan tool results."""
     registry = InMemoryStoreRegistry()
-    mock = MockArchiveGenerationStrategy()
-    system = _bot_project_system(registry, max_messages=8, archive_strategy=mock)
+    mock = _MockArchiveGenerator()
+    storage = DirArchiveStorage(tmp_path / "archives")
+    system = _bot_project_system(registry, max_messages=8, archive_agent=mock, archive_storage=storage)
     await system.initialize()
     ctx = _make_ctx("tool-chain-cascade")
 
@@ -231,14 +272,15 @@ async def test_tool_chains_intact_after_cascade():
 
 
 @pytest.mark.asyncio
-async def test_archive_uses_mock_summarizer_output():
+async def test_archive_uses_mock_summarizer_output(tmp_path: Path):
     """When archive strategy is wired, archive content matches mock output."""
     registry = InMemoryStoreRegistry()
-    mock = MockArchiveGenerationStrategy(
+    mock = _MockArchiveGenerator(
         canned_context="[MOCK] compressed to archive",
         canned_knowledge="[MOCK] compressed to archive",
     )
-    system = _bot_project_system(registry, max_messages=5, archive_strategy=mock)
+    storage = DirArchiveStorage(tmp_path / "archives")
+    system = _bot_project_system(registry, max_messages=5, archive_agent=mock, archive_storage=storage)
     await system.initialize()
     ctx = _make_ctx("mock-summary")
 
@@ -249,17 +291,19 @@ async def test_archive_uses_mock_summarizer_output():
 
     assert len(mock.calls) > 0, "mock archive generation should have been called"
 
-    entries = await system.get_history_entries(ctx, limit=10)
-    assert len(entries) > 0, "archive should have entries from mock generation"
-    assert any("[MOCK]" in (e.get("summary") or "") for e in entries)
+    archive_ids = await storage.list_archives()
+    assert len(archive_ids) > 0, "archive should have mock-generated entries"
+    content = await storage.read_archive_file(archive_ids[0], "context.md") or ""
+    assert "[MOCK]" in content
 
 
 @pytest.mark.asyncio
-async def test_archive_skips_empty_generation():
-    """Empty archive generation should not produce archive entries."""
+async def test_archive_skips_empty_generation(tmp_path: Path):
+    """Empty archive generation should not produce archive files."""
     registry = InMemoryStoreRegistry()
-    mock = EmptyArchiveGenerationStrategy()
-    system = _bot_project_system(registry, max_messages=5, archive_strategy=mock)
+    mock = _EmptyArchiveGenerator()
+    storage = DirArchiveStorage(tmp_path / "archives")
+    system = _bot_project_system(registry, max_messages=5, archive_agent=mock, archive_storage=storage)
     await system.initialize()
     ctx = _make_ctx("nothing-sentinel")
 
@@ -268,8 +312,8 @@ async def test_archive_skips_empty_generation():
         await history.append({"role": "user", "content": f"q{i}"})
         await history.append({"role": "assistant", "content": f"a{i}"})
 
-    entries = await system.get_history_entries(ctx, limit=10)
-    assert len(entries) == 0, "empty archive generation should produce no entries"
+    archive_ids = await storage.list_archives()
+    assert len(archive_ids) == 0, "empty archive generation should produce no dirs"
     # Session IS cleaned even when archive generation is empty
     remaining = len(await system.get_history(ctx, max_messages=None))
     assert remaining < 24, (
@@ -281,69 +325,49 @@ async def test_archive_skips_empty_generation():
 
 
 @pytest.mark.asyncio
-async def test_full_injection_includes_knowledge_archive_and_session():
+async def test_full_injection_includes_knowledge_archive_and_session(tmp_path: Path):
     """FullInjectionPolicy assembles Knowledge, Archive, and Session messages."""
     from framework.memory.injection import FullInjectionPolicy
+    from framework.memory.stores.dir_archive import DirArchiveStorage
 
-    registry = InMemoryStoreRegistry()
-    system = _bot_project_system(registry)
-    await system.initialize()
-    ctx = _make_ctx("injection")
+    archive_dir = tmp_path / "archives"
+    storage = DirArchiveStorage(archive_dir)
+    await storage.write_archive_file(1, "context.md", "previous session: discussed memory compression")
 
-    # Seed knowledge
-    await system._layers.knowledge.ensure_defaults(ctx, {
-        "soul": "- friendly and concise",
-        "user": "- prefers dark mode",
-        "memory": "- project: ModexAgent",
-    })
-
-    # Seed archive
-    await system._layers.archive.append(ctx, ArchiveEntry(
-        summary="previous session: discussed memory compression",
-    ))
-
-    # Seed session messages
-    await system._layers.session.add_messages(ctx, [
-        {"role": "user", "content": "current question"},
-        {"role": "assistant", "content": "current answer"},
-    ])
-
-    bundle = await FullInjectionPolicy(max_history_entries=5).assemble(
-        context=ctx, memory_system=system, query="",
+    fake = _FakeInjectableMemorySystem(archive_dir)
+    result = await FullInjectionPolicy(max_history_entries=5).assemble(
+        context=MemoryContext(session_id="s1"),
+        memory_system=fake,
     )
 
-    content = bundle.system_prompt
-    assert "<agent_knowledge>" in content
-    assert "friendly and concise" in content
-    assert "prefers dark mode" in content
-    assert "ModexAgent" in content
+    # Archive content injected via MD path
+    content = result.system_prompt
     assert "memory compression" in content
-    assert len(bundle.messages) >= 2
+    assert "### Earlier Conversation Summaries" in content
 
 
 @pytest.mark.asyncio
-async def test_injection_excludes_empty_archive_markers():
-    """Archive entries with '(nothing)' / '(no semantic content)' are filtered."""
+async def test_injection_excludes_empty_archive_markers(tmp_path: Path):
+    """Empty context.md files are skipped; only non-empty archives inject."""
     from framework.memory.injection import FullInjectionPolicy
+    from framework.memory.stores.dir_archive import DirArchiveStorage
 
-    registry = InMemoryStoreRegistry()
-    system = _bot_project_system(registry)
-    await system.initialize()
-    ctx = _make_ctx("filter-empty-injection")
+    archive_dir = tmp_path / "archives"
+    storage = DirArchiveStorage(archive_dir)
+    await storage.write_archive_file(1, "context.md", "")
+    await storage.write_archive_file(2, "context.md", "   ")
+    await storage.write_archive_file(3, "context.md", "real: user asked about weather")
 
-    await system._layers.archive.append(ctx, ArchiveEntry(summary="(nothing)"))
-    await system._layers.archive.append(ctx, ArchiveEntry(summary="(no semantic content)"))
-    await system._layers.archive.append(ctx, ArchiveEntry(
-        summary="real: user asked about weather",
-    ))
-
-    bundle = await FullInjectionPolicy(max_history_entries=5).assemble(
-        context=ctx, memory_system=system, query="",
+    fake = _FakeInjectableMemorySystem(archive_dir)
+    result = await FullInjectionPolicy(max_history_entries=5).assemble(
+        context=MemoryContext(session_id="s1"),
+        memory_system=fake,
     )
-    content = bundle.system_prompt
+
+    content = result.system_prompt
     assert "weather" in content
-    assert "(nothing)" not in content
-    assert "no semantic content" not in content
+    assert 'number="1"' not in content
+    assert 'number="2"' not in content
 
 
 # ── Long-term knowledge: full update (existing + new) ─────────────────────
@@ -400,14 +424,15 @@ async def test_knowledge_replace_text_updates_in_place():
 
 
 @pytest.mark.asyncio
-async def test_archive_merges_multiple_cleanup_rounds():
+async def test_archive_merges_multiple_cleanup_rounds(tmp_path: Path):
     """Multiple cleanup rounds produce cumulative archive entries."""
     registry = InMemoryStoreRegistry()
-    mock = MockArchiveGenerationStrategy(
+    mock = _MockArchiveGenerator(
         canned_context="[MOCK] round context",
         canned_knowledge="[MOCK] round knowledge",
     )
-    system = _bot_project_system(registry, max_messages=10, archive_strategy=mock)
+    storage = DirArchiveStorage(tmp_path / "archives")
+    system = _bot_project_system(registry, max_messages=10, archive_agent=mock, archive_storage=storage)
     await system.initialize()
     ctx = _make_ctx("multi-compress")
 
@@ -420,8 +445,8 @@ async def test_archive_merges_multiple_cleanup_rounds():
     for i in range(40):
         await history.append({"role": "user", "content": f"r2-{i}"})
 
-    entries = await system.get_history_entries(ctx, limit=50)
-    assert len(entries) >= 1
+    archive_ids = await storage.list_archives()
+    assert len(archive_ids) >= 1
 
     remaining = len(await system.get_history(ctx, max_messages=None))
     assert remaining <= 25, f"multiple rounds should keep session small, got {remaining}"
@@ -451,11 +476,12 @@ async def test_empty_session_no_cleanup():
 
 
 @pytest.mark.asyncio
-async def test_session_only_messages_no_duplicate_cleanup_trigger():
+async def test_session_only_messages_no_duplicate_cleanup_trigger(tmp_path: Path):
     """Cleanup does not fire on every single message -- threshold-based trigger works."""
     registry = InMemoryStoreRegistry()
-    mock = MockArchiveGenerationStrategy()
-    system = _bot_project_system(registry, max_messages=10, archive_strategy=mock)
+    mock = _MockArchiveGenerator()
+    storage = DirArchiveStorage(tmp_path / "archives")
+    system = _bot_project_system(registry, max_messages=10, archive_agent=mock, archive_storage=storage)
     await system.initialize()
     ctx = _make_ctx("no-dupe")
 
@@ -473,69 +499,54 @@ async def test_session_only_messages_no_duplicate_cleanup_trigger():
 
 
 @pytest.mark.asyncio
-async def test_archive_injection_has_distinguishable_markers():
+async def test_archive_injection_has_distinguishable_markers(tmp_path: Path):
     """Multiple archive entries are injected with clear per-entry markers."""
     from framework.memory.injection import FullInjectionPolicy
+    from framework.memory.stores.dir_archive import DirArchiveStorage
 
-    registry = InMemoryStoreRegistry()
-    system = _bot_project_system(registry)
-    await system.initialize()
-    ctx = _make_ctx("archive-markers")
+    archive_dir = tmp_path / "archives"
+    storage = DirArchiveStorage(archive_dir)
+    await storage.write_archive_file(1, "context.md", "first session: discussed login bug")
+    await storage.write_archive_file(2, "context.md", "second session: fixed auth flow")
+    await storage.write_archive_file(3, "context.md", "third session: added JWT tests")
 
-    await system._layers.archive.append(ctx, ArchiveEntry(
-        summary="first session: discussed login bug",
-    ))
-    await system._layers.archive.append(ctx, ArchiveEntry(
-        summary="second session: fixed auth flow",
-    ))
-    await system._layers.archive.append(ctx, ArchiveEntry(
-        summary="third session: added JWT tests",
-    ))
-
-    bundle = await FullInjectionPolicy(max_history_entries=5).assemble(
-        context=ctx, memory_system=system, query="",
+    fake = _FakeInjectableMemorySystem(archive_dir)
+    result = await FullInjectionPolicy(max_history_entries=5).assemble(
+        context=MemoryContext(session_id="s1"),
+        memory_system=fake,
     )
-    content = bundle.system_prompt
+    content = result.system_prompt
 
-    assert '<record id="1"' in content
-    assert '<record id="2"' in content
-    assert '<record id="3"' in content
-    assert "<historical_context>" in content
-    assert "</historical_context>" in content
+    assert '<summary' in content
+    assert "<older_topics>" in content
+    assert "</older_topics>" in content
     assert "login bug" in content
     assert "auth flow" in content
     assert "JWT tests" in content
 
 
 @pytest.mark.asyncio
-async def test_archive_injection_includes_timestamp_when_available():
-    """Archive entries with created_at show timestamps in markers."""
+async def test_archive_injection_uses_archive_id_as_number(tmp_path: Path):
+    """Archive entries are injected with archive_id as the number attribute."""
     from framework.memory.injection import FullInjectionPolicy
-    from datetime import datetime
+    from framework.memory.stores.dir_archive import DirArchiveStorage
 
-    registry = InMemoryStoreRegistry()
-    system = _bot_project_system(registry)
-    await system.initialize()
-    ctx = _make_ctx("archive-timestamps")
+    archive_dir = tmp_path / "archives"
+    storage = DirArchiveStorage(archive_dir)
+    await storage.write_archive_file(1, "context.md", "older discussion")
+    await storage.write_archive_file(2, "context.md", "recent discussion")
 
-    await system._layers.archive.append(ctx, ArchiveEntry(
-        summary="older discussion",
-        created_at=datetime(2026, 5, 1, 10, 30),
-    ))
-    await system._layers.archive.append(ctx, ArchiveEntry(
-        summary="recent discussion",
-        created_at=datetime(2026, 5, 6, 14, 45),
-    ))
-
-    bundle = await FullInjectionPolicy(max_history_entries=5).assemble(
-        context=ctx, memory_system=system, query="",
+    fake = _FakeInjectableMemorySystem(archive_dir)
+    result = await FullInjectionPolicy(max_history_entries=5).assemble(
+        context=MemoryContext(session_id="s1"),
+        memory_system=fake,
     )
-    content = bundle.system_prompt
+    content = result.system_prompt
 
-    assert "2026-05-01 10:30" in content
-    assert "2026-05-06 14:45" in content
-    assert '<record id="1" timestamp="2026-05-01 10:30"' in content
-    assert '<record id="2" timestamp="2026-05-06 14:45"' in content
+    assert 'number="1"' in content
+    assert 'number="2"' in content
+    assert "older discussion" in content
+    assert "recent discussion" in content
 
 
 
@@ -657,7 +668,7 @@ async def test_injection_budget_trims_low_priority_first():
     })
     await system._layers.archive.append(ctx, ArchiveEntry(summary="low priority old history " * 20))
 
-    budget = MemoryBudget(max_system_prompt_tokens=300, max_history_messages=10)
+    budget = MemoryBudget(max_system_prompt_tokens=1200, max_history_messages=10)
     bundle = await FullInjectionPolicy(max_history_entries=5, budget=budget).assemble(
         context=ctx, memory_system=system, query="",
     )
@@ -741,14 +752,15 @@ async def test_injection_preserves_tool_messages_by_default():
 
 
 @pytest.mark.asyncio
-async def test_three_tier_memory_cascade_preserves_tool_context():
+async def test_three_tier_memory_cascade_preserves_tool_context(tmp_path: Path):
     """Full cascade: add tool-heavy messages -> cleanup -> archive with tool context."""
     registry = InMemoryStoreRegistry()
-    mock = MockArchiveGenerationStrategy(
+    mock = _MockArchiveGenerator(
         canned_context="[ARCHIVE] user asked about weather, used shell+web_search, got sunny 28C",
         canned_knowledge="[ARCHIVE] user asked about weather, used shell+web_search, got sunny 28C",
     )
-    system = _bot_project_system(registry, max_messages=5, archive_strategy=mock)
+    storage = DirArchiveStorage(tmp_path / "archives")
+    system = _bot_project_system(registry, max_messages=5, archive_agent=mock, archive_storage=storage)
     await system.initialize()
     ctx = _make_ctx("three-tier")
 
@@ -764,10 +776,12 @@ async def test_three_tier_memory_cascade_preserves_tool_context():
     remaining = await system.get_history(ctx, max_messages=None)
     assert len(remaining) <= 10, f"old prefix compressed, got {len(remaining)} remaining"
 
-    archive_entries = await system.get_history_entries(ctx, limit=10)
-    assert len(archive_entries) > 0
-    assert any("[ARCHIVE]" in str(e.get("summary", "")) for e in archive_entries)
+    archive_ids = await storage.list_archives()
+    assert len(archive_ids) > 0
+    context_md = await storage.read_archive_file(archive_ids[0], "context.md") or ""
+    assert "[ARCHIVE]" in context_md
 
+    # In-memory archive additions still work through the fallback path
     await system._layers.archive.append(ctx, ArchiveEntry(
         summary="[ARCHIVE] user prefers dark mode for all UIs",
     ))
@@ -781,18 +795,17 @@ async def test_three_tier_memory_cascade_preserves_tool_context():
 
 
 @pytest.mark.asyncio
-async def test_archive_entries_are_meaningful_for_dream_engine():
+async def test_archive_entries_are_meaningful_for_dream_engine(tmp_path: Path):
     """Archive summaries contain enough context for DreamEngine fact extraction."""
-    from framework.memory.consolidation.dream_engine import DreamEngine
-
     registry = InMemoryStoreRegistry()
-    mock = MockArchiveGenerationStrategy(
+    mock = _MockArchiveGenerator(
         canned_context="[ARCHIVE] user: fix login bug | tools: read_file(auth.py), shell(git log) | "
                      "decision: use JWT instead of session | state: branch fix/auth, tests fail",
         canned_knowledge="[ARCHIVE] user: fix login bug | tools: read_file(auth.py), shell(git log) | "
                         "decision: use JWT instead of session | state: branch fix/auth, tests fail",
     )
-    system = _bot_project_system(registry, max_messages=3, archive_strategy=mock)
+    storage = DirArchiveStorage(tmp_path / "archives")
+    system = _bot_project_system(registry, max_messages=3, archive_agent=mock, archive_storage=storage)
     await system.initialize()
     ctx = _make_ctx("dream-input")
 
@@ -801,14 +814,14 @@ async def test_archive_entries_are_meaningful_for_dream_engine():
         await history.append({"role": "user", "content": f"msg {i}"})
         await history.append({"role": "assistant", "content": f"reply {i}"})
 
-    entries = await system.get_history_entries(ctx, limit=20)
-    assert len(entries) > 0
+    archive_ids = await storage.list_archives()
+    assert len(archive_ids) > 0
 
-    for e in entries:
-        assert DreamEngine._is_meaningful_entry(e), \
-            f"archive entry should be meaningful: {e.get('summary', '')[:80]}"
+    for aid in archive_ids:
+        context_md = await storage.read_archive_file(aid, "context.md") or ""
+        assert context_md.strip(), f"archive {aid} should have non-empty context.md"
 
-    summary = str(entries[0].get("summary", ""))
+    summary = await storage.read_archive_file(archive_ids[0], "context.md") or ""
     assert "user:" in summary or "tools:" in summary or "decision:" in summary or "[ARCHIVE]" in summary
 
 

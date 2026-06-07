@@ -5,31 +5,14 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
+from framework.core.frontmatter import parse_frontmatter as _parse_frontmatter
+
 from .models import Skill, SkillMetadata, SkillResource, SkillSummary
 
 logger = logging.getLogger(__name__)
 
-
-def _parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
-    """Extract YAML frontmatter between --- fences."""
-    lines = text.splitlines(keepends=True)
-    if not lines or not lines[0].strip().startswith("---"):
-        return {}, text
-    end = -1
-    for i in range(1, len(lines)):
-        if lines[i].strip() == "---":
-            end = i
-            break
-    if end == -1:
-        return {}, text
-    try:
-        import yaml
-        frontmatter = yaml.safe_load("".join(lines[1:end])) or {}
-    except Exception as exc:  # pragma: no cover
-        logger.warning("Failed to parse frontmatter: %s", exc)
-        frontmatter = {}
-    content = "".join(lines[end + 1 :])
-    return frontmatter, content
+# Re-export for backward compatibility
+parse_frontmatter = _parse_frontmatter
 
 
 class SkillSource(ABC):

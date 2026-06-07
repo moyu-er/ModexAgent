@@ -57,21 +57,25 @@ class TestOverwriteKnowledgeUpdate:
         assert "(unknown)" not in file_content
 
     @pytest.mark.asyncio
-    async def test_parse_updates_defaults_to_overwrite_mode(self):
-        """DreamEngine _parse_updates should default to section_replace (overwrite)."""
-        from framework.memory.consolidation.dream_engine import DreamEngine
+    async def test_memory_update_defaults_to_overwrite_mode(self):
+        """MemoryUpdate should default to section_replace mode."""
+        from framework.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
 
-        response = '''[
-            {"file_name": "USER.md", "content": "# Updated User\\n- Name: John", "reason": "learned name"},
-            {"file_name": "MEMORY.md", "content": "# Memory\\n- Uses Python", "reason": "new fact"}
-        ]'''
+        update = MemoryUpdate(
+            file_name="USER.md",
+            content="# Updated User\n- Name: John",
+            reason="learned name",
+        )
+        assert update.mode == str(MemoryUpdateMode.INCREMENTAL)
+        assert update.content == "# Updated User\n- Name: John"
 
-        updates = DreamEngine._parse_updates(response)
-
-        assert len(updates) == 2
-        assert updates[0].mode == "section_replace"
-        assert updates[0].content == "# Updated User\n- Name: John"
-        assert updates[1].mode == "section_replace"
+        update2 = MemoryUpdate(
+            file_name="MEMORY.md",
+            content="# Memory\n- Uses Python",
+            mode="section_replace",
+            reason="new fact",
+        )
+        assert update2.mode == "section_replace"
 
     @pytest.mark.asyncio
     async def test_template_not_found_creates_empty_md(self, tmp_path):

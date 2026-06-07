@@ -1,46 +1,32 @@
-"""Context governance — in-turn token budget management for LLM context.
+"""ContextGovernance implementations for pre-LLM context trimming and injection.
 
-Governance chain:
-  lossy_compaction → tool_chain_repair → final_legality
-
-All governance operates on a *copy* of messages; the persisted history
+Governance runs on a COPY of the model-visible message list; persisted history
 is never modified.
 """
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
 from framework.core.types import MessageRole
 from framework.memory.core.message import ContentFormat
-from framework.memory.sanitizer import (
-    DefaultSessionToolChainSanitizer,
-    ToolChainSanitizationMode,
-)
 from framework.memory.core.scope import MemoryContext
-from framework.memory.utils import estimate_token_count
+from framework.memory.tags import UrbTag
 from framework.memory.xml_truncate import truncate_xml_safe
 
-TOOL_RESULT_UNAVAILABLE_CONTENT = (
-    "[Tool result unavailable - the tool call may have been interrupted "
-    "or its result was removed from the model-visible context]"
-)
+logger = logging.getLogger(__name__)
 
 
-class ContextReductionType(StrEnum):
-    """Type of lossy reduction applied to a message for governance."""
+def estimate_token_count(messages: list[dict[str, Any]]) -> int:
+    """Rough token estimate from character count (chars / 4)."""
+    total = sum(len(str(m.get("content", ""))) for m in messages)
+    return total // 4
 
-    TOOL_RESULT_TRUNCATED = "tool_result_truncated"
-    ASSISTANT_TRUNCATED = "assistant_truncated"
-    AGENT_INPUT_TRUNCATED = "agent_input_truncated"
-    USER_INPUT_TRUNCATED = "user_input_truncated"
-    CONTENT_TRUNCATED = "content_truncated"
-
-
-# Metadata keys used by governance to mark lossy-compacted messages
 META_CONTEXT_LOSSY = "meta_context_lossy"
 META_ORIGINAL_CHARS = "meta_original_chars"
 META_CONTEXT_REDUCTION = "meta_context_reduction"
@@ -96,11 +82,17 @@ class ToolChainRepairGovernance(ContextGovernance):
     """
 
     async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        from framework.memory.sanitizer import (
+            DefaultSessionToolChainSanitizer,
+            ToolChainSanitizationMode,
+        )
+
         result = DefaultSessionToolChainSanitizer().sanitize(
             messages,
             mode=ToolChainSanitizationMode.MODEL_VISIBLE_CONTEXT,
         )
         return result.messages
+
 
 class LossyContentCompactionGovernance(ContextGovernance):
     """Apply deterministic lossy reductions to LLM context copies only.
@@ -329,21 +321,26 @@ class FinalContextLegalityGovernance(ContextGovernance):
 
 
 class UserRetentionBufferInjectionGovernance(ContextGovernance):
-    """Inject pruned conversation context from UserRetentionBuffer.
+    """Inject recently pruned conversation fragments as a user message.
 
-    The canned XML is inserted as a ``user`` message directly after the
-    last system message (before conversation history).  This is
-    semantically correct — the entries represent pruned user/agent
-    dialogue, not system instructions.
+    The XML is inserted directly after the last system message (before
+    conversation history). This is semantically correct — the entries
+    represent recent dialogue between you and the user.
     """
 
     def __init__(
         self,
         urb,  # UserRetentionBuffer
         context_factory: Callable[[], MemoryContext] | None = None,
+        max_entries: int = 5,
+        max_user_content_chars: int = 800,
+        max_assistant_content_chars: int = 400,
     ) -> None:
         self._urb = urb
         self._context_factory = context_factory
+        self._max_entries = max_entries
+        self._max_user_chars = max_user_content_chars
+        self._max_assistant_chars = max_assistant_content_chars
 
     async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         context = self._context_factory() if self._context_factory else None
@@ -356,26 +353,69 @@ class UserRetentionBufferInjectionGovernance(ContextGovernance):
         if not entries:
             return messages
 
+        # Cap entries to max (default 5) — matches UserRetentionBufferConfig
+        if len(entries) > self._max_entries:
+            entries = entries[-self._max_entries :]
+
         import xml.sax.saxutils as saxutils
-        lines = ['<pruned_conversation_context>']
+
+        ct = UrbTag.CONTAINER.value
+        et = UrbTag.ENTRY.value
+        ut = UrbTag.USER_MSG.value
+        yt = UrbTag.YOU_RESPONSE.value
+        lines = [
+            f'<{ct}>',
+            '<!-- Parts of your recent conversation that were cut for space. -->',
+        ]
         for e in entries:
-            role_attr = ' role="agent"' if e.pruned_user_role == str(MessageRole.AGENT) else ""
-            lines.append(f'  <entry{role_attr}>')
-            lines.append(f'    <pruned_user_content>{saxutils.escape(e.pruned_user_content)}</pruned_user_content>')
+            user_text = self._truncate_entry_content(
+                e.pruned_user_content, self._max_user_chars,
+                e.content_format, e.truncatable_paths,
+            )
+            assistant_text = ""
             if e.completing_assistant_content:
-                lines.append(f'    <completing_assistant_content>{saxutils.escape(e.completing_assistant_content)}</completing_assistant_content>')
-            lines.append('  </entry>')
-        lines.append('</pruned_conversation_context>')
+                assistant_text = self._truncate_entry_content(
+                    e.completing_assistant_content, self._max_assistant_chars,
+                    e.content_format, e.truncatable_paths,
+                )
+            if not user_text and not assistant_text:
+                continue
+
+            role_attr = ' role="agent"' if e.pruned_user_role == str(MessageRole.AGENT) else ""
+            lines.append(f'  <{et}{role_attr}>')
+            lines.append(f'    <{ut}>{saxutils.escape(user_text)}</{ut}>')
+            if assistant_text:
+                lines.append(f'    <{yt}>{saxutils.escape(assistant_text)}</{yt}>')
+            lines.append(f'  </{et}>')
+        lines.append(f'</{ct}>')
+
+        # Only emit the message if we have at least one non-empty entry
+        if len(lines) <= 2:  # only opening + closing tags
+            return messages
 
         urb_msg = {
             "role": str(MessageRole.USER),
             "content": "\n".join(lines),
             "content_format": ContentFormat.XML,
-            "truncatable_paths": ["pruned_user_content", "completing_assistant_content"],
+            "truncatable_paths": [UrbTag.USER_MSG.value, UrbTag.YOU_RESPONSE.value],
             "metadata": {"memory_source": "user_retention_buffer"},
         }
         insert_at = self._after_system_messages(messages)
         return [*messages[:insert_at], urb_msg, *messages[insert_at:]]
+
+    @staticmethod
+    def _truncate_entry_content(
+        content: str,
+        max_chars: int,
+        content_format: str | None,
+        truncatable_paths: list[str] | None,
+    ) -> str:
+        """Truncate entry content, preserving XML structure when applicable."""
+        if not content or len(content) <= max_chars:
+            return content
+        if content_format == "xml":
+            return truncate_xml_safe(content, max_chars, truncatable_paths or [])
+        return content[:max_chars] + f"\n[...truncated, {len(content)} chars total]"
 
     @staticmethod
     def _after_system_messages(messages):
@@ -404,48 +444,14 @@ def _compact_xml_content(content: str, paths: list[str]) -> str:
         return f"[XML content omitted: {len(content)} chars]"
 
 
-class MicrocompactGovernance(ContextGovernance):
-    """将旧的可压缩 tool result 替换为一行摘要，保留最近 N 个。"""
-    def __init__(
-        self,
-        keep_recent: int = 10,
-        min_chars: int = 200,
-        whitelist_tools: set[str] | None = None,
-    ) -> None:
-        self._keep_recent = keep_recent
-        self._min_chars = min_chars
-        self._whitelist_tools = frozenset(whitelist_tools) if whitelist_tools is not None else frozenset()
+class ContextReductionType(StrEnum):
+    """Standardized names for context-reduction metadata."""
 
-    async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        compactable_indices: list[int] = []
-        for idx, msg in enumerate(messages):
-            if msg.get("role") == str(MessageRole.TOOL) and msg.get("name") not in self._whitelist_tools:
-                compactable_indices.append(idx)
-
-        if len(compactable_indices) <= self._keep_recent:
-            return list(messages)
-
-        stale = compactable_indices[: len(compactable_indices) - self._keep_recent]
-        updated: list[dict[str, Any]] | None = None
-        for idx in stale:
-            msg = messages[idx]
-            content = msg.get("content")
-            if not isinstance(content, str) or len(content) < self._min_chars:
-                continue
-            name = msg.get("name", "tool")
-            fmt = str(msg.get("content_format", "plain"))
-            if fmt == "xml":
-                paths: list[str] = msg.get("truncatable_paths") or ["content"]
-                if updated is None:
-                    updated = [dict(m) for m in messages]
-                updated[idx]["content"] = _compact_xml_content(content, paths)
-            else:
-                summary = f"[{name} result omitted from context: {len(content):,} chars]"
-                if updated is None:
-                    updated = [dict(m) for m in messages]
-                updated[idx]["content"] = summary
-
-        return updated if updated is not None else list(messages)
+    TOOL_RESULT_TRUNCATED = "tool_result_truncated"
+    ASSISTANT_TRUNCATED = "assistant_truncated"
+    AGENT_INPUT_TRUNCATED = "agent_input_truncated"
+    USER_INPUT_TRUNCATED = "user_input_truncated"
+    CONTENT_TRUNCATED = "content_truncated"
 
 
 class TokenBudgetGovernance(ContextGovernance):
@@ -497,3 +503,47 @@ class TokenBudgetGovernance(ContextGovernance):
                         break
 
         return system_messages + kept
+
+
+class MicrocompactGovernance(ContextGovernance):
+    """将旧的可压缩 tool result 替换为一行摘要，保留最近 N 个。"""
+    def __init__(
+        self,
+        keep_recent: int = 10,
+        min_chars: int = 200,
+        whitelist_tools: set[str] | None = None,
+    ) -> None:
+        self._keep_recent = keep_recent
+        self._min_chars = min_chars
+        self._whitelist_tools = frozenset(whitelist_tools) if whitelist_tools is not None else frozenset()
+
+    async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        compactable_indices: list[int] = []
+        for idx, msg in enumerate(messages):
+            if msg.get("role") == str(MessageRole.TOOL) and msg.get("name") not in self._whitelist_tools:
+                compactable_indices.append(idx)
+
+        if len(compactable_indices) <= self._keep_recent:
+            return list(messages)
+
+        stale = compactable_indices[: len(compactable_indices) - self._keep_recent]
+        updated: list[dict[str, Any]] | None = None
+        for idx in stale:
+            msg = messages[idx]
+            content = msg.get("content")
+            if not isinstance(content, str) or len(content) < self._min_chars:
+                continue
+            name = msg.get("name", "tool")
+            fmt = str(msg.get("content_format", "plain"))
+            if fmt == "xml":
+                paths: list[str] = msg.get("truncatable_paths") or ["content"]
+                if updated is None:
+                    updated = [dict(m) for m in messages]
+                updated[idx]["content"] = _compact_xml_content(content, paths)
+            else:
+                summary = f"[{name} result omitted from context: {len(content):,} chars]"
+                if updated is None:
+                    updated = [dict(m) for m in messages]
+                updated[idx]["content"] = summary
+
+        return updated if updated is not None else list(messages)

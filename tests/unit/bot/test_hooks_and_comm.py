@@ -96,105 +96,20 @@ class TestHookConfiguration:
 class TestCommunicationToolScoping:
     """Verify communication tools are properly isolated per pool and per agent."""
 
-    @pytest.mark.asyncio
-    async def test_list_targets_subagent_only_sees_normal(self):
-        """SUBAGENT's ListCommunicationTargetsTool filters to NORMAL agents only."""
-        from framework.multi_agent.tools import ListCommunicationTargetsTool
-        from framework.multi_agent.address import AgentAddress
-        from framework.multi_agent.comm_kind import AgentCommKind
-        from dataclasses import dataclass
-
-        @dataclass
-        class _FakeProfile:
-            name: str
-            comm_kind: AgentCommKind = AgentCommKind.NORMAL
-            role_description: str = ""
-
-        class _FakeRegistry:
-            def list_profiles(self):
-                return [
-                    _FakeProfile("coding", AgentCommKind.NORMAL),
-                    _FakeProfile("reviewer", AgentCommKind.SUBAGENT),
-                    _FakeProfile("planner", AgentCommKind.SUBAGENT),
-                ]
-
-        registry = _FakeRegistry()
-        tool = ListCommunicationTargetsTool(
-            self_address=AgentAddress(name="reviewer"),
-            registry=registry,
-        )
-        result = await tool.execute()
-        # Reviewer (SUBAGENT) should only see NORMAL agents = coding
-        assert "coding" in result
-        assert "planner" not in result  # SUBAGENT can't see other SUBAGENTs
-
-    @pytest.mark.asyncio
-    async def test_list_targets_normal_sees_all(self):
-        """NORMAL agent's ListCommunicationTargetsTool shows all other agents."""
-        from framework.multi_agent.tools import ListCommunicationTargetsTool
-        from framework.multi_agent.address import AgentAddress
-        from framework.multi_agent.comm_kind import AgentCommKind
-        from dataclasses import dataclass
-
-        @dataclass
-        class _FakeProfile:
-            name: str
-            comm_kind: AgentCommKind = AgentCommKind.NORMAL
-            role_description: str = ""
-
-        class _FakeRegistry:
-            def list_profiles(self):
-                return [
-                    _FakeProfile("coding", AgentCommKind.NORMAL),
-                    _FakeProfile("reviewer", AgentCommKind.SUBAGENT),
-                    _FakeProfile("planner", AgentCommKind.SUBAGENT),
-                ]
-
-        registry = _FakeRegistry()
-        tool = ListCommunicationTargetsTool(
-            self_address=AgentAddress(name="coding"),
-            registry=registry,
-        )
-        result = await tool.execute()
-        # Coding (NORMAL) should see all other agents
-        assert "reviewer" in result
-        assert "planner" in result
-
     def test_send_tool_dynamic_description_includes_targets(self):
-        """SendToAgentTool builds dynamic description with available targets."""
-        from framework.multi_agent.tools import SendToAgentTool, _build_dynamic_description
-        from framework.multi_agent.address import AgentAddress
+        """SendToAgentTool builds dynamic description from CommunicationTargetStore."""
+        from framework.multi_agent.tools import CommunicationTarget, CommunicationTargetStore
         from framework.multi_agent.comm_kind import AgentCommKind
-        from dataclasses import dataclass
 
-        @dataclass
-        class _FakeProfile:
-            name: str
-            comm_kind: AgentCommKind = AgentCommKind.NORMAL
-            role_description: str = ""
+        store = CommunicationTargetStore()
+        store.add(CommunicationTarget(
+            name="coding", kind=AgentCommKind.NORMAL, description="Coding agent",
+        ))
+        store.add(CommunicationTarget(
+            name="reviewer", kind=AgentCommKind.SUBAGENT, description="Review agent",
+        ))
 
-        class _FakeRegistry:
-            def list_profiles(self):
-                return [
-                    _FakeProfile("coding", AgentCommKind.NORMAL),
-                    _FakeProfile("reviewer", AgentCommKind.SUBAGENT),
-                ]
-
-        class _FakeService:
-            def __init__(self):
-                self._registry = _FakeRegistry()
-
-            def build_targets_description(self) -> str:
-                lines = ["Available targets:"]
-                for p in self._registry.list_profiles():
-                    lines.append(f"- {p.name} ({p.comm_kind.value})")
-                return "\n".join(lines)
-
-        desc = _build_dynamic_description(
-            _FakeService(),
-            "Send a message to another agent's inbox.",
-        )
-        assert "Available targets:" in desc
+        desc = store.description
         assert "coding" in desc
         assert "reviewer" in desc
 

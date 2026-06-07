@@ -27,6 +27,7 @@ from framework.memory.core.storage import MemoryStorage
 from framework.memory.registry.base import MemoryStoreRegistry
 from framework.memory.stores.scoped_file import DefaultScopedStorage
 from framework.memory.stores.utils import sanitize_scope_key
+from framework.utils.file_io import read_json_robust
 
 _SCOPE_FILE = ".scope.json"
 
@@ -36,7 +37,7 @@ class DefaultMemoryStoreRegistry(MemoryStoreRegistry):
 
     def __init__(self, root: Path | str) -> None:
         self.root = Path(root)
-        self._stores: dict[tuple[MemoryLayerName, str], DefaultScopedStorage] = {}
+        self._stores: dict[tuple[MemoryLayerName, str], MemoryStorage] = {}
 
     async def initialize(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -88,19 +89,19 @@ class DefaultMemoryStoreRegistry(MemoryStoreRegistry):
 
     def _read_scope_record(self, scope_dir: Path) -> ScopeRecord | None:
         path = scope_dir / _SCOPE_FILE
-        if not path.exists():
+        data = read_json_robust(path)
+        if not data:
             return None
         try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
             return ScopeRecord(
-                scope_key=raw["scope_key"],
-                layer=MemoryLayerName(raw["layer"]),
-                context=MemoryContext.from_dict(raw.get("context")),
-                storage_path=raw.get("storage_path") or str(scope_dir),
-                agent_role=raw.get("agent_role", MemoryAgentRole.MAIN),
-                agent_id=raw.get("agent_id"),
-                created_at=raw.get("created_at"),
-                updated_at=raw.get("updated_at"),
+                scope_key=data["scope_key"],
+                layer=MemoryLayerName(data["layer"]),
+                context=MemoryContext.from_dict(data.get("context")),
+                storage_path=data.get("storage_path") or str(scope_dir),
+                agent_role=data.get("agent_role", MemoryAgentRole.MAIN),
+                agent_id=data.get("agent_id"),
+                created_at=data.get("created_at"),
+                updated_at=data.get("updated_at"),
             )
         except Exception:
             return None
@@ -121,6 +122,9 @@ class DefaultMemoryStoreRegistry(MemoryStoreRegistry):
             if layer == MemoryLayerName.KNOWLEDGE:
                 from framework.memory.stores.markdown_knowledge import MarkdownKnowledgeStorage
                 storage = MarkdownKnowledgeStorage(scope_dir, layer=layer)
+            elif layer == MemoryLayerName.ARCHIVE:
+                from framework.memory.stores.dir_archive import DirArchiveStorage
+                storage: MemoryStorage = DirArchiveStorage(scope_dir)  # type: ignore[assignment]
             else:
                 storage = DefaultScopedStorage(scope_dir, layer=layer)
             await storage.initialize()

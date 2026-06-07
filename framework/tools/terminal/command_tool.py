@@ -10,7 +10,6 @@ Returns structured <command_result> XML with CommandResultStatus.
 
 from __future__ import annotations
 
-import asyncio
 import time
 from xml.sax.saxutils import escape as xml_escape
 
@@ -19,7 +18,6 @@ from framework.tools.terminal.config import TerminalRuntimeConfig
 from framework.tools.terminal.managers import TerminalManagerBase
 from framework.tools.terminal.process_registry import ProcessRegistry, RunningSessionRuntime
 from framework.tools.terminal.prompt import (
-    detect_pager_entry,
     resolve_cursor_line,
     sanitize_terminal_output,
 )
@@ -92,9 +90,9 @@ class CommandTool(Tool):
             "to create a new session (it auto-selects).\n\n"
             "Do NOT re-run setup commands (cd, source, export, etc.) that were "
             "already executed in this session.\n\n"
-            "Returns <command_result> XML with <status>: completed, running, "
-            "timed_out, paginated, or input_wait. If <status> is not 'completed', "
-            "use 'process log' or 'terminal current' to check the state.\n\n"
+            "Returns <command_result> XML with <status>: completed, executing, "
+            "timed_out, paginated, waiting_input, or stuck. If <status> is not 'completed', "
+            "use 'terminal current' to check the state.\n\n"
             "IMPORTANT: If a command asks for a password, STOP and ask the user. "
             "NEVER guess or invent passwords."
         )
@@ -130,107 +128,52 @@ class CommandTool(Tool):
 
         await session.submit_command(command)
 
+        from framework.tools.terminal.poll_loop import PollOutcome, poll_until_settled
+
         timeout_seconds = self._config.default_command_timeout_seconds
         yield_window_ms = self._config.default_yield_ms
 
-        start = time.monotonic()
-        last_output_time = start
-        output_parts: list[str] = []
-        output_received = False
-        prompt_stable_since: float | None = None
+        result = await poll_until_settled(
+            session, self._registry, proc.id, self._config,
+            yield_ms=yield_window_ms,
+            timeout_seconds=timeout_seconds,
+            check_input_wait=True,
+        )
 
-        while True:
-            elapsed_ms = int((time.monotonic() - start) * 1000)
-
-            # Read output
-            read = await session.poll_once(timeout=0.05)
-            if read.stdout:
-                self._registry.append_output(proc.id, "stdout", read.stdout)
-                output_parts.append(read.stdout)
-                output_received = True
-                prompt_stable_since = None
-                last_output_time = time.monotonic()
-            if read.stderr:
-                self._registry.append_output(proc.id, "stderr", read.stderr)
-                output_parts.append(read.stderr)
-
-            # 1. Process exit (authoritative)
-            if not await session.is_alive():
+        match result.outcome:
+            case PollOutcome.PROCESS_EXIT:
                 self._registry.mark_exited(
-                    proc.id,
-                    exit_code=None,
-                    exit_signal=None,
+                    proc.id, exit_code=None, exit_signal=None,
                     status=ProcessStatus.COMPLETED,
                 )
-                return self._format_completed(output_parts, elapsed_ms, terminal=terminal_name)
-
-            # 2. Prompt detection (auxiliary completion)
-            if output_received:
-                segment = await session.current_segment()
-                if segment.is_empty_prompt:
-                    if prompt_stable_since is None:
-                        prompt_stable_since = time.monotonic()
-                    elif (
-                        (time.monotonic() - prompt_stable_since) * 1000
-                        >= self._config.prompt_stabilize_ms
-                    ):
-                        self._registry.mark_exited(
-                            proc.id,
-                            exit_code=None,
-                            exit_signal=None,
-                            status=ProcessStatus.COMPLETED,
-                        )
-                        return self._format_completed(output_parts, elapsed_ms, terminal=terminal_name)
-                else:
-                    prompt_stable_since = None
-
-            # 2.5 Pager detection
-            if output_received and not read.stdout:
-                idle_elapsed = time.monotonic() - last_output_time
-                if idle_elapsed >= self._config.pager_idle_detect_seconds:
-                    segment = await session.current_segment()
-                    cursor = resolve_cursor_line(segment)
-                    if (
-                        not segment.is_empty_prompt
-                        and detect_pager_entry(cursor)
-                    ):
-                        output_parts, pages = await self._auto_scroll_pager(
-                            session, output_parts, proc.id,
-                        )
-                        self._registry.mark_exited(
-                            proc.id,
-                            exit_code=None,
-                            exit_signal=None,
-                            status=ProcessStatus.COMPLETED,
-                        )
-                        elapsed_ms = int((time.monotonic() - start) * 1000)
-                        total_chars = sum(len(p) for p in output_parts)
-                        return self._format_paginated(
-                            output_parts, pages, elapsed_ms,
-                            total_chars, self._config.pager_auto_scroll_max_chars,
-                            terminal=terminal_name,
-                        )
-
-            # 3. Timeout (kills process)
-            if elapsed_ms >= timeout_seconds * 1000:
+                return self._format_completed(result.output_parts, result.elapsed_ms, terminal=terminal_name)
+            case PollOutcome.PROMPT_DETECTED:
+                self._registry.mark_exited(
+                    proc.id, exit_code=None, exit_signal=None,
+                    status=ProcessStatus.COMPLETED,
+                )
+                return self._format_completed(result.output_parts, result.elapsed_ms, terminal=terminal_name)
+            case PollOutcome.INPUT_WAIT:
+                runtime = self._registry.running_runtime(proc.id)
+                return await self._format_running(
+                    session, result.output_parts, runtime, result.elapsed_ms,
+                    detected_input_wait=True, terminal=terminal_name,
+                )
+            case PollOutcome.STUCK:
+                raw_idle_ms = int((time.monotonic() - session.last_byte_at) * 1000)
+                return self._format_stuck(result.output_parts, raw_idle_ms, result.elapsed_ms, terminal=terminal_name)
+            case PollOutcome.YIELDED:
+                return await self._format_running(
+                    session, result.output_parts, None, result.elapsed_ms,
+                    terminal=terminal_name,
+                )
+            case PollOutcome.TIMED_OUT:
                 await session.terminate()
                 self._registry.mark_exited(
-                    proc.id,
-                    exit_code=None,
-                    exit_signal="TIMEOUT",
-                    status=ProcessStatus.TIMED_OUT,
-                    timed_out=True,
+                    proc.id, exit_code=None, exit_signal="TIMEOUT",
+                    status=ProcessStatus.TIMED_OUT, timed_out=True,
                 )
-                return self._format_timed_out(output_parts, timeout_seconds, elapsed_ms, terminal=terminal_name)
-
-            # 4. waiting_for_input hint
-            runtime = self._registry.running_runtime(proc.id)
-            if runtime is not None and runtime.waiting_for_input:
-                return await self._format_running(session, output_parts, runtime, elapsed_ms, terminal=terminal_name)
-
-            # 5. yield_ms elapsed
-            if elapsed_ms >= yield_window_ms:
-                return await self._format_running(session, output_parts, None, elapsed_ms, terminal=terminal_name)
+                return self._format_timed_out(result.output_parts, timeout_seconds, result.elapsed_ms, terminal=terminal_name)
 
     # ------------------------------------------------------------------
     # XML formatting
@@ -254,29 +197,31 @@ class CommandTool(Tool):
         runtime: RunningSessionRuntime | None,
         elapsed_ms: int,
         *,
+        detected_input_wait: bool = False,
         terminal: str | None = None,
     ) -> str:
         raw = "".join(output_parts)
         output = sanitize_terminal_output(raw).rstrip()
         idle_ms = runtime.idle_ms if runtime else None
 
-        if runtime is not None and runtime.waiting_for_input:
+        is_input_wait = detected_input_wait or (runtime is not None and runtime.waiting_for_input)
+        if is_input_wait:
             message = (
-                f"No new output for {runtime.idle_ms // 1000}s; this session may be "
-                "waiting for input. Use process write, send_keys, submit, or paste "
-                "to provide input."
+                f"No new output for {(runtime.idle_ms if runtime else 0) // 1000}s; "
+                "this session may be waiting for input. "
+                "Use process write, send_keys, submit, or paste to provide input."
             )
             return _build_command_xml(
-                output, CommandResultStatus.INPUT_WAIT, elapsed_ms,
+                output, CommandResultStatus.WAITING_INPUT, elapsed_ms,
                 terminal=terminal, idle_ms=idle_ms, message=message,
             )
 
         message = (
-            "Command still running. Use process log for status, "
+            "Command still executing. Use terminal current to check progress, "
             "process write/send_keys/paste for input."
         )
         xml = _build_command_xml(
-            output, CommandResultStatus.RUNNING, elapsed_ms,
+            output, CommandResultStatus.EXECUTING, elapsed_ms,
             terminal=terminal, idle_ms=idle_ms, message=message,
         )
 
@@ -288,8 +233,37 @@ class CommandTool(Tool):
                     "</command_result>",
                     f"\n<tui_screen>{xml_escape(tui_text)}</tui_screen>\n</command_result>",
                 )
+        else:
+            segment = await terminal_session.current_segment()
+            cursor = resolve_cursor_line(segment)
+            if cursor.strip():
+                cursor_text = sanitize_terminal_output(cursor).rstrip()
+                xml = xml.replace(
+                    "</command_result>",
+                    f"\n<cursor_line>{xml_escape(cursor_text)}</cursor_line>\n</command_result>",
+                )
 
         return xml
+
+    @staticmethod
+    def _format_stuck(
+        output_parts: list[str],
+        raw_idle_ms: int,
+        elapsed_ms: int,
+        *,
+        terminal: str | None = None,
+    ) -> str:
+        raw = "".join(output_parts)
+        output = sanitize_terminal_output(raw).rstrip()
+        message = (
+            f"No terminal activity for {raw_idle_ms // 1000}s. "
+            "The command may be stuck. Use process interrupt to send Ctrl+C, "
+            "or terminal current to check the screen."
+        )
+        return _build_command_xml(
+            output, CommandResultStatus.STUCK, elapsed_ms,
+            terminal=terminal, idle_ms=raw_idle_ms, message=message,
+        )
 
     @staticmethod
     def _format_timed_out(
@@ -310,86 +284,3 @@ class CommandTool(Tool):
             terminal=terminal, message=message,
         )
 
-    @staticmethod
-    def _format_paginated(
-        output_parts: list[str],
-        pages_scrolled: int,
-        elapsed_ms: int,
-        total_chars: int,
-        max_chars: int,
-        *,
-        terminal: str | None = None,
-    ) -> str:
-        raw = "".join(output_parts)
-        output = sanitize_terminal_output(raw).rstrip()
-        truncated = total_chars >= max_chars
-        message = (
-            "Output was displayed through a pager and automatically scrolled. "
-            'If content was cut off, use process send_keys keys=[" "] to continue '
-            'scrolling, or process send_keys keys=["q"] to exit the pager.'
-        )
-        return _build_command_xml(
-            output, CommandResultStatus.PAGINATED, elapsed_ms,
-            terminal=terminal,
-            pages_scrolled=pages_scrolled,
-            truncated=truncated,
-            message=message,
-        )
-
-    # ------------------------------------------------------------------
-    # Pager auto-scroll
-    # ------------------------------------------------------------------
-
-    async def _auto_scroll_pager(
-        self,
-        session: TerminalSession,
-        initial_output: list[str],
-        proc_id: str,
-    ) -> tuple[list[str], int]:
-        """Auto-scroll through a pager by sending space characters.
-
-        Returns the collected output parts and number of pages scrolled.
-        """
-        output_parts = list(initial_output)
-        total_chars = sum(len(p) for p in output_parts)
-        pages_scrolled = 0
-        idle_timeout = self._config.pager_idle_detect_seconds
-
-        for _ in range(self._config.pager_auto_scroll_max_pages):
-            await session.write(" ")
-
-            new_output = False
-            deadline = time.monotonic() + idle_timeout
-            while time.monotonic() < deadline:
-                read = await session.poll_once(timeout=0.3)
-                if read.stdout:
-                    self._registry.append_output(proc_id, "stdout", read.stdout)
-                    output_parts.append(read.stdout)
-                    total_chars += len(read.stdout)
-                    new_output = True
-                    break
-                if not await session.is_alive():
-                    break
-
-            if not new_output:
-                break
-
-            pages_scrolled += 1
-            if total_chars >= self._config.pager_auto_scroll_max_chars:
-                break
-
-            segment = await session.current_segment()
-            if segment.is_empty_prompt:
-                return output_parts, pages_scrolled
-
-        # Exit the pager
-        if await session.is_alive():
-            await session.write("q")
-        await asyncio.sleep(0.5)
-        while True:
-            read = await session.poll_once(timeout=0.3)
-            if not read.stdout:
-                break
-            output_parts.append(read.stdout)
-
-        return output_parts, pages_scrolled

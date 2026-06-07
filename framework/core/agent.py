@@ -56,6 +56,22 @@ class AgentContext:
 
     system_prompt: str
     history: MessageHistory
+    """Message history for the current session.
+
+    **IMPORTANT**: Do NOT use ``len(history)``, ``list(history)``, or index
+    access ``history[0]`` — these are **not** guaranteed to work.  The pool-mode
+    implementation (``ShortTermMessageHistory``) intentionally raises on
+    synchronous ``__len__`` / ``__iter__`` / ``__getitem__`` because messages
+    live in an async storage backend.
+
+    Always use ``await history.to_list()`` to get a list of messages, then use
+    ``len()`` / iteration on *that* list::
+
+        messages = await ctx.history.to_list()
+        count = len(messages)
+        for msg in messages:
+            ...
+    """
     tool_manager: ToolManager
     session_id: str = ""
     max_iterations: int = 10

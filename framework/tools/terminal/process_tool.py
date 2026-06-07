@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
 from typing import Any
 from xml.sax.saxutils import escape as xml_escape
@@ -11,7 +10,6 @@ from framework.tools.terminal.managers import TerminalManagerBase
 from framework.tools.terminal.process_registry import (
     ProcessRegistry,
     ProcessSession,
-    RunningSessionRuntime,
 )
 from framework.tools.terminal.pty_keys import (
     CursorKeyMode,
@@ -42,7 +40,6 @@ class WriteParams:
     submit: bool = False
 
 
-_DEFAULT_LOG_TAIL_LINES = 200
 _WRITE_READ_TIMEOUT_S = 3.0  # max wait for terminal output after write/submit
 
 
@@ -52,83 +49,23 @@ async def _drain_terminal_after_action(
     session_id: str,
     config: TerminalRuntimeConfig,
 ) -> str:
-    """Read terminal output after write/submit. Reuses CommandTool timing:
+    """Read terminal output after write/submit. Uses shared poll_until_settled:
     yield_ms as soft deadline, default_command_timeout as hard timeout,
     prompt detection for early completion.
     """
+    from framework.tools.terminal.poll_loop import poll_until_settled
     from framework.tools.terminal.prompt import sanitize_terminal_output
-    import asyncio as _asyncio
-    import time as _time
 
-    yield_window_ms = config.default_yield_ms
-    hard_timeout_s = config.default_command_timeout_seconds
-    start = _time.monotonic()
+    result = await poll_until_settled(
+        terminal_session, registry, session_id, config,
+        yield_ms=config.default_yield_ms,
+        timeout_seconds=config.default_command_timeout_seconds,
+        check_input_wait=False,
+    )
 
-    output_parts: list[str] = []
-    output_received = False
-    prompt_stable_since: float | None = None
-
-    while True:
-        elapsed_ms = int((_time.monotonic() - start) * 1000)
-
-        read = await terminal_session.poll_once(timeout=0.05)
-        if read.stdout:
-            registry.append_output(session_id, "stdout", read.stdout)
-            output_parts.append(read.stdout)
-            output_received = True
-            prompt_stable_since = None
-        if read.stderr:
-            registry.append_output(session_id, "stderr", read.stderr)
-            output_parts.append(read.stderr)
-
-        # Hard timeout
-        if elapsed_ms >= hard_timeout_s * 1000:
-            break
-
-        # Prompt detection (same as CommandTool)
-        if output_received:
-            segment = await terminal_session.current_segment()
-            if segment.is_empty_prompt:
-                if prompt_stable_since is None:
-                    prompt_stable_since = _time.monotonic()
-                elif (_time.monotonic() - prompt_stable_since) * 1000 >= config.prompt_stabilize_ms:
-                    break
-            else:
-                prompt_stable_since = None
-
-        # Yield window
-        if elapsed_ms >= yield_window_ms:
-            break
-
-        await _asyncio.sleep(0.05)
-
-    if output_parts:
-        return sanitize_terminal_output("".join(output_parts)).rstrip()
+    if result.output_parts:
+        return sanitize_terminal_output("".join(result.output_parts)).rstrip()
     return ""
-
-
-def _format_duration(ms: int) -> str:
-    if ms < 1000:
-        return f"{ms}ms"
-    seconds = ms // 1000
-    if seconds < 60:
-        return f"{seconds}s"
-    minutes = seconds // 60
-    secs = seconds % 60
-    return f"{minutes}m{secs:02d}s"
-
-
-def _format_list_line(session: ProcessSession, runtime: RunningSessionRuntime | None = None) -> str:
-    elapsed_ms = int((session.ended_at or 0) - session.started_at) if session.ended_at else 0
-    if session.status != ProcessStatus.RUNNING:
-        exit_part = f"exit={session.exit_code}" if session.exit_code is not None else ""
-        signal_part = f"signal={session.exit_signal}" if session.exit_signal is not None else ""
-        suffix = " ".join(p for p in (exit_part, signal_part) if p)
-        return f"{session.id}  {session.status.value:9s}  {_format_duration(elapsed_ms)}  [{session.terminal}]  {session.command}  ({suffix})"
-
-    wait_marker = " [input-wait]" if runtime and runtime.waiting_for_input else ""
-    idle_str = f" idle={_format_duration(runtime.idle_ms)}" if runtime else ""
-    return f"{session.id}  running   {_format_duration(elapsed_ms)}{idle_str}{wait_marker}  [{session.terminal}]  ::  {session.command}"
 
 
 def _build_process_xml(
@@ -163,31 +100,14 @@ def _build_process_xml(
     return "\n".join(parts)
 
 
-def _build_input_wait_hint(runtime: RunningSessionRuntime | None) -> str:
-    if not runtime or not runtime.waiting_for_input:
-        return ""
-    idle = _format_duration(runtime.idle_ms)
-    return (
-        f"\n\nNo new output for {idle}; this session may be waiting for input. "
-        "Use process write, send_keys, submit, or paste to provide input."
-    )
-
-
-def _build_output_velocity_hint(runtime: RunningSessionRuntime | None) -> str:
-    if not runtime or not runtime.output_velocity.is_active:
-        return ""
-    return "\n\nOutput is still being produced. Poll again in a few seconds."
-
-
 class ProcessTool(Tool):
     """Interact with a running command in the CURRENTLY SELECTED terminal tab.
 
-    Use log when you need status, full output history, or completion confirmation.
+    Use 'terminal current' to see output and status.
+    Use 'terminal list' to see all sessions.
     Use write/send_keys/submit/paste/interrupt/kill for input or intervention.
 
     Actions:
-      list       — list all running and finished sessions across all tabs
-      log        — read aggregated output with optional line paging (offset/limit)
       write      — send text to the running command's stdin (use submit=true for Enter)
       submit     — send Enter key to stdin (confirm a prompt after write)
       send_keys  — send key sequences: arrows, c-c (Ctrl+C), escape, tab, f1-f12
@@ -217,10 +137,9 @@ class ProcessTool(Tool):
     def description(self) -> str:
         return (
             "Interact with a running command in the CURRENTLY SELECTED terminal tab.\n"
-            "Use 'terminal list' to see which tab is active.\n\n"
+            "Use 'terminal current' to see output and status.\n"
+            "Use 'terminal list' to see all sessions.\n\n"
             "Actions:\n"
-            "  log       -- read full output history (optional: offset, limit for paging)\n"
-            "  list      -- list all running and recently finished sessions\n"
             "  write     -- send text to the command's stdin\n"
             "  submit    -- send Enter key to stdin (confirm a prompt after write)\n"
             "  send_keys -- send key sequences: arrows, c-c (Ctrl+C), escape, tab, f1-f12\n"
@@ -232,7 +151,7 @@ class ProcessTool(Tool):
             "IMPORTANT: NEVER write a password without asking the user first. "
             "If a command prompts for a password, STOP and ask the user. "
             "Only use write for passwords after the user explicitly provides one.\n"
-            "After providing input, use 'terminal current' to check the screen.\n"
+            "After providing input, use 'terminal current' to check the result.\n"
             "To answer a prompt: process write data=\"USER_PROVIDED_VALUE\" submit=true.\n"
             "Use send_keys for TUI programs (arrows, escape, Ctrl+C).\n"
             "Use interrupt/kill to stop commands."
@@ -246,7 +165,7 @@ class ProcessTool(Tool):
                 "action": {
                     "type": "string",
                     "enum": [a.value for a in ProcessAction],
-                    "description": "poll | log | list | write | submit | send_keys | paste | interrupt | kill | clear | remove",
+                    "description": "write | submit | send_keys | paste | interrupt | kill | clear | remove",
                 },
                 "data": {
                     "type": "string",
@@ -274,14 +193,6 @@ class ProcessTool(Tool):
                     "type": "boolean",
                     "description": "Send Enter key after writing (write action). Use for passwords, y/n confirmations.",
                 },
-                "offset": {
-                    "type": "integer",
-                    "description": "Skip first N lines (log action)",
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Max lines to return (log action)",
-                },
             },
             "required": ["action"],
         }
@@ -294,16 +205,6 @@ class ProcessTool(Tool):
             return f"[Error] Unknown action: {action_raw}"
 
         match action:
-            case ProcessAction.LIST:
-                return await self._do_list()
-            # POLL removed (see pty_keys.py comment)
-            # case ProcessAction.POLL:
-            #     return await self._do_poll()
-            case ProcessAction.LOG:
-                return await self._do_log(
-                    offset=int(kwargs.get("offset") or 0),
-                    limit=int(kwargs.get("limit") or _DEFAULT_LOG_TAIL_LINES),
-                )
             case ProcessAction.WRITE:
                 return await self._do_write(
                     WriteParams(
@@ -349,77 +250,6 @@ class ProcessTool(Tool):
         running = self._registry.get_running_by_terminal(name)
         finished = self._registry.get_finished_by_terminal(name)
         return terminal_session, running, finished
-
-    async def _do_list(self) -> str:
-        running = self._registry.list_running()
-        finished = self._registry.list_finished()
-        if not running and not finished:
-            return _build_process_xml("list", "No running or recent sessions.")
-
-        lines: list[str] = []
-        session_entries: list[str] = []
-        for s in running:
-            runtime = self._registry.running_runtime(s.id)
-            lines.append(_format_list_line(s, runtime))
-            idle = runtime.idle_ms if runtime else 0
-            session_entries.append(
-                f'<session id="{s.id}" terminal="{xml_escape(s.terminal)}" status="running" '
-                f'command="{xml_escape(s.command)}" '
-                f'elapsed_ms="{int(((s.ended_at or time.time()) - s.started_at) * 1000)}"'
-                f'idle_ms="{idle}" />'
-            )
-        for s in finished:
-            lines.append(_format_list_line(s))
-            session_entries.append(
-                f'<session id="{s.id}" terminal="{xml_escape(s.terminal)}" status="{s.status.value}" '
-                f'command="{xml_escape(s.command)}" '
-                f'elapsed_ms="{int(((s.ended_at or 0) - s.started_at) * 1000)}" '
-                f'exit_code="{s.exit_code}" />'
-            )
-
-        return _build_process_xml(
-            "list", "\n".join(lines),
-            sessions_xml="\n".join(session_entries),
-        )
-
-    # _do_poll removed — poll drains pending output but cannot detect command
-    # completion reliably in PTY mode. After write+submit, use `terminal current`
-    # to see the terminal screen state instead of polling for new output.
-    # See pty_keys.py ProcessAction comment for details.
-
-    async def _do_log(
-        self, offset: int = 0, limit: int = _DEFAULT_LOG_TAIL_LINES
-    ) -> str:
-        _terminal, running, finished = await self._resolve_terminal()
-
-        session = running or finished
-        if session is None:
-            return _build_process_xml("log", "[Error] No process session found for default terminal")
-
-        all_lines = session.aggregated.splitlines()
-        total = len(all_lines)
-        using_default_tail = offset == 0 and limit == _DEFAULT_LOG_TAIL_LINES
-        sliced = all_lines[offset : offset + limit]
-        output = "\n".join(sliced) or "(no output yet)"
-
-        tail_note = ""
-        if using_default_tail and total > _DEFAULT_LOG_TAIL_LINES:
-            tail_note = f"\n\n[showing last {_DEFAULT_LOG_TAIL_LINES} of {total} lines; pass offset/limit to page]"
-
-        runtime = (
-            self._registry.running_runtime(session.id)
-            if session.status == ProcessStatus.RUNNING
-            else None
-        )
-        hint = _build_input_wait_hint(runtime)
-
-        return _build_process_xml(
-            "log", output + tail_note + hint,
-            terminal_name=_terminal.name,
-            session_id=session.id,
-            status=session.status.value,
-            idle_ms=runtime.idle_ms if runtime else None,
-        )
 
     async def _do_write(self, params: WriteParams) -> str:
         terminal_session, running, _finished = await self._resolve_terminal()

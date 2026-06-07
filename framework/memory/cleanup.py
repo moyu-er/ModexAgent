@@ -1,11 +1,12 @@
-"""Session cleanup function — replaces MemoryCompressionCoordinator.maybe_compress().
+"""Session cleanup function — prunes old messages and optionally archives them.
 
 This is a standalone async function that handles:
 1. Trigger check (message count or token pressure)
-2. Cleanup (sanitize tool chains, compute keep/prune boundary, commit)
-3. Optional archive (generate archive from pruned messages)
-
-It does NOT import from framework.memory.compression or framework.memory.compaction.
+2. Cleanup (sanitize tool chains, compute keep/prune boundary)
+3. Archive agent generation (context.md, knowledge.md, index.md)
+4. Pruned index refresh from archive index.md files
+5. Session commit (replace messages + backup)
+6. Archive_id increment
 """
 
 from __future__ import annotations
@@ -17,15 +18,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 
-from framework.utils.timezone import get_user_timezone
 from pathlib import Path
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
-from framework.memory.archive_models import ArchiveChannel
-from framework.memory.archive_generation import (
-    ArchiveGenerationStrategy,
-    ArchiveInputMessage,
-)
+from framework.utils.timezone import get_user_timezone
+
 from framework.memory.core.layers import (
     ArchiveMemoryManager,
     SessionMemoryManager,
@@ -34,38 +32,18 @@ from framework.memory.core.layers import (
 from framework.memory.core.models import CompressionReason
 from framework.memory.core.scope import MemoryContext
 from framework.memory.user_buffer import UserBufferEntry
+from framework.core.types import MessageRole
 from framework.memory.pruned.manager import PrunedManager
 from framework.memory.sanitizer import (
     DefaultSessionToolChainSanitizer,
     ToolChainSanitizationMode,
 )
 
+if TYPE_CHECKING:
+    from framework.agents.summarizer.abc import ArchiveGenerator
+    from framework.memory.stores.dir_archive import DirArchiveStorage
+
 logger = logging.getLogger(__name__)
-
-# Per-session in-memory archive failure counters.
-#
-# Keyed by context.session_id.  Each session has an independent counter so a
-# failing archive in one session never affects another.  The dictionary is
-# bounded in practice by the number of active sessions in the process.
-_archive_fail_counters: dict[str, int] = {}
-
-# Maximum entries before a compaction pass prunes counters for sessions that
-# have been reset (value 0).  This keeps the dictionary from growing without
-# bound in long-running processes with ephemeral session ids.
-_MAX_COUNTER_ENTRIES = 2000
-
-
-def _compact_counters() -> None:
-    """Drop counter entries with value 0 to bound dictionary growth.
-
-    Called after a counter is reset to 0, so stale entries for finished
-    sessions are eventually reclaimed without affecting active counters.
-    """
-    if len(_archive_fail_counters) <= _MAX_COUNTER_ENTRIES:
-        return
-    for key in list(_archive_fail_counters):
-        if _archive_fail_counters[key] == 0:
-            del _archive_fail_counters[key]
 
 
 @dataclass(frozen=True)
@@ -80,150 +58,362 @@ class CleanupResult:
     user_retention_extracted: int = 0
 
 
-async def cleanup_session(
-    *,
-    session: SessionMemoryManager,
-    archive: ArchiveMemoryManager | None,
+async def _write_pruned_content(
+    pruned_manager: PrunedManager,
+    pruned_messages: list[dict[str, Any]],
     context: MemoryContext,
-    max_messages: int | None = None,
-    max_tokens: int | None = None,
-    keep_ratio: float = 0.5,
-    archive_strategy: ArchiveGenerationStrategy | None = None,
-    archive_fail_threshold: int = 3,
-    max_backups: int = 10,
-    user_retention: UserRetentionBuffer | None = None,
-    pruned_manager: PrunedManager | None = None,
-) -> CleanupResult:
-    """Clean up a session by pruning old messages and optionally archiving them.
+    *,
+    topic: str | None = None,
+) -> None:
+    """Write raw pruned messages to the pruned store.
 
-    This replaces ``MemoryCompressionCoordinator.maybe_compress()``. It is a
-    standalone async function (not a class) called directly from
-    ``ScopedMessageHistory``.
-
-    Flow:
-        1. Trigger check (message count > max_messages OR estimated tokens > max_tokens)
-        2. Cleanup (sanitize, plan boundary, commit)
-        3. Optional archive (generate archive from pruned messages)
+    Always called when messages are pruned, regardless of archive success.
+    When *topic* is provided (e.g. from archive index.md), it is used as
+    the index entry topic instead of the default time-range fallback.
     """
-    # ── Step 1: Trigger check ──────────────────────────────────────────────
+    try:
+        await pruned_manager.write_pruned(
+            pruned_messages,
+            topic=topic,
+            cleanup_time=datetime.now(get_user_timezone()),
+            session_id=context.session_id or "",
+        )
+    except Exception:
+        logger.warning("Pruned content write failed", exc_info=True)
+
+
+# ── Internal result types ──────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class _CleanupPlan:
+    """Result of the prepare phase: sanitized messages with keep/prune split."""
+
+    trigger_reason: CompressionReason
+    total_count: int
+    sanitized: list[dict[str, Any]]
+    keep_messages: list[dict[str, Any]]
+    pruned_messages: list[dict[str, Any]]
+
+
+@dataclass(frozen=True)
+class _ArchiveOutcome:
+    """Result of archive generation phase."""
+
+    generated: bool
+    skipped: bool
+    next_archive_id: int
+    resolved_storage: DirArchiveStorage | None = None
+
+
+# ── Phase helpers ──────────────────────────────────────────────────────────────
+
+
+async def _prepare_cleanup_phase(
+    session: SessionMemoryManager,
+    context: MemoryContext,
+    max_messages: int | None,
+    max_tokens: int | None,
+    keep_ratio: float,
+    max_backups: int,
+) -> _CleanupPlan | None:
+    """Phase 1: trigger check → backup → sanitize → compute keep/prune boundary.
+
+    Returns ``None`` when cleanup is not triggered.  On success returns a
+    :class:`_CleanupPlan` containing sanitized messages and the boundary split.
+    """
     all_messages = await session.get_all_messages(context)
     total_count = len(all_messages)
 
     trigger_reason = _check_trigger(all_messages, total_count, max_messages, max_tokens)
     if trigger_reason is None:
-        return CleanupResult(triggered=False)
+        return None
 
     logger.info(
         "Cleanup triggered: session=%s reason=%s total=%d",
         context.session_id, trigger_reason.value, total_count,
     )
 
-    # ── Step 1.5: Backup session before any mutation ────────────────────────
     await _backup_session(session, context, all_messages, max_backups)
 
-    # ── Step 2: Cleanup session ────────────────────────────────────────────
-    # Convert to dicts for sanitizer
     all_dicts = [m.to_dict() for m in all_messages]
-
-    # Sanitize: remove invalid tool-chain records
     sanitizer = DefaultSessionToolChainSanitizer()
-    sanitization = sanitizer.sanitize(all_dicts, mode=ToolChainSanitizationMode.PERSISTENT_SESSION)
+    sanitization = sanitizer.sanitize(
+        all_dicts, mode=ToolChainSanitizationMode.PERSISTENT_SESSION,
+    )
 
     if sanitization.removed_messages:
         logger.info(
             "Sanitizer removed invalid messages: session=%s removed=%d",
-            context.session_id,
-            len(sanitization.removed_messages),
+            context.session_id, len(sanitization.removed_messages),
         )
 
     sanitized = sanitization.messages
     if not sanitized:
-        # All messages were invalid — clear session
-        revision = await session.get_revision(context)
-        await session.replace_messages_if_revision(context, [], revision)
-        return CleanupResult(
-            triggered=True,
-            messages_kept=0,
-            messages_pruned=total_count,
-            archive_skipped=True,
-            reason=trigger_reason,
+        # All messages were invalid — caller will clear session
+        return _CleanupPlan(
+            trigger_reason=trigger_reason,
+            total_count=total_count,
+            sanitized=[],
+            keep_messages=[],
+            pruned_messages=all_dicts,
         )
 
-    # Plan: compute keep/prune boundary
     keep_target = max(1, int(len(sanitized) * keep_ratio))
     keep_messages, pruned_messages = _compute_boundary(sanitized, keep_target)
 
     if not keep_messages:
-        # Could not compute a safe boundary — skip
         logger.warning("No safe keep boundary found: session=%s", context.session_id)
-        return CleanupResult(
-            triggered=True,
-            messages_kept=total_count,
-            messages_pruned=0,
-            archive_skipped=True,
-            reason=trigger_reason,
+        return _CleanupPlan(
+            trigger_reason=trigger_reason,
+            total_count=total_count,
+            sanitized=sanitized,
+            keep_messages=[],
+            pruned_messages=pruned_messages,
         )
 
-    # Re-sanitize keep region to guarantee tool chain integrity
     keep_messages = _resanitize_keep(keep_messages)
+    return _CleanupPlan(
+        trigger_reason=trigger_reason,
+        total_count=total_count,
+        sanitized=sanitized,
+        keep_messages=keep_messages,
+        pruned_messages=pruned_messages,
+    )
 
-    # Extract user retention entries from pruned messages
-    # Walk all sanitized messages; accumulate pruned user/agent messages.
-    # When a plain assistant appears (no tool_calls, content present),
-    # flush accumulated entries as a completed turn.
+
+async def _generate_archive_phase(
+    archive_agent: ArchiveGenerator | None,
+    archive_storage: DirArchiveStorage | None,
+    archive: ArchiveMemoryManager | None,
+    pruned_messages: list[dict[str, Any]],
+    context: MemoryContext,
+) -> _ArchiveOutcome:
+    """Phase 2: resolve storage, read state, and run archive agent.
+
+    Returns an :class:`_ArchiveOutcome` describing what happened.
+    """
+    if archive is None:
+        logger.debug(
+            "Archive generation skipped: archive layer is disabled. session=%s",
+            context.session_id,
+        )
+        return _ArchiveOutcome(generated=False, skipped=True, next_archive_id=0)
+
+    if archive_agent is None:
+        logger.info(
+            "Archive generation skipped: archive_agent not configured. session=%s",
+            context.session_id,
+        )
+        return _ArchiveOutcome(generated=False, skipped=True, next_archive_id=0)
+
+    if not pruned_messages:
+        logger.info(
+            "Archive generation skipped: no pruned messages. session=%s",
+            context.session_id,
+        )
+        return _ArchiveOutcome(generated=False, skipped=True, next_archive_id=0)
+
+    # Resolve archive_storage dynamically when not injected
+    resolved_storage = archive_storage
+    if resolved_storage is None:
+        try:
+            archive_dir = await archive.get_storage_path(context)
+            if archive_dir is not None:
+                from framework.memory.stores.dir_archive import DirArchiveStorage
+                resolved_storage = DirArchiveStorage(archive_dir)
+                logger.info(
+                    "Archive storage resolved dynamically: session=%s path=%s",
+                    context.session_id, archive_dir,
+                )
+            else:
+                logger.warning(
+                    "Archive storage resolution returned None: session=%s",
+                    context.session_id,
+                )
+        except Exception:
+            logger.warning(
+                "Cannot resolve archive directory dynamically: session=%s",
+                context.session_id, exc_info=True,
+            )
+
+    if resolved_storage is None:
+        logger.warning(
+            "Archive generation skipped: archive_agent present but storage unresolved. session=%s",
+            context.session_id,
+        )
+        return _ArchiveOutcome(generated=False, skipped=True, next_archive_id=0, resolved_storage=None)
+
+    session_id = context.session_id
+    try:
+        state_data = await resolved_storage.read_archive_state() or {}
+        next_archive_id = state_data.get("next_archive_id", 1)
+    except Exception:
+        logger.warning(
+            "Failed to read archive state: session=%s", session_id, exc_info=True,
+        )
+        next_archive_id = 1
+
+    try:
+        is_complete = await resolved_storage.is_archive_complete(next_archive_id)
+    except Exception:
+        logger.warning(
+            "Archive completeness check failed: archive_id=%d session=%s",
+            next_archive_id, session_id, exc_info=True,
+        )
+        is_complete = False
+
+    if is_complete:
+        logger.info(
+            "Archive %d already complete, skipping generation. session=%s",
+            next_archive_id, session_id,
+        )
+        return _ArchiveOutcome(
+            generated=True, skipped=False, next_archive_id=next_archive_id,
+            resolved_storage=resolved_storage,
+        )
+
+    archive_dir = resolved_storage.base_dir / str(next_archive_id)
+    logger.info(
+        "Starting archive generation: archive_id=%d session=%s",
+        next_archive_id, session_id,
+    )
+
+    try:
+        result = await archive_agent.generate(
+            pruned_messages=list(pruned_messages),
+            archive_dir=archive_dir,
+            archive_id=next_archive_id,
+        )
+        if result.success:
+            logger.info(
+                "Archive generated: archive_id=%d session=%s files=%s",
+                next_archive_id, session_id, result.files_written,
+            )
+            return _ArchiveOutcome(
+                generated=True, skipped=False, next_archive_id=next_archive_id,
+                resolved_storage=resolved_storage,
+            )
+        logger.warning(
+            "Archive generation failed: archive_id=%d session=%s error=%s",
+            next_archive_id, session_id, result.error,
+        )
+    except Exception:
+        logger.warning(
+            "Archive agent crashed: archive_id=%d session=%s",
+            next_archive_id, session_id, exc_info=True,
+        )
+
+    return _ArchiveOutcome(
+        generated=False, skipped=True, next_archive_id=next_archive_id,
+        resolved_storage=resolved_storage,
+    )
+
+
+async def _write_pruned_phase(
+    pruned_manager: PrunedManager | None,
+    archive_storage: DirArchiveStorage | None,
+    pruned_messages: list[dict[str, Any]],
+    archive_generated: bool,
+    next_archive_id: int,
+    context: MemoryContext,
+) -> None:
+    """Phase 3: write raw pruned content, enriching with archive topic if available."""
+    if pruned_manager is None or not pruned_messages:
+        return
+
+    pruned_topic: str | None = None
+    if archive_generated and archive_storage is not None and next_archive_id > 0:
+        try:
+            index_md = await archive_storage.read_archive_file(
+                next_archive_id, "index.md",
+            )
+            if index_md and index_md.strip():
+                pruned_topic = index_md.strip().split("\n")[0].strip() or None
+        except Exception:
+            logger.debug(
+                "Failed to read archive topic for pruned entry: session=%s",
+                context.session_id, exc_info=True,
+            )
+
+    await _write_pruned_content(
+        pruned_manager, pruned_messages, context, topic=pruned_topic,
+    )
+
+
+def _extract_retention_entries(
+    sanitized: list[dict[str, Any]],
+    pruned_messages: list[dict[str, Any]],
+) -> list[UserBufferEntry]:
+    """Phase 4: extract user retention entries from pruned messages.
+
+    Walks all *sanitized* messages; accumulates pruned user/agent messages.
+    When a plain assistant appears (no tool_calls, content present), flushes
+    accumulated entries as a completed turn.
+    """
+    if not pruned_messages:
+        return []
+
     pruned_now = _time.time()
     boundary_idx = len(pruned_messages)
     pruned_indices = set(range(boundary_idx))
     retention_entries: list[UserBufferEntry] = []
     pending: list[dict[str, Any]] = []
 
-    if user_retention is not None and pruned_messages:
-        for idx, msg in enumerate(sanitized):
-            role = str(msg.get("role", ""))
-            # Plain assistant (no tool_calls, has content) -> completed turn barrier
-            if role == "assistant" and not msg.get("tool_calls") and msg.get("content"):
-                if pending:
-                    asst_content = str(msg.get("content", ""))
-                    for pending_msg in pending:
-                        try:
-                            entry = UserBufferEntry.from_message(pending_msg, pruned_at=pruned_now)
-                            entry = replace(entry, completing_assistant_content=asst_content)
-                            retention_entries.append(entry)
-                        except (ValueError, TypeError):
-                            pass
-                    pending.clear()
-                continue
-            # Accumulate pruned user/agent messages
-            if idx in pruned_indices and role in {"user", "agent"}:
-                pending.append(msg)
+    for idx, msg in enumerate(sanitized):
+        role = str(msg.get("role", ""))
+        # Plain assistant (no tool_calls, has content) -> completed turn barrier
+        if role == MessageRole.ASSISTANT and not msg.get("tool_calls") and msg.get("content"):
+            if pending:
+                asst_content = str(msg.get("content", ""))
+                for pending_msg in pending:
+                    try:
+                        entry = UserBufferEntry.from_message(pending_msg, pruned_at=pruned_now)
+                        entry = replace(entry, completing_assistant_content=asst_content)
+                        retention_entries.append(entry)
+                    except (ValueError, TypeError):
+                        pass
+                pending.clear()
+            continue
+        # Accumulate pruned user/agent messages
+        if idx in pruned_indices and role in {MessageRole.USER, MessageRole.AGENT}:
+            pending.append(msg)
 
-        # Flush remaining pending entries (no plain assistant after them)
-        for pending_msg in pending:
-            try:
-                entry = UserBufferEntry.from_message(pending_msg, pruned_at=pruned_now)
-                retention_entries.append(entry)
-            except (ValueError, TypeError):
-                pass
+    # Flush remaining pending entries (no plain assistant after them)
+    for pending_msg in pending:
+        try:
+            entry = UserBufferEntry.from_message(pending_msg, pruned_at=pruned_now)
+            retention_entries.append(entry)
+        except (ValueError, TypeError):
+            pass
 
-    # Commit: replace session messages
+    return retention_entries
+
+
+async def _commit_session_phase(
+    session: SessionMemoryManager,
+    context: MemoryContext,
+    keep_messages: list[dict[str, Any]],
+    pruned_messages: list[dict[str, Any]],
+    retention_entries: list[UserBufferEntry],
+    user_retention: UserRetentionBuffer | None,
+) -> tuple[int, int] | None:
+    """Phase 5: replace session messages and persist retention entries.
+
+    Returns ``(keep_count, prune_count)`` on success, or ``None`` when a
+    revision conflict prevents the commit.
+    """
     revision = await session.get_revision(context)
     new_revision = await session.replace_messages_if_revision(
         context, keep_messages, revision,
     )
 
     if new_revision is None:
-        # Revision conflict — concurrent modification, skip
         logger.debug(
             "Cleanup commit conflict (revision changed): session=%s",
             context.session_id,
         )
-        return CleanupResult(
-            triggered=True,
-            messages_kept=total_count,
-            messages_pruned=0,
-            archive_skipped=True,
-            reason=trigger_reason,
-        )
+        return None
 
     prune_count = len(pruned_messages)
     keep_count = len(keep_messages)
@@ -244,14 +434,15 @@ async def cleanup_session(
             )
 
     # A plain assistant in the kept region completes ALL unfinished entries
-    # (both newly created and leftover from previous cleanups).
     if user_retention is not None and keep_messages:
         last_plain_asst: str | None = None
         for msg in reversed(keep_messages):
             role = str(msg.get("role", ""))
-            if (role == "assistant"
-                    and not msg.get("tool_calls")
-                    and msg.get("content")):
+            if (
+                role == MessageRole.ASSISTANT
+                and not msg.get("tool_calls")
+                and msg.get("content")
+            ):
                 last_plain_asst = str(msg.get("content", ""))
                 break
         if last_plain_asst is not None:
@@ -263,91 +454,158 @@ async def cleanup_session(
                     context.session_id, exc_info=True,
                 )
 
-    # ── Step 3: Archive (optional) ─────────────────────────────────────────
-    #
-    # Each session has an independent failure counter keyed by session_id so
-    # one session's archive failures never affect another session.
-    archive_skipped = True
-    gen_result = None
+    return keep_count, prune_count
 
-    if archive is not None and archive_strategy is not None and pruned_messages:
-        session_id = context.session_id
-        # Guard: a valid session_id is required for per-session counting.
-        # Sessions without an id use a one-shot attempt without counter tracking.
-        if not session_id:
-            logger.warning(
-                "Archive skipped: context.session_id is empty — cannot track "
-                "per-session failure counter",
-            )
-        else:
-            fail_count = _archive_fail_counters.get(session_id, 0)
 
-            if fail_count >= archive_fail_threshold:
-                logger.info(
-                    "Archive skipped due to consecutive failures: session=%s "
-                    "fail_count=%d threshold=%d",
-                    session_id, fail_count, archive_fail_threshold,
-                )
-                _archive_fail_counters[session_id] = 0
-                _compact_counters()
-            else:
-                try:
-                    archive_inputs = [
-                        ArchiveInputMessage.from_dict(m) for m in pruned_messages
-                    ]
-                    gen_result = await archive_strategy.generate(
-                        archive_inputs, context, trigger_reason,
-                    )
-                    if gen_result.writes:
-                        await archive.append_bundle(context, gen_result.writes)
-                        channels = [w.channel.value for w in gen_result.writes]
-                        logger.info(
-                            "Archive generated: session=%s entries=%d channels=%s input_messages=%d",
-                            session_id, len(gen_result.writes), channels, len(archive_inputs),
-                        )
-                    else:
-                        logger.warning(
-                            "Archive generation produced no writes: session=%s input_messages=%d",
-                            session_id, len(archive_inputs),
-                        )
-                    _archive_fail_counters[session_id] = 0
-                    archive_skipped = False
-                except Exception:
-                    _archive_fail_counters[session_id] = fail_count + 1
-                    logger.warning(
-                        "Archive generation failed: session=%s fail_count=%d",
-                        session_id,
-                        _archive_fail_counters[session_id],
-                        exc_info=True,
-                    )
-
-    # ── Step 4: Pruned catalog (optional, independent of archive) ────────
-    if pruned_manager is not None and pruned_messages:
+async def _advance_archive_phase(
+    archive_agent: ArchiveGenerator | None,
+    archive_storage: DirArchiveStorage | None,
+    archive_generated: bool,
+    next_archive_id: int,
+    context: MemoryContext,
+    on_archive_generated: Callable[[], Awaitable[None]] | None,
+) -> None:
+    """Phase 6: increment archive state and fire post-archive trigger."""
+    if archive_agent is not None and archive_storage is not None and archive_generated:
         try:
-            pruned_topic: str | None = None
-            if gen_result is not None:
-                for w in gen_result.writes:
-                    if w.channel is ArchiveChannel.CONTEXT:
-                        pruned_topic = w.summary[:200]
-                        break
-            await pruned_manager.write_pruned(
-                pruned_messages,
-                topic=pruned_topic,
-                cleanup_time=datetime.now(get_user_timezone()),
-                session_id=context.session_id or "",
+            await archive_storage.write_archive_state(
+                {"next_archive_id": next_archive_id + 1}
+            )
+            logger.info(
+                "Archive state advanced: next_archive_id=%d session=%s",
+                next_archive_id + 1, context.session_id,
             )
         except Exception:
             logger.warning(
-                "Pruned catalog write failed: session=%s",
+                "Archive state increment failed: session=%s",
                 context.session_id, exc_info=True,
             )
+
+    if archive_generated and on_archive_generated is not None:
+        try:
+            await on_archive_generated()
+        except Exception:
+            logger.debug("Post-cleanup archive trigger failed", exc_info=True)
+
+
+# ── Cleanup orchestrator ───────────────────────────────────────────────────────
+
+
+async def cleanup_session(
+    *,
+    session: SessionMemoryManager,
+    archive: ArchiveMemoryManager | None,
+    context: MemoryContext,
+    max_messages: int | None = None,
+    max_tokens: int | None = None,
+    keep_ratio: float = 0.5,
+    max_backups: int = 10,
+    user_retention: UserRetentionBuffer | None = None,
+    pruned_manager: PrunedManager | None = None,
+    archive_agent: ArchiveGenerator | None = None,
+    archive_storage: DirArchiveStorage | None = None,
+    on_archive_generated: Callable[[], Awaitable[None]] | None = None,
+) -> CleanupResult:
+    """Clean up a session by pruning old messages and optionally archiving them.
+
+    Orchestrates 6 phases:
+        1. Prepare (trigger, backup, sanitize, boundary)
+        2. Archive generation (optional)
+        3. Pruned content write
+        4. Retention extraction
+        5. Session commit + retention persistence
+        6. Archive state advance + trigger
+    """
+    # Phase 1: prepare
+    plan = await _prepare_cleanup_phase(
+        session, context, max_messages, max_tokens, keep_ratio, max_backups,
+    )
+    if plan is None:
+        return CleanupResult(triggered=False)
+
+    # Edge case: all messages invalid -> clear session
+    if not plan.sanitized:
+        revision = await session.get_revision(context)
+        await session.replace_messages_if_revision(context, [], revision)
+        return CleanupResult(
+            triggered=True,
+            messages_kept=0,
+            messages_pruned=plan.total_count,
+            archive_skipped=True,
+            reason=plan.trigger_reason,
+        )
+
+    # Edge case: no safe boundary
+    if not plan.keep_messages:
+        return CleanupResult(
+            triggered=True,
+            messages_kept=plan.total_count,
+            messages_pruned=0,
+            archive_skipped=True,
+            reason=plan.trigger_reason,
+        )
+
+    # Phase 2: archive generation
+    archive_outcome = await _generate_archive_phase(
+        archive_agent, archive_storage, archive, plan.pruned_messages, context,
+    )
+
+    # Use resolved_storage from Phase 2 (may have been dynamically created)
+    effective_storage = archive_outcome.resolved_storage or archive_storage
+
+    # Phase 3: pruned content write
+    await _write_pruned_phase(
+        pruned_manager,
+        effective_storage,
+        plan.pruned_messages,
+        archive_outcome.generated,
+        archive_outcome.next_archive_id,
+        context,
+    )
+
+    # Phase 4: retention extraction
+    retention_entries = (
+        _extract_retention_entries(plan.sanitized, plan.pruned_messages)
+        if user_retention is not None
+        else []
+    )
+
+    # Phase 5: session commit + retention persistence
+    commit_result = await _commit_session_phase(
+        session,
+        context,
+        plan.keep_messages,
+        plan.pruned_messages,
+        retention_entries,
+        user_retention,
+    )
+    if commit_result is None:
+        # Revision conflict
+        return CleanupResult(
+            triggered=True,
+            messages_kept=plan.total_count,
+            messages_pruned=0,
+            archive_skipped=True,
+            reason=plan.trigger_reason,
+        )
+    keep_count, prune_count = commit_result
+
+    # Phase 6: advance archive state + trigger
+    await _advance_archive_phase(
+        archive_agent,
+        effective_storage,
+        archive_outcome.generated,
+        archive_outcome.next_archive_id,
+        context,
+        on_archive_generated,
+    )
 
     return CleanupResult(
         triggered=True,
         messages_kept=keep_count,
         messages_pruned=prune_count,
-        archive_skipped=archive_skipped,
-        reason=trigger_reason,
+        archive_skipped=archive_outcome.skipped,
+        reason=plan.trigger_reason,
         user_retention_extracted=len(retention_entries),
     )
 
@@ -444,28 +702,28 @@ def _adjust_boundary_for_tool_chains(
     msg_before = messages[boundary - 1]
 
     # Case 1: tool result at boundary, assistant with tool_calls before it
-    if msg_at_boundary.get("role") == "tool":
+    if msg_at_boundary.get("role") == MessageRole.TOOL:
         # Walk backward to find the assistant that started this tool chain
         for j in range(boundary - 1, -1, -1):
             candidate = messages[j]
-            if candidate.get("role") == "assistant" and candidate.get("tool_calls"):
+            if candidate.get("role") == MessageRole.ASSISTANT and candidate.get("tool_calls"):
                 call_ids = {tc.get("id") for tc in candidate.get("tool_calls") or []}
                 # Check if this tool result belongs to this assistant
                 if msg_at_boundary.get("tool_call_id") in call_ids:
                     # Don't split: move boundary before the assistant
                     return j
-            elif candidate.get("role") == "assistant" and not candidate.get("tool_calls"):
+            elif candidate.get("role") == MessageRole.ASSISTANT and not candidate.get("tool_calls"):
                 # Plain assistant — tool chain doesn't extend further back
                 break
-            elif candidate.get("role") == "user":
+            elif candidate.get("role") == MessageRole.USER:
                 break
 
     # Case 2: assistant with tool_calls just before boundary, tool results at or after boundary
-    if msg_before.get("role") == "assistant" and msg_before.get("tool_calls"):
+    if msg_before.get("role") == MessageRole.ASSISTANT and msg_before.get("tool_calls"):
         call_ids = {tc.get("id") for tc in msg_before.get("tool_calls") or []}
         # Check if any tool result for these calls is at or after boundary
         has_tool_result_after = any(
-            messages[k].get("role") == "tool" and messages[k].get("tool_call_id") in call_ids
+            messages[k].get("role") == MessageRole.TOOL and messages[k].get("tool_call_id") in call_ids
             for k in range(boundary, min(boundary + 5, len(messages)))
         )
         if has_tool_result_after:

@@ -104,7 +104,7 @@ class CompressionResult:
 class MemoryBudget:
     max_system_prompt_tokens: int | None = None
     max_total_tokens: int | None = None
-    max_history_messages: int = 50
+    max_history_messages: int | None = None
 
 
 @dataclass(frozen=True)
@@ -139,7 +139,6 @@ class LongTermMemory:
 
 
 from framework.memory.core.consolidation import (  # noqa: E402
-    ConsolidationResult,
     MemoryUpdate,
     MemoryUpdateMode,
 )
@@ -160,7 +159,6 @@ __all__ = [
     "CompressionPlan",
     "CompressionReason",
     "CompressionTrigger",
-    "ConsolidationResult",
     "LongTermMemory",
     "InjectionResult",
     "KnowledgeBudget",

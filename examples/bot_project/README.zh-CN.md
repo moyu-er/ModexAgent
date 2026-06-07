@@ -240,7 +240,7 @@ python bot_service.py --mode pipeline
 
 ### 多 Agent 协作
 
-主 Agent 通过 `send_to_agent` 同步唤醒子 Agent，或通过 `send_to_agent_async` 异步投递到 inbox。`list_communication_targets` 动态注入当前可见子 Agent 列表，帮助 LLM 判断联系目标：
+主 Agent 通过 `send_to_agent` 异步投递到 inbox。工具描述会动态显示所有可用目标，帮助 LLM 判断联系目标：
 
 <img src="../../assets/office_subagent.jpg" alt="多 Agent 协作" width="800">
 
@@ -341,9 +341,9 @@ agents:
 
 | Agent | 文件 | Shell | MCP | 通信工具 | Skills |
 |-------|:----:|:-----:|:---:|----------|--------|
-| **main** | ✅ | ✅ | ✅（全部） | `send_to_agent`, `send_to_agent_async`, `list_communication_targets` | `skills/main/*` |
-| **office-expert** | ✅ | ✅ | — | `send_to_agent_async`(→main), `list_communication_targets` | docx/pdf/pptx/xlsx |
-| **query-12306** | ✅ | ✅ | ✅（12306-mcp, fetch） | `send_to_agent_async`(→main), `list_communication_targets` | — |
+| **main** | ✅ | ✅ | ✅（全部） | `send_to_agent`, `send_to_agent_async` | `skills/main/*` |
+| **office-expert** | ✅ | ✅ | — | `send_to_agent_async`(→main) | docx/pdf/pptx/xlsx |
+| **query-12306** | ✅ | ✅ | ✅（12306-mcp, fetch） | `send_to_agent_async`(→main) | — |
 | **helper-sync** | ✅ | ✅ | — | —（spawn 同步返回） | `skills/subagents/*` |
 
 ## 适配其他 IM 平台

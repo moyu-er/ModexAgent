@@ -41,7 +41,7 @@ from framework.multi_agent import (
     SubagentService, AgentMessageBus,
 )
 from framework.multi_agent.session_id import DefaultSessionIdStrategy
-from framework.multi_agent.tools import ListCommunicationTargetsTool, SendToAgentTool
+from framework.multi_agent.tools import CommunicationTarget, CommunicationTargetStore, SendToAgentTool
 from framework.pipeline.adapters import OutputAdapter
 from framework.tools import MCPClientManager
 
@@ -201,6 +201,9 @@ class AgentBuilderMixin:
         self.tool_manager.register(SendFileToUserTool(output_adapter=self.output_adapter))
         print("   [OK] send_file_to_user registered")
 
+        # Experience tool is registered in BotService.initialize() alongside
+        # the hook/curator so all three share the same ExperienceMetaStore.
+
     async def _register_mcp_tools(self) -> None:
         if self.tool_manager is None:
             return
@@ -240,7 +243,16 @@ class AgentBuilderMixin:
         strategy = DefaultSessionIdStrategy(main_agent_name=parent_name)
 
         if self.agent_bus is not None:
+            from framework.multi_agent.comm_kind import AgentCommKind
             from framework.multi_agent.communication import AgentCommunicationService
+            comm_store = CommunicationTargetStore()
+            # Populate from other configured agents
+            for a in agents:
+                if a.name != parent_name:
+                    comm_store.add(CommunicationTarget(
+                        name=a.name, kind=AgentCommKind.SUBAGENT,
+                        description=getattr(a, "description", ""),
+                    ))
             service = AgentCommunicationService(
                 source=parent_address,
                 broker=self.broker,
@@ -248,20 +260,15 @@ class AgentBuilderMixin:
                 agent_bus=self.agent_bus,
                 session_strategy=strategy,
                 comm_tracker=self.communication_tracker,
+                target_store=comm_store,
             )
             self.tool_manager.register(SendToAgentTool(
+                store=comm_store,
                 source=parent_address, broker=self.broker, registry=self.agent_pool,
                 agent_bus=self.agent_bus, service=service,
                 comm_tracker=self.communication_tracker,
             ))
             print("   [OK] send_to_agent registered")
-
-            self.tool_manager.register(ListCommunicationTargetsTool(
-                self_address=parent_address,
-                registry=self.agent_pool,
-                # template_registry and pool_name not available in old mode
-            ))
-            print("   [OK] list_communication_targets registered")
 
     # ── Subagent Tool Manager (code-driven) ──
 
@@ -364,7 +371,8 @@ class AgentBuilderMixin:
 
         subagent_cfg = self._find_subagent_cfg()
         sub_memory_cfg = subagent_cfg.memory if subagent_cfg else None
-        sub_dir = self._resolve_path("memory_dir", "data/memory") / "subagents" / sub_name
+        data_dir = self.workspace_context.data_dir
+        sub_dir = data_dir / "memory" / "subagents" / sub_name
         sub_dir.mkdir(parents=True, exist_ok=True)
 
         # Support both old (short_term) and new (session) config
@@ -380,12 +388,25 @@ class AgentBuilderMixin:
             "keep_ratio": st.keep_ratio_for_messages if st else 0.4,
         }
 
+        # Inherit archive/knowledge agents from the main memory system so subagents
+        # also generate archives and consolidate knowledge when enabled.
+        archive_agent: Any | None = None
+        knowledge_consolidator: Any | None = None
+        if self.context_manager is not None:
+            main_memory = getattr(self.context_manager, "memory_system", None)
+            if main_memory is not None:
+                archive_agent = getattr(main_memory, "_archive_agent", None)
+                knowledge_consolidator = main_memory.knowledge_consolidator
+
         memory_system = create_memory_system(
             workspace=sub_dir,
             config=self._session_only_memory_config(sub_memory_cfg),
             session_only=False,
             cleanup_config=cleanup_config,
             pruned_manager=self.pruned_manager,
+            archive_agent=archive_agent,
+            archive_storage=None,
+            knowledge_consolidator=knowledge_consolidator,
         )
         await memory_system.initialize()
         if self.plugin_integration:

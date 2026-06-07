@@ -12,6 +12,7 @@ from typing import Any
 
 from framework.memory.archive_models import ArchiveChannel, ArchiveChannelStorage
 from framework.memory.core.layers import MemoryLayerSet
+from framework.memory.stores.dir_archive import DirArchiveStorage
 from framework.memory.core.scope import (
     MemoryContext,
     MemoryLayerName,
@@ -150,6 +151,33 @@ class DefaultMemoryMaintenancePolicy(MemoryMaintenancePolicy):
                             else:
                                 await archive_storage.save_logs(kept)
 
+                    # FIFO eviction: delete oldest dirs exceeding max_archive_total,
+                    # but never delete unconsumed archives.
+                    max_total = await self._archive_retention.get_max_archive_total(ctx)
+                    if max_total is not None:
+                        # DirArchiveStorage is used for MD-based archives (agent path).
+                        # When registry returns DefaultScopedStorage (JSONL path), look up
+                        # the archive directory via the layer manager and wrap it.
+                        dir_storage: DirArchiveStorage | None = None
+                        if isinstance(archive_storage, DirArchiveStorage):
+                            dir_storage = archive_storage
+                        elif layers.archive is not None:
+                            try:
+                                archive_dir = await layers.archive.get_storage_path(ctx)
+                                if archive_dir is not None:
+                                    dir_storage = DirArchiveStorage(archive_dir)
+                            except Exception:
+                                pass
+                        if dir_storage is not None:
+                            state = await dir_storage.read_archive_state() or {}
+                            consumed = state.get("knowledge_consumed_archive_id", 0)
+                            deleted = await dir_storage.prune_to_max(
+                                max_total, min_safe_id=consumed
+                            )
+                            if deleted:
+                                await dir_storage.cleanup_empty_dirs()
+                                pruned = True
+
                     if pruned:
                         results.append(MaintenanceResult(
                             scope_key=record.scope_key, task="archive_retention", success=True,
@@ -254,7 +282,7 @@ class DefaultSessionRetentionPolicy(SessionRetentionPolicy):
 
 
 class ArchiveRetentionPolicy(ABC):
-    """Archive layer aging: max entries, max age."""
+    """Archive layer aging: max entries, max age, max total."""
 
     @abstractmethod
     async def get_max_entries(self, context: MemoryContext) -> int | None: ...
@@ -262,11 +290,21 @@ class ArchiveRetentionPolicy(ABC):
     @abstractmethod
     async def get_max_age_days(self, context: MemoryContext) -> int | None: ...
 
+    async def get_max_archive_total(self, context: MemoryContext) -> int | None:
+        """Default: no total limit. Override to enable FIFO eviction."""
+        return None
+
 
 class DefaultArchiveRetentionPolicy(ArchiveRetentionPolicy):
-    def __init__(self, max_entries: int | None = 1000, max_age_days: int | None = None) -> None:
+    def __init__(
+        self,
+        max_entries: int | None = 1000,
+        max_age_days: int | None = None,
+        max_archive_total: int | None = None,
+    ) -> None:
         self._max_entries = max_entries
         self._max_age_days = max_age_days
+        self._max_archive_total = max_archive_total
 
     async def get_max_entries(self, context: MemoryContext) -> int | None:
         _ = context
@@ -275,6 +313,9 @@ class DefaultArchiveRetentionPolicy(ArchiveRetentionPolicy):
     async def get_max_age_days(self, context: MemoryContext) -> int | None:
         _ = context
         return self._max_age_days
+
+    async def get_max_archive_total(self, context: MemoryContext) -> int | None:
+        return self._max_archive_total
 
 
 class KnowledgeRetentionPolicy(ABC):

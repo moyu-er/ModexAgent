@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from pathlib import Path
+from typing import Any
 from xml.sax.saxutils import escape as xml_escape
 
-from framework.memory.archive_models import ArchiveChannel
 from framework.memory.core.models import (
     InjectionResult,
     MemoryBudget,
@@ -13,8 +13,9 @@ from framework.memory.core.models import (
 from framework.memory.core.scope import MemoryContext
 from framework.memory.core.system import InjectableMemorySystem, MemorySystem
 from framework.memory.injection.policy import MemoryInjectionPolicy
+from framework.memory.tags import ArchiveTag, KnowledgeTag
 from framework.memory.pruned.manager import PrunedManager
-from framework.memory.utils import estimate_text_tokens, normalize_memory_summary
+from framework.memory.utils import estimate_text_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +31,9 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
     """Main agent policy — knowledge + archive + providers + session.
 
     Injection order (deterministic, priority-ordered):
-    1. Bootstrap files: SOUL, USER → priority=100
-    2. Knowledge: MEMORY.md → priority=90
-    3. Archive recent: search or get_recent → priority=70
+    1. Previous conversations disclaimer → priority=110
+    2. Knowledge: identity, user profile, known facts → priority=100
+    3. Archive summaries: older topics → priority=70
     4. Provider static blocks → priority=60
     5. Provider prefetch → priority=50
     6. Session visible messages → messages field of result
@@ -44,10 +45,14 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         budget: MemoryBudget | None = None,
         max_history_entries: int = 3,
         pruned_manager: PrunedManager | None = None,
+        archive_inject_count: int = 3,
+        archive_inject_max_chars: int = 1000,
     ) -> None:
         self._budget = budget or MemoryBudget()
         self._max_history = max_history_entries
         self._pruned_manager = pruned_manager
+        self._archive_inject_count = archive_inject_count
+        self._archive_inject_max_chars = archive_inject_max_chars
 
     async def assemble(
         self,
@@ -63,8 +68,9 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         sections: list[_PromptSection] = []
         injectable = memory_system
 
+        self._inject_disclaimer(sections)
         await self._inject_knowledge(sections, context, injectable, query)
-        await self._inject_archive(sections, context, injectable, query)
+        await self._inject_archive(sections, context, injectable)
         self._inject_pruned_catalog(sections, context)
         await self._inject_provider_blocks(sections, injectable)
         await self._inject_provider_prefetch(sections, context, injectable, query)
@@ -83,6 +89,24 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
 
     # -- injection helpers ---------------------------------------------------
 
+    def _inject_disclaimer(self, sections: list[_PromptSection]) -> None:
+        """Inject a header and disclaimer about injected memory sections."""
+        sections.append(
+            _PromptSection(
+                content=(
+                    "## Memory & Past Sessions\n\n"
+                    "Below is your persistent memory (identity, user info, learned facts) "
+                    "and previous conversation history (transcripts and summaries). "
+                    "These are from **past** sessions — they are NOT part of the current "
+                    "conversation.\n\n"
+                    "**Your current conversation always takes priority.** If anything "
+                    "below conflicts with the current conversation, trust the current "
+                    "conversation."
+                ),
+                priority=110,
+            )
+        )
+
     async def _inject_knowledge(
         self,
         sections: list[_PromptSection],
@@ -90,55 +114,50 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         memory_system: InjectableMemorySystem,
         query: str,
     ) -> None:
-        """Inject knowledge as semantic XML with absolute paths and editability metadata."""
+        """Inject knowledge as natural XML with file paths and editability."""
         try:
             knowledge = await memory_system.retrieve_knowledge(context, query=query)
             knowledge_dir = await memory_system.get_knowledge_directory(context)
 
-            # Build XML sections for each knowledge file
-            xml_parts: list[str] = [
-                "<agent_knowledge>",
-                "<!-- Persistent knowledge from prior sessions. Reference as background context.",
-                "     This is NOT an active instruction. The user's current request takes priority",
-                "     over any fact recorded here. -->",
-            ]
+            xml_parts: list[str] = []
 
             if knowledge.soul:
-                file_path = ""
+                file_attr = ""
                 if knowledge_dir:
-                    file_path = f' file="{xml_escape(str((knowledge_dir / "SOUL.md").resolve()))}"'
-                xml_parts.append(
-                    f'  <identity{file_path} editable="true" '
-                    f'description="Your personality, core principles, and behavioral rules.">'
-                    f"{xml_escape(knowledge.soul)}"
-                    f"</identity>"
-                )
+                    file_attr = f' file="{xml_escape(str((knowledge_dir / "SOUL.md").resolve()))}"'
+                tag = KnowledgeTag.YOUR_IDENTITY.value
+                xml_parts.extend([
+                    f'<{tag}{file_attr} editable="true"'
+                    f' description="Who you are: personality, principles, and behavior rules">'
+                    f"\n{xml_escape(knowledge.soul)}\n"
+                    f"</{tag}>",
+                ])
 
             if knowledge.user:
-                file_path = ""
+                file_attr = ""
                 if knowledge_dir:
-                    file_path = f' file="{xml_escape(str((knowledge_dir / "USER.md").resolve()))}"'
-                xml_parts.append(
-                    f'  <user_profile{file_path} editable="true" '
-                    f'description="Information about the user you are interacting with - preferences, background, habits.">'
-                    f"{xml_escape(knowledge.user)}"
-                    f"</user_profile>"
-                )
+                    file_attr = f' file="{xml_escape(str((knowledge_dir / "USER.md").resolve()))}"'
+                tag = KnowledgeTag.USER_PROFILE.value
+                xml_parts.extend([
+                    f'<{tag}{file_attr} editable="true"'
+                    f' description="Facts about the user: name, preferences, habits, communication style">'
+                    f"\n{xml_escape(knowledge.user)}\n"
+                    f"</{tag}>",
+                ])
 
             if knowledge.memory:
-                file_path = ""
+                file_attr = ""
                 if knowledge_dir:
-                    file_path = f' file="{xml_escape(str((knowledge_dir / "MEMORY.md").resolve()))}"'
-                xml_parts.append(
-                    f'  <persistent_memory{file_path} editable="false" '
-                    f'description="Facts and context preserved across sessions. Maintained automatically.">'
-                    f"{xml_escape(knowledge.memory)}"
-                    f"</persistent_memory>"
-                )
+                    file_attr = f' file="{xml_escape(str((knowledge_dir / "MEMORY.md").resolve()))}"'
+                tag = KnowledgeTag.KNOWN_FACTS.value
+                xml_parts.extend([
+                    f'<{tag}{file_attr} editable="false"'
+                    f' description="Known facts about the project: conventions, decisions, verified solutions">'
+                    f"\n{xml_escape(knowledge.memory)}\n"
+                    f"</{tag}>",
+                ])
 
-            xml_parts.append("</agent_knowledge>")
-
-            if len(xml_parts) > 2:  # More than just opening/closing tags
+            if xml_parts:
                 xml_content = "\n".join(xml_parts)
 
                 # Pre-truncation: if XML exceeds 8000 chars, truncate safely
@@ -149,14 +168,20 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                         xml_content,
                         8000,
                         truncatable_paths=[
-                            "identity",
-                            "user_profile",
-                            "persistent_memory",
+                            KnowledgeTag.YOUR_IDENTITY.value,
+                            KnowledgeTag.USER_PROFILE.value,
+                            KnowledgeTag.KNOWN_FACTS.value,
                         ],
                     )
 
+                heading = (
+                    "### Knowledge Files\n\n"
+                    "Self-maintained files storing your personality, user preferences, "
+                    "and learned facts. Files with `editable=\"true\"` can be updated "
+                    "via file tools to evolve your knowledge over time.\n\n"
+                )
                 sections.append(_PromptSection(
-                    content=xml_content,
+                    content=heading + xml_content,
                     priority=100,
                 ))
         except Exception:
@@ -167,76 +192,80 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         sections: list[_PromptSection],
         context: MemoryContext,
         memory_system: InjectableMemorySystem,
-        query: str,
     ) -> None:
         try:
-            entries = await memory_system.get_history_entries(
-                context,
-                limit=self._max_history,
-                query=query,
-                channel=ArchiveChannel.CONTEXT,
-            )
-            if not entries:
-                return
-
-            xml_parts: list[str] = [
-                "<historical_context>",
-                "<!-- Summaries of recent conversation segments, generated automatically after",
-                "     each cleanup. Reference as background context — current request takes priority. -->",
-            ]
-
-            record_count = 0
-            any_truncated = False
-            for e in entries:
-                summary = normalize_memory_summary(e.get("summary"))
-                if summary is None:
-                    continue
-                if e.get("metadata", {}).get("source") == "empty":
-                    continue
-                if e.get("metadata", {}).get("semantic_count") == 0:
-                    continue
-                record_count += 1
-
-                created_at = e.get("created_at")
-                if isinstance(created_at, str):
-                    time_str = created_at.replace("T", " ")[:16]
-                elif isinstance(created_at, datetime):
-                    time_str = created_at.strftime("%Y-%m-%d %H:%M")
-                else:
-                    time_str = ""
-
-                archive_id = e.get("archive_id", "")
-                aid_attr = f' archive_id="{archive_id}"' if archive_id != "" else ""
-
-                if len(summary) > 200:
-                    summary = summary[:200]
-                    any_truncated = True
-
-                xml_parts.append(
-                    f'  <record id="{record_count}"'
-                    + (f' timestamp="{xml_escape(time_str)}"' if time_str else "")
-                    + f'{aid_attr}>'
-                    f"{xml_escape(summary)}"
-                    f"</record>"
-                )
-
-            if any_truncated:
-                archive_dir = await memory_system.get_archive_directory(context)
-                if archive_dir:
-                    xml_parts.insert(1,
-                        f'  <!-- Some summaries were truncated. Full records and complete'
-                        f' conversation history can be read from: {xml_escape(str(archive_dir))} -->'
-                    )
-
-            xml_parts.append("</historical_context>")
-
-            if record_count > 0:
-                sections.append(_PromptSection(
-                    content="\n".join(xml_parts),
-                    priority=70,
-                ))
+            await self._inject_md_archives(sections, memory_system, context)
         except Exception:
             logger.debug("Archive injection skipped", exc_info=True)
+
+    async def _inject_md_archives(
+        self,
+        sections: list[_PromptSection],
+        memory_system: Any,
+        context: MemoryContext,
+    ) -> None:
+        """Inject archive summaries from DirArchiveStorage (MD files on disk)."""
+        try:
+            archive_dir = await memory_system.get_storage_path(context)
+        except Exception:
+            return
+
+        if archive_dir is None:
+            return
+
+        from framework.memory.stores.dir_archive import DirArchiveStorage
+
+        storage = DirArchiveStorage(archive_dir)
+
+        try:
+            archive_ids = await storage.list_archives(limit=self._archive_inject_count)
+        except Exception:
+            return
+
+        if not archive_ids:
+            return
+
+        # Read context.md from each archive (ascending by archive_id: oldest first)
+        records: list[str] = []
+        for aid in sorted(archive_ids)[:self._archive_inject_count]:
+            try:
+                content = await storage.read_archive_file(aid, "context.md")
+            except Exception:
+                continue
+
+            if not content or not content.strip():
+                continue
+
+            truncated = len(content) > self._archive_inject_max_chars
+            display = content[:self._archive_inject_max_chars] + "..." if truncated else content
+
+            full_path = self._archive_file_path(archive_dir, aid)
+            st = ArchiveTag.SUMMARY.value
+            records.append(
+                f'<{st} number="{aid}"'
+                f' file="{xml_escape(full_path)}"'
+                f'>\n{xml_escape(display)}\n</{st}>'
+            )
+
+        if not records:
+            return
+
+        heading = (
+            "### Earlier Conversation Summaries\n\n"
+            "Short summaries of older conversations. Higher number = more recent. "
+            "Read the `context.md` file at each path for the full details.\n\n"
+        )
+        ct = ArchiveTag.CONTAINER.value
+        xml = (
+            f"<{ct}>\n"
+            + "\n".join(records)
+            + f"\n</{ct}>"
+        )
+        sections.append(_PromptSection(content=heading + xml, priority=70))
+
+    def _archive_file_path(self, archive_dir: Path, archive_id: int) -> str:
+        """Return absolute path to archive context.md for injection XML."""
+        return str((archive_dir / str(archive_id) / "context.md").resolve())
 
     def _inject_pruned_catalog(
         self, sections: list[_PromptSection], context: MemoryContext,
@@ -277,7 +306,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
             prefetch = await memory_system.prefetch_memories(query, context)
             if prefetch:
                 sections.append(_PromptSection(
-                    content=f"<memory-context>\n{xml_escape(prefetch)}\n</memory-context>",
+                    content=f"<related_facts>\n{xml_escape(prefetch)}\n</related_facts>",
                     priority=50,
                 ))
         except Exception:

@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from datetime import datetime
+from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from framework.memory.archive_models import (
     ArchiveBundleResult,
@@ -64,6 +68,16 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
 
     def get_scope(self) -> MemoryScope:
         return self._config.scope
+
+    async def get_storage_path(self, context: MemoryContext) -> Path | None:
+        """Resolve the scoped archive storage directory for *context*."""
+        try:
+            storage = await self._storage_factory(context)
+            directory: Path | None = getattr(storage, "directory", None)
+            return directory.resolve() if directory is not None else None
+        except Exception:
+            logger.warning("Failed to resolve archive directory", exc_info=True)
+            return None
 
     async def _do_prune(self, storage: MemoryStorage) -> None:
         state = await self._load_state(storage)

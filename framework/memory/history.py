@@ -21,6 +21,22 @@ class MessageHistory(ABC):
 
     Does NOT inherit from Sequence because synchronous iteration is
     incompatible with async storage backends.
+
+    **Usage contract**:
+
+    - **Primary API**: ``await history.to_list()`` — the ONLY guaranteed-safe
+      way to access messages.  Returns a list you can ``len()`` and iterate.
+    - ``__len__`` / ``__iter__`` / ``__getitem__`` are **NOT** guaranteed to
+      work.  Implementations that use async storage backends (e.g.
+      ``ShortTermMessageHistory``) intentionally raise ``RuntimeError`` on
+      these methods.  Only ``ListMessageHistory`` (in-memory) supports them.
+
+    If you need message count, iteration, or indexed access::
+
+        messages = await history.to_list()
+        count = len(messages)
+        for msg in messages:
+            role = msg.role  # ChatMessage
     """
 
     @abstractmethod
@@ -35,7 +51,10 @@ class MessageHistory(ABC):
 
     @abstractmethod
     async def to_list(self) -> Sequence[ChatMessage]:
-        """Return a copy of the current message list (ChatMessage objects)."""
+        """Return a copy of the current message list (ChatMessage objects).
+
+        This is the **primary** read API.  Always use this, never sync accessors.
+        """
         pass
 
     async def replace_all(
@@ -50,17 +69,32 @@ class MessageHistory(ABC):
 
     @abstractmethod
     def __len__(self) -> int:
-        """Return the number of messages (best-effort for async backends)."""
+        """Return message count.
+
+        .. warning::
+           ``ShortTermMessageHistory`` (pool mode) raises ``RuntimeError``.
+           Use ``len(await history.to_list())`` instead.
+        """
         pass
 
     @abstractmethod
     def __iter__(self) -> Iterator[ChatMessage]:
-        """Iterate over messages (best-effort for async backends)."""
+        """Iterate over messages.
+
+        .. warning::
+           ``ShortTermMessageHistory`` (pool mode) raises ``RuntimeError``.
+           Use ``for msg in await history.to_list()`` instead.
+        """
         pass
 
     @abstractmethod
     def __getitem__(self, index: int) -> ChatMessage:
-        """Get message by index (best-effort for async backends)."""
+        """Get message by index.
+
+        .. warning::
+           ``ShortTermMessageHistory`` (pool mode) raises ``RuntimeError``.
+           Use ``(await history.to_list())[index]`` instead.
+        """
         pass
 
 

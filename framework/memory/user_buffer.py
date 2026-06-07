@@ -47,16 +47,50 @@ class UserBufferEntry:
         )
         content_format = message.get("content_format")
         truncatable_paths = message.get("truncatable_paths")
+
+        # Auto-detect XML content if not explicitly tagged — preserves
+        # truncatability for skill contexts and other XML-wrapped input.
+        detected_format, detected_paths = cls._detect_xml_meta(
+            content, content_format, truncatable_paths
+        )
+
         return cls(
             pruned_user_role=role,
-            pruned_user_content=content if isinstance(content, str) else json.dumps(content, ensure_ascii=False),
+            pruned_user_content=content,
             pruned_user_source_agent=source_text,
             pruned_user_created_at=created_at,
             completing_assistant_content=None,
             fingerprint=cls._make_fingerprint(role, content, source_text),
-            content_format=str(content_format) if content_format is not None else None,
-            truncatable_paths=list(truncatable_paths) if isinstance(truncatable_paths, list) else None,
+            content_format=detected_format,
+            truncatable_paths=detected_paths,
         )
+
+    @staticmethod
+    def _detect_xml_meta(
+        content: str,
+        content_format: Any,
+        truncatable_paths: Any,
+    ) -> tuple[str | None, list[str] | None]:
+        """Infer XML truncation metadata from explicit fields or content heuristic.
+
+        If the message already carries content_format/truncatable_paths,
+        those are preserved.  Otherwise, if the content looks like XML
+        (starts with '<' and contains tags), format is inferred as 'xml'
+        and a default path is provided so _enforce_limits can truncate
+        safely without breaking structure.
+        """
+        if content_format is not None:
+            paths: list[str] | None = None
+            if truncatable_paths is not None and type(truncatable_paths) is list:
+                paths = list(truncatable_paths)
+            return str(content_format), paths
+        stripped = content.strip()
+        if stripped.startswith("<") and ">" in stripped:
+            # Heuristic: content looks like XML — tag it so truncation
+            # uses truncate_xml_safe instead of blunt head-cut.
+            root_tag = stripped[1:].split()[0].split(">")[0].split("/")[0]
+            return "xml", [root_tag] if root_tag else ["content"]
+        return None, None
 
     @staticmethod
     def _make_fingerprint(role: str, content: str, source_agent: str | None) -> str:
@@ -66,21 +100,58 @@ class UserBufferEntry:
 
     @staticmethod
     def _normalize_content(value: Any) -> str:
-        if isinstance(value, list):
-            return json.dumps([dict(item) for item in value if isinstance(item, dict)], ensure_ascii=False)
+        if type(value) is list:
+            return json.dumps([dict(item) for item in value if type(item) is dict], ensure_ascii=False)
         return "" if value is None else str(value)
 
     @staticmethod
     def _coerce_timestamp(value: Any, *, fallback: float) -> float:
-        if isinstance(value, int | float):
-            return float(value)
+        match value:
+            case int() | float():
+                return float(value)
+            case str():
+                return UserBufferEntry._parse_timestamp_str(value, fallback)
+            case _:
+                return fallback
+
+    @staticmethod
+    def _parse_timestamp_str(value: str, fallback: float) -> float:
+        from datetime import datetime
+        from framework.utils.timezone import get_user_timezone
+
+        tz = get_user_timezone()
+        # Try session-style format first: "YYYY-MM-DD HH:MM:SS"
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S%z"):
+            try:
+                dt = datetime.strptime(value, fmt)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=tz)
+                return dt.timestamp()
+            except ValueError:
+                pass
+        # Try ISO format
         try:
-            return float(str(value))
+            dt = datetime.fromisoformat(value)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=tz)
+            return dt.timestamp()
+        except (ValueError, TypeError):
+            pass
+        # Try plain float string
+        try:
+            return float(value)
         except (TypeError, ValueError):
             return fallback
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        # Convert float timestamp to session-style readable format
+        from datetime import datetime
+        from framework.utils.timezone import get_user_timezone
+
+        dt = datetime.fromtimestamp(self.pruned_user_created_at, tz=get_user_timezone())
+        d["pruned_user_created_at"] = dt.strftime("%Y-%m-%d %H:%M:%S")
+        return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> UserBufferEntry | None:
