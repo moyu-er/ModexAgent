@@ -40,6 +40,14 @@ You are a capable AI assistant.
 """
 
 
+class ExperienceConfig(BaseModel):
+    enabled: bool = False
+    review_interval: int = 5
+    max_iterations: int = 50
+    max_experiences: int = 20  # LRU eviction cap — excess are deleted
+    curator_interval: int = 86400  # run once per day (seconds)
+
+
 class AgentConfig(BaseModel):
     """Configuration for a single agent.
 
@@ -65,6 +73,7 @@ class AgentConfig(BaseModel):
     approval: ApprovalConfig | None = None
     safety: SafetyConfig | None = None
     hooks: HooksConfig | None = Field(default_factory=HooksConfig)
+    experience: ExperienceConfig | None = None
 
     # pi-aligned: extra tools registered by name for the main agent
     # e.g. ["ast_grep_search", "ast_grep_replace", "lsp_diagnostics", "lsp_navigation"]

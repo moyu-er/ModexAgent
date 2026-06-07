@@ -27,6 +27,7 @@ from framework.memory.registry.file import DefaultMemoryStoreRegistry
 
 if TYPE_CHECKING:
     from framework.agents.summarizer.abc import ArchiveGenerator, KnowledgeConsolidatorBase
+    from framework.core.experience.manager import ExperienceManager
     from framework.core.provider import LLMProvider
     from framework.memory.stores.dir_archive import DirArchiveStorage
 
@@ -86,9 +87,19 @@ def create_memory_system(
 class MemorySystemContextManager(ContextManager):
     """Adapter that wraps a ``MemorySystem`` behind the ``ContextManager`` interface.
 
-    This is a bridge so the existing pipeline can consume the new memory
-    system without being rewritten.  New code should depend on
-    ``MemorySystem`` directly.
+    Prompt assembly order (in :meth:`load`):
+      1. Runtime metadata (date, platform)
+      2. Base system prompt (agent personality / system.md)
+      3. Memory layers via ``injection_policy.assemble()`` — session, archive,
+         knowledge, user-retention (subject to budget & pruning)
+      4. Experiences — persistent reference knowledge (NOT a memory layer)
+      5. Skills — persistent reference knowledge (NOT a memory layer)
+
+    Skills and experiences are intentionally kept OUTSIDE the memory
+    injection pipeline because they are static reference content — they
+    do not participate in memory lifecycle (no budget enforcement, no
+    truncation, no eviction at the injection level).  Their own managers
+    handle freshness / validity independently.
     """
 
     def __init__(
@@ -99,6 +110,7 @@ class MemorySystemContextManager(ContextManager):
         default_agent_role: str | MemoryAgentRole | None = None,
         base_system_prompt: str = "",
         injection_policy: Any | None = None,
+        experience_manager: ExperienceManager | None = None,
     ):
         # Invariant: URB completion hook and injection governance must be
         # both enabled or both disabled. The hook is wired when
@@ -118,6 +130,7 @@ class MemorySystemContextManager(ContextManager):
         self._last_session_id: str | None = None
         self._context_cache: dict[str, MemoryContext] = {}
         self._max_context_cache_size = 1000
+        self._experience_manager = experience_manager
 
     def wrap_governance(
         self,
@@ -201,8 +214,25 @@ class MemorySystemContextManager(ContextManager):
             query=query,
         )
 
-        # Build complete system_prompt in one pass
-        # Order: Runtime → Agent Rules → Knowledge & Archive → Skills
+        # ── Prompt assembly ────────────────────────────────────────────
+        # Layers are joined with "---" separators.  Order matters:
+        #   1. Runtime metadata       — date, platform (ephemeral)
+        #   2. Base system prompt     — agent personality (static)
+        #   3. Memory layers          — session / archive / knowledge /
+        #                              user-retention (managed by
+        #                              injection_policy.assemble;
+        #                              subject to budget & pruning)
+        #   4. Experiences            — persistent reference knowledge
+        #                              (NOT a memory layer — no pruning)
+        #   5. Skills                 — persistent reference knowledge
+        #                              (NOT a memory layer — no pruning)
+        #
+        # Skills and experiences are kept OUTSIDE injection_policy.assemble
+        # because they are static reference content — they do not
+        # participate in memory lifecycle (no budget enforcement, no
+        # truncation, no eviction at the injection level).  Their own
+        # managers handle freshness / validity independently.
+        # ────────────────────────────────────────────────────────────────
         parts: list[str] = []
         if runtime_info:
             runtime_text = self._format_runtime_info(runtime_info)
@@ -212,6 +242,14 @@ class MemorySystemContextManager(ContextManager):
             parts.append(self.base_system_prompt)
         if result.system_prompt:
             parts.append(result.system_prompt)
+        if self._experience_manager is not None:
+            try:
+                experience_prompt = await self._experience_manager.build_prompt()
+            except Exception:
+                logger.debug("Failed to build experience prompt", exc_info=True)
+            else:
+                if experience_prompt:
+                    parts.append(experience_prompt)
         if skill_manager is not None:
             from framework.core.skills import ResolutionContext
             skill_prompt = await skill_manager.build_prompt(

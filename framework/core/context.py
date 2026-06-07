@@ -183,9 +183,15 @@ class InMemoryContextManager(ContextManager):
         skill_manager: SkillManager | None = None,
         runtime_info: dict[str, Any] | None = None,
     ) -> str:
+        """Base-class fallback.  MemorySystemContextManager overrides this
+        and assembles skills + experiences + memory layers in load() instead.
+        This version exists for ContextManager subclasses that do NOT use a
+        full MemorySystem.
+        """
         parts = [self.base_system_prompt]
 
-        # 添加 Skills（tool 描述由 Agent 通过 API tools 参数传递，不注入 system prompt）
+        # Skills — persistent reference (included in base class when no
+        # MemorySystem pipeline is available to inject them via load()).
         if skill_manager is not None:
             skill_prompt = await skill_manager.build_prompt(
                 ResolutionContext.from_runtime(tool_manager=tool_manager)

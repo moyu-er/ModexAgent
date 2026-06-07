@@ -42,6 +42,14 @@ class LLMNode(Node):
         state.iteration += 1
         state.current_node = ReActNode.LLM
         state.phase = TurnPhase.RUNNING
+        tm = ctx.tool_manager
+        if tm is not None:
+            tools = tm.list_tools()
+            tool_dict = dict()
+            for tool_name in tools:
+                temp = tm.get_tool(tool_name)
+                if temp is not None:
+                    tool_dict[tool_name] = temp
 
         if state.iteration > ctx.max_iterations:
             if ctx.emitter is not None:
