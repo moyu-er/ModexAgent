@@ -7,6 +7,7 @@ import pytest
 
 from framework.core.experience.meta import PerFileExperienceMetaStore
 from framework.hook.builtin.experience_review import ExperienceReviewHook
+from framework.memory.history import ListMessageHistory
 
 
 @pytest.fixture
@@ -17,47 +18,196 @@ def meta_store(tmp_path: Path) -> PerFileExperienceMetaStore:
 @pytest.fixture
 def hook(tmp_path: Path, meta_store: PerFileExperienceMetaStore) -> ExperienceReviewHook:
     agent = MagicMock()
-
-    async def fake_review(**_kwargs):
-        return True
-    agent.review = fake_review
-
+    agent.review = MagicMock()
     return ExperienceReviewHook(
         review_agent=agent,
         experience_dir=tmp_path,
         meta_store=meta_store,
-        review_interval=5,
+        min_messages=6,
+        exp_cooldown_turns=3,
     )
 
 
-def test_hook_skips_when_turn_not_multiple(tmp_path: Path, meta_store: PerFileExperienceMetaStore):
-    agent = MagicMock()
-    agent.review = MagicMock()
-    hook = ExperienceReviewHook(
-        review_agent=agent,
-        experience_dir=tmp_path,
-        meta_store=meta_store,
-        review_interval=5,
+@pytest.mark.asyncio
+async def test_hook_skips_when_not_plain_completion(hook: ExperienceReviewHook):
+    """Review should not trigger if stop_reason is not 'completed'."""
+    ctx = MagicMock()
+    ctx.history = ListMessageHistory([{"role": "user", "content": "hi"}] * 6)
+    result = MagicMock(stop_reason="max_iterations", messages=[])
+
+    await hook.after_turn(ctx, result)
+    assert not hook._agent.review.called  # type: ignore[reportAttributeAccessIssue]
+
+
+@pytest.mark.asyncio
+async def test_hook_skips_when_insufficient_messages(hook: ExperienceReviewHook):
+    """Review should not trigger if history has fewer than min_messages."""
+    ctx = MagicMock()
+    ctx.history = ListMessageHistory([{"role": "user", "content": "hi"}] * 3)
+    result = MagicMock(stop_reason="completed", messages=[])
+
+    await hook.after_turn(ctx, result)
+    assert not hook._agent.review.called  # type: ignore[reportAttributeAccessIssue]
+
+
+@pytest.mark.asyncio
+async def test_hook_triggers_on_plain_turn_with_enough_messages(
+    hook: ExperienceReviewHook,
+):
+    """Review should trigger on a plain assistant turn with sufficient history."""
+    ctx = MagicMock()
+    ctx.history = ListMessageHistory([{"role": "user", "content": "hello"}] * 6)
+    result = MagicMock(
+        stop_reason="completed",
+        messages=[{"role": "assistant", "content": "response"}],
     )
-    ctx = MagicMock(turn_count=3)
-    asyncio.run(hook.after_turn(ctx, MagicMock()))
-    agent.review.assert_not_called()
+    await hook.after_turn(ctx, result)
+    # Give the background task a moment
+    await asyncio.sleep(0.05)
+    assert hook._agent.review.called  # type: ignore[reportAttributeAccessIssue]
+
+
+@pytest.mark.asyncio
+async def test_hook_skips_during_cooldown_with_enough_messages(
+    hook: ExperienceReviewHook,
+):
+    """During cooldown, threshold is doubled; need 12 messages instead of 6."""
+    ctx = MagicMock()
+    # 8 messages < doubled threshold of 12
+    ctx.history = ListMessageHistory([{"role": "user", "content": "hi"}] * 8)
+    result = MagicMock(
+        stop_reason="completed",
+        messages=[{"role": "assistant", "content": "response"}],
+    )
+
+    # Simulate exp tool usage at turn 1
+    hook._turn_counter = 1
+    hook._last_exp_tool_turn = 1
+
+    # Next turn (turn 2): still in cooldown (3 turns), threshold doubled to 12
+    await hook.after_turn(ctx, result)
+    assert not hook._agent.review.called  # type: ignore[reportAttributeAccessIssue]
+
+
+@pytest.mark.asyncio
+async def test_cooldown_expires_after_enough_turns(
+    hook: ExperienceReviewHook,
+):
+    """After cooldown expires, normal threshold applies."""
+    ctx = MagicMock()
+    ctx.history = ListMessageHistory([{"role": "user", "content": "hi"}] * 6)
+    result = MagicMock(
+        stop_reason="completed",
+        messages=[{"role": "assistant", "content": "response"}],
+    )
+
+    # Exp tool used at turn 1, cooldown=3
+    # Turn 5: turns_since = 5-1 = 4 > 3, cooldown expired
+    hook._turn_counter = 4
+    hook._last_exp_tool_turn = 1
+
+    await hook.after_turn(ctx, result)
+    await asyncio.sleep(0.05)
+    assert hook._agent.review.called  # type: ignore[reportAttributeAccessIssue]
+
+
+@pytest.mark.asyncio
+async def test_exp_tool_usage_sets_cooldown(
+    hook: ExperienceReviewHook,
+):
+    """Using experience_write this turn should set cooldown."""
+    ctx = MagicMock()
+    ctx.history = ListMessageHistory([{"role": "user", "content": "hi"}] * 12)
+    result = MagicMock(
+        stop_reason="completed",
+        messages=[{
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{
+                "function": {"name": "experience_write", "arguments": ""},
+            }],
+        }],
+    )
+
+    hook._turn_counter = 5
+    hook._last_exp_tool_turn = 0
+
+    await hook.after_turn(ctx, result)
+    assert not hook._agent.review.called  # type: ignore[reportAttributeAccessIssue]
+    assert hook._last_exp_tool_turn == 6  # incremented in after_turn then set in _should_review
 
 
 @pytest.mark.asyncio
 async def test_hook_skips_when_mutex_busy(hook: ExperienceReviewHook):
     hook._pending.add(asyncio.create_task(asyncio.sleep(0.001)))
-    ctx = MagicMock(turn_count=5)
-    await hook.after_turn(ctx, MagicMock())
+    ctx = MagicMock()
+    result = MagicMock(stop_reason="completed", messages=[])
+    await hook.after_turn(ctx, result)
     # Mutex busy — review should NOT be called
-    # (the mock doesn't actually call review, so this just tests no crash)
 
 
 def test_capture_snapshot_empty(hook: ExperienceReviewHook):
     ctx = MagicMock()
-    ctx.history.messages = []
+    ctx.history = ListMessageHistory([])
     snapshot = hook._capture_snapshot(ctx)
     assert snapshot == ""
+
+
+def test_capture_snapshot_with_messages(hook: ExperienceReviewHook):
+    ctx = MagicMock()
+    ctx.history = ListMessageHistory([
+        {"role": "user", "content": "Hello there"},
+        {"role": "assistant", "content": "Hi!"},
+    ])
+    snapshot = hook._capture_snapshot(ctx)
+    assert "[user]: Hello there" in snapshot
+    assert "[assistant]: Hi!" in snapshot
+
+
+def test_extract_tool_names(hook: ExperienceReviewHook):
+    result = MagicMock()
+    result.messages = [{
+        "role": "assistant",
+        "tool_calls": [
+            {"function": {"name": "read_file", "arguments": ""}},
+            {"function": {"name": "experience_write", "arguments": ""}},
+        ],
+    }]
+    names = hook._extract_tool_names(result)
+    assert names == {"read_file", "experience_write"}
+
+
+def test_detect_exp_edit_direct_tools(hook: ExperienceReviewHook):
+    result = MagicMock()
+    result.messages = [{
+        "role": "assistant",
+        "tool_calls": [
+            {"function": {"name": "experience_write", "arguments": ""}},
+        ],
+    }]
+    assert hook._detect_exp_edit({"experience_write"}, result) is True
+
+
+def test_detect_exp_edit_unified_experience_tool(hook: ExperienceReviewHook):
+    result = MagicMock()
+    result.messages = [{
+        "role": "assistant",
+        "tool_calls": [
+            {"function": {"name": "experience", "arguments": '{"action": "write"}'}},
+        ],
+    }]
+    assert hook._detect_exp_edit({"experience"}, result) is True
+
+
+def test_detect_exp_edit_unified_experience_read(hook: ExperienceReviewHook):
+    result = MagicMock()
+    result.messages = [{
+        "role": "assistant",
+        "tool_calls": [
+            {"function": {"name": "experience", "arguments": '{"action": "read"}'}},
+        ],
+    }]
+    assert hook._detect_exp_edit({"experience"}, result) is False
 
 
 def test_scan_experience_dir(tmp_path: Path, meta_store: PerFileExperienceMetaStore):

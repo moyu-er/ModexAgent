@@ -15,10 +15,12 @@ from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+from framework.core.experience.curator import ExperienceCurator
 from framework.workspace import DefaultWorkspaceContext
 
 if TYPE_CHECKING:
     from framework.commands.processor import SlashCommandProcessor
+    from framework.hook.builtin.experience_review import ExperienceReviewHook
     from framework.runtime.codec import RuntimeStateCodecRegistry
     from framework.runtime.store import JsonFileRuntimeCommandStore, JsonFileTurnStateStore
     from framework.memory.pruned.manager import PrunedManager
@@ -247,8 +249,8 @@ class BotService(AgentBuilderMixin):
 
         # Experience layer (initialized lazily in initialize())
         self._experience_manager: ExperienceManager | None = None
-        self._experience_hook: object | None = None  # ExperienceReviewHook when initialized
-        self._experience_curator: object | None = None
+        self._experience_hook: ExperienceReviewHook | None = None
+        self._experience_curator: ExperienceCurator | None = None
 
         # Runtime control
         self._shutdown_event = asyncio.Event()
@@ -584,7 +586,8 @@ class BotService(AgentBuilderMixin):
                     review_agent=exp_review_agent,
                     experience_dir=_exp_path,
                     meta_store=exp_meta,
-                    review_interval=exp_cfg.review_interval,
+                    min_messages=exp_cfg.min_messages,
+                    exp_cooldown_turns=exp_cfg.exp_cooldown_turns,
                 )
 
                 self._experience_hook = exp_review_hook
@@ -761,7 +764,6 @@ class BotService(AgentBuilderMixin):
         )
         self.command_processor = command_processor
 
-        dream_cfg = self._main_memory_cfg.dream_engine if self._main_memory_cfg else None
         self.pipeline = AgentPipeline(
             agent=self.agent,
             context_manager=self.context_manager,
