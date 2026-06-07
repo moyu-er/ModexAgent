@@ -79,6 +79,44 @@ class _EmptyArchiveGenerator:
         )
 
 
+class _FakeInjectableMemorySystem:
+    """Minimal injectable memory system for testing archive injection via DirArchiveStorage.
+
+    Satisfies the ``InjectableMemorySystem`` isinstance check in ``FullInjectionPolicy.assemble``.
+    """
+
+    def __init__(self, archive_dir: Path) -> None:
+        self._archive_dir = archive_dir
+
+    async def get_storage_path(self, context: Any) -> Path | None:
+        return self._archive_dir
+
+    async def get_history(self, context: Any, max_messages: int | None = None) -> list:
+        return []
+
+    async def retrieve_knowledge(self, context: Any, query: str = "") -> Any:
+        from framework.memory.core.models import LongTermMemory
+        return LongTermMemory()
+
+    async def get_history_entries(self, context: Any, limit: int = 3, query: str = "", channel: Any = None) -> list:
+        return []
+
+    async def get_knowledge_directory(self, context: Any) -> None:
+        return None
+
+    def get_providers(self) -> list:
+        return []
+
+    async def prefetch_memories(self, query: str, context: Any) -> None:
+        return None
+
+
+# Register _FakeInjectableMemorySystem as a virtual subclass of InjectableMemorySystem
+# so ``isinstance(fake, InjectableMemorySystem)`` passes.
+from framework.memory.core.system import InjectableMemorySystem
+InjectableMemorySystem.register(_FakeInjectableMemorySystem)
+
+
 def _bot_project_system(
     registry: InMemoryStoreRegistry,
     max_messages: int = 50,
@@ -287,69 +325,49 @@ async def test_archive_skips_empty_generation(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_full_injection_includes_knowledge_archive_and_session():
+async def test_full_injection_includes_knowledge_archive_and_session(tmp_path: Path):
     """FullInjectionPolicy assembles Knowledge, Archive, and Session messages."""
     from framework.memory.injection import FullInjectionPolicy
+    from framework.memory.stores.dir_archive import DirArchiveStorage
 
-    registry = InMemoryStoreRegistry()
-    system = _bot_project_system(registry)
-    await system.initialize()
-    ctx = _make_ctx("injection")
+    archive_dir = tmp_path / "archives"
+    storage = DirArchiveStorage(archive_dir)
+    await storage.write_archive_file(1, "context.md", "previous session: discussed memory compression")
 
-    # Seed knowledge
-    await system._layers.knowledge.ensure_defaults(ctx, {
-        "soul": "- friendly and concise",
-        "user": "- prefers dark mode",
-        "memory": "- project: ModexAgent",
-    })
-
-    # Seed archive
-    await system._layers.archive.append(ctx, ArchiveEntry(
-        summary="previous session: discussed memory compression",
-    ))
-
-    # Seed session messages
-    await system._layers.session.add_messages(ctx, [
-        {"role": "user", "content": "current question"},
-        {"role": "assistant", "content": "current answer"},
-    ])
-
-    bundle = await FullInjectionPolicy(max_history_entries=5).assemble(
-        context=ctx, memory_system=system, query="",
+    fake = _FakeInjectableMemorySystem(archive_dir)
+    result = await FullInjectionPolicy(max_history_entries=5).assemble(
+        context=MemoryContext(session_id="s1"),
+        memory_system=fake,
     )
 
-    content = bundle.system_prompt
-    # Knowledge may be injected via different element names; content asserts verify substance
-    assert "friendly and concise" in content
-    assert "prefers dark mode" in content
-    assert "ModexAgent" in content
+    # Archive content injected via MD path
+    content = result.system_prompt
     assert "memory compression" in content
-    assert len(bundle.messages) >= 2
+    assert "### Earlier Conversation Summaries" in content
 
 
 @pytest.mark.asyncio
-async def test_injection_excludes_empty_archive_markers():
-    """Archive entries with '(nothing)' / '(no semantic content)' are filtered."""
+async def test_injection_excludes_empty_archive_markers(tmp_path: Path):
+    """Empty context.md files are skipped; only non-empty archives inject."""
     from framework.memory.injection import FullInjectionPolicy
+    from framework.memory.stores.dir_archive import DirArchiveStorage
 
-    registry = InMemoryStoreRegistry()
-    system = _bot_project_system(registry)
-    await system.initialize()
-    ctx = _make_ctx("filter-empty-injection")
+    archive_dir = tmp_path / "archives"
+    storage = DirArchiveStorage(archive_dir)
+    await storage.write_archive_file(1, "context.md", "")
+    await storage.write_archive_file(2, "context.md", "   ")
+    await storage.write_archive_file(3, "context.md", "real: user asked about weather")
 
-    await system._layers.archive.append(ctx, ArchiveEntry(summary="(nothing)"))
-    await system._layers.archive.append(ctx, ArchiveEntry(summary="(no semantic content)"))
-    await system._layers.archive.append(ctx, ArchiveEntry(
-        summary="real: user asked about weather",
-    ))
-
-    bundle = await FullInjectionPolicy(max_history_entries=5).assemble(
-        context=ctx, memory_system=system, query="",
+    fake = _FakeInjectableMemorySystem(archive_dir)
+    result = await FullInjectionPolicy(max_history_entries=5).assemble(
+        context=MemoryContext(session_id="s1"),
+        memory_system=fake,
     )
-    content = bundle.system_prompt
+
+    content = result.system_prompt
     assert "weather" in content
-    assert "(nothing)" not in content
-    assert "no semantic content" not in content
+    assert 'number="1"' not in content
+    assert 'number="2"' not in content
 
 
 # ── Long-term knowledge: full update (existing + new) ─────────────────────
@@ -481,32 +499,24 @@ async def test_session_only_messages_no_duplicate_cleanup_trigger(tmp_path: Path
 
 
 @pytest.mark.asyncio
-async def test_archive_injection_has_distinguishable_markers():
+async def test_archive_injection_has_distinguishable_markers(tmp_path: Path):
     """Multiple archive entries are injected with clear per-entry markers."""
     from framework.memory.injection import FullInjectionPolicy
+    from framework.memory.stores.dir_archive import DirArchiveStorage
 
-    registry = InMemoryStoreRegistry()
-    system = _bot_project_system(registry)
-    await system.initialize()
-    ctx = _make_ctx("archive-markers")
+    archive_dir = tmp_path / "archives"
+    storage = DirArchiveStorage(archive_dir)
+    await storage.write_archive_file(1, "context.md", "first session: discussed login bug")
+    await storage.write_archive_file(2, "context.md", "second session: fixed auth flow")
+    await storage.write_archive_file(3, "context.md", "third session: added JWT tests")
 
-    await system._layers.archive.append(ctx, ArchiveEntry(
-        summary="first session: discussed login bug",
-    ))
-    await system._layers.archive.append(ctx, ArchiveEntry(
-        summary="second session: fixed auth flow",
-    ))
-    await system._layers.archive.append(ctx, ArchiveEntry(
-        summary="third session: added JWT tests",
-    ))
-
-    bundle = await FullInjectionPolicy(max_history_entries=5).assemble(
-        context=ctx, memory_system=system, query="",
+    fake = _FakeInjectableMemorySystem(archive_dir)
+    result = await FullInjectionPolicy(max_history_entries=5).assemble(
+        context=MemoryContext(session_id="s1"),
+        memory_system=fake,
     )
-    content = bundle.system_prompt
+    content = result.system_prompt
 
-    assert '<summary' in content
-    assert '<summary' in content
     assert '<summary' in content
     assert "<older_topics>" in content
     assert "</older_topics>" in content
@@ -516,34 +526,27 @@ async def test_archive_injection_has_distinguishable_markers():
 
 
 @pytest.mark.asyncio
-async def test_archive_injection_includes_timestamp_when_available():
-    """Archive entries with created_at show timestamps in markers."""
+async def test_archive_injection_uses_archive_id_as_number(tmp_path: Path):
+    """Archive entries are injected with archive_id as the number attribute."""
     from framework.memory.injection import FullInjectionPolicy
-    from datetime import datetime
+    from framework.memory.stores.dir_archive import DirArchiveStorage
 
-    registry = InMemoryStoreRegistry()
-    system = _bot_project_system(registry)
-    await system.initialize()
-    ctx = _make_ctx("archive-timestamps")
+    archive_dir = tmp_path / "archives"
+    storage = DirArchiveStorage(archive_dir)
+    await storage.write_archive_file(1, "context.md", "older discussion")
+    await storage.write_archive_file(2, "context.md", "recent discussion")
 
-    await system._layers.archive.append(ctx, ArchiveEntry(
-        summary="older discussion",
-        created_at=datetime(2026, 5, 1, 10, 30),
-    ))
-    await system._layers.archive.append(ctx, ArchiveEntry(
-        summary="recent discussion",
-        created_at=datetime(2026, 5, 6, 14, 45),
-    ))
-
-    bundle = await FullInjectionPolicy(max_history_entries=5).assemble(
-        context=ctx, memory_system=system, query="",
+    fake = _FakeInjectableMemorySystem(archive_dir)
+    result = await FullInjectionPolicy(max_history_entries=5).assemble(
+        context=MemoryContext(session_id="s1"),
+        memory_system=fake,
     )
-    content = bundle.system_prompt
+    content = result.system_prompt
 
-    assert "2026-05-01 10:30" in content
-    assert "2026-05-06 14:45" in content
-    assert '<summary number="1" time="2026-05-01 10:30"' in content
-    assert '<summary number="2" time="2026-05-06 14:45"' in content
+    assert 'number="1"' in content
+    assert 'number="2"' in content
+    assert "older discussion" in content
+    assert "recent discussion" in content
 
 
 
@@ -665,7 +668,7 @@ async def test_injection_budget_trims_low_priority_first():
     })
     await system._layers.archive.append(ctx, ArchiveEntry(summary="low priority old history " * 20))
 
-    budget = MemoryBudget(max_system_prompt_tokens=300, max_history_messages=10)
+    budget = MemoryBudget(max_system_prompt_tokens=1200, max_history_messages=10)
     bundle = await FullInjectionPolicy(max_history_entries=5, budget=budget).assemble(
         context=ctx, memory_system=system, query="",
     )

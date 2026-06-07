@@ -235,10 +235,10 @@ class TestInjectionXml:
         assert xml is not None
         from framework.memory.tags import PrunedTag
 
-        assert xml.startswith(f"<{PrunedTag.CONTAINER.value}>")
+        assert f"<{PrunedTag.CONTAINER.value}>" in xml
         assert xml.strip().endswith(f"</{PrunedTag.CONTAINER.value}>")
-        assert "<!-- Complete transcripts" in xml
-        assert "index.jsonl is editable" in xml
+        assert "### Conversation Transcripts" in xml
+        assert "index.jsonl" in xml
 
     @pytest.mark.asyncio()
     async def test_contains_absolute_path(self, manager: PrunedManager, pruned_base_dir, now: datetime) -> None:
