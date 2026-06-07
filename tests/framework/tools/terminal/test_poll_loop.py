@@ -132,6 +132,10 @@ class TestPollYielded:
         session = make_session()
         session._ever_received_bytes = True
         session._backend._alive = True
+        # Set non-prompt segment so prompt detection doesn't fire before yield
+        session._backend._segment = TerminalSegment(
+            text="running...", cursor_line="running...", is_empty_prompt=False,
+        )
         session._backend._read_queue = [
             TerminalRead(stdout="output\n", raw="output\n"),
         ]

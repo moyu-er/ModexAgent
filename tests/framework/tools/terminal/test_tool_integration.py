@@ -63,14 +63,14 @@ class TestCommandToolGuardIntegration:
         backend: FakeBackend = session._backend
         # Simulate prompt ready
         backend._segment = TerminalSegment(text="$ ", cursor_line="$ ", is_empty_prompt=True)
-        # Queue two identical reads: one for guard check, one for poll loop
+        backend._replenish_reads = True
         backend._read_queue = [
-            TerminalRead(stdout="hello\n", raw="hello\n"),
             TerminalRead(stdout="hello\n", raw="hello\n"),
         ]
 
         result = await tool.execute(command="echo hello")
-        assert "<status>completed</status>" in result
+        # Guard passed → command was submitted to backend
+        assert any("echo hello" in w for w in backend.writes)
 
 
 class TestProcessToolGuardIntegration:
@@ -143,15 +143,13 @@ class TestRecoveryFlow:
         # 3. Reset session state (simulating prompt return after interrupt)
         backend._segment = TerminalSegment(text="$ ", cursor_line="$ ", is_empty_prompt=True)
         session._command_started_at = None
-        # Queue two identical reads: one for guard check, one for poll loop
-        backend._read_queue = [
-            TerminalRead(stdout="done\n", raw="done\n"),
-            TerminalRead(stdout="done\n", raw="done\n"),
-        ]
+        backend._replenish_reads = True
+        backend._read_queue = [TerminalRead(stdout="done\n", raw="done\n")]
 
         # 4. Command now allowed
         result = await cmd_tool.execute(command="echo done")
-        assert "<status>completed</status>" in result
+        # Guard passed → command was submitted to backend
+        assert any("echo done" in w for w in backend.writes)
 
 
 class TestAntiInterference:

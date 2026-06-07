@@ -35,7 +35,15 @@ class FakeBackend:
 
     async def read_pending(self, timeout=0.05, max_size=65536) -> TerminalRead:
         if self._read_queue:
-            return self._read_queue.pop(0)
+            item = self._read_queue.pop(0)
+            if getattr(self, "_replenish_reads", False):
+                self._read_queue.append(item)
+            return item
+        # Simulate real backend: wait for data (or timeout) instead of
+        # returning immediately. This gives prompt-stabilization logic
+        # enough wall-clock time to trigger before yield_ms.
+        import asyncio
+        await asyncio.sleep(timeout)
         return TerminalRead()
 
     async def read(self, timeout=0.05, max_size=65536) -> str:
