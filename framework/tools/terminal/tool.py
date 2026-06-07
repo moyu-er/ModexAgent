@@ -209,6 +209,19 @@ class TerminalTool(Tool):
             if idle_ms_str:
                 parts.append(f"<idle_ms>{idle_ms_str}</idle_ms>")
             parts.append(f"<output>{xml_text(output or '(no output yet)')}</output>")
+
+            # Interference detection for visible terminals
+            if session.detect_interference(status):
+                expected = session._expected_state
+                assert expected is not None
+                parts.append(
+                    "<interference_warning>"
+                    f"Terminal state changed unexpectedly (was: {expected.value}, now: {status.value}). "
+                    "This may be caused by user input in the visible terminal window. "
+                    "Current screen content is shown above — verify before proceeding."
+                    "</interference_warning>"
+                )
+
             parts.append("</terminal_result>")
             return "\n".join(parts)
 

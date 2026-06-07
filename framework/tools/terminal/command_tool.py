@@ -124,6 +124,7 @@ class CommandTool(Tool):
         if guard_result is not None:
             return self._format_rejected(guard_result, terminal=terminal_name)
 
+        session.set_expected_state(TerminalCommandStatus.EXECUTING)
         await session.ensure_started()
 
         proc = self._registry.create(
@@ -153,29 +154,35 @@ class CommandTool(Tool):
                     proc.id, exit_code=None, exit_signal=None,
                     status=ProcessStatus.COMPLETED,
                 )
+                session.set_expected_state(TerminalCommandStatus.IDLE)
                 return self._format_completed(result.output_parts, result.elapsed_ms, terminal=terminal_name)
             case PollOutcome.PROMPT_DETECTED:
                 self._registry.mark_exited(
                     proc.id, exit_code=None, exit_signal=None,
                     status=ProcessStatus.COMPLETED,
                 )
+                session.set_expected_state(TerminalCommandStatus.IDLE)
                 return self._format_completed(result.output_parts, result.elapsed_ms, terminal=terminal_name)
             case PollOutcome.INPUT_WAIT:
                 runtime = self._registry.running_runtime(proc.id)
+                session.set_expected_state(TerminalCommandStatus.WAITING_INPUT)
                 return await self._format_running(
                     session, result.output_parts, runtime, result.elapsed_ms,
                     detected_input_wait=True, terminal=terminal_name,
                 )
             case PollOutcome.LONG_RUNNING:
                 runtime = self._registry.running_runtime(proc.id)
+                session.set_expected_state(TerminalCommandStatus.LONG_RUNNING)
                 return await self._format_running(
                     session, result.output_parts, runtime, result.elapsed_ms,
                     terminal=terminal_name,
                 )
             case PollOutcome.STUCK:
                 raw_idle_ms = int((time.monotonic() - session.last_byte_at) * 1000)
+                session.set_expected_state(None)
                 return self._format_stuck(result.output_parts, raw_idle_ms, result.elapsed_ms, terminal=terminal_name)
             case PollOutcome.YIELDED:
+                session.set_expected_state(TerminalCommandStatus.EXECUTING)
                 return await self._format_running(
                     session, result.output_parts, None, result.elapsed_ms,
                     terminal=terminal_name,
@@ -186,6 +193,7 @@ class CommandTool(Tool):
                     proc.id, exit_code=None, exit_signal="TIMEOUT",
                     status=ProcessStatus.TIMED_OUT, timed_out=True,
                 )
+                session.set_expected_state(None)
                 return self._format_timed_out(result.output_parts, timeout_seconds, result.elapsed_ms, terminal=terminal_name)
 
     # ------------------------------------------------------------------

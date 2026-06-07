@@ -102,6 +102,23 @@ class TerminalSession:
         self._last_byte_at = time.monotonic()
         self._ever_received_bytes = True
 
+    def set_expected_state(self, status: TerminalCommandStatus | None) -> None:
+        """Set the expected terminal state after an agent operation."""
+        self._expected_state = status
+
+    def detect_interference(self, actual: TerminalCommandStatus) -> bool:
+        """Detect if actual state diverges from expected (possible user interference).
+
+        Only active for visible terminal sessions.
+        """
+        if not self.visible or self._expected_state is None:
+            return False
+        unexpected = {
+            (TerminalCommandStatus.EXECUTING, TerminalCommandStatus.IDLE),
+            (TerminalCommandStatus.LONG_RUNNING, TerminalCommandStatus.IDLE),
+        }
+        return (self._expected_state, actual) in unexpected
+
     async def ensure_started(self) -> None:
         """Start the backend immediately if not already started.
 
