@@ -72,6 +72,7 @@ class CommandResultStatus(StrEnum):
     PAGINATED     = "paginated"
     WAITING_INPUT = "waiting_input"  # was: input_wait
     STUCK         = "stuck"          # new
+    REJECTED      = "rejected"
 
 
 class TerminalCommandStatus(StrEnum):
@@ -80,6 +81,7 @@ class TerminalCommandStatus(StrEnum):
     UNKNOWN       = "unknown"
     IDLE          = "idle"
     EXECUTING     = "executing"
+    LONG_RUNNING  = "long_running"
     WAITING_INPUT = "waiting_input"
     STUCK         = "stuck"
     COMPLETED     = "completed"

@@ -39,6 +39,10 @@ class TerminalRuntimeConfig:
     pager_auto_scroll_max_pages: int = 10
     pager_auto_scroll_max_chars: int = 100_000
     pager_idle_detect_seconds: float = 2.0
+    # No-output timeout: how long with zero bytes before declaring STUCK
+    no_output_timeout_ms: int = 30_000
+    # LONG_RUNNING: elapsed time threshold for long-running detection
+    long_running_threshold_ms: int = 300_000
 
 
 def resolve_yield_ms(value: int | None, config: TerminalRuntimeConfig) -> int:

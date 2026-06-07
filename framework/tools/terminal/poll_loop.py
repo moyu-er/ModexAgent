@@ -23,6 +23,7 @@ class PollOutcome(StrEnum):
     TIMED_OUT = "timed_out"
     INPUT_WAIT = "input_wait"
     STUCK = "stuck"
+    LONG_RUNNING = "long_running"
     PROCESS_EXIT = "process_exit"
 
 
