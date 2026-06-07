@@ -31,6 +31,7 @@ from framework.utils.xml import xml_text
 
 if TYPE_CHECKING:
     from framework.tools.terminal.backends.base import TerminalBackend
+    from framework.tools.terminal.config import TerminalRuntimeConfig
     from framework.tools.terminal.types import ShellInfo
 
 
@@ -94,6 +95,12 @@ class TerminalSession:
         self.bracketed_paste_enabled: bool = False
         self._last_byte_at: float = time.monotonic()
         self._ever_received_bytes: bool = False
+        self._command_started_at: float | None = None
+
+    def touch_output(self) -> None:
+        """Reset the no-output timer. Called when output bytes are received."""
+        self._last_byte_at = time.monotonic()
+        self._ever_received_bytes = True
 
     async def ensure_started(self) -> None:
         """Start the backend immediately if not already started.
@@ -440,8 +447,7 @@ class TerminalSession:
             return read
 
         # Track raw byte activity for stuck/executing detection
-        self._last_byte_at = time.monotonic()
-        self._ever_received_bytes = True
+        self.touch_output()
 
         raw_bytes = read.raw.encode("utf-8", errors="replace")
 
@@ -486,25 +492,30 @@ class TerminalSession:
             return TerminalRead()
         return await self.poll_once(timeout=timeout)
 
-    async def command_status(self) -> TerminalCommandStatus:
+    async def command_status(
+        self,
+        config: TerminalRuntimeConfig | None = None,
+    ) -> TerminalCommandStatus:
         """Compute current terminal status using the detection priority rules.
 
         Priority: COMPLETED > UNKNOWN > WAITING_INPUT > IDLE > PAGINATED >
-                  EXECUTING > STUCK
+                  STUCK > LONG_RUNNING > EXECUTING
         """
+        from framework.tools.terminal.config import TerminalRuntimeConfig as _Cfg
+
+        cfg = config or _Cfg()
+
         # 1. Process exit
         if not await self.is_alive():
+            self._command_started_at = None
             return TerminalCommandStatus.COMPLETED
 
         # 2. No data ever received → UNKNOWN (safety net)
-        #    Use _ever_received_bytes flag rather than comparing
-        #    _last_byte_at (time.monotonic) vs created_at (time.time)
-        #    since they come from different clocks.
         if not self._ever_received_bytes:
             return TerminalCommandStatus.UNKNOWN
 
         # Refresh to get latest data
-        read = await self.refresh_output(timeout=0.05)
+        await self.refresh_output(timeout=0.05)
 
         # 3. Content marker → WAITING_INPUT (fast path)
         segment = await self.current_segment()
@@ -514,6 +525,7 @@ class TerminalSession:
 
         # 4. Prompt stable → IDLE
         if segment.is_empty_prompt:
+            self._command_started_at = None
             return TerminalCommandStatus.IDLE
 
         # 5. Pager detection
@@ -521,13 +533,19 @@ class TerminalSession:
         if detect_pager_entry(cursor):
             return TerminalCommandStatus.PAGINATED
 
-        # 6. Raw bytes flowing → EXECUTING
+        # 6. No-output timeout → STUCK
         raw_idle_ms = (time.monotonic() - self._last_byte_at) * 1000
-        if read.stdout or raw_idle_ms < 15000:
-            return TerminalCommandStatus.EXECUTING
+        if raw_idle_ms >= cfg.no_output_timeout_ms:
+            return TerminalCommandStatus.STUCK
 
-        # 7. 15s no bytes → STUCK
-        return TerminalCommandStatus.STUCK
+        # 7. Long-running detection
+        if self._command_started_at is not None:
+            elapsed_ms = (time.monotonic() - self._command_started_at) * 1000
+            if elapsed_ms >= cfg.long_running_threshold_ms:
+                return TerminalCommandStatus.LONG_RUNNING
+
+        # 8. Active output → EXECUTING
+        return TerminalCommandStatus.EXECUTING
 
     async def last_command_output(self) -> str:
         """Get complete output from the last command to current terminal state.
@@ -584,6 +602,7 @@ class TerminalSession:
         caller (CommandTool.execute) already guards against busy/dead
         states and the shell is expected to be at a clean prompt.
         """
+        self._command_started_at = time.monotonic()
         await self._discard_pending_output()
         ending = self.shell_info.family.command_ending()
         await self._backend.write(command + ending)
