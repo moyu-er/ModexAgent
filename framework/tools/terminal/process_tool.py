@@ -5,6 +5,7 @@ from typing import Any
 
 from framework.core.tool_manager import Tool
 from framework.tools.terminal.config import TerminalRuntimeConfig
+from framework.tools.terminal.guard import check_terminal_writable
 from framework.tools.terminal.managers import TerminalManagerBase
 from framework.tools.terminal.process_registry import (
     ProcessRegistry,
@@ -256,6 +257,11 @@ class ProcessTool(Tool):
         if running is None:
             return _build_process_xml("write", "[Error] No running process session found for default terminal")
 
+        # Guard: check terminal is writable for regular input
+        guard_result = await check_terminal_writable(terminal_session, config=self._config)
+        if guard_result is not None:
+            return self._format_write_rejected(guard_result, terminal_name=terminal_session.name)
+
         await terminal_session.write(params.data)
         if params.submit:
             await terminal_session.write("\r")
@@ -383,3 +389,32 @@ class ProcessTool(Tool):
             return _build_process_xml("remove", f"Removed finished session {finished.id}.", terminal_name=terminal_session.name)
 
         return _build_process_xml("remove", "[Error] No process session found for default terminal")
+
+    def _format_write_rejected(
+        self,
+        guard_result: "TerminalGuardResult",
+        *,
+        terminal_name: str | None = None,
+    ) -> str:
+        from framework.tools.terminal.guard import TerminalGuardResult
+        snap = guard_result.snapshot
+        parts = [
+            "<process_result>",
+            "<action>write</action>",
+            "<status>rejected</status>",
+            f"<message>{xml_escape(guard_result.message)}</message>",
+        ]
+        if terminal_name:
+            parts.append(f"<terminal>{xml_escape(terminal_name)}</terminal>")
+        parts.extend([
+            "<diagnostic>",
+            f"<status>{snap.status.value}</status>",
+            f"<idle_ms>{snap.idle_ms}</idle_ms>",
+        ])
+        if snap.cursor_line:
+            parts.append(f"<cursor>{xml_escape(snap.cursor_line)}</cursor>")
+        if snap.suggestion:
+            parts.append(f"<suggestion>{xml_escape(snap.suggestion)}</suggestion>")
+        parts.append("</diagnostic>")
+        parts.append("</process_result>")
+        return "\n".join(parts)
