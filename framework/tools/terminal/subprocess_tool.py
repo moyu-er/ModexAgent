@@ -51,12 +51,14 @@ class SubprocessExecutor(ShellExecutor):
         )
 
     async def execute(self, command: str, working_dir: str | None = None, timeout: int = 60) -> str:
+        from framework.tools.terminal.env import build_full_env
         cwd = working_dir or os.getcwd()
         process = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
+            env=build_full_env(),
         )
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)

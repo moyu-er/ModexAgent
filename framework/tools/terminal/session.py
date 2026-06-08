@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -367,10 +366,8 @@ class TerminalSession:
 
     def _startup_env(self) -> dict[str, str]:
         """Return environment for agent-managed terminal sessions."""
-        env = dict(os.environ)
-        if self._env:
-            env.update(self._env)
-        return env
+        from framework.tools.terminal.env import build_full_env
+        return build_full_env(self._env)
 
     def get_history(self) -> list[CommandRecord]:
         """Return command history (newest last)."""
