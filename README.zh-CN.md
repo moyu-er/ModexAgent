@@ -45,7 +45,7 @@ ModexAgent 是一个用于构建 AI Agent 应用的 Python 框架。它将模型
 - **双模式运行时** — `Pipeline` 模式适合单 Agent 长运行服务（QQ Bot、CLI）；`Pool` 模式支持多 Agent 常驻池，通过 `MessageBroker` + `AgentMessageBus` 路由消息，Input/Output 与 Agent 逻辑完全解耦。
 - **四级记忆 + Dream 引擎** — Short-term（短期会话）、Archive（历史归档）、Knowledge（长期知识，SOUL.md/USER.md/MEMORY.md）、UserRetentionBuffer（用户保留缓冲，防止治理过度压缩）四层架构；Dream Engine 离线整合历史归档为长期知识。
 - **Hook + Interceptor 扩展体系** — 生命周期 Hook（如 InboxFlush、SubagentAutoSend、ProgressReport）与 AOP 拦截器链（ControlDrain、ToolResultLimit）正交组合，框架行为可逐层定制，不侵入核心代码。
-- **类型安全** — 63 个 ABC + 18 个 Protocol，枚举替代原始字符串，`from __future__ import annotations` 全仓覆盖，mypy strict 级别检查。
+- **类型安全** — 全部使用 ABC 接口（零 Protocol），枚举替代原始字符串，`from __future__ import annotations` 全仓覆盖，mypy strict 级别检查。
 - **MCP 原生集成** — 动态加载 MCP 服务器（SSE/stdio），`MCPToolAdapter` 自动将 MCP 能力映射为框架 Tool 对象，支持工具、资源、Prompt 三类能力。
 
 ## 架构概览
