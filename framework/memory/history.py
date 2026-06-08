@@ -22,7 +22,7 @@ class MessageHistory(ABC):
       way to access messages.  Returns a list you can ``len()`` and iterate.
     - ``__len__`` / ``__iter__`` / ``__getitem__`` are **NOT** guaranteed to
       work.  Implementations that use async storage backends (e.g.
-      ``ShortTermMessageHistory``) intentionally raise ``RuntimeError`` on
+      async-backed implementations) intentionally raise ``RuntimeError`` on
       these methods.  Only ``ListMessageHistory`` (in-memory) supports them.
 
     If you need message count, iteration, or indexed access::
@@ -56,7 +56,7 @@ class MessageHistory(ABC):
     ) -> None:
         """替换全部消息（默认实现：清空后 extend）。
 
-        子类可优化为原子操作（如 ShortTermMessageHistory 的单锁写入）。
+        子类可优化为原子操作（如异步后端的单锁写入）。
         参数兼容 dict，内部会自动转换为 ChatMessage。
         """
         raise NotImplementedError("replace_all is not supported by this history implementation")
@@ -66,7 +66,7 @@ class MessageHistory(ABC):
         """Return message count.
 
         .. warning::
-           ``ShortTermMessageHistory`` (pool mode) raises ``RuntimeError``.
+           Async-backed implementations (pool mode) raise ``RuntimeError``.
            Use ``len(await history.to_list())`` instead.
         """
         pass
@@ -76,7 +76,7 @@ class MessageHistory(ABC):
         """Iterate over messages.
 
         .. warning::
-           ``ShortTermMessageHistory`` (pool mode) raises ``RuntimeError``.
+           Async-backed implementations (pool mode) raise ``RuntimeError``.
            Use ``for msg in await history.to_list()`` instead.
         """
         pass
@@ -86,7 +86,7 @@ class MessageHistory(ABC):
         """Get message by index.
 
         .. warning::
-           ``ShortTermMessageHistory`` (pool mode) raises ``RuntimeError``.
+           Async-backed implementations (pool mode) raise ``RuntimeError``.
            Use ``(await history.to_list())[index]`` instead.
         """
         pass
@@ -143,7 +143,7 @@ class ListMessageHistory(MessageHistory):
 
 
 # ---------------------------------------------------------------------------
-# Shared helpers (used by Pipeline and AgentSession)
+# Shared helpers (used by Pipeline)
 # ---------------------------------------------------------------------------
 
 async def history_to_list(
@@ -151,7 +151,7 @@ async def history_to_list(
 ) -> list[dict[str, Any]]:
     """将 MessageHistory 或消息列表转换为 list[dict]。
 
-    Pipeline 和 AgentSession 共用此辅助函数，避免重复定义。
+    Pipeline 使用此辅助函数，避免重复定义。
     返回 dict 列表以支持直接修改和序列化。
     """
     if isinstance(history, MessageHistory):
@@ -204,7 +204,7 @@ async def restore_multimodal_in_history(
 ) -> list[dict[str, Any]] | None:
     """将当前用户消息的多模态内容恢复到 history（在 save->sanitize->load 后调用）。
 
-    Pipeline 和 AgentSession 共用此辅助函数。
+    Pipeline 使用此辅助函数。
     内存中保存的是 sanitize 后的占位符，LLM 需要看到完整媒体内容。
 
     Args:

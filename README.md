@@ -138,7 +138,7 @@ framework/
   pipeline/          # End-to-end orchestration
   memory/            # Four-layer memory system + Dream Engine + Governance
   tools/             # Tool registry, execution, terminal system, MCP adapters
-  multi_agent/       # Multi-agent collaboration: Pool, MessageBus, SubagentService
+  multi_agent/       # Multi-agent collaboration: Pool, MessageBus
   hook/              # Lifecycle hook extension points
   interceptor/       # AOP interceptor chains
   control/           # Runtime control, approval, event bus

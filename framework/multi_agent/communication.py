@@ -196,7 +196,7 @@ class AgentCommunicationService:
 
     def _resolve_target(self, target_agent: str) -> tuple[AgentCommKind | None, AgentTemplate | None]:
         """Resolve target_agent to comm_kind + optional template."""
-        # 1. Check if registered in registry (AgentPool or AgentDirectory)
+        # 1. Check if registered in registry (AgentPool)
         descriptor = self._registry.get_descriptor(target_agent)
         if descriptor is not None:
             return descriptor.comm_kind, None

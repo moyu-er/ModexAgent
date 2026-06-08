@@ -1,7 +1,7 @@
 """End-to-end tests for RuntimeContextHook + SubagentAutoSendHook collaboration.
 
 Verifies:
-- RuntimeContextHook auto-injection in AgentPipeline / AgentSession
+- RuntimeContextHook auto-injection in AgentPipeline
 - Correct hook ordering (RuntimeContextHook first)
 - SubagentAutoSendHook detects send_to_agent via RuntimeContext
 - Multiple hooks do not conflict

@@ -111,7 +111,7 @@ class TestPipelineEmitterSelection:
         return pipeline, agent
 
     async def test_main_with_source_agent_uses_factory_emitter(self):
-        """Main agent + subagent message → factory emitter (NOT BufferingEmitter).
+        """Main agent + subagent message → factory emitter (NOT StreamingAwareEmitter).
 
         Main agent should always use factory emitter so the LLM's assistant
         response (including tool outputs like SendFileToUser) reaches the user.

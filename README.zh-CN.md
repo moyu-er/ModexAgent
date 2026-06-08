@@ -138,7 +138,7 @@ framework/
   pipeline/          # 端到端流程编排
   memory/            # 四级记忆系统 + Dream 引擎 + 治理
   tools/             # 工具注册、执行、终端系统、MCP 适配器
-  multi_agent/       # 多 Agent 协作：Pool、MessageBus、SubagentService
+  multi_agent/       # 多 Agent 协作：Pool、MessageBus
   hook/              # 生命周期 Hook 扩展点
   interceptor/       # AOP 拦截器链
   control/           # 运行时控制、审批、事件总线

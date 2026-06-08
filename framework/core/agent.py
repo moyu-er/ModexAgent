@@ -60,7 +60,7 @@ class AgentContext:
 
     **IMPORTANT**: Do NOT use ``len(history)``, ``list(history)``, or index
     access ``history[0]`` — these are **not** guaranteed to work.  The pool-mode
-    implementation (``ShortTermMessageHistory``) intentionally raises on
+    implementation (async-backed history) intentionally raises on
     synchronous ``__len__`` / ``__iter__`` / ``__getitem__`` because messages
     live in an async storage backend.
 

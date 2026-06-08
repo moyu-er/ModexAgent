@@ -14,7 +14,7 @@ routing, slash commands, approval snapshot recovery, dream engine, and session l
 | File | Description |
 |------|-------------|
 | `pipeline.py` | `AgentPipeline` + `TurnRequest` dataclass + `safe_send_output()` helper. Main loop: `run()` → `_process_message()` → `_process_message_locked()`. Inner: `_preprocess_input()`, `_assemble_context()`, `_build_runtime_and_context()`, `_execute_turn()`, `_handle_snapshot_approval()`, `_build_turn_request()`, `_dream_scan_loop()`. |
-| `adapters.py` | `InputAdapter` / `OutputAdapter` ABCs. Concrete: `NullOutputAdapter`, `LoggingOutputAdapter`, `SessionPrefixStripAdapter`, `CompositeOutputAdapter`, `CLIOutputAdapter`, `HTTPOutputAdapter`. Streaming: `send()` + `send_delta()` + `flush_deltas()`. |
+| `adapters.py` | `InputAdapter` / `OutputAdapter` ABCs. Concrete: `NullOutputAdapter`, `SessionPrefixStripAdapter`, `CLIOutputAdapter`, `HTTPOutputAdapter`. Streaming: `send()` + `send_delta()` + `flush_deltas()`. |
 | `approval_renderer.py` | `ApprovalRenderer` — detects pending approval state, buffers agent messages during approval, applies unrelated-input auto-denial. Standalone `format_approval_prompt()`. Does NOT parse `/approve`/`/deny` (that's `parse_input_command` from `approval/response`). |
 | `context_assembler.py` | `assemble_context()` — loads history, writes user message, builds system prompt, handles multimodal/attachment content, sideband prompts, runs `MultiAgentContextBuilder`. |
 | `filters.py` | `ContentFilter` ABC + `ChainedContentFilter`, `ReasoningContentFilter` (strip/keep), `WhitespaceFilter` (collapse/strip). Applied by `OutputAdapter._apply_filter()`. |

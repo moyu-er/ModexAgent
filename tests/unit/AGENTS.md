@@ -25,7 +25,7 @@ Pure unit tests — no external deps, must run offline. Mirror the framework pac
 | `plugins/` | Plugin system tests |
 | `providers/` | LLM provider tests |
 | `runtime/` | Runtime services, store, codec tests |
-| `session/` | AgentSession tests |
+
 | `tools/` | Tool registry, executor, MCP tests |
 | `utils/` | Utility tests |
 

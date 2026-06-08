@@ -1,4 +1,4 @@
-"""Integration tests for AgentMessageBus + AgentPool + SubagentService(queued)."""
+"""Integration tests for AgentMessageBus + AgentPool (queued)."""
 
 from __future__ import annotations
 

@@ -176,7 +176,7 @@ This pattern cleanly separates the **storage backend** (ChromaDB), the **retriev
 ## Migration Notes
 
 - `MemorySystemContextManager` is a **transitional adapter** that wraps `MemorySystem` to satisfy the legacy `ContextManager` ABC.
-- Existing `AgentSession` and `AgentPipeline` code continues to work unchanged.
+- Existing `AgentPipeline` code continues to work unchanged.
 - New code should prefer consuming `MemorySystem` directly.
 ## Current Runtime Status
 
