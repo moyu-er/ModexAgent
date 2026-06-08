@@ -8,7 +8,7 @@ Foundational memory abstractions — ABCs, Protocols, data models, and scope sys
 
 | File | Description |
 |------|-------------|
-| `system.py` | `MemorySystem` ABC — CRUD + lifecycle; `InjectableMemorySystem` Protocol; `BudgetManagedMemorySystem` Protocol |
+| `system.py` | `MemorySystem` ABC — CRUD + lifecycle + injection reads; `BudgetManagedMemorySystem` ABC; `ContextManagedMemorySystem` ABC |
 | `storage.py` | `MemoryStorage` ABC — unified async interface for messages, logs, KV, cursors |
 | `scope.py` | `MemoryScope` ABC + `SessionScope`, `UserScope`, `TenantScope`, `AgentScope`, `ChannelScope`, `ChatScope`, `PeerPairScope`, `CompositeScope`, `GlobalScope`; `MemoryContext` dataclass |
 | `message.py` | `ChatMessage` (Pydantic model), `ContentFormat(StrEnum)` — PLAIN/XML |

@@ -11,7 +11,7 @@ from framework.memory.core.models import (
     MemoryBudget,
 )
 from framework.memory.core.scope import MemoryContext
-from framework.memory.core.system import InjectableMemorySystem, MemorySystem
+from framework.memory.core.system import MemorySystem
 from framework.memory.injection.policy import MemoryInjectionPolicy
 from framework.memory.tags import ArchiveTag, KnowledgeTag
 from framework.memory.pruned.manager import PrunedManager
@@ -61,19 +61,14 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         memory_system: MemorySystem,
         query: str = "",
     ) -> InjectionResult:
-        if not isinstance(memory_system, InjectableMemorySystem):
-            raise TypeError(
-                f"memory_system must implement InjectableMemorySystem, got {type(memory_system).__name__}"
-            )
         sections: list[_PromptSection] = []
-        injectable: InjectableMemorySystem = memory_system
 
         self._inject_disclaimer(sections)
-        await self._inject_knowledge(sections, context, injectable, query)
-        await self._inject_archive(sections, context, injectable)
+        await self._inject_knowledge(sections, context, memory_system, query)
+        await self._inject_archive(sections, context, memory_system)
         self._inject_pruned_catalog(sections, context)
-        await self._inject_provider_blocks(sections, injectable)
-        await self._inject_provider_prefetch(sections, context, injectable, query)
+        await self._inject_provider_blocks(sections, memory_system)
+        await self._inject_provider_prefetch(sections, context, memory_system, query)
 
         sections = self._trim_by_priority(sections)
 
@@ -111,7 +106,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         self,
         sections: list[_PromptSection],
         context: MemoryContext,
-        memory_system: InjectableMemorySystem,
+        memory_system: MemorySystem,
         query: str,
     ) -> None:
         """Inject knowledge as natural XML with file paths and editability."""
@@ -191,7 +186,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         self,
         sections: list[_PromptSection],
         context: MemoryContext,
-        memory_system: InjectableMemorySystem,
+        memory_system: MemorySystem,
     ) -> None:
         try:
             await self._inject_md_archives(sections, memory_system, context)
@@ -280,7 +275,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
     async def _inject_provider_blocks(
         self,
         sections: list[_PromptSection],
-        memory_system: InjectableMemorySystem,
+        memory_system: MemorySystem,
     ) -> None:
         for provider in memory_system.get_providers():
             try:
@@ -297,7 +292,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         self,
         sections: list[_PromptSection],
         context: MemoryContext,
-        memory_system: InjectableMemorySystem,
+        memory_system: MemorySystem,
         query: str,
     ) -> None:
         if not query:

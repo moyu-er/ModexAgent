@@ -19,7 +19,6 @@ from framework.memory.core.scope import (
 )
 from framework.memory.core.system import (
     ContextManagedMemorySystem,
-    InjectableMemorySystem,
     MemorySystem,
 )
 from framework.memory.history import MessageHistory
@@ -161,7 +160,7 @@ class ScopedMessageHistory(MessageHistory):
         raise RuntimeError("Use 'await history.to_list()' for async access.")
 
 
-class DefaultMemorySystem(MemorySystem, InjectableMemorySystem, ContextManagedMemorySystem):
+class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
     """Default tiered memory system that delegates to typed layer managers.
 
     Receives a ``MemoryLayerSet``, ``MemoryStoreRegistry``, and optional

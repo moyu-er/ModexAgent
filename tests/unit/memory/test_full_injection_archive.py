@@ -4,13 +4,13 @@ from __future__ import annotations
 import pytest
 
 from framework.memory.core.scope import MemoryContext
-from framework.memory.core.system import InjectableMemorySystem, MemorySystem
+from framework.memory.core.system import MemorySystem
 from framework.memory.injection.full_injection import FullInjectionPolicy
 from framework.memory.stores.dir_archive import DirArchiveStorage
 from framework.memory.tags import ArchiveTag
 
 
-class _FakeInjectableMemorySystem(InjectableMemorySystem, MemorySystem):
+class _FakeInjectableMemorySystem(MemorySystem):
     """Minimal injectable memory system for testing archive injection."""
 
     def __init__(self, archive_dir):

@@ -15,43 +15,43 @@ from framework.memory.history import MessageHistory
 
 
 class MemorySystem(ABC):
-    """Abstract application-facing memory capability — core CRUD lifecycle.
+    """Abstract application-facing memory capability — CRUD lifecycle + injection reads.
 
-    Prompt/context assembly belongs to memory injection policies, not this
-    core CRUD/lifecycle contract.
+    A complete memory system must implement both the lifecycle methods
+    (initialize, close, CRUD) and the injection read methods (knowledge,
+    archive, providers) used by injection policies.
     """
 
-    @abstractmethod
-    async def initialize(self) -> None:
-        pass
+    # -- lifecycle ------------------------------------------------------------
 
     @abstractmethod
-    async def close(self) -> None:
-        pass
+    async def initialize(self) -> None: ...
+
+    @abstractmethod
+    async def close(self) -> None: ...
+
+    # -- CRUD -----------------------------------------------------------------
 
     @abstractmethod
     def create_message_history(
         self,
         context: MemoryContext,
         initial_messages: Sequence[ChatMessage | dict[str, Any]] | None = None,
-    ) -> MessageHistory:
-        pass
+    ) -> MessageHistory: ...
 
     @abstractmethod
     async def add_messages(
         self,
         context: MemoryContext,
         messages: Sequence[ChatMessage | dict[str, Any]],
-    ) -> None:
-        pass
+    ) -> None: ...
 
     @abstractmethod
     async def get_history(
         self,
         context: MemoryContext,
         max_messages: int | None = None,
-    ) -> list[ChatMessage]:
-        pass
+    ) -> list[ChatMessage]: ...
 
     @abstractmethod
     async def search(
@@ -59,20 +59,12 @@ class MemorySystem(ABC):
         query: str,
         context: MemoryContext,
         limit: int = 5,
-    ) -> list[dict[str, Any]]:
-        pass
+    ) -> list[dict[str, Any]]: ...
 
     @abstractmethod
-    async def clear(self, context: MemoryContext) -> None:
-        pass
+    async def clear(self, context: MemoryContext) -> None: ...
 
-
-class InjectableMemorySystem(ABC):
-    """Read facade required by full memory injection policies.
-
-    Separate from MemorySystem so that test fakes and injection-only
-    consumers don't need to implement the full CRUD lifecycle.
-    """
+    # -- injection reads ------------------------------------------------------
 
     @abstractmethod
     async def get_knowledge(self, context: MemoryContext) -> LongTermMemory:

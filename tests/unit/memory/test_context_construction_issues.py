@@ -77,7 +77,7 @@ def _make_session_messages(turns: int = 10, tool_calls_per_turn: int = 2) -> lis
 
 
 class FakeMemorySystem:
-    """Minimal fake satisfying InjectableMemorySystem protocol."""
+    """Minimal fake satisfying MemorySystem ABC."""
 
     def __init__(self, messages: list[ChatMessage], knowledge: Any = None):
         self._messages = messages

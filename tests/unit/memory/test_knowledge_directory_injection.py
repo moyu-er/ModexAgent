@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, MagicMock
 
 from framework.memory.core.models import LongTermMemory
 from framework.memory.core.scope import MemoryContext
-from framework.memory.core.system import InjectableMemorySystem  # ABC
+from framework.memory.core.system import MemorySystem
 from framework.memory.injection.full_injection import FullInjectionPolicy
 
 
