@@ -139,79 +139,6 @@ class Tool(DynamicSchemaProvider):
         """
         return self.get_schema()
 
-    def clone(self) -> "Tool":
-        """创建工具的深拷贝副本。
-
-        有状态的工具应覆盖此方法，以确保在跨 Agent 共享时
-        不会泄漏内部状态。
-
-        Returns:
-            新的 Tool 实例
-        """
-        import copy
-        return copy.deepcopy(self)
-
-    def validate_params(self, params: dict[str, Any]) -> list[str]:
-        """验证工具参数
-
-        Args:
-            params: 要验证的参数
-
-        Returns:
-            错误列表，空列表表示验证通过
-        """
-        schema = self.parameters or {}
-        if schema.get("type", "object") != "object":
-            return [f"Schema must be object type, got {schema.get('type')!r}"]
-        return self._validate(params, {**schema, "type": "object"}, "")
-
-    def _validate(self, val: Any, schema: dict[str, Any], path: str) -> list[str]:
-        """递归验证参数"""
-        _TYPE_MAP = {
-            "string": str,
-            "integer": int,
-            "number": (int, float),
-            "boolean": bool,
-            "array": list,
-            "object": dict,
-        }
-
-        t, label = schema.get("type"), path or "parameter"
-
-        if t in _TYPE_MAP and not isinstance(val, _TYPE_MAP[t]):
-            return [f"{label} should be {t}"]
-
-        errors = []
-
-        if "enum" in schema and val not in schema["enum"]:
-            errors.append(f"{label} must be one of {schema['enum']}")
-
-        if t in ("integer", "number"):
-            if "minimum" in schema and val < schema["minimum"]:
-                errors.append(f"{label} must be >= {schema['minimum']}")
-            if "maximum" in schema and val > schema["maximum"]:
-                errors.append(f"{label} must be <= {schema['maximum']}")
-
-        if t == "string":
-            if "minLength" in schema and len(val) < schema["minLength"]:
-                errors.append(f"{label} must be at least {schema['minLength']} chars")
-            if "maxLength" in schema and len(val) > schema["maxLength"]:
-                errors.append(f"{label} must be at most {schema['maxLength']} chars")
-
-        if t == "object":
-            props = schema.get("properties", {})
-            for k in schema.get("required", []):
-                if k not in val:
-                    errors.append(f"missing required {path + '.' + k if path else k}")
-            for k, v in val.items():
-                if k in props:
-                    errors.extend(self._validate(v, props[k], path + '.' + k if path else k))
-
-        if t == "array" and "items" in schema:
-            for i, item in enumerate(val):
-                errors.extend(self._validate(item, schema["items"], f"{path}[{i}]" if path else f"[{i}]"))
-
-        return errors
 
 
 class ToolResult:
@@ -245,11 +172,6 @@ class ToolResult:
     def success(self) -> bool:
         """执行是否成功"""
         return self.error is None
-
-    @property
-    def execution_time_ms(self) -> float:
-        """执行时间（毫秒）- 兼容旧代码"""
-        return self.execution_time * 1000
 
     def __repr__(self) -> str:
         status = "error" if self.error else "success"
@@ -579,22 +501,6 @@ class ToolManager(ABC):
                 descriptions.append(tool.get_dynamic_schema())
         return descriptions
 
-    def get_tools_section(self) -> str:
-        """生成工具描述文本（用于系统提示词）"""
-        lines = ["# Available Tools", ""]
-
-        for tool_name in self.list_tools():
-            tool = self.get_tool(tool_name)
-            if tool is None or not hasattr(tool, 'config'):
-                continue
-            if tool.config.enabled:
-                lines.append(f"## {tool.name}")
-                schema = tool.get_dynamic_schema()
-                desc = schema.get("function", {}).get("description", tool.description)
-                lines.append(f"{desc}")
-                lines.append("")
-
-        return "\n".join(lines)
 
 
 class InMemoryToolManager(ToolManager):
@@ -639,10 +545,6 @@ class InMemoryToolManager(ToolManager):
     def tools(self) -> dict[str, Tool]:
         """所有已注册的工具（按名称索引）。调试用，修改 dict 不影响管理器。"""
         return dict(self._tools)
-
-    def list_tool_instances(self) -> list[Tool]:
-        """列出所有工具实例。"""
-        return list(self._tools.values())
 
     def __contains__(self, tool_name: str) -> bool:
         """支持 'tool_name in tool_manager' 语法"""

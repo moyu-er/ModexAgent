@@ -90,9 +90,6 @@ class AgentContext:
             return None
         return self.runtime.turn_uuid
 
-    def add_attachment(self, path: str) -> None:
-        self.attachments.append(path)
-
     async def to_messages(self) -> list[dict[str, Any]]:
         history_list = await self.history.to_list()
         history_list, _has_agent_msgs = normalize_agent_messages_for_llm(history_list)

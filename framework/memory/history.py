@@ -2,18 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from framework.memory.core.layers import SessionMemoryManager
 from framework.memory.core.message import ChatMessage
-from framework.memory.core.scope import MemoryContext
-
-if TYPE_CHECKING:
-    from framework.memory.recorder import MemoryAppendRecorder
 
 
 class MessageHistory(ABC):
@@ -98,96 +92,10 @@ class MessageHistory(ABC):
         pass
 
 
-class ShortTermMessageHistory(MessageHistory):
-    """Live proxy over SessionMemoryManager and MemoryContext.
-
-    Writes directly to session memory on append/extend and reads
-    from it on to_list(). Maintains a short-lived cache protected by
-    asyncio.Lock using storage-first lock ordering.
-    """
-
-    def __init__(
-        self,
-        manager: SessionMemoryManager,
-        context: MemoryContext,
-        initial_messages: Sequence[ChatMessage | dict[str, Any]] | None = None,
-        recorder: MemoryAppendRecorder | None = None,
-    ) -> None:
-        self._manager = manager
-        self._context = context
-        self._recorder = recorder
-        self._cache: list[ChatMessage] | None = [ChatMessage.coerce(m) for m in initial_messages] if initial_messages is not None else None
-        self._cache_lock = asyncio.Lock()
-
-    async def append(self, message: ChatMessage | dict[str, Any]) -> None:
-        """Append a single message via STM and invalidate cache."""
-        await self._manager.add_messages(self._context, [message])
-        if self._recorder is not None:
-            await self._recorder.record([message], self._context)
-        async with self._cache_lock:
-            self._cache = None
-
-    async def extend(self, messages: Sequence[ChatMessage | dict[str, Any]]) -> None:
-        """Append multiple messages via STM (triggers compression exactly once)."""
-        if not messages:
-            return
-        await self._manager.add_messages(self._context, list(messages))
-        if self._recorder is not None:
-            await self._recorder.record(list(messages), self._context)
-        async with self._cache_lock:
-            self._cache = None
-
-    async def to_list(self) -> list[ChatMessage]:
-        """Read from storage and cache the result."""
-        # If cache is valid (not invalidated by write), return it directly.
-        # This preserves message-limiting applied at construction time
-        # (e.g. DefaultMemoryInjectionPolicy's max_short_term_messages).
-        async with self._cache_lock:
-            if self._cache is not None:
-                return list(self._cache)
-        stm_messages = await self._manager.get_recent_messages(self._context)
-        async with self._cache_lock:
-            self._cache = list(stm_messages)
-        return list(stm_messages)
-
-    async def clear(self) -> None:
-        """清空短期记忆中的所有消息。"""
-        await self._manager.clear(self._context)
-        async with self._cache_lock:
-            self._cache = None
-
-    async def replace_all(
-        self, messages: Sequence[ChatMessage | dict[str, Any]], *, skip_transform: bool = False
-    ) -> None:
-        """通过 Manager 接口原子替换，触发 transformer 和跟踪。"""
-        _ = skip_transform
-        await self._manager.replace_messages(self._context, list(messages))
-        async with self._cache_lock:
-            self._cache = None
-
-    def __len__(self) -> int:
-        raise RuntimeError(
-            "ShortTermMessageHistory does not support synchronous len(). "
-            "Use 'await history.to_list()' for async access."
-        )
-
-    def __iter__(self) -> Iterator[ChatMessage]:
-        raise RuntimeError(
-            "ShortTermMessageHistory does not support synchronous iteration. "
-            "Use 'await history.to_list()' for async access."
-        )
-
-    def __getitem__(self, index: int) -> ChatMessage:
-        raise RuntimeError(
-            "ShortTermMessageHistory does not support synchronous indexing. "
-            "Use 'await history.to_list()' for async access."
-        )
-
-
 class ListMessageHistory(MessageHistory):
     """Simple in-memory MessageHistory backed by a Python list.
 
-    Used by InMemoryContextManager and FileContextManager.
+    Used by InMemoryContextManager.
     内部统一存储 ChatMessage；dict 输入会在入口处自动转换。
     """
 

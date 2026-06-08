@@ -1,5 +1,8 @@
 """Secure tool wrapper with validation and approval.
 
+EXPERIMENTAL: 此模块暂不推荐生产使用。当前零测试覆盖、零生产接入。
+后续如需要工具安全包装，可参考此实现补充测试后启用。
+
 This module provides SecureToolWrapper that integrates ToolValidator
 with ApprovalHandler for complete tool security.
 """

@@ -7,6 +7,9 @@
 - 推理内容处理流程
 """
 
+from enum import Enum
+from typing import Any, TypeVar
+
 import pytest
 
 pytestmark = pytest.mark.integration
@@ -17,6 +20,65 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Add framework path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from framework.core.constants import StopReason
+from framework.core.emitter import AgentResult, ContentEmitter, EmitterConfig
+from framework.core.events import AgentEvent
+
+E = TypeVar('E', bound=AgentEvent)
+
+
+class _BufferingEmitter(ContentEmitter[E]):
+    """Minimal test emitter that captures output for assertions."""
+
+    def __init__(self, config: EmitterConfig | None = None):
+        super().__init__(config)
+        self._buffer = ""
+        self._reasoning_buffer = ""
+        self._result: AgentResult | None = None
+        self._events: list[tuple[E, Any]] = []
+
+    async def emit(self, event: E, data: Any = None) -> None:
+        event_name = event.value if isinstance(event, Enum) else str(event)
+        if self.config.is_enabled(event_name):
+            self._events.append((event, data))
+        await super().emit(event, data)
+
+    async def _on_event(self, event: E, data: Any = None) -> None:
+        event_name = event.value if isinstance(event, Enum) else str(event)
+        if event_name == "model_reasoning":
+            if isinstance(data, str):
+                self._reasoning_buffer += data
+
+    async def emit_delta(self, delta: str) -> None:
+        self._buffer += delta
+
+    async def emit_content(self, full_content: str) -> None:
+        self._buffer += full_content
+
+    async def emit_complete(self, result: AgentResult) -> None:
+        self._result = result
+
+    async def emit_error(self, error: str) -> None:
+        self._result = AgentResult(error=error, stop_reason=StopReason.ERROR)
+
+    def get_content(self) -> str:
+        return self._buffer
+
+    def get_reasoning(self) -> str:
+        return self._reasoning_buffer
+
+    def get_events(self, event_type: E | None = None) -> list[tuple[E, Any]]:
+        if event_type is not None:
+            return [(e, d) for e, d in self._events if e == event_type]
+        return list(self._events)
+
+    def get_events_by_name(self, name: str) -> list[tuple[E, Any]]:
+        result = []
+        for e, d in self._events:
+            if isinstance(e, Enum) and e.name == name or isinstance(e, str) and e == name:
+                result.append((e, d))
+        return result
 
 
 class TestQQBotServiceIntegration:
@@ -139,7 +201,6 @@ class TestQQBotServiceIntegration:
         """Test ReActAgent correctly switches between streaming and non-streaming based on emitter."""
         from framework.agents.react import ReActAgent, ReActEvent
         from framework.core.agent import AgentContext
-        from framework.core.emitter import BufferingEmitter
         from framework.core.provider import StreamingLLMProvider
         from framework.core.types import LLMResponse
 
@@ -173,7 +234,7 @@ class TestQQBotServiceIntegration:
         )
 
         # Test streaming mode (emitter wants streaming)
-        class StreamingEmitter(BufferingEmitter[ReActEvent]):
+        class StreamingEmitter(_BufferingEmitter[ReActEvent]):
             def wants_streaming(self):
                 return True
 
@@ -187,7 +248,7 @@ class TestQQBotServiceIntegration:
         provider.chat_called = False
 
         # Test non-streaming mode (emitter doesn't want streaming)
-        emitter2 = BufferingEmitter[ReActEvent]()
+        emitter2 = _BufferingEmitter[ReActEvent]()
         await agent.run(context, emitter2)
         assert provider.chat_stream_called is False
         assert provider.chat_called is True
@@ -447,8 +508,7 @@ mcp:
 
         def _emitter_factory(session_id: str):
             from framework.agents.react import ReActEvent
-            from framework.core.emitter import BufferingEmitter
-            return BufferingEmitter[ReActEvent]()
+            return _BufferingEmitter[ReActEvent]()
 
         with patch("bot.service.core.create_llm_provider", return_value=_MockProvider()):
             service = BotService(

@@ -100,47 +100,6 @@ async def test_commit_cursor_advances_monotonically_under_race():
     )
 
 
-async def test_dream_lock_released_when_llm_hangs():
-    """_dream_locks must be released even if engine.run() hangs.
-
-    Bug: _run_dream() holds _dream_locks for the entire engine.run() duration.
-    If the LLM call inside SummarizerAgent hangs (no timeout), the lock is
-    held forever, blocking all subsequent dream triggers for the same scope.
-    """
-    from framework.session.agent_session import _dream_locks
-
-    scope_key = "test:hang:scope"
-    lock = _dream_locks.setdefault(scope_key, asyncio.Lock())
-
-    # Simulate a hanging dream task
-    hang_started = asyncio.Event()
-
-    async def hanging_dream():
-        async with lock:
-            hang_started.set()
-            # Simulate hanging LLM call
-            await asyncio.sleep(3600)
-
-    task = asyncio.create_task(hanging_dream())
-    await hang_started.wait()
-
-    # A second task trying to acquire the same lock should time out
-    # (in production it would block forever)
-    async def second_attempt():
-        async with lock:
-            return True
-
-    try:
-        await asyncio.wait_for(second_attempt(), timeout=0.5)
-        pytest.fail("Second dream task should have timed out — lock was released unexpectedly")
-    except asyncio.TimeoutError:
-        pass  # Expected: lock is still held by hanging task
-    finally:
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-
-
 async def test_prune_does_not_starve_concurrent_reads():
     """prune_consumed_pairs() must not block readers indefinitely.
 

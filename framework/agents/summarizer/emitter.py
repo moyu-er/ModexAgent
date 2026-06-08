@@ -75,8 +75,8 @@ class SummarizerTrajectoryEmitter(ContentEmitter[Any]):
             self._current_content += full_content
 
     async def _on_event(self, event: Any, data: Any = None) -> None:
-        from framework.core.emitter import ToolCall
         from framework.core.tool_manager import ToolResult
+        from framework.core.types import ToolCall
 
         event_name = event.value if isinstance(event, Enum) else str(event)
 

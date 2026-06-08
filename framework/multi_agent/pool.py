@@ -85,7 +85,6 @@ class AgentPool(AgentRegistry):
         self._safety = safety or RuntimeSafetyPolicy()
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._session_meta: dict[str, SessionMeta] = {}
-        self._sync_futures: dict[str, asyncio.Future[Any]] = {}
         self._retention = retention or SessionRetentionPolicy()
         self._comm_tracker = comm_tracker
         self._cleanup_task: asyncio.Task[None] | None = None
@@ -160,7 +159,6 @@ class AgentPool(AgentRegistry):
         ctx_mgr_factory = context_manager_factory or self._default_context_manager_factory
         instance = await self._agent_factory.create_agent(
             descriptor,
-            mode="pipeline",
             context_manager=ctx_mgr,
             broker=self._broker,
             tool_manager=tool_manager,
@@ -719,10 +717,6 @@ class AgentPool(AgentRegistry):
                     InputMessage(content=content, session_id=session_id, metadata=metadata)
                 )
 
-    async def register_directory(self, descriptor: AgentDescriptor) -> None:
-        """将 Agent 注册到发现目录（不启动常驻 Pipeline）。"""
-        self._status[descriptor.address.name] = AgentState.IDLE
-
     def get(self, name: str) -> AgentInstance | None:
         return self._agents.get(name)
 
@@ -752,14 +746,6 @@ class AgentPool(AgentRegistry):
         operations — use this lock instead.
         """
         return self._session_locks.setdefault(session_id, asyncio.Lock())
-
-    def register_sync_future(self, correlation_id: str, future: asyncio.Future[Any]) -> None:
-        """Register a Future for synchronous result delivery."""
-        self._sync_futures[correlation_id] = future
-
-    def pop_sync_future(self, correlation_id: str) -> asyncio.Future[object] | None:
-        """Retrieve and remove a registered sync Future."""
-        return self._sync_futures.pop(correlation_id, None)
 
     def _track_session(
         self, session_id: str, agent_name: str, is_dynamic: bool = False
@@ -933,34 +919,6 @@ class AgentPool(AgentRegistry):
             return None
         return self._make_profile(instance.descriptor)
 
-    def find_profiles(
-        self,
-        capability: str | None = None,
-        skill: str | None = None,
-        tool: str | None = None,
-        caller: str | None = None,
-    ) -> list[AgentProfile]:
-        profiles = self.list_profiles(caller=caller)
-        results: list[AgentProfile] = []
-        for profile in profiles:
-            # capability filter
-            if capability is not None:
-                caps = profile.capabilities or []
-                if capability not in caps:
-                    continue
-            # skill filter
-            if skill is not None:
-                skills = profile.allowed_skills
-                if skills is not None and skill not in skills:
-                    continue
-            # tool filter
-            if tool is not None:
-                tools = profile.allowed_tools
-                if tools is not None and tool not in tools:
-                    continue
-            results.append(profile)
-        return results
-
     async def _poll_inbox_for_idle_agents(self) -> None:
         """后台轮询 inbox：对 IDLE 状态的 agent，若其 session 有未读消息则发送 wakeup。"""
         while True:
@@ -1101,7 +1059,3 @@ class AgentPool(AgentRegistry):
         self._session_locks.clear()
         for name in list(self._status.keys()):
             self._status[name] = AgentState.SHUTDOWN
-
-    async def close(self, timeout: float = 10.0) -> None:
-        """`shutdown_all` 的别名，提升 API 可发现性。"""
-        await self.shutdown_all(timeout=timeout)

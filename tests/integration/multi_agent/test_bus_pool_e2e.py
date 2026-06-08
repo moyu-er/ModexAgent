@@ -9,14 +9,12 @@ import pytest
 
 pytestmark = pytest.mark.integration
 
-from framework.core.emitter import AgentResult
 from framework.core.types import InputMessage
 from framework.messaging.broker_memory import InMemoryMessageBroker
 from framework.multi_agent import (
     AgentAddress,
     AgentDescriptor,
     DefaultAgentFactory,
-    SubagentService,
     SessionRetentionPolicy,
 )
 from framework.multi_agent.bus import LocalAgentMessageBus
@@ -76,60 +74,6 @@ async def test_agent_pool_dispatches_inbox_wakeup_to_pipeline():
     assert len(pipeline_calls) == 1
     assert pipeline_calls[0].content == "hello worker"
     assert pipeline_calls[0].metadata.get("message_type") == "agent_message"
-
-    await pool.shutdown_all()
-    await broker.stop()
-
-
-@pytest.mark.asyncio
-async def test_pool_mode_subagent_sync_still_works():
-    """Pool 模式下同步 spawn_and_wait() 仍然可用。"""
-    broker = InMemoryMessageBroker()
-    await broker.start()
-
-    factory = MagicMock(spec=DefaultAgentFactory)
-    fake_instance = MagicMock()
-    fake_pipeline = MagicMock()
-
-    async def _mock_process(*args, **kwargs) -> AgentResult:
-        return AgentResult(content="sync result", stop_reason="completed")
-
-    fake_pipeline.process_message = AsyncMock(side_effect=_mock_process)
-    fake_instance.pipeline = fake_pipeline
-    fake_instance.stop = AsyncMock()
-    fake_instance.descriptor.address = AgentAddress(kind="agent", name="helper")
-    factory.create_agent = AsyncMock(return_value=fake_instance)
-
-    inbox_server = InMemoryInboxServer()
-    inbox_consumer = InboxConsumer(server=inbox_server)
-    inbox_producer = InboxProducer(server=inbox_server)
-    agent_bus = LocalAgentMessageBus(producer=inbox_producer, consumer=inbox_consumer)
-    pool = AgentPool(
-        broker=broker,
-        agent_factory=factory,
-        agent_bus=agent_bus,
-        enable_inbox_polling=False,
-        retention=SessionRetentionPolicy(),
-    )
-    mgr = SubagentService(
-        pool=pool,
-        factory=factory,
-        broker=broker,
-        agent_bus=agent_bus,
-    )
-
-    descriptor = AgentDescriptor(
-        address=AgentAddress(kind="agent", name="helper"),
-        context_strategy="ephemeral",
-    )
-
-    result = await mgr.create_and_wait(
-        descriptor=descriptor,
-        task_prompt="sync task",
-    )
-
-    assert result.content == "sync result"
-    assert result.stop_reason == "completed"
 
     await pool.shutdown_all()
     await broker.stop()

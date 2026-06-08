@@ -137,20 +137,6 @@ class TestToolSchemaAndValidation:
         assert schema["function"]["name"] == "dummy"
         assert "value" in schema["function"]["parameters"]["properties"]
 
-    def test_validate_params_ok(self):
-        t = _DummyTool()
-        errors = t.validate_params({"value": 10})
-        assert errors == []
-
-    def test_validate_params_missing_required(self):
-        t = _DummyTool()
-        errors = t.validate_params({})
-        assert any("missing required" in e for e in errors)
-
-    def test_validate_params_type_mismatch(self):
-        t = _DummyTool()
-        errors = t.validate_params({"value": "not_int"})
-        assert any("should be integer" in e for e in errors)
 
 
 # ---------------------------------------------------------------------------

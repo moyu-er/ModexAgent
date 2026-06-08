@@ -8,7 +8,6 @@ from collections.abc import Awaitable, Callable, Iterator, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from framework.memory.archive_models import ArchiveChannel
 from framework.memory.core.layers import ArchiveMemoryManager, MemoryLayerSet, SessionMemoryManager
 from framework.memory.core.message import ChatMessage
 from framework.memory.core.models import LongTermMemory
@@ -323,34 +322,6 @@ class DefaultMemorySystem(MemorySystem):
 
     # -- Archive convenience --------------------------------------------
 
-    async def get_history_entries(
-        self,
-        context: MemoryContext,
-        limit: int = 5,
-        query: str = "",
-        *,
-        channel: ArchiveChannel = ArchiveChannel.CONTEXT,
-    ) -> list[dict[str, Any]]:
-        archive = self._layers.archive
-        if archive is None:
-            return []
-        if query:
-            entries = await archive.search(context, query=query, limit=limit, channel=channel)
-            if not entries:
-                entries = await archive.get_recent(context, limit=limit, channel=channel)
-        else:
-            entries = await archive.get_recent(context, limit=limit, channel=channel)
-        return [
-            {
-                "summary": e.summary,
-                "metadata": dict(e.metadata),
-                "archive_id": e.entry_id,
-                "cursor": e.entry_id,
-                "created_at": e.created_at.isoformat() if e.created_at is not None else None,
-            }
-            for e in entries
-        ]
-
     async def get_unprocessed_history_count(
         self, context: MemoryContext, cursor_name: str = "dream"
     ) -> int:
@@ -366,12 +337,6 @@ class DefaultMemorySystem(MemorySystem):
         return self._layers.archive
 
     # -- Knowledge convenience ------------------------------------------
-
-    async def get_knowledge(self, context: MemoryContext) -> LongTermMemory:
-        knowledge = self._layers.knowledge
-        if knowledge is None:
-            return LongTermMemory()
-        return await knowledge.get_all(context)
 
     async def retrieve_knowledge(
         self,
@@ -416,11 +381,6 @@ class DefaultMemorySystem(MemorySystem):
         return self._knowledge_consolidator
 
     # -- Provider fan-out -----------------------------------------------
-
-    async def search_memories(
-        self, query: str, context: MemoryContext, limit: int = 5
-    ) -> list[dict[str, Any]]:
-        return await self.search(query, context, limit)
 
     async def prefetch_memories(self, query: str, context: MemoryContext) -> str | None:
         if not self._recorder.providers:

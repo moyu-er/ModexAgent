@@ -64,29 +64,3 @@ class EmitterConfig:
             return event_name in self.enabled_events
         return True
 
-    def filter_content(self, content: str) -> str:
-        """应用内容过滤器
-
-        Args:
-            content: 原始内容
-
-        Returns:
-            过滤后的内容
-        """
-        if self.content_filter is not None:
-            return self.content_filter(content)
-        return content
-
-    def truncate_tool_result(self, result: str) -> str:
-        """截断工具结果
-
-        Args:
-            result: 原始工具结果
-
-        Returns:
-            截断后的结果（如果超出最大长度）
-        """
-        if len(result) > self.max_tool_result_length:
-            truncated = result[:self.max_tool_result_length]
-            return f"{truncated}\n... (truncated, {len(result)} chars total)"
-        return result

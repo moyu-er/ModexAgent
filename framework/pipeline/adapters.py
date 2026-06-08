@@ -260,30 +260,6 @@ class OutputAdapter(ABC):
                 await self.send(OutputMessage(content=content), session_id)
             del buffers[session_id]
 
-    @property
-    def supports_streaming(self) -> bool:
-        """是否支持真流式
-
-        优先根据 streaming_mode 判断；若子类未覆盖 streaming_mode，
-        回退到检查 send_delta 是否被覆盖。
-        """
-        if type(self).streaming_mode is not OutputAdapter.streaming_mode:
-            return self.streaming_mode == StreamingMode.NATIVE
-        return type(self).send_delta is not OutputAdapter.send_delta
-
-    async def send_stream(
-        self,
-        content_iterator: AsyncIterator[str],
-        session_id: str,
-    ) -> None:
-        """发送流式输出（兼容性方法，默认使用 send_delta）
-
-        子类可以覆盖此方法实现真正的流式发送。
-        新方法建议使用 send_delta() 实现更细粒度的控制。
-        """
-        async for chunk in content_iterator:
-            await self.send_delta(chunk, session_id)
-        await self.flush_deltas(session_id)
 
 
 class NullOutputAdapter(OutputAdapter):
@@ -310,30 +286,6 @@ class NullOutputAdapter(OutputAdapter):
         return StreamingMode.NONE
 
 
-class LoggingOutputAdapter(OutputAdapter):
-    """日志输出适配器 - 将输出记录到日志，不发送到外部平台。"""
-
-    def __init__(self, level: int = logging.DEBUG):
-        self.level = level
-
-    @property
-    def name(self) -> str:
-        return "logging"
-
-    async def send(self, message: OutputMessage, session_id: str) -> None:
-        logger.log(self.level, "[session=%s] %s", session_id, message.content)
-
-    async def send_delta(self, delta: str, session_id: str, metadata: dict[str, Any] | None = None) -> None:
-        logger.log(self.level, "[session=%s] delta: %s", session_id, delta)
-
-    async def flush_deltas(self, session_id: str) -> None:
-        logger.log(self.level, "[session=%s] flush_deltas", session_id)
-
-    @property
-    def streaming_mode(self) -> StreamingMode:
-        return StreamingMode.NATIVE
-
-
 class SessionPrefixStripAdapter(OutputAdapter):
     """剥离 session_id 中内部 agent 名称前缀/后缀的通用适配器。
 
@@ -354,10 +306,6 @@ class SessionPrefixStripAdapter(OutputAdapter):
     def streaming_mode(self) -> StreamingMode:
         return self._inner.streaming_mode
 
-    @property
-    def supports_streaming(self) -> bool:
-        return self._inner.streaming_mode == StreamingMode.NATIVE
-
     def _map_session_id(self, session_id: str) -> str:
         if self._separator not in session_id:
             return session_id
@@ -372,69 +320,6 @@ class SessionPrefixStripAdapter(OutputAdapter):
 
     async def flush_deltas(self, session_id: str) -> None:
         await self._inner.flush_deltas(self._map_session_id(session_id))
-
-
-class CompositeOutputAdapter(OutputAdapter):
-    """组合多个输出适配器
-
-    例如：同时输出到 QQ 和日志
-    """
-
-    def __init__(self, adapters: list):
-        self.adapters = adapters
-
-    @property
-    def name(self) -> str:
-        return f"composite({', '.join(a.name for a in self.adapters)})"
-
-    async def send(self, message: OutputMessage, session_id: str) -> None:
-        for adapter in self.adapters:
-            try:
-                await adapter.send(message, session_id)
-            except Exception as e:
-                logger.error(f"Adapter {adapter.name} failed: {e}")
-
-    async def send_delta(self, delta: str, session_id: str, metadata: dict[str, Any] | None = None) -> None:
-        """转发 send_delta 到所有子适配器"""
-        for adapter in self.adapters:
-            try:
-                await adapter.send_delta(delta, session_id, metadata)
-            except Exception as e:
-                logger.error(f"Adapter {adapter.name} send_delta failed: {e}")
-
-    async def flush_deltas(self, session_id: str) -> None:
-        """转发 flush_deltas 到所有子适配器"""
-        for adapter in self.adapters:
-            try:
-                await adapter.flush_deltas(session_id)
-            except Exception as e:
-                logger.error(f"Adapter {adapter.name} flush_deltas failed: {e}")
-
-    @property
-    def supports_streaming(self) -> bool:
-        """如果任一子适配器支持真流式，返回 True"""
-        return any(adapter.streaming_mode == StreamingMode.NATIVE for adapter in self.adapters)
-
-    @property
-    def streaming_mode(self) -> StreamingMode:
-        if any(adapter.streaming_mode == StreamingMode.NATIVE for adapter in self.adapters):
-            return StreamingMode.NATIVE
-        if any(adapter.streaming_mode == StreamingMode.PSEUDO for adapter in self.adapters):
-            return StreamingMode.PSEUDO
-        return StreamingMode.NONE
-
-    async def send_stream(
-        self,
-        content_iterator: AsyncIterator[str],
-        session_id: str,
-    ) -> None:
-        # 收集流式内容
-        chunks = []
-        async for chunk in content_iterator:
-            chunks.append(chunk)
-
-        content = "".join(chunks)
-        await self.send(OutputMessage(content=content), session_id)
 
 
 class CLIOutputAdapter(OutputAdapter):

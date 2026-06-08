@@ -3,11 +3,12 @@
 验证 ReActAgent 的统一执行循环：
 - 流式与非流式共享同一主循环
 - _request_llm 根据 emitter.wants_streaming() 选择正确路径
-- 内容通过 get_content()、推理通过 get_reasoning() 被 BufferingEmitter 收集
+- 内容通过 get_content()、推理通过 get_reasoning() 被 _BufferingEmitter 收集
 - 生命周期事件 (MODEL_OUTPUT, MODEL_REASONING) 仍然被分发
 """
 
-from typing import Any
+from enum import Enum
+from typing import Any, TypeVar
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -15,7 +16,9 @@ import pytest
 from framework.adapters.platform import StreamingMode
 from framework.agents.react import ReActAgent, ReActEvent
 from framework.core.agent import AgentContext
-from framework.core.emitter import BufferingEmitter, StreamingAwareEmitter
+from framework.core.constants import StopReason
+from framework.core.emitter import AgentResult, ContentEmitter, EmitterConfig, StreamingAwareEmitter
+from framework.core.events import AgentEvent
 from framework.core.provider import StreamingLLMProvider
 from framework.core.tool_manager import ToolResult
 from framework.core.types import LLMResponse, ToolCall
@@ -24,6 +27,62 @@ from framework.runtime.enums import AgentKind, TurnPhase
 from framework.runtime.models import TurnIdentity
 from framework.runtime.services import AgentRuntime, AgentRuntimeServices
 from framework.agents.react.state import ReActTurnState
+
+
+E = TypeVar('E', bound=AgentEvent)
+
+
+class _BufferingEmitter(ContentEmitter[E]):
+    """Minimal test emitter that captures output for assertions."""
+
+    def __init__(self, config: EmitterConfig | None = None):
+        super().__init__(config)
+        self._buffer = ""
+        self._reasoning_buffer = ""
+        self._result: AgentResult | None = None
+        self._events: list[tuple[E, Any]] = []
+
+    async def emit(self, event: E, data: Any = None) -> None:
+        event_name = event.value if isinstance(event, Enum) else str(event)
+        if self.config.is_enabled(event_name):
+            self._events.append((event, data))
+        await super().emit(event, data)
+
+    async def _on_event(self, event: E, data: Any = None) -> None:
+        event_name = event.value if isinstance(event, Enum) else str(event)
+        if event_name == "model_reasoning":
+            if isinstance(data, str):
+                self._reasoning_buffer += data
+
+    async def emit_delta(self, delta: str) -> None:
+        self._buffer += delta
+
+    async def emit_content(self, full_content: str) -> None:
+        self._buffer += full_content
+
+    async def emit_complete(self, result: AgentResult) -> None:
+        self._result = result
+
+    async def emit_error(self, error: str) -> None:
+        self._result = AgentResult(error=error, stop_reason=StopReason.ERROR)
+
+    def get_content(self) -> str:
+        return self._buffer
+
+    def get_reasoning(self) -> str:
+        return self._reasoning_buffer
+
+    def get_events(self, event_type: E | None = None) -> list[tuple[E, Any]]:
+        if event_type is not None:
+            return [(e, d) for e, d in self._events if e == event_type]
+        return list(self._events)
+
+    def get_events_by_name(self, name: str) -> list[tuple[E, Any]]:
+        result = []
+        for e, d in self._events:
+            if isinstance(e, Enum) and e.name == name or isinstance(e, str) and e == name:
+                result.append((e, d))
+        return result
 
 
 def _make_runtime():
@@ -80,7 +139,7 @@ class MockStreamingProvider(StreamingLLMProvider):
         return "mock-model"
 
 
-class StreamingEmitter(BufferingEmitter[ReActEvent]):
+class StreamingEmitter(_BufferingEmitter[ReActEvent]):
     def wants_streaming(self):
         return True
 
@@ -109,7 +168,7 @@ class TestReActAgentUnifiedLoop:
 
     @pytest.fixture
     def emitter(self):
-        return BufferingEmitter[ReActEvent]()
+        return _BufferingEmitter[ReActEvent]()
 
     @pytest.fixture
     def streaming_emitter(self):
@@ -377,7 +436,7 @@ class TestReActAgentUnifiedLoop:
             return LLMResponse(content="Response")
 
         non_streaming_provider.chat = mock_chat
-        # BufferingEmitter wants_streaming returns False by default
+        # _BufferingEmitter wants_streaming returns False by default
         assert emitter.wants_streaming() is False
         agent = ReActAgent(provider=non_streaming_provider)
 
@@ -511,7 +570,7 @@ class TestReActAgentRegression:
 
         non_streaming_provider.chat = mock_chat
 
-        class TrackingEmitter(BufferingEmitter[ReActEvent]):
+        class TrackingEmitter(_BufferingEmitter[ReActEvent]):
             def __init__(self):
                 super().__init__()
                 self.content_calls = []
@@ -594,7 +653,7 @@ class TestReActAgentCheckpoint:
 
     @pytest.fixture
     def emitter(self):
-        return BufferingEmitter[ReActEvent]()
+        return _BufferingEmitter[ReActEvent]()
 
     @pytest.mark.asyncio
     async def test_checkpoint_saved_after_assistant_and_tool_messages(self, streaming_provider, context, emitter):

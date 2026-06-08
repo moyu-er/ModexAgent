@@ -3,17 +3,15 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from framework.control.channel import InMemoryControlChannel
     from framework.pipeline.pipeline import AgentPipeline
-    from framework.session.agent_session import AgentSession
 
 logger = logging.getLogger(__name__)
 
 from framework.core.context import ContextManager, InMemoryContextManager
-from framework.core.emitter import EmitterConfig
 from framework.core.runtime_context import RuntimeContextManager
 from framework.core.tool_manager import InMemoryToolManager
 
@@ -47,7 +45,6 @@ class AgentFactory(ABC):
     async def create_agent(
         self,
         descriptor: AgentDescriptor,
-        mode: Literal["pipeline", "session", "ephemeral"],
         conversation_id: str | None = None,
         context_manager: ContextManager | None = None,
         broker: Any | None = None,
@@ -60,7 +57,7 @@ class AgentFactory(ABC):
         output_adapter: Any | None = None,
         context_manager_factory: Callable[[str], ContextManager] | None = None,
     ) -> AgentInstance:
-        """根据描述符和模式创建 AgentInstance。"""
+        """根据描述符创建 AgentInstance。"""
         ...
 
 
@@ -141,10 +138,8 @@ class DefaultAgentFactory(AgentFactory):
         if descriptor.context_manager is not None:
             return descriptor.context_manager
         if descriptor.context_strategy == "ephemeral":
-            from framework.core.context import EphemeralContextManager
-
-            # 每次创建全新的 EphemeralContextManager，不保留历史、不写入文件
-            return EphemeralContextManager(
+            # 每次创建全新的 InMemoryContextManager，不保留历史、不写入文件
+            return InMemoryContextManager(
                 base_system_prompt=descriptor.system_prompt_template or ""
             )
         # persistent / shared 默认使用标准内存管理器
@@ -153,7 +148,6 @@ class DefaultAgentFactory(AgentFactory):
     async def create_agent(
         self,
         descriptor: AgentDescriptor,
-        mode: Literal["pipeline", "session", "ephemeral"],
         conversation_id: str | None = None,
         context_manager: ContextManager | None = None,
         broker: Any | None = None,
@@ -188,137 +182,90 @@ class DefaultAgentFactory(AgentFactory):
                 allowed_skills=descriptor.allowed_skills,
             )
 
-        pipeline: AgentPipeline | None = None
-        session: AgentSession | None = None
         agent_hooks: list[Any] = list(self._default_hooks) + list(hooks or [])
 
-        # Auto-inject InboxFlushHook for pipeline-mode resident agents (BEFORE pipeline construction)
-        inbox_address_name = ""
-
-        if mode == "pipeline":
-            from framework.messaging.broker_bridge import (
-                BrokerInputAdapter,
-                BrokerOutputAdapter,
-            )
-            from framework.messaging.broker_memory import InMemoryMessageBroker
-            from framework.multi_agent.router import DefaultMeshRouter
-            from framework.pipeline.pipeline import AgentPipeline
-
-            if broker is None:
-                logger.warning(
-                    "Creating pipeline agent with isolated broker. "
-                    "Pass broker= for mesh communication."
+        # Auto-inject InboxFlushHook (BEFORE pipeline construction)
+        if descriptor.inbox_strategy != "none" and self._inbox_consumer is not None:
+            agent_hooks.append(
+                InboxFlushHook(
+                    consumer=self._inbox_consumer,
+                    agent_name=descriptor.address.name,
                 )
-                broker = InMemoryMessageBroker()
-                await broker.start()
-            address = descriptor.address
-            inbox_address_name = address.name
-            if descriptor.inbox_strategy != "none" and self._inbox_consumer is not None:
-                agent_hooks.append(
-                    InboxFlushHook(
-                        consumer=self._inbox_consumer,
-                        agent_name=inbox_address_name,
-                    )
-                )
-            input_adapter = BrokerInputAdapter(broker=broker, address=address)
-            from framework.pipeline.adapters import OutputAdapter
-
-            if output_adapter is not None and isinstance(output_adapter, OutputAdapter):
-                pipe_output_adapter = output_adapter
-                emitter_output_adapter = output_adapter
-            else:
-                pipe_output_adapter = BrokerOutputAdapter(
-                    broker=broker,
-                    sender=address,
-                    default_topic=f"agent:{address.name}:out",
-                )
-                emitter_output_adapter = BrokerOutputAdapter(
-                    broker=broker, sender=address, default_topic=f"agent:{address.name}:out"
-                )
-            builder = self._get_builder(descriptor.execution_strategy)
-            if builder is None:
-                raise ValueError(f"Unsupported execution_strategy: {descriptor.execution_strategy}")
-            emitter_factory = builder.build_emitter_factory(emitter_output_adapter)
-            # Each agent needs its own HookRunner so that agent-specific hooks
-            # (e.g. SubagentAutoSendHook) don't leak across agents.
-            hook_runner = (
-                HookRunner(self._default_hook_runner.hook_specs)
-                if self._default_hook_runner is not None
-                else None
-            )
-            # Per-agent InterceptorChain copy to prevent cross-agent state leakage.
-            # Mirrors the HookRunner copy pattern above.
-            agent_interceptor_chain = None
-            if self._default_interceptor_chain is not None:
-                from framework.interceptor.chain import InterceptorChain
-                agent_interceptor_chain = InterceptorChain(
-                    self._default_interceptor_chain.interceptors
-                )
-            pipeline = AgentPipeline(
-                agent=agent,
-                context_manager=ctx_mgr,
-                tool_manager=filtered_tools,
-                input_adapter=input_adapter,
-                output_adapter=pipe_output_adapter,
-                emitter_factory=emitter_factory,
-                max_iterations=descriptor.max_iterations,
-                skill_manager=skill_mgr,
-                hooks=agent_hooks,
-                hook_runner=hook_runner,
-                interceptor_chain=agent_interceptor_chain,
-                turn_store=self._default_turn_store,
-                context_manager_factory=context_manager_factory,
-                runtime_context_manager=self._runtime_context_manager,
-                safety=descriptor.safety_policy,
-                agent_descriptor=descriptor,
-                router=DefaultMeshRouter(),
-                control_channel=self._control_channel,
-            )
-        elif mode in ("session", "ephemeral"):
-            # Auto-inject InboxFlushHook for session-mode agents (BEFORE session construction)
-            if descriptor.inbox_strategy != "none" and self._inbox_consumer is not None:
-                agent_hooks.append(
-                    InboxFlushHook(
-                        consumer=self._inbox_consumer,
-                        agent_name=descriptor.address.name,
-                    )
-                )
-            # Each agent needs its own HookRunner so that agent-specific hooks
-            # don't leak across agents.
-            hook_runner = (
-                HookRunner(self._default_hook_runner.hook_specs)
-                if self._default_hook_runner is not None
-                else None
-            )
-            # Per-agent InterceptorChain copy for session mode as well
-            session_interceptor_chain = None
-            if self._default_interceptor_chain is not None:
-                from framework.interceptor.chain import InterceptorChain
-                session_interceptor_chain = InterceptorChain(
-                    self._default_interceptor_chain.interceptors
-                )
-            from framework.session.agent_session import AgentSession
-            session = AgentSession(
-                agent=agent,
-                context_manager=ctx_mgr,
-                tool_manager=filtered_tools,
-                skill_manager=skill_mgr,
-                hooks=agent_hooks,
-                sanitizer=sanitizer or self._sanitizer,
-                command_interceptor=command_interceptor or self._command_interceptor,
-                runtime_context_manager=self._runtime_context_manager,
-                hook_runner=hook_runner,
-                interceptor_chain=session_interceptor_chain,
-                turn_store=self._default_turn_store,
             )
 
-        return AgentInstance(
-            descriptor=descriptor,
+        from framework.messaging.broker_bridge import (
+            BrokerInputAdapter,
+            BrokerOutputAdapter,
+        )
+        from framework.messaging.broker_memory import InMemoryMessageBroker
+        from framework.multi_agent.router import DefaultMeshRouter
+        from framework.pipeline.pipeline import AgentPipeline
+
+        if broker is None:
+            logger.warning(
+                "Creating pipeline agent with isolated broker. "
+                "Pass broker= for mesh communication."
+            )
+            broker = InMemoryMessageBroker()
+            await broker.start()
+        address = descriptor.address
+        input_adapter = BrokerInputAdapter(broker=broker, address=address)
+        from framework.pipeline.adapters import OutputAdapter
+
+        if output_adapter is not None and isinstance(output_adapter, OutputAdapter):
+            pipe_output_adapter = output_adapter
+            emitter_output_adapter = output_adapter
+        else:
+            pipe_output_adapter = BrokerOutputAdapter(
+                broker=broker,
+                sender=address,
+                default_topic=f"agent:{address.name}:out",
+            )
+            emitter_output_adapter = BrokerOutputAdapter(
+                broker=broker, sender=address, default_topic=f"agent:{address.name}:out"
+            )
+        builder = self._get_builder(descriptor.execution_strategy)
+        if builder is None:
+            raise ValueError(f"Unsupported execution_strategy: {descriptor.execution_strategy}")
+        emitter_factory = builder.build_emitter_factory(emitter_output_adapter)
+        # Each agent needs its own HookRunner so that agent-specific hooks
+        # (e.g. SubagentAutoSendHook) don't leak across agents.
+        hook_runner = (
+            HookRunner(self._default_hook_runner.hook_specs)
+            if self._default_hook_runner is not None
+            else None
+        )
+        # Per-agent InterceptorChain copy to prevent cross-agent state leakage.
+        # Mirrors the HookRunner copy pattern above.
+        agent_interceptor_chain = None
+        if self._default_interceptor_chain is not None:
+            from framework.interceptor.chain import InterceptorChain
+            agent_interceptor_chain = InterceptorChain(
+                self._default_interceptor_chain.interceptors
+            )
+        pipeline = AgentPipeline(
             agent=agent,
             context_manager=ctx_mgr,
             tool_manager=filtered_tools,
-            pipeline=pipeline,
-            session=session,
-            emitter_config=EmitterConfig(),
+            input_adapter=input_adapter,
+            output_adapter=pipe_output_adapter,
+            emitter_factory=emitter_factory,
+            max_iterations=descriptor.max_iterations,
+            skill_manager=skill_mgr,
             hooks=agent_hooks,
+            hook_runner=hook_runner,
+            interceptor_chain=agent_interceptor_chain,
+            turn_store=self._default_turn_store,
+            context_manager_factory=context_manager_factory,
+            runtime_context_manager=self._runtime_context_manager,
+            safety=descriptor.safety_policy,
+            agent_descriptor=descriptor,
+            router=DefaultMeshRouter(),
+            control_channel=self._control_channel,
+        )
+
+        return AgentInstance(
+            descriptor=descriptor,
+            context_manager=ctx_mgr,
+            pipeline=pipeline,
         )

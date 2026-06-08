@@ -83,7 +83,6 @@ class TestDispatchTaskRequestFallback:
     async def test_dispatch_falls_back_to_content_when_task_prompt_missing(self, pool):
         """When the envelope payload has ``content`` but no ``task_prompt``,
         _dispatch_task_request should still extract the task via the fallback."""
-        from framework.core.context import InMemoryContextManager
         from framework.core.types import InputMessage
         from framework.multi_agent.address import AgentAddress
         from framework.multi_agent.descriptor import AgentDescriptor, AgentInstance
@@ -108,10 +107,8 @@ class TestDispatchTaskRequestFallback:
         pipeline_stub.process_message.side_effect = _fake_process
         instance = AgentInstance(
             descriptor=desc,
-            agent=agent_stub,
-            tool_manager=InMemoryToolManager(),
             pipeline=pipeline_stub,
-            context_manager=InMemoryContextManager(),
+            context_manager=MagicMock(),
         )
 
         envelope = AgentMessageEnvelope(

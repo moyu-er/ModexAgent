@@ -142,7 +142,7 @@ class TestCommunicationService:
             descriptors=[AgentDescriptor(address=AgentAddress(name="main"))],
         )
         ctx = _make_context()
-        result = await svc.send_sync(
+        result = await svc.send_async(
             target_agent="main", content="hello", invocation_id=None, context=ctx,
         )
         assert "main" in result
@@ -154,7 +154,7 @@ class TestCommunicationService:
             descriptors=[AgentDescriptor(address=AgentAddress(name="reviewer"))],
         )
         ctx = _make_context()
-        result = await svc.send_sync(
+        result = await svc.send_async(
             target_agent="reviewer", content="hello", invocation_id="", context=ctx,
         )
         assert "Message sent to reviewer" in result
@@ -166,7 +166,7 @@ class TestCommunicationService:
             descriptors=[AgentDescriptor(address=AgentAddress(name="reviewer"))],
         )
         ctx = _make_context()
-        result = await svc.send_sync(
+        result = await svc.send_async(
             target_agent="reviewer", content="hello", invocation_id="abc123", context=ctx,
         )
         assert "Message sent to reviewer" in result
@@ -180,7 +180,7 @@ class TestCommunicationService:
             ],
         )
         ctx = _make_context()
-        result = await svc.send_sync(
+        result = await svc.send_async(
             target_agent="office-expert", content="do task", invocation_id="", context=ctx,
         )
         assert "office-expert" in result
@@ -195,7 +195,7 @@ class TestCommunicationService:
             ],
         )
         ctx = _make_context()
-        result = await svc.send_sync(
+        result = await svc.send_async(
             target_agent="office-expert", content="follow-up", invocation_id="a1b2c3d4", context=ctx,
         )
         assert "office-expert" in result
@@ -237,7 +237,7 @@ class TestCommunicationService:
             ],
         )
         ctx = _make_context()
-        result = await svc.send_sync(
+        result = await svc.send_async(
             target_agent="office-expert", content="hello", invocation_id=None, context=ctx,
         )
         assert "invocation_id" in result.lower() or "Error" in result or "not found" in result.lower()
