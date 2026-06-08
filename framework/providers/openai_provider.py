@@ -24,7 +24,7 @@ from framework.core.llm_struct import (
 from framework.core.provider import StreamingLLMProvider
 from framework.core.tool_call_accumulator import ToolCallAccumulator
 from framework.core.types import LLMResponse
-from framework.providers.shared.delta import ParsedResponse, StreamDelta
+from framework.providers.shared.delta import StreamDelta
 from framework.providers.shared.errors import classify_openai_error
 from framework.utils.think_tag import ThinkTagExtractor
 
@@ -90,110 +90,6 @@ class OpenAIProvider(StreamingLLMProvider):
 
     def get_default_model(self) -> str:
         return self._model
-
-    async def chat(
-        self,
-        messages: list[dict[str, Any]],
-        model: str | None = None,
-        temperature: float = 0.7,
-        max_tokens: int | None = None,
-        tools: list[dict] | None = None,
-        **kwargs,
-    ) -> LLMResponse:
-        return await self.chat_with_retry(
-            messages=messages,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            tools=tools,
-            **kwargs,
-        )
-
-    async def chat_with_retry(
-        self,
-        messages: list[dict[str, Any]],
-        model: str | None = None,
-        temperature: float = 0.7,
-        max_tokens: int | None = None,
-        tools: list[dict] | None = None,
-        max_retries: int = 1,
-        **kwargs,
-    ) -> LLMResponse:
-        return await self._execute_with_retry(
-            self._chat_raw, messages, max_retries,
-            model=model, temperature=temperature, max_tokens=max_tokens,
-            tools=tools, **kwargs
-        )
-
-    async def _chat_raw(
-        self,
-        messages: list[dict[str, Any]],
-        model: str | None = None,
-        temperature: float = 0.7,
-        max_tokens: int | None = None,
-        tools: list[dict] | None = None,
-        **kwargs,
-    ) -> LLMResponse:
-        params = self._build_params(
-            messages=messages, model=model, temperature=temperature,
-            max_tokens=max_tokens, tools=tools, stream=False, **kwargs,
-        )
-        t0 = time.monotonic()
-        logger.debug("OpenAI chat start: model=%s", params["model"])
-
-        try:
-            response = await self._client.chat.completions.create(**params)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            elapsed_ms = (time.monotonic() - t0) * 1000
-            error_info = classify_openai_error(exc)
-            logger.warning(
-                "OpenAI chat failed: kind=%s elapsed=%.0fms message=%s",
-                error_info.kind.value, elapsed_ms, error_info.message[:200],
-            )
-            return LLMResponse(
-                content=f"Error calling LLM: {error_info.message}",
-                finish_reason=FinishReason.ERROR.value,
-                error=error_info.message,
-                error_info=error_info,
-            )
-
-        try:
-            parsed = ParsedResponse.from_openai(response)
-        except Exception as exc:
-            elapsed_ms = (time.monotonic() - t0) * 1000
-            logger.warning(
-                "OpenAI response parse failed: model=%s elapsed=%.0fms error=%s",
-                params["model"], elapsed_ms, exc,
-            )
-            return LLMResponse(
-                content=f"Error parsing LLM response: {exc}",
-                finish_reason=FinishReason.ERROR.value,
-                error=str(exc),
-            )
-
-        # ThinkTag fallback for non-streaming response
-        content = parsed.content or ""
-        reasoning = parsed.reasoning_content
-        if self._parse_think_tags and reasoning is None:
-            clean_content, extracted_reasoning = ThinkTagExtractor.extract(content)
-            content = clean_content
-            reasoning = extracted_reasoning
-
-        elapsed_ms = (time.monotonic() - t0) * 1000
-        logger.debug(
-            "OpenAI chat done: model=%s finish=%s elapsed=%.0fms",
-            params["model"], parsed.finish_reason, elapsed_ms,
-        )
-
-        return LLMResponse(
-            content=content,
-            tool_calls=parsed.tool_calls,
-            reasoning_content=reasoning,
-            finish_reason=parsed.finish_reason,
-            usage=parsed.usage,
-        )
 
     async def chat_stream(
         self,

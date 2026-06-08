@@ -1,17 +1,68 @@
-"""Tests for LiteLLMProvider error response and stream idle timeout handling (P0-a 11.2)."""
+"""Tests for LiteLLMProvider error response and stream idle timeout handling.
+
+chat() now delegates to chat_stream_with_retry internally (stream=True),
+so all error handling tests mock streaming responses.
+"""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from framework.core.constants import FinishReason
-from framework.core.llm_struct import LLMErrorInfo, LLMErrorKind, build_timeout_response
+from framework.core.llm_struct import LLMErrorKind
 from framework.core.types import LLMResponse
 
 
-class TestChatRawErrorHandling:
-    """_chat_raw() converts exceptions to error responses, passthrough CancelledError."""
+def _make_stream_chunk(content=None, reasoning_content=None, finish_reason=None):
+    """Build a single mock chunk for a streaming response.
+
+    Uses plain classes (not MagicMock) so _get_attr_or_extra works correctly.
+    """
+
+    class FakeDelta:
+        pass
+
+    delta = FakeDelta()
+    delta.content = content
+    delta.reasoning_content = reasoning_content
+    delta.tool_calls = None
+
+    class FakeChoice:
+        pass
+
+    choice = FakeChoice()
+    choice.delta = delta
+    choice.finish_reason = finish_reason
+
+    class FakeChunk:
+        pass
+
+    chunk = FakeChunk()
+    chunk.choices = [choice]
+    return chunk
+
+
+def _make_stream(chunks):
+    """Return a coroutine that yields an async iterator over chunks."""
+
+    class _Iter:
+        async def __aiter__(self):
+            for c in chunks:
+                yield c
+
+    async def _coro(**_kw):
+        return _Iter()
+
+    return _coro
+
+
+class TestChatErrorHandling:
+    """chat() error handling via internal streaming path.
+
+    chat() now delegates to chat_stream_with_retry, so errors come through
+    the streaming pipeline.
+    """
 
     @pytest.fixture
     def provider(self):
@@ -47,10 +98,13 @@ class TestChatRawErrorHandling:
             )
 
     @pytest.mark.asyncio
-    async def test_empty_response_returns_error(self, provider):
-        response = MagicMock()
-        response.choices = []
-        provider._acompletion.return_value = response
+    async def test_empty_content_chunk_then_content_chunk(self, provider):
+        """Chunks with None content are skipped; final chunk with content wins."""
+        chunks = [
+            _make_stream_chunk(),  # None content
+            _make_stream_chunk(content="Hello world", finish_reason="stop"),
+        ]
+        provider._acompletion = _make_stream(chunks)
 
         result = await provider.chat_with_retry(
             messages=[{"role": "user", "content": "hi"}],
@@ -58,36 +112,15 @@ class TestChatRawErrorHandling:
         )
 
         assert isinstance(result, LLMResponse)
-        assert result.finish_reason == FinishReason.ERROR.value
-        assert result.error_info is not None
-        assert result.error_info.kind == LLMErrorKind.UNKNOWN
-
-    @pytest.mark.asyncio
-    async def test_empty_message_returns_error(self, provider):
-        choice = MagicMock()
-        choice.message = None
-        response = MagicMock()
-        response.choices = [choice]
-        provider._acompletion.return_value = response
-
-        result = await provider.chat_with_retry(
-            messages=[{"role": "user", "content": "hi"}],
-            max_retries=0,
-        )
-
-        assert isinstance(result, LLMResponse)
-        assert result.finish_reason == FinishReason.ERROR.value
+        assert result.content == "Hello world"
+        assert result.finish_reason == "stop"
 
     @pytest.mark.asyncio
     async def test_normal_response_succeeds(self, provider):
-        msg = MagicMock()
-        msg.content = "Hello world"
-        choice = MagicMock()
-        choice.message = msg
-        choice.finish_reason = "stop"
-        response = MagicMock()
-        response.choices = [choice]
-        provider._acompletion.return_value = response
+        chunks = [
+            _make_stream_chunk(content="Hello world", finish_reason="stop"),
+        ]
+        provider._acompletion = _make_stream(chunks)
 
         result = await provider.chat_with_retry(
             messages=[{"role": "user", "content": "hi"}],
@@ -112,6 +145,34 @@ class TestChatRawErrorHandling:
         assert result.finish_reason == FinishReason.ERROR.value
         assert result.error_info.kind == LLMErrorKind.AUTH
         assert result.error_info.should_retry is False
+
+    @pytest.mark.asyncio
+    async def test_retry_on_transient_error(self, provider):
+        call_count = 0
+
+        async def mock_acompletion(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise Exception("429 rate limit")
+
+            class _Iter:
+                async def __aiter__(self):
+                    yield _make_stream_chunk(content="recovered", finish_reason="stop")
+
+            return _Iter()
+
+        provider._acompletion = mock_acompletion
+
+        result = await provider.chat_with_retry(
+            messages=[{"role": "user", "content": "hi"}],
+            max_retries=2,
+        )
+
+        assert call_count == 2
+        assert isinstance(result, LLMResponse)
+        assert result.content == "recovered"
+        assert result.finish_reason == "stop"
 
 
 class TestChatStreamRawErrorHandling:
@@ -164,24 +225,7 @@ class TestChatStreamRawErrorHandling:
                 async def __anext__(self):
                     if self._i == 0:
                         self._i += 1
-                        # Return one chunk then hang
-                        class FakeDelta:
-                            pass
-                        delta = FakeDelta()
-                        delta.content = "partial"
-                        delta.reasoning_content = None
-                        delta.tool_calls = None
-
-                        class FakeChoice:
-                            def __init__(self):
-                                self.delta = delta
-                                self.finish_reason = None
-
-                        class FakeChunk:
-                            def __init__(self):
-                                self.choices = [FakeChoice()]
-
-                        return FakeChunk()
+                        return _make_stream_chunk(content="partial")
                     # Hang forever (will trigger stream_idle_timeout)
                     await asyncio.sleep(999)
                     raise StopAsyncIteration
@@ -207,40 +251,8 @@ class TestChatStreamRawErrorHandling:
     @pytest.mark.asyncio
     async def test_stream_normal_response(self, provider):
         """Normal stream should complete successfully."""
-        async def normal_stream(**kwargs):
-            class NormalIterator:
-                def __init__(self):
-                    self._done = False
-
-                def __aiter__(self):
-                    return self
-
-                async def __anext__(self):
-                    if self._done:
-                        raise StopAsyncIteration
-                    self._done = True
-
-                    class FakeDelta:
-                        pass
-                    delta = FakeDelta()
-                    delta.content = "hello"
-                    delta.reasoning_content = None
-                    delta.tool_calls = None
-
-                    class FakeChoice:
-                        def __init__(self):
-                            self.delta = delta
-                            self.finish_reason = "stop"
-
-                    class FakeChunk:
-                        def __init__(self):
-                            self.choices = [FakeChoice()]
-
-                    return FakeChunk()
-
-            return NormalIterator()
-
-        provider._acompletion = normal_stream
+        chunks = [_make_stream_chunk(content="hello", finish_reason="stop")]
+        provider._acompletion = _make_stream(chunks)
 
         deltas = []
         result = await provider.chat_stream_with_retry(
