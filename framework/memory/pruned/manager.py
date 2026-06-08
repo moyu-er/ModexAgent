@@ -75,12 +75,13 @@ class PrunedManager:
         ct = PrunedTag.CONTAINER.value
         tt = PrunedTag.TRANSCRIPT.value
         heading = (
-            "### Conversation Transcripts\n\n"
-            "Complete transcripts of **previous** conversations (not the current one). "
-            "The directory below contains all stored transcript files — read its "
-            "`index.jsonl` to browse every conversation by topic, time range, and "
-            "message count. Transcripts are read-only; you may update topic descriptions "
-            "in `index.jsonl`.\n\n"
+            "### Previous Conversation Transcripts\n\n"
+            "The directory below stores complete transcripts of **previous** conversations "
+            f"(not the current one). The `<{PrunedTag.HISTORY.value}>` section is a partial "
+            "preview — read `index.jsonl` for the full catalog (topic, time range, message "
+            "count), then read the specific transcript files when you need context from a "
+            "prior conversation. Transcripts are read-only; you may update topic "
+            "descriptions in `index.jsonl`.\n\n"
         )
         lines: list[str] = [
             heading,
