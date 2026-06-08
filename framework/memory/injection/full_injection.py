@@ -66,7 +66,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                 f"memory_system must implement InjectableMemorySystem, got {type(memory_system).__name__}"
             )
         sections: list[_PromptSection] = []
-        injectable = memory_system
+        injectable: InjectableMemorySystem = memory_system
 
         self._inject_disclaimer(sections)
         await self._inject_knowledge(sections, context, injectable, query)

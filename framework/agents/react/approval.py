@@ -7,8 +7,8 @@ Approval classification (``ApprovalClassifier``) is a policy service;
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Protocol
 
 from framework.approval.config import AgentApprovalConfig
 from framework.approval.constants import ApprovalTier
@@ -18,14 +18,15 @@ from framework.interceptor.builtin.tool_approval import ArgumentMatcher
 from framework.runtime.enums import ApprovalDenyPolicy
 
 
-class ApprovalClassifier(Protocol):
+class ApprovalClassifier(ABC):
     """Classify a tool call into an ``ApprovalTier`` value."""
 
+    @abstractmethod
     def classify(self, tool_call: ToolCall, ctx: AgentContext) -> str: ...
 
 
 @dataclass
-class TieredToolApprovalClassifier:
+class TieredToolApprovalClassifier(ApprovalClassifier):
     """Agent-level tool approval classifier driven by path rules.
 
     - approval.enabled=False  → all tools NORMAL

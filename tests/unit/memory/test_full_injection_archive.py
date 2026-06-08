@@ -4,23 +4,36 @@ from __future__ import annotations
 import pytest
 
 from framework.memory.core.scope import MemoryContext
-from framework.memory.core.system import InjectableMemorySystem
+from framework.memory.core.system import InjectableMemorySystem, MemorySystem
 from framework.memory.injection.full_injection import FullInjectionPolicy
 from framework.memory.stores.dir_archive import DirArchiveStorage
 from framework.memory.tags import ArchiveTag
 
 
-class _FakeInjectableMemorySystem(InjectableMemorySystem):
+class _FakeInjectableMemorySystem(InjectableMemorySystem, MemorySystem):
     """Minimal injectable memory system for testing archive injection."""
 
     def __init__(self, archive_dir):
         self._archive_dir = archive_dir
+    async def initialize(self): pass
+    async def close(self): pass
+    def create_message_history(self, context, initial_messages=None):
+        from framework.memory.history import MessageHistory
+        return MessageHistory()
+    async def add_messages(self, context, messages): pass
+    async def search(self, query, context, limit=5): return []
+    async def clear(self, context): pass
+
 
     async def get_storage_path(self, context):
         return self._archive_dir
 
     async def get_history(self, context, max_messages=None):
         return []
+
+    async def get_knowledge(self, context):
+        from framework.memory.core.models import LongTermMemory
+        return LongTermMemory()
 
     async def retrieve_knowledge(self, context, query=""):
         from framework.memory.core.models import LongTermMemory

@@ -8,9 +8,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from abc import ABC, abstractmethod
 from collections import defaultdict, deque
 from collections.abc import Sequence
-from typing import Protocol
 
 from framework.control.types import ControlCommand, ControlCommandType, ControlScope
 
@@ -19,16 +19,18 @@ logger = logging.getLogger(__name__)
 _DEFAULT_TTL = 300.0
 
 
-class ControlChannel(Protocol):
+class ControlChannel(ABC):
     """控制命令通道协议。
 
     负责命令输入：外部/预设策略 → agent runtime。
     """
 
+    @abstractmethod
     async def send(self, command: ControlCommand) -> None:
         """向 channel 发送控制命令。"""
         ...
 
+    @abstractmethod
     async def drain(
         self,
         scope: ControlScope,
@@ -44,6 +46,7 @@ class ControlChannel(Protocol):
         """
         ...
 
+    @abstractmethod
     async def peek(
         self,
         scope: ControlScope,
@@ -52,12 +55,13 @@ class ControlChannel(Protocol):
         """非破坏性查看 scope 下匹配的命令。"""
         ...
 
+    @abstractmethod
     async def cleanup_session(self, session_id: str) -> None:
         """清理指定 session 的所有命令。在 session 结束时调用，避免内存泄漏。"""
         ...
 
 
-class InMemoryControlChannel:
+class InMemoryControlChannel(ControlChannel):
     """内存实现的控制命令通道。
 
     按 session_id → command_type → deque 双层分区存储。

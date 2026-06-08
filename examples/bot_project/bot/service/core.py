@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from framework.core.experience.curator import ExperienceCurator
-from framework.workspace import DefaultWorkspaceContext
+from framework.workspace import DefaultWorkspaceContext, WorkspaceSwitchCallback
 
 if TYPE_CHECKING:
     from framework.commands.processor import SlashCommandProcessor
@@ -132,7 +132,7 @@ def _update_pruned_manager(
         policy._pruned_manager = pruned_manager
 
 
-class _WorkspaceCallbackAdapter:
+class _WorkspaceCallbackAdapter(WorkspaceSwitchCallback):
     """Adapter that wraps an async method as a WorkspaceSwitchCallback.
 
     Avoids defining one-shot inner classes in BotService.initialize().

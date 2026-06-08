@@ -9,6 +9,7 @@ from framework.commands.constants import (
     CommandAction,
     CommandDispatchPolicy,
 )
+from framework.commands.handlers import CommandHandler
 from framework.commands.models import (
     CommandContext,
     CommandHandlingResult,
@@ -21,7 +22,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class CdCommandHandler:
+class CdCommandHandler(CommandHandler):
     """处理 /cd <path> 命令。
 
     使用 NORMAL_QUEUE 策略：通过 Pipeline 正常流程处理，
@@ -66,7 +67,7 @@ class CdCommandHandler:
         )
 
 
-class ExitCommandHandler:
+class ExitCommandHandler(CommandHandler):
     """处理 /exit 命令。
 
     使用 NORMAL_QUEUE 策略。handler 内部调用 WorkspaceContext.exit()。
@@ -102,7 +103,7 @@ class ExitCommandHandler:
         )
 
 
-class PwdCommandHandler:
+class PwdCommandHandler(CommandHandler):
     """Handle /pwd command — print working directory.
 
     Read-only, no state change. Returns NORMAL_QUEUE + NOTICE.

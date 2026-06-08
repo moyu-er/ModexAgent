@@ -3,17 +3,32 @@ from __future__ import annotations
 
 import pytest
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, MagicMock
 
 from framework.memory.core.models import LongTermMemory
 from framework.memory.core.scope import MemoryContext
-from framework.memory.core.system import InjectableMemorySystem
+from framework.memory.core.system import InjectableMemorySystem  # ABC
 from framework.memory.injection.full_injection import FullInjectionPolicy
 
 
 def _make_injectable_system(knowledge_dir: Path | None = None):
     """Create a mock InjectableMemorySystem."""
-    system = AsyncMock(spec=InjectableMemorySystem)
+    system = AsyncMock()
+    # ABC conformance — stub all abstract methods
+    system.get_knowledge = AsyncMock()
+    system.retrieve_knowledge = AsyncMock()
+    system.get_history_entries = AsyncMock()
+    system.get_providers = lambda: []
+    system.prefetch_memories = AsyncMock()
+    system.get_knowledge_directory = AsyncMock()
+    system.get_storage_path = AsyncMock()
+    system.get_history = AsyncMock()
+    system.create_message_history = MagicMock()
+    system.initialize = AsyncMock()
+    system.close = AsyncMock()
+    system.add_messages = AsyncMock()
+    system.search = AsyncMock()
+    system.clear = AsyncMock()
     system.retrieve_knowledge = AsyncMock(return_value=LongTermMemory(
         soul="I am a test assistant.",
         user="- **Name**: (unknown)",

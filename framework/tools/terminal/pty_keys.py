@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import re
+from abc import ABC, abstractmethod
 from enum import StrEnum
-from typing import Protocol, runtime_checkable
 
 
 class CursorKeyMode(StrEnum):
@@ -90,8 +90,8 @@ _BRACKETED_PASTE_ENABLE = b"\x1b[?2004h"
 _BRACKETED_PASTE_DISABLE = b"\x1b[?2004l"
 
 
-@runtime_checkable
-class _StdinWriter(Protocol):
+class _StdinWriter(ABC):
+    @abstractmethod
     def write(self, data: bytes) -> object: ...
 
 

@@ -20,29 +20,34 @@ import os
 import socket
 import sys
 import threading
-from typing import Protocol, TextIO
+from abc import ABC, abstractmethod
+from typing import TextIO
 
 _READ_TIMEOUT = 0.5  # seconds for each socket recv()
 _PTY_ROWS = 30
 _PTY_COLS = 120
 
 
-class WritablePty(Protocol):
+class WritablePty(ABC):
+    @abstractmethod
     def write(self, data: str) -> None:
         """Write text to the PTY process."""
 
 
-class ReadablePtyFile(Protocol):
+class ReadablePtyFile(ABC):
+    @abstractmethod
     def settimeout(self, val: float) -> None:
         """Set the PTY socket read timeout."""
 
+    @abstractmethod
     def recv(self, size: int) -> bytes:
         """Receive bytes from the PTY socket."""
 
 
-class VisiblePtyProcess(WritablePty, Protocol):
+class VisiblePtyProcess(WritablePty, ABC):
     fileobj: ReadablePtyFile
 
+    @abstractmethod
     def isalive(self) -> bool:
         """Return True if the underlying process is still running."""
         ...

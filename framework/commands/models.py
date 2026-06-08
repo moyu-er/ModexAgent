@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 from framework.approval.types import ApprovalAction
 from framework.commands.constants import (
@@ -61,10 +62,12 @@ class CommandHandlingResult:
     truncatable_paths: list[str] | None = None
 
 
-class CommandProcessor(Protocol):
+class CommandProcessor(ABC):
+    @abstractmethod
     def parse(self, text: str) -> CommandParseResult:
         ...
 
+    @abstractmethod
     def dispatch_policy(
         self,
         invocation: SlashCommandInvocation,
@@ -72,6 +75,7 @@ class CommandProcessor(Protocol):
     ) -> CommandDispatchPolicy:
         ...
 
+    @abstractmethod
     async def handle(
         self,
         text: str,

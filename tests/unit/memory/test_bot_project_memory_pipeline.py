@@ -18,6 +18,7 @@ from framework.memory.archive_models import (
     ArchiveChannel,
 )
 from framework.memory.core.models import ArchiveEntry
+from framework.memory.core.system import InjectableMemorySystem, MemorySystem
 from framework.memory.core.scope import MemoryContext
 from framework.memory.default_system import DefaultMemorySystem
 from framework.memory.layers.factory import MemoryLayerFactory
@@ -79,7 +80,7 @@ class _EmptyArchiveGenerator:
         )
 
 
-class _FakeInjectableMemorySystem:
+class _FakeInjectableMemorySystem(InjectableMemorySystem, MemorySystem):
     """Minimal injectable memory system for testing archive injection via DirArchiveStorage.
 
     Satisfies the ``InjectableMemorySystem`` isinstance check in ``FullInjectionPolicy.assemble``.
@@ -111,10 +112,7 @@ class _FakeInjectableMemorySystem:
         return None
 
 
-# Register _FakeInjectableMemorySystem as a virtual subclass of InjectableMemorySystem
-# so ``isinstance(fake, InjectableMemorySystem)`` passes.
-from framework.memory.core.system import InjectableMemorySystem
-InjectableMemorySystem.register(_FakeInjectableMemorySystem)
+# _FakeInjectableMemorySystem explicitly inherits InjectableMemorySystem ABC
 
 
 def _bot_project_system(

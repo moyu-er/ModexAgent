@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import logging
+from abc import ABC, abstractmethod
 from collections.abc import Collection, Sequence
-from typing import Protocol
 
 from framework.approval.types import ApprovalAction
 from framework.commands.constants import (
@@ -27,11 +27,13 @@ from framework.commands.models import (
 logger = logging.getLogger(__name__)
 
 
-class CommandHandler(Protocol):
+class CommandHandler(ABC):
     @property
+    @abstractmethod
     def names(self) -> Collection[str]:
         ...
 
+    @abstractmethod
     def dispatch_policy(
         self,
         invocation: SlashCommandInvocation,
@@ -39,6 +41,7 @@ class CommandHandler(Protocol):
     ) -> CommandDispatchPolicy:
         ...
 
+    @abstractmethod
     async def handle(
         self,
         invocation: SlashCommandInvocation,
@@ -47,7 +50,7 @@ class CommandHandler(Protocol):
         ...
 
 
-class ApprovalCommandHandler:
+class ApprovalCommandHandler(CommandHandler):
     @property
     def names(self) -> Collection[str]:
         return (BuiltinCommand.APPROVE.value, BuiltinCommand.DENY.value)
@@ -88,7 +91,7 @@ class ApprovalCommandHandler:
         )
 
 
-class ContinueCommandHandler:
+class ContinueCommandHandler(CommandHandler):
     @property
     def names(self) -> Collection[str]:
         return (BuiltinCommand.CONTINUE.value,)
@@ -123,7 +126,7 @@ class ContinueCommandHandler:
         )
 
 
-class UnknownCommandHandler:
+class UnknownCommandHandler(CommandHandler):
     @property
     def names(self) -> Collection[str]:
         return ()
@@ -162,7 +165,7 @@ class InvalidCommandHandler:
         )
 
 
-class ControlCommandHandler:
+class ControlCommandHandler(CommandHandler):
     """Handles /stop and future control slash commands.
 
     Returns CONTROL_COMMAND action for the pipeline to execute immediately
@@ -221,7 +224,7 @@ def build_default_builtin_handlers() -> Sequence[CommandHandler]:
     return (ApprovalCommandHandler(), ContinueCommandHandler(), ControlCommandHandler())
 
 
-class SkillCommandHandler:
+class SkillCommandHandler(CommandHandler):
     @property
     def names(self) -> Collection[str]:
         return ()

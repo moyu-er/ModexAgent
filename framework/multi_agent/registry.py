@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from framework.multi_agent.comm_kind import AgentCommKind
 
@@ -26,29 +27,35 @@ class AgentProfile:
     comm_kind: AgentCommKind = AgentCommKind.NORMAL
 
 
-class AgentRegistry(Protocol):
+class AgentRegistry(ABC):
     """Agent 注册表协议（只读发现层）。"""
 
+    @abstractmethod
     def list_agents(self) -> list[AgentDescriptor]:
         """列出所有已注册 Agent 的描述符。"""
         ...
 
+    @abstractmethod
     def get_descriptor(self, name: str) -> AgentDescriptor | None:
         """按名称获取 Agent 描述符。"""
         ...
 
+    @abstractmethod
     def get_status(self, name: str) -> AgentState:
         """按名称获取 Agent 状态。"""
         ...
 
+    @abstractmethod
     def list_profiles(self, caller: str | None = None) -> list[AgentProfile]:
         """列出对 caller 可见的所有 Agent 画像。"""
         ...
 
+    @abstractmethod
     def get_profile(self, name: str) -> AgentProfile | None:
         """按名称获取 Agent 画像。"""
         ...
 
+    @abstractmethod
     def find_profiles(
         self,
         capability: str | None = None,

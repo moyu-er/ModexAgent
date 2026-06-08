@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable, Iterator, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from framework.memory.archive_models import ArchiveChannel
 from framework.memory.core.layers import ArchiveMemoryManager, MemoryLayerSet, SessionMemoryManager
 from framework.memory.core.message import ChatMessage
 from framework.memory.core.models import LongTermMemory
@@ -16,7 +17,11 @@ from framework.memory.core.scope import (
     MemoryLayerName,
     SessionScope,
 )
-from framework.memory.core.system import MemorySystem
+from framework.memory.core.system import (
+    ContextManagedMemorySystem,
+    InjectableMemorySystem,
+    MemorySystem,
+)
 from framework.memory.history import MessageHistory
 
 if TYPE_CHECKING:
@@ -156,7 +161,7 @@ class ScopedMessageHistory(MessageHistory):
         raise RuntimeError("Use 'await history.to_list()' for async access.")
 
 
-class DefaultMemorySystem(MemorySystem):
+class DefaultMemorySystem(MemorySystem, InjectableMemorySystem, ContextManagedMemorySystem):
     """Default tiered memory system that delegates to typed layer managers.
 
     Receives a ``MemoryLayerSet``, ``MemoryStoreRegistry``, and optional
@@ -165,10 +170,6 @@ class DefaultMemorySystem(MemorySystem):
 
     This is the single concrete memory system.  There is no legacy
     compatibility path — all callers should migrate to this class.
-
-    This class satisfies the :class:`~framework.memory.core.system.InjectableMemorySystem`
-    Protocol via duck typing.  All methods required by the injection policy
-    are implemented.
     """
 
     def __init__(
@@ -322,6 +323,34 @@ class DefaultMemorySystem(MemorySystem):
 
     # -- Archive convenience --------------------------------------------
 
+    async def get_history_entries(
+        self,
+        context: MemoryContext,
+        limit: int = 5,
+        query: str = "",
+        *,
+        channel: ArchiveChannel = ArchiveChannel.CONTEXT,
+    ) -> list[dict[str, Any]]:
+        archive = self._layers.archive
+        if archive is None:
+            return []
+        if query:
+            entries = await archive.search(context, query=query, limit=limit, channel=channel)
+            if not entries:
+                entries = await archive.get_recent(context, limit=limit, channel=channel)
+        else:
+            entries = await archive.get_recent(context, limit=limit, channel=channel)
+        return [
+            {
+                "summary": e.summary,
+                "metadata": dict(e.metadata),
+                "archive_id": e.entry_id,
+                "cursor": e.entry_id,
+                "created_at": e.created_at.isoformat() if e.created_at is not None else None,
+            }
+            for e in entries
+        ]
+
     async def get_unprocessed_history_count(
         self, context: MemoryContext, cursor_name: str = "dream"
     ) -> int:
@@ -337,6 +366,12 @@ class DefaultMemorySystem(MemorySystem):
         return self._layers.archive
 
     # -- Knowledge convenience ------------------------------------------
+
+    async def get_knowledge(self, context: MemoryContext) -> LongTermMemory:
+        knowledge = self._layers.knowledge
+        if knowledge is None:
+            return LongTermMemory()
+        return await knowledge.get_all(context)
 
     async def retrieve_knowledge(
         self,

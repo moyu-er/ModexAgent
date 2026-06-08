@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from framework.workspace.context import DefaultWorkspaceContext
+from framework.workspace.models import WorkspaceSwitchCallback
 
 
 @pytest.fixture
@@ -168,7 +169,7 @@ class TestDefaultWorkspaceContext:
     async def test_callback_called_on_cd(self, home, target):
         calls = []
 
-        class Spy:
+        class Spy(WorkspaceSwitchCallback):
             async def on_workspace_switch(self, old_dir, new_dir):
                 calls.append((old_dir, new_dir))
 
@@ -183,7 +184,7 @@ class TestDefaultWorkspaceContext:
     async def test_callback_called_on_exit(self, home, target):
         calls = []
 
-        class Spy:
+        class Spy(WorkspaceSwitchCallback):
             async def on_workspace_switch(self, old_dir, new_dir):
                 calls.append((old_dir, new_dir))
 
@@ -197,7 +198,7 @@ class TestDefaultWorkspaceContext:
 
     @pytest.mark.asyncio
     async def test_callback_failure_maintains_state(self, home, target):
-        class Failing:
+        class Failing(WorkspaceSwitchCallback):
             async def on_workspace_switch(self, old_dir, new_dir):
                 raise RuntimeError("boom")
 

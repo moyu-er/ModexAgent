@@ -906,6 +906,31 @@ class AgentPool(AgentRegistry):
             return True
         return caller in descriptor.allowed_callers
 
+    def find_profiles(
+        self,
+        capability: str | None = None,
+        skill: str | None = None,
+        tool: str | None = None,
+        caller: str | None = None,
+    ) -> list[AgentProfile]:
+        profiles = self.list_profiles(caller=caller)
+        results: list[AgentProfile] = []
+        for profile in profiles:
+            if capability is not None:
+                caps = profile.capabilities or []
+                if capability not in caps:
+                    continue
+            if skill is not None:
+                skills = profile.allowed_skills
+                if skills is not None and skill not in skills:
+                    continue
+            if tool is not None:
+                tools = profile.allowed_tools
+                if tools is not None and tool not in tools:
+                    continue
+            results.append(profile)
+        return results
+
     def list_profiles(self, caller: str | None = None) -> list[AgentProfile]:
         return [
             self._make_profile(inst.descriptor)
