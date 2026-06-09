@@ -60,27 +60,33 @@ _MESSAGES: dict[TerminalCommandStatus, str] = {
     TerminalCommandStatus.PAGINATED: "Terminal is not ready: a pager is active.",
 }
 
-_ALLOWED_STATES: frozenset[TerminalCommandStatus] = frozenset({
+_COMMAND_ALLOWED: frozenset[TerminalCommandStatus] = frozenset({
+    TerminalCommandStatus.IDLE,
+    TerminalCommandStatus.UNKNOWN,
+    TerminalCommandStatus.COMPLETED,
+    TerminalCommandStatus.TIMED_OUT,
+})
+
+_PROCESS_ALLOWED: frozenset[TerminalCommandStatus] = frozenset({
     TerminalCommandStatus.IDLE,
     TerminalCommandStatus.UNKNOWN,
     TerminalCommandStatus.WAITING_INPUT,
+    TerminalCommandStatus.PAGINATED,
     TerminalCommandStatus.COMPLETED,
     TerminalCommandStatus.TIMED_OUT,
 })
 
 
-async def check_terminal_writable(
+async def _check_writable(
     session: TerminalSession,
+    allowed: frozenset[TerminalCommandStatus],
     config: TerminalRuntimeConfig | None = None,
 ) -> TerminalGuardResult | None:
-    """Check if terminal is ready for new input.
-
-    Returns None if writable (proceed), or GuardResult with diagnostic snapshot.
-    """
+    """Generic guard — returns None if status is in *allowed*, else diagnostic."""
     cfg = config or TerminalRuntimeConfig()
     status = await session.command_status(config=cfg)
 
-    if status in _ALLOWED_STATES:
+    if status in allowed:
         return None
 
     # Build diagnostic snapshot
@@ -111,3 +117,38 @@ async def check_terminal_writable(
         message=_MESSAGES.get(status, f"Terminal is not ready: state is {status.value}."),
         snapshot=snapshot,
     )
+
+
+async def check_command_writable(
+    session: TerminalSession,
+    config: TerminalRuntimeConfig | None = None,
+) -> TerminalGuardResult | None:
+    """Guard for CommandTool: only allow submission when terminal is truly idle.
+
+    WAITING_INPUT is rejected — a new command would overwrite the password prompt.
+    PAGINATED is rejected — a new command would be swallowed by the pager.
+    """
+    return await _check_writable(session, _COMMAND_ALLOWED, config)
+
+
+async def check_process_writable(
+    session: TerminalSession,
+    config: TerminalRuntimeConfig | None = None,
+) -> TerminalGuardResult | None:
+    """Guard for ProcessTool: allow interaction with running processes.
+
+    WAITING_INPUT is allowed — ProcessTool is used to type passwords.
+    PAGINATED is allowed — ProcessTool can send 'q' or Space to control the pager.
+    EXECUTING/LONG_RUNNING/STUCK are still rejected to avoid injecting data
+    into a command that isn't expecting it (e.g. during build output).
+    """
+    return await _check_writable(session, _PROCESS_ALLOWED, config)
+
+
+# Backward-compatible alias
+async def check_terminal_writable(
+    session: TerminalSession,
+    config: TerminalRuntimeConfig | None = None,
+) -> TerminalGuardResult | None:
+    """Deprecated — use check_command_writable or check_process_writable."""
+    return await check_command_writable(session, config)

@@ -18,8 +18,9 @@ class ToolResultOverflowHandler:
     # LLM-facing text is centralised and can be overridden by subclasses.
     _INSTRUCTION_TEMPLATE = (
         "This result was too large and has been split into {chunk_count} chunk(s). "
-        "Use the read tool with "
-        'path="{dir_path}/{chunk_index}.full.txt" to load any chunk.'
+        "Chunk 1 is already shown in the <chunk index=\"1\"> element below. "
+        "To read rest chunks through {total_chunks}, use the read tool with "
+        'path="{dir_path}/$CHUNK.full.txt", replacing $CHUNK with the number you need.'
     )
 
     def __init__(
@@ -47,8 +48,8 @@ class ToolResultOverflowHandler:
 
         instruction = self._INSTRUCTION_TEMPLATE.format(
             chunk_count=ref.chunk_count,
+            total_chunks=ref.chunk_count,
             dir_path=ref.dir_path,
-            chunk_index="N",
         )
 
         xml = (
