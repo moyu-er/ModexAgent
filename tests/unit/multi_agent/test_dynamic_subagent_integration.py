@@ -412,7 +412,6 @@ class TestSubagentIsolation:
     """
 
     async def test_subagent_gets_dedicated_context_manager(self):
-        from framework.core.context import InMemoryContextManager
         from framework.multi_agent.address import AgentAddress
         from framework.multi_agent.communication import AgentCommunicationService
 
@@ -425,8 +424,6 @@ class TestSubagentIsolation:
             registry = AgentTemplateRegistry(project)
             template = registry.get_template("main", "helper")
             assert template is not None
-
-            main_ctx = InMemoryContextManager(base_system_prompt="Main system prompt")
 
             mock_pool = _make_mock_pool()
             mock_pool._agents = {}
@@ -455,9 +452,6 @@ class TestSubagentIsolation:
             passed_ctx = call_kwargs[1].get("context_manager")
             assert passed_ctx is not None, (
                 "_create_dynamic_subagent must pass dedicated context_manager"
-            )
-            assert passed_ctx is not main_ctx, (
-                "Must be a fresh instance, not pool's default (main's) context manager"
             )
 
     async def test_subagent_gets_dedicated_tool_manager(self):
@@ -520,9 +514,8 @@ class TestSubagentMemoryCorrectness:
     """
 
     async def test_subagent_gets_memory_system_context_manager(self):
-        """Subagent must use MemorySystemContextManager, not InMemoryContextManager."""
+        """Subagent must use MemorySystemContextManager."""
         from framework.memory.system import MemorySystemContextManager
-        from framework.core.context import InMemoryContextManager
         from framework.multi_agent.address import AgentAddress
         from framework.multi_agent.communication import AgentCommunicationService
         from framework.memory.core.scope import MemoryAgentRole
@@ -566,9 +559,6 @@ class TestSubagentMemoryCorrectness:
             assert passed_ctx is not None
             assert isinstance(passed_ctx, MemorySystemContextManager), (
                 f"Expected MemorySystemContextManager, got {type(passed_ctx).__name__}"
-            )
-            assert not isinstance(passed_ctx, InMemoryContextManager), (
-                "Must not use bare InMemoryContextManager (no memory persistence)"
             )
 
             # Memory system must exist and be initialized

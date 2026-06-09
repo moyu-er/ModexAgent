@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import logging
+from abc import ABC, abstractmethod
 from collections.abc import Collection, Sequence
-from typing import Protocol
 
 from framework.approval.types import ApprovalAction
 from framework.commands.constants import (
@@ -15,23 +15,24 @@ from framework.commands.constants import (
     CommandAction,
     CommandDispatchPolicy,
 )
-from xml.sax.saxutils import escape as xml_escape
-
 from framework.memory.core.message import ContentFormat
 from framework.commands.models import (
     CommandContext,
     CommandHandlingResult,
     SlashCommandInvocation,
 )
+from framework.utils.xml import xml_attr, xml_text
 
 logger = logging.getLogger(__name__)
 
 
-class CommandHandler(Protocol):
+class CommandHandler(ABC):
     @property
+    @abstractmethod
     def names(self) -> Collection[str]:
         ...
 
+    @abstractmethod
     def dispatch_policy(
         self,
         invocation: SlashCommandInvocation,
@@ -39,6 +40,7 @@ class CommandHandler(Protocol):
     ) -> CommandDispatchPolicy:
         ...
 
+    @abstractmethod
     async def handle(
         self,
         invocation: SlashCommandInvocation,
@@ -47,7 +49,7 @@ class CommandHandler(Protocol):
         ...
 
 
-class ApprovalCommandHandler:
+class ApprovalCommandHandler(CommandHandler):
     @property
     def names(self) -> Collection[str]:
         return (BuiltinCommand.APPROVE.value, BuiltinCommand.DENY.value)
@@ -88,7 +90,7 @@ class ApprovalCommandHandler:
         )
 
 
-class ContinueCommandHandler:
+class ContinueCommandHandler(CommandHandler):
     @property
     def names(self) -> Collection[str]:
         return (BuiltinCommand.CONTINUE.value,)
@@ -123,7 +125,7 @@ class ContinueCommandHandler:
         )
 
 
-class UnknownCommandHandler:
+class UnknownCommandHandler(CommandHandler):
     @property
     def names(self) -> Collection[str]:
         return ()
@@ -162,7 +164,7 @@ class InvalidCommandHandler:
         )
 
 
-class ControlCommandHandler:
+class ControlCommandHandler(CommandHandler):
     """Handles /stop and future control slash commands.
 
     Returns CONTROL_COMMAND action for the pipeline to execute immediately
@@ -221,7 +223,7 @@ def build_default_builtin_handlers() -> Sequence[CommandHandler]:
     return (ApprovalCommandHandler(), ContinueCommandHandler(), ControlCommandHandler())
 
 
-class SkillCommandHandler:
+class SkillCommandHandler(CommandHandler):
     @property
     def names(self) -> Collection[str]:
         return ()
@@ -277,10 +279,10 @@ class SkillCommandHandler:
                 invocation=invocation,
             )
         content = (
-            f'<command_context type="skill" name="{xml_escape(skill.name)}">\n'
-            f"<skill>\n{xml_escape(skill.content)}\n</skill>\n"
+            f'<command_context type="skill" name="{xml_attr(skill.name)}">\n'
+            f"<skill>\n{xml_text(skill.content)}\n</skill>\n"
             f"</command_context>\n\n"
-            f"<user_input>\n{xml_escape(invocation.args)}\n</user_input>"
+            f"<user_input>\n{xml_text(invocation.args)}\n</user_input>"
         )
         logger.info("Resolved slash skill command: /%s", invocation.command)
         return CommandHandlingResult(

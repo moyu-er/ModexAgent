@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Protocol
 
 
 class CdError(StrEnum):
@@ -37,13 +37,14 @@ class CdResult:
     error: CdError | None = None
 
 
-class WorkspaceSwitchCallback(Protocol):
+class WorkspaceSwitchCallback(ABC):
     """工作空间切换回调协议。
 
-    实现此 Protocol 的类可在工作空间切换时接收通知，
+    实现此 ABC 的类可在工作空间切换时接收通知，
     以执行子系统的重建或清理工作。
     """
 
+    @abstractmethod
     async def on_workspace_switch(
         self,
         old_data_dir: Path,

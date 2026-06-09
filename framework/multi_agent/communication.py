@@ -196,7 +196,7 @@ class AgentCommunicationService:
 
     def _resolve_target(self, target_agent: str) -> tuple[AgentCommKind | None, AgentTemplate | None]:
         """Resolve target_agent to comm_kind + optional template."""
-        # 1. Check if registered in registry (AgentPool or AgentDirectory)
+        # 1. Check if registered in registry (AgentPool)
         descriptor = self._registry.get_descriptor(target_agent)
         if descriptor is not None:
             return descriptor.comm_kind, None
@@ -443,7 +443,6 @@ class AgentCommunicationService:
             ),
             system_prompt_template=system_prompt,
             max_iterations=template.max_steps,
-            max_tools_per_turn=10,
             execution_strategy="react",
             context_strategy="persistent",
             safety_policy=self._safety,
@@ -648,29 +647,6 @@ class AgentCommunicationService:
             return invocation_id_in, None
 
         return None, f"Unknown target kind: {target_kind!r}"
-
-    async def send_sync(
-        self,
-        *,
-        target_agent: str,
-        content: str,
-        invocation_id: str | None,
-        context: AgentContext,
-    ) -> str:
-        """Send synchronously via broker wakeup. Returns result text."""
-        result = await self._send(
-            target_agent=target_agent,
-            content=content,
-            invocation_id=invocation_id,
-            context=context,
-            async_mode=False,
-        )
-        if result is None or result.error:
-            return f"Error: {result.error if result else 'unknown'}"
-        text = f"Message sent to {target_agent}." + (
-            f" invocation_id: {result.invocation_id}" if result.invocation_id else ""
-        )
-        return text
 
     async def send_async(
         self,

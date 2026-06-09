@@ -232,11 +232,9 @@ class TestLiteLLMProviderRetryRouting:
             return p
 
     @pytest.mark.asyncio
-    async def test_chat_routes_through_retry_wrapper(self, provider):
-        """chat() should call chat_with_retry which calls _chat_raw."""
-        response = MagicMock()
-        response.choices = []
-        provider._acompletion.return_value = response
+    async def test_chat_routes_through_streaming_retry_wrapper(self, provider):
+        """chat() now uses streaming internally; error via stream returns error response."""
+        provider._acompletion.side_effect = Exception("503 Service Unavailable")
 
         result = await provider.chat_with_retry(
             messages=[{"role": "user", "content": "hi"}],
@@ -250,28 +248,44 @@ class TestLiteLLMProviderRetryRouting:
 
     @pytest.mark.asyncio
     async def test_chat_retries_on_transient_error(self, provider):
-        # Build a proper response so _chat_raw doesn't treat it as an error
-        ok_msg = MagicMock()
-        ok_msg.content = "recovered"
-        ok_choice = MagicMock()
-        ok_choice.message = ok_msg
-        ok_choice.finish_reason = "stop"
-        ok_response = MagicMock()
-        ok_response.choices = [ok_choice]
+        call_count = 0
 
-        provider._acompletion.side_effect = [
-            Exception("429 rate limit"),
-            ok_response,
-        ]
+        async def mock_acompletion(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise Exception("429 rate limit")
+
+            class FakeDelta:
+                pass
+            delta = FakeDelta()
+            delta.content = "recovered"
+            delta.reasoning_content = None
+            delta.tool_calls = None
+
+            class FakeChoice:
+                def __init__(self):
+                    self.delta = delta
+                    self.finish_reason = "stop"
+
+            class FakeChunk:
+                def __init__(self):
+                    self.choices = [FakeChoice()]
+
+            class FakeIterator:
+                async def __aiter__(self):
+                    yield FakeChunk()
+
+            return FakeIterator()
+
+        provider._acompletion = mock_acompletion
 
         result = await provider.chat_with_retry(
             messages=[{"role": "user", "content": "hi"}],
             max_retries=2,
         )
 
-        # Exception is caught by _chat_raw → error response → retried by
-        # _execute_with_retry → second call succeeds with proper response
-        assert provider._acompletion.call_count == 2
+        assert call_count == 2
         assert isinstance(result, LLMResponse)
         assert result.content == "recovered"
 

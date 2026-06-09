@@ -78,14 +78,14 @@ class PromptRegistry:
         Variable values are XML-escaped so user content containing <, >, &
         or " characters does not break XML template structure.
         """
-        from xml.sax.saxutils import escape as xml_escape
+        from framework.utils.xml import xml_attr
 
         result = content
         for var_name, var_value in variables.items():
             placeholder = f"{{{var_name}}}"
             result = result.replace(
                 placeholder,
-                xml_escape(str(var_value), {'"': "&quot;", "'": "&apos;"}),
+                xml_attr(str(var_value)),
             )
         return result
 

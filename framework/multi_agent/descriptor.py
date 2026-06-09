@@ -6,14 +6,10 @@ from typing import TYPE_CHECKING, Any
 from framework.multi_agent.comm_kind import AgentCommKind
 
 if TYPE_CHECKING:
-    from framework.core.agent import Agent
     from framework.core.context import ContextManager
-    from framework.core.emitter import EmitterConfig
     from framework.core.llm_struct import RuntimeSafetyPolicy
-    from framework.core.tool_manager import ToolManager
     from framework.multi_agent.address import AgentAddress
     from framework.pipeline.pipeline import AgentPipeline
-    from framework.session.agent_session import AgentSession
 
 
 @dataclass
@@ -56,17 +52,10 @@ class AgentDescriptor:
     denied_tools: list[str] | None = None
     allowed_skills: list[str] | None = None
     max_iterations: int = 15
-    max_tools_per_turn: int = 10
-    context_window_tokens: int | None = None
-    fail_on_tool_error: bool = False
-    streaming_to_user: bool = True
-    internal_streaming: bool = False
     execution_strategy: str = "react"  # "react" | "single_turn" | "pipeline"
     context_manager: ContextManager | None = None
     context_strategy: str = "persistent"  # "persistent" | "ephemeral" | "shared"
-    governance_config: ContextGovernanceConfig = field(default_factory=ContextGovernanceConfig)
     inbox_strategy: str = "drain_all"  # "drain_all" | "drain_limit" | "peek_latest"
-    inbox_max_messages_per_turn: int = 10
     allowed_callers: list[str] | None = None
     role_description: str = ""
     specialties: list[str] = field(default_factory=list)
@@ -80,13 +69,8 @@ class AgentInstance:
     """由 AgentFactory 组装完成的 Agent 运行时实例。"""
 
     descriptor: AgentDescriptor
-    agent: Agent
     context_manager: ContextManager
-    tool_manager: ToolManager
     pipeline: AgentPipeline | None = None
-    session: AgentSession | None = None
-    emitter_config: EmitterConfig | None = None
-    hooks: list[Any] = field(default_factory=list)
 
     async def stop(self) -> None:
         """优雅停止该实例并释放资源。"""

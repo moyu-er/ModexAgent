@@ -68,22 +68,15 @@ class TestConsumerDuringErrorBackoff:
         Actual (before fix): consumer creates dispatch task with invalid state transition.
         """
         from framework.multi_agent.descriptor import AgentDescriptor, AgentInstance
-        from framework.core.agent import Agent
-        from framework.core.tool_manager import InMemoryToolManager
-        from framework.core.context import InMemoryContextManager
+
 
         broker = pool._broker
         pool._status["main"] = AgentState.ERROR
 
         desc = AgentDescriptor(address=AgentAddress(kind="agent", name="main"))
-        agent_stub = MagicMock(spec=Agent)
-        agent_stub.name = "main"
         instance = AgentInstance(
             descriptor=desc,
-            agent=agent_stub,
-            tool_manager=InMemoryToolManager(),
-            pipeline=None,
-            context_manager=InMemoryContextManager(),
+            context_manager=MagicMock(),
         )
 
         consumer_task = asyncio.create_task(pool._consume_messages(instance, desc))
@@ -119,23 +112,14 @@ class TestConsumerDuringErrorBackoff:
         for state transitions.
         """
         from framework.multi_agent.descriptor import AgentDescriptor, AgentInstance
-        from framework.core.agent import Agent
-        from framework.core.tool_manager import InMemoryToolManager
-        from framework.core.context import InMemoryContextManager
-
         broker = pool._broker
         pool._status["main"] = AgentState.ERROR
         pool._error_counts["main"] = 1
 
         desc = AgentDescriptor(address=AgentAddress(kind="agent", name="main"))
-        agent_stub = MagicMock(spec=Agent)
-        agent_stub.name = "main"
         instance = AgentInstance(
             descriptor=desc,
-            agent=agent_stub,
-            tool_manager=InMemoryToolManager(),
-            pipeline=None,
-            context_manager=InMemoryContextManager(),
+            context_manager=MagicMock(),
         )
 
         consumer_task = asyncio.create_task(pool._consume_messages(instance, desc))

@@ -10,10 +10,10 @@ from framework.agents.react.constants import ReActNode, ReActReason
 from framework.agents.react.state import ReActSnapshotPolicy, get_react_state
 from framework.approval.constants import ApprovalDecision, ApprovalTier
 from framework.core.agent import AgentContext
-from framework.core.emitter import ToolCall
 from framework.core.graph.interrupt import interrupt
 from framework.core.graph.node import Node, NodeTransition
 from framework.core.tool_manager import ToolResult
+from framework.core.types import ToolCall
 from framework.hook import HookPayload, HookPoint
 from framework.runtime.enums import (
     ApprovalDenyPolicy,

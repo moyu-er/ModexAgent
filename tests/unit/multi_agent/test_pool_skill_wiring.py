@@ -63,7 +63,6 @@ async def test_factory_passes_skill_manager_to_pipeline() -> None:
             )
             instance = await factory.create_agent(
                 descriptor,
-                mode="pipeline",
                 broker=broker,
                 skill_manager=None,  # Same as register_resident default
             )

@@ -185,7 +185,6 @@ async def build_subagent_descriptor(
         ),
         system_prompt_template=system_prompt,
         max_iterations=agent_cfg.max_steps,
-        max_tools_per_turn=10,
         execution_strategy="react",
         context_strategy="persistent",
         safety_policy=safety,

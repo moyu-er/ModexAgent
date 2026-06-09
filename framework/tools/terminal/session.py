@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
-from xml.sax.saxutils import escape as xml_escape
 
 from framework.tools.terminal.prompt import (
     INPUT_PROMPT_MARKERS,
@@ -28,11 +26,12 @@ from framework.tools.terminal.pty_keys import (
     strip_smkx_rmkx,
 )
 from framework.tools.terminal.results import TerminalRead, TerminalSegment
-
 from framework.tools.terminal.types import TerminalCommandStatus
+from framework.utils.xml import xml_text
 
 if TYPE_CHECKING:
     from framework.tools.terminal.backends.base import TerminalBackend
+    from framework.tools.terminal.config import TerminalRuntimeConfig
     from framework.tools.terminal.types import ShellInfo
 
 
@@ -96,6 +95,29 @@ class TerminalSession:
         self.bracketed_paste_enabled: bool = False
         self._last_byte_at: float = time.monotonic()
         self._ever_received_bytes: bool = False
+        self._command_started_at: float | None = None
+
+    def touch_output(self) -> None:
+        """Reset the no-output timer. Called when output bytes are received."""
+        self._last_byte_at = time.monotonic()
+        self._ever_received_bytes = True
+
+    def set_expected_state(self, status: TerminalCommandStatus | None) -> None:
+        """Set the expected terminal state after an agent operation."""
+        self._expected_state = status
+
+    def detect_interference(self, actual: TerminalCommandStatus) -> bool:
+        """Detect if actual state diverges from expected (possible user interference).
+
+        Only active for visible terminal sessions.
+        """
+        if not self.visible or self._expected_state is None:
+            return False
+        unexpected = {
+            (TerminalCommandStatus.EXECUTING, TerminalCommandStatus.IDLE),
+            (TerminalCommandStatus.LONG_RUNNING, TerminalCommandStatus.IDLE),
+        }
+        return (self._expected_state, actual) in unexpected
 
     async def ensure_started(self) -> None:
         """Start the backend immediately if not already started.
@@ -200,7 +222,7 @@ class TerminalSession:
                 await self._backend.terminate()
             return (
                 f"<shell_result>\n"
-                f"<output>{xml_escape(output)}</output>\n"
+                f"<output>{xml_text(output)}</output>\n"
                 f"<status>ended</status>\n"
                 f"<message>Terminal session ended</message>\n"
                 f"</shell_result>"
@@ -261,7 +283,7 @@ class TerminalSession:
             self._last_status = "timeout"
             return (
                 f"<shell_result>\n"
-                f"<output>{xml_escape(output)}</output>\n"
+                f"<output>{xml_text(output)}</output>\n"
                 f"<status>timeout</status>\n"
                 f"<message>Timed out after {timeout:.0f}s — command may still be running</message>\n"
                 f"</shell_result>"
@@ -271,7 +293,7 @@ class TerminalSession:
             self._last_status = "waiting_input"
             return (
                 f"<shell_result>\n"
-                f"<output>{xml_escape(output)}</output>\n"
+                f"<output>{xml_text(output)}</output>\n"
                 f"<status>waiting_input</status>\n"
                 f"<message>Command is waiting for user input</message>\n"
                 f"</shell_result>"
@@ -281,7 +303,7 @@ class TerminalSession:
             self._last_status = "ended"
             return (
                 f"<shell_result>\n"
-                f"<output>{xml_escape(output)}</output>\n"
+                f"<output>{xml_text(output)}</output>\n"
                 f"<status>ended</status>\n"
                 f"<message>Terminal session ended</message>\n"
                 f"</shell_result>"
@@ -367,10 +389,8 @@ class TerminalSession:
 
     def _startup_env(self) -> dict[str, str]:
         """Return environment for agent-managed terminal sessions."""
-        env = dict(os.environ)
-        if self._env:
-            env.update(self._env)
-        return env
+        from framework.tools.terminal.env import build_full_env
+        return build_full_env(self._env)
 
     def get_history(self) -> list[CommandRecord]:
         """Return command history (newest last)."""
@@ -444,8 +464,7 @@ class TerminalSession:
             return read
 
         # Track raw byte activity for stuck/executing detection
-        self._last_byte_at = time.monotonic()
-        self._ever_received_bytes = True
+        self.touch_output()
 
         raw_bytes = read.raw.encode("utf-8", errors="replace")
 
@@ -490,25 +509,30 @@ class TerminalSession:
             return TerminalRead()
         return await self.poll_once(timeout=timeout)
 
-    async def command_status(self) -> TerminalCommandStatus:
+    async def command_status(
+        self,
+        config: TerminalRuntimeConfig | None = None,
+    ) -> TerminalCommandStatus:
         """Compute current terminal status using the detection priority rules.
 
         Priority: COMPLETED > UNKNOWN > WAITING_INPUT > IDLE > PAGINATED >
-                  EXECUTING > STUCK
+                  STUCK > LONG_RUNNING > EXECUTING
         """
+        from framework.tools.terminal.config import TerminalRuntimeConfig as _Cfg
+
+        cfg = config or _Cfg()
+
         # 1. Process exit
         if not await self.is_alive():
+            self._command_started_at = None
             return TerminalCommandStatus.COMPLETED
 
         # 2. No data ever received → UNKNOWN (safety net)
-        #    Use _ever_received_bytes flag rather than comparing
-        #    _last_byte_at (time.monotonic) vs created_at (time.time)
-        #    since they come from different clocks.
         if not self._ever_received_bytes:
             return TerminalCommandStatus.UNKNOWN
 
         # Refresh to get latest data
-        read = await self.refresh_output(timeout=0.05)
+        await self.refresh_output(timeout=0.05)
 
         # 3. Content marker → WAITING_INPUT (fast path)
         segment = await self.current_segment()
@@ -518,6 +542,7 @@ class TerminalSession:
 
         # 4. Prompt stable → IDLE
         if segment.is_empty_prompt:
+            self._command_started_at = None
             return TerminalCommandStatus.IDLE
 
         # 5. Pager detection
@@ -525,13 +550,19 @@ class TerminalSession:
         if detect_pager_entry(cursor):
             return TerminalCommandStatus.PAGINATED
 
-        # 6. Raw bytes flowing → EXECUTING
+        # 6. No-output timeout → STUCK
         raw_idle_ms = (time.monotonic() - self._last_byte_at) * 1000
-        if read.stdout or raw_idle_ms < 15000:
-            return TerminalCommandStatus.EXECUTING
+        if raw_idle_ms >= cfg.no_output_timeout_ms:
+            return TerminalCommandStatus.STUCK
 
-        # 7. 15s no bytes → STUCK
-        return TerminalCommandStatus.STUCK
+        # 7. Long-running detection
+        if self._command_started_at is not None:
+            elapsed_ms = (time.monotonic() - self._command_started_at) * 1000
+            if elapsed_ms >= cfg.long_running_threshold_ms:
+                return TerminalCommandStatus.LONG_RUNNING
+
+        # 8. Active output → EXECUTING
+        return TerminalCommandStatus.EXECUTING
 
     async def last_command_output(self) -> str:
         """Get complete output from the last command to current terminal state.
@@ -572,12 +603,15 @@ class TerminalSession:
         self._busy_after_timeout = False
 
     async def send_interrupt(self) -> None:
-        """Send Ctrl-C (\\x03) to the backend and clear busy state.
+        """Send Ctrl-C to the backend and clear busy state.
 
-        Allows the agent (or user) to interrupt a long-running or timed-out
-        command so that the next execute() can start a fresh command.
+        Each backend implements interrupt() with its platform-appropriate
+        mechanism: pexpect uses sendintr() (os.kill SIGINT), Windows
+        backends write CTRL_C through the PTY input stream (matching how
+        user keyboard Ctrl+C reaches the shell), tmux forwards it via
+        send_keys.  See pty_keys.CTRL_C for the rationale.
         """
-        await self._backend.write("\x03")
+        await self._backend.interrupt()
         self._busy_after_timeout = False
 
     async def submit_command(self, command: str) -> None:
@@ -588,6 +622,7 @@ class TerminalSession:
         caller (CommandTool.execute) already guards against busy/dead
         states and the shell is expected to be at a clean prompt.
         """
+        self._command_started_at = time.monotonic()
         await self._discard_pending_output()
         ending = self.shell_info.family.command_ending()
         await self._backend.write(command + ending)

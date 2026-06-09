@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from enum import StrEnum
 from typing import Any
-from xml.sax.saxutils import escape as xml_escape
 
 from framework.core.tool_manager import Tool
 from framework.tools.terminal.managers import TerminalManagerBase
 from framework.tools.terminal.process_registry import ProcessRegistry
 from framework.tools.terminal.prompt import resolve_cursor_line
+from framework.tools.terminal.types import TerminalVisibility
+from framework.utils.xml import xml_attr, xml_text
+
+
+def _visibility_text(visibility: TerminalVisibility | str) -> str:
+    return visibility.value if isinstance(visibility, TerminalVisibility) else str(visibility)
 
 
 class TerminalAction(StrEnum):
@@ -132,9 +138,9 @@ class TerminalTool(Tool):
                 if self._registry:
                     running = self._registry.get_running_by_terminal(s.name)
                     if running:
-                        proc_attr = f' process="{xml_escape(running.command)}"'
+                        proc_attr = f' process="{xml_attr(running.command)}"'
                 lines.append(
-                    f'  <tab name="{xml_escape(s.name)}" shell="{s.shell_type}" '
+                    f'  <tab name="{xml_attr(s.name)}" shell="{s.shell_type}" '
                     f'created_at="{int(s.created_at)}" commands="{s.command_count}"{default_attr}{alive_attr}{proc_attr} />'
                 )
             lines.append("</tabs>")
@@ -169,7 +175,18 @@ class TerminalTool(Tool):
             if session is None:
                 return "Error: No default terminal is active."
             await session.send_interrupt()
-            return f"Sent Ctrl+C to terminal '{session.name}'."
+            # Drain output so the agent sees ^C marker and new prompt.
+            await asyncio.sleep(0.3)
+            await session.refresh_output(timeout=0.5)
+            segment = await session.current_segment()
+            cursor = resolve_cursor_line(segment).strip()
+            return (
+                "<terminal_result>\n"
+                f"<action>interrupt</action>\n"
+                f"<terminal>{xml_text(session.name)}</terminal>\n"
+                f"<output>{xml_text(cursor or '(interrupted)')}</output>\n"
+                f"</terminal_result>"
+            )
 
         if action_enum == TerminalAction.CURRENT:
             if name:
@@ -196,19 +213,61 @@ class TerminalTool(Tool):
             default_session = await self._manager.get_default_session()
             is_default = default_session is not None and session.name == default_session.name
 
+            alive = await session.is_alive()
             parts = [
                 "<terminal_result>",
                 "<action>current</action>",
-                f"<terminal>{xml_escape(session.name)}</terminal>",
+                f"<terminal>{xml_text(session.name)}</terminal>",
+                f"<shell>{xml_text(session.shell_info.name)}</shell>",
+                f"<alive>{str(alive).lower()}</alive>",
+                f"<visibility>{_visibility_text(session._backend.visibility)}</visibility>",
                 f"<created_at>{int(session.created_at)}</created_at>",
                 f"<default>{str(is_default).lower()}</default>",
                 f"<status>{status.value}</status>",
             ]
             if cursor:
-                parts.append(f"<cursor>{xml_escape(cursor)}</cursor>")
+                parts.append(f"<cursor>{xml_text(cursor)}</cursor>")
             if idle_ms_str:
                 parts.append(f"<idle_ms>{idle_ms_str}</idle_ms>")
-            parts.append(f"<output>{xml_escape(output or '(no output yet)')}</output>")
+
+            # Running command info
+            if self._registry:
+                running = self._registry.get_running_by_terminal(session.name)
+                if running:
+                    parts.append(f"<running_command>{xml_text(running.command)}</running_command>")
+                    parts.append(f"<running_since>{int(running.started_at)}</running_since>")
+
+            # Command history
+            history = session.get_history()
+            if history:
+                parts.append("<history>")
+                for rec in history[-3:]:
+                    parts.append(f'  <record command="{xml_attr(rec.command)}" timestamp="{int(rec.timestamp)}" />')
+                parts.append("</history>")
+
+            if session.last_status:
+                parts.append(f"<last_status>{xml_text(session.last_status)}</last_status>")
+
+            if session.window_title:
+                parts.append(f"<window_title>{xml_text(session.window_title)}</window_title>")
+
+            parts.append(f"<output>{xml_text(output or '(no output yet)')}</output>")
+
+            # Interference detection for visible terminals
+            if session.detect_interference(status):
+                expected = session._expected_state
+                assert expected is not None
+                parts.append(
+                    "<interference>"
+                    f"<expected>{expected.value}</expected>"
+                    f"<actual>{status.value}</actual>"
+                    "<message>"
+                    "Terminal state changed unexpectedly — user may have interacted with the visible window. "
+                    "Verify the current screen content above before proceeding."
+                    "</message>"
+                    "</interference>"
+                )
+
             parts.append("</terminal_result>")
             return "\n".join(parts)
 

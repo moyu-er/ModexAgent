@@ -197,7 +197,55 @@ class StreamingLLMProvider(LLMProvider):
     支持流式输出的LLM提供商抽象基类。
 
     继承自LLMProvider，额外支持流式输出。
+    chat() 和 chat_with_retry() 内部使用流式 API 以获得 prompt cache 收益。
     """
+
+    async def chat(
+        self,
+        messages: list[dict[str, Any]],
+        model: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+        tools: list[dict] | None = None,
+        **kwargs
+    ) -> LLMResponse:
+        """非流式聊天完成。
+
+        对外行为与 LLMProvider.chat() 完全一致：调用者拿到完整 LLMResponse，
+        无任何 delta 回调。
+        内部使用流式 API 实现（chat_stream_with_retry），以获得 prompt cache
+        等只有 streaming 模式才有的收益。
+        """
+        return await self.chat_stream_with_retry(
+            messages=messages, model=model, temperature=temperature,
+            max_tokens=max_tokens, tools=tools,
+            on_content_delta=None, on_reasoning_delta=None,
+            max_retries=1, **kwargs,
+        )
+
+    async def chat_with_retry(
+        self,
+        messages: list[dict[str, Any]],
+        model: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+        tools: list[dict] | None = None,
+        max_retries: int = 3,
+        **kwargs
+    ) -> LLMResponse:
+        """带重试的非流式聊天完成。
+
+        对外行为与 LLMProvider.chat_with_retry() 完全一致：调用者拿到完整
+        LLMResponse，无任何 delta 回调，失败时按 max_retries 自动重试。
+        内部使用流式 API 实现（chat_stream_with_retry），以获得 prompt cache
+        等只有 streaming 模式才有的收益。
+        """
+        return await self.chat_stream_with_retry(
+            messages=messages, model=model, temperature=temperature,
+            max_tokens=max_tokens, tools=tools,
+            on_content_delta=None, on_reasoning_delta=None,
+            max_retries=max_retries, **kwargs,
+        )
 
     @abstractmethod
     async def chat_stream(

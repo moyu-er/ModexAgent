@@ -21,11 +21,11 @@ from framework.runtime.enums import TurnCustomKey, TurnPhase
 
 from ...core.agent import Agent, AgentContext, current_agent_context
 from ...core.constants import DefaultValues, StopReason
-from ...core.emitter import AgentResult, ContentEmitter, ToolCall
+from ...core.emitter import AgentResult, ContentEmitter
 from ...core.events import AgentEvent
 from ...core.provider import LLMProvider, StreamingLLMProvider
 from ...core.tool_manager import ToolResult
-from ...core.types import LLMResponse
+from ...core.types import LLMResponse, ToolCall
 
 logger = logging.getLogger(__name__)
 

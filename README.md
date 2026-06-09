@@ -45,7 +45,7 @@ The framework core replaces traditional loops with a **graph-driven execution en
 - **Dual Runtime Modes** — `Pipeline` for single-agent long-running services (QQ Bot, CLI); `Pool` for multi-agent persistent pools with `MessageBroker` + `AgentMessageBus` routing.
 - **Four-layer Memory + Dream Engine** — Short-term, Archive, Knowledge (SOUL.md / USER.md / MEMORY.md), and UserRetentionBuffer. Dream Engine periodically consolidates archives into long-term knowledge.
 - **Hook + Interceptor Extension System** — Lifecycle hooks (InboxFlush, SubagentAutoSend, ProgressReport) and AOP interceptor chains (ControlDrain, ToolResultLimit) compose orthogonally without core intrusion.
-- **Type Safety** — 63 ABCs + 18 Protocols, enums replacing raw strings, mypy strict-level checking.
+- **Type Safety** — All interfaces use ABCs (zero Protocols), enums replacing raw strings, mypy strict-level checking.
 - **Native MCP Integration** — Dynamically load MCP servers (SSE/stdio). `MCPToolAdapter` maps MCP capabilities to framework Tool objects.
 
 ## Architecture Overview
@@ -138,7 +138,7 @@ framework/
   pipeline/          # End-to-end orchestration
   memory/            # Four-layer memory system + Dream Engine + Governance
   tools/             # Tool registry, execution, terminal system, MCP adapters
-  multi_agent/       # Multi-agent collaboration: Pool, MessageBus, SubagentService
+  multi_agent/       # Multi-agent collaboration: Pool, MessageBus
   hook/              # Lifecycle hook extension points
   interceptor/       # AOP interceptor chains
   control/           # Runtime control, approval, event bus

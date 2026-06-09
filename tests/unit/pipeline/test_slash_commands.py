@@ -12,6 +12,7 @@ from framework.commands.models import (
     CommandContext,
     CommandHandlingResult,
     CommandParseResult,
+    CommandProcessor,
     SlashCommandInvocation,
 )
 from framework.core.agent import Agent, AgentContext
@@ -141,7 +142,7 @@ async def test_assemble_context_propagates_xml_format_from_input_msg() -> None:
     assert last_msg.get("truncatable_paths") == ["command_context", "user_input"]
 
 
-class FakeCommandProcessor:
+class FakeCommandProcessor(CommandProcessor):
     def __init__(self, result: CommandHandlingResult) -> None:
         self.result = result
         self.contexts: list[CommandContext] = []

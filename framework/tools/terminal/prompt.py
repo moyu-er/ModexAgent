@@ -271,15 +271,31 @@ async def drain_windows_startup(
     await _drain_until_quiet(max_empty_reads=3, read_timeout=0.3)
 
 
-_PAGER_ENTRY_MARKER = ":"
+_PAGER_PATTERNS: list[re.Pattern[str]] = [
+    # less: bare ":" on its own line (waiting for command)
+    re.compile(r"^:\s*$"),
+    # less: "(END)" or "(END) - Press q to quit" style EOF markers
+    re.compile(r"^\(END\)"),
+    # more: "--More--" or "--More--(N%)" style prompts
+    re.compile(r"^--More--"),
+    # less: status line "lines N-M/L" or "lines N-M"
+    re.compile(r"^lines\s+\d+"),
+    # less: "Waiting for data... (interrupt to abort)" for pipe input
+    re.compile(r"^Waiting for data"),
+]
 
 
 def detect_pager_entry(cursor_line: str) -> bool:
-    """Detect if cursor line is a pager entry prompt (less colon).
+    """Detect if cursor line matches a known pager (less/more) prompt.
 
-    Only matches bare ":" on its own line. Excludes "config:", "error:", etc.
+    Covers less's command prompt (:), EOF marker (END), status line,
+    and more's --More-- prompt.  Excludes incidental colons in config
+    output or error messages.
     """
-    return cursor_line.strip() == _PAGER_ENTRY_MARKER
+    stripped = cursor_line.strip()
+    if not stripped:
+        return False
+    return any(p.search(stripped) for p in _PAGER_PATTERNS)
 
 
 def resolve_cursor_line(segment: TerminalSegment) -> str:

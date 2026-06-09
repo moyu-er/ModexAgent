@@ -399,7 +399,7 @@ class TestIsTransient:
 
 
 class TestBuildToolMessage:
-    """验证 build_tool_message 对大结果的截断。"""
+    """验证 build_tool_message 不截断结果，正确传递 XML 元数据。"""
 
     def test_short_result_not_truncated(self):
         from framework.core.tool_manager import ToolResult
@@ -409,17 +409,15 @@ class TestBuildToolMessage:
         msg = build_tool_message(result)
         assert msg.content == "short output"
 
-    def test_long_result_truncated(self):
+    def test_long_result_not_truncated(self):
         from framework.core.tool_manager import ToolResult
         from framework.utils.message_builder import build_tool_message
 
         long_content = "x" * 30000
         result = ToolResult(tool_name="test", result=long_content)
         msg = build_tool_message(result)
-        assert msg.content is not None
-        assert len(msg.content) < 30000
-        assert "truncated" in msg.content
-        assert "30000 chars total" in msg.content
+        assert msg.content == long_content
+        assert len(msg.content) == 30000
 
     def test_error_not_truncated(self):
         from framework.core.tool_manager import ToolResult
@@ -436,6 +434,33 @@ class TestBuildToolMessage:
         result = ToolResult(tool_name="test", result=None)
         msg = build_tool_message(result)
         assert msg.content == " "
+
+    def test_terminal_xml_sets_metadata(self):
+        from framework.core.tool_manager import ToolResult
+        from framework.memory.core.message import ContentFormat
+        from framework.utils.message_builder import build_tool_message
+
+        xml_content = (
+            "<command_result>"
+            "<terminal>default</terminal>"
+            "<output>hello</output>"
+            "<status>completed</status>"
+            "</command_result>"
+        )
+        result = ToolResult(tool_name="bash", result=xml_content)
+        msg = build_tool_message(result)
+        assert msg.content_format == ContentFormat.XML
+        assert msg.truncatable_paths == ["output", "tui_screen", "cursor_line"]
+
+    def test_plain_text_no_metadata(self):
+        from framework.core.tool_manager import ToolResult
+        from framework.memory.core.message import ContentFormat
+        from framework.utils.message_builder import build_tool_message
+
+        result = ToolResult(tool_name="grep", result="Found 3 matches")
+        msg = build_tool_message(result)
+        assert msg.content_format == ContentFormat.PLAIN
+        assert msg.truncatable_paths is None
 
 
 # ---------------------------------------------------------------------------

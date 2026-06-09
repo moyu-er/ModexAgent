@@ -9,6 +9,7 @@ from typing import Any
 
 from framework.tools.terminal.backends.base import TerminalBackend, extract_current_segment_from_buffer
 from framework.tools.terminal.prompt import is_prompt_ready
+from framework.tools.terminal.pty_keys import CTRL_C
 from framework.tools.terminal.results import TerminalRead, TerminalSegment
 from framework.tools.terminal.types import Platform, TerminalVisibility
 
@@ -205,7 +206,7 @@ class TmuxPtyBackend(TerminalBackend):
         return extract_current_segment_from_buffer(text)
 
     async def interrupt(self) -> None:
-        await self.write("\x03")
+        await self.write(CTRL_C)
 
     def stdin_writable(self) -> bool:
         return self._pane is not None

@@ -240,13 +240,154 @@ def _find_actual_string(file_content: str, search_string: str) -> str | None:
     return None
 
 
+# -- 分页读取核心逻辑 -------------------------------------------------------
+
+
+# 分页读取内部常量
+_DEFAULT_LIMIT = 200
+_MAX_LIMIT = 300
+_MAX_CHARS = 20_000
+
+
+def _paginate_file(
+    file_path: Path,
+    offset: int = 0,
+    limit: int = _DEFAULT_LIMIT,
+    max_chars: int = _MAX_CHARS,
+) -> str:
+    """分页读取文件，返回带结构化元数据的结果字符串。
+
+    参数:
+        file_path: 已校验的文件路径
+        offset: 跳过前 N 行 (0-based)
+        limit: 最多读取行数 (自动 clamp 到 _MAX_LIMIT)
+        max_chars: 总字符数硬上限
+
+    返回:
+        带结构化后缀的文件内容字符串，或错误信息字符串
+    """
+    # ── 参数校验 ─────────────────────────────────────────────
+    if offset < 0:
+        return f"Error: offset must be >= 0, got {offset}"
+    if limit < 1:
+        return f"Error: limit must be >= 1, got {limit}"
+
+    # clamp limit
+    if limit > _MAX_LIMIT:
+        limit = _MAX_LIMIT
+
+    # ── 第一遍：统计总行数 ──────────────────────────────────
+    total_lines = 0
+    with file_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            total_lines += 1
+
+    # ── 空文件 ──────────────────────────────────────────────
+    if total_lines == 0:
+        return (
+            "(empty file)\n"
+            "\n"
+            "total_lines: 0\n"
+            "offset: 0\n"
+            "read_status: empty"
+        )
+
+    # ── offset 超出范围 ──────────────────────────────────────
+    if offset >= total_lines:
+        return (
+            f"Error: offset ({offset}) exceeds file length ({total_lines} lines).\n"
+            f"File has {total_lines} lines (line numbers 1-{total_lines}).\n"
+            f"Valid offset range: 0 ~ {total_lines - 1}.\n"
+            f"hint: use offset=0 to read from the beginning"
+        )
+
+    # ── 第二遍：分页读取 ─────────────────────────────────────
+    selected_lines: list[str] = []
+    accumulated_chars = 0
+    char_truncated = False
+    last_line_read = offset  # 0-based, 最后成功读取的行索引
+
+    with file_path.open("r", encoding="utf-8") as f:
+        line_idx = 0  # 0-based
+        lines_collected = 0
+
+        for raw_line in f:
+            # 跳过 offset 之前的行
+            if line_idx < offset:
+                line_idx += 1
+                continue
+
+            # limit 用尽 → 还有更多行
+            if lines_collected >= limit:
+                break
+
+            line = raw_line.rstrip("\n\r")
+
+            # 字符数软上限：先带上该行，再判断是否截断
+            selected_lines.append(line)
+            accumulated_chars += len(line) + 1  # +1 for newline
+            last_line_read = line_idx
+            lines_collected += 1
+            line_idx += 1
+
+            if accumulated_chars > max_chars:
+                char_truncated = True
+                break
+
+        # 检查读完之后是否还有更多行（仅当 limit 未触发且 char 也未触发时）
+        has_more_by_limit = lines_collected >= limit
+        # 如果没有被 char 截断，检查文件是否已读完
+        remaining = total_lines - (last_line_read + 1) if not char_truncated else total_lines - (last_line_read + 1)
+
+    # ── 计算状态 ─────────────────────────────────────────────
+    actual_start = offset + 1       # 1-based 显示
+    actual_end = last_line_read + 1  # 1-based 显示
+
+    is_complete = (not char_truncated) and (actual_end == total_lines)
+    is_truncated_by_limit = has_more_by_limit and not char_truncated
+
+    # ── 构建结果 ─────────────────────────────────────────────
+    content = "\n".join(selected_lines)
+    parts: list[str] = [content, ""]
+
+    # metadata
+    parts.append(f"total_lines: {total_lines}")
+    parts.append(f"offset: {offset}")
+
+    if is_complete and not is_truncated_by_limit:
+        # 完整读取
+        if lines_collected < limit:
+            parts.append(f"read_lines: {actual_start}-{actual_end} (requested {limit}, file has {lines_collected} remaining)")
+        else:
+            parts.append(f"read_lines: {actual_start}-{actual_end}")
+        parts.append("read_status: complete")
+
+    elif is_truncated_by_limit:
+        # 行数截断
+        parts.append(f"read_lines: {actual_start}-{actual_end} (limit reached)")
+        parts.append(f"remaining_lines: {remaining}")
+        parts.append("read_status: truncated_by_limit")
+        parts.append(f"hint: use offset={last_line_read + 1} to read next chunk")
+
+    elif char_truncated:
+        # 字符数截断（limit 未用尽就提前返回）
+        parts.append(f"read_lines: {actual_start}-{actual_end} (stopped before limit)")
+        parts.append(f"remaining_lines: {remaining}")
+        parts.append("read_status: truncated_by_chars")
+        parts.append(
+            f"warning: char limit ({max_chars}) reached, "
+            f"only read {lines_collected} of requested {limit} lines"
+        )
+        parts.append(f"hint: use offset={last_line_read + 1} to read next chunk")
+
+    return "\n".join(parts)
+
+
 # -- 工具类 -----------------------------------------------------------------
 
 
 class ReadFileTool(Tool):
     """读取文件内容的工具."""
-
-    DEFAULT_MAX_LINES = 200
 
     def __init__(self):
         super().__init__()
@@ -257,7 +398,11 @@ class ReadFileTool(Tool):
 
     @property
     def description(self) -> str:
-        return f"Read the contents of a file at the given path. By default reads first {self.DEFAULT_MAX_LINES} lines."
+        return (
+            "Read the contents of a file at the given path. "
+            f"By default reads up to {_DEFAULT_LIMIT} lines from the beginning. "
+            "Use offset to skip lines and limit to control how many lines to read."
+        )
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -268,21 +413,21 @@ class ReadFileTool(Tool):
                     "type": "string",
                     "description": "The file path to read"
                 },
-                "start_line": {
+                "offset": {
                     "type": "integer",
-                    "description": "Starting line number include (start from 1, default: 1)",
-                    "default": 1
+                    "description": "Number of lines to skip from the beginning (0-based, default: 0)",
+                    "default": 0
                 },
-                "end_line": {
+                "limit": {
                     "type": "integer",
-                    "description": f"Ending line number include (default: {self.DEFAULT_MAX_LINES})",
-                    "default": self.DEFAULT_MAX_LINES
+                    "description": f"Maximum number of lines to read (default: {_DEFAULT_LIMIT}, max: {_MAX_LIMIT})",
+                    "default": _DEFAULT_LIMIT
                 }
             },
             "required": ["path"]
         }
 
-    async def execute(self, path: str, start_line: int = 1, end_line: int = DEFAULT_MAX_LINES, **kwargs: Any) -> str:
+    async def execute(self, path: str, offset: int = 0, limit: int = _DEFAULT_LIMIT, **kwargs: Any) -> str:
         try:
             file_path = _resolve_path(path)
             if not file_path.exists():
@@ -290,42 +435,7 @@ class ReadFileTool(Tool):
             if not file_path.is_file():
                 return f"Error: Not a file: {path}"
 
-            # 校验行号
-            if start_line < 1:
-                return f"Error: start_line must be >= 1, got {start_line}"
-            if end_line < start_line:
-                return f"Error: end_line ({end_line}) must be >= start_line ({start_line})"
-
-            # 限制读取行数
-            max_end = start_line + self.DEFAULT_MAX_LINES - 1
-            actual_end = min(end_line, max_end)
-
-            # 单次遍历：读取指定范围并检测是否还有更多内容
-            selected_lines = []
-            has_more = False
-
-            with file_path.open("r", encoding="utf-8") as f:
-                for line_num, line in enumerate(f, start=1):
-                    if line_num < start_line:
-                        continue
-                    if line_num > actual_end:
-                        has_more = True
-                        break
-                    selected_lines.append(line.rstrip('\n\r'))
-
-            # 如果起始行就超出范围
-            if not selected_lines and start_line > 1:
-                return f"[Start line {start_line} is beyond file end]"
-
-            result = "\n".join(selected_lines)
-
-            # 如果有更多内容，简单提示
-            if has_more:
-                result += "\n\n[... more lines below ...]"
-            else:
-                result += "\n\n[No more lines below]"
-
-            return result
+            return _paginate_file(file_path, offset=offset, limit=limit)
         except Exception as e:
             return f"Error reading file: {str(e)}"
 

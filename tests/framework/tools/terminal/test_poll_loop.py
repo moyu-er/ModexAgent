@@ -1,3 +1,5 @@
+"""Test poll_until_settled() PollOutcome branches."""
+
 from __future__ import annotations
 
 import time
@@ -5,122 +7,145 @@ import time
 import pytest
 
 from framework.tools.terminal.config import TerminalRuntimeConfig
-from framework.tools.terminal.managers import BaseTerminalManager
 from framework.tools.terminal.poll_loop import PollOutcome, poll_until_settled
 from framework.tools.terminal.process_registry import ProcessRegistry
 from framework.tools.terminal.results import TerminalRead, TerminalSegment
-from framework.tools.terminal.types import Platform, ShellFamily, ShellInfo, TerminalVisibility
+
+from tests.framework.tools.terminal.conftest import make_session
 
 
-class DeadBackend:
-    """Backend that is immediately dead."""
-
-    platform = Platform.WINDOWS  # type: ignore[assignment]
-    visibility = TerminalVisibility.HIDDEN  # type: ignore[assignment]
-
-    async def start(self, *a, **kw): pass
-    async def write(self, data: str): pass
-    async def read_pending(self, timeout: float, max_size: int) -> TerminalRead:
-        return TerminalRead()
-    async def current_segment(self) -> TerminalSegment:
-        return TerminalSegment(text="")
-    async def interrupt(self): pass
-    async def terminate(self): pass
-    async def kill(self): pass
-    async def is_alive(self) -> bool:
-        return False
-    def stdin_writable(self) -> bool:
-        return False
-    async def drain_startup(self): pass
-    async def clear_input_line(self): pass
-    def mark_command_boundary(self): pass
-
-
-class SilentAliveBackend:
-    """Backend that is alive but produces no output."""
-
-    platform = Platform.WINDOWS  # type: ignore[assignment]
-    visibility = TerminalVisibility.HIDDEN  # type: ignore[assignment]
-
-    async def start(self, *a, **kw): pass
-    async def write(self, data: str): pass
-    async def read_pending(self, timeout: float, max_size: int) -> TerminalRead:
-        return TerminalRead()
-    async def current_segment(self) -> TerminalSegment:
-        return TerminalSegment(text="output", is_empty_prompt=False)
-    async def interrupt(self): pass
-    async def terminate(self): pass
-    async def kill(self): pass
-    async def is_alive(self) -> bool:
-        return True
-    def stdin_writable(self) -> bool:
-        return True
-    async def drain_startup(self): pass
-    async def clear_input_line(self): pass
-    def mark_command_boundary(self): pass
-
-
-@pytest.mark.asyncio
-async def test_poll_exits_on_process_exit() -> None:
-    cfg = TerminalRuntimeConfig(default_yield_ms=100)
-    manager = BaseTerminalManager(
-        shell_info=ShellInfo(ShellFamily.BASH, "bash", Platform.WINDOWS),
-        visibility=TerminalVisibility.HIDDEN,
-        backend_factory=DeadBackend,
-        config=cfg,
+def _quick_config(**overrides) -> TerminalRuntimeConfig:
+    defaults = dict(
+        no_output_timeout_ms=30_000,
+        long_running_threshold_ms=300_000,
+        prompt_stabilize_ms=50,
+        default_yield_ms=500,
+        default_command_timeout_seconds=10,
     )
-    registry = ProcessRegistry(config=cfg)
-    session = await manager.get_default()
-    proc = registry.create(command="test", terminal="default", cwd=None, pid=None)
-
-    result = await poll_until_settled(
-        session, registry, proc.id, cfg,
-        yield_ms=100, timeout_seconds=5,
-    )
-
-    assert result.outcome == PollOutcome.PROCESS_EXIT
+    defaults.update(overrides)
+    return TerminalRuntimeConfig(**defaults)
 
 
-@pytest.mark.asyncio
-async def test_poll_yields_after_window() -> None:
-    cfg = TerminalRuntimeConfig(default_yield_ms=10)
-    manager = BaseTerminalManager(
-        shell_info=ShellInfo(ShellFamily.BASH, "bash", Platform.WINDOWS),
-        visibility=TerminalVisibility.HIDDEN,
-        backend_factory=SilentAliveBackend,
-        config=cfg,
-    )
-    registry = ProcessRegistry(config=cfg)
-    session = await manager.get_default()
-    proc = registry.create(command="test", terminal="default", cwd=None, pid=None)
-
-    result = await poll_until_settled(
-        session, registry, proc.id, cfg,
-        yield_ms=10, timeout_seconds=5,
-    )
-
-    assert result.outcome == PollOutcome.YIELDED
+class TestPollProcessExit:
+    @pytest.mark.asyncio
+    async def test_dead_backend_returns_process_exit(self) -> None:
+        session = make_session()
+        session._backend._alive = False
+        session._ever_received_bytes = True
+        registry = ProcessRegistry()
+        proc = registry.create(command="echo hi", terminal="test", cwd=None, pid=None)
+        config = _quick_config()
+        result = await poll_until_settled(
+            session, registry, proc.id, config,
+            yield_ms=500, timeout_seconds=10,
+        )
+        assert result.outcome == PollOutcome.PROCESS_EXIT
 
 
-@pytest.mark.asyncio
-async def test_poll_detects_stuck() -> None:
-    cfg = TerminalRuntimeConfig(default_yield_ms=30_000)  # high yield
-    manager = BaseTerminalManager(
-        shell_info=ShellInfo(ShellFamily.BASH, "bash", Platform.WINDOWS),
-        visibility=TerminalVisibility.HIDDEN,
-        backend_factory=SilentAliveBackend,
-        config=cfg,
-    )
-    registry = ProcessRegistry(config=cfg)
-    session = await manager.get_default()
-    proc = registry.create(command="test", terminal="default", cwd=None, pid=None)
+class TestPollPromptDetected:
+    @pytest.mark.asyncio
+    async def test_stable_prompt_returns_prompt_detected(self) -> None:
+        session = make_session()
+        session._ever_received_bytes = True
+        session._backend._segment = TerminalSegment(
+            text="$ ", cursor_line="$ ", is_empty_prompt=True,
+        )
+        session._backend._read_queue = [
+            TerminalRead(stdout="done\n", raw="done\n"),
+        ]
+        registry = ProcessRegistry()
+        proc = registry.create(command="echo done", terminal="test", cwd=None, pid=None)
+        config = _quick_config()
+        result = await poll_until_settled(
+            session, registry, proc.id, config,
+            yield_ms=500, timeout_seconds=10,
+        )
+        assert result.outcome == PollOutcome.PROMPT_DETECTED
 
-    # Simulate 16s of silence
-    session._last_byte_at = time.monotonic() - 16.0
 
-    result = await poll_until_settled(
-        session, registry, proc.id, cfg,
-        yield_ms=30_000, timeout_seconds=60,
-    )
+class TestPollInputWait:
+    @pytest.mark.asyncio
+    async def test_input_marker_returns_input_wait(self) -> None:
+        session = make_session()
+        session._ever_received_bytes = True
+        session._backend._read_queue = [
+            TerminalRead(stdout="[sudo] password for user: ", raw="[sudo] password for user: "),
+        ]
+        registry = ProcessRegistry()
+        proc = registry.create(command="sudo ls", terminal="test", cwd=None, pid=None)
+        config = _quick_config()
+        result = await poll_until_settled(
+            session, registry, proc.id, config,
+            yield_ms=500, timeout_seconds=10, check_input_wait=True,
+        )
+        assert result.outcome == PollOutcome.INPUT_WAIT
 
-    assert result.outcome == PollOutcome.STUCK
+
+class TestPollStuck:
+    @pytest.mark.asyncio
+    async def test_no_output_timeout_returns_stuck(self) -> None:
+        session = make_session()
+        session._ever_received_bytes = True
+        session._last_byte_at = time.monotonic() - 1  # 1s ago
+        session._backend._alive = True
+        registry = ProcessRegistry()
+        proc = registry.create(command="hang", terminal="test", cwd=None, pid=None)
+        config = _quick_config(no_output_timeout_ms=200)  # very short
+        result = await poll_until_settled(
+            session, registry, proc.id, config,
+            yield_ms=500, timeout_seconds=10,
+        )
+        assert result.outcome == PollOutcome.STUCK
+
+
+class TestPollLongRunning:
+    @pytest.mark.asyncio
+    async def test_elapsed_over_threshold_returns_long_running(self) -> None:
+        session = make_session()
+        session._ever_received_bytes = True
+        session._last_byte_at = time.monotonic()
+        session._backend._alive = True
+        # Set non-prompt segment so prompt detection doesn't fire before long-running
+        session._backend._segment = TerminalSegment(
+            text="building...", cursor_line="building...", is_empty_prompt=False,
+        )
+        # Queue output so output_received becomes True
+        session._backend._read_queue = [
+            TerminalRead(stdout="building...\n", raw="building...\n"),
+        ]
+        registry = ProcessRegistry()
+        proc = registry.create(command="make", terminal="test", cwd=None, pid=None)
+        config = _quick_config(
+            long_running_threshold_ms=100,
+            default_yield_ms=500,
+        )
+        result = await poll_until_settled(
+            session, registry, proc.id, config,
+            yield_ms=500, timeout_seconds=10,
+        )
+        assert result.outcome == PollOutcome.LONG_RUNNING
+
+
+class TestPollYielded:
+    @pytest.mark.asyncio
+    async def test_yield_window_expires(self) -> None:
+        session = make_session()
+        session._ever_received_bytes = True
+        session._backend._alive = True
+        # Set non-prompt segment so prompt detection doesn't fire before yield
+        session._backend._segment = TerminalSegment(
+            text="running...", cursor_line="running...", is_empty_prompt=False,
+        )
+        session._backend._read_queue = [
+            TerminalRead(stdout="output\n", raw="output\n"),
+        ]
+        registry = ProcessRegistry()
+        proc = registry.create(command="cmd", terminal="test", cwd=None, pid=None)
+        config = _quick_config(
+            long_running_threshold_ms=300_000,  # very high, won't trigger
+        )
+        result = await poll_until_settled(
+            session, registry, proc.id, config,
+            yield_ms=50, timeout_seconds=10,
+        )
+        assert result.outcome == PollOutcome.YIELDED

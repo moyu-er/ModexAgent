@@ -1,7 +1,7 @@
 """BotService core — generic bot orchestration for any InputAdapter/OutputAdapter pair.
 
 Supports two runtime modes:
-- pipeline: single AgentPipeline, SubagentService creates asyncio.Task directly.
+- pipeline: single AgentPipeline.
 - pool: AgentPool with resident agents, BrokerBridgeService routes messages.
 """
 
@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from framework.core.experience.curator import ExperienceCurator
-from framework.workspace import DefaultWorkspaceContext
+from framework.workspace import DefaultWorkspaceContext, WorkspaceSwitchCallback
 
 if TYPE_CHECKING:
     from framework.commands.processor import SlashCommandProcessor
@@ -89,7 +89,6 @@ from framework.multi_agent import (
     DefaultAgentFactory,
     DefaultMeshRouter,
     SessionRetentionPolicy,
-    SubagentService,
 )
 from framework.multi_agent.bus import LocalAgentMessageBus
 from framework.multi_agent.descriptor import AgentLLMConfig
@@ -133,7 +132,7 @@ def _update_pruned_manager(
         policy._pruned_manager = pruned_manager
 
 
-class _WorkspaceCallbackAdapter:
+class _WorkspaceCallbackAdapter(WorkspaceSwitchCallback):
     """Adapter that wraps an async method as a WorkspaceSwitchCallback.
 
     Avoids defining one-shot inner classes in BotService.initialize().
@@ -155,7 +154,7 @@ class BotService(AgentBuilderMixin):
     Just provide the corresponding adapters and an Emitter factory.
 
     Modes:
-    - pipeline: single AgentPipeline (default). SubagentService spawns asyncio.Task.
+    - pipeline: single AgentPipeline (default).
     - pool: resident AgentPool with MessageBroker routing.
 
     Accepts an IOC AppConfig object as the single source of truth.
@@ -190,7 +189,6 @@ class BotService(AgentBuilderMixin):
         self.context_manager: ContextManager | None = None
         self.agent: ReActAgent | None = None
         self.agent_factory: AgentFactory | None = None
-        self.subagent_service: SubagentService | None = None
         self.communication_tracker: CommunicationTracker | None = None
         self.broker: InMemoryMessageBroker | None = None
         self.inbox_server: LocalFileInboxServer | None = None
@@ -691,7 +689,6 @@ class BotService(AgentBuilderMixin):
         print(f"   - ContextManager: {type(self.context_manager).__name__}")
         print(f"   - Agent: {self.agent.name}")
         print(f"   - AgentFactory: {type(self.agent_factory).__name__}")
-        print(f"   - SubagentService: {type(self.subagent_service).__name__}")
         print("   - InboxServer: LocalFileInboxServer")
         print(f"   - Mode: {self.mode}")
 
@@ -728,10 +725,6 @@ class BotService(AgentBuilderMixin):
             consumer=self.inbox_consumer,
             agent_name=parent_agent_name,
         )
-
-        # SubagentService not used in pipeline mode (no AgentPool)
-        self.subagent_service = None
-        print("[OK] Pipeline mode — SubagentService not needed")
 
         if self.agent is None:
             raise RuntimeError("Agent is not initialized")

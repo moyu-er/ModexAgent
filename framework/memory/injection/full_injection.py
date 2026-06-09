@@ -4,18 +4,17 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from xml.sax.saxutils import escape as xml_escape
-
 from framework.memory.core.models import (
     InjectionResult,
     MemoryBudget,
 )
 from framework.memory.core.scope import MemoryContext
-from framework.memory.core.system import InjectableMemorySystem, MemorySystem
+from framework.memory.core.system import MemorySystem
 from framework.memory.injection.policy import MemoryInjectionPolicy
 from framework.memory.tags import ArchiveTag, KnowledgeTag
 from framework.memory.pruned.manager import PrunedManager
 from framework.memory.utils import estimate_text_tokens
+from framework.utils.xml import xml_attr, xml_text
 
 logger = logging.getLogger(__name__)
 
@@ -61,19 +60,14 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         memory_system: MemorySystem,
         query: str = "",
     ) -> InjectionResult:
-        if not isinstance(memory_system, InjectableMemorySystem):
-            raise TypeError(
-                f"memory_system must implement InjectableMemorySystem, got {type(memory_system).__name__}"
-            )
         sections: list[_PromptSection] = []
-        injectable = memory_system
 
         self._inject_disclaimer(sections)
-        await self._inject_knowledge(sections, context, injectable, query)
-        await self._inject_archive(sections, context, injectable)
+        await self._inject_knowledge(sections, context, memory_system, query)
+        await self._inject_archive(sections, context, memory_system)
         self._inject_pruned_catalog(sections, context)
-        await self._inject_provider_blocks(sections, injectable)
-        await self._inject_provider_prefetch(sections, context, injectable, query)
+        await self._inject_provider_blocks(sections, memory_system)
+        await self._inject_provider_prefetch(sections, context, memory_system, query)
 
         sections = self._trim_by_priority(sections)
 
@@ -111,7 +105,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         self,
         sections: list[_PromptSection],
         context: MemoryContext,
-        memory_system: InjectableMemorySystem,
+        memory_system: MemorySystem,
         query: str,
     ) -> None:
         """Inject knowledge as natural XML with file paths and editability."""
@@ -124,36 +118,36 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
             if knowledge.soul:
                 file_attr = ""
                 if knowledge_dir:
-                    file_attr = f' file="{xml_escape(str((knowledge_dir / "SOUL.md").resolve()))}"'
+                    file_attr = f' file="{xml_attr(str((knowledge_dir / "SOUL.md").resolve()))}"'
                 tag = KnowledgeTag.YOUR_IDENTITY.value
                 xml_parts.extend([
                     f'<{tag}{file_attr} editable="true"'
                     f' description="Who you are: personality, principles, and behavior rules">'
-                    f"\n{xml_escape(knowledge.soul)}\n"
+                    f"\n{xml_text(knowledge.soul)}\n"
                     f"</{tag}>",
                 ])
 
             if knowledge.user:
                 file_attr = ""
                 if knowledge_dir:
-                    file_attr = f' file="{xml_escape(str((knowledge_dir / "USER.md").resolve()))}"'
+                    file_attr = f' file="{xml_attr(str((knowledge_dir / "USER.md").resolve()))}"'
                 tag = KnowledgeTag.USER_PROFILE.value
                 xml_parts.extend([
                     f'<{tag}{file_attr} editable="true"'
                     f' description="Facts about the user: name, preferences, habits, communication style">'
-                    f"\n{xml_escape(knowledge.user)}\n"
+                    f"\n{xml_text(knowledge.user)}\n"
                     f"</{tag}>",
                 ])
 
             if knowledge.memory:
                 file_attr = ""
                 if knowledge_dir:
-                    file_attr = f' file="{xml_escape(str((knowledge_dir / "MEMORY.md").resolve()))}"'
+                    file_attr = f' file="{xml_attr(str((knowledge_dir / "MEMORY.md").resolve()))}"'
                 tag = KnowledgeTag.KNOWN_FACTS.value
                 xml_parts.extend([
                     f'<{tag}{file_attr} editable="false"'
                     f' description="Known facts about the project: conventions, decisions, verified solutions">'
-                    f"\n{xml_escape(knowledge.memory)}\n"
+                    f"\n{xml_text(knowledge.memory)}\n"
                     f"</{tag}>",
                 ])
 
@@ -191,7 +185,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         self,
         sections: list[_PromptSection],
         context: MemoryContext,
-        memory_system: InjectableMemorySystem,
+        memory_system: MemorySystem,
     ) -> None:
         try:
             await self._inject_md_archives(sections, memory_system, context)
@@ -243,8 +237,8 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
             st = ArchiveTag.SUMMARY.value
             records.append(
                 f'<{st} number="{aid}"'
-                f' file="{xml_escape(full_path)}"'
-                f'>\n{xml_escape(display)}\n</{st}>'
+                f' file="{xml_attr(full_path)}"'
+                f'>\n{xml_text(display)}\n</{st}>'
             )
 
         if not records:
@@ -280,7 +274,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
     async def _inject_provider_blocks(
         self,
         sections: list[_PromptSection],
-        memory_system: InjectableMemorySystem,
+        memory_system: MemorySystem,
     ) -> None:
         for provider in memory_system.get_providers():
             try:
@@ -297,7 +291,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         self,
         sections: list[_PromptSection],
         context: MemoryContext,
-        memory_system: InjectableMemorySystem,
+        memory_system: MemorySystem,
         query: str,
     ) -> None:
         if not query:
@@ -306,7 +300,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
             prefetch = await memory_system.prefetch_memories(query, context)
             if prefetch:
                 sections.append(_PromptSection(
-                    content=f"<related_facts>\n{xml_escape(prefetch)}\n</related_facts>",
+                    content=f"<related_facts>\n{xml_text(prefetch)}\n</related_facts>",
                     priority=50,
                 ))
         except Exception:

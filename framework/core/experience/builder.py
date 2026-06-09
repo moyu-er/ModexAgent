@@ -1,12 +1,7 @@
 from __future__ import annotations
 
-from xml.sax.saxutils import escape as _xml_escape
-
 from framework.core.experience.models import ExperienceSummary
-
-
-def _attr(v: str) -> str:
-    return _xml_escape(v).replace('"', "&quot;")
+from framework.utils.xml import xml_attr, xml_text
 
 
 class ExperiencePromptBuilder:
@@ -32,16 +27,16 @@ class ExperiencePromptBuilder:
         ]
         for exp in experiences:
             attrs = [
-                f'name="{_attr(exp.name)}"',
-                f'directory="{_attr(exp.directory)}"',
+                f'name="{xml_attr(exp.name)}"',
+                f'directory="{xml_attr(exp.directory)}"',
             ]
             if exp.tags:
-                attrs.append(f'tags="{_attr(",".join(exp.tags))}"')
+                attrs.append(f'tags="{xml_attr(",".join(exp.tags))}"')
             if exp.scenario:
-                attrs.append(f'scenario="{_attr(exp.scenario)}"')
+                attrs.append(f'scenario="{xml_attr(exp.scenario)}"')
             parts.append(f'  <experience {" ".join(attrs)}>')
             if exp.description:
-                parts.append(f"    <description>{_xml_escape(exp.description)}</description>")
+                parts.append(f"    <description>{xml_text(exp.description)}</description>")
             parts.append("  </experience>")
         parts.append("</available_experiences>")
         return "\n".join(parts)

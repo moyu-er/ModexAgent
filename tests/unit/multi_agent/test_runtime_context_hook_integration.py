@@ -1,7 +1,7 @@
 """End-to-end tests for RuntimeContextHook + SubagentAutoSendHook collaboration.
 
 Verifies:
-- RuntimeContextHook auto-injection in AgentPipeline / AgentSession
+- RuntimeContextHook auto-injection in AgentPipeline
 - Correct hook ordering (RuntimeContextHook first)
 - SubagentAutoSendHook detects send_to_agent via RuntimeContext
 - Multiple hooks do not conflict
@@ -12,7 +12,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from framework.core.agent import AgentContext
-from framework.core.context import InMemoryContextManager
 from framework.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from framework.runtime.models import TurnIdentity, TurnStateBase
 from framework.runtime.services import AgentRuntime, AgentRuntimeServices
@@ -38,7 +37,6 @@ from framework.core.tool_manager import InMemoryToolManager
 from framework.memory.history import ListMessageHistory
 from framework.hook.builtin import SubagentAutoSendHook, RuntimeContextHook
 from framework.pipeline.pipeline import AgentPipeline
-from framework.session.agent_session import AgentSession
 
 
 class FakeAgent:
@@ -125,7 +123,7 @@ class TestRuntimeContextHookNoAutoInjection:
         mgr = RuntimeContextManager()
         pipeline = AgentPipeline(
             agent=FakeAgent(),
-            context_manager=InMemoryContextManager(),
+            context_manager=MagicMock(),
             tool_manager=InMemoryToolManager(),
             input_adapter=FakeInputAdapter(),
             output_adapter=FakeOutputAdapter(),
@@ -137,7 +135,7 @@ class TestRuntimeContextHookNoAutoInjection:
     def test_pipeline_no_injection_without_manager(self):
         pipeline = AgentPipeline(
             agent=FakeAgent(),
-            context_manager=InMemoryContextManager(),
+            context_manager=MagicMock(),
             tool_manager=InMemoryToolManager(),
             input_adapter=FakeInputAdapter(),
             output_adapter=FakeOutputAdapter(),
@@ -145,18 +143,6 @@ class TestRuntimeContextHookNoAutoInjection:
             runtime_context_manager=None,
         )
         assert not any(isinstance(h, RuntimeContextHook) for h in pipeline.hooks)
-
-    def test_session_does_not_auto_inject_runtime_context_hook(self):
-        mgr = RuntimeContextManager()
-        session = AgentSession(
-            agent=FakeAgent(),
-            context_manager=InMemoryContextManager(),
-            tool_manager=InMemoryToolManager(),
-            hooks=[MagicMock(spec=Hook)],
-            runtime_context_manager=mgr,
-        )
-        assert not any(isinstance(h, RuntimeContextHook) for h in session._hooks)
-
 
 # ---------------------------------------------------------------------------
 # 2. SubagentAutoSendHook + RuntimeContextHook collaboration
@@ -174,7 +160,7 @@ class TestHookCollaboration:
     def _make_pipeline(self, agent, hooks, runtime_mgr=None):
         return AgentPipeline(
             agent=agent,
-            context_manager=InMemoryContextManager(),
+            context_manager=MagicMock(),
             tool_manager=InMemoryToolManager(),
             input_adapter=FakeInputAdapter(),
             output_adapter=FakeOutputAdapter(),

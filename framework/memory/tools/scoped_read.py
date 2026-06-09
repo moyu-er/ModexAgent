@@ -7,10 +7,11 @@ from typing import Any
 
 from framework.core.tool_manager import Tool, ToolResult
 from framework.memory.tools._utils import validate_scoped_path
+from framework.tools.standard.file_tool import _DEFAULT_LIMIT, _paginate_file
 
 
 class ScopedReadFileTool(Tool):
-    """Read a file within allowed directories."""
+    """Read a file within allowed directories, with pagination support."""
 
     def __init__(self, allowed_dirs: list[Path]) -> None:
         self._allowed_dirs = [d.resolve() for d in allowed_dirs]
@@ -29,6 +30,16 @@ class ScopedReadFileTool(Tool):
                         "type": "string",
                         "description": "Path to the file to read",
                     },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Number of lines to skip from the beginning (0-based, default: 0)",
+                        "default": 0,
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": f"Maximum number of lines to read (default: {_DEFAULT_LIMIT})",
+                        "default": _DEFAULT_LIMIT,
+                    },
                 },
                 "required": ["path"],
             },
@@ -36,6 +47,9 @@ class ScopedReadFileTool(Tool):
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         raw_path = kwargs.get("path", "")
+        offset = kwargs.get("offset", 0)
+        limit = kwargs.get("limit", _DEFAULT_LIMIT)
+
         try:
             resolved = validate_scoped_path(raw_path, self._allowed_dirs)
         except ValueError as exc:
@@ -51,8 +65,12 @@ class ScopedReadFileTool(Tool):
                 tool_name=self.name,
                 error=f"Not a file: {resolved}",
             )
+
         try:
-            content = resolved.read_text(encoding="utf-8")
-            return ToolResult(tool_name=self.name, result=content)
+            result = _paginate_file(resolved, offset=offset, limit=limit)
+            # 检查是否为错误返回
+            if result.startswith("Error:"):
+                return ToolResult(tool_name=self.name, error=result)
+            return ToolResult(tool_name=self.name, result=result)
         except Exception as exc:
             return ToolResult(tool_name=self.name, error=str(exc))

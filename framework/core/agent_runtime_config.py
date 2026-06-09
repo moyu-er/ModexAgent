@@ -39,7 +39,7 @@ class AgentRuntimeConfig:
     """运行时配置聚合对象。
 
     捆绑 hooks、interceptors、control 组件，供 Pipeline / AgentFactory /
-    AgentPool / AgentSession 统一使用。
+    AgentPool / Pipeline 统一使用。
 
     Usage:
         runtime = AgentRuntimeConfig(

@@ -17,7 +17,10 @@ from framework.memory.core.scope import (
     MemoryLayerName,
     SessionScope,
 )
-from framework.memory.core.system import MemorySystem
+from framework.memory.core.system import (
+    ContextManagedMemorySystem,
+    MemorySystem,
+)
 from framework.memory.history import MessageHistory
 
 if TYPE_CHECKING:
@@ -157,7 +160,7 @@ class ScopedMessageHistory(MessageHistory):
         raise RuntimeError("Use 'await history.to_list()' for async access.")
 
 
-class DefaultMemorySystem(MemorySystem):
+class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
     """Default tiered memory system that delegates to typed layer managers.
 
     Receives a ``MemoryLayerSet``, ``MemoryStoreRegistry``, and optional
@@ -166,10 +169,6 @@ class DefaultMemorySystem(MemorySystem):
 
     This is the single concrete memory system.  There is no legacy
     compatibility path — all callers should migrate to this class.
-
-    This class satisfies the :class:`~framework.memory.core.system.InjectableMemorySystem`
-    Protocol via duck typing.  All methods required by the injection policy
-    are implemented.
     """
 
     def __init__(
@@ -416,11 +415,6 @@ class DefaultMemorySystem(MemorySystem):
         return self._knowledge_consolidator
 
     # -- Provider fan-out -----------------------------------------------
-
-    async def search_memories(
-        self, query: str, context: MemoryContext, limit: int = 5
-    ) -> list[dict[str, Any]]:
-        return await self.search(query, context, limit)
 
     async def prefetch_memories(self, query: str, context: MemoryContext) -> str | None:
         if not self._recorder.providers:

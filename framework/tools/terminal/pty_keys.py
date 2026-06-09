@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import re
+from abc import ABC, abstractmethod
 from enum import StrEnum
-from typing import Protocol, runtime_checkable
 
 
 class CursorKeyMode(StrEnum):
@@ -89,9 +89,31 @@ _BRACKETED_PASTE_END = b"\x1b[201~"
 _BRACKETED_PASTE_ENABLE = b"\x1b[?2004h"
 _BRACKETED_PASTE_DISABLE = b"\x1b[?2004l"
 
+# Enter key — the carriage return character.  When a program puts the
+# terminal in raw mode (less, vim, nano, ssh), only \r is recognised as
+# the Enter key; \n (line feed) is ignored.  \r is the universal Enter
+# key code on all platforms — the terminal hardware always sends \r for
+# the Enter key, and the terminal driver translates it to \n in canonical
+# mode.
+ENTER_KEY: str = "\r"
 
-@runtime_checkable
-class _StdinWriter(Protocol):
+# Ctrl+C — the ASCII End-of-Text character.  Writing this byte to a PTY
+# input stream triggers SIGINT in the foreground process group via the
+# terminal driver.  This is the universal terminal protocol for "interrupt
+# current process".
+#
+# Each backend uses its library's official API to send this byte:
+#   pywinpty:  proc.sendintr() or proc.sendcontrol('c') — both call
+#              pty.write('\\x03') internally (verified from pywinpty source)
+#   pexpect:   proc.sendintr() — sends SIGINT via os.kill()
+#   libtmux:   pane.send_keys(data) with this character
+#
+# Visible-windows backends use this constant as a socket-protocol marker;
+# the host process detects it and calls proc.sendintr().
+CTRL_C: str = "\x03"
+
+class _StdinWriter(ABC):
+    @abstractmethod
     def write(self, data: bytes) -> object: ...
 
 

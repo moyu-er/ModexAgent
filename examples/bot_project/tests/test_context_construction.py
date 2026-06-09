@@ -9,7 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from framework.core.agent import AgentContext
-from framework.core.context import InMemoryContextManager, EphemeralContextManager
+from framework.core.context import InMemoryContextManager
 from framework.core.emitter import AgentResult
 from framework.memory.history import ListMessageHistory
 
@@ -27,12 +27,12 @@ class TestContextManagerConstruction:
         prompt = await cm.build_system_prompt(tool_manager=MagicMock())
         assert "You are helpful" in (prompt or "")
 
-    async def test_ephemeral_context_is_stateless(self):
-        cm = EphemeralContextManager(base_system_prompt="ephemeral")
+    async def test_inmemory_context_is_reusable(self):
+        cm = InMemoryContextManager(base_system_prompt="inmemory")
         state1 = await cm.load("any_id")
         state2 = await cm.load("any_id")
-        assert state1.system_prompt == "ephemeral"
-        assert state2.system_prompt == "ephemeral"
+        assert state1.system_prompt == "inmemory"
+        assert state2.system_prompt == "inmemory"
 
 
 class TestAgentContextConstruction:

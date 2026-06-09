@@ -1,5 +1,8 @@
 """Security module for command execution approval and policy enforcement.
 
+EXPERIMENTAL: 此模块暂不推荐生产使用。当前零测试覆盖、零生产接入。
+后续待补充测试和接入验证后再正式开放。如需使用，请参考 examples/security/。
+
 This module provides a flexible security framework for command execution
 with support for multiple approval mechanisms and a three-level permission model.
 

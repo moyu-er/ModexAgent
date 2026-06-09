@@ -38,7 +38,7 @@ from framework.multi_agent import (
     AgentAddress,
     AgentPool,
     CommunicationTracker,
-    SubagentService, AgentMessageBus,
+    AgentMessageBus,
 )
 from framework.multi_agent.session_id import DefaultSessionIdStrategy
 from framework.multi_agent.tools import CommunicationTarget, CommunicationTargetStore, SendToAgentTool
@@ -155,7 +155,7 @@ class AgentBuilderMixin:
     agent_pool: AgentPool | None
     broker: InMemoryMessageBroker | None
     agent_bus: AgentMessageBus | None
-    subagent_service: SubagentService | None
+
     communication_tracker: CommunicationTracker | None
     mcp_manager: MCPClientManager | None
     context_manager: ContextManager | None
@@ -229,7 +229,7 @@ class AgentBuilderMixin:
             logger.warning("MCP tools registration failed: %s", e)
 
     async def _register_multi_agent_tools(self) -> None:
-        if self.tool_manager is None or self.subagent_service is None or self.broker is None:
+        if self.tool_manager is None or self.broker is None:
             return
 
         agents = self._app_config.agents

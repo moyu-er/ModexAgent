@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from framework.multi_agent.comm_kind import AgentCommKind
 
@@ -26,29 +27,35 @@ class AgentProfile:
     comm_kind: AgentCommKind = AgentCommKind.NORMAL
 
 
-class AgentRegistry(Protocol):
+class AgentRegistry(ABC):
     """Agent 注册表协议（只读发现层）。"""
 
+    @abstractmethod
     def list_agents(self) -> list[AgentDescriptor]:
         """列出所有已注册 Agent 的描述符。"""
         ...
 
+    @abstractmethod
     def get_descriptor(self, name: str) -> AgentDescriptor | None:
         """按名称获取 Agent 描述符。"""
         ...
 
+    @abstractmethod
     def get_status(self, name: str) -> AgentState:
         """按名称获取 Agent 状态。"""
         ...
 
+    @abstractmethod
     def list_profiles(self, caller: str | None = None) -> list[AgentProfile]:
         """列出对 caller 可见的所有 Agent 画像。"""
         ...
 
+    @abstractmethod
     def get_profile(self, name: str) -> AgentProfile | None:
         """按名称获取 Agent 画像。"""
         ...
 
+    @abstractmethod
     def find_profiles(
         self,
         capability: str | None = None,
@@ -66,45 +73,3 @@ class AgentRegistry(Protocol):
         ...
 
 
-class AgentDirectory:
-    """Agent 目录实现，支持按能力发现。"""
-
-    def __init__(self) -> None:
-        self._descriptors: dict[str, AgentDescriptor] = {}
-        self._status: dict[str, AgentState] = {}
-
-    def register(self, descriptor: AgentDescriptor) -> None:
-        """注册 Agent 描述符。"""
-        self._descriptors[descriptor.address.name] = descriptor
-        if descriptor.address.name not in self._status:
-            self._status[descriptor.address.name] = AgentState.IDLE
-
-    def unregister(self, name: str) -> bool:
-        """注销 Agent 描述符。"""
-        if name in self._descriptors:
-            del self._descriptors[name]
-            self._status.pop(name, None)
-            return True
-        return False
-
-    def list_agents(self) -> list[AgentDescriptor]:
-        return list(self._descriptors.values())
-
-    def get_descriptor(self, name: str) -> AgentDescriptor | None:
-        return self._descriptors.get(name)
-
-    def get_status(self, name: str) -> AgentState:
-        from .state import AgentState
-        return self._status.get(name, AgentState.SHUTDOWN)
-
-    def find_by_capability(self, capability: str) -> list[AgentDescriptor]:
-        """按能力标签查找 Agent。"""
-        return [
-            desc
-            for desc in self._descriptors.values()
-            if capability in desc.address.capabilities
-        ]
-
-    def update_status(self, name: str, state: AgentState) -> None:
-        """更新 Agent 状态。"""
-        self._status[name] = state

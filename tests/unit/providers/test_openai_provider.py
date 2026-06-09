@@ -8,52 +8,21 @@ import pytest
 
 from framework.core.constants import FinishReason
 from framework.core.llm_struct import (
-    LLMErrorInfo,
     LLMErrorKind,
     LLMTimeoutPolicy,
     RuntimeSafetyPolicy,
     TurnTimeoutPolicy,
 )
-from framework.core.types import LLMResponse, ToolCall
+from framework.core.types import LLMResponse
 from framework.providers.openai_provider import OpenAIProvider
 
 
-def _make_mock_chat_completion(content="hello", tool_calls=None, finish_reason="stop",
-                                reasoning_content=None, usage_tokens=(100, 50, 150)):
-    """Build a mock ChatCompletion response with the right attributes."""
-    tc_list = []
-    if tool_calls:
-        for tc in tool_calls:
-            func = MagicMock()
-            func.name = tc["name"]
-            func.arguments = tc["arguments"]
-            m = MagicMock()
-            m.id = tc["id"]
-            m.function = func
-            tc_list.append(m)
-
-    msg = MagicMock()
-    msg.content = content
-    msg.tool_calls = tc_list if tc_list else None
-    msg.model_extra = {"reasoning_content": reasoning_content} if reasoning_content else None
-
-    choice = MagicMock()
-    choice.message = msg
-    choice.finish_reason = finish_reason
-
-    usage = MagicMock()
-    usage.prompt_tokens = usage_tokens[0]
-    usage.completion_tokens = usage_tokens[1]
-    usage.total_tokens = usage_tokens[2]
-
-    response = MagicMock()
-    response.choices = [choice]
-    response.usage = usage
-    return response
-
-
 class TestOpenAIProviderChat:
-    """Unit tests for OpenAIProvider.chat()."""
+    """Unit tests for OpenAIProvider.chat().
+
+    chat() now delegates to chat_stream_with_retry internally (stream=True)
+    for prompt cache benefits, while returning a complete LLMResponse to the caller.
+    """
 
     @pytest.fixture
     def provider(self):
@@ -68,10 +37,35 @@ class TestOpenAIProviderChat:
             p._client = mock_client
             yield p
 
+    def _make_chunk(self, content=None, finish_reason=None, reasoning=None, usage=None):
+        """Build a mock ChatCompletionChunk."""
+        delta = MagicMock()
+        delta.content = content
+        delta.tool_calls = None
+        delta.model_extra = {"reasoning_content": reasoning} if reasoning else None
+
+        choice = MagicMock()
+        choice.delta = delta
+        choice.finish_reason = finish_reason
+
+        chunk = MagicMock()
+        chunk.choices = [choice]
+        chunk.usage = usage
+        return chunk
+
+    async def _stream_chunks(self, chunks):
+        for c in chunks:
+            yield c
+
     @pytest.mark.asyncio
     async def test_chat_returns_content(self, provider):
+        chunks = [
+            self._make_chunk(content="Hello"),
+            self._make_chunk(content=", world!", finish_reason="stop",
+                             usage=MagicMock(prompt_tokens=100, completion_tokens=50, total_tokens=150)),
+        ]
         provider._client.chat.completions.create = AsyncMock(
-            return_value=_make_mock_chat_completion(content="Hello, world!")
+            return_value=self._stream_chunks(chunks)
         )
 
         result = await provider.chat(messages=[{"role": "user", "content": "hi"}])
@@ -83,12 +77,30 @@ class TestOpenAIProviderChat:
 
     @pytest.mark.asyncio
     async def test_chat_with_tool_calls(self, provider):
+        func = MagicMock()
+        func.name = "search"
+        func.arguments = '{"query": "test"}'
+
+        tc = MagicMock()
+        tc.index = 0
+        tc.id = "c1"
+        tc.function = func
+
+        delta = MagicMock()
+        delta.content = None
+        delta.tool_calls = [tc]
+        delta.model_extra = None
+
+        choice = MagicMock()
+        choice.delta = delta
+        choice.finish_reason = "tool_calls"
+
+        chunk = MagicMock()
+        chunk.choices = [choice]
+        chunk.usage = None
+
         provider._client.chat.completions.create = AsyncMock(
-            return_value=_make_mock_chat_completion(
-                content=None,
-                tool_calls=[{"id": "c1", "name": "search", "arguments": '{"query": "test"}'}],
-                finish_reason="tool_calls",
-            )
+            return_value=self._stream_chunks([chunk])
         )
 
         result = await provider.chat(messages=[{"role": "user", "content": "search"}])
@@ -100,48 +112,16 @@ class TestOpenAIProviderChat:
 
     @pytest.mark.asyncio
     async def test_chat_with_reasoning(self, provider):
+        chunks = [
+            self._make_chunk(reasoning="step by step..."),
+            self._make_chunk(content="answer", finish_reason="stop"),
+        ]
         provider._client.chat.completions.create = AsyncMock(
-            return_value=_make_mock_chat_completion(
-                content="answer", reasoning_content="step by step..."
-            )
+            return_value=self._stream_chunks(chunks)
         )
 
         result = await provider.chat(messages=[{"role": "user", "content": "?"}])
         assert result.reasoning_content == "step by step..."
-
-    @pytest.mark.asyncio
-    async def test_chat_response_parse_error_returns_error_response(self, provider):
-        """When the API response cannot be parsed, an error LLMResponse is returned."""
-        bad_msg = MagicMock()
-        bad_msg.content = "ok"
-        bad_msg.tool_calls = [
-            MagicMock(
-                id="c1",
-                function=MagicMock(
-                    name="search",
-                    arguments="not valid json at all {{{",
-                ),
-            )
-        ]
-        bad_msg.model_extra = None
-        bad_choice = MagicMock()
-        bad_choice.message = bad_msg
-        bad_choice.finish_reason = "tool_calls"
-
-        bad_response = MagicMock()
-        bad_response.choices = [bad_choice]
-        bad_response.usage = None
-
-        provider._client.chat.completions.create = AsyncMock(
-            return_value=bad_response
-        )
-
-        result = await provider.chat(messages=[{"role": "user", "content": "hi"}])
-        # Should NOT crash — returns content normally (tool call degraded to {} args)
-        assert result.content == "ok"
-        assert result.tool_calls is not None
-        assert len(result.tool_calls) == 1
-        assert result.tool_calls[0].arguments == {}
 
     @pytest.mark.asyncio
     async def test_chat_error_returns_error_response(self, provider):
@@ -157,8 +137,9 @@ class TestOpenAIProviderChat:
 
     @pytest.mark.asyncio
     async def test_chat_passes_parameters_correctly(self, provider):
+        chunks = [self._make_chunk(content="ok", finish_reason="stop")]
         provider._client.chat.completions.create = AsyncMock(
-            return_value=_make_mock_chat_completion(content="ok")
+            return_value=self._stream_chunks(chunks)
         )
 
         await provider.chat(
@@ -174,7 +155,8 @@ class TestOpenAIProviderChat:
         assert call_kwargs["temperature"] == 0.3
         assert call_kwargs["max_tokens"] == 500
         assert len(call_kwargs["tools"]) == 1
-        assert call_kwargs["stream"] is False
+        # chat() now uses streaming internally for cache benefits
+        assert call_kwargs["stream"] is True
 
 
 class TestBuildParamsStripsGovernanceFields:

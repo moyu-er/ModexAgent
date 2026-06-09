@@ -15,6 +15,7 @@ from framework.commands.models import (
     CommandContext,
     CommandHandlingResult,
     CommandParseResult,
+    CommandProcessor,
     SlashCommandInvocation,
 )
 from framework.commands.parser import SlashCommandParser
@@ -22,7 +23,7 @@ from framework.commands.parser import SlashCommandParser
 logger = logging.getLogger(__name__)
 
 
-class SlashCommandProcessor:
+class SlashCommandProcessor(CommandProcessor):
     def __init__(
         self,
         *,

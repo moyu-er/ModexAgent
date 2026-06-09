@@ -48,7 +48,7 @@ from ..multi_agent import (
 from ..runtime.enums import SnapshotReason, TurnCustomKey, TurnPhase
 from ..runtime.models import StateQueryScope, TurnSnapshot
 from ..runtime.services import AgentRuntimeServices
-from ..session.agent_session import _dream_locks
+from ..runtime.dream_locks import _dream_locks
 from ..utils.context_builder import MultiAgentContextBuilder
 from ..utils.deduplicator import MessageDeduplicator
 from .adapters import InputAdapter, OutputAdapter, OutputMessage
@@ -83,36 +83,6 @@ async def _safe_flush(ctx_mgr: Any, session_id: str, *, timeout: float) -> None:
         logger.exception("Memory flush failed for %s", session_id)
 
 
-async def safe_send_output(
-    adapter: Any,
-    message: Any,
-    session_id: str,
-    *,
-    timeout: float,
-) -> None:
-    """通过 OutputAdapter 发送消息，带 timeout 保护。
-
-    与 _safe_emit_error 不同，这个函数直接包装 adapter.send()，
-    供 StreamingAwareEmitter 和 BrokerBridgeService 等组件使用。
-    """
-    try:
-        await asyncio.wait_for(
-            adapter.send(message, session_id),
-            timeout=timeout,
-        )
-    except TimeoutError:
-        logger.error(
-            "Output send timeout after %.1fs for session=%s adapter=%s",
-            timeout,
-            session_id,
-            getattr(adapter, "name", "unknown"),
-        )
-    except Exception:
-        logger.exception(
-            "Output send failed for session=%s adapter=%s",
-            session_id,
-            getattr(adapter, "name", "unknown"),
-        )
 
 
 class AgentPipeline:
@@ -144,7 +114,6 @@ class AgentPipeline:
         incremental_flush: bool = True,
         skill_manager: SkillManager | None = None,
         hooks: list[Any] | None = None,
-        command_interceptor: Any | None = None,
         router: AgentMessageRouter | None = None,
         deduplicator: MessageDeduplicator | None = None,
         context_builder: MultiAgentContextBuilder | None = None,
@@ -194,12 +163,6 @@ class AgentPipeline:
         self.skill_manager = skill_manager
         self.hooks = list(hooks) if hooks else []
 
-        self.command_interceptor = command_interceptor
-        if command_interceptor is not None:
-            logger.warning(
-                "command_interceptor is deprecated and no longer used by AgentPipeline. "
-                "Use command_processor instead."
-            )
         self.router = router
         self.deduplicator = deduplicator
         self.context_builder = context_builder

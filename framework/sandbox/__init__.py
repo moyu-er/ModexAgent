@@ -1,3 +1,6 @@
+# EXPERIMENTAL: 此模块暂不推荐生产使用。当前零测试覆盖、零生产接入。
+# 后续待补充测试和接入验证后再正式开放。如需使用，请参考 examples/sandbox/。
+
 # Import security from the new security package
 from framework.security import (
     APIBasedApprovalHandler,

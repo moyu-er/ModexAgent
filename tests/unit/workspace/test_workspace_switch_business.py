@@ -20,7 +20,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from framework.workspace.context import DefaultWorkspaceContext
-from framework.workspace.models import CdResult
+from framework.workspace.models import CdResult, WorkspaceSwitchCallback
 
 
 # -- Fixtures ---------------------------------------------------------------
@@ -132,7 +132,7 @@ class TestConcurrentCdLock:
         ctx = DefaultWorkspaceContext(home=home)
         execution_order: list[str] = []
 
-        class SlowCallback:
+        class SlowCallback(WorkspaceSwitchCallback):
             async def on_workspace_switch(self, old_data_dir: Path, new_data_dir: Path) -> None:
                 name = "t1" if "target1" in str(new_data_dir) else "t2"
                 execution_order.append(f"{name}-start")
@@ -202,7 +202,7 @@ class TestCallbackAtomicity:
         """If the merged callback raises, the switch is aborted."""
         ctx = DefaultWorkspaceContext(home=home)
 
-        class FailingCallback:
+        class FailingCallback(WorkspaceSwitchCallback):
             async def on_workspace_switch(self, old_data_dir: Path, new_data_dir: Path) -> None:
                 raise RuntimeError("rebuild failed")
 
@@ -221,11 +221,11 @@ class TestCallbackAtomicity:
         ctx = DefaultWorkspaceContext(home=home)
         order: list[str] = []
 
-        class FirstCallback:
+        class FirstCallback(WorkspaceSwitchCallback):
             async def on_workspace_switch(self, old_data_dir: Path, new_data_dir: Path) -> None:
                 order.append("first")
 
-        class SecondCallback:
+        class SecondCallback(WorkspaceSwitchCallback):
             async def on_workspace_switch(self, old_data_dir: Path, new_data_dir: Path) -> None:
                 order.append("second")
 

@@ -45,5 +45,5 @@ class TestDefaultSkillBuilder:
     async def test_xml_escapes_special_chars(self):
         skills = [Skill(name="test_skill", description="a & b < c", location="/tmp/s.md")]
         out = await DefaultSkillBuilder().build(skills)
-        assert "&amp;" in out
-        assert "&lt;" in out
+        # Description with special chars is wrapped in CDATA (not entity-escaped)
+        assert "<![CDATA[\na & b < c\n]]>" in out

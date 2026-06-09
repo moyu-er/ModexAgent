@@ -43,6 +43,7 @@ class TestReadFileTool:
         result = await tool.execute(path=str(file_path))
         assert "line1" in result
         assert "line3" in result
+        assert "read_status: complete" in result
 
     @pytest.mark.asyncio
     async def test_read_file_not_found(self, tmp_workspace):
@@ -57,11 +58,12 @@ class TestReadFileTool:
         assert "not a file" in result.lower()
 
     @pytest.mark.asyncio
-    async def test_read_line_range(self, tmp_workspace):
+    async def test_read_with_offset_and_limit(self, tmp_workspace):
+        """offset=1, limit=3 跳过第 1 行，读取 3 行 (b,c,d)。"""
         file_path = tmp_workspace / "test.txt"
         file_path.write_text("a\nb\nc\nd\ne", encoding="utf-8")
         tool = ReadFileTool()
-        result = await tool.execute(path=str(file_path), start_line=2, end_line=4)
+        result = await tool.execute(path=str(file_path), offset=1, limit=3)
         lines = result.splitlines()
         assert "b" in lines
         assert "c" in lines
@@ -70,12 +72,108 @@ class TestReadFileTool:
         assert "e" not in lines
 
     @pytest.mark.asyncio
-    async def test_read_invalid_line_range(self, tmp_workspace):
+    async def test_read_negative_offset(self, tmp_workspace):
         file_path = tmp_workspace / "test.txt"
         file_path.write_text("a\nb", encoding="utf-8")
         tool = ReadFileTool()
-        result = await tool.execute(path=str(file_path), start_line=1, end_line=0)
-        assert "must be >= start_line" in result.lower()
+        result = await tool.execute(path=str(file_path), offset=-1)
+        assert "offset must be >= 0" in result
+
+    @pytest.mark.asyncio
+    async def test_read_zero_limit(self, tmp_workspace):
+        file_path = tmp_workspace / "test.txt"
+        file_path.write_text("a\nb", encoding="utf-8")
+        tool = ReadFileTool()
+        result = await tool.execute(path=str(file_path), limit=0)
+        assert "limit must be >= 1" in result
+
+    @pytest.mark.asyncio
+    async def test_read_offset_exceeds_file(self, tmp_workspace):
+        """offset 超出文件行数时，返回错误并告知有效范围。"""
+        file_path = tmp_workspace / "test.txt"
+        file_path.write_text("a\nb\nc", encoding="utf-8")
+        tool = ReadFileTool()
+        result = await tool.execute(path=str(file_path), offset=10)
+        assert "offset (10) exceeds file length (3 lines)" in result
+        assert "Valid offset range: 0 ~ 2" in result
+
+    @pytest.mark.asyncio
+    async def test_read_empty_file(self, tmp_workspace):
+        file_path = tmp_workspace / "empty.txt"
+        file_path.write_text("", encoding="utf-8")
+        tool = ReadFileTool()
+        result = await tool.execute(path=str(file_path))
+        assert "(empty file)" in result
+        assert "read_status: empty" in result
+        assert "total_lines: 0" in result
+
+    @pytest.mark.asyncio
+    async def test_read_limit_exceeds_remaining(self, tmp_workspace):
+        """limit 超出剩余行数时，返回实际内容并提示。"""
+        file_path = tmp_workspace / "test.txt"
+        file_path.write_text("a\nb\nc", encoding="utf-8")
+        tool = ReadFileTool()
+        result = await tool.execute(path=str(file_path), offset=0, limit=100)
+        assert "a" in result
+        assert "c" in result
+        assert "read_status: complete" in result
+        assert "requested 100" in result
+        assert "file has 3 remaining" in result
+
+    @pytest.mark.asyncio
+    async def test_read_limit_clamped_to_max(self, tmp_workspace):
+        """limit > 300 被自动 clamp，不报错。"""
+        file_path = tmp_workspace / "test.txt"
+        file_path.write_text("a\nb", encoding="utf-8")
+        tool = ReadFileTool()
+        result = await tool.execute(path=str(file_path), limit=999)
+        assert "read_status: complete" in result
+        # 不应报错
+        assert "error" not in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_read_truncated_by_limit(self, tmp_workspace):
+        """文件行数 > limit 时，返回 truncated_by_limit。"""
+        file_path = tmp_workspace / "test.txt"
+        lines = [f"line{i}" for i in range(500)]
+        file_path.write_text("\n".join(lines), encoding="utf-8")
+        tool = ReadFileTool()
+        result = await tool.execute(path=str(file_path), offset=0, limit=200)
+        assert "read_status: truncated_by_limit" in result
+        assert "remaining_lines: 300" in result
+        assert "hint: use offset=200" in result
+        # 验证内容只有前 200 行
+        assert "line0" in result
+        assert "line199" in result
+        assert "line200" not in result
+
+    @pytest.mark.asyncio
+    async def test_read_truncated_by_chars(self, tmp_workspace):
+        """累积字符数超限时截断。"""
+        file_path = tmp_workspace / "test.txt"
+        # 每行 ~200 字符，200 行 ≈ 40000 字符 > 20000 上限
+        lines = ["x" * 100 for _ in range(200)]
+        file_path.write_text("\n".join(lines), encoding="utf-8")
+        tool = ReadFileTool()
+        result = await tool.execute(path=str(file_path), offset=0, limit=200)
+        assert "read_status: truncated_by_chars" in result
+        assert "stopped before limit" in result
+        assert "warning: char limit" in result
+        assert "hint: use offset=" in result
+
+    @pytest.mark.asyncio
+    async def test_read_single_long_line_within_char_limit(self, tmp_workspace):
+        """单行超长但总量未超 max_chars 时完整返回。"""
+        file_path = tmp_workspace / "test.txt"
+        long_line = "x" * 5000
+        file_path.write_text(f"short\n{long_line}\nend", encoding="utf-8")
+        tool = ReadFileTool()
+        result = await tool.execute(path=str(file_path))
+        assert "read_status: complete" in result
+        assert "short" in result
+        assert "end" in result
+        # 超长行完整保留，不截断
+        assert long_line in result
 
 
 # ---------------------------------------------------------------------------

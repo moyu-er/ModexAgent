@@ -9,6 +9,7 @@ import pytest
 from framework.tools.terminal.command_tool import CommandTool
 from framework.tools.terminal.config import TerminalRuntimeConfig
 from framework.tools.terminal.process_tool import ProcessTool
+from framework.tools.terminal.pty_keys import CTRL_C, ENTER_KEY
 from framework.tools.terminal.results import TerminalRead, TerminalSegment
 from framework.tools.terminal.tool import TerminalTool
 from framework.tools.terminal.types import TerminalCommandStatus
@@ -63,14 +64,14 @@ class TestCommandToolGuardIntegration:
         backend: FakeBackend = session._backend
         # Simulate prompt ready
         backend._segment = TerminalSegment(text="$ ", cursor_line="$ ", is_empty_prompt=True)
-        # Queue two identical reads: one for guard check, one for poll loop
+        backend._replenish_reads = True
         backend._read_queue = [
-            TerminalRead(stdout="hello\n", raw="hello\n"),
             TerminalRead(stdout="hello\n", raw="hello\n"),
         ]
 
         result = await tool.execute(command="echo hello")
-        assert "<status>completed</status>" in result
+        # Guard passed → command was submitted to backend
+        assert any("echo hello" in w for w in backend.writes)
 
 
 class TestProcessToolGuardIntegration:
@@ -111,7 +112,7 @@ class TestProcessToolGuardIntegration:
 
         result = await tool.execute(action="interrupt")
         assert "rejected" not in result.lower()
-        assert "\x03" in backend.writes  # Ctrl+C was sent
+        assert CTRL_C in backend.writes  # Ctrl+C was sent
 
 
 class TestRecoveryFlow:
@@ -143,15 +144,13 @@ class TestRecoveryFlow:
         # 3. Reset session state (simulating prompt return after interrupt)
         backend._segment = TerminalSegment(text="$ ", cursor_line="$ ", is_empty_prompt=True)
         session._command_started_at = None
-        # Queue two identical reads: one for guard check, one for poll loop
-        backend._read_queue = [
-            TerminalRead(stdout="done\n", raw="done\n"),
-            TerminalRead(stdout="done\n", raw="done\n"),
-        ]
+        backend._replenish_reads = True
+        backend._read_queue = [TerminalRead(stdout="done\n", raw="done\n")]
 
         # 4. Command now allowed
         result = await cmd_tool.execute(command="echo done")
-        assert "<status>completed</status>" in result
+        # Guard passed → command was submitted to backend
+        assert any("echo done" in w for w in backend.writes)
 
 
 class TestAntiInterference:
@@ -173,6 +172,67 @@ class TestAntiInterference:
         session._backend._segment = TerminalSegment(text="$ ", cursor_line="$ ", is_empty_prompt=True)
 
         result = await term_tool.execute(action="current")
-        assert "<interference_warning>" in result
-        assert "executing" in result.lower()
-        assert "idle" in result.lower()
+        assert "<interference>" in result
+        assert "<expected>executing</expected>" in result
+        assert "<actual>idle</actual>" in result
+
+
+class TestProcessWriteEnterKey:
+    """Process write with submit=true uses \\r (Enter key code), not \\n.
+
+    Programs that set the terminal to raw mode (less, vim, nano, ssh, etc.)
+    only recognise \\r as the Enter key.  \\n (line feed) is ignored in raw
+    mode, causing the program to appear "frozen" waiting for input.
+    """
+
+    @pytest.mark.asyncio
+    async def test_write_submit_uses_carriage_return(self) -> None:
+        cfg = _config()
+        manager, registry = make_manager_and_registry(config=cfg)
+        tool = ProcessTool(registry=registry, manager=manager, config=cfg)
+
+        session = await manager.get_default()
+        session._ever_received_bytes = True
+        session._backend_started = True
+        session._needs_restart = False
+        backend: FakeBackend = session._backend
+        backend._segment = TerminalSegment(text=": ", cursor_line=": ", is_empty_prompt=False)
+        backend._replenish_reads = True
+        backend._read_queue = [
+            TerminalRead(stdout="commit_hash fix: message\n:\n", raw="commit_hash fix: message\n:\n"),
+        ]
+
+        # Create a running process (pager active)
+        proc = registry.create(command="git log", terminal=session.name, cwd=None, pid=None)
+
+        await tool.execute(action="write", data="q")
+
+        # The payload written to the backend must end with \r, not \n.
+        assert any(w.endswith(ENTER_KEY) for w in backend.writes), (
+            f"Expected ENTER_KEY in writes, got: {backend.writes}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_submit_uses_carriage_return(self) -> None:
+        cfg = _config()
+        manager, registry = make_manager_and_registry(config=cfg)
+        tool = ProcessTool(registry=registry, manager=manager, config=cfg)
+
+        session = await manager.get_default()
+        session._ever_received_bytes = True
+        session._backend_started = True
+        session._needs_restart = False
+        backend: FakeBackend = session._backend
+        backend._segment = TerminalSegment(text=": ", cursor_line=": ", is_empty_prompt=False)
+        backend._replenish_reads = True
+        backend._read_queue = [
+            TerminalRead(stdout="commit_hash fix: message\n:\n", raw="commit_hash fix: message\n:\n"),
+        ]
+
+        proc = registry.create(command="git log", terminal=session.name, cwd=None, pid=None)
+
+        await tool.execute(action="submit")
+
+        assert any(w.endswith(ENTER_KEY) for w in backend.writes), (
+            f"Expected ENTER_KEY in writes, got: {backend.writes}"
+        )

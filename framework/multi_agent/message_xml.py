@@ -8,7 +8,7 @@ Two formats:
 
 from __future__ import annotations
 
-import xml.sax.saxutils as saxutils
+from framework.utils.xml import xml_attr, xml_text
 
 
 def build_agent_message(
@@ -18,10 +18,10 @@ def build_agent_message(
     content: str,
 ) -> str:
     """Build <agent_message> XML for LLM-initiated communication."""
-    inv_attr = f' invocation_id="{saxutils.escape(invocation_id)}"' if invocation_id else ""
+    inv_attr = f' invocation_id="{xml_attr(invocation_id)}"' if invocation_id else ""
     lines = [
-        f'<agent_message source="{saxutils.escape(source)}"{inv_attr}>',
-        f"  <content>{saxutils.escape(content)}</content>",
+        f'<agent_message source="{xml_attr(source)}"{inv_attr}>',
+        f"  <content>{xml_text(content)}</content>",
         "</agent_message>",
     ]
     return "\n".join(lines)
@@ -36,12 +36,12 @@ def build_agent_result(
     content: str,
 ) -> str:
     """Build <agent_result> XML for hook-generated turn results."""
-    inv_attr = f' invocation_id="{saxutils.escape(invocation_id)}"' if invocation_id else ""
+    inv_attr = f' invocation_id="{xml_attr(invocation_id)}"' if invocation_id else ""
     lines = [
-        f'<agent_result source="{saxutils.escape(source)}"{inv_attr}'
-        f' status="{saxutils.escape(status)}">',
-        f"  <stop_reason>{saxutils.escape(stop_reason)}</stop_reason>",
-        f"  <content>{saxutils.escape(content)}</content>",
+        f'<agent_result source="{xml_attr(source)}"{inv_attr}'
+        f' status="{xml_attr(status)}">',
+        f"  <stop_reason>{xml_text(stop_reason)}</stop_reason>",
+        f"  <content>{xml_text(content)}</content>",
         "</agent_result>",
     ]
     return "\n".join(lines)

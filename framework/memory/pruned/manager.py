@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from html import escape
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from framework.memory.tags import PrunedTag
 from framework.memory.pruned.models import PrunedIndexEntry
 from framework.utils.timezone import get_user_timezone
+from framework.utils.xml import xml_attr, xml_text
 
 if TYPE_CHECKING:
     from framework.memory.pruned.storage import PrunedStorage, FilePrunedStorage  # type: ignore[no-redef]
@@ -71,16 +71,17 @@ class PrunedManager:
         storage = self._get_storage(session_id)
         if not storage.has_content():
             return None
-        path = escape(storage.get_directory_path())
+        path = xml_attr(storage.get_directory_path())
         ct = PrunedTag.CONTAINER.value
         tt = PrunedTag.TRANSCRIPT.value
         heading = (
-            "### Conversation Transcripts\n\n"
-            "Complete transcripts of **previous** conversations (not the current one). "
-            "The directory below contains all stored transcript files — read its "
-            "`index.jsonl` to browse every conversation by topic, time range, and "
-            "message count. Transcripts are read-only; you may update topic descriptions "
-            "in `index.jsonl`.\n\n"
+            "### Previous Conversation Transcripts\n\n"
+            "The directory below stores complete transcripts of **previous** conversations "
+            f"(not the current one). The `<{PrunedTag.HISTORY.value}>` section is a partial "
+            "preview — read `index.jsonl` for the full catalog (topic, time range, message "
+            "count), then read the specific transcript files when you need context from a "
+            "prior conversation. Transcripts are read-only; you may update topic "
+            "descriptions in `index.jsonl`.\n\n"
         )
         lines: list[str] = [
             heading,
@@ -105,9 +106,9 @@ class PrunedManager:
                 if len(topic) > 200:
                     topic = topic[:200] + "..."
                 lines.append(
-                    f'    <{tt} time="{escape(time_range)}"'
+                    f'    <{tt} time="{xml_attr(time_range)}"'
                     f' messages="{e.message_count}">'
-                    f"\n{escape(topic)}\n"
+                    f"\n{xml_text(topic)}\n"
                     f"</{tt}>"
                 )
             lines.append(f"  </{history}>")

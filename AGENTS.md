@@ -34,7 +34,7 @@
 1. **Enums/constants over raw strings** for categories, roles, states, protocol values. Use `MessageRole`, `MessageType`, `FinishReason`, `DefaultValues`.
 2. **Typed structures over loose dicts**. Use existing dataclasses: `ChatMessage`, `ToolCall`, `LLMResponse`, `InputMessage`, `OutputMessage`.
 3. **Typed signatures**. No bare `Any`, `list`, `dict`, `object`, `list[Any]` in framework-facing APIs. Declare parameter and return types.
-4. **ABCs/Protocols before implementations**. No concrete dependency where a pluggable contract exists. 63 ABCs + 18 Protocols in framework/.
+4. **ABCs before implementations**. No concrete dependency where a pluggable contract exists. All extension points use ABCs (zero Protocols).
 5. **Framework vs examples separation**. `framework/` = reusable behavior; `examples/` = business wiring. No example-specific config in framework.
 6. **No dynamic access** (`getattr`/`hasattr`) except at real extension boundaries. Prefer explicit typed attributes and method calls.
 

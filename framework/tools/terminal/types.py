@@ -5,6 +5,7 @@ import platform as _platform
 import re
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -72,6 +73,7 @@ class CommandResultStatus(StrEnum):
     PAGINATED     = "paginated"
     WAITING_INPUT = "waiting_input"  # was: input_wait
     STUCK         = "stuck"          # new
+    REJECTED      = "rejected"
 
 
 class TerminalCommandStatus(StrEnum):
@@ -80,6 +82,7 @@ class TerminalCommandStatus(StrEnum):
     UNKNOWN       = "unknown"
     IDLE          = "idle"
     EXECUTING     = "executing"
+    LONG_RUNNING  = "long_running"
     WAITING_INPUT = "waiting_input"
     STUCK         = "stuck"
     COMPLETED     = "completed"
@@ -155,41 +158,62 @@ def _verify_bash(path: str) -> ShellInfo | None:
     return None
 
 
+def _verify_wsl(wsl_path: str) -> bool:
+    try:
+        result = subprocess.run(
+            [wsl_path, "--list", "--quiet"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+        )
+        return result.returncode == 0 and bool(result.stdout.strip())
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return False
+
+
+def detect_git_bash() -> ShellInfo | None:
+    """Detect Git Bash by locating git.exe, then searching sibling directories for bash.exe."""
+    git_path = shutil.which("git")
+    if not git_path:
+        return None
+
+    git_dir = Path(git_path).resolve().parent
+    for candidate_dir in [git_dir, git_dir.parent / "bin", git_dir.parent / "usr" / "bin"]:
+        bash_candidate = candidate_dir / "bash.exe"
+        if bash_candidate.is_file():
+            info = _verify_bash(str(bash_candidate))
+            if info is not None:
+                return info
+
+    return None
+
+
 def detect_platform_shell() -> ShellInfo | None:
     """Detect the best available shell for the current platform.
 
-    Windows priority: WSL bash > Git bash / MSYS2 > PowerShell.
+    Windows priority: WSL bash > Git bash / MSYS2.
     Linux priority: bash > sh
     macOS priority: bash > zsh > sh
     """
     plat = _parse_platform(_platform.system().lower())
 
     if plat is Platform.WINDOWS:
-        # Priority 1: WSL bash
-        system_root = os.environ.get("SystemRoot", r"C:\Windows")
-        wsl_bash = Path(system_root) / "System32" / "bash.exe"
-        if wsl_bash.is_file():
-            info = _verify_bash(str(wsl_bash))
-            if info is not None:
-                return info
+        # wsl_path = shutil.which("wsl")
+        # if wsl_path and _verify_wsl(wsl_path):
+        #     for candidate in [
+        #         shutil.which("bash"),
+        #         str(Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "bash.exe"),
+        #     ]:
+        #         if candidate and Path(candidate).is_file():
+        #             info = _verify_bash(candidate)
+        #             if info is not None:
+        #                 return info
 
-        # Priority 2: Git bash / MSYS2 (any bash in PATH)
-        bash_path = shutil.which("bash")
-        if bash_path:
-            info = _verify_bash(bash_path)
-            if info is not None:
-                return info
+        git_bash = detect_git_bash()
+        if git_bash is not None:
+            return git_bash
 
-        # Priority 3: PowerShell
-        ps_path = shutil.which("powershell.exe")
-        if ps_path:
-            return ShellInfo(
-                family=ShellFamily.POWERSHELL,
-                path=ps_path,
-                platform=plat,
-            )
-
-        # Should never happen on Windows
         return None
 
     env_shell = os.environ.get("SHELL", "")

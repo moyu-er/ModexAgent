@@ -13,11 +13,11 @@ import shutil
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-from xml.sax.saxutils import escape as _xml_escape
 
 from framework.core.experience.meta import ExperienceMetaStore
 from framework.core.experience.name_sync import auto_correct_frontmatter_name
 from framework.core.experience.source import sanitize_name
+from framework.utils.xml import xml_text
 from framework.core.experience.validation import validate_experience_md
 from framework.core.tool_manager import Tool, ToolConfig
 from framework.tools.standard.file_tool import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
@@ -132,19 +132,19 @@ def _validation_result_xml_with_extra(exp_name: str, validation: Any, extra_warn
     valid_attr = "true" if validation.valid else "false"
     errors_xml = ""
     if validation.errors:
-        items = "\n".join(f"      <error>{_xml_escape(e)}</error>" for e in validation.errors)
+        items = "\n".join(f"      <error>{xml_text(e)}</error>" for e in validation.errors)
         errors_xml = f"\n{items}\n    "
     all_warnings = list(validation.warnings or [])
     if extra_warnings:
         all_warnings.extend(extra_warnings)
     warnings_xml = ""
     if all_warnings:
-        items = "\n".join(f"      <warning>{_xml_escape(w)}</warning>" for w in all_warnings)
+        items = "\n".join(f"      <warning>{xml_text(w)}</warning>" for w in all_warnings)
         warnings_xml = f"\n{items}\n    "
     return (
         f"<result>\n"
         f"  <status>success</status>\n"
-        f"  <name>{_xml_escape(exp_name)}</name>\n"
+        f"  <name>{xml_text(exp_name)}</name>\n"
         f'  <validation valid="{valid_attr}">\n'
         f"    <errors>{errors_xml}</errors>\n"
         f"    <warnings>{warnings_xml}</warnings>\n"
@@ -192,11 +192,11 @@ class ExperienceReadTool(Tool):
     async def execute(self, name: str, path: str | None = None, **kwargs: Any) -> str:
         err = _validate_name(name)
         if err:
-            return f"<result><status>error</status><error>{_xml_escape(err)}</error></result>"
+            return f"<result><status>error</status><error>{xml_text(err)}</error></result>"
 
         resolved, resolve_err = self._resolver.resolve(name, path)
         if resolve_err:
-            return f"<result><status>error</status><error>{_xml_escape(resolve_err)}</error></result>"
+            return f"<result><status>error</status><error>{xml_text(resolve_err)}</error></result>"
         if resolved is None:
             return "<result><status>error</status><error>Path resolution failed.</error></result>"
 
@@ -254,11 +254,11 @@ class ExperienceWriteTool(Tool):
     async def execute(self, name: str, content: str, path: str | None = None, **kwargs: Any) -> str:
         err = _validate_name(name)
         if err:
-            return f"<result><status>error</status><error>{_xml_escape(err)}</error></result>"
+            return f"<result><status>error</status><error>{xml_text(err)}</error></result>"
 
         resolved, resolve_err = self._resolver.resolve(name, path)
         if resolve_err:
-            return f"<result><status>error</status><error>{_xml_escape(resolve_err)}</error></result>"
+            return f"<result><status>error</status><error>{xml_text(resolve_err)}</error></result>"
         if resolved is None:
             return "<result><status>error</status><error>Path resolution failed.</error></result>"
 
@@ -329,11 +329,11 @@ class ExperienceEditTool(Tool):
     ) -> str:
         err = _validate_name(name)
         if err:
-            return f"<result><status>error</status><error>{_xml_escape(err)}</error></result>"
+            return f"<result><status>error</status><error>{xml_text(err)}</error></result>"
 
         resolved, resolve_err = self._resolver.resolve(name, path)
         if resolve_err:
-            return f"<result><status>error</status><error>{_xml_escape(resolve_err)}</error></result>"
+            return f"<result><status>error</status><error>{xml_text(resolve_err)}</error></result>"
         if resolved is None:
             return "<result><status>error</status><error>Path resolution failed.</error></result>"
 
@@ -354,7 +354,7 @@ class ExperienceEditTool(Tool):
             try:
                 new_text = resolved.read_text(encoding="utf-8")
             except Exception as exc:
-                return f"<result><status>error</status><error>Read after edit failed: {_xml_escape(str(exc))}</error></result>"
+                return f"<result><status>error</status><error>Read after edit failed: {xml_text(str(exc))}</error></result>"
             # Auto-correct frontmatter name after edit
             warning = auto_correct_frontmatter_name(resolved.parent)
             sanitized = sanitize_name(name)
@@ -405,11 +405,11 @@ class ExperienceListTool(Tool):
 
         err = _validate_name(name)
         if err:
-            return f"<result><status>error</status><error>{_xml_escape(err)}</error></result>"
+            return f"<result><status>error</status><error>{xml_text(err)}</error></result>"
 
         base_dir, resolve_err = self._resolver.resolve_dir(name)
         if resolve_err:
-            return f"<result><status>error</status><error>{_xml_escape(resolve_err)}</error></result>"
+            return f"<result><status>error</status><error>{xml_text(resolve_err)}</error></result>"
         if base_dir is None:
             return "<result><status>error</status><error>Path resolution failed.</error></result>"
 
@@ -462,29 +462,29 @@ class ExperienceRenameDirTool(Tool):
         for n in (name, new_name):
             err = _validate_name(n)
             if err:
-                return f"<result><status>error</status><error>{_xml_escape(err)}</error></result>"
+                return f"<result><status>error</status><error>{xml_text(err)}</error></result>"
 
         src_dir, resolve_err = self._resolver.resolve_dir(name)
         if resolve_err:
-            return f"<result><status>error</status><error>{_xml_escape(resolve_err)}</error></result>"
+            return f"<result><status>error</status><error>{xml_text(resolve_err)}</error></result>"
         if src_dir is None:
             return "<result><status>error</status><error>Path resolution failed.</error></result>"
 
         dst_dir, resolve_err = self._resolver.resolve_dir(new_name)
         if resolve_err:
-            return f"<result><status>error</status><error>{_xml_escape(resolve_err)}</error></result>"
+            return f"<result><status>error</status><error>{xml_text(resolve_err)}</error></result>"
         if dst_dir is None:
             return "<result><status>error</status><error>Path resolution failed.</error></result>"
 
         if not src_dir.exists():
-            return f"<result><status>error</status><error>Source '{_xml_escape(name)}' does not exist.</error></result>"
+            return f"<result><status>error</status><error>Source '{xml_text(name)}' does not exist.</error></result>"
         if dst_dir.exists():
-            return f"<result><status>error</status><error>Destination '{_xml_escape(new_name)}' already exists.</error></result>"
+            return f"<result><status>error</status><error>Destination '{xml_text(new_name)}' already exists.</error></result>"
 
         try:
             src_dir.rename(dst_dir)
         except Exception as exc:
-            return f"<result><status>error</status><error>Rename failed: {_xml_escape(str(exc))}</error></result>"
+            return f"<result><status>error</status><error>Rename failed: {xml_text(str(exc))}</error></result>"
 
         self._meta_store.migrate(name, new_name)
         # Auto-correct frontmatter name in new directory
@@ -493,8 +493,8 @@ class ExperienceRenameDirTool(Tool):
         return (
             f"<result>\n"
             f"  <status>success</status>\n"
-            f"  <name>{_xml_escape(name)}</name>\n"
-            f"  <new_name>{_xml_escape(new_name)}</new_name>\n"
+            f"  <name>{xml_text(name)}</name>\n"
+            f"  <new_name>{xml_text(new_name)}</new_name>\n"
             f"</result>"
         )
 
@@ -530,16 +530,16 @@ class ExperienceDeleteTool(Tool):
     async def execute(self, name: str, **kwargs: Any) -> str:
         err = _validate_name(name)
         if err:
-            return f"<result><status>error</status><error>{_xml_escape(err)}</error></result>"
+            return f"<result><status>error</status><error>{xml_text(err)}</error></result>"
 
         exp_dir, resolve_err = self._resolver.resolve_dir(name)
         if resolve_err:
-            return f"<result><status>error</status><error>{_xml_escape(resolve_err)}</error></result>"
+            return f"<result><status>error</status><error>{xml_text(resolve_err)}</error></result>"
         if exp_dir is None:
             return "<result><status>error</status><error>Path resolution failed.</error></result>"
 
         if not exp_dir.exists():
-            return f"<result><status>error</status><error>Experience '{_xml_escape(name)}' does not exist.</error></result>"
+            return f"<result><status>error</status><error>Experience '{xml_text(name)}' does not exist.</error></result>"
 
         # Safety: verify the resolved path is still inside the experience root
         try:
@@ -550,13 +550,13 @@ class ExperienceDeleteTool(Tool):
         try:
             shutil.rmtree(exp_dir)
         except Exception as exc:
-            return f"<result><status>error</status><error>Delete failed: {_xml_escape(str(exc))}</error></result>"
+            return f"<result><status>error</status><error>Delete failed: {xml_text(str(exc))}</error></result>"
 
         self._meta_store.remove(name)
         return (
             f"<result>\n"
             f"  <status>success</status>\n"
-            f"  <name>{_xml_escape(name)}</name>\n"
+            f"  <name>{xml_text(name)}</name>\n"
             f"  <deleted>true</deleted>\n"
             f"</result>"
         )
@@ -691,6 +691,6 @@ class ExperienceTool(Tool):
         else:
             return (
                 f"<result><status>error</status>"
-                f"<error>Unknown action '{_xml_escape(action)}'. "
+                f"<error>Unknown action '{xml_text(action)}'. "
                 f"Valid: list, read, write, edit, rename, delete.</error></result>"
             )

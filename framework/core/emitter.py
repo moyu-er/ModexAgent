@@ -1,7 +1,7 @@
 """ContentEmitter 抽象基类和实现
 
 提供 AgentResult 数据类和 ContentEmitter 泛型抽象基类，
-以及 BufferingEmitter、BusEmitter、LoggingEmitter 实现。
+以及 StreamingAwareEmitter 实现。
 """
 
 import asyncio
@@ -16,8 +16,6 @@ from ..adapters.platform import StreamingMode
 from ..memory.core.message import ChatMessage
 from .constants import StopReason
 from .events import AgentEvent, EmitterConfig
-from .tool_manager import ToolResult
-from .types import ToolCall
 
 if TYPE_CHECKING:
     from ..pipeline.adapters import OutputAdapter
@@ -37,8 +35,6 @@ class AgentResult:
     reasoning: str | None = None  # 推理/思考过程（新增）
     stop_reason: StopReason = StopReason.COMPLETED
     error: str | None = None
-    usage: dict[str, Any] = field(default_factory=dict)
-    metadata: dict[str, Any] = field(default_factory=dict)
     messages: Sequence[ChatMessage | dict[str, Any]] = field(default_factory=list)  # 本次执行生成的历史消息
     partial_content: str | None = None  # 取消时保留的部分内容
     attachments: list[str] = field(default_factory=list)  # 要发送给用户的附件路径列表
@@ -156,20 +152,6 @@ class ContentEmitter(ABC, Generic[E]):
             error: 错误信息
         """
         pass
-
-    async def emit_tool_error(self, error_data: Any) -> None:
-        """通知工具执行错误
-
-        工具执行失败时调用。默认实现调用 emit_error。
-        子类可以覆盖以特殊处理工具错误。
-
-        Args:
-            error_data: 错误信息或 (tool_call, error) 元组
-        """
-        if isinstance(error_data, tuple) and len(error_data) >= 2:
-            await self.emit_error(f"Tool error: {error_data[1]}")
-        else:
-            await self.emit_error(str(error_data))
 
     async def flush(self) -> None:
         """刷新缓冲区（可选）
@@ -346,155 +328,3 @@ class StreamingAwareEmitter(ContentEmitter[E]):
             self._content_buffer = ""
             self._reasoning_buffer = ""
 
-
-class BufferingEmitter(ContentEmitter[E]):
-    """缓冲发送器 - 收集所有内容后一次性发送
-
-    适用于非流式场景和测试。
-    通过泛型参数 E 支持不同 Agent 的事件类型。
-    """
-
-    def __init__(self, config: EmitterConfig | None = None):
-        super().__init__(config)
-        self._buffer = ""
-        self._reasoning_buffer = ""  # 单独缓存推理内容
-        self._tool_calls: list[ToolCall] = []
-        self._tool_results: list[tuple[ToolCall, ToolResult]] = []
-        self._result: AgentResult | None = None
-        self._events: list[tuple[E, Any]] = []  # 记录所有事件 (event_type, data)
-
-    async def emit(self, event: E, data: Any = None) -> None:
-        """记录所有启用的事件，然后调用基类钩子"""
-        event_name = event.value if isinstance(event, Enum) else str(event)
-        if self.config.is_enabled(event_name):
-            self._events.append((event, data))
-        await super().emit(event, data)
-
-    async def _on_event(self, event: E, data: Any = None) -> None:
-        """统一收集业务事件到内部状态。"""
-        from enum import Enum
-        event_name = event.value if isinstance(event, Enum) else str(event)
-        if event_name == "model_reasoning":
-            if isinstance(data, str):
-                self._reasoning_buffer += data
-        elif event_name == "tool_call_start":
-            if isinstance(data, ToolCall):
-                self._tool_calls.append(data)
-        elif event_name == "tool_call_end":
-            if isinstance(data, tuple) and len(data) >= 2:
-                self._tool_results.append((data[0], data[1]))
-
-    async def emit_delta(self, delta: str) -> None:
-        self._buffer += delta
-
-    async def emit_content(self, full_content: str) -> None:
-        self._buffer += full_content
-
-    async def emit_complete(self, result: AgentResult) -> None:
-        self._result = result
-
-    async def emit_error(self, error: str) -> None:
-        self._result = AgentResult(error=error, stop_reason=StopReason.ERROR)
-
-    def get_content(self) -> str:
-        """获取收集的完整内容"""
-        return self._buffer
-
-    def get_reasoning(self) -> str:
-        """获取收集的推理内容"""
-        return self._reasoning_buffer
-
-    def get_result(self) -> AgentResult | None:
-        """获取最终结果"""
-        return self._result
-
-    def get_events(self, event_type: E | None = None) -> list[tuple[E, Any]]:
-        """获取记录的事件
-
-        Args:
-            event_type: 如果指定，只返回该类型的事件
-
-        Returns:
-            事件列表 [(event_type, data), ...]
-        """
-        if event_type is not None:
-            return [(e, d) for e, d in self._events if e == event_type]
-        return list(self._events)
-
-    def get_events_by_name(self, name: str) -> list[tuple[E, Any]]:
-        """按事件名称获取事件（用于跨 Agent 的通用查询）
-
-        Args:
-            name: 事件名称（如 "MODEL_OUTPUT", "TOOL_CALL_START" 等）
-
-        Returns:
-            匹配的事件列表
-        """
-        result = []
-        for e, d in self._events:
-            if isinstance(e, Enum) and e.name == name or isinstance(e, str) and e == name:
-                result.append((e, d))
-        return result
-
-
-class NoOpEmitter(ContentEmitter[Any]):
-    """Discards all emissions. Use when agent output is not needed.
-
-    Useful for background agents (archive summarizer, knowledge consolidator)
-    where the side-effects (file writes via tools) are the important output,
-    not the agent's textual response.
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-
-    async def emit_delta(self, delta: str) -> None:
-        pass
-
-    async def emit_complete(self, result: AgentResult) -> None:
-        pass
-
-    async def emit_error(self, error: str) -> None:
-        pass
-
-
-class LoggingEmitter(ContentEmitter[E]):
-    """日志发送器 - 仅记录日志，不发送
-
-    适用于调试和监控场景。
-    """
-
-    def __init__(
-        self,
-        config: EmitterConfig | None = None,
-        log_level: int = logging.DEBUG,
-        logger_name: str = "agent.emitter",
-    ):
-        super().__init__(config)
-        self._logger = logging.getLogger(logger_name)
-        self._log_level = log_level
-
-    async def emit_delta(self, delta: str) -> None:
-        self._logger.log(self._log_level, f"[Delta] {delta!r}")
-
-    async def emit_content(self, full_content: str) -> None:
-        self._logger.log(self._log_level, f"[Content] {full_content!r}")
-
-    async def _on_event(self, event: E, data: Any = None) -> None:
-        event_name = event.name if isinstance(event, Enum) else str(event)
-        self._logger.log(self._log_level, f"[Event] {event_name}: {data!r}")
-
-    async def emit_complete(self, result: AgentResult) -> None:
-        if result.error:
-            self._logger.log(
-                self._log_level,
-                f"[Complete] Error: {result.error}"
-            )
-        else:
-            self._logger.log(
-                self._log_level,
-                f"[Complete] Content: {result.content!r}"
-            )
-
-    async def emit_error(self, error: str) -> None:
-        self._logger.error(f"[Error] {error}")

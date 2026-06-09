@@ -3,6 +3,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+from framework.utils.xml import xml_attr, xml_text
+
 from .models import Skill
 
 
@@ -20,12 +22,6 @@ def _render_skill_xml(skills: list[Skill]) -> str:
     Only name, directory path, and description are included.
     The LLM is expected to ``read`` the SKILL.md for full instructions.
     """
-    from xml.sax.saxutils import escape as _xml_escape
-
-    def _attr(v: str) -> str:
-        """Escape a value for use in an XML attribute."""
-        return _xml_escape(v).replace('"', "&quot;")
-
     parts: list[str] = [
         "## Skills",
         "",
@@ -42,11 +38,11 @@ def _render_skill_xml(skills: list[Skill]) -> str:
     for skill in skills:
         dir_path = str(Path(skill.location).parent.resolve()) if skill.location else ""
         parts.append(
-            f'  <skill name="{_attr(skill.name)}" '
-            f'directory="{_attr(dir_path)}">'
+            f'  <skill name="{xml_attr(skill.name)}" '
+            f'directory="{xml_attr(dir_path)}">'
         )
         if skill.description:
-            parts.append(f'    <description>{_xml_escape(skill.description)}</description>')
+            parts.append(f'    <description>{xml_text(skill.description)}</description>')
         parts.append("  </skill>")
     parts.append("</available_skills>")
     return "\n".join(parts)

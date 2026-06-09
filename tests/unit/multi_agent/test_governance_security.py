@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import pytest
 
-from framework.core.context import InMemoryContextManager
 from framework.core.emitter import AgentResult
 from framework.core.tool_manager import (
     FunctionalTool,
@@ -158,20 +157,3 @@ class TestMultiAgentContextBuilder:
         assert messages[1]["metadata"]["agent_session_id"] == "c1:a"
 
 
-class TestContextManagerMetaSource:
-    @pytest.mark.asyncio
-    async def test_inmemory_meta_source(self) -> None:
-        mgr = InMemoryContextManager()
-        result = AgentResult(content="hello")
-        await mgr.save("s1", None, result, metadata={"foo": "bar"})
-        state = await mgr.load("s1")
-        assert state.metadata["foo"] == "bar"
-        assert state.metadata["meta_source"] == "framework"
-
-    @pytest.mark.asyncio
-    async def test_inmemory_preserves_existing_meta_source(self) -> None:
-        mgr = InMemoryContextManager()
-        result = AgentResult(content="hello")
-        await mgr.save("s1", None, result, metadata={"meta_source": "custom"})
-        state = await mgr.load("s1")
-        assert state.metadata["meta_source"] == "custom"

@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import inspect
 import logging
+from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 
 from framework.control.types import ControlEvent, ControlEventType
 
@@ -18,16 +19,18 @@ logger = logging.getLogger(__name__)
 ControlEventHandler = Callable[[ControlEvent], Any]  # sync or async
 
 
-class ControlEventBus(Protocol):
+class ControlEventBus(ABC):
     """控制事件总线协议。
 
     负责事件输出：agent runtime → 外部（如审批服务、监控等）。
     """
 
+    @abstractmethod
     async def emit(self, event: ControlEvent) -> None:
         """发布事件。"""
         ...
 
+    @abstractmethod
     async def subscribe(
         self,
         event_type: ControlEventType,
@@ -46,7 +49,7 @@ class Subscription:
     session_id: str | None = None  # None = 全局，接收所有 session
 
 
-class CallbackControlEventBus:
+class CallbackControlEventBus(ControlEventBus):
     """基于回调的控制事件总线实现。支持按 session_id 路由。"""
 
     def __init__(self) -> None:

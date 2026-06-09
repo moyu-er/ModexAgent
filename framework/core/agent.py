@@ -60,7 +60,7 @@ class AgentContext:
 
     **IMPORTANT**: Do NOT use ``len(history)``, ``list(history)``, or index
     access ``history[0]`` — these are **not** guaranteed to work.  The pool-mode
-    implementation (``ShortTermMessageHistory``) intentionally raises on
+    implementation (async-backed history) intentionally raises on
     synchronous ``__len__`` / ``__iter__`` / ``__getitem__`` because messages
     live in an async storage backend.
 
@@ -89,9 +89,6 @@ class AgentContext:
         if self.runtime is None:
             return None
         return self.runtime.turn_uuid
-
-    def add_attachment(self, path: str) -> None:
-        self.attachments.append(path)
 
     async def to_messages(self) -> list[dict[str, Any]]:
         history_list = await self.history.to_list()

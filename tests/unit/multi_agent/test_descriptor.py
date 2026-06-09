@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from framework.core.context import InMemoryContextManager
-from framework.core.tool_manager import InMemoryToolManager
 from framework.multi_agent.address import AgentAddress
 from framework.multi_agent.descriptor import (
     AgentDescriptor,
@@ -33,11 +31,9 @@ class TestAgentDescriptor:
         addr = AgentAddress(kind="agent", name="coder")
         desc = AgentDescriptor(address=addr)
         assert desc.max_iterations == 15
-        assert desc.max_tools_per_turn == 10
         assert desc.execution_strategy == "react"
         assert desc.context_strategy == "persistent"
         assert desc.inbox_strategy == "drain_all"
-        assert desc.inbox_max_messages_per_turn == 10
         assert desc.allowed_callers is None
 
     def test_full_fields(self) -> None:
@@ -64,29 +60,19 @@ class TestAgentDescriptor:
 
 class TestAgentInstance:
     def test_creation_and_stop(self) -> None:
-        from unittest.mock import AsyncMock
-
-        from framework.agents.react import ReActAgent
+        from unittest.mock import MagicMock
 
         addr = AgentAddress(kind="agent", name="coder")
         desc = AgentDescriptor(address=addr)
-        ctx = InMemoryContextManager()
-        tools = InMemoryToolManager()
+        ctx = MagicMock()
 
-        agent = AsyncMock(spec=ReActAgent)
         instance = AgentInstance(
             descriptor=desc,
-            agent=agent,
             context_manager=ctx,
-            tool_manager=tools,
-            hooks=[],
         )
         assert instance.descriptor == desc
-        assert instance.agent is agent
         assert instance.context_manager is ctx
-        assert instance.tool_manager is tools
         assert instance.pipeline is None
-        assert instance.session is None
 
     def test_agent_state_enum(self) -> None:
         assert AgentState.INITIALIZING.value == "initializing"
