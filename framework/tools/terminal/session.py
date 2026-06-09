@@ -603,12 +603,15 @@ class TerminalSession:
         self._busy_after_timeout = False
 
     async def send_interrupt(self) -> None:
-        """Send Ctrl-C (\\x03) to the backend and clear busy state.
+        """Send Ctrl-C to the backend and clear busy state.
 
-        Allows the agent (or user) to interrupt a long-running or timed-out
-        command so that the next execute() can start a fresh command.
+        Each backend implements interrupt() with its platform-appropriate
+        mechanism: pexpect uses sendintr() (os.kill SIGINT), Windows
+        backends write CTRL_C through the PTY input stream (matching how
+        user keyboard Ctrl+C reaches the shell), tmux forwards it via
+        send_keys.  See pty_keys.CTRL_C for the rationale.
         """
-        await self._backend.write("\x03")
+        await self._backend.interrupt()
         self._busy_after_timeout = False
 
     async def submit_command(self, command: str) -> None:

@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from framework.tools.terminal.prompt import drain_windows_startup
+from framework.tools.terminal.pty_keys import CTRL_C
 from framework.tools.terminal.results import SlidingOutputBuffer, TerminalRead, TerminalSegment
 from framework.tools.terminal.types import Platform, TerminalVisibility, _family_from_path
 
@@ -128,7 +129,7 @@ class VisibleWindowsPtyBackend(TerminalBackend):
         return extract_current_segment_from_buffer(self._output_buffer.text)
 
     async def interrupt(self) -> None:
-        await self.write("\x03")
+        await self.write(CTRL_C)
 
     def stdin_writable(self) -> bool:
         return self._sock is not None

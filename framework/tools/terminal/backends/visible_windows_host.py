@@ -418,6 +418,8 @@ def main() -> None:
             except (OSError, ConnectionResetError):
                 pass
 
+    _CTRL_C = "\x03"  # matches pty_keys.CTRL_C
+
     # socket input (parent) -> PTY
     def socket_to_pty() -> None:
         while True:
@@ -425,7 +427,19 @@ def main() -> None:
                 data = sock.recv(65536)
                 if not data:
                     break
-                proc.write(data.decode("utf-8", errors="replace"))
+                text = data.decode("utf-8", errors="replace")
+                # \x03 (Ctrl+C) → proc.sendintr(), the official pywinpty
+                # API.  Verified from source: sendintr() calls
+                # pty.write('\\x03') internally — same byte-path as user
+                # keyboard Ctrl+C (_stdin_to_pty → proc.write).
+                if _CTRL_C in text:
+                    for ch in text:
+                        if ch == _CTRL_C:
+                            proc.sendintr()
+                        else:
+                            proc.write(ch)
+                else:
+                    proc.write(text)
             except (OSError, ConnectionResetError):
                 break
 

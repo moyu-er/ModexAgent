@@ -7,6 +7,7 @@ import pytest
 from framework.tools.terminal.config import TerminalRuntimeConfig
 from framework.tools.terminal.managers import BaseTerminalManager
 from framework.tools.terminal.process_registry import ProcessRegistry
+from framework.tools.terminal.pty_keys import CTRL_C
 from framework.tools.terminal.results import TerminalRead, TerminalSegment
 from framework.tools.terminal.session import TerminalSession
 from framework.tools.terminal.types import Platform, ShellFamily, ShellInfo, TerminalVisibility
@@ -54,7 +55,7 @@ class FakeBackend:
         return self._segment
 
     async def interrupt(self) -> None:
-        self.writes.append("\x03")
+        self.writes.append(CTRL_C)
 
     async def terminate(self) -> None:
         self._alive = False
