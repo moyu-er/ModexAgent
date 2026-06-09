@@ -163,26 +163,23 @@ class ExperienceReviewHook(AfterTurnHook):
             summaries = await source.list_experiences()
             if not summaries:
                 return ""
-            from xml.sax.saxutils import escape as _esc
-
-            def _attr(v: str) -> str:
-                return _esc(v).replace('"', "&quot;")
+            from framework.utils.xml import xml_attr, xml_text
 
             entries: list[str] = []
             for s in summaries:
                 parts = [
-                    f'  <experience name="{_attr(s.name)}"',
+                    f'  <experience name="{xml_attr(s.name)}"',
                 ]
                 if s.directory:
-                    parts.append(f' directory="{_attr(s.directory)}"')
+                    parts.append(f' directory="{xml_attr(s.directory)}"')
                 if s.tags:
-                    parts.append(f' tags="{_attr(",".join(s.tags))}"')
+                    parts.append(f' tags="{xml_attr(",".join(s.tags))}"')
                 if s.scenario:
-                    parts.append(f' scenario="{_attr(s.scenario)}"')
+                    parts.append(f' scenario="{xml_attr(s.scenario)}"')
                 parts.append(">")
                 entries.append("".join(parts))
                 if s.description:
-                    entries.append(f"    <description>{_esc(s.description)}</description>")
+                    entries.append(f"    <description>{xml_text(s.description)}</description>")
                 entries.append("  </experience>")
             return "<experiences>\n" + "\n".join(entries) + "\n</experiences>"
         except Exception:

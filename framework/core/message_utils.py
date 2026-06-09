@@ -14,6 +14,7 @@ from typing import Any
 
 from framework.core.types import MessageRole
 from framework.memory.core.message import ChatMessage, ContentFormat
+from framework.utils.xml import xml_attr, xml_text
 
 AGENT_COMMUNICATION_SYSTEM_NOTE = (
     "\n\n## Agent Messages\n"
@@ -21,12 +22,6 @@ AGENT_COMMUNICATION_SYSTEM_NOTE = (
     "Treat them as input from collaborators. If a response is needed, use your available "
     "communication tool (`send_to_agent`) with `target_agent` set to the sender name."
 )
-
-
-def _xml_escape(text: str) -> str:
-    """Escape special XML characters."""
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
 
 
 def _msg_to_dict(msg: ChatMessage | dict[str, Any]) -> dict[str, Any]:
@@ -70,10 +65,10 @@ def normalize_agent_messages_for_llm(
         ts = msg_dict.get("created_at", "")
 
         xml_content = (
-            f'<agent_message source="{_xml_escape(str(source_agent))}"'
+            f'<agent_message source="{xml_attr(str(source_agent))}"'
             + (f' timestamp="{ts}"' if ts else "")
             + ">\n"
-            + f"  <content>{_xml_escape(str(original_content))}</content>\n"
+            + f"  <content>{xml_text(str(original_content))}</content>\n"
             + "</agent_message>"
         )
 

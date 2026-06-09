@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from html import escape
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from framework.memory.tags import PrunedTag
 from framework.memory.pruned.models import PrunedIndexEntry
 from framework.utils.timezone import get_user_timezone
+from framework.utils.xml import xml_attr, xml_text
 
 if TYPE_CHECKING:
     from framework.memory.pruned.storage import PrunedStorage, FilePrunedStorage  # type: ignore[no-redef]
@@ -71,7 +71,7 @@ class PrunedManager:
         storage = self._get_storage(session_id)
         if not storage.has_content():
             return None
-        path = escape(storage.get_directory_path())
+        path = xml_attr(storage.get_directory_path())
         ct = PrunedTag.CONTAINER.value
         tt = PrunedTag.TRANSCRIPT.value
         heading = (
@@ -106,9 +106,9 @@ class PrunedManager:
                 if len(topic) > 200:
                     topic = topic[:200] + "..."
                 lines.append(
-                    f'    <{tt} time="{escape(time_range)}"'
+                    f'    <{tt} time="{xml_attr(time_range)}"'
                     f' messages="{e.message_count}">'
-                    f"\n{escape(topic)}\n"
+                    f"\n{xml_text(topic)}\n"
                     f"</{tt}>"
                 )
             lines.append(f"  </{history}>")

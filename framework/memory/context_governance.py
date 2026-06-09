@@ -357,7 +357,7 @@ class UserRetentionBufferInjectionGovernance(ContextGovernance):
         if len(entries) > self._max_entries:
             entries = entries[-self._max_entries :]
 
-        import xml.sax.saxutils as saxutils
+        from framework.utils.xml import xml_text
 
         ct = UrbTag.CONTAINER.value
         et = UrbTag.ENTRY.value
@@ -383,9 +383,9 @@ class UserRetentionBufferInjectionGovernance(ContextGovernance):
 
             role_attr = ' role="agent"' if e.pruned_user_role == str(MessageRole.AGENT) else ""
             lines.append(f'  <{et}{role_attr}>')
-            lines.append(f'    <{ut}>{saxutils.escape(user_text)}</{ut}>')
+            lines.append(f'    <{ut}>{xml_text(user_text)}</{ut}>')
             if assistant_text:
-                lines.append(f'    <{yt}>{saxutils.escape(assistant_text)}</{yt}>')
+                lines.append(f'    <{yt}>{xml_text(assistant_text)}</{yt}>')
             lines.append(f'  </{et}>')
         lines.append(f'</{ct}>')
 

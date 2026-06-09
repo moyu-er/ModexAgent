@@ -6,7 +6,6 @@ import asyncio
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
-from xml.sax.saxutils import escape as xml_escape
 
 from framework.tools.terminal.prompt import (
     INPUT_PROMPT_MARKERS,
@@ -27,8 +26,8 @@ from framework.tools.terminal.pty_keys import (
     strip_smkx_rmkx,
 )
 from framework.tools.terminal.results import TerminalRead, TerminalSegment
-
 from framework.tools.terminal.types import TerminalCommandStatus
+from framework.utils.xml import xml_text
 
 if TYPE_CHECKING:
     from framework.tools.terminal.backends.base import TerminalBackend
@@ -199,7 +198,7 @@ class TerminalSession:
                 await self._backend.terminate()
             return (
                 f"<shell_result>\n"
-                f"<output>{xml_escape(output)}</output>\n"
+                f"<output>{xml_text(output)}</output>\n"
                 f"<status>ended</status>\n"
                 f"<message>Terminal session ended</message>\n"
                 f"</shell_result>"
@@ -260,7 +259,7 @@ class TerminalSession:
             self._last_status = "timeout"
             return (
                 f"<shell_result>\n"
-                f"<output>{xml_escape(output)}</output>\n"
+                f"<output>{xml_text(output)}</output>\n"
                 f"<status>timeout</status>\n"
                 f"<message>Timed out after {timeout:.0f}s — command may still be running</message>\n"
                 f"</shell_result>"
@@ -270,7 +269,7 @@ class TerminalSession:
             self._last_status = "waiting_input"
             return (
                 f"<shell_result>\n"
-                f"<output>{xml_escape(output)}</output>\n"
+                f"<output>{xml_text(output)}</output>\n"
                 f"<status>waiting_input</status>\n"
                 f"<message>Command is waiting for user input</message>\n"
                 f"</shell_result>"
@@ -280,7 +279,7 @@ class TerminalSession:
             self._last_status = "ended"
             return (
                 f"<shell_result>\n"
-                f"<output>{xml_escape(output)}</output>\n"
+                f"<output>{xml_text(output)}</output>\n"
                 f"<status>ended</status>\n"
                 f"<message>Terminal session ended</message>\n"
                 f"</shell_result>"

@@ -55,5 +55,8 @@ def test_xml_escapes_special_chars():
         invocation_id='id"&',
         content="<hello> & world",
     )
+    # Attribute values use entity escaping
     assert "agent&lt;&gt;" in result
-    assert "&lt;hello&gt; &amp; world" in result
+    assert 'id&quot;&amp;' in result
+    # Element text uses CDATA when special chars present
+    assert "<![CDATA[\n<hello> & world\n]]>" in result

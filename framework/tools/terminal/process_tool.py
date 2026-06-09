@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
-from xml.sax.saxutils import escape as xml_escape
 
 from framework.core.tool_manager import Tool
 from framework.tools.terminal.config import TerminalRuntimeConfig
@@ -20,6 +19,7 @@ from framework.tools.terminal.pty_keys import (
 )
 from framework.tools.terminal.session import TerminalSession
 from framework.tools.terminal.types import ProcessStatus
+from framework.utils.xml import xml_text
 
 
 @dataclass(frozen=True)
@@ -82,7 +82,7 @@ def _build_process_xml(
     parts = [
         "<process_result>",
         f"<action>{action}</action>",
-        f"<output>{xml_escape(output)}</output>",
+        f"<output>{xml_text(output)}</output>",
     ]
     if terminal_name is not None:
         parts.append(f"<terminal>{terminal_name}</terminal>")

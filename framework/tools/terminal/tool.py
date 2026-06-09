@@ -5,12 +5,12 @@ from __future__ import annotations
 import time
 from enum import StrEnum
 from typing import Any
-from xml.sax.saxutils import escape as xml_escape
 
 from framework.core.tool_manager import Tool
 from framework.tools.terminal.managers import TerminalManagerBase
 from framework.tools.terminal.process_registry import ProcessRegistry
 from framework.tools.terminal.prompt import resolve_cursor_line
+from framework.utils.xml import xml_attr, xml_text
 
 
 class TerminalAction(StrEnum):
@@ -132,9 +132,9 @@ class TerminalTool(Tool):
                 if self._registry:
                     running = self._registry.get_running_by_terminal(s.name)
                     if running:
-                        proc_attr = f' process="{xml_escape(running.command)}"'
+                        proc_attr = f' process="{xml_attr(running.command)}"'
                 lines.append(
-                    f'  <tab name="{xml_escape(s.name)}" shell="{s.shell_type}" '
+                    f'  <tab name="{xml_attr(s.name)}" shell="{s.shell_type}" '
                     f'created_at="{int(s.created_at)}" commands="{s.command_count}"{default_attr}{alive_attr}{proc_attr} />'
                 )
             lines.append("</tabs>")
@@ -199,16 +199,16 @@ class TerminalTool(Tool):
             parts = [
                 "<terminal_result>",
                 "<action>current</action>",
-                f"<terminal>{xml_escape(session.name)}</terminal>",
+                f"<terminal>{xml_text(session.name)}</terminal>",
                 f"<created_at>{int(session.created_at)}</created_at>",
                 f"<default>{str(is_default).lower()}</default>",
                 f"<status>{status.value}</status>",
             ]
             if cursor:
-                parts.append(f"<cursor>{xml_escape(cursor)}</cursor>")
+                parts.append(f"<cursor>{xml_text(cursor)}</cursor>")
             if idle_ms_str:
                 parts.append(f"<idle_ms>{idle_ms_str}</idle_ms>")
-            parts.append(f"<output>{xml_escape(output or '(no output yet)')}</output>")
+            parts.append(f"<output>{xml_text(output or '(no output yet)')}</output>")
             parts.append("</terminal_result>")
             return "\n".join(parts)
 

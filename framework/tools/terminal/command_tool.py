@@ -11,7 +11,6 @@ Returns structured <command_result> XML with CommandResultStatus.
 from __future__ import annotations
 
 import time
-from xml.sax.saxutils import escape as xml_escape
 
 from framework.core.tool_manager import Tool
 from framework.tools.terminal.config import TerminalRuntimeConfig
@@ -24,6 +23,7 @@ from framework.tools.terminal.prompt import (
 from framework.tools.terminal.pty_keys import CursorKeyMode
 from framework.tools.terminal.session import TerminalSession
 from framework.tools.terminal.types import CommandResultStatus, ProcessStatus
+from framework.utils.xml import xml_text
 
 
 def _build_command_xml(
@@ -42,9 +42,9 @@ def _build_command_xml(
         "<command_result>",
     ]
     if terminal is not None:
-        parts.append(f"<terminal>{xml_escape(terminal)}</terminal>")
+        parts.append(f"<terminal>{xml_text(terminal)}</terminal>")
     parts.extend([
-        f"<output>{xml_escape(output)}</output>",
+        f"<output>{xml_text(output)}</output>",
         f"<status>{status.value}</status>",
         f"<elapsed_ms>{elapsed_ms}</elapsed_ms>",
     ])
@@ -55,7 +55,7 @@ def _build_command_xml(
     if truncated is not None:
         parts.append(f"<truncated>{str(truncated).lower()}</truncated>")
     if message is not None:
-        parts.append(f"<message>{xml_escape(message)}</message>")
+        parts.append(f"<message>{xml_text(message)}</message>")
     parts.append("</command_result>")
     return "\n".join(parts)
 
@@ -231,7 +231,7 @@ class CommandTool(Tool):
                 tui_text = sanitize_terminal_output(segment.text).rstrip()
                 xml = xml.replace(
                     "</command_result>",
-                    f"\n<tui_screen>{xml_escape(tui_text)}</tui_screen>\n</command_result>",
+                    f"\n<tui_screen>{xml_text(tui_text)}</tui_screen>\n</command_result>",
                 )
         else:
             segment = await terminal_session.current_segment()
@@ -240,7 +240,7 @@ class CommandTool(Tool):
                 cursor_text = sanitize_terminal_output(cursor).rstrip()
                 xml = xml.replace(
                     "</command_result>",
-                    f"\n<cursor_line>{xml_escape(cursor_text)}</cursor_line>\n</command_result>",
+                    f"\n<cursor_line>{xml_text(cursor_text)}</cursor_line>\n</command_result>",
                 )
 
         return xml

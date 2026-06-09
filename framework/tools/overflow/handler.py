@@ -3,14 +3,7 @@ from __future__ import annotations
 from framework.tools.overflow.cleaner import OverflowCleaner
 from framework.tools.overflow.models import OverflowRef
 from framework.tools.overflow.store import ToolOverflowStore
-
-
-def _wrap_cdata(text: str) -> str:
-    """Wrap text in CDATA, handling embedded ]]> sequences."""
-    if "]]>" not in text:
-        return f"<![CDATA[{text}]]>"
-    escaped = text.replace("]]>", "]]]]><![CDATA[>")
-    return f"<![CDATA[{escaped}]]>"
+from framework.utils.xml import xml_text
 
 
 class ToolResultOverflowHandler:
@@ -50,7 +43,7 @@ class ToolResultOverflowHandler:
         if chunk1 is None:
             chunk1 = ""
 
-        cdata = _wrap_cdata(chunk1)
+        cdata = xml_text(chunk1)
 
         instruction = self._INSTRUCTION_TEMPLATE.format(
             chunk_count=ref.chunk_count,
