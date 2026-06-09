@@ -77,9 +77,6 @@ class SubprocessExecutor(ShellExecutor):
             output_parts.append(f"\nExit code: {process.returncode}")
 
         result = "\n".join(output_parts) if output_parts else "(no output)"
-        max_len = 10000
-        if len(result) > max_len:
-            result = result[:max_len] + f"\n... (truncated, {len(result) - max_len} more chars)"
         return result
 
     def shell_info(self) -> ShellInfo:

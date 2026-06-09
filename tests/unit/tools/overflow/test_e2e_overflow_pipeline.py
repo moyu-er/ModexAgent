@@ -127,7 +127,9 @@ class TestHandlerEndToEnd:
         assert ref.dir_path in notice
         assert ".full.txt" in notice
         assert "data-" in notice
-        assert "<chunk index=\"1\"><![CDATA[" in notice
+        # Chunk content is present (xml_text skips CDATA when no special chars)
+        assert '<chunk index="1">' in notice
+        assert "data-" in notice
 
     @pytest.mark.asyncio
     async def test_handler_writes_full_content_to_disk(

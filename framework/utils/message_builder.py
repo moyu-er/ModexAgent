@@ -14,8 +14,6 @@ from framework.core.tool_manager import ToolResult
 from framework.core.types import ToolCall
 from framework.memory.core.message import ChatMessage
 
-MAX_TOOL_RESULT_CHARS: int = 20000  # ~5000 tokens
-
 
 def build_assistant_message(
     content: str | None,
@@ -67,8 +65,12 @@ def build_tool_message(result: ToolResult, call_id: str | None = None) -> ChatMe
     Tool content must not be empty — it is padded with a single space if
     necessary to satisfy provider validation.
 
-    Oversized results (> :data:`MAX_TOOL_RESULT_CHARS`) are truncated with an
-    ellipsis suffix so the conversation history stays bounded.
+    Reuses ``ToolResult.to_message()`` for XML metadata detection
+    (``content_format`` and ``truncatable_paths``), ensuring the governance
+    layer can perform structure-aware compaction downstream.
+
+    Truncation of oversized results is handled exclusively by the overflow
+    interceptor — this function does NOT truncate.
 
     Args:
         result:  Tool execution result.
@@ -77,24 +79,24 @@ def build_tool_message(result: ToolResult, call_id: str | None = None) -> ChatMe
     Returns:
         A :class:`ChatMessage` instance.
     """
-    if result.error:
-        content = f"Error: {result.error}"
-    elif result.result is not None:
-        content = str(result.result)
-    else:
+    # Reuse to_message() which detects terminal XML and attaches
+    # content_format / truncatable_paths metadata.
+    msg_dict = result.to_message()
+    content = msg_dict.get("content", " ")
+    if not content or not content.strip():
         content = " "
 
-    if not content.strip():
-        content = " "
-
-    if len(content) > MAX_TOOL_RESULT_CHARS:
-        content = content[:MAX_TOOL_RESULT_CHARS] + (
-            f"\n... (truncated, {len(content)} chars total)"
-        )
+    # Build ChatMessage, only passing XML metadata when detected
+    extra: dict[str, Any] = {}
+    if "content_format" in msg_dict:
+        extra["content_format"] = msg_dict["content_format"]
+    if "truncatable_paths" in msg_dict:
+        extra["truncatable_paths"] = msg_dict["truncatable_paths"]
 
     return ChatMessage(
         role="tool",
         tool_call_id=call_id or result.tool_name,
         name=result.tool_name,
         content=content,
+        **extra,
     )

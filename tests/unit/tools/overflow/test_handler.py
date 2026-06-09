@@ -37,7 +37,9 @@ class TestStoreOverflow:
         assert 'current_chunk="1"' in xml
         assert '<storage dir=' in xml
         assert '<instruction>' in xml
-        assert '<chunk index="1"><![CDATA[' in xml
+        assert '<chunk index="1">' in xml
+        # Chunk content is present (xml_text skips CDATA when no special chars)
+        assert "x" * 50 in xml
         assert ref.total_chars == 250
         assert ref.chunk_count == 5
 
@@ -81,7 +83,8 @@ class TestStoreOverflow:
         assert xml.startswith('<tool_result_overflow')
         assert ref.total_chars == 0
         assert ref.chunk_count == 1
-        assert '<chunk index="1"><![CDATA[]]></chunk>' in xml
+        # Empty content: chunk element exists with empty text (no CDATA needed)
+        assert '<chunk index="1"></chunk>' in xml
 
     @pytest.mark.asyncio
     async def test_store_overflow_exactly_max_chunk_size(self, tmp_path: Path, handler: ToolResultOverflowHandler) -> None:
