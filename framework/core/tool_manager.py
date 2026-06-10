@@ -27,9 +27,9 @@ class ToolExecutionMode(Enum):
 @dataclass
 class ToolConfig:
     """单个工具的配置"""
-    timeout: float = 30.0                    # 执行超时（秒）
+    timeout: float = 300.0                    # 执行超时（秒）
     execution_mode: ToolExecutionMode = ToolExecutionMode.ASYNC
-    retry_count: int = 0                     # 失败重试次数
+    retry_count: int = 1                     # 失败重试次数
     retry_delay: float = 1.0                 # 重试间隔（秒）
     enabled: bool = True                     # 是否启用
 
@@ -40,7 +40,7 @@ class ToolManagerConfig:
     max_workers: int = 10                    # 线程池最大工作线程数
     default_timeout: float = 30.0            # 默认超时
     default_execution_mode: ToolExecutionMode = ToolExecutionMode.ASYNC
-    enable_parallel: bool = True             # 是否允许并行执行多个工具
+    enable_parallel: bool = False             # 是否允许并行执行多个工具
     parallel_max_workers: int = 5            # 并行执行时的最大并发数
 
 
@@ -74,14 +74,8 @@ class Tool(DynamicSchemaProvider):
     @property
     def name(self) -> str:
         """工具名称"""
-        # 优先返回 _name，如果没有则尝试从类属性获取
         if self._name is not None:
             return self._name
-        # 兼容旧方式：子类可能定义了 name 属性
-        if hasattr(self.__class__, 'name') and isinstance(self.__class__.name, property):
-            prop = self.__class__.name
-            if prop.fget is not None:
-                return prop.fget(self)
         raise NotImplementedError("Tool must define 'name' either via __init__ or as a property")
 
     @property
@@ -89,10 +83,6 @@ class Tool(DynamicSchemaProvider):
         """工具描述"""
         if self._description is not None:
             return self._description
-        if hasattr(self.__class__, 'description') and isinstance(self.__class__.description, property):
-            prop = self.__class__.description
-            if prop.fget is not None:
-                return prop.fget(self)
         raise NotImplementedError("Tool must define 'description' either via __init__ or as a property")
 
     @property
@@ -100,10 +90,6 @@ class Tool(DynamicSchemaProvider):
         """工具参数定义"""
         if self._parameters is not None:
             return self._parameters
-        if hasattr(self.__class__, 'parameters') and isinstance(self.__class__.parameters, property):
-            prop = self.__class__.parameters
-            if prop.fget is not None:
-                return prop.fget(self)
         raise NotImplementedError("Tool must define 'parameters' either via __init__ or as a property")
 
     @abstractmethod

@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-05-31 | Branch: develop_gyt -->
+<!-- Updated: 2026-06-10 -->
 
 # core
 
@@ -31,6 +31,7 @@ Abstract base classes and shared types forming the framework's type-safe foundat
 |-----------|---------|
 | `graph/` | Directed graph state machine — `Graph[R]`, `Node[R]`, `Edge`, `GraphEngine`, `GraphInterrupt`, `GraphNode`(StrEnum) |
 | `skills/` | `SkillManager`, `SkillSource` ABC, `FileSkillSource`, `InlineSkillSource`, `CompositeSkillSource`, `SkillPromptBuilder` + `ProgressiveBuilder`/`HybridBuilder`/`InlineBuilder`, `DirectorySkillCache`, `SkillFilter` hierarchy |
+| `experience/` | Experience layer — `ExperienceManager`, `FileExperienceSource`, `ExperiencePromptBuilder`, `ExperienceCurator`, validation, metadata tracking (see `experience/AGENTS.md`) |
 
 ## For AI Agents
 

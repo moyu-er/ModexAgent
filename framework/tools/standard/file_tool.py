@@ -681,6 +681,3 @@ class ListDirTool(Tool):
         except Exception as e:
             return f"Error listing directory: {str(e)}"
 
-
-# 为兼容性保留 FileTool 别名
-FileTool = ReadFileTool

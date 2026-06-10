@@ -8,7 +8,6 @@ Shell execution tools have moved to framework.tools.terminal.subprocess_tool.
 
 from .file_tool import (
     EditFileTool,
-    FileTool,  # 兼容性别名
     ListDirTool,
     ReadFileTool,
     WriteFileTool,
@@ -20,7 +19,6 @@ __all__ = [
     "WriteFileTool",
     "EditFileTool",
     "ListDirTool",
-    "FileTool",
     "SearchFilesTool",
     "FindFilesTool",
 ]

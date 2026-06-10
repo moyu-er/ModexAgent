@@ -290,10 +290,12 @@ class WindowsIsolationProvider(IsolationProvider):
         # Add filesystem restrictions via ACL checks
         fs = self.config.filesystem
 
-        # Build the constrained command
+        # Build the constrained command.
+        # NOTE: Do NOT add Set-Location here. subprocess.Popen(cwd=...) handles
+        # working directory correctly. Adding Set-Location would override it and
+        # cause files to be created in the wrong directory.
         constrained_cmd = "; ".join([
             "$ErrorActionPreference = 'Stop'",
-            f"Set-Location -Path '{Path.cwd()}'",
             " ".join(command),
         ])
 
@@ -326,14 +328,21 @@ class IsolationManager:
         self._select_provider()
 
     def _select_provider(self) -> None:
-        """Select the best available isolation provider."""
-        providers = [
-            BubblewrapProvider(self.config),
-            SandboxExecProvider(self.config),
-            WindowsIsolationProvider(self.config),
-        ]
+        """Select the best available isolation provider for the current platform."""
+        import platform as _platform
 
-        for provider in providers:
+        system = _platform.system()
+        if system == "Linux":
+            providers = [BubblewrapProvider]
+        elif system == "Darwin":
+            providers = [SandboxExecProvider]
+        elif system == "Windows":
+            providers = [WindowsIsolationProvider]
+        else:
+            providers = [BubblewrapProvider, SandboxExecProvider, WindowsIsolationProvider]
+
+        for ProviderCls in providers:
+            provider = ProviderCls(self.config)
             if provider.is_available():
                 self._provider = provider
                 logger.info(f"Selected isolation provider: {provider.get_name()}")

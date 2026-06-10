@@ -5,10 +5,12 @@ Each inject_* method is independent and can be called separately.
 """
 
 import logging
-from typing import Any
 
+from framework.core.skills.manager import SkillManager
 from framework.hook import Hook
+from framework.memory.system import MemorySystemContextManager
 from framework.plugins.manager import PluginManager
+from framework.core.tool_manager import InMemoryToolManager
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +29,7 @@ class PluginLoader:
     def __init__(self, plugin_manager: PluginManager):
         self._pm = plugin_manager
 
-    def inject_tools(self, tool_manager: Any) -> list[str]:
+    def inject_tools(self, tool_manager: InMemoryToolManager) -> list[str]:
         """Inject plugin tools into ToolManager.
 
         Args:
@@ -69,8 +71,8 @@ class PluginLoader:
 
     async def inject_memory_providers(
         self,
-        memory_system: Any,
-        init_kwargs: dict[str, Any] | None = None,
+        memory_system: MemorySystemContextManager,
+        init_kwargs: dict[str, object] | None = None,
     ) -> list[str]:
         """Inject plugin MemoryProviders into MemorySystem and initialize them.
 
@@ -103,7 +105,7 @@ class PluginLoader:
         return injected
 
     def inject_memory_system_modifiers(
-        self, memory_system: Any
+        self, memory_system: MemorySystemContextManager
     ) -> list[str]:
         """Apply plugin MemorySystem modifiers.
 
@@ -133,7 +135,7 @@ class PluginLoader:
                 )
         return applied
 
-    def inject_skill_sources(self, skill_manager: Any) -> list[str]:
+    def inject_skill_sources(self, skill_manager: SkillManager) -> list[str]:
         """Inject plugin SkillSources into SkillManager.
 
         Args:

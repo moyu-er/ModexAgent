@@ -1337,7 +1337,11 @@ class BotService(AgentBuilderMixin):
         from framework.tools.overflow.handler import ToolResultOverflowHandler
         from framework.tools.overflow.local import LocalFileToolOverflowStore
 
-        overflow_dir = self.workspace_context.data_dir
+        overflow_dir = (
+            self.workspace_context.data_dir
+            if self.workspace_context is not None
+            else self._project_dir
+        )
         max_chars = 50_000
         overflow_store = LocalFileToolOverflowStore(
             workspace=overflow_dir, max_chunk_size=10_000

@@ -156,7 +156,7 @@ async def history_to_list(
     """
     if isinstance(history, MessageHistory):
         raw = await history.to_list()
-        return [m.to_dict() if isinstance(m, ChatMessage) else m for m in raw]
+        return [m.to_dict() for m in raw]
     result: list[dict[str, Any]] = []
     for m in history:
         if isinstance(m, ChatMessage):

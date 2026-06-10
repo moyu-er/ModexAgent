@@ -66,10 +66,9 @@ def _make_file_tools() -> list[Tool]:
 def _make_shell_tool(
     terminal_manager: Any | None = None,
     timeout: int = 60,
-    enable_safety_guard: bool = True,
 ) -> Tool:
     from framework.tools.terminal import SubprocessTool, SubprocessExecutor
-    return SubprocessTool(executor=SubprocessExecutor(), timeout=timeout, enable_safety_guard=enable_safety_guard)
+    return SubprocessTool(executor=SubprocessExecutor(), timeout=timeout)
 
 
 def _make_search_tools() -> list[Tool]:

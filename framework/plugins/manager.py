@@ -4,12 +4,21 @@ Scans three sources for plugins (bundled, user, entry_points) and
 loads them via the register(ctx) convention.
 """
 
+from __future__ import annotations
+
 import importlib.metadata
 import importlib.util
 import logging
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from framework.core.skills.source import SkillSource
+    from framework.core.tool_manager import Tool
+    from framework.hook import Hook
+    from framework.runtime.models import JsonValue
 
 from framework.plugins.abc import MemoryProvider
 from framework.plugins.context import PluginContext
@@ -42,11 +51,11 @@ class PluginManager:
         self._user_plugins_dir = user_plugins_dir or Path.home() / ".af" / "plugins"
 
         # Collected components (populated after discover_and_load)
-        self._tools: list[tuple[Any, str]] = []            # (Tool, plugin_name)
-        self._hooks: list[tuple[Any, str]] = []             # (Hook, plugin_name)
+        self._tools: list[tuple[Tool, str]] = []            # (Tool, plugin_name)
+        self._hooks: list[tuple[Hook, str]] = []             # (Hook, plugin_name)
         self._memory_providers: list[tuple[MemoryProvider, str]] = []  # (Provider, name)
-        self._skill_sources: list[tuple[Any, str]] = []     # (Source, plugin_name)
-        self._memory_system_modifiers: list[tuple[Any, str]] = []  # (modifier, plugin_name)
+        self._skill_sources: list[tuple[SkillSource, str]] = []     # (Source, plugin_name)
+        self._memory_system_modifiers: list[tuple[Callable[[object], None], str]] = []  # (modifier, plugin_name)
         self._providers_initialized = False
         self._initialized_provider_names: set[str] = set()
 
@@ -55,7 +64,7 @@ class PluginManager:
     # ========================================
 
     def discover_and_load(
-        self, plugin_configs: dict[str, dict[str, Any]] | None = None
+        self, plugin_configs: dict[str, dict[str, JsonValue]] | None = None
     ) -> None:
         """Discover and load all plugins.
 
@@ -303,7 +312,7 @@ class PluginManager:
     # Provider Lifecycle
     # ========================================
 
-    async def initialize_providers(self, **kwargs: Any) -> list[str]:
+    async def initialize_providers(self, **kwargs: JsonValue) -> list[str]:
         """Initialize all MemoryProviders.
 
         Per-provider error isolation: one failing provider does not block others.

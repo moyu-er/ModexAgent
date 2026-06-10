@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 import pytest
 
@@ -250,3 +251,26 @@ class TestInjectionXml:
         assert '<directory path="' in xml
         import html
         assert html.escape(expected_path) in xml
+
+
+class TestGetVersion:
+
+    def test_returns_zero_when_no_entries(self, manager: PrunedManager) -> None:
+        """get_version returns '0' when no entries exist."""
+        assert manager.get_version(session_id=SID) == "0"
+
+    @pytest.mark.asyncio()
+    async def test_returns_max_entry_id(self, manager: PrunedManager, now: datetime) -> None:
+        """get_version returns str(max_entry_id)."""
+        msgs = _messages([datetime(2024, 6, 1, 9, 0, tzinfo=TZ)])
+        await manager.write_pruned(msgs, "topic1", now, session_id=SID)
+        assert manager.get_version(session_id=SID) == "1"
+
+        await manager.write_pruned(msgs, "topic2", now, session_id=SID)
+        assert manager.get_version(session_id=SID) == "2"
+
+    @pytest.mark.asyncio()
+    async def test_returns_empty_on_exception(self, manager: PrunedManager, now: datetime) -> None:
+        """get_version returns '' when _get_storage raises."""
+        with patch.object(manager, "_get_storage", side_effect=OSError("disk error")):
+            assert manager.get_version(session_id=SID) == ""

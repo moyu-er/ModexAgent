@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from framework.core.emitter import AgentResult
     from framework.core.tool_manager import ToolResult
     from framework.core.types import ToolCall
+    from framework.runtime.models import TurnStateBase
 
 
 class InterceptorScope(str, Enum):
@@ -60,7 +61,7 @@ class ToolCallContext:
     arguments: Mapping[str, object]
     session_id: str
     turn_id: str = ""
-    turn_state: object | None = None  # TurnStateBase | None
+    turn_state: TurnStateBase | None = None
 
 
 @dataclass(frozen=True)
@@ -70,7 +71,7 @@ class TurnContext:
     prompt: str
     turn_id: str
     max_iterations: int = 10
-    turn_state: object | None = None  # TurnStateBase | None
+    turn_state: TurnStateBase | None = None
 
 
 @dataclass(frozen=True)
@@ -79,7 +80,7 @@ class IterationContext:
 
     iteration: int
     turn_id: str
-    turn_state: object | None = None  # TurnStateBase | None
+    turn_state: TurnStateBase | None = None
 
 
 @dataclass(frozen=True)
@@ -89,7 +90,7 @@ class LLMCallContext:
     messages: Sequence[dict[str, Any]]
     model: str | None = None
     stream: bool = False
-    turn_state: object | None = None  # TurnStateBase | None
+    turn_state: TurnStateBase | None = None
     request: LLMRequest | None = None
 
 
@@ -100,7 +101,7 @@ class LLMStreamContext:
     messages: Sequence[dict[str, Any]]
     model: str | None = None
     session_id: str = ""
-    turn_state: object | None = None  # TurnStateBase | None
+    turn_state: TurnStateBase | None = None
     request: LLMRequest | None = None
 
 

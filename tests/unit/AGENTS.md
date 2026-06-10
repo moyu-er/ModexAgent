@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-05-31 -->
+<!-- Updated: 2026-06-10 -->
 
 # unit
 
@@ -12,10 +12,10 @@ Pure unit tests — no external deps, must run offline. Mirror the framework pac
 | `agents/` | ReActAgent tests — error handling, tool execution, streaming |
 | `approval/` | Approval system tests |
 | `bot_project/` | Bot project integration tests |
+| `commands/` | Slash command tests — parser, handlers, processor |
 | `control/` | ControlChannel, EventBus, store, task supervision tests |
-| `core/` | Core abstractions — AgentContext, AgentResult, emitter, tool manager |
-| `core/graph/` | Graph engine tests |
-| `core/skills/` | Skill system tests |
+| `core/` | Core abstractions — AgentContext, AgentResult, emitter, tool manager, LLM error |
+| `hook/` | Hook runner, error policy tests |
 | `interceptor/` | Interceptor chain tests |
 | `ioc/` | IOC config and factory tests |
 | `memory/` | Memory system — core, stores, compression, consolidation, retention, injection |
@@ -25,8 +25,9 @@ Pure unit tests — no external deps, must run offline. Mirror the framework pac
 | `plugins/` | Plugin system tests |
 | `providers/` | LLM provider tests |
 | `runtime/` | Runtime services, store, codec tests |
-
-| `tools/` | Tool registry, executor, MCP tests |
+| `tools/` | Tool registry, executor, MCP, presets, overflow, AST engine tests |
+| `tools/overflow/` | Overflow store, cleaner, handler, e2e pipeline tests |
+| `tools/web/` | Web reader and search tool tests |
 | `utils/` | Utility tests |
 
 ## For AI Agents

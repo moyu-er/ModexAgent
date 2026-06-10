@@ -496,58 +496,24 @@ class TestListDirTool:
 
 class TestSubprocessTool:
     @pytest.fixture
-    def safe_shell(self):
-        return SubprocessTool(enable_safety_guard=True)
+    def shell(self):
+        return SubprocessTool()
 
     @pytest.mark.asyncio
-    async def test_shell_echo(self, safe_shell):
-        result = await safe_shell.execute(command='echo "hello"')
+    async def test_shell_echo(self, shell):
+        result = await shell.execute(command='echo "hello"')
         assert "hello" in result
 
     @pytest.mark.asyncio
     async def test_shell_with_working_dir(self, tmp_workspace):
-        shell = SubprocessTool(enable_safety_guard=False)
+        shell = SubprocessTool()
         result = await shell.execute(command="pwd" if os.name != "nt" else "cd", working_dir=str(tmp_workspace))
         # On Windows `cd` returns current dir; on Unix `pwd` returns it
         assert str(tmp_workspace.name) in result or "STDERR" not in result
 
     @pytest.mark.asyncio
     async def test_shell_timeout(self):
-        shell = SubprocessTool(timeout=1, enable_safety_guard=False)
+        shell = SubprocessTool(timeout=1)
         # Use Python sleep for cross-platform timeout test
         result = await shell.execute(command='python -c "import time; time.sleep(5)"')
         assert "timed out" in result.lower()
-
-    @pytest.mark.skipif(os.name == "nt", reason="POSIX-specific dangerous command test")
-    @pytest.mark.asyncio
-    async def test_shell_safety_guard_blocks_rm_rf(self, safe_shell):
-        result = await safe_shell.execute(command="rm -rf /tmp/test")
-        assert "blocked by safety guard" in result.lower()
-
-    @pytest.mark.skipif(os.name != "nt", reason="Windows-specific dangerous command test")
-    @pytest.mark.asyncio
-    async def test_shell_safety_guard_blocks_windows_dangerous(self, safe_shell):
-        result = await safe_shell.execute(command="format C:")
-        assert "blocked by safety guard" in result.lower()
-
-    @pytest.mark.skipif(os.name != "nt", reason="Windows-specific format command test")
-    @pytest.mark.asyncio
-    async def test_shell_safety_guard_blocks_format(self, safe_shell):
-        result = await safe_shell.execute(command="format C:")
-        assert "blocked by safety guard" in result.lower() or "dangerous pattern" in result.lower()
-
-    @pytest.mark.asyncio
-    async def test_shell_disabled_safety_guard(self):
-        shell = SubprocessTool(enable_safety_guard=False)
-        # Even dangerous-looking command should be allowed when guard is off
-        result = await shell.execute(command="echo 'rm -rf /'")
-        assert "rm -rf /" in result
-
-    @pytest.mark.asyncio
-    async def test_shell_allowlist_blocks_unmatched(self):
-        shell = SubprocessTool(
-            enable_safety_guard=True,
-            allow_patterns=[r"^echo\b"],
-        )
-        result = await shell.execute(command="ls")
-        assert "not in allowlist" in result.lower()

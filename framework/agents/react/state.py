@@ -9,6 +9,7 @@ from enum import StrEnum
 from uuid import uuid4
 
 from framework.approval.constants import ApprovalDecision, ApprovalStatus, ApprovalTier
+from framework.core.agent import AgentContext
 from framework.core.types import LLMResponse
 from framework.memory.core.message import ChatMessage
 from framework.runtime.codec import RuntimeStateCodec, RuntimeStateCodecConfig
@@ -146,11 +147,8 @@ class ReActTurnState(TurnStateBase):
         self.updated_at = time.time()
 
 
-def require_react_state(ctx: object) -> ReActTurnState:
+def require_react_state(ctx: AgentContext) -> ReActTurnState:
     """Validate and return typed ReActTurnState from AgentContext.runtime.state."""
-    from framework.core.agent import AgentContext
-    if not isinstance(ctx, AgentContext):
-        raise TypeError(f"require_react_state expects AgentContext, got {type(ctx).__name__}")
     runtime = ctx.runtime
     if runtime is None or not hasattr(runtime, "state"):
         raise TypeError("AgentContext.runtime is not an AgentRuntime")
@@ -160,11 +158,8 @@ def require_react_state(ctx: object) -> ReActTurnState:
     raise TypeError(f"ReAct requires ReActTurnState, got {type(state).__name__}")
 
 
-def get_react_state(ctx: object) -> ReActTurnState | None:
+def get_react_state(ctx: AgentContext) -> ReActTurnState | None:
     """Safely extract ReActTurnState from AgentContext, returning None if unavailable."""
-    from framework.core.agent import AgentContext
-    if not isinstance(ctx, AgentContext):
-        return None
     if ctx.identity is None or ctx.runtime is None:
         return None
     state = ctx.runtime.state

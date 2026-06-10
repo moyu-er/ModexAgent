@@ -4,13 +4,19 @@ Each plugin receives its own PluginContext instance during register(ctx).
 Components are collected here and later injected by PluginLoader.
 """
 
+from __future__ import annotations
+
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from framework.core.skills.source import SkillSource
 from framework.core.tool_manager import Tool
 from framework.hook import Hook
 from framework.plugins.abc import MemoryProvider
+
+if TYPE_CHECKING:
+    from framework.memory.system import MemorySystemContextManager
+    from framework.runtime.models import JsonValue
 
 
 class PluginContext:
@@ -37,7 +43,7 @@ class PluginContext:
     def name(self) -> str:
         return self._name
 
-    def get_config(self, key: str, default: Any = None) -> Any:
+    def get_config(self, key: str, default: JsonValue = None) -> JsonValue:
         """Read plugin-specific config from bot_config.yml.
 
         plugins:
@@ -66,7 +72,7 @@ class PluginContext:
         self._skill_sources.append(source)
 
     def register_memory_system_modifier(
-        self, modifier: Callable[[Any], None]
+        self, modifier: Callable[[MemorySystemContextManager], None]
     ) -> None:
         """Register a callback that mutates a MemorySystem after initialization.
 

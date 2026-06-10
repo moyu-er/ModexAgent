@@ -343,8 +343,14 @@ class TestArchiveRetentionFifoEviction:
                 storage_path=str(archive_dir),
             )
         ])
-        # Return something that is NOT DirArchiveStorage
-        registry.resolve = AsyncMock(return_value=AsyncMock())
+        # Mock a MemoryStorage-like object with channel + maintenance methods
+        mock_storage = MagicMock()
+        mock_storage.read_channel_logs = AsyncMock(return_value=[{"cursor": 1}])
+        mock_storage.save_channel_logs = AsyncMock()
+        mock_storage.read_archive_state = AsyncMock(return_value={"knowledge_consumed_archive_id": 3})
+        mock_storage.prune_to_max = AsyncMock(return_value=0)
+        mock_storage.cleanup_empty_dirs = AsyncMock(return_value=0)
+        registry.resolve = AsyncMock(return_value=mock_storage)
 
         # Mock archive layer that returns the directory path
         mock_archive = AsyncMock()
@@ -398,7 +404,14 @@ class TestArchiveRetentionFifoEviction:
                 storage_path=str(archive_dir),
             )
         ])
-        registry.resolve = AsyncMock(return_value=AsyncMock())
+        # Mock a MemoryStorage-like object with channel + maintenance methods
+        mock_storage = MagicMock()
+        mock_storage.read_channel_logs = AsyncMock(return_value=[{"cursor": 1}])
+        mock_storage.save_channel_logs = AsyncMock()
+        mock_storage.read_archive_state = AsyncMock(return_value={"knowledge_consumed_archive_id": 0})
+        mock_storage.prune_to_max = AsyncMock(return_value=0)
+        mock_storage.cleanup_empty_dirs = AsyncMock(return_value=0)
+        registry.resolve = AsyncMock(return_value=mock_storage)
 
         mock_archive = AsyncMock()
         mock_archive.get_storage_path = AsyncMock(return_value=archive_dir)

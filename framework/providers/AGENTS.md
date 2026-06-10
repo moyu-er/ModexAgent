@@ -1,6 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-05-31 -->
-<!-- Generated: 2026-05-16 -->
+<!-- Updated: 2026-06-10 -->
 
 # providers
 

@@ -4,7 +4,9 @@ import time
 from pathlib import Path
 
 from ..config import SandboxConfig
+from ..env_builder import EnvBuilderConfig, EnvironmentBuilder
 from ..exceptions import SandboxUnavailableError
+from ..guard import CommandPatternGuard, CommandPatternGuardConfig
 from ..types import SandboxResult
 from ..validation import validate_code
 from .base import SandboxAdapter
@@ -46,6 +48,7 @@ class DockerSandbox(SandboxAdapter):
     def __init__(self, config: SandboxConfig | None = None):
         self.config = config or SandboxConfig()
         self._client = None
+        self._command_guard: CommandPatternGuard | None = None
 
     def _get_client(self):
         if not DOCKER_AVAILABLE:
@@ -56,6 +59,13 @@ class DockerSandbox(SandboxAdapter):
 
     def _get_image(self, language: str) -> str:
         return self.LANGUAGE_IMAGES.get(language, "python:3.11-slim")
+
+    def _get_command_guard(self) -> CommandPatternGuard:
+        if self._command_guard is None:
+            cfg = self.config
+            guard_config = cfg.command_guard if cfg and cfg.command_guard else None
+            self._command_guard = CommandPatternGuard(guard_config)
+        return self._command_guard
 
     async def execute(
         self,
@@ -103,6 +113,9 @@ class DockerSandbox(SandboxAdapter):
             client = self._get_client()
             image = self._get_image(language)
 
+            env_builder = EnvironmentBuilder(EnvBuilderConfig(policy=cfg.env_policy))
+            env = env_builder.build(overrides={"SANDBOX_ARTIFACTS_DIR": "/app/artifacts"})
+
             volumes = {
                 tmpdir: {"bind": "/app", "mode": "rw"},
                 artifacts_dir: {"bind": "/app/artifacts", "mode": "rw"},
@@ -122,7 +135,7 @@ class DockerSandbox(SandboxAdapter):
                 security_opt=["no-new-privileges:true"],
                 user="1000:1000",
                 pids_limit=64,
-                environment={"SANDBOX_ARTIFACTS_DIR": "/app/artifacts"},
+                environment=env,
             )
 
             if cfg.memory_limit_mb is not None:
@@ -185,6 +198,11 @@ class DockerSandbox(SandboxAdapter):
         cfg = config or self.config
         start_time = time.time()
 
+        guard = self._get_command_guard()
+        result = guard.check(command)
+        if not result.allowed:
+            return SandboxResult(success=False, error=f"Command blocked: {result.reason}")
+
         tmpdir = None
         container = None
         try:
@@ -193,6 +211,9 @@ class DockerSandbox(SandboxAdapter):
 
             client = self._get_client()
             image = self.LANGUAGE_IMAGES["python"]
+
+            env_builder = EnvironmentBuilder(EnvBuilderConfig(policy=cfg.env_policy))
+            env = env_builder.build(overrides={"SANDBOX_ARTIFACTS_DIR": "/app/artifacts"})
 
             work_dir = cwd or "/app"
             volumes = {
@@ -214,7 +235,7 @@ class DockerSandbox(SandboxAdapter):
                 security_opt=["no-new-privileges:true"],
                 user="1000:1000",
                 pids_limit=64,
-                environment={"SANDBOX_ARTIFACTS_DIR": "/app/artifacts"},
+                environment=env,
             )
 
             if cfg.memory_limit_mb is not None:

@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-05-31 -->
+<!-- Updated: 2026-06-10 -->
 
 # utils
 

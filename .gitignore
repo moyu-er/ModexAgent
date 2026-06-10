@@ -52,6 +52,10 @@ references
 !.python-version
 uv.lock
 
+node_modules
+package.json
+package-lock.json
+
 openspec
 design_doc/
 agent_doc/

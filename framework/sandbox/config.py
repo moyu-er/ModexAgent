@@ -3,7 +3,9 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from framework.security import SecurityConfig
+from .guard import CommandPatternGuardConfig
+from .workspace_policy import WorkspacePolicyConfig
+from .env_builder import EnvPolicy
 
 
 def _get_default_temp_dir() -> str:
@@ -32,7 +34,9 @@ class SandboxConfig:
     auto_download_artifacts: bool = False
     auto_download_patterns: list[str] | None = None
     # Security configuration for command execution
-    security: SecurityConfig | None = None
+    command_guard: CommandPatternGuardConfig | None = None
+    workspace: WorkspacePolicyConfig | None = None
+    env_policy: EnvPolicy = EnvPolicy.STANDARD
 
     def __post_init__(self):
         default_temp = _get_default_temp_dir()

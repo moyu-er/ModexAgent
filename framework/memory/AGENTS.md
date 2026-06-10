@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-05-31 | Branch: develop_gyt | Commit: 6647e8a -->
+<!-- Updated: 2026-06-10 -->
 
 # memory
 
@@ -15,7 +15,7 @@ Multi-layer memory system with scope isolation and injection. Layers: Session (s
 | `context_governance.py` | `ContextGovernance` ABC — `CompositeGovernance`, `TokenBudgetGovernance`, `MicrocompactGovernance`, `ToolChainRepairGovernance` |
 | `archive_generation.py` | `ArchiveGenerationStrategy` (ABC), `DualLLMArchiveGenerationStrategy`, `ArchiveInputMessage`, `SummarizerLike` |
 | `archive_input.py` | Archive input message types |
-| `archive_models.py` | `ArchiveChannelStorage` Protocol, archive data models |
+| `archive_models.py` | Archive data models (`ArchiveChannel`, `ArchiveWrite`, etc.) |
 | `cleanup.py` | `cleanup_session()`, `CleanupResult` — sanitize → prune boundary → archive → write pruned catalog |
 | `sanitizer.py` | `DefaultSessionToolChainSanitizer` — removes invalid tool-chain records |
 | `recorder.py` | `MemoryAppendRecorder` — records what gets appended and from where |
@@ -38,6 +38,7 @@ Multi-layer memory system with scope isolation and injection. Layers: Session (s
 | `pruned/` | `PrunedManager` + `PrunedStorage` (ABC + FilePrunedStorage) + `PrunedIndexEntry` — catalog of cleaned-up session messages, session-scoped |
 | `registry/` | `MemoryStoreRegistry` — storage provider registry |
 | `stores/` | Storage backend implementations (`FileStorage`, `InMemoryStorage`) |
+| `tools/` | Agent-facing tools — 6 experience tools (read/write/edit/list/rename/delete), scoped file tools (see `tools/AGENTS.md`) |
 
 ## For AI Agents
 

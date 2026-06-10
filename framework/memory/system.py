@@ -2,6 +2,20 @@
 
 from __future__ import annotations
 
+from framework.memory.pipeline import SystemPromptProvider
+
+# Default system prompt used when no other content is configured.
+# Kept minimal so the agent is useful even without custom configuration.
+_DEFAULT_SYSTEM_PROMPT = (
+    "You are an AI assistant.\n\n"
+    "## Interaction Guidelines\n"
+    "- Respond naturally and concisely.\n"
+    "- Give direct answers first, then add explanation if needed.\n"
+    "- If the user's intent is unclear, ask for clarification before guessing.\n"
+    "- Be honest about uncertainty — never fabricate information.\n"
+    "- Use code blocks for code and commands."
+)
+
 import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -104,7 +118,7 @@ class MemorySystemContextManager(ContextManager):
 
     def __init__(
         self,
-        memory_system: ContextManagedMemorySystem,
+        memory_system: DefaultMemorySystem,
         default_user_id: str = "default",
         default_agent_id: str | None = None,
         default_agent_role: str | MemoryAgentRole | None = None,
@@ -119,7 +133,7 @@ class MemorySystemContextManager(ContextManager):
         # We validate here that both paths agree.
         from framework.memory.injection import FullInjectionPolicy
 
-        self.memory_system: ContextManagedMemorySystem = memory_system
+        self.memory_system: DefaultMemorySystem = memory_system
         self.default_user_id = default_user_id
         self.default_agent_id = default_agent_id
         self.default_agent_role = default_agent_role
@@ -137,9 +151,10 @@ class MemorySystemContextManager(ContextManager):
         governance: ContextGovernance | None,
         session_id: str,
     ) -> ContextGovernance | None:
-        if not isinstance(self.memory_system, DefaultMemorySystem):
+        try:
+            urb = self.memory_system.layers.user_retention
+        except AttributeError:
             return governance
-        urb = self.memory_system.layers.user_retention
         if urb is None:
             return governance
         from framework.memory.context_governance import (
@@ -207,41 +222,109 @@ class MemorySystemContextManager(ContextManager):
         if runtime_info and "message" in runtime_info:
             query = str(runtime_info["message"])
 
-        # Single assemble
-        result = await self.injection_policy.assemble(
+        # ── Prompt assembly ────────────────────────────────────────────
+        # Build SystemPromptPipeline with individual providers.
+        # Archive and Pruned have dedicated refreshable providers.
+        # The injection_policy provides: disclaimer + knowledge + blocks + prefetch.
+        # ────────────────────────────────────────────────────────────────
+        from framework.memory.injection.full_injection import FullInjectionPolicy
+        from framework.memory.pipeline.pipeline import SystemPromptPipeline
+        from framework.memory.pipeline.providers import (
+            ArchiveProvider,
+            BasePromptProvider,
+            ExperienceProvider,
+            KnowledgeProvider,
+            PrunedProvider,
+            ProviderBlocksProvider,
+            ProviderPrefetchProvider,
+            RuntimeProvider,
+            SkillProvider,
+        )
+
+        # Determine if the original policy would inject archive/pruned content.
+        # If so, create a pipeline-specific policy that skips them
+        # (those sections are handled by dedicated refreshable providers).
+        # Subagent policies (e.g. RestrictedInjectionPolicy) do not inject
+        # archive/pruned, so the original policy is used as-is.
+        policy = self.injection_policy
+        needs_clean_policy = False
+        try:
+            needs_clean_policy = policy._pruned_manager is not None
+        except AttributeError:
+            pass
+        if not needs_clean_policy:
+            try:
+                needs_clean_policy = policy._archive_inject_count > 0
+            except AttributeError:
+                pass
+
+        if needs_clean_policy:
+            pipeline_policy = FullInjectionPolicy(
+                pruned_manager=None,
+                archive_inject_count=0,
+            )
+        else:
+            pipeline_policy = policy
+        result = await pipeline_policy.assemble(
             context=ctx,
             memory_system=self.memory_system,
             query=query,
         )
 
-        # ── Prompt assembly ────────────────────────────────────────────
-        # Layers are joined with "---" separators.  Order matters:
-        #   1. Runtime metadata       — date, platform (ephemeral)
-        #   2. Base system prompt     — agent personality (static)
-        #   3. Memory layers          — session / archive / knowledge /
-        #                              user-retention (managed by
-        #                              injection_policy.assemble;
-        #                              subject to budget & pruning)
-        #   4. Experiences            — persistent reference knowledge
-        #                              (NOT a memory layer — no pruning)
-        #   5. Skills                 — persistent reference knowledge
-        #                              (NOT a memory layer — no pruning)
-        #
-        # Skills and experiences are kept OUTSIDE injection_policy.assemble
-        # because they are static reference content — they do not
-        # participate in memory lifecycle (no budget enforcement, no
-        # truncation, no eviction at the injection level).  Their own
-        # managers handle freshness / validity independently.
-        # ────────────────────────────────────────────────────────────────
-        parts: list[str] = []
+        providers: list[SystemPromptProvider] = []
+
+        # 1. Runtime metadata (refreshes daily)
         if runtime_info:
-            runtime_text = self._format_runtime_info(runtime_info)
-            if runtime_text:
-                parts.append(runtime_text)
+            providers.append(RuntimeProvider())
+
+        # 2. Base system prompt (static)
         if self.base_system_prompt:
-            parts.append(self.base_system_prompt)
+            providers.append(BasePromptProvider(self.base_system_prompt))
+
+        # 3. Memory layers from injection policy (disclaimer + knowledge + blocks + prefetch)
         if result.system_prompt:
-            parts.append(result.system_prompt)
+            providers.append(KnowledgeProvider(result.system_prompt))
+
+        # 4. Archive summaries (must refresh on cleanup)
+        archive_dir = None
+        try:
+            archive_dir = await self.memory_system.get_storage_path(ctx)
+        except Exception:
+            logger.debug("Failed to resolve archive directory", exc_info=True)
+        if archive_dir is not None:
+            providers.append(ArchiveProvider(archive_dir))
+
+        # 5. Pruned catalog (must refresh on cleanup)
+        pruned_mgr = None
+        try:
+            pruned_mgr = self.memory_system.pruned_manager
+        except AttributeError:
+            pass  # MemorySystem does not have pruned_manager
+        if pruned_mgr is not None:
+            providers.append(PrunedProvider(pruned_mgr, session_id=session_id))
+
+        # 6. Provider blocks (hash-based versioning)
+        provider_blocks: list[str] = []
+        for prov in self.memory_system.get_providers():
+            try:
+                block = prov.system_prompt_block()
+                if block:
+                    provider_blocks.append(block)
+            except Exception:
+                continue
+        if provider_blocks:
+            providers.append(ProviderBlocksProvider(provider_blocks))
+
+        # 7. Provider prefetch (query-based versioning)
+        if query:
+            try:
+                prefetch = await self.memory_system.prefetch_memories(query, ctx)
+                if prefetch:
+                    providers.append(ProviderPrefetchProvider(query, prefetch))
+            except Exception:
+                pass
+
+        # 8. Experience (static by default)
         if self._experience_manager is not None:
             try:
                 experience_prompt = await self._experience_manager.build_prompt()
@@ -249,20 +332,47 @@ class MemorySystemContextManager(ContextManager):
                 logger.debug("Failed to build experience prompt", exc_info=True)
             else:
                 if experience_prompt:
-                    parts.append(experience_prompt)
+                    providers.append(ExperienceProvider(experience_prompt))
+
+        # 9. Skills (static)
         if skill_manager is not None:
             from framework.core.skills import ResolutionContext
             skill_prompt = await skill_manager.build_prompt(
                 ResolutionContext.from_runtime(tool_manager=tool_manager)
             )
             if skill_prompt:
-                parts.append(skill_prompt)
+                providers.append(SkillProvider(skill_prompt))
 
-        system_prompt = "\n\n---\n\n".join(parts) if parts else ""
+        pipeline = SystemPromptPipeline(providers)
+
+        # Build a static fallback system_prompt for backward compatibility.
+        # When all providers are empty, use the default prompt so the agent
+        # remains functional even without custom configuration.
+        static_parts: list[str] = []
+        if runtime_info:
+            runtime_text = self._format_runtime_info(runtime_info)
+            if runtime_text:
+                static_parts.append(runtime_text)
+        if self.base_system_prompt:
+            static_parts.append(self.base_system_prompt)
+        if result.system_prompt:
+            static_parts.append(result.system_prompt)
+
+        # Assemble fallback string
+        system_prompt = "\n\n---\n\n".join(static_parts) if static_parts else ""
+
+        # If absolutely nothing is configured, inject the default prompt
+        if not system_prompt:
+            system_prompt = _DEFAULT_SYSTEM_PROMPT
+
         history = self.memory_system.create_message_history(
             context=ctx, initial_messages=result.messages,
         )
-        return ContextState(system_prompt=system_prompt, history=history)
+        return ContextState(
+            system_prompt=system_prompt,
+            history=history,
+            system_prompt_pipeline=pipeline,
+        )
 
     async def save(
         self,
@@ -299,13 +409,15 @@ class MemorySystemContextManager(ContextManager):
         skill_manager: SkillManager | None = None,
         runtime_info: dict[str, Any] | None = None,
     ) -> str:
-        """Build system prompt by delegating to load()."""
+        """Build system prompt by delegating to load() and resolving pipeline."""
         state = await self.load(
             session_id=self._last_session_id or "default",
             tool_manager=tool_manager,
             skill_manager=skill_manager,
             runtime_info=runtime_info,
         )
+        if state.system_prompt_pipeline is not None:
+            return await state.system_prompt_pipeline.get_or_refresh()
         return state.system_prompt
 
     def get_active_contexts(self) -> list[MemoryContext]:
@@ -378,26 +490,31 @@ class MemorySystemContextManager(ContextManager):
         if not runtime_lines:
             return user_message
 
-        msg_dict = (
-            user_message.to_dict() if isinstance(user_message, ChatMessage) else dict(user_message)
-        )
+        try:
+            msg_dict = user_message.to_dict()
+        except AttributeError:
+            msg_dict = dict(user_message)
         original_content = msg_dict.get("content", "")
         prefix = "[Runtime Context]\n" + "\n".join(runtime_lines) + "\n\n"
 
-        if isinstance(original_content, list):
+        try:
+            # Detect list-like content (multimodal) vs string.
+            # Strings don't support + [] — they raise TypeError.
+            _ = original_content + []
             if not original_content:
                 return user_message
             new_content: str | list[dict[str, Any]] = [
                 {"type": "text", "text": prefix},
                 *list(original_content),
             ]
-        else:
+        except TypeError:
             new_content = prefix + str(original_content)
 
         msg_dict["content"] = new_content
-        if isinstance(user_message, ChatMessage):
+        try:
             return ChatMessage.coerce(msg_dict)
-        return msg_dict
+        except Exception:
+            return msg_dict
 
     @staticmethod
     def _format_runtime_info(info: dict[str, Any]) -> str:

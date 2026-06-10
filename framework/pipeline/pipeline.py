@@ -3,14 +3,28 @@
 提供 AgentPipeline 类，统一编排完整的输入→处理→输出流程。
 """
 
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import logging
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from framework.control.channel import InMemoryControlChannel
+    from framework.core.context import ContextState
+    from framework.core.emitter import ContentEmitter
+    from framework.hook.abc import HookSpec
+    from framework.hook.runner import HookRunner
+    from framework.interceptor.chain import InterceptorChain
+    from framework.multi_agent.router import RouteResult
+    from framework.runtime.store import RuntimeCommandStore, TurnStateStore
+    from framework.utils.media_utils import MediaBlock, MediaProcessor
 
 from framework.commands.models import (
     CommandContext,
@@ -36,7 +50,7 @@ from ..core.runtime_context import RuntimeContextManager
 from ..core.tool_manager import ToolManager
 from ..control.exceptions import AgentControlError
 from ..core.types import InputMessage
-from ..memory import ContextGovernance
+from ..memory import ContextGovernance, MemoryContext
 from ..memory.consolidation import DreamEngine
 from ..memory.history import (
     inject_attachments_to_history,
@@ -107,32 +121,32 @@ class AgentPipeline:
         tool_manager: ToolManager,
         input_adapter: InputAdapter,
         output_adapter: OutputAdapter,
-        emitter_factory: Any | None = None,
+        emitter_factory: Callable[..., ContentEmitter] | None = None,
         dream_engine: DreamEngine | None = None,
         dream_interval: float | None = None,
         max_iterations: int = 10,
         incremental_flush: bool = True,
         skill_manager: SkillManager | None = None,
-        hooks: list[Any] | None = None,
+        hooks: list[HookSpec] | None = None,
         router: AgentMessageRouter | None = None,
         deduplicator: MessageDeduplicator | None = None,
         context_builder: MultiAgentContextBuilder | None = None,
         agent_descriptor: AgentDescriptor | None = None,
-        sanitizer: Any = _UNSET,
-        context_manager_factory: Any | None = None,
-        on_session_start: Any | None = None,
-        on_session_end: Any | None = None,
+        sanitizer: Callable[[str], str] | object = _UNSET,
+        context_manager_factory: Callable[..., ContextManager] | None = None,
+        on_session_start: Callable[[str], None] | None = None,
+        on_session_end: Callable[[str], None] | None = None,
         runtime_context_manager: RuntimeContextManager | None = None,
         governance: ContextGovernance | None = None,
         safety: RuntimeSafetyPolicy | None = None,
-        hook_runner: Any | None = None,
-        interceptor_chain: Any | None = None,
-        control_channel: Any | None = None,
+        hook_runner: HookRunner | None = None,
+        interceptor_chain: InterceptorChain | None = None,
+        control_channel: InMemoryControlChannel | None = None,
         busy_input_mode: BusyInputMode = BusyInputMode.QUEUE,
         approval_workspace: str = ".modex_approval",
         user_interface: ApprovalUserInterface | None = None,
-        turn_store: Any | None = None,
-        command_store: Any | None = None,
+        turn_store: TurnStateStore | None = None,
+        command_store: RuntimeCommandStore | None = None,
         runtime_services: AgentRuntimeServices | None = None,
         command_processor: CommandProcessor | None = None,
     ):
@@ -314,9 +328,9 @@ class AgentPipeline:
                     )
 
                     async def _run_dream(
-                        c: Any = ctx,
-                        engine: Any = dream_engine,
-                        lk: Any = lock,
+                        c: MemoryContext = ctx,
+                        engine: DreamEngine = dream_engine,
+                        lk: asyncio.Lock = lock,
                     ) -> None:
                         async with lk:
                             try:
@@ -484,8 +498,8 @@ class AgentPipeline:
         input_msg: InputMessage,
         session_id: str,
         input_metadata: dict[str, Any],
-        route_result: Any | None,
-    ) -> tuple[str | None, list[Any], Any | None]:
+        route_result: RouteResult | None,
+    ) -> tuple[str | None, list[MediaBlock], MediaProcessor | None]:
         """Preprocess input: sanitize, handle attachments, apply route modifier.
 
         Returns:
@@ -499,8 +513,8 @@ class AgentPipeline:
 
         # 处理附件（通用媒体类型，不限于图片）
         attachments = getattr(input_msg, "attachments", None) or []
-        media_blocks: list[Any] = []
-        _media_processor = None
+        media_blocks: list[MediaBlock] = []
+        _media_processor: MediaProcessor | None = None
         if attachments:
             try:
                 from framework.utils.media_utils import MediaProcessor
@@ -530,13 +544,13 @@ class AgentPipeline:
         input_msg: InputMessage,
         input_metadata: dict[str, Any],
         sanitized_content: str | None,
-        media_blocks: list[Any],
-        _media_processor: Any | None,
-        ctx_mgr: Any,
-        route_result: Any | None,
+        media_blocks: list[MediaBlock],
+        _media_processor: MediaProcessor | None,
+        ctx_mgr: ContextManager,
+        route_result: RouteResult | None,
         _is_approval_cmd: bool,
         append_user_message: bool = True,
-    ) -> Any:
+    ) -> ContextState:
         """Assemble context state via context_assembler module."""
         return await assemble_context(
             session_id,
@@ -558,11 +572,11 @@ class AgentPipeline:
     def _build_runtime_and_context(
         self,
         session_id: str,
-        context_state: Any,
-        ctx_mgr: Any,
+        context_state: ContextState,
+        ctx_mgr: ContextManager,
         *,
         input_metadata: dict[str, Any] | None = None,
-    ) -> tuple[AgentContext, Any]:
+    ) -> tuple[AgentContext, ContentEmitter]:
         """Build AgentContext and emitter for the turn."""
 
         # Ensure per-session injection queue exists
@@ -589,6 +603,7 @@ class AgentPipeline:
             session_id=session_id,
             max_iterations=self.max_iterations,
         )
+        agent_context.system_prompt_pipeline = context_state.system_prompt_pipeline
         agent_context.identity = turn_identity
         # Parse session_id to extract clean conversation_id and invocation id.
         agent_context.session_meta = AgentSessionMeta(
@@ -688,11 +703,11 @@ class AgentPipeline:
     async def _execute_turn(
         self,
         agent_context: AgentContext,
-        emitter: Any,
+        emitter: ContentEmitter,
         session_id: str,
-        context_state: Any,
+        context_state: ContextState,
         input_metadata: dict[str, Any],
-        ctx_mgr: Any,
+        ctx_mgr: ContextManager,
     ) -> AgentResult | None:
         """Execute a normal agent turn, including cleanup.
 
@@ -796,11 +811,11 @@ class AgentPipeline:
         action: ApprovalAction | None,
         snapshot: TurnSnapshot,
         agent_context: AgentContext,
-        emitter: Any,
+        emitter: ContentEmitter,
         session_id: str,
-        context_state: Any,
+        context_state: ContextState,
         input_metadata: dict[str, Any],
-        ctx_mgr: Any,
+        ctx_mgr: ContextManager,
     ) -> AgentResult | None:
         approval = ReActSnapshotPolicy.approval_from_snapshot(snapshot)
         if approval is None:

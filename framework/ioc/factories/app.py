@@ -14,8 +14,9 @@ from framework.ioc.configs.agent import AgentConfig
 from framework.ioc.configs.app import AppConfig
 from framework.ioc.factories.agent import create_agent
 from framework.ioc.factories.llm import create_llm_provider
-from framework.ioc.factories.memory import create_memory
+from framework.ioc.factories.memory import create_memory, DefaultMemorySystem
 from framework.ioc.factories.tools import connect_mcp, create_tool_manager, register_mcp_tools
+from framework.tools.mcp_adapter import MCPToolAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +27,9 @@ class App:
     def __init__(self) -> None:
         self.agents: dict[str, ReActAgent] = {}
         self.tool_managers: dict[str, InMemoryToolManager] = {}
-        self.memory_system: object | None = None
+        self.memory_system: DefaultMemorySystem | None = None
         self.config: AppConfig | None = None
-        self._mcp_adapter: object | None = None
+        self._mcp_adapter: MCPToolAdapter | None = None
 
     async def start(self) -> None:
         """Start the application."""
@@ -37,12 +38,10 @@ class App:
     async def stop(self) -> None:
         """Stop the application, disconnecting MCP servers."""
         if self._mcp_adapter is not None:
-            from framework.tools.mcp_adapter import MCPToolAdapter
-            if isinstance(self._mcp_adapter, MCPToolAdapter):
-                try:
-                    await self._mcp_adapter.mcp_manager.disconnect_all()
-                except Exception:
-                    logger.warning("MCP disconnect error", exc_info=True)
+            try:
+                await self._mcp_adapter.mcp_manager.disconnect_all()
+            except Exception:
+                logger.warning("MCP disconnect error", exc_info=True)
 
 
 async def create_app(

@@ -9,7 +9,6 @@ from framework.agents.react.state import get_react_state
 from framework.core.agent import AgentContext
 from framework.core.constants import FinishReason
 from framework.core.graph.node import Node, NodeTransition
-from framework.core.provider import StreamingLLMProvider
 from framework.core.types import LLMResponse
 from framework.hook import HookPayload, HookPoint
 from framework.interceptor.abc import InterceptorScope, IterationContext
@@ -147,8 +146,15 @@ class LLMNode(Node):
 
     async def _build_messages(self, ctx: AgentContext) -> list[dict[str, object]]:
         messages: list[dict[str, object]] = []
-        if ctx.system_prompt:
+
+        # Use pipeline for dynamic system prompt if available
+        if ctx.system_prompt_pipeline is not None:
+            system_content = await ctx.system_prompt_pipeline.get_or_refresh()
+            if system_content:
+                messages.append({"role": "system", "content": system_content})
+        elif ctx.system_prompt:
             messages.append({"role": "system", "content": ctx.system_prompt})
+
         messages.extend(await ctx.to_messages())
 
         governance = ctx.runtime.governance if ctx.runtime else None
@@ -160,9 +166,15 @@ class LLMNode(Node):
         self, messages: list[dict[str, object]], ctx: AgentContext,
     ) -> LLMResponse:
         emitter = ctx.emitter
-        if emitter is not None and emitter.wants_streaming() and isinstance(
-            self._agent.provider, StreamingLLMProvider,
-        ):
+        use_streaming = False
+        if emitter is not None and emitter.wants_streaming():
+            try:
+                self._agent.provider.chat_stream
+            except AttributeError:
+                pass
+            else:
+                use_streaming = True
+        if use_streaming:
             interceptor_chain = ctx.runtime.interceptors if ctx.runtime else None
             if interceptor_chain is not None:
                 if interceptor_chain.has_scope(InterceptorScope.LLM_STREAM):

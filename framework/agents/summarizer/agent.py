@@ -265,7 +265,7 @@ Output ONLY the consolidated markdown content — nothing else. No extra text be
         )
 
     @staticmethod
-    def _extract_content(response: Any) -> str:
+    def _extract_content(response: str | LLMResponse) -> str:
         from framework.utils.helpers import strip_think
 
         if isinstance(response, LLMResponse):
@@ -279,9 +279,7 @@ Output ONLY the consolidated markdown content — nothing else. No extra text be
             if response.reasoning_content is not None:
                 return response.content or ""
             raw = response.content or ""
-        elif isinstance(response, str):
-            raw = response.strip()
         else:
-            raw = str(response).strip()
+            raw = response.strip()
         cleaned = strip_think(raw)
         return cleaned or ""

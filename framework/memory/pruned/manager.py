@@ -116,6 +116,21 @@ class PrunedManager:
         lines.append(f"</{ct}>")
         return "\n".join(lines)
 
+    def get_version(self, *, session_id: str = "") -> str:
+        """Return the current version of pruned content for the given session.
+
+        Version is the max entry ID from the index. Returns "0" when empty,
+        "" on read error (triggers refresh in provider).
+        """
+        try:
+            storage = self._get_storage(session_id)
+            entries = storage.read_index()
+            if not entries:
+                return "0"
+            return str(max(e.id for e in entries))
+        except Exception:
+            return ""
+
     # -- private helpers -----------------------------------------------------
 
     def _get_storage(self, session_id: str) -> PrunedStorage:
