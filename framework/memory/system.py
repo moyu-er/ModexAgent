@@ -207,32 +207,115 @@ class MemorySystemContextManager(ContextManager):
         if runtime_info and "message" in runtime_info:
             query = str(runtime_info["message"])
 
-        # Single assemble
-        result = await self.injection_policy.assemble(
+        # ── Prompt assembly ────────────────────────────────────────────
+        # Build SystemPromptPipeline with individual providers.
+        # Archive and Pruned have dedicated refreshable providers.
+        # The injection_policy provides: disclaimer + knowledge + blocks + prefetch.
+        # ────────────────────────────────────────────────────────────────
+        from framework.memory.injection.full_injection import FullInjectionPolicy
+        from framework.memory.pipeline.pipeline import SystemPromptPipeline
+        from framework.memory.pipeline.providers import (
+            ArchiveProvider,
+            BasePromptProvider,
+            ExperienceProvider,
+            KnowledgeProvider,
+            PrunedProvider,
+            ProviderBlocksProvider,
+            ProviderPrefetchProvider,
+            RuntimeProvider,
+            SkillProvider,
+        )
+
+        # Use a pipeline-specific policy that skips archive/pruned
+        # (those are handled by dedicated refreshable providers)
+        pipeline_policy = FullInjectionPolicy(
+            pruned_manager=None,
+            archive_inject_count=0,
+        )
+        result = await pipeline_policy.assemble(
             context=ctx,
             memory_system=self.memory_system,
             query=query,
         )
 
-        # ── Prompt assembly ────────────────────────────────────────────
-        # Layers are joined with "---" separators.  Order matters:
-        #   1. Runtime metadata       — date, platform (ephemeral)
-        #   2. Base system prompt     — agent personality (static)
-        #   3. Memory layers          — session / archive / knowledge /
-        #                              user-retention (managed by
-        #                              injection_policy.assemble;
-        #                              subject to budget & pruning)
-        #   4. Experiences            — persistent reference knowledge
-        #                              (NOT a memory layer — no pruning)
-        #   5. Skills                 — persistent reference knowledge
-        #                              (NOT a memory layer — no pruning)
-        #
-        # Skills and experiences are kept OUTSIDE injection_policy.assemble
-        # because they are static reference content — they do not
-        # participate in memory lifecycle (no budget enforcement, no
-        # truncation, no eviction at the injection level).  Their own
-        # managers handle freshness / validity independently.
-        # ────────────────────────────────────────────────────────────────
+        providers: list[SystemPromptProvider] = []
+
+        # 1. Runtime metadata (refreshes daily)
+        if runtime_info:
+            runtime_text = self._format_runtime_info(runtime_info)
+            if runtime_text:
+                providers.append(RuntimeProvider())
+
+        # 2. Base system prompt (static)
+        if self.base_system_prompt:
+            providers.append(BasePromptProvider(self.base_system_prompt))
+
+        # 3. Memory layers from injection policy (disclaimer + knowledge + blocks + prefetch)
+        if result.system_prompt:
+            providers.append(KnowledgeProvider(result.system_prompt))
+
+        # 4. Archive summaries (must refresh on cleanup)
+        archive_storage = None
+        if isinstance(self.memory_system, DefaultMemorySystem):
+            try:
+                archive_storage = await self.memory_system._resolve_archive_storage(ctx)
+            except Exception:
+                logger.debug("Failed to resolve archive storage", exc_info=True)
+        if archive_storage is not None:
+            providers.append(ArchiveProvider(archive_storage))
+
+        # 5. Pruned catalog (must refresh on cleanup)
+        pruned_mgr = (
+            self.memory_system.pruned_manager
+            if isinstance(self.memory_system, DefaultMemorySystem)
+            else None
+        )
+        if pruned_mgr is not None:
+            providers.append(PrunedProvider(pruned_mgr, session_id=session_id))
+
+        # 6. Provider blocks (hash-based versioning)
+        provider_blocks: list[str] = []
+        for prov in self.memory_system.get_providers():
+            try:
+                block = prov.system_prompt_block()
+                if block:
+                    provider_blocks.append(block)
+            except Exception:
+                continue
+        if provider_blocks:
+            providers.append(ProviderBlocksProvider(provider_blocks))
+
+        # 7. Provider prefetch (query-based versioning)
+        if query:
+            try:
+                prefetch = await self.memory_system.prefetch_memories(query, ctx)
+                if prefetch:
+                    providers.append(ProviderPrefetchProvider(query, prefetch))
+            except Exception:
+                pass
+
+        # 8. Experience (static by default)
+        if self._experience_manager is not None:
+            try:
+                experience_prompt = await self._experience_manager.build_prompt()
+            except Exception:
+                logger.debug("Failed to build experience prompt", exc_info=True)
+            else:
+                if experience_prompt:
+                    providers.append(ExperienceProvider(experience_prompt))
+
+        # 9. Skills (static)
+        if skill_manager is not None:
+            from framework.core.skills import ResolutionContext
+            skill_prompt = await skill_manager.build_prompt(
+                ResolutionContext.from_runtime(tool_manager=tool_manager)
+            )
+            if skill_prompt:
+                providers.append(SkillProvider(skill_prompt))
+
+        pipeline = SystemPromptPipeline(providers)
+
+        # Build fallback static system_prompt for backward compatibility
         parts: list[str] = []
         if runtime_info:
             runtime_text = self._format_runtime_info(runtime_info)
@@ -242,27 +325,16 @@ class MemorySystemContextManager(ContextManager):
             parts.append(self.base_system_prompt)
         if result.system_prompt:
             parts.append(result.system_prompt)
-        if self._experience_manager is not None:
-            try:
-                experience_prompt = await self._experience_manager.build_prompt()
-            except Exception:
-                logger.debug("Failed to build experience prompt", exc_info=True)
-            else:
-                if experience_prompt:
-                    parts.append(experience_prompt)
-        if skill_manager is not None:
-            from framework.core.skills import ResolutionContext
-            skill_prompt = await skill_manager.build_prompt(
-                ResolutionContext.from_runtime(tool_manager=tool_manager)
-            )
-            if skill_prompt:
-                parts.append(skill_prompt)
-
         system_prompt = "\n\n---\n\n".join(parts) if parts else ""
+
         history = self.memory_system.create_message_history(
             context=ctx, initial_messages=result.messages,
         )
-        return ContextState(system_prompt=system_prompt, history=history)
+        return ContextState(
+            system_prompt=system_prompt,
+            history=history,
+            system_prompt_pipeline=pipeline,
+        )
 
     async def save(
         self,

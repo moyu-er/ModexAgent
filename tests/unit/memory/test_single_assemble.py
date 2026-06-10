@@ -1,4 +1,4 @@
-"""Verify single assemble in MemorySystemContextManager."""
+"""Verify pipeline construction in MemorySystemContextManager.load()."""
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -7,51 +7,56 @@ import pytest
 
 from framework.core.context import ContextState
 from framework.memory.core.message import ChatMessage
-from framework.memory.core.models import InjectionResult
 from framework.memory.system import MemorySystemContextManager
+
+
+def _make_mock_system() -> MagicMock:
+    """Create a mock MemorySystem with all async methods load() needs.
+
+    load() now builds a pipeline-specific FullInjectionPolicy that calls
+    assemble() internally, so the mock must support:
+    ensure_within_budget, retrieve_knowledge, get_knowledge_directory,
+    get_storage_path, get_providers, prefetch_memories, get_history,
+    create_message_history.
+    """
+    mock_system = MagicMock()
+    mock_system.ensure_within_budget = AsyncMock()
+    mock_system.retrieve_knowledge = AsyncMock(
+        return_value=MagicMock(soul="", user="", memory=""),
+    )
+    mock_system.get_knowledge_directory = AsyncMock(return_value=None)
+    mock_system.get_storage_path = AsyncMock(return_value=None)
+    mock_system.get_providers = MagicMock(return_value=[])
+    mock_system.prefetch_memories = AsyncMock(return_value=None)
+    mock_system.get_history = AsyncMock(return_value=[])
+    mock_system.create_message_history = MagicMock(return_value=MagicMock())
+    return mock_system
 
 
 @pytest.mark.asyncio
 async def test_load_produces_complete_context_state():
-    """load() returns ContextState with both system_prompt and history."""
-    mock_system = MagicMock()
-    mock_system.ensure_within_budget = AsyncMock()
-    mock_system.create_message_history = MagicMock(
-        return_value=MagicMock()
-    )
-    policy = MagicMock()
-    policy.assemble = AsyncMock(return_value=InjectionResult(
-        system_prompt="## Knowledge\n...",
-        messages=[ChatMessage(role="user", content="hello")],
-    ))
+    """load() returns ContextState with system_prompt, history, and pipeline."""
+    mock_system = _make_mock_system()
     ctx_mgr = MemorySystemContextManager(
         memory_system=mock_system,
-        injection_policy=policy,
         base_system_prompt="You are helpful.",
     )
     state = await ctx_mgr.load("s1", tool_manager=MagicMock())
     assert isinstance(state, ContextState)
+    # Static system_prompt fallback includes base prompt
     assert "You are helpful." in state.system_prompt
-    assert "## Knowledge" in state.system_prompt
     assert state.history is not None
+    # Pipeline is built with at least the base prompt provider
+    assert state.system_prompt_pipeline is not None
 
 
 @pytest.mark.asyncio
 async def test_build_system_prompt_delegates_to_load():
     """build_system_prompt() delegates to load() and returns system_prompt."""
-    mock_system = MagicMock()
-    mock_system.ensure_within_budget = AsyncMock()
-    mock_system.create_message_history = MagicMock(return_value=MagicMock())
-    policy = MagicMock()
-    policy.assemble = AsyncMock(return_value=InjectionResult(
-        system_prompt="test",
-        messages=[],
-    ))
+    mock_system = _make_mock_system()
     ctx_mgr = MemorySystemContextManager(
         memory_system=mock_system,
-        injection_policy=policy,
         base_system_prompt="base",
     )
     prompt = await ctx_mgr.build_system_prompt(tool_manager=MagicMock())
     assert "base" in prompt
-    assert "test" in prompt
