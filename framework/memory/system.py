@@ -137,9 +137,10 @@ class MemorySystemContextManager(ContextManager):
         governance: ContextGovernance | None,
         session_id: str,
     ) -> ContextGovernance | None:
-        if not isinstance(self.memory_system, DefaultMemorySystem):
+        try:
+            urb = self.memory_system.layers.user_retention
+        except AttributeError:
             return governance
-        urb = self.memory_system.layers.user_retention
         if urb is None:
             return governance
         from framework.memory.context_governance import (
@@ -226,12 +227,30 @@ class MemorySystemContextManager(ContextManager):
             SkillProvider,
         )
 
-        # Use a pipeline-specific policy that skips archive/pruned
-        # (those are handled by dedicated refreshable providers)
-        pipeline_policy = FullInjectionPolicy(
-            pruned_manager=None,
-            archive_inject_count=0,
-        )
+        # Determine if the original policy would inject archive/pruned content.
+        # If so, create a pipeline-specific policy that skips them
+        # (those sections are handled by dedicated refreshable providers).
+        # Subagent policies (e.g. RestrictedInjectionPolicy) do not inject
+        # archive/pruned, so the original policy is used as-is.
+        policy = self.injection_policy
+        needs_clean_policy = False
+        try:
+            needs_clean_policy = policy._pruned_manager is not None
+        except AttributeError:
+            pass
+        if not needs_clean_policy:
+            try:
+                needs_clean_policy = policy._archive_inject_count > 0
+            except AttributeError:
+                pass
+
+        if needs_clean_policy:
+            pipeline_policy = FullInjectionPolicy(
+                pruned_manager=None,
+                archive_inject_count=0,
+            )
+        else:
+            pipeline_policy = policy
         result = await pipeline_policy.assemble(
             context=ctx,
             memory_system=self.memory_system,
@@ -242,9 +261,7 @@ class MemorySystemContextManager(ContextManager):
 
         # 1. Runtime metadata (refreshes daily)
         if runtime_info:
-            runtime_text = self._format_runtime_info(runtime_info)
-            if runtime_text:
-                providers.append(RuntimeProvider())
+            providers.append(RuntimeProvider())
 
         # 2. Base system prompt (static)
         if self.base_system_prompt:
@@ -256,20 +273,21 @@ class MemorySystemContextManager(ContextManager):
 
         # 4. Archive summaries (must refresh on cleanup)
         archive_storage = None
-        if isinstance(self.memory_system, DefaultMemorySystem):
-            try:
-                archive_storage = await self.memory_system._resolve_archive_storage(ctx)
-            except Exception:
-                logger.debug("Failed to resolve archive storage", exc_info=True)
+        try:
+            archive_storage = await self.memory_system._resolve_archive_storage(ctx)
+        except AttributeError:
+            pass  # MemorySystem does not support archive resolution
+        except Exception:
+            logger.debug("Failed to resolve archive storage", exc_info=True)
         if archive_storage is not None:
             providers.append(ArchiveProvider(archive_storage))
 
         # 5. Pruned catalog (must refresh on cleanup)
-        pruned_mgr = (
-            self.memory_system.pruned_manager
-            if isinstance(self.memory_system, DefaultMemorySystem)
-            else None
-        )
+        pruned_mgr = None
+        try:
+            pruned_mgr = self.memory_system.pruned_manager
+        except AttributeError:
+            pass  # MemorySystem does not have pruned_manager
         if pruned_mgr is not None:
             providers.append(PrunedProvider(pruned_mgr, session_id=session_id))
 
@@ -315,26 +333,10 @@ class MemorySystemContextManager(ContextManager):
 
         pipeline = SystemPromptPipeline(providers)
 
-        # Build fallback static system_prompt for backward compatibility
-        parts: list[str] = []
-        if runtime_info:
-            runtime_text = self._format_runtime_info(runtime_info)
-            if runtime_text:
-                parts.append(runtime_text)
-        if self.base_system_prompt:
-            parts.append(self.base_system_prompt)
-        if result.system_prompt:
-            parts.append(result.system_prompt)
-        system_prompt = "\n\n---\n\n".join(parts) if parts else ""
-
         history = self.memory_system.create_message_history(
             context=ctx, initial_messages=result.messages,
         )
-        return ContextState(
-            system_prompt=system_prompt,
-            history=history,
-            system_prompt_pipeline=pipeline,
-        )
+        return ContextState(history=history, system_prompt_pipeline=pipeline)
 
     async def save(
         self,
@@ -371,13 +373,15 @@ class MemorySystemContextManager(ContextManager):
         skill_manager: SkillManager | None = None,
         runtime_info: dict[str, Any] | None = None,
     ) -> str:
-        """Build system prompt by delegating to load()."""
+        """Build system prompt by delegating to load() and resolving pipeline."""
         state = await self.load(
             session_id=self._last_session_id or "default",
             tool_manager=tool_manager,
             skill_manager=skill_manager,
             runtime_info=runtime_info,
         )
+        if state.system_prompt_pipeline is not None:
+            return await state.system_prompt_pipeline.get_or_refresh()
         return state.system_prompt
 
     def get_active_contexts(self) -> list[MemoryContext]:
@@ -450,26 +454,31 @@ class MemorySystemContextManager(ContextManager):
         if not runtime_lines:
             return user_message
 
-        msg_dict = (
-            user_message.to_dict() if isinstance(user_message, ChatMessage) else dict(user_message)
-        )
+        try:
+            msg_dict = user_message.to_dict()
+        except AttributeError:
+            msg_dict = dict(user_message)
         original_content = msg_dict.get("content", "")
         prefix = "[Runtime Context]\n" + "\n".join(runtime_lines) + "\n\n"
 
-        if isinstance(original_content, list):
+        try:
+            # Detect list-like content (multimodal) vs string.
+            # Strings don't support + [] — they raise TypeError.
+            _ = original_content + []
             if not original_content:
                 return user_message
             new_content: str | list[dict[str, Any]] = [
                 {"type": "text", "text": prefix},
                 *list(original_content),
             ]
-        else:
+        except TypeError:
             new_content = prefix + str(original_content)
 
         msg_dict["content"] = new_content
-        if isinstance(user_message, ChatMessage):
+        try:
             return ChatMessage.coerce(msg_dict)
-        return msg_dict
+        except Exception:
+            return msg_dict
 
     @staticmethod
     def _format_runtime_info(info: dict[str, Any]) -> str:
