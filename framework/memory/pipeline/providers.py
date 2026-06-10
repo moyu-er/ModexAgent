@@ -130,12 +130,14 @@ class ArchiveProvider(SystemPromptProvider):
 
     def __init__(
         self,
-        archive_storage: Any,
+        archive_dir: Path,
         inject_count: int = 3,
         inject_max_chars: int = 1000,
     ) -> None:
         super().__init__()
-        self._storage = archive_storage
+        from framework.memory.stores.dir_archive import DirArchiveStorage
+
+        self._storage = DirArchiveStorage(archive_dir)
         self._inject_count = inject_count
         self._inject_max_chars = inject_max_chars
 
@@ -156,9 +158,7 @@ class ArchiveProvider(SystemPromptProvider):
         from framework.memory.tags import ArchiveTag
         from framework.utils.xml import xml_attr, xml_text
 
-        archive_dir = getattr(self._storage, "base_dir", None) or getattr(
-            self._storage, "directory", None
-        )
+        archive_dir = self._storage.directory
         if archive_dir is None:
             return ""
 

@@ -2,6 +2,20 @@
 
 from __future__ import annotations
 
+from framework.memory.pipeline import SystemPromptProvider
+
+# Default system prompt used when no other content is configured.
+# Kept minimal so the agent is useful even without custom configuration.
+_DEFAULT_SYSTEM_PROMPT = (
+    "You are an AI assistant.\n\n"
+    "## Interaction Guidelines\n"
+    "- Respond naturally and concisely.\n"
+    "- Give direct answers first, then add explanation if needed.\n"
+    "- If the user's intent is unclear, ask for clarification before guessing.\n"
+    "- Be honest about uncertainty — never fabricate information.\n"
+    "- Use code blocks for code and commands."
+)
+
 import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -104,7 +118,7 @@ class MemorySystemContextManager(ContextManager):
 
     def __init__(
         self,
-        memory_system: ContextManagedMemorySystem,
+        memory_system: DefaultMemorySystem,
         default_user_id: str = "default",
         default_agent_id: str | None = None,
         default_agent_role: str | MemoryAgentRole | None = None,
@@ -119,7 +133,7 @@ class MemorySystemContextManager(ContextManager):
         # We validate here that both paths agree.
         from framework.memory.injection import FullInjectionPolicy
 
-        self.memory_system: ContextManagedMemorySystem = memory_system
+        self.memory_system: DefaultMemorySystem = memory_system
         self.default_user_id = default_user_id
         self.default_agent_id = default_agent_id
         self.default_agent_role = default_agent_role
@@ -272,15 +286,13 @@ class MemorySystemContextManager(ContextManager):
             providers.append(KnowledgeProvider(result.system_prompt))
 
         # 4. Archive summaries (must refresh on cleanup)
-        archive_storage = None
+        archive_dir = None
         try:
-            archive_storage = await self.memory_system._resolve_archive_storage(ctx)
-        except AttributeError:
-            pass  # MemorySystem does not support archive resolution
+            archive_dir = await self.memory_system.get_storage_path(ctx)
         except Exception:
-            logger.debug("Failed to resolve archive storage", exc_info=True)
-        if archive_storage is not None:
-            providers.append(ArchiveProvider(archive_storage))
+            logger.debug("Failed to resolve archive directory", exc_info=True)
+        if archive_dir is not None:
+            providers.append(ArchiveProvider(archive_dir))
 
         # 5. Pruned catalog (must refresh on cleanup)
         pruned_mgr = None
@@ -333,10 +345,34 @@ class MemorySystemContextManager(ContextManager):
 
         pipeline = SystemPromptPipeline(providers)
 
+        # Build a static fallback system_prompt for backward compatibility.
+        # When all providers are empty, use the default prompt so the agent
+        # remains functional even without custom configuration.
+        static_parts: list[str] = []
+        if runtime_info:
+            runtime_text = self._format_runtime_info(runtime_info)
+            if runtime_text:
+                static_parts.append(runtime_text)
+        if self.base_system_prompt:
+            static_parts.append(self.base_system_prompt)
+        if result.system_prompt:
+            static_parts.append(result.system_prompt)
+
+        # Assemble fallback string
+        system_prompt = "\n\n---\n\n".join(static_parts) if static_parts else ""
+
+        # If absolutely nothing is configured, inject the default prompt
+        if not system_prompt:
+            system_prompt = _DEFAULT_SYSTEM_PROMPT
+
         history = self.memory_system.create_message_history(
             context=ctx, initial_messages=result.messages,
         )
-        return ContextState(history=history, system_prompt_pipeline=pipeline)
+        return ContextState(
+            system_prompt=system_prompt,
+            history=history,
+            system_prompt_pipeline=pipeline,
+        )
 
     async def save(
         self,

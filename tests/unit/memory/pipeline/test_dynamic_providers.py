@@ -25,7 +25,7 @@ async def test_archive_provider_no_archives(tmp_path):
     storage = DirArchiveStorage(tmp_path / "archives")
     await storage.initialize()
 
-    provider = ArchiveProvider(storage)
+    provider = ArchiveProvider(storage.directory)
     content = await provider.get_or_refresh()
 
     assert content == ""
@@ -43,7 +43,7 @@ async def test_archive_provider_with_archives(tmp_path):
     # Write archive 2 with more content
     await storage.write_archive_file(2, "context.md", "Second conversation summary.")
 
-    provider = ArchiveProvider(storage)
+    provider = ArchiveProvider(storage.directory)
     content = await provider.get_or_refresh()
 
     # Version should be the latest (highest) archive id
@@ -62,7 +62,7 @@ async def test_archive_provider_detects_new_archive(tmp_path):
 
     await storage.write_archive_file(1, "context.md", "Initial summary.")
 
-    provider = ArchiveProvider(storage)
+    provider = ArchiveProvider(storage.directory)
     content1 = await provider.get_or_refresh()
     assert provider.last_version == "1"
     assert "Initial summary." in content1
@@ -87,7 +87,7 @@ async def test_archive_provider_respects_inject_count(tmp_path):
     for i in range(1, 6):
         await storage.write_archive_file(i, "context.md", f"Archive {i} content.")
 
-    provider = ArchiveProvider(storage, inject_count=2)
+    provider = ArchiveProvider(storage.directory, inject_count=2)
     content = await provider.get_or_refresh()
 
     # Only the 2 most recent (sorted ascending, last 2) should appear
@@ -107,7 +107,7 @@ async def test_archive_provider_truncates_long_content(tmp_path):
     long_text = "A" * 2000
     await storage.write_archive_file(1, "context.md", long_text)
 
-    provider = ArchiveProvider(storage, inject_max_chars=100)
+    provider = ArchiveProvider(storage.directory, inject_max_chars=100)
     content = await provider.get_or_refresh()
 
     # Content should contain truncated version with "..."
@@ -130,7 +130,7 @@ async def test_archive_provider_skips_empty_context(tmp_path):
     # Archive 3 has empty context.md
     await storage.write_archive_file(3, "context.md", "")
 
-    provider = ArchiveProvider(storage)
+    provider = ArchiveProvider(storage.directory)
     content = await provider.get_or_refresh()
 
     # Version should still be "3" (highest archive id)
