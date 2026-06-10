@@ -15,9 +15,12 @@ from __future__ import annotations
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from framework.memory.core.scope import MemoryContext, MemoryScope, SessionScope
+
+if TYPE_CHECKING:
+    from framework.runtime.models import JsonValue
 
 #: Internal key used by :meth:`InMemoryRuntimeContext.record_tool_call`.
 _TOOL_CALLS_KEY = "_tool_calls"
@@ -28,8 +31,8 @@ class ToolCallRecord:
     """Immutable record of a single tool invocation."""
 
     tool_name: str
-    arguments: dict[str, Any]
-    result: Any
+    arguments: dict[str, JsonValue]
+    result: JsonValue
     timestamp: float = field(default_factory=time.time)
 
 
@@ -77,8 +80,8 @@ class RuntimeContext(ABC):
     async def record_tool_call(
         self,
         tool_name: str,
-        arguments: dict[str, Any],
-        result: Any,
+        arguments: dict[str, JsonValue],
+        result: JsonValue,
     ) -> None:
         """Append a tool call record."""
 
@@ -125,8 +128,8 @@ class InMemoryRuntimeContext(RuntimeContext):
     async def record_tool_call(
         self,
         tool_name: str,
-        arguments: dict[str, Any],
-        result: Any,
+        arguments: dict[str, JsonValue],
+        result: JsonValue,
     ) -> None:
         calls: list[ToolCallRecord] = self._data.setdefault(_TOOL_CALLS_KEY, [])
         calls.append(

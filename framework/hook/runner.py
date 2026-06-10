@@ -8,9 +8,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Generic
+from typing import TYPE_CHECKING, Any, Generic, TypedDict
 
-from typing_extensions import TypeVar
+from typing_extensions import TypeVar, Unpack
 
 from framework.hook.abc import (
     AfterIterationHook,
@@ -31,6 +31,9 @@ from framework.hook.abc import (
 
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
+    from framework.core.emitter import AgentResult
+    from framework.core.tool_manager import ToolResult
+    from framework.core.types import LLMResponse, ToolCall
 
 R = TypeVar("R", default=Any)
 
@@ -41,52 +44,93 @@ _DEFAULT_HOOK_TIMEOUT = 10.0
 
 
 # ---------------------------------------------------------------------------
+# Per-point typed payloads (TypedDict for static checking, no runtime cost)
+# ---------------------------------------------------------------------------
+
+
+class _EmptyPayload(TypedDict, total=False):
+    """No extra data."""
+
+
+class _AfterTurnPayload(TypedDict, total=False):
+    result: "AgentResult | None"
+
+
+class _ToolExecutionPayload(TypedDict, total=False):
+    tool_calls: "Sequence[ToolCall] | None"
+
+
+class _ToolResultsPayload(TypedDict, total=False):
+    results: "Sequence[ToolResult] | None"
+
+
+class _AfterLLMResponsePayload(TypedDict, total=False):
+    response: "LLMResponse | None"
+
+
+class _ControlCommandPayload(TypedDict, total=False):
+    command: "Mapping[str, object]"
+
+
+class _FinalizeContentPayload(TypedDict, total=False):
+    content: "str | None"
+
+
+# ---------------------------------------------------------------------------
 # Per-point dispatch helpers — eliminate getattr from the hot path
 # ---------------------------------------------------------------------------
 
 
-async def _call_before_turn(hook: BeforeTurnHook, ctx: AgentContext[R], **_: Any) -> None:  # noqa: ANN401
+async def _call_before_turn(
+    hook: BeforeTurnHook, ctx: AgentContext[R], **_: Unpack[_EmptyPayload]
+) -> None:
     await hook.before_turn(ctx)
 
 
-async def _call_after_turn(hook: AfterTurnHook, ctx: AgentContext[R], **kw: Any) -> None:  # noqa: ANN401
-    await hook.after_turn(ctx, kw.get("result"))
+async def _call_after_turn(
+    hook: AfterTurnHook, ctx: AgentContext[R], **kw: Unpack[_AfterTurnPayload]
+) -> None:
+    await hook.after_turn(ctx, kw.get("result"))  # type: ignore[arg-type]
 
 
-async def _call_before_iteration(hook: BeforeIterationHook, ctx: AgentContext[R], **_: Any) -> None:  # noqa: ANN401
+async def _call_before_iteration(
+    hook: BeforeIterationHook, ctx: AgentContext[R], **_: Unpack[_EmptyPayload]
+) -> None:
     await hook.before_iteration(ctx)
 
 
-async def _call_after_iteration(hook: AfterIterationHook, ctx: AgentContext[R], **_: Any) -> None:  # noqa: ANN401
+async def _call_after_iteration(
+    hook: AfterIterationHook, ctx: AgentContext[R], **_: Unpack[_EmptyPayload]
+) -> None:
     await hook.after_iteration(ctx)
 
 
 async def _call_before_tool_execution(
-    hook: BeforeToolExecutionHook, ctx: AgentContext[R], **kw: Any,  # noqa: ANN401
+    hook: BeforeToolExecutionHook, ctx: AgentContext[R], **kw: Unpack[_ToolExecutionPayload]
 ) -> None:
-    await hook.before_tool_execution(ctx, kw.get("tool_calls"))
+    await hook.before_tool_execution(ctx, kw.get("tool_calls"))  # type: ignore[arg-type]
 
 
 async def _call_after_tool_execution(
-    hook: AfterToolExecutionHook, ctx: AgentContext[R], **kw: Any,  # noqa: ANN401
+    hook: AfterToolExecutionHook, ctx: AgentContext[R], **kw: Unpack[_ToolResultsPayload]
 ) -> None:
-    await hook.after_tool_execution(ctx, kw.get("results"))
+    await hook.after_tool_execution(ctx, kw.get("results"))  # type: ignore[arg-type]
 
 
 async def _call_after_llm_response(
-    hook: AfterLLMResponseHook, ctx: AgentContext[R], **kw: Any,  # noqa: ANN401
+    hook: AfterLLMResponseHook, ctx: AgentContext[R], **kw: Unpack[_AfterLLMResponsePayload]
 ) -> HookResult | None:
     return await hook.after_llm_response(ctx, kw.get("response"))  # type: ignore[arg-type]
 
 
 async def _call_on_control_command(
-    hook: OnControlCommandHook, ctx: AgentContext[R], **kw: Any,  # noqa: ANN401
+    hook: OnControlCommandHook, ctx: AgentContext[R], **kw: Unpack[_ControlCommandPayload]
 ) -> HookResult:
-    return await hook.on_control_command(ctx, kw.get("command", {}))
+    return await hook.on_control_command(ctx, kw.get("command", {}))  # type: ignore[arg-type]
 
 
 async def _call_finalize_content(
-    hook: FinalizeContentHook, ctx: AgentContext[R], **kw: Any,  # noqa: ANN401
+    hook: FinalizeContentHook, ctx: AgentContext[R], **kw: Unpack[_FinalizeContentPayload]
 ) -> str | None:
     return hook.finalize_content(ctx, kw.get("content"))
 

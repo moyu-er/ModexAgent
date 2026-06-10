@@ -5,14 +5,14 @@ from pathlib import Path
 
 from framework.utils.xml import xml_attr, xml_text
 
-from .models import Skill
+from .models import ResolutionContext, Skill
 
 
 class SkillPromptBuilder(ABC):
     """Strategy for converting a list of skills into a prompt section."""
 
     @abstractmethod
-    async def build(self, skills: list[Skill], context: object = None) -> str:
+    async def build(self, skills: list[Skill], context: ResolutionContext | None = None) -> str:
         """Return the skills prompt section (may be empty)."""
 
 
@@ -54,7 +54,7 @@ class DefaultSkillBuilder(SkillPromptBuilder):
     def __init__(self, base_path: Path | None = None) -> None:
         _ = base_path
 
-    async def build(self, skills: list[Skill], context: object = None) -> str:
+    async def build(self, skills: list[Skill], context: ResolutionContext | None = None) -> str:
         if not skills:
             return ""
         return _render_skill_xml(skills)

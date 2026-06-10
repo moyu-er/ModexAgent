@@ -74,14 +74,8 @@ class Tool(DynamicSchemaProvider):
     @property
     def name(self) -> str:
         """工具名称"""
-        # 优先返回 _name，如果没有则尝试从类属性获取
         if self._name is not None:
             return self._name
-        # 兼容旧方式：子类可能定义了 name 属性
-        if hasattr(self.__class__, 'name') and isinstance(self.__class__.name, property):
-            prop = self.__class__.name
-            if prop.fget is not None:
-                return prop.fget(self)
         raise NotImplementedError("Tool must define 'name' either via __init__ or as a property")
 
     @property
@@ -89,10 +83,6 @@ class Tool(DynamicSchemaProvider):
         """工具描述"""
         if self._description is not None:
             return self._description
-        if hasattr(self.__class__, 'description') and isinstance(self.__class__.description, property):
-            prop = self.__class__.description
-            if prop.fget is not None:
-                return prop.fget(self)
         raise NotImplementedError("Tool must define 'description' either via __init__ or as a property")
 
     @property
@@ -100,10 +90,6 @@ class Tool(DynamicSchemaProvider):
         """工具参数定义"""
         if self._parameters is not None:
             return self._parameters
-        if hasattr(self.__class__, 'parameters') and isinstance(self.__class__.parameters, property):
-            prop = self.__class__.parameters
-            if prop.fget is not None:
-                return prop.fget(self)
         raise NotImplementedError("Tool must define 'parameters' either via __init__ or as a property")
 
     @abstractmethod

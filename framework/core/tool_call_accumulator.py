@@ -275,7 +275,9 @@ class ToolCallAccumulator:
         return len(self._accumulating)
 
 
-def parse_tool_call_chunks_from_delta(tool_calls_data: Any) -> list[ToolCallChunk]:
+def parse_tool_call_chunks_from_delta(
+    tool_calls_data: Any,  # noqa: ANN401 — external data boundary: LiteLLM objects or dicts
+) -> list[ToolCallChunk]:
     """
     从工具调用数据中解析工具调用块列表。
 
@@ -290,7 +292,7 @@ def parse_tool_call_chunks_from_delta(tool_calls_data: Any) -> list[ToolCallChun
     Returns:
         ToolCallChunk列表
     """
-    chunks = []
+    chunks: list[ToolCallChunk] = []
 
     if not tool_calls_data:
         return chunks
@@ -301,19 +303,19 @@ def parse_tool_call_chunks_from_delta(tool_calls_data: Any) -> list[ToolCallChun
 
     for i, tc in enumerate(tool_calls_data):
         # 提取字段 - 支持对象和字典格式
-        call_id = _get_value(tc, 'id')
+        call_id = _get_value(tc, "id")
 
         name = None
         args = None
 
         # 提取 function 信息
-        function = _get_value(tc, 'function')
+        function = _get_value(tc, "function")
         if function:
-            name = _get_value(function, 'name')
-            args = _get_value(function, 'arguments')
+            name = _get_value(function, "name")
+            args = _get_value(function, "arguments")
 
         chunk = ToolCallChunk(
-            index=_get_value(tc, 'index', i),  # 优先使用 tc.index，否则使用枚举索引
+            index=_get_value(tc, "index", i),  # 优先使用 tc.index，否则使用枚举索引
             id=call_id,
             name=name,
             args=args,
@@ -323,7 +325,7 @@ def parse_tool_call_chunks_from_delta(tool_calls_data: Any) -> list[ToolCallChun
     return chunks
 
 
-def _get_value(obj: Any, key: str, default: Any = None) -> Any:
+def _get_value(obj: Any, key: str, default: Any = None) -> Any:  # noqa: ANN401 — external data boundary
     """从对象或字典中获取值
 
     Args:

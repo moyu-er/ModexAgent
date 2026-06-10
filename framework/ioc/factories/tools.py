@@ -12,7 +12,7 @@ from framework.ioc.configs.mcp import MCPConfig
 
 async def connect_mcp(
     mcp_config: MCPConfig | None,
-) -> object | None:
+) -> MCPToolAdapter | None:
     """Connect to MCP servers and return an MCPToolAdapter ready for registration.
 
     Args:
@@ -42,7 +42,7 @@ async def connect_mcp(
 
 
 async def register_mcp_tools(
-    adapter: object,
+    adapter: MCPToolAdapter | None,
     tool_manager: InMemoryToolManager,
 ) -> list[str]:
     """Register MCP tools from adapter into a tool manager.
@@ -57,19 +57,15 @@ async def register_mcp_tools(
     if adapter is None:
         return []
 
-    from framework.tools.mcp_adapter import MCPToolAdapter
     from framework.tools.registry import ToolRegistry
 
-    if isinstance(adapter, MCPToolAdapter):
-        registry = ToolRegistry()
-        names = await adapter.register_tools(registry=registry)
-        for name in names:
-            tool = registry.get(name)
-            if tool is not None:
-                tool_manager.register(tool)
-        return names
-
-    return []
+    registry = ToolRegistry()
+    names = await adapter.register_tools(registry=registry)
+    for name in names:
+        tool = registry.get(name)
+        if tool is not None:
+            tool_manager.register(tool)
+    return names
 
 
 def create_tool_manager(
