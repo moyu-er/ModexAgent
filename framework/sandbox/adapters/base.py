@@ -1,7 +1,16 @@
+from __future__ import annotations
+
 import fnmatch
 import mimetypes
 import os
 from abc import ABC, abstractmethod
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ..guard import CommandPatternGuard
+    from ..env_builder import EnvironmentBuilder
+    from ..workspace_policy import WorkspacePolicy
 
 from ..config import SandboxConfig
 from ..types import SandboxArtifact, SandboxResult
@@ -39,6 +48,28 @@ class SandboxAdapter(ABC):
     @abstractmethod
     async def cleanup(self, sandbox_id: str | None = None) -> None:
         pass
+
+    def _get_command_guard(self) -> CommandPatternGuard | None:
+        """Optional hook: return a CommandPatternGuard for pre-execution checks.
+
+        Default returns None. Local adapters override to provide a guard.
+        Cloud/container adapters return None (isolation is their job).
+        """
+        return None
+
+    def _get_env_builder(self) -> EnvironmentBuilder | None:
+        """Optional hook: return an EnvironmentBuilder for env sanitization.
+
+        Default returns None. Local adapters override.
+        """
+        return None
+
+    def _get_workspace_policy(self) -> WorkspacePolicy | None:
+        """Optional hook: return a WorkspacePolicy for path boundary enforcement.
+
+        Default returns None. Local adapters override.
+        """
+        return None
 
     def _get_artifacts_dir(self, config: SandboxConfig | None) -> str:
         if config is None:

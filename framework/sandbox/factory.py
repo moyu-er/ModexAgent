@@ -1,4 +1,4 @@
-import sys
+from dataclasses import dataclass
 
 from .adapters.base import SandboxAdapter
 from .adapters.docker import DockerSandbox
@@ -8,6 +8,42 @@ from .adapters.subprocess import SubprocessSandbox
 from .config import SandboxConfig
 from .enums import SandboxType
 from .exceptions import SandboxUnavailableError
+from .platform import Platform, get_platform
+
+
+@dataclass(frozen=True)
+class PlatformFallbackChain:
+    """Ordered list of sandbox types to try, per platform."""
+    linux: tuple[SandboxType, ...] = (
+        SandboxType.LANDLOCK,
+        SandboxType.DOCKER,
+        SandboxType.SUBPROCESS,
+    )
+    macos: tuple[SandboxType, ...] = (
+        SandboxType.DOCKER,
+        SandboxType.SUBPROCESS,
+    )
+    windows: tuple[SandboxType, ...] = (
+        SandboxType.DOCKER,
+        SandboxType.SUBPROCESS,
+    )
+    unknown: tuple[SandboxType, ...] = (
+        SandboxType.SUBPROCESS,
+    )
+
+    def for_platform(self, platform: Platform) -> tuple[SandboxType, ...]:
+        match platform:
+            case Platform.LINUX:
+                return self.linux
+            case Platform.MACOS:
+                return self.macos
+            case Platform.WINDOWS:
+                return self.windows
+            case _:
+                return self.unknown
+
+
+_DEFAULT_CHAIN = PlatformFallbackChain()
 
 _ADAPTERS = {
     SandboxType.LANDLOCK: LandlockSandbox,
@@ -30,16 +66,31 @@ def get_default_sandbox(config: SandboxConfig | None = None) -> SandboxAdapter:
     return get_local_sandbox(config)
 
 
-def get_local_sandbox(config: SandboxConfig | None = None) -> SandboxAdapter:
-    if sys.platform == "linux":
-        landlock = LandlockSandbox(config)
-        if landlock.is_available:
-            return landlock
+def get_local_sandbox(
+    config: SandboxConfig | None = None,
+    *,
+    chain: PlatformFallbackChain | None = None,
+) -> SandboxAdapter:
+    """Get the best available local sandbox adapter for the current platform.
 
-        docker = DockerSandbox(config)
-        if docker.is_available:
-            return docker
+    Tries each adapter type in the platform's fallback chain until one is
+    available.
 
+    Args:
+        config: Sandbox configuration.
+        chain: Custom fallback chain. Uses platform defaults if not provided.
+    """
+    fallback_chain = chain or _DEFAULT_CHAIN
+    platform = get_platform()
+
+    for sandbox_type in fallback_chain.for_platform(platform):
+        adapter_cls = _ADAPTERS.get(sandbox_type)
+        if adapter_cls is not None:
+            adapter = adapter_cls(config)
+            if adapter.is_available:
+                return adapter
+
+    # Ultimate fallback — SubprocessSandbox is always available
     return SubprocessSandbox(config)
 
 

@@ -7,9 +7,12 @@ import time
 from pathlib import Path
 
 from ..config import SandboxConfig
+from ..env_builder import EnvBuilderConfig, EnvPolicy, EnvironmentBuilder
 from ..exceptions import SandboxUnavailableError
+from ..guard import CommandPatternGuard, CommandPatternGuardConfig
 from ..types import SandboxResult
 from ..validation import validate_code
+from ..workspace_policy import WorkspacePolicy, WorkspacePolicyConfig
 from .base import SandboxAdapter
 
 LANDLOCK_AVAILABLE = False
@@ -44,6 +47,9 @@ class LandlockSandbox(SandboxAdapter):
 
     def __init__(self, config: SandboxConfig | None = None):
         self.config = config or SandboxConfig()
+        self._command_guard: CommandPatternGuard | None = None
+        self._env_builder: EnvironmentBuilder | None = None
+        self._workspace_policy: WorkspacePolicy | None = None
 
     def _create_ruleset(self, allowed_dirs: list[str]):
         if not LANDLOCK_AVAILABLE:
@@ -114,7 +120,7 @@ class LandlockSandbox(SandboxAdapter):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=tmpdir,
-                env=self._get_safe_env(cfg),
+                env=self._get_env_builder().build(overrides={"SANDBOX_ARTIFACTS_DIR": self._get_artifacts_dir(cfg)}),
                 preexec_fn=ruleset.restrict_self,
             )
 
@@ -176,6 +182,11 @@ class LandlockSandbox(SandboxAdapter):
         cfg = config or self.config
         start_time = time.time()
 
+        guard = self._get_command_guard()
+        result = guard.check(command)
+        if not result.allowed:
+            return SandboxResult(success=False, error=f"Command blocked: {result.reason}")
+
         try:
             ruleset = self._create_ruleset(cfg.allowed_dirs)
         except Exception as e:
@@ -192,7 +203,7 @@ class LandlockSandbox(SandboxAdapter):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=work_dir,
-                env=self._get_safe_env(cfg),
+                env=self._get_env_builder().build(overrides={"SANDBOX_ARTIFACTS_DIR": self._get_artifacts_dir(cfg)}),
                 preexec_fn=ruleset.restrict_self,
                 shell=True,
             )
@@ -234,20 +245,26 @@ class LandlockSandbox(SandboxAdapter):
                 execution_time_ms=(time.time() - start_time) * 1000,
             )
 
-    def _get_safe_env(self, config: SandboxConfig) -> dict:
-        env = os.environ.copy()
-        safe_vars = [
-            "PATH",
-            "HOME",
-            "USER",
-            "LANG",
-            "LC_ALL",
-            "PYTHONPATH",
-            "PYTHONHOME",
-        ]
-        filtered_env = {k: env[k] for k in safe_vars if k in env}
-        filtered_env["SANDBOX_ARTIFACTS_DIR"] = self._get_artifacts_dir(config)
-        return filtered_env
+    def _get_command_guard(self) -> CommandPatternGuard:
+        if self._command_guard is None:
+            cfg = self.config
+            guard_config = cfg.command_guard if cfg and cfg.command_guard else None
+            self._command_guard = CommandPatternGuard(guard_config)
+        return self._command_guard
+
+    def _get_env_builder(self) -> EnvironmentBuilder:
+        if self._env_builder is None:
+            cfg = self.config
+            policy = cfg.env_policy if cfg else EnvPolicy.STANDARD
+            self._env_builder = EnvironmentBuilder(EnvBuilderConfig(policy=policy))
+        return self._env_builder
+
+    def _get_workspace_policy(self) -> WorkspacePolicy | None:
+        if self._workspace_policy is None:
+            cfg = self.config
+            if cfg and cfg.workspace:
+                self._workspace_policy = WorkspacePolicy(cfg.workspace)
+        return self._workspace_policy
 
     async def cleanup(self, sandbox_id: str | None = None) -> None:
         pass

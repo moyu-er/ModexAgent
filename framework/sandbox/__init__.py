@@ -1,19 +1,18 @@
-# EXPERIMENTAL: 此模块暂不推荐生产使用。当前零测试覆盖、零生产接入。
-# 后续待补充测试和接入验证后再正式开放。如需使用，请参考 examples/sandbox/。
+# Sandbox module — isolated command/code execution with security guards.
+# For usage examples, see examples/sandbox/.
 
-# Import security from the new security package
-from framework.security import (
-    APIBasedApprovalHandler,
-    ApprovalHandler,
-    CommandPolicy,
-    CompositeApprovalHandler,
-    ConfigBasedApprovalHandler,
-    ConsoleApprovalHandler,
-    LoggingApprovalHandler,
-    SecurityChecker,
-    SecurityCheckResult,
-    SecurityConfig,
+from .env_builder import EnvBuilderConfig, EnvPolicy, EnvironmentBuilder
+from .guard import (
+    CommandPatternGuard,
+    CommandPatternGuardConfig,
+    CommandSeverity,
+    GuardMatch,
+    GuardResult,
 )
+from .guard_device import BENIGN_DEVICE_PATHS, is_benign_device_path
+from .guard_pipeline import GuardPipeline
+from .guard_traversal import PathTraversalConfig, PathTraversalGuard
+from .workspace_policy import WorkspacePolicy, WorkspacePolicyConfig
 
 from .adapters.base import SandboxAdapter
 from .adapters.docker import DockerSandbox
@@ -27,7 +26,13 @@ from .docker_utils import (
     check_windows_linux_containers,
 )
 from .enums import SandboxType
-from .exceptions import SandboxError, SandboxTimeoutError, SandboxUnavailableError
+from .exceptions import (
+    CommandRejectedError,
+    SandboxError,
+    SandboxTimeoutError,
+    SandboxUnavailableError,
+    WorkspaceBoundaryError,
+)
 from .factory import (
     get_cloud_sandbox,
     get_default_sandbox,
@@ -47,6 +52,8 @@ __all__ = [
     "SandboxError",
     "SandboxUnavailableError",
     "SandboxTimeoutError",
+    "CommandRejectedError",
+    "WorkspaceBoundaryError",
     "SandboxConfig",
     "SandboxType",
     "get_default_sandbox",
@@ -59,18 +66,22 @@ __all__ = [
     "LandlockSandbox",
     "DockerSandbox",
     "E2BSandbox",
-    # Security (re-exported from framework.security)
-    "SecurityConfig",
-    "SecurityChecker",
-    "CommandPolicy",
-    "SecurityCheckResult",
-    # Approval Handlers
-    "ApprovalHandler",
-    "ConsoleApprovalHandler",
-    "ConfigBasedApprovalHandler",
-    "APIBasedApprovalHandler",
-    "CompositeApprovalHandler",
-    "LoggingApprovalHandler",
+    # Guard & policy
+    "CommandPatternGuard",
+    "CommandPatternGuardConfig",
+    "CommandSeverity",
+    "GuardMatch",
+    "GuardResult",
+    "GuardPipeline",
+    "PathTraversalGuard",
+    "PathTraversalConfig",
+    "BENIGN_DEVICE_PATHS",
+    "is_benign_device_path",
+    "EnvironmentBuilder",
+    "EnvBuilderConfig",
+    "EnvPolicy",
+    "WorkspacePolicy",
+    "WorkspacePolicyConfig",
     # Platform
     "Platform",
     "get_platform",

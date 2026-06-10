@@ -193,15 +193,19 @@ def _resolves_to_private(hostname: str) -> bool:
 
 ```python
 # SubprocessTool._guard_command 中新增
-from framework.security.network import contains_internal_url
+# NOTE: framework.security module was removed on 2026-06-10.
+# SSRF protection can be implemented as part of CommandGuard in framework.sandbox.guard
+# by adding URL pattern checks to the deny list.
+# from framework.security.network import contains_internal_url
 
 def _guard_command(self, command: str) -> str | None:
     # ... 现有 deny/allow 检查 ...
-    if contains_internal_url(command):
-        return (
-            "Error: Command blocked by safety guard (internal/private URL detected). "
-            "This is a security boundary — do not attempt to bypass it."
-        )
+    # SSRF check — add URL patterns to CommandPatternGuard deny list instead
+    # if contains_internal_url(command):
+    #     return (
+    #         "Error: Command blocked by safety guard (internal/private URL detected). "
+    #         "This is a security boundary — do not attempt to bypass it."
+    #     )
     return None
 ```
 

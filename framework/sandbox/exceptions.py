@@ -16,3 +16,11 @@ class SandboxPermissionError(SandboxError):
 
 class SandboxConfigurationError(SandboxError):
     pass
+
+
+class CommandRejectedError(SandboxError):
+    """Raised when a guard denies a command."""
+
+
+class WorkspaceBoundaryError(SandboxError):
+    """Raised when a path violates workspace policy."""

@@ -7,7 +7,10 @@ import tempfile
 import time
 from pathlib import Path
 
-from framework.security import SecurityChecker, SecurityConfig
+from ..guard import CommandPatternGuard, CommandPatternGuardConfig
+from ..env_builder import EnvironmentBuilder, EnvBuilderConfig
+from ..workspace_policy import WorkspacePolicy, WorkspacePolicyConfig
+from ..exceptions import CommandRejectedError
 
 from ..config import SandboxConfig
 from ..exceptions import SandboxError
@@ -48,7 +51,9 @@ class SubprocessSandbox(SandboxAdapter):
 
     def __init__(self, config: SandboxConfig | None = None):
         self.config = config or SandboxConfig()
-        self._security_checker: SecurityChecker | None = None
+        self._command_guard: CommandPatternGuard | None = None
+        self._env_builder: EnvironmentBuilder | None = None
+        self._workspace_policy: WorkspacePolicy | None = None
         self._isolation_manager: IsolationManager | None = None
 
     def _get_isolation_manager(self) -> IsolationManager:
@@ -67,12 +72,30 @@ class SubprocessSandbox(SandboxAdapter):
             self._isolation_manager = IsolationManager(isolation_config)
         return self._isolation_manager
 
-    def _get_security_checker(self) -> SecurityChecker:
-        """Get or create the security checker."""
-        if self._security_checker is None:
-            security_config = self.config.security or SecurityConfig()
-            self._security_checker = SecurityChecker(security_config)
-        return self._security_checker
+    def _get_command_guard(self) -> CommandPatternGuard:
+        """Lazily create CommandPatternGuard from config."""
+        if self._command_guard is None:
+            cfg = self.config
+            guard_config = cfg.command_guard if cfg and cfg.command_guard else None
+            self._command_guard = CommandPatternGuard(guard_config)
+        return self._command_guard
+
+    def _get_env_builder(self) -> EnvironmentBuilder:
+        """Lazily create EnvironmentBuilder from config."""
+        if self._env_builder is None:
+            from ..env_builder import EnvBuilderConfig, EnvPolicy
+            cfg = self.config
+            policy = cfg.env_policy if cfg else EnvPolicy.STANDARD
+            self._env_builder = EnvironmentBuilder(EnvBuilderConfig(policy=policy))
+        return self._env_builder
+
+    def _get_workspace_policy(self) -> WorkspacePolicy | None:
+        """Lazily create WorkspacePolicy from config. Returns None if not configured."""
+        if self._workspace_policy is None:
+            cfg = self.config
+            if cfg and cfg.workspace:
+                self._workspace_policy = WorkspacePolicy(cfg.workspace)
+        return self._workspace_policy
 
     async def execute(
         self,
@@ -122,7 +145,7 @@ class SubprocessSandbox(SandboxAdapter):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=tmpdir,
-                env=self._get_safe_env(cfg),
+                env=self._get_env_builder().build(overrides={}),
                 preexec_fn=preexec_fn,
             )
 
@@ -178,21 +201,24 @@ class SubprocessSandbox(SandboxAdapter):
         cfg = config or self.config
         start_time = time.time()
 
-        # Security check with approval
-        security_checker = self._get_security_checker()
-        try:
-            security_result = await security_checker.check_and_approve(command)
-        except SandboxError as e:
-            return SandboxResult(
-                success=False,
-                error=str(e),
-                execution_time_ms=(time.time() - start_time) * 1000,
-            )
+        # Command guard check
+        guard = self._get_command_guard()
+        result = guard.check(command)
+        if not result.allowed:
+            return SandboxResult(success=False, error=f"Command blocked: {result.reason}")
 
         os.makedirs(cfg.workspace_dir, exist_ok=True)
         self._ensure_artifacts_dir(cfg)
 
         work_dir = cwd or cfg.workspace_dir
+
+        # Workspace path check
+        workspace = self._get_workspace_policy()
+        if workspace and cwd:
+            try:
+                workspace.require_within(cwd)
+            except CommandRejectedError as e:
+                return SandboxResult(success=False, error=str(e))
 
         try:
             # Get OS-level isolation manager
@@ -215,7 +241,7 @@ class SubprocessSandbox(SandboxAdapter):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=work_dir,
-                env=self._get_safe_env(cfg),
+                env=self._get_env_builder().build(overrides={}),
                 preexec_fn=preexec_fn,
                 shell=isinstance(isolated_cmd, str),
             )
@@ -256,35 +282,6 @@ class SubprocessSandbox(SandboxAdapter):
                 error=str(e),
                 execution_time_ms=(time.time() - start_time) * 1000,
             )
-
-    def _get_safe_env(self, config: SandboxConfig) -> dict:
-        env = os.environ.copy()
-        safe_vars = [
-            # Cross-platform
-            "PATH",
-            "HOME",
-            "USER",
-            "LANG",
-            "LC_ALL",
-            "PYTHONPATH",
-            "PYTHONHOME",
-            "PYTHONIOENCODING",
-            # Windows-specific -- critical for subprocess operation
-            "SYSTEMROOT",
-            "COMSPEC",
-            "USERPROFILE",
-            "APPDATA",
-            "LOCALAPPDATA",
-            "PATHEXT",
-            "TEMP",
-            "TMP",
-            "PROGRAMFILES",
-            "HOMEDRIVE",
-            "HOMEPATH",
-        ]
-        filtered_env = {k: env[k] for k in safe_vars if k in env}
-        filtered_env["SANDBOX_ARTIFACTS_DIR"] = self._get_artifacts_dir(config)
-        return filtered_env
 
     async def cleanup(self, sandbox_id: str | None = None) -> None:
         pass
