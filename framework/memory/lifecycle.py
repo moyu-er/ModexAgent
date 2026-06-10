@@ -10,9 +10,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
-from framework.memory.archive_models import ArchiveChannel, ArchiveChannelStorage
+from framework.memory.archive_models import ArchiveChannel
 from framework.memory.core.layers import MemoryLayerSet
 from framework.memory.stores.dir_archive import DirArchiveStorage
+from framework.memory.core.storage import MemoryStorage
 from framework.memory.core.scope import (
     MemoryContext,
     MemoryLayerName,
@@ -89,12 +90,9 @@ class DefaultMemoryMaintenancePolicy(MemoryMaintenancePolicy):
                         scope=layers.archive.get_scope(),
                         context=ctx,
                     )
-                    if isinstance(archive_storage, ArchiveChannelStorage):
-                        entries = await archive_storage.read_channel_logs(
-                            ArchiveChannel.CONTEXT.value, since_archive_id=0, limit=1_000_000,
-                        )
-                    else:
-                        entries = await archive_storage.read_logs(since_cursor=0)
+                    entries = await archive_storage.read_channel_logs(
+                        ArchiveChannel.CONTEXT.value, since_archive_id=0, limit=1_000_000,
+                    )
                     if not entries:
                         continue
 
@@ -105,19 +103,16 @@ class DefaultMemoryMaintenancePolicy(MemoryMaintenancePolicy):
                     if max_entries is not None and len(entries) > max_entries:
                         kept = entries[-max_entries:]
                         kept_ids = {int(e.get("archive_id", e.get("cursor", 0)) or 0) for e in kept}
-                        if isinstance(archive_storage, ArchiveChannelStorage):
-                            await archive_storage.save_channel_logs(ArchiveChannel.CONTEXT.value, kept)
-                            # Also prune KNOWLEDGE channel to match retained CONTEXT entries
-                            knowledge_entries = await archive_storage.read_channel_logs(
-                                ArchiveChannel.KNOWLEDGE.value, since_archive_id=0, limit=1_000_000,
-                            )
-                            knowledge_kept = [e for e in knowledge_entries
-                                              if int(e.get("archive_id", 0) or 0) in kept_ids]
-                            await archive_storage.save_channel_logs(
-                                ArchiveChannel.KNOWLEDGE.value, knowledge_kept,
-                            )
-                        else:
-                            await archive_storage.save_logs(kept)
+                        await archive_storage.save_channel_logs(ArchiveChannel.CONTEXT.value, kept)
+                        # Also prune KNOWLEDGE channel to match retained CONTEXT entries
+                        knowledge_entries = await archive_storage.read_channel_logs(
+                            ArchiveChannel.KNOWLEDGE.value, since_archive_id=0, limit=1_000_000,
+                        )
+                        knowledge_kept = [e for e in knowledge_entries
+                                          if int(e.get("archive_id", 0) or 0) in kept_ids]
+                        await archive_storage.save_channel_logs(
+                            ArchiveChannel.KNOWLEDGE.value, knowledge_kept,
+                        )
                         entries = kept
                         pruned = True
 
@@ -138,25 +133,22 @@ class DefaultMemoryMaintenancePolicy(MemoryMaintenancePolicy):
                             kept.append(entry)
                         if pruned and len(kept) != len(entries):
                             kept_ids = {int(e.get("archive_id", e.get("cursor", 0)) or 0) for e in kept}
-                            if isinstance(archive_storage, ArchiveChannelStorage):
-                                await archive_storage.save_channel_logs(ArchiveChannel.CONTEXT.value, kept)
-                                knowledge_entries = await archive_storage.read_channel_logs(
-                                    ArchiveChannel.KNOWLEDGE.value, since_archive_id=0, limit=1_000_000,
-                                )
-                                knowledge_kept = [e for e in knowledge_entries
-                                                  if int(e.get("archive_id", 0) or 0) in kept_ids]
-                                await archive_storage.save_channel_logs(
-                                    ArchiveChannel.KNOWLEDGE.value, knowledge_kept,
-                                )
-                            else:
-                                await archive_storage.save_logs(kept)
+                            await archive_storage.save_channel_logs(ArchiveChannel.CONTEXT.value, kept)
+                            knowledge_entries = await archive_storage.read_channel_logs(
+                                ArchiveChannel.KNOWLEDGE.value, since_archive_id=0, limit=1_000_000,
+                            )
+                            knowledge_kept = [e for e in knowledge_entries
+                                              if int(e.get("archive_id", 0) or 0) in kept_ids]
+                            await archive_storage.save_channel_logs(
+                                ArchiveChannel.KNOWLEDGE.value, knowledge_kept,
+                            )
 
                     # FIFO eviction: delete oldest dirs exceeding max_archive_total,
                     # but never delete unconsumed archives.
                     max_total = await self._archive_retention.get_max_archive_total(ctx)
                     if max_total is not None:
-                        # DirArchiveStorage is used for MD-based archives (agent path).
-                        # When registry returns DefaultScopedStorage (JSONL path), look up
+                        # DirArchiveStorage manages archive directories directly.
+                        # When registry returns a different storage type, look up
                         # the archive directory via the layer manager and wrap it.
                         dir_storage = archive_storage if isinstance(archive_storage, DirArchiveStorage) else None
                         if dir_storage is None and layers.archive is not None:

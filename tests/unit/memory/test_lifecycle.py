@@ -343,11 +343,13 @@ class TestArchiveRetentionFifoEviction:
                 storage_path=str(archive_dir),
             )
         ])
-        # Return something that is NOT DirArchiveStorage (no list_archives)
-        mock_storage = MagicMock(spec=["read_logs", "save_logs"])
-        # Return a truthy entry so code reaches max_total FIFO eviction
-        mock_storage.read_logs = AsyncMock(return_value=[{"cursor": 1}])
-        mock_storage.save_logs = AsyncMock()
+        # Mock a MemoryStorage-like object with channel + maintenance methods
+        mock_storage = MagicMock()
+        mock_storage.read_channel_logs = AsyncMock(return_value=[{"cursor": 1}])
+        mock_storage.save_channel_logs = AsyncMock()
+        mock_storage.read_archive_state = AsyncMock(return_value={"knowledge_consumed_archive_id": 3})
+        mock_storage.prune_to_max = AsyncMock(return_value=0)
+        mock_storage.cleanup_empty_dirs = AsyncMock(return_value=0)
         registry.resolve = AsyncMock(return_value=mock_storage)
 
         # Mock archive layer that returns the directory path
@@ -402,11 +404,13 @@ class TestArchiveRetentionFifoEviction:
                 storage_path=str(archive_dir),
             )
         ])
-        # Return something that is NOT DirArchiveStorage (no list_archives)
-        mock_storage = MagicMock(spec=["read_logs", "save_logs"])
-        # Return a truthy entry so code reaches max_total FIFO eviction
-        mock_storage.read_logs = AsyncMock(return_value=[{"cursor": 1}])
-        mock_storage.save_logs = AsyncMock()
+        # Mock a MemoryStorage-like object with channel + maintenance methods
+        mock_storage = MagicMock()
+        mock_storage.read_channel_logs = AsyncMock(return_value=[{"cursor": 1}])
+        mock_storage.save_channel_logs = AsyncMock()
+        mock_storage.read_archive_state = AsyncMock(return_value={"knowledge_consumed_archive_id": 0})
+        mock_storage.prune_to_max = AsyncMock(return_value=0)
+        mock_storage.cleanup_empty_dirs = AsyncMock(return_value=0)
         registry.resolve = AsyncMock(return_value=mock_storage)
 
         mock_archive = AsyncMock()

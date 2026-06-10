@@ -85,3 +85,55 @@ class MemoryStorage(ABC):
     @abstractmethod
     async def set_last_cursor(self, cursor_name: str, cursor: int) -> None:
         pass
+
+    # -- archive maintenance extensions (default no-op implementations) ---------
+
+    async def prune_to_max(self, max_total: int, min_safe_id: int = 0) -> int:
+        """Delete oldest entries exceeding max_total. Default: no-op."""
+        _ = max_total, min_safe_id
+        return 0
+
+    async def cleanup_empty_dirs(self) -> int:
+        """Remove empty directories. Default: no-op."""
+        return 0
+
+    # -- archive channel extensions (default implementations) -------------------
+
+    async def read_archive_state(self) -> dict[str, Any] | None:
+        """Return persisted archive state. Default: read from KV store."""
+        return await self.get(".archive_state")
+
+    async def write_archive_state(self, state: dict[str, Any]) -> None:
+        """Persist archive state. Default: write to KV store."""
+        await self.set(".archive_state", state)
+
+    async def append_channel_log(
+        self, channel: str, entry: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Append entry to channel log. Default: delegate to append_log."""
+        return await self.append_log({**entry, "channel": channel})
+
+    async def read_channel_logs(
+        self,
+        channel: str,
+        since_archive_id: int = 0,
+        limit: int = 1_000_000,
+    ) -> list[dict[str, Any]]:
+        """Read channel logs with archive_id > since_archive_id.
+        Default: filter read_logs by channel and archive_id.
+        """
+        entries = await self.read_logs(since_cursor=0, limit=limit)
+        return [
+            entry
+            for entry in entries
+            if entry.get("channel") == channel
+            and int(entry.get("archive_id", 0) or 0) > since_archive_id
+        ][:limit]
+
+    async def save_channel_logs(
+        self, channel: str, entries: list[dict[str, Any]]
+    ) -> None:
+        """Atomically replace channel log. Default: merge via read_logs + save_logs."""
+        all_entries = await self.read_logs(since_cursor=0, limit=1_000_000)
+        other = [e for e in all_entries if e.get("channel") != channel]
+        await self.save_logs(other + entries)

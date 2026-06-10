@@ -7,7 +7,8 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from framework.memory.archive_models import ArchiveChannelStorage
+from framework.memory.core.models import StorageRevision
+from framework.memory.core.storage import MemoryStorage
 from framework.utils.file_io import read_json_robust
 
 if TYPE_CHECKING:
@@ -20,7 +21,7 @@ _REQUIRED_ARCHIVE_FILES: frozenset[str] = frozenset(
 )
 
 
-class DirArchiveStorage(ArchiveChannelStorage):
+class DirArchiveStorage(MemoryStorage):
     """Archive storage backed by a directory tree of markdown files.
 
     Layout::
@@ -36,9 +37,9 @@ class DirArchiveStorage(ArchiveChannelStorage):
     """
 
     def __init__(self, base_dir: Path) -> None:
-        self._base = base_dir
         from framework.memory.core.lock import AioRWLock
-        self._lock = AioRWLock()
+        super().__init__(AioRWLock())
+        self._base = base_dir
 
     async def initialize(self) -> None:
         """Ensure base directory exists."""
@@ -63,7 +64,7 @@ class DirArchiveStorage(ArchiveChannelStorage):
         """Alias for compatibility with callers that expect ``.directory``."""
         return self._base
 
-    # -- ArchiveChannelStorage protocol --------------------------------------
+    # -- MemoryStorage archive extensions (overrides) ------------------------
 
     async def read_archive_state(self) -> dict[str, Any] | None:
         """Return the persisted archive state, or ``None`` if absent."""
@@ -188,6 +189,103 @@ class DirArchiveStorage(ArchiveChannelStorage):
                     shutil.rmtree(child, ignore_errors=True)
                     count += 1
         return count
+
+    # -- MemoryStorage base methods ------------------------------------------
+
+    @property
+    def base_path(self) -> Path | None:
+        return self._base.resolve()
+
+    async def get(self, key: str) -> Any | None:
+        data = read_json_robust(self._base / "state.json")
+        return data.get(key) if data else None
+
+    async def set(self, key: str, value: Any) -> None:
+        self._base.mkdir(parents=True, exist_ok=True)
+        data = read_json_robust(self._base / "state.json") or {}
+        data[key] = value
+        (self._base / "state.json").write_text(
+            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+    async def delete(self, key: str) -> bool:
+        data = read_json_robust(self._base / "state.json")
+        if not data or key not in data:
+            return False
+        del data[key]
+        (self._base / "state.json").write_text(
+            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        return True
+
+    async def list_keys(self, prefix: str = "") -> list[str]:
+        data = read_json_robust(self._base / "state.json")
+        if not data:
+            return []
+        return [k for k in data if k.startswith(prefix)]
+
+    async def load_messages(self) -> list[dict[str, Any]]:
+        return []
+
+    async def save_messages(self, messages: list[dict[str, Any]]) -> StorageRevision:
+        return self._revision()
+
+    async def get_revision(self) -> StorageRevision:
+        return self._revision()
+
+    def _revision(self) -> StorageRevision:
+        from datetime import UTC, datetime
+        return StorageRevision(
+            message_count=0,
+            updated_at=datetime.now(UTC),
+            version=0,
+        )
+
+    async def append_log(self, entry: dict[str, Any]) -> dict[str, Any]:
+        self._base.mkdir(parents=True, exist_ok=True)
+        log_path = self._base / "archive.jsonl"
+        stored = {**entry, "created_at": entry.get("created_at") or datetime.now(UTC).isoformat()}
+        with log_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(stored, ensure_ascii=False) + "\n")
+        return stored
+
+    async def read_logs(self, since_cursor: int = 0, limit: int = 1000) -> list[dict[str, Any]]:
+        log_path = self._base / "archive.jsonl"
+        if not log_path.exists():
+            return []
+        entries: list[dict[str, Any]] = []
+        for line in log_path.read_text(encoding="utf-8").strip().split("\n"):
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+                if int(entry.get("cursor", 0)) > since_cursor:
+                    entries.append(entry)
+                    if len(entries) >= limit:
+                        break
+            except (json.JSONDecodeError, ValueError):
+                continue
+        return entries
+
+    async def save_logs(self, entries: list[dict[str, Any]]) -> None:
+        self._base.mkdir(parents=True, exist_ok=True)
+        log_path = self._base / "archive.jsonl"
+        with log_path.open("w", encoding="utf-8") as handle:
+            for entry in entries:
+                handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    async def get_last_cursor(self, cursor_name: str = "default") -> int:
+        data = read_json_robust(self._base / "state.json")
+        if not data:
+            return 0
+        return int(data.get(f".cursor_{cursor_name}", 0))
+
+    async def set_last_cursor(self, cursor_name: str, cursor: int) -> None:
+        data = read_json_robust(self._base / "state.json") or {}
+        data[f".cursor_{cursor_name}"] = cursor
+        (self._base / "state.json").write_text(
+            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
     # -- MD-file-specific methods --------------------------------------------
 

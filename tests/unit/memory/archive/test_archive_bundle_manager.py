@@ -6,7 +6,6 @@ import pytest
 
 from framework.memory.archive_models import (
     ArchiveChannel,
-    ArchiveChannelStorage,
     ArchiveWrite,
 )
 from framework.memory.core.scope import MemoryContext, MemoryLayerName
@@ -199,8 +198,6 @@ async def test_prune_consumed_pairs_does_not_lose_concurrent_appends() -> None:
     await asyncio.gather(append(7), append(8))
 
     storage = await factory(ctx)
-    if not isinstance(storage, ArchiveChannelStorage):
-        pytest.skip(f"Storage {type(storage).__name__} does not implement ArchiveChannelStorage")
     context_entries = await storage.read_channel_logs(ArchiveChannel.CONTEXT.value)
     archive_ids = {int(e.get("archive_id", 0) or 0) for e in context_entries}
 
