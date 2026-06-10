@@ -145,7 +145,7 @@ class SubprocessTool(Tool):
             parts.append(family_desc)
 
         parts.append(
-            "Each invocation runs independently in a fresh shell. "
+            "Each invocation runs independently in a fresh process. "
             "Working directory, environment variables, and background "
             "processes do NOT persist between calls."
         )
