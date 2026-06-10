@@ -343,8 +343,12 @@ class TestArchiveRetentionFifoEviction:
                 storage_path=str(archive_dir),
             )
         ])
-        # Return something that is NOT DirArchiveStorage
-        registry.resolve = AsyncMock(return_value=AsyncMock())
+        # Return something that is NOT DirArchiveStorage (no list_archives)
+        mock_storage = MagicMock(spec=["read_logs", "save_logs"])
+        # Return a truthy entry so code reaches max_total FIFO eviction
+        mock_storage.read_logs = AsyncMock(return_value=[{"cursor": 1}])
+        mock_storage.save_logs = AsyncMock()
+        registry.resolve = AsyncMock(return_value=mock_storage)
 
         # Mock archive layer that returns the directory path
         mock_archive = AsyncMock()
@@ -398,7 +402,12 @@ class TestArchiveRetentionFifoEviction:
                 storage_path=str(archive_dir),
             )
         ])
-        registry.resolve = AsyncMock(return_value=AsyncMock())
+        # Return something that is NOT DirArchiveStorage (no list_archives)
+        mock_storage = MagicMock(spec=["read_logs", "save_logs"])
+        # Return a truthy entry so code reaches max_total FIFO eviction
+        mock_storage.read_logs = AsyncMock(return_value=[{"cursor": 1}])
+        mock_storage.save_logs = AsyncMock()
+        registry.resolve = AsyncMock(return_value=mock_storage)
 
         mock_archive = AsyncMock()
         mock_archive.get_storage_path = AsyncMock(return_value=archive_dir)
