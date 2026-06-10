@@ -20,6 +20,7 @@ from .message_utils import normalize_agent_messages_for_llm
 from .tool_manager import ToolManager
 
 if TYPE_CHECKING:
+    from framework.memory.pipeline.pipeline import SystemPromptPipeline
     from framework.multi_agent.comm_kind import AgentCommKind
     from framework.runtime.models import TurnIdentity
     from framework.runtime.services import AgentRuntime
@@ -82,6 +83,7 @@ class AgentContext:
     runtime: AgentRuntime | None = None
     identity: TurnIdentity | None = None
     session_meta: AgentSessionMeta | None = None
+    system_prompt_pipeline: SystemPromptPipeline | None = None
 
     @property
     def current_turn_uuid(self) -> str | None:

@@ -16,6 +16,7 @@ from framework.memory.history import ListMessageHistory, MessageHistory
 
 if TYPE_CHECKING:
     from framework.memory.context_governance import ContextGovernance
+    from framework.memory.pipeline.pipeline import SystemPromptPipeline
 
 from .emitter import AgentResult
 from .message_utils import AGENT_COMMUNICATION_SYSTEM_NOTE, normalize_agent_messages_for_llm
@@ -30,6 +31,7 @@ class ContextState:
     system_prompt: str = ""
     history: MessageHistory = field(default_factory=ListMessageHistory)
     metadata: dict[str, Any] = field(default_factory=dict)
+    system_prompt_pipeline: SystemPromptPipeline | None = None
 
     def __post_init__(self) -> None:
         """构造时自动将 list 转换为 ListMessageHistory，确保类型一致性。"""
@@ -48,9 +50,14 @@ class ContextState:
         history_list, has_agent_msgs = normalize_agent_messages_for_llm(history_list)
 
         messages = []
-        # 只在 system_prompt 非空时添加，避免 API 报错
-        if self.system_prompt:
+        # Prefer pipeline over static system_prompt
+        system_content = ""
+        if self.system_prompt_pipeline is not None:
+            system_content = await self.system_prompt_pipeline.get_or_refresh()
+        elif self.system_prompt:
             system_content = self.system_prompt
+
+        if system_content:
             if has_agent_msgs and AGENT_COMMUNICATION_SYSTEM_NOTE not in system_content:
                 system_content += AGENT_COMMUNICATION_SYSTEM_NOTE
             messages.append({"role": "system", "content": system_content})

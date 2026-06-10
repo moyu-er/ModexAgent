@@ -589,6 +589,7 @@ class AgentPipeline:
             session_id=session_id,
             max_iterations=self.max_iterations,
         )
+        agent_context.system_prompt_pipeline = context_state.system_prompt_pipeline
         agent_context.identity = turn_identity
         # Parse session_id to extract clean conversation_id and invocation id.
         agent_context.session_meta = AgentSessionMeta(
