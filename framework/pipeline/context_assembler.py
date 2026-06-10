@@ -152,11 +152,9 @@ async def assemble_context(
             m.get("role") == MessageRole.USER for m in non_system
         ):
             non_system = list(non_system) + [user_message]
-        if isinstance(context_state.history, MessageHistory) and not isinstance(
-            context_state.history, ListMessageHistory
-        ):
+        try:
             await context_state.history.replace_all(non_system)
-        else:
+        except (AttributeError, NotImplementedError):
             context_state.history = ListMessageHistory(non_system)
 
     return context_state

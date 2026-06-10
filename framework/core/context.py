@@ -35,7 +35,9 @@ class ContextState:
 
     def __post_init__(self) -> None:
         """构造时自动将 list 转换为 ListMessageHistory，确保类型一致性。"""
-        if isinstance(self.history, list):
+        try:
+            self.history.to_list
+        except AttributeError:
             self.history = ListMessageHistory(list(self.history))
 
     async def to_messages(self) -> list[dict[str, Any]]:
@@ -154,7 +156,14 @@ class InMemoryContextManager(ContextManager):
         self.base_system_prompt = base_system_prompt
         self._sessions: dict[str, ContextState] = {}
 
-    async def load(self, session_id: str, runtime_info=None, metadata=None, tool_manager=None, skill_manager=None) -> ContextState:
+    async def load(
+        self,
+        session_id: str,
+        runtime_info: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        tool_manager: Any = None,
+        skill_manager: Any = None,
+    ) -> ContextState:
         if session_id not in self._sessions:
             self._sessions[session_id] = ContextState(
                 system_prompt=self.base_system_prompt,

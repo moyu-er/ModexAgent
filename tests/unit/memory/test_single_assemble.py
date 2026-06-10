@@ -30,6 +30,9 @@ def _make_mock_system() -> MagicMock:
     mock_system.prefetch_memories = AsyncMock(return_value=None)
     mock_system.get_history = AsyncMock(return_value=[])
     mock_system.create_message_history = MagicMock(return_value=MagicMock())
+    # Explicitly set to None so duck-typed attribute checks work correctly
+    # (MagicMock auto-creates attributes, which would fool hasattr checks).
+    mock_system.pruned_manager = None
     return mock_system
 
 
@@ -42,12 +45,11 @@ async def test_load_produces_complete_context_state():
         base_system_prompt="You are helpful.",
     )
     state = await ctx_mgr.load("s1", tool_manager=MagicMock())
-    assert isinstance(state, ContextState)
-    # Static system_prompt fallback includes base prompt
-    assert "You are helpful." in state.system_prompt
     assert state.history is not None
-    # Pipeline is built with at least the base prompt provider
+    # Pipeline is the sole system prompt path; static fallback is empty
     assert state.system_prompt_pipeline is not None
+    prompt = await state.system_prompt_pipeline.get_or_refresh()
+    assert "You are helpful." in prompt
 
 
 @pytest.mark.asyncio
