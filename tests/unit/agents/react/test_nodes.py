@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 from unittest.mock import AsyncMock
 
+from framework import ToolCall
 from framework.agents.react.agent import ReActAgent
 from framework.agents.react.constants import ReActNode, ReActReason
 from framework.agents.react.nodes.end import EndNode
@@ -14,9 +15,8 @@ from framework.agents.react.state import ReActTurnState
 from framework.approval.constants import ApprovalDecision
 from framework.core.agent import AgentContext
 from framework.core.constants import FinishReason
-from framework.core.emitter import ToolCall, ToolResult
 from framework.core.graph.constants import GraphNode
-from framework.core.tool_manager import InMemoryToolManager
+from framework.core.tool_manager import InMemoryToolManager, ToolResult
 from framework.memory.history import ListMessageHistory
 from framework.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from framework.runtime.models import TurnIdentity
