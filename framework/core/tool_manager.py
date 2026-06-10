@@ -27,9 +27,9 @@ class ToolExecutionMode(Enum):
 @dataclass
 class ToolConfig:
     """单个工具的配置"""
-    timeout: float = 30.0                    # 执行超时（秒）
+    timeout: float = 300.0                    # 执行超时（秒）
     execution_mode: ToolExecutionMode = ToolExecutionMode.ASYNC
-    retry_count: int = 0                     # 失败重试次数
+    retry_count: int = 1                     # 失败重试次数
     retry_delay: float = 1.0                 # 重试间隔（秒）
     enabled: bool = True                     # 是否启用
 
@@ -40,7 +40,7 @@ class ToolManagerConfig:
     max_workers: int = 10                    # 线程池最大工作线程数
     default_timeout: float = 30.0            # 默认超时
     default_execution_mode: ToolExecutionMode = ToolExecutionMode.ASYNC
-    enable_parallel: bool = True             # 是否允许并行执行多个工具
+    enable_parallel: bool = False             # 是否允许并行执行多个工具
     parallel_max_workers: int = 5            # 并行执行时的最大并发数
 
 

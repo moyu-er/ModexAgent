@@ -105,6 +105,9 @@ class AgentContext:
     def get_tool_descriptions(self) -> list[dict[str, Any]]:
         return self.tool_manager.get_tool_descriptions()
 
+    def add_attachment(self, path: str) -> None:
+        self.attachments.append(path)
+
 
 current_agent_context: contextvars.ContextVar[AgentContext] = contextvars.ContextVar(
     "current_agent_context"
