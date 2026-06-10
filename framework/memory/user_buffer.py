@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from framework.core.types import MessageRole
+from framework.memory.core.message import ChatMessage
 from framework.memory.core.scope import MemoryContext
 
 
@@ -33,20 +34,26 @@ class UserBufferEntry:
     truncatable_paths: list[str] | None = None
 
     @classmethod
-    def from_message(cls, message: dict[str, Any], *, pruned_at: float) -> UserBufferEntry:
-        """Create an entry from a pruned session message dict."""
-        role = str(message.get("role", "user"))
+    def from_message(cls, message: ChatMessage | dict[str, Any], *, pruned_at: float) -> UserBufferEntry:
+        """Create an entry from a pruned session message."""
+        if isinstance(message, ChatMessage):
+            # to_dict() omits content_format when it is the default (PLAIN),
+            # preserving the "not explicitly set" semantics for UserBufferEntry.
+            message_dict = message.to_dict()
+        else:
+            message_dict = dict(message)
+        role = str(message_dict.get("role", "user"))
         if role not in {MessageRole.USER.value, MessageRole.AGENT.value}:
             raise ValueError(f"role must be user or agent, got {role}")
-        content = cls._normalize_content(message.get("content", ""))
-        source_agent = message.get("source_agent")
+        content = cls._normalize_content(message_dict.get("content", ""))
+        source_agent = message_dict.get("source_agent")
         source_text = str(source_agent) if source_agent is not None else None
         created_at = cls._coerce_timestamp(
-            message.get("created_at", message.get("timestamp", pruned_at)),
+            message_dict.get("created_at", message_dict.get("timestamp", pruned_at)),
             fallback=pruned_at,
         )
-        content_format = message.get("content_format")
-        truncatable_paths = message.get("truncatable_paths")
+        content_format = message_dict.get("content_format")
+        truncatable_paths = message_dict.get("truncatable_paths")
 
         # Auto-detect XML content if not explicitly tagged — preserves
         # truncatability for skill contexts and other XML-wrapped input.
@@ -68,8 +75,8 @@ class UserBufferEntry:
     @staticmethod
     def _detect_xml_meta(
         content: str,
-        content_format: Any,
-        truncatable_paths: Any,
+        content_format: str | None,
+        truncatable_paths: list[str] | None,
     ) -> tuple[str | None, list[str] | None]:
         """Infer XML truncation metadata from explicit fields or content heuristic.
 
@@ -99,20 +106,22 @@ class UserBufferEntry:
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     @staticmethod
-    def _normalize_content(value: Any) -> str:
-        if type(value) is list:
-            return json.dumps([dict(item) for item in value if type(item) is dict], ensure_ascii=False)
-        return "" if value is None else str(value)
+    def _normalize_content(value: str | list[dict[str, Any]] | None) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, list):
+            return json.dumps([dict(item) for item in value if isinstance(item, dict)], ensure_ascii=False)
+        return str(value)
 
     @staticmethod
-    def _coerce_timestamp(value: Any, *, fallback: float) -> float:
-        match value:
-            case int() | float():
-                return float(value)
-            case str():
-                return UserBufferEntry._parse_timestamp_str(value, fallback)
-            case _:
-                return fallback
+    def _coerce_timestamp(value: float | str | int | None, *, fallback: float) -> float:
+        if value is None:
+            return fallback
+        if isinstance(value, int | float):
+            return float(value)
+        if isinstance(value, str):
+            return UserBufferEntry._parse_timestamp_str(value, fallback)
+        return fallback
 
     @staticmethod
     def _parse_timestamp_str(value: str, fallback: float) -> float:

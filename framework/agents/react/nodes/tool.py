@@ -89,7 +89,7 @@ class ToolNode(Node):
 
     async def _suspend_for_approval(
         self,
-        state: object,
+        state: ReActTurnState,
         batch: ToolBatchState,
         tool_calls: list[ToolCall],
         decisions: list[ApprovalDecision],

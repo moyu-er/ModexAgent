@@ -8,11 +8,12 @@ from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ..agents.react.agent import ReActAgent
 from ..agents.react.state import ReActSnapshotPolicy
 from ..approval.constants import ApprovalDecision
 from ..approval.types import ApprovalAction
 from ..core.types import InputMessage
-from ..runtime.models import ToolArguments, TurnSnapshot
+from ..runtime.models import ApprovalRequestState, ToolArguments, TurnSnapshot
 
 if TYPE_CHECKING:
     from ..approval.ui import ApprovalUserInterface
@@ -22,22 +23,20 @@ logger = logging.getLogger(__name__)
 _UNRELATED_INPUT_PREVIEW_LIMIT = 50
 
 
-def _format_arguments(args: object) -> str:
+def _format_arguments(args: ToolArguments | Mapping[str, object]) -> str:
     if isinstance(args, ToolArguments):
         values: Mapping[str, object] = args.values
-    elif isinstance(args, Mapping):
-        values = args
     else:
-        values = {}
+        values = args
     return ", ".join(f"{key}={value}" for key, value in values.items())
 
 
-def format_approval_prompt(req: object) -> str:
+def format_approval_prompt(req: ApprovalRequestState) -> str:
     """Format an approval request for display to the user."""
-    tool_name = getattr(req, "tool_name", "unknown")
-    call_id = getattr(req, "tool_call_id", "")
-    tier = getattr(req, "tier", "unknown")
-    args_str = _format_arguments(getattr(req, "arguments", {}))
+    tool_name = req.tool_name
+    call_id = req.tool_call_id
+    tier = req.tier
+    args_str = _format_arguments(req.arguments)
     return (
         f"Approval Required [{str(tier).upper()}]\n"
         f"Tool: {tool_name}\n"
@@ -59,7 +58,7 @@ class ApprovalRenderer:
         self,
         *,
         approval_workspace: Path,
-        agent: object | None = None,
+        agent: ReActAgent | None = None,
         user_interface: ApprovalUserInterface | None = None,
         on_drain: Callable[[InputMessage], Awaitable[None]] | None = None,
     ) -> None:

@@ -3,17 +3,23 @@
 提供 InputAdapter 和 OutputAdapter 抽象基类，支持多种输入输出源。
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
-from typing import Any
+from collections.abc import AsyncIterator, Callable
+from typing import TYPE_CHECKING, Any
 
 from framework.adapters.platform import StreamingMode
 
 from ..core.types import InputMessage, OutputMessage
 from .filters import ContentFilter
+
+if TYPE_CHECKING:
+    from framework.commands.models import CommandProcessor
+    from framework.control.channel import InMemoryControlChannel
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +36,11 @@ class InputAdapter(ABC):
     """
 
     def __init__(self) -> None:
-        self._control_channel: Any = None
-        self._cmd_processor: Any = None
-        self._ctrl_output_adapter: Any = None
-        self._session_checker: Any = None
-        self._turn_uuid_getter: Any = None
+        self._control_channel: InMemoryControlChannel | None = None
+        self._cmd_processor: CommandProcessor | None = None
+        self._ctrl_output_adapter: OutputAdapter | None = None
+        self._session_checker: Callable[[str], bool] | None = None
+        self._turn_uuid_getter: Callable[[], str] | None = None
 
     @property
     @abstractmethod
@@ -60,11 +66,11 @@ class InputAdapter(ABC):
     def configure_control_filter(
         self,
         *,
-        control_channel: Any = None,
-        command_processor: Any = None,
-        output_adapter: Any = None,
-        session_checker: Any = None,
-        turn_uuid_getter: Any = None,
+        control_channel: InMemoryControlChannel | None = None,
+        command_processor: CommandProcessor | None = None,
+        output_adapter: OutputAdapter | None = None,
+        session_checker: Callable[[str], bool] | None = None,
+        turn_uuid_getter: Callable[[], str] | None = None,
     ) -> None:
         """Configure control command interception.
 

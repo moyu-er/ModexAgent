@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from framework.core.provider import LLMProvider
 from framework.memory.core.layers import MemoryLayerSet
 from framework.memory.core.scope import (
     MemoryContext,
@@ -32,7 +33,7 @@ class MemoryLayerFactory:
         *,
         registry: MemoryStoreRegistry,
         config: MemoryLayerConfigSet | None = None,
-        llm_provider: object | None = None,
+        llm_provider: LLMProvider | None = None,
     ) -> MemoryLayerSet:
         _ = llm_provider
         config = config or MemoryLayerConfigSet()
