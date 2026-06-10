@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-05-31 | Branch: develop_gyt | Commit: 6647e8a -->
+<!-- Updated: 2026-06-10 -->
 
 # memory
 
@@ -38,6 +38,7 @@ Multi-layer memory system with scope isolation and injection. Layers: Session (s
 | `pruned/` | `PrunedManager` + `PrunedStorage` (ABC + FilePrunedStorage) + `PrunedIndexEntry` — catalog of cleaned-up session messages, session-scoped |
 | `registry/` | `MemoryStoreRegistry` — storage provider registry |
 | `stores/` | Storage backend implementations (`FileStorage`, `InMemoryStorage`) |
+| `tools/` | Agent-facing tools — 6 experience tools (read/write/edit/list/rename/delete), scoped file tools (see `tools/AGENTS.md`) |
 
 ## For AI Agents
 

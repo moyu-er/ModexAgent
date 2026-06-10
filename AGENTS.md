@@ -1,20 +1,22 @@
-<!-- Updated: 2026-05-31 | Branch: develop_gyt | Commit: 6647e8a -->
+<!-- Updated: 2026-06-10 | Branch: develop_gyt -->
 
 # Repository Guidelines
 
 ## Project Layout
 
-`framework/` is the reusable agent framework (322 Python files, 22 subdirectories). Key areas:
+`framework/` is the reusable agent framework (322+ Python files, 22 subdirectories). Key areas:
 
-- `framework/core/`: ABCs — `Agent[E]`, `ContentEmitter[E]`, `Tool`, `ContextManager`, graph engine (`Graph[R]`/`Node[R]`), skills, types.
+- `framework/core/`: ABCs — `Agent[E]`, `ContentEmitter[E]`, `Tool`, `ContextManager`, graph engine (`Graph[R]`/`Node[R]`), skills, experience system, types.
 - `framework/agents/react/`: graph-based ReAct runtime (4-node: START→LLM→TOOL→END), approval suspension/resume, `RuntimeAssembler`.
+- `framework/agents/experience/`: `ExperienceReviewAgent` — ReAct agent that reviews conversations and creates/updates EXPERIENCE.md files.
+- `framework/core/experience/`: experience layer — `ExperienceManager`, `FileExperienceSource`, `ExperiencePromptBuilder`, `ExperienceCurator`, validation, metadata tracking.
 - `framework/memory/`: three-layer memory (session/archive/knowledge) + compression + governance + injection policies.
 - `framework/multi_agent/`: star-topology subagent coordination, `AgentPool`, inbox, `CommunicationTracker`, `AgentMessageBus`.
 - `framework/ioc/`: typed config (`AppConfig` via Pydantic) + 8 factory modules + `PoolConfig`.
 - `framework/runtime/`: `AgentRuntime`, `AgentRuntimeServices`, `TurnStateStore`, `RuntimeCommandStore`, typed enums/models.
 - `framework/pipeline/`: `AgentPipeline` end-to-end orchestration, I/O adapters, approval renderer, slash commands.
 - `framework/hook/` + `framework/interceptor/` + `framework/control/`: three-layer runtime model (observe/AOP/control).
-- `framework/tools/`: tool registry, executor, MCP integration, terminal system (pexpect/tmux/winpty backends), overflow management.
+- `framework/tools/`: tool registry, executor, MCP integration, terminal system (pexpect/tmux/winpty backends, input guard, poll loop), overflow management.
 - `framework/commands/`: slash command processor with two-stage dispatch (pre-lock routing + in-lock execution).
 - `framework/sandbox/`: sandboxed execution adapters (Subprocess/Docker/E2B/Landlock).
 

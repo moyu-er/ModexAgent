@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-03 -->
+<!-- Updated: 2026-06-10 -->
 
 # control
 

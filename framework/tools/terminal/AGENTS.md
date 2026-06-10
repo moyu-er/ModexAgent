@@ -1,3 +1,6 @@
+<!-- Parent: ../AGENTS.md -->
+<!-- Updated: 2026-06-10 -->
+
 # Terminal System — Agent Guide
 
 ## Overview
@@ -109,6 +112,55 @@ Actions:
 
 **Important**: `terminal` does NOT execute commands — use `shell` for that.
 The agent generally does NOT need to `open` a terminal before using `shell`.
+
+---
+
+## Input Guard (guard.py)
+
+Before CommandTool or ProcessTool sends data to the terminal, a guard checks session readiness:
+
+```
+CommandTool.execute("ls")
+  → check_command_writable(session)
+    → session.command_status() → TerminalCommandStatus
+    → allowed: IDLE, UNKNOWN, COMPLETED, TIMED_OUT
+    → rejected: EXECUTING, LONG_RUNNING, STUCK, PAGINATED
+  → None (ok) → proceed with command
+  → TerminalGuardResult → return diagnostic to LLM with suggestion
+```
+
+```
+ProcessTool._do_write(data)
+  → check_process_writable(session)
+    → allowed: IDLE, UNKNOWN, WAITING_INPUT, PAGINATED, COMPLETED, TIMED_OUT
+    → rejected: EXECUTING, LONG_RUNNING, STUCK
+  → None (ok) → write data
+  → TerminalGuardResult → return diagnostic to LLM
+```
+
+Key difference: ProcessTool allows `WAITING_INPUT` (for typing passwords) and `PAGINATED` (for sending 'q'/Space), while CommandTool rejects both (a new command would corrupt the interaction).
+
+---
+
+## Poll Loop (poll_loop.py)
+
+Both `CommandTool.execute()` and `ProcessTool._drain_terminal_after_action()` share a unified poll loop:
+
+```
+poll_until_settled(session, registry, proc_id, config, yield_ms=..., timeout_seconds=...)
+  → poll-detect-yield cycle:
+     1. Read available output
+     2. Check for prompt detection (command finished)
+     3. Check for input wait (password/confirmation)
+     4. Check for pager entry (--help, less, etc.)
+     5. Check for process exit
+     6. Check stuck threshold (no output for configurable period)
+     7. Check long-running threshold
+     8. Check yield interval (return partial output for progress)
+     9. Timeout expiry
+```
+
+`PollOutcome` captures the terminal state: PAGINATED is a new addition detecting pager programs (`less`, `more`, `--help` output) that require key input to dismiss.
 
 ---
 
@@ -276,8 +328,11 @@ terminal:
 | `tool.py` | LLM terminal management tool (open/close/list/select/interrupt) |
 | `process_tool.py` | Process management tool — list/kill processes |
 | `process_registry.py` | Process tracking and registry |
-| `command_tool.py` | Command execution tool |
-| `prompt.py` | Prompt detection, ANSI/DA1 stripping, startup drain |
+| `command_tool.py` | Command execution tool — submits commands with input guard |
+| `guard.py` | `TerminalGuard` — pre-flight input validation. `check_command_writable()` (CommandTool) and `check_process_writable()` (ProcessTool) enforce status-based allowlists; returns `TerminalGuardResult` with diagnostic `TerminalSnapshot` |
+| `poll_loop.py` | Shared `poll_until_settled()` — reused by CommandTool and ProcessTool for post-write drain. `PollOutcome` enum (PROMPT_DETECTED / YIELDED / TIMED_OUT / INPUT_WAIT / STUCK / LONG_RUNNING / PROCESS_EXIT / PAGINATED) |
+| `env.py` | `build_full_env()` — complete environment dict for child processes. On Windows, merges missing HKLM/HKCU PATH entries from registry |
+| `prompt.py` | Prompt detection, ANSI/DA1 stripping, pager detection, startup drain |
 | `types.py` | `ShellFamily`, `ShellInfo`, `Platform`, `detect_platform_shell` |
 | `config.py` | Terminal configuration |
 | `state_store.py` | Terminal state persistence |

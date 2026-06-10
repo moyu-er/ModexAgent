@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-05-31 | Branch: develop_gyt | Commit: 6647e8a -->
+<!-- Updated: 2026-06-10 -->
 
 # ioc
 

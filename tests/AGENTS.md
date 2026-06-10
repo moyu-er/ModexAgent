@@ -1,4 +1,4 @@
-<!-- Updated: 2026-05-31 | Branch: develop_gyt | Commit: 6647e8a -->
+<!-- Updated: 2026-06-10 -->
 
 # tests
 
@@ -11,7 +11,7 @@ Test suites for the ModexAgent framework, organized by level.
 | `unit/` | Pure unit tests — no external deps, must run offline (see `unit/AGENTS.md`) |
 | `integration/` | Requires config files, LLM APIs, external services; tagged `@pytest.mark.integration` |
 | `framework/` | Framework-level test fixtures and shared utilities |
-| `e2e/` | End-to-end multi-agent scenarios |
+| `framework/tools/terminal/` | Terminal system integration tests — guard, poll loop, prompt detection, backend tests, tool integration |
 
 ## For AI Agents
 

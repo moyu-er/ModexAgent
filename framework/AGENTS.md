@@ -1,15 +1,15 @@
-<!-- Updated: 2026-05-31 | Branch: develop_gyt | Commit: 6647e8a -->
+<!-- Updated: 2026-06-10 | Branch: develop_gyt -->
 
 # framework
 
-Core multi-agent framework package (336 Python files). All abstractions, implementations, and the three-layer runtime model (Hook / Interceptor / Control) plus Approval.
+Core multi-agent framework package (336+ Python files). All abstractions, implementations, and the three-layer runtime model (Hook / Interceptor / Control) plus Approval and Experience.
 
 ## Subdirectories
 
 | Directory | Purpose |
 |-----------|---------|
-| `core/` | ABCs — `Agent[E]`, `ContentEmitter[E]`, `Tool`, `ContextManager`, graph engine (`Graph[R]`/`Node[R]`), skills, types (see `core/AGENTS.md`) |
-| `agents/` | `ReActAgent` (graph-based 4-node), `SummarizerAgent` (see `agents/AGENTS.md`) |
+| `core/` | ABCs — `Agent[E]`, `ContentEmitter[E]`, `Tool`, `ContextManager`, graph engine (`Graph[R]`/`Node[R]`), skills, experience, types (see `core/AGENTS.md`) |
+| `agents/` | `ReActAgent` (graph-based 4-node), `SummarizerAgent`, `ExperienceReviewAgent` (see `agents/AGENTS.md`) |
 | `approval/` | Tiered tool approval — tiers, decisions, response parsing (see `approval/AGENTS.md`) |
 | `pipeline/` | `AgentPipeline` orchestration, I/O adapters, approval renderer, slash commands (see `pipeline/AGENTS.md`) |
 

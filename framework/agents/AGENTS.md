@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-05-31 -->
+<!-- Updated: 2026-06-10 -->
 
 # agents
 
@@ -11,6 +11,7 @@ Agent reasoning pattern implementations. Each sub-package implements a specific 
 |-----------|---------|
 | `react/` | `ReActAgent` — Thought→Action→Observation loop with `ReActEvent` events (see `react/AGENTS.md`) |
 | `summarizer/` | `SummarizerAgent` — single-turn tool-free summarization; `ArchiveSummarizer` (MD archive generation); `KnowledgeConsolidator` (ReAct-based knowledge consolidation via `ScopedFileAgent` base class); `KnowledgeConsolidatorBase` ABC |
+| `experience/` | `ExperienceReviewAgent` — ReAct agent that reviews conversations and creates/updates EXPERIENCE.md files using experience tools (see `experience/AGENTS.md`) |
 
 ## For AI Agents
 

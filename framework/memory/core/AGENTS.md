@@ -1,4 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
+<!-- Updated: 2026-06-10 -->
 
 # memory/core
 
