@@ -60,7 +60,7 @@
 - Create: `tests/unit/memory/pipeline/__init__.py`
 - Create: `tests/unit/memory/pipeline/test_abc.py`
 
-- [ ] **Step 1: Create package `__init__.py`**
+- [x] **Step 1: Create package `__init__.py`**
 
 ```python
 # framework/memory/pipeline/__init__.py
@@ -72,7 +72,7 @@ from framework.memory.pipeline.pipeline import SystemPromptPipeline
 __all__ = ["SystemPromptProvider", "SystemPromptPipeline"]
 ```
 
-- [ ] **Step 2: Write ABC test for contract behavior**
+- [x] **Step 2: Write ABC test for contract behavior**
 
 ```python
 # tests/unit/memory/pipeline/__init__.py
@@ -216,12 +216,12 @@ async def test_initial_state():
     assert provider.last_version is None
 ```
 
-- [ ] **Step 3: Run test to verify it fails (ABC not yet created)**
+- [x] **Step 3: Run test to verify it fails (ABC not yet created)**
 
 Run: `python -m pytest tests/unit/memory/pipeline/test_abc.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'framework.memory.pipeline'`
 
-- [ ] **Step 4: Implement SystemPromptProvider ABC**
+- [x] **Step 4: Implement SystemPromptProvider ABC**
 
 ```python
 # framework/memory/pipeline/abc.py
@@ -277,12 +277,12 @@ class SystemPromptProvider(ABC):
         return self._last_version
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `python -m pytest tests/unit/memory/pipeline/test_abc.py -v`
 Expected: All PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add framework/memory/pipeline/ tests/unit/memory/pipeline/
@@ -297,7 +297,7 @@ git commit -m "feat(pipeline): add SystemPromptProvider ABC with version-based c
 - Create: `framework/memory/pipeline/pipeline.py`
 - Create: `tests/unit/memory/pipeline/test_pipeline.py`
 
-- [ ] **Step 1: Write pipeline tests**
+- [x] **Step 1: Write pipeline tests**
 
 ```python
 # tests/unit/memory/pipeline/test_pipeline.py
@@ -403,12 +403,12 @@ async def test_all_empty_returns_empty():
     assert result == ""
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/unit/memory/pipeline/test_pipeline.py -v`
 Expected: FAIL — `ImportError: cannot import name 'SystemPromptPipeline'`
 
-- [ ] **Step 3: Implement SystemPromptPipeline**
+- [x] **Step 3: Implement SystemPromptPipeline**
 
 ```python
 # framework/memory/pipeline/pipeline.py
@@ -452,16 +452,16 @@ class SystemPromptPipeline:
         return "\n\n---\n\n".join(parts)
 ```
 
-- [ ] **Step 4: Update `__init__.py` exports (already done in Task 1, verify)**
+- [x] **Step 4: Update `__init__.py` exports (already done in Task 1, verify)**
 
 The `__init__.py` from Task 1 already exports `SystemPromptPipeline`. Verify it's correct.
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `python -m pytest tests/unit/memory/pipeline/ -v`
 Expected: All PASS (both test_abc and test_pipeline)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add framework/memory/pipeline/pipeline.py tests/unit/memory/pipeline/test_pipeline.py
@@ -478,7 +478,7 @@ git commit -m "feat(pipeline): add SystemPromptPipeline with error-tolerant asse
 - Create: `framework/memory/pipeline/providers.py`
 - Create: `tests/unit/memory/pipeline/test_providers.py`
 
-- [ ] **Step 1: Write tests for all static providers**
+- [x] **Step 1: Write tests for all static providers**
 
 ```python
 # tests/unit/memory/pipeline/test_providers.py
@@ -591,12 +591,12 @@ async def test_experience_empty_when_no_content():
     assert result == ""
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/unit/memory/pipeline/test_providers.py -v`
 Expected: FAIL — `ImportError`
 
-- [ ] **Step 3: Implement all static providers**
+- [x] **Step 3: Implement all static providers**
 
 ```python
 # framework/memory/pipeline/providers.py
@@ -826,12 +826,12 @@ class PrunedProvider(SystemPromptProvider):
             return ""
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `python -m pytest tests/unit/memory/pipeline/test_providers.py -v`
 Expected: All PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add framework/memory/pipeline/providers.py tests/unit/memory/pipeline/test_providers.py
@@ -848,7 +848,7 @@ git commit -m "feat(pipeline): add all 9 SystemPromptProvider implementations"
 - Modify: `framework/memory/pruned/manager.py`
 - Modify: `framework/memory/pruned/storage.py` (if needed)
 
-- [ ] **Step 1: Write test for PrunedManager.get_version()**
+- [x] **Step 1: Write test for PrunedManager.get_version()**
 
 Add to `tests/unit/memory/test_pruned.py` (or create new test file):
 
@@ -906,12 +906,12 @@ async def test_pruned_manager_get_version_corrupted_index(tmp_path):
     assert version == ""
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/unit/memory/test_pruned.py -k "get_version" -v`
 Expected: FAIL — `AttributeError: 'PrunedManager' object has no attribute 'get_version'`
 
-- [ ] **Step 3: Implement PrunedManager.get_version()**
+- [x] **Step 3: Implement PrunedManager.get_version()**
 
 Add to `framework/memory/pruned/manager.py`, after `get_injection_xml()`:
 
@@ -932,12 +932,12 @@ def get_version(self, *, session_id: str = "") -> str:
         return ""
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `python -m pytest tests/unit/memory/test_pruned.py -k "get_version" -v`
 Expected: All PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add framework/memory/pruned/manager.py tests/unit/memory/test_pruned.py
@@ -951,7 +951,7 @@ git commit -m "feat(pruned): add PrunedManager.get_version() for pipeline versio
 **Files:**
 - Create: `tests/unit/memory/pipeline/test_dynamic_providers.py`
 
-- [ ] **Step 1: Write integration tests for ArchiveProvider**
+- [x] **Step 1: Write integration tests for ArchiveProvider**
 
 ```python
 # tests/unit/memory/pipeline/test_dynamic_providers.py
@@ -1034,12 +1034,12 @@ async def test_pruned_provider_with_pruned_manager(tmp_path):
     assert provider.last_version == "1"
 ```
 
-- [ ] **Step 2: Run tests to verify they pass**
+- [x] **Step 2: Run tests to verify they pass**
 
 Run: `python -m pytest tests/unit/memory/pipeline/test_dynamic_providers.py -v`
 Expected: All PASS
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add tests/unit/memory/pipeline/test_dynamic_providers.py
@@ -1056,7 +1056,7 @@ git commit -m "test(pipeline): add integration tests for ArchiveProvider and Pru
 - Modify: `framework/core/context.py` — `ContextState` adds `system_prompt_pipeline` field
 - Modify: `framework/core/context.py` — `ContextState.to_messages()` prefers pipeline
 
-- [ ] **Step 1: Write test for ContextState with pipeline**
+- [x] **Step 1: Write test for ContextState with pipeline**
 
 ```python
 # In tests/unit/test_context_state.py (or wherever ContextState tests live)
@@ -1091,12 +1091,12 @@ async def test_context_state_falls_back_to_system_prompt():
     assert system_msgs[0]["content"] == "static prompt"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/unit/test_context_state.py -v`
 Expected: FAIL — `TypeError: ContextState.__init__() got an unexpected keyword argument 'system_prompt_pipeline'`
 
-- [ ] **Step 3: Modify ContextState to add pipeline field**
+- [x] **Step 3: Modify ContextState to add pipeline field**
 
 In `framework/core/context.py`, modify the `ContextState` dataclass:
 
@@ -1136,17 +1136,17 @@ async def to_messages(self) -> list[dict[str, Any]]:
     return messages
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `python -m pytest tests/unit/test_context_state.py -v`
 Expected: All PASS
 
-- [ ] **Step 5: Run full test suite to check for regressions**
+- [x] **Step 5: Run full test suite to check for regressions**
 
 Run: `python -m pytest tests/unit/ -x --timeout=30 -q`
 Expected: All PASS (ContextState.system_prompt_pipeline defaults to None, backward compatible)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add framework/core/context.py tests/unit/test_context_state.py
@@ -1160,7 +1160,7 @@ git commit -m "feat(context): add system_prompt_pipeline to ContextState, prefer
 **Files:**
 - Modify: `framework/memory/system.py` — `MemorySystemContextManager.load()`
 
-- [ ] **Step 1: Understand current load() flow**
+- [x] **Step 1: Understand current load() flow**
 
 Current `load()` in `framework/memory/system.py:176`:
 1. Build MemoryContext
@@ -1179,7 +1179,7 @@ New flow:
 5. Create history from injection messages (still needed for session messages)
 6. Return `ContextState(system_prompt_pipeline=pipeline, history=...)`
 
-- [ ] **Step 2: Write test for ctx_mgr.load() returning pipeline**
+- [x] **Step 2: Write test for ctx_mgr.load() returning pipeline**
 
 ```python
 @pytest.mark.asyncio
@@ -1206,7 +1206,7 @@ async def test_load_returns_pipeline_with_providers(tmp_path):
 
 > **Implementer note:** `_build_test_memory_system` should be extracted from the nearest existing test that constructs a `DefaultMemorySystem`. Run: `grep -rn "DefaultMemorySystem" tests/unit/memory/` to find the factory pattern.
 
-- [ ] **Step 3: Implement pipeline construction in load()**
+- [x] **Step 3: Implement pipeline construction in load()**
 
 In `framework/memory/system.py`, modify `load()` method. Replace the prompt assembly block (lines ~236-264) with pipeline construction:
 
@@ -1318,12 +1318,12 @@ return ContextState(
 
 > **Note:** The exact implementation depends on how `FullInjectionPolicy.assemble()` structures its output. The provider construction may need to extract individual sections rather than using the monolithic `result.system_prompt`. This should be refined during implementation.
 
-- [ ] **Step 4: Run full test suite**
+- [x] **Step 4: Run full test suite**
 
 Run: `python -m pytest tests/unit/ -x --timeout=30 -q`
 Expected: All PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add framework/memory/system.py
@@ -1337,7 +1337,7 @@ git commit -m "feat(memory): build SystemPromptPipeline in MemorySystemContextMa
 **Files:**
 - Modify: `framework/agents/react/nodes/llm.py`
 
-- [ ] **Step 1: Write test for LLMNode with pipeline**
+- [x] **Step 1: Write test for LLMNode with pipeline**
 
 ```python
 # In tests/unit/agents/react/test_llm_node.py (or nearest existing LLMNode test)
@@ -1394,7 +1394,7 @@ async def test_llm_node_falls_back_to_static_prompt():
     assert system_msgs[0]["content"] == "static prompt"
 ```
 
-- [ ] **Step 2: Modify LLMNode._build_messages()**
+- [x] **Step 2: Modify LLMNode._build_messages()**
 
 In `framework/agents/react/nodes/llm.py`, the current `_build_messages()`:
 
@@ -1453,7 +1453,7 @@ async def _build_messages(self, ctx: AgentContext) -> list[dict[str, object]]:
 >
 > Recommended: Option 1 — add `system_prompt_pipeline` field to `AgentContext`, set it in `_build_runtime_and_context()` from `context_state.system_prompt_pipeline`.
 
-- [ ] **Step 3: Add system_prompt_pipeline to AgentContext**
+- [x] **Step 3: Add system_prompt_pipeline to AgentContext**
 
 In `framework/core/agent.py`, add field:
 
@@ -1472,7 +1472,7 @@ agent_context = AgentContext(
 agent_context.system_prompt_pipeline = context_state.system_prompt_pipeline
 ```
 
-- [ ] **Step 4: Update LLMNode._build_messages()**
+- [x] **Step 4: Update LLMNode._build_messages()**
 
 ```python
 async def _build_messages(self, ctx: AgentContext) -> list[dict[str, object]]:
@@ -1493,12 +1493,12 @@ async def _build_messages(self, ctx: AgentContext) -> list[dict[str, object]]:
     return messages
 ```
 
-- [ ] **Step 5: Run full test suite**
+- [x] **Step 5: Run full test suite**
 
 Run: `python -m pytest tests/unit/ -x --timeout=30 -q`
 Expected: All PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add framework/agents/react/nodes/llm.py framework/core/agent.py framework/pipeline/pipeline.py
@@ -1514,7 +1514,7 @@ git commit -m "feat(react): LLMNode uses SystemPromptPipeline for dynamic system
 **Files:**
 - Modify: `framework/memory/context_governance.py` — `UserRetentionBufferInjectionGovernance.apply()`
 
-- [ ] **Step 1: Update URB XML comments**
+- [x] **Step 1: Update URB XML comments**
 
 In `framework/memory/context_governance.py`, find the `apply()` method of `UserRetentionBufferInjectionGovernance` (around line 366-368):
 
@@ -1535,7 +1535,7 @@ lines = [
 ]
 ```
 
-- [ ] **Step 2: Update existing tests that match on the old comment**
+- [x] **Step 2: Update existing tests that match on the old comment**
 
 Search for tests that assert the old comment text:
 
@@ -1543,12 +1543,12 @@ Run: `grep -r "cut for space" tests/`
 
 Update any found tests to match the new comment.
 
-- [ ] **Step 3: Run full test suite**
+- [x] **Step 3: Run full test suite**
 
 Run: `python -m pytest tests/unit/ -x --timeout=30 -q`
 Expected: All PASS
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add framework/memory/context_governance.py tests/
@@ -1562,17 +1562,17 @@ git commit -m "fix(urb): improve URB XML description to clarify pruned history a
 **Files:**
 - No new files
 
-- [ ] **Step 1: Run full test suite**
+- [x] **Step 1: Run full test suite**
 
 Run: `python -m pytest tests/unit/ -x --timeout=30 -q`
 Expected: All PASS
 
-- [ ] **Step 2: Run integration tests (if available)**
+- [x] **Step 2: Run integration tests (if available)**
 
 Run: `python -m pytest tests/ -x --timeout=60 -q -k "not slow"`
 Expected: All PASS
 
-- [ ] **Step 3: Verify spec coverage**
+- [x] **Step 3: Verify spec coverage**
 
 Check each spec requirement against implemented tasks:
 
@@ -1589,9 +1589,23 @@ Check each spec requirement against implemented tasks:
 | URB XML description update | Task 9 |
 | Subagent compatibility (no null issues) | Task 6, 7 |
 
-- [ ] **Step 4: Final commit (if any cleanup needed)**
+- [x] **Step 4: Final commit (if any cleanup needed)**
 
 ```bash
 git add -A
 git commit -m "chore: final cleanup for system prompt pipeline implementation"
 ```
+
+---
+
+## Deviations from Original Plan
+
+1. **No backward compatibility**: User explicitly requested removal of old static `system_prompt` assembly. `MemorySystemContextManager.load()` now returns `ContextState(history=..., system_prompt_pipeline=pipeline)` without setting `system_prompt`. The `system_prompt` field is preserved on `ContextState` for `InMemoryContextManager` which doesn't use pipelines.
+
+2. **Subagent policy handling**: `load()` checks `isinstance(self.injection_policy, FullInjectionPolicy)` — uses a pipeline-specific `FullInjectionPolicy(pruned_manager=None, archive_inject_count=0)` for main agents to avoid duplicating archive/pruned content; falls through to original policy (e.g. `RestrictedInjectionPolicy`) for subagents.
+
+3. **ArchiveProvider heading fix**: The generated `_build_archive_xml()` defined a `heading` variable but never included it in the return value. Fixed to prepend heading before the XML container.
+
+4. **Runtime metadata**: Uses `BasePromptProvider(runtime_text)` instead of `RuntimeProvider()` — matches original behavior of gating runtime info on `runtime_info` parameter availability.
+
+5. **Pre-existing test failures**: 30 test failures existed before this implementation. Zero new failures introduced. All 46 pipeline-specific tests pass.
