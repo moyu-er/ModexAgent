@@ -50,7 +50,7 @@ from ..core.runtime_context import RuntimeContextManager
 from ..core.tool_manager import ToolManager
 from ..control.exceptions import AgentControlError
 from ..core.types import InputMessage
-from ..memory import ContextGovernance
+from ..memory import ContextGovernance, MemoryContext
 from ..memory.consolidation import DreamEngine
 from ..memory.history import (
     inject_attachments_to_history,

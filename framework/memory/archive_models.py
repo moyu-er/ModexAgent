@@ -81,7 +81,6 @@ __all__ = [
     "KNOWLEDGE_ARCHIVE_FILENAME",
     "ArchiveBundleResult",
     "ArchiveChannel",
-    "ArchiveChannelStorage",
     "ArchiveGenerationInputs",
     "ArchiveGenerationResult",
     "ArchiveInputStats",
