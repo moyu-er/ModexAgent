@@ -38,9 +38,9 @@ def _make_file_tools() -> list[Tool]:
     ]
 
 
-def _make_shell_tool(timeout: int = 60, enable_safety_guard: bool = True) -> Tool:
+def _make_shell_tool(timeout: int = 60) -> Tool:
     from framework.tools.terminal import SubprocessTool
-    return SubprocessTool(timeout=timeout, enable_safety_guard=enable_safety_guard)
+    return SubprocessTool(timeout=timeout)
 
 
 def _make_search_tools() -> list[Tool]:

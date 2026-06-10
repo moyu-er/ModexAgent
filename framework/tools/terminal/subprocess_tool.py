@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import os
 import platform
-import re
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -87,47 +86,23 @@ class SubprocessTool(Tool):
     """Execute shell commands in a fresh subprocess (stateless).
 
     For subagent use -- each command runs in a new process, no terminal state.
+
+    Safety checks (dangerous command blocking) are NOT in the tool layer.
+    They are handled at the ToolNode level via the approval system.
+    See ``framework/agents/react/nodes/tool.py`` and the "Approval & Security"
+    section in ``framework/AGENTS.md`` for the full architecture.
     """
-
-    # Windows dangerous command patterns
-    WINDOWS_DENY_PATTERNS = [
-        r"\bdel\s+/[fq]\b",              # del /f, del /q
-        r"\brmdir\s+/s\b",               # rmdir /s
-        r"\bformat\b",                   # format
-        r"\bdiskpart\b",                 # diskpart
-        r"\bshutdown\b",                 # shutdown
-        r"\breboot\b",                   # reboot
-        r"\bpoweroff\b",                 # poweroff
-    ]
-
-    # POSIX (Linux/macOS) dangerous command patterns
-    POSIX_DENY_PATTERNS = [
-        r"\brm\s+-[rf]{1,2}\b",          # rm -r, rm -rf, rm -fr
-        r"\bmkfs\.",                     # mkfs
-        r"\bdd\s+if=",                   # dd
-        r">\s*/dev/sd",                  # write to disk
-        r"\b(shutdown|reboot|poweroff)\b",  # system power
-        r":\(\)\s*\{.*\};\s*:",          # fork bomb
-        r"\brm\s+-rf\s+/\b",             # rm -rf /
-        r"\bdd\s+if=.*of=/dev/[sh]d",    # dd to disk
-    ]
 
     def __init__(
         self,
         executor: ShellExecutor | None = None,
         timeout: int = 60,
-        enable_safety_guard: bool = True,
-        deny_patterns: list[str] | None = None,
-        allow_patterns: list[str] | None = None,
     ) -> None:
         """Initialize SubprocessTool.
 
         Args:
             executor: Shell execution strategy (defaults to SubprocessExecutor).
             timeout: Command timeout in seconds.
-            enable_safety_guard: Whether to enable safety checks.
-            deny_patterns: Custom deny patterns.
-            allow_patterns: Allowlist patterns.
         """
         super().__init__()
         self._executor = executor or SubprocessExecutor()
@@ -135,17 +110,6 @@ class SubprocessTool(Tool):
         # Ensure ToolManager's outer asyncio.wait_for never preempts our own
         # timeout handling (which returns partial output + timeout marker).
         self.config.timeout = timeout + 10
-        self.enable_safety_guard = enable_safety_guard
-        self._platform = platform.system().lower()
-
-        if deny_patterns is not None:
-            self.deny_patterns = deny_patterns
-        elif self._platform == "windows":
-            self.deny_patterns = self.WINDOWS_DENY_PATTERNS.copy()
-        else:
-            self.deny_patterns = self.POSIX_DENY_PATTERNS.copy()
-
-        self.allow_patterns = allow_patterns or []
 
     @property
     def name(self) -> str:
@@ -186,9 +150,6 @@ class SubprocessTool(Tool):
             "processes do NOT persist between calls."
         )
 
-        if self.enable_safety_guard:
-            parts.append("Safety guard is enabled.")
-
         return " ".join(parts)
 
     @property
@@ -209,24 +170,4 @@ class SubprocessTool(Tool):
         }
 
     async def execute(self, command: str, working_dir: str | None = None, **kwargs: object) -> str:
-        if self.enable_safety_guard:
-            guard_error = self._guard_command(command)
-            if guard_error:
-                return guard_error
         return await self._executor.execute(command, working_dir, timeout=self.timeout)
-
-    def _guard_command(self, command: str) -> str | None:
-        """Safety check to prevent dangerous commands."""
-        cmd = command.strip()
-        lower = cmd.lower()
-
-        # Check deny patterns
-        for pattern in self.deny_patterns:
-            if re.search(pattern, lower):
-                return f"Error: Command blocked by safety guard (dangerous pattern: {pattern})"
-
-        # Check allow patterns
-        if self.allow_patterns and not any(re.search(p, lower) for p in self.allow_patterns):
-            return "Error: Command blocked by safety guard (not in allowlist)"
-
-        return None

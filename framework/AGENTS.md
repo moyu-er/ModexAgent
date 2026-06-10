@@ -59,4 +59,90 @@ Core multi-agent framework package (336+ Python files). All abstractions, implem
 - Per-turn state in `runtime.state` (typed `ReActTurnState`), not instance attributes
 - Control commands: `ControlChannel` inbound; events: `ControlEventBus` outbound
 - `GraphInterrupt` for approval suspension — never catch and swallow it
+
+## Approval & Security Architecture
+
+### Overview
+
+The framework uses a **ToolNode-level approval system** — safety checks happen
+*before* tool execution in the ReAct graph, not inside individual tools.
+Tools are pure execution units with no knowledge of approval logic.
+
+### Current Mechanism (What Works)
+
+```
+LLM returns tool_calls
+    │
+    ▼
+ToolNode.execute()                                    ← framework/agents/react/nodes/tool.py
+    │
+    ├─ _classify_all()  ←── TieredToolApprovalClassifier   ← framework/agents/react/approval.py
+    │                      (path-based: checks allowed_paths per tool)
+    │
+    │   NORMAL    → ALLOWED (execute immediately)
+    │   DANGEROUS → PENDING (suspend for human approval)
+    │   HARDLINE  → DENIED  (blocked, never executes)
+    │
+    ├─ PENDING → _suspend_for_approval()
+    │     Capture TurnSnapshot → save to TurnStateStore → GraphInterrupt
+    │     Pipeline sends approval prompt to user
+    │     User replies /approve or /deny
+    │     Pipeline._handle_snapshot_approval() restores state → resumes ToolNode
+    │
+    ▼
+_execute_batch()
+    │   ALLOWED   → _agent._execute_tool()  ← Tool.execute() runs here
+    │   DENIED    → ToolResult(error=...)
+    │   PREEMPTED → ToolResult(error=...)    ← one DENY cascades to entire batch
+```
+
+### Key Components
+
+| Component | Location | Role |
+|-----------|----------|------|
+| `ToolNode` | `agents/react/nodes/tool.py` | Classify → suspend → execute |
+| `TieredToolApprovalClassifier` | `agents/react/approval.py` | Path-based tier assignment |
+| `ArgumentMatcher` | `interceptor/builtin/tool_approval.py` | Extracts path args, matches against allowed_paths |
+| `ApprovalTransaction` | `runtime/models.py` | Per-batch approval state with cascade logic |
+| `ApprovalRenderer` | `pipeline/approval_renderer.py` | Detects /approve /deny, auto-denies on unrelated input |
+| `ReActSnapshotPolicy` | `agents/react/state.py` | Serializes/restores full agent state for suspend-resume |
+| `AgentPipeline` | `pipeline/pipeline.py` | Orchestrates the user-facing approval interaction |
+
+### Coverage — What IS Protected
+
+- **File tools** (`write`, `edit`, `read`): classified by `allowed_paths` in config
+- **Batch atomicity**: one DENY → all remaining PENDING become PREEMPTED
+- **Unrelated input**: auto-denies pending request (prevents accidental approval)
+
+### Coverage — What Is NOT Protected (Known Gaps)
+
+1. **Command content**: the classifier only inspects file path arguments.
+   Shell commands like `rm -rf /` are NOT intercepted — the tool executes them.
+   (Previously `SubprocessTool._guard_command()` provided a regex deny list,
+   but it has been removed. Command-level safety is a planned improvement.)
+
+2. **Subagents**: subagents are created via `DefaultAgentFactory` without
+   `ApprovalRuntime`. Their `ToolNode._get_tier()` always returns `NORMAL`.
+   All tool calls bypass approval.
+
+3. **Pool mode main agent**: `pool_builder.py` does not use `RuntimeAssembler`,
+   so the tiered approval system is not wired even for the main agent.
+   The `approval` section in `main.yml` is only consumed in pipeline mode (`core.py`).
+
+4. **SSRF / network safety**: no private-IP detection or URL validation exists.
+
+5. **Workspace boundary**: no filesystem path confinement for shell commands.
+
+6. **Environment isolation**: subprocesses inherit the full parent environment
+   (potential API key leakage).
+
+### What NOT To Do
+
+- **Do NOT add safety checks inside Tool subclasses.** Safety belongs at the
+  ToolNode / agent level so it is uniformly applied regardless of tool implementation.
+- **Do NOT use `framework/security/` or `framework/tools/secure_wrapper.py`.**
+  These are EXPERIMENTAL modules with zero production integration and are
+  candidates for removal.
+- **Do NOT confuse `TerminalGuard`** (`tools/terminal/guard.py`) with a security
+  guard — it manages terminal *state* (is the terminal writable?), not command *content*.
 - `TurnCustomKey` enum for per-turn custom state keys in `TurnStateBase.custom`
