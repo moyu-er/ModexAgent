@@ -199,7 +199,7 @@ class ArchiveProvider(SystemPromptProvider):
             "Read the `context.md` file at each path for the full details.\n\n"
         )
         ct = ArchiveTag.CONTAINER.value
-        return f"<{ct}>\n" + "\n".join(records) + f"\n</{ct}>"
+        return heading + f"<{ct}>\n" + "\n".join(records) + f"\n</{ct}>"
 
 
 class PrunedProvider(SystemPromptProvider):
