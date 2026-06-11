@@ -1,7 +1,6 @@
 agent_type: delegate
 description: "Lightweight subagent for simple delegated tasks"
 max_steps: 50
-tool_preset: full
 context_mode: fresh
 system_prompt_mode: append
 memory:
