@@ -227,26 +227,19 @@ class ReActAgent(Agent[ReActEvent]):
                 error=str(e), stop_reason=StopReason.ERROR,
                 messages=all_new, attachments=context.attachments,
             )
-            # TODO: Dispatch AFTER_TURN hooks here so SubagentAutoSendHook
-            # can forward error results to the parent agent. Currently hooks
-            # only fire in actual_turn() (the success path), meaning error
-            # exits are invisible to the parent.
-            # if runtime.hooks:
-            #     await runtime.hooks.dispatch(
-            #         HookPoint.AFTER_TURN, context,
-            #         HookPayload(data={"result": result}),
-            #     )
             await emitter.emit_complete(result)
             return result
         finally:
-            # TODO: Add a FINALLY_TURN hook point here that fires regardless of
-            # success/error/cancel. This ensures SubagentAutoSendHook and other
-            # cleanup hooks always execute, even on error exit.
-            # if runtime.hooks:
-            #     await runtime.hooks.dispatch(
-            #         HookPoint.FINALLY_TURN, context,
-            #         HookPayload(data={"result": result}),
-            #     )
+            # FINALLY_TURN: fires regardless of success/error/cancel.
+            # SubagentAutoSendHook and cleanup hooks always execute.
+            if runtime.hooks:
+                try:
+                    await runtime.hooks.dispatch(
+                        HookPoint.FINALLY_TURN, context,
+                        HookPayload(data={"result": result}),
+                    )
+                except Exception:
+                    logger.exception("FINALLY_TURN hook dispatch failed")
             # Clean up typed state
             state = get_react_state(context)
             if state is not None:
