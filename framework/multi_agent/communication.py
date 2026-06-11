@@ -165,6 +165,7 @@ class AgentCommunicationService:
         main_agent_name: str | None = None,
         pruned_manager: Any | None = None,
         target_store: CommunicationTargetStore | None = None,
+        runtime_dir: Path | None = None,
     ) -> None:
         self._source = source
         self._broker = broker
@@ -186,6 +187,7 @@ class AgentCommunicationService:
         self._main_agent_name = main_agent_name
         self._pruned_manager = pruned_manager
         self._target_store = target_store
+        self._runtime_dir = runtime_dir
 
     def _resolve_source(self, context: AgentContext) -> AgentAddress:
         """Resolve effective source address from context, fallback to constructor default."""
@@ -212,6 +214,51 @@ class AgentCommunicationService:
                 return AgentCommKind.SUBAGENT, template
 
         return None, None
+
+    def _ensure_invocation(
+        self,
+        target_agent: str,
+        conversation_id: str,
+        invocation_id: str | None,
+        target_kind: AgentCommKind | None,
+    ) -> tuple[str | None, Path | None, Path | None]:
+        """Ensure invocation_id and create trace/output dirs for subagent targets.
+
+        Returns (invocation_id, trace_dir, output_path).  Returns (invocation_id, None, None)
+        when target is not a subagent.
+        """
+        if target_kind != AgentCommKind.SUBAGENT:
+            return invocation_id, None, None
+
+        # Generate or validate invocation_id
+        if not invocation_id or str(invocation_id).lower() == "null":
+            invocation_id = _uuid_mod.uuid4().hex[:_TASK_ID_BYTES]
+        else:
+            # Check if existing trace directory exists for this invocation
+            existing_session = self._session_strategy.format(
+                conversation_id=conversation_id,
+                agent_name=target_agent,
+                invocation_id=invocation_id,
+            )
+            if self._runtime_dir is not None:
+                trace_path = self._runtime_dir / "trace" / existing_session
+                if not trace_path.exists():
+                    invocation_id = _uuid_mod.uuid4().hex[:_TASK_ID_BYTES]
+
+        session_id = self._session_strategy.format(
+            conversation_id=conversation_id,
+            agent_name=target_agent,
+            invocation_id=invocation_id,
+        )
+
+        runtime_dir = self._runtime_dir or Path(".")
+        trace_dir = runtime_dir / "trace" / session_id
+        output_path = runtime_dir / "output" / session_id / "output.md"
+
+        trace_dir.mkdir(parents=True, exist_ok=True)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        return invocation_id, trace_dir, output_path
 
     async def _create_dynamic_subagent(
         self,
@@ -407,6 +454,26 @@ class AgentCommunicationService:
                 "Keep it concise — this is a scratch file for coordination, not documentation."
             )
             system_prompt = system_prompt + progress_instruction
+
+        # ── Inject output.md protocol into system prompt ──
+        if self._runtime_dir is not None:
+            output_session_id = self._session_strategy.format(
+                conversation_id=conversation_id,
+                agent_name=name,
+                invocation_id=invocation_id,
+            )
+            output_path = self._runtime_dir / "output" / output_session_id / "output.md"
+            output_protocol = (
+                "\n\n---\n\n"
+                "## Output Protocol\n\n"
+                "Your task result MUST be written to this file:\n"
+                f"  {output_path}\n\n"
+                "- This file is your deliverable. What you say in conversation is transient.\n"
+                "- Write your final answer, analysis, or implementation result here.\n"
+                "- The system will notify your caller with this path when you finish.\n"
+                "- Do NOT rely on communication tools for result delivery — write to this file."
+            )
+            system_prompt = system_prompt + output_protocol
 
         # ── Tool manager: standard + MCP + communication ──
         subagent_tm = await self._build_subagent_tool_manager(
