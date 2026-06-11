@@ -15,17 +15,17 @@ class PrunedIndexEntry:
 
     # -- required fields --
     id: int
-    cleanup_time: int           # epoch seconds (internal)
-    cleanup_time_display: str   # "YYYY-MM-DD HH:MM" (display)
+    cleanup_time: int  # epoch seconds (internal)
+    cleanup_time_display: str  # "YYYY-MM-DD HH:MM" (display)
     message_count: int
-    content_filename: str       # exactly matches the actual file name on disk
+    content_filename: str  # exactly matches the actual file name on disk
 
     # -- optional fields --
-    start_time: int = 0              # epoch seconds (internal)
-    end_time: int = 0                # epoch seconds (internal)
-    start_time_display: str = ""     # "YYYY-MM-DD HH:MM" (display)
-    end_time_display: str = ""       # "YYYY-MM-DD HH:MM" (display)
-    topic: str = ""                  # from archive CONTEXT summary, or time-range fallback
+    start_time: int = 0  # epoch seconds (internal)
+    end_time: int = 0  # epoch seconds (internal)
+    start_time_display: str = ""  # "YYYY-MM-DD HH:MM" (display)
+    end_time_display: str = ""  # "YYYY-MM-DD HH:MM" (display)
+    topic: str = ""  # from archive CONTEXT summary, or time-range fallback
 
     def to_dict(self) -> dict:
         """Serialize all fields to a plain dict."""
@@ -39,11 +39,14 @@ class PrunedIndexEntry:
         """
         known = {
             "id",
-            "cleanup_time", "cleanup_time_display",
+            "cleanup_time",
+            "cleanup_time_display",
             "message_count",
             "content_filename",
-            "start_time", "end_time",
-            "start_time_display", "end_time_display",
+            "start_time",
+            "end_time",
+            "start_time_display",
+            "end_time_display",
             "topic",
         }
         filtered = {k: v for k, v in data.items() if k in known}

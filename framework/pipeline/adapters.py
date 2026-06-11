@@ -109,6 +109,7 @@ class InputAdapter(ABC):
         # Normalise to canonical session_id (conversation_id:agent_name)
         # so the ControlScope matches what the consumer (agent) uses.
         from framework.multi_agent.session_id import DefaultSessionIdStrategy
+
         canonical_sid = DefaultSessionIdStrategy().normalize(session_id)
 
         from framework.commands.constants import BuiltinCommand, CommandDispatchPolicy
@@ -237,7 +238,9 @@ class OutputAdapter(ABC):
         """发送完整输出消息"""
         pass
 
-    async def send_delta(self, delta: str, session_id: str, metadata: dict[str, Any] | None = None) -> None:
+    async def send_delta(
+        self, delta: str, session_id: str, metadata: dict[str, Any] | None = None
+    ) -> None:
         """发送流式增量（真流式传输）
 
         子类应该覆盖此方法以实现真流式（如 WebSocket、SSE、消息编辑等）。
@@ -248,24 +251,23 @@ class OutputAdapter(ABC):
             session_id: 会话ID
             metadata: 可选元数据（如 reasoning 标记等）
         """
-        if not hasattr(self, '_delta_buffers'):
-            self._delta_buffers = {}  # type: ignore
-        if session_id not in self._delta_buffers:  # type: ignore
-            self._delta_buffers[session_id] = []  # type: ignore
-        self._delta_buffers[session_id].append(delta)  # type: ignore
+        if not hasattr(self, "_delta_buffers"):
+            self._delta_buffers = {}
+        if session_id not in self._delta_buffers:
+            self._delta_buffers[session_id] = []
+        self._delta_buffers[session_id].append(delta)
 
     async def flush_deltas(self, session_id: str) -> None:
         """刷新缓冲区，发送收集的内容
 
         在流式输出结束时调用，将缓冲的内容一次性发送。
         """
-        buffers = getattr(self, '_delta_buffers', {})
+        buffers = getattr(self, "_delta_buffers", {})
         if session_id in buffers:
             content = "".join(buffers[session_id])
             if content:
                 await self.send(OutputMessage(content=content), session_id)
             del buffers[session_id]
-
 
 
 class NullOutputAdapter(OutputAdapter):
@@ -281,7 +283,9 @@ class NullOutputAdapter(OutputAdapter):
     async def send(self, message: OutputMessage, session_id: str) -> None:
         pass
 
-    async def send_delta(self, delta: str, session_id: str, metadata: dict[str, Any] | None = None) -> None:
+    async def send_delta(
+        self, delta: str, session_id: str, metadata: dict[str, Any] | None = None
+    ) -> None:
         pass
 
     async def flush_deltas(self, session_id: str) -> None:
@@ -299,7 +303,7 @@ class SessionPrefixStripAdapter(OutputAdapter):
     但外部 I/O 平台（QQ、微信、Discord 等）通常只需要 conversation_id。
     """
 
-    def __init__(self, inner: OutputAdapter, separator: str = ":", keep: str = "first"):
+    def __init__(self, inner: OutputAdapter, separator: str = ":", keep: str = "first") -> None:
         self._inner = inner
         self._separator = separator
         self._keep = keep  # "first" 或 "last"
@@ -321,7 +325,9 @@ class SessionPrefixStripAdapter(OutputAdapter):
     async def send(self, message: OutputMessage, session_id: str) -> None:
         await self._inner.send(message, self._map_session_id(session_id))
 
-    async def send_delta(self, delta: str, session_id: str, metadata: dict[str, Any] | None = None) -> None:
+    async def send_delta(
+        self, delta: str, session_id: str, metadata: dict[str, Any] | None = None
+    ) -> None:
         await self._inner.send_delta(delta, self._map_session_id(session_id), metadata)
 
     async def flush_deltas(self, session_id: str) -> None:
@@ -334,7 +340,7 @@ class CLIOutputAdapter(OutputAdapter):
     支持实时打印每个 delta，适用于命令行交互场景。
     """
 
-    def __init__(self, prefix: str = "", suffix: str = "\n"):
+    def __init__(self, prefix: str = "", suffix: str = "\n") -> None:
         self.prefix = prefix
         self.suffix = suffix
 
@@ -348,7 +354,9 @@ class CLIOutputAdapter(OutputAdapter):
         if content:
             print(f"{self.prefix}{content}", end=self.suffix, flush=True)
 
-    async def send_delta(self, delta: str, session_id: str, metadata: dict[str, Any] | None = None) -> None:
+    async def send_delta(
+        self, delta: str, session_id: str, metadata: dict[str, Any] | None = None
+    ) -> None:
         """真流式：立即打印每个 delta 到终端"""
         if delta:
             print(delta, end="", flush=True)
@@ -364,7 +372,7 @@ class HTTPOutputAdapter(OutputAdapter):
     每个 delta 会生成一个 SSE 事件，客户端可以通过 EventSource 实时接收。
     """
 
-    def __init__(self, sse_queue: asyncio.Queue | None = None):
+    def __init__(self, sse_queue: asyncio.Queue | None = None) -> None:
         self.sse_queue = sse_queue or asyncio.Queue()
 
     @property
@@ -385,7 +393,9 @@ class HTTPOutputAdapter(OutputAdapter):
             payload["metadata"] = dict(message.metadata)
         await self.sse_queue.put(f"data: {json.dumps(payload)}\n\n")
 
-    async def send_delta(self, delta: str, session_id: str, metadata: dict[str, Any] | None = None) -> None:
+    async def send_delta(
+        self, delta: str, session_id: str, metadata: dict[str, Any] | None = None
+    ) -> None:
         """真流式：每个 delta 作为一个 SSE 事件"""
         payload: dict[str, Any] = {
             "type": "delta",
@@ -406,10 +416,12 @@ class HTTPOutputAdapter(OutputAdapter):
 
     def iter_sse(self):
         """用于 FastAPI StreamingResponse 的异步生成器"""
+
         async def _generator():
             while True:
                 event = await self.sse_queue.get()
                 if event is None:
                     break
                 yield event
+
         return _generator()

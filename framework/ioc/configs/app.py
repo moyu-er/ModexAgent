@@ -57,9 +57,7 @@ def _validate_pool_name(name: str) -> None:
             f"Reserved names: {_RESERVED_POOL_NAMES}"
         )
     if not re.match(r"^[a-z][a-z0-9_-]+$", name):
-        raise ValueError(
-            f"Invalid pool name '{name}'. Must match: [a-z][a-z0-9_-]+"
-        )
+        raise ValueError(f"Invalid pool name '{name}'. Must match: [a-z][a-z0-9_-]+")
 
 
 class PathsConfig(BaseModel):
@@ -127,6 +125,7 @@ class AppConfig(BaseModel):
             mcp_json = yaml_path.parent / "mcp.json"
             if mcp_json.exists():
                 import json
+
                 with open(mcp_json, encoding="utf-8") as fj:
                     mcp_data = _resolve_env_in(json.load(fj))
                 servers = mcp_data.get("mcpServers") or mcp_data.get("servers") or {}

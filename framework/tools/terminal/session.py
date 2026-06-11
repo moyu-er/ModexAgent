@@ -310,8 +310,8 @@ class TerminalSession:
             )
 
         # Truncate and record
-        truncated_cmd = command[:self._history_truncate]
-        truncated_out = output[:self._history_truncate]
+        truncated_cmd = command[: self._history_truncate]
+        truncated_out = output[: self._history_truncate]
         record = CommandRecord(
             command=truncated_cmd,
             output=truncated_out,
@@ -390,6 +390,7 @@ class TerminalSession:
     def _startup_env(self) -> dict[str, str]:
         """Return environment for agent-managed terminal sessions."""
         from framework.tools.terminal.env import build_full_env
+
         return build_full_env(self._env)
 
     def get_history(self) -> list[CommandRecord]:
@@ -424,12 +425,14 @@ class TerminalSession:
         self.created_at = data.get("created_at", self.created_at)
         self._needs_restart = True
         for rec_data in data.get("history", []):
-            self._history.append(CommandRecord(
-                command=rec_data["command"],
-                output=rec_data["output"],
-                exit_code=rec_data.get("exit_code"),
-                timestamp=rec_data.get("timestamp", time.time()),
-            ))
+            self._history.append(
+                CommandRecord(
+                    command=rec_data["command"],
+                    output=rec_data["output"],
+                    exit_code=rec_data.get("exit_code"),
+                    timestamp=rec_data.get("timestamp", time.time()),
+                )
+            )
 
     async def to_info(self, is_default: bool = False) -> TerminalInfo:
         """Return metadata for list/inspection."""

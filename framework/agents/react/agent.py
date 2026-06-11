@@ -55,6 +55,7 @@ class ReActEvent(AgentEvent, Enum):
     - ITERATION_START/END: 单次 Thought-Action-Observation 循环
     - FINAL_OUTPUT: 确定是最终输出（无后续工具调用）
     """
+
     # 模型输出（流式，最终输出内容）
     MODEL_OUTPUT = "model_output"
 
@@ -82,10 +83,13 @@ class ReActEvent(AgentEvent, Enum):
 def _get_turn_messages(ctx: AgentContext) -> list[dict[str, Any]]:
     """Extract current-turn messages from typed state or metadata fallback."""
     from framework.agents.react.state import get_react_state as _grs
+
     state = _grs(ctx)
     if state is not None:
-        return [md.message.to_dict() if hasattr(md.message, 'to_dict') else md.message
-                for md in state.message_delta]
+        return [
+            md.message.to_dict() if hasattr(md.message, "to_dict") else md.message
+            for md in state.message_delta
+        ]
     return []
 
 
@@ -123,7 +127,7 @@ class ReActAgent(Agent[ReActEvent]):
         tool_timeout: float = _TOOL_TIMEOUT,
         *,
         mode: Literal["clean", "full"] = "full",
-    ):
+    ) -> None:
         from framework.agents.react.graph import ReActGraph
         from framework.core.graph.engine import GraphEngine
 
@@ -164,6 +168,7 @@ class ReActAgent(Agent[ReActEvent]):
             from framework.runtime.enums import AgentKind
             from framework.runtime.models import TurnIdentity
             from framework.runtime.services import AgentRuntime, AgentRuntimeServices
+
             state = ReActTurnState(
                 identity=context.identity
                 or TurnIdentity(agent_id="react", session_id=context.session_id, turn_id="default"),
@@ -185,15 +190,18 @@ class ReActAgent(Agent[ReActEvent]):
             # Drain control commands before starting turn
             if context.runtime and context.runtime.control_channel:
                 from framework.hook.builtin.control_drain import drain_control_channel
+
                 await drain_control_channel(
-                    context.runtime.control_channel, context,
+                    context.runtime.control_channel,
+                    context,
                     turn_uuid=context.runtime.turn_uuid,
                 )
 
             result = await self.engine.run(context)
             if runtime.hooks:
                 await runtime.hooks.dispatch(
-                    HookPoint.AFTER_TURN, context,
+                    HookPoint.AFTER_TURN,
+                    context,
                     HookPayload(data={"result": result}),
                 )
             return result
@@ -201,6 +209,7 @@ class ReActAgent(Agent[ReActEvent]):
         try:
             if runtime.interceptors is not None:
                 from framework.interceptor.abc import InterceptorScope
+
                 if runtime.interceptors.has_scope(InterceptorScope.TURN):
                     result = await runtime.interceptors.around_turn(context, actual_turn)
                 else:
@@ -224,8 +233,10 @@ class ReActAgent(Agent[ReActEvent]):
             await emitter.emit(ReActEvent.ERROR, str(e))
             all_new = _get_turn_messages(context)
             result = AgentResult(
-                error=str(e), stop_reason=StopReason.ERROR,
-                messages=all_new, attachments=context.attachments,
+                error=str(e),
+                stop_reason=StopReason.ERROR,
+                messages=all_new,
+                attachments=context.attachments,
             )
             await emitter.emit_complete(result)
             return result
@@ -235,7 +246,8 @@ class ReActAgent(Agent[ReActEvent]):
             if runtime.hooks:
                 try:
                     await runtime.hooks.dispatch(
-                        HookPoint.FINALLY_TURN, context,
+                        HookPoint.FINALLY_TURN,
+                        context,
                         HookPayload(data={"result": result}),
                     )
                 except Exception:
@@ -243,7 +255,11 @@ class ReActAgent(Agent[ReActEvent]):
             # Clean up typed state
             state = get_react_state(context)
             if state is not None:
-                state.phase = TurnPhase.COMPLETED if state.phase not in (TurnPhase.COMPLETED, TurnPhase.FAILED) else state.phase
+                state.phase = (
+                    TurnPhase.COMPLETED
+                    if state.phase not in (TurnPhase.COMPLETED, TurnPhase.FAILED)
+                    else state.phase
+                )
             context.emitter = None
             current_agent_context.reset(ctx_token)
 
@@ -408,13 +424,16 @@ class ReActAgent(Agent[ReActEvent]):
 
         interceptor_chain = context.runtime.interceptors if context.runtime else None
         async for chunk in interceptor_chain.around_llm_stream(
-            context, stream_ctx, _actual_stream,
+            context,
+            stream_ctx,
+            _actual_stream,
         ):
             if chunk.control_action == "cancel":
                 finish_reason = chunk.finish_reason or "cancelled"
                 logger.warning(
                     "LLM stream cancelled session=%s finish_reason=%s",
-                    context.session_id, finish_reason,
+                    context.session_id,
+                    finish_reason,
                 )
                 break
             if chunk.content_delta:
@@ -443,7 +462,11 @@ class ReActAgent(Agent[ReActEvent]):
         if q is None:
             return []
 
-        cycle_count: int = context.runtime.state.custom.get(TurnCustomKey.INJECTION_CYCLE_COUNT, 0) if context.runtime else 0
+        cycle_count: int = (
+            context.runtime.state.custom.get(TurnCustomKey.INJECTION_CYCLE_COUNT, 0)
+            if context.runtime
+            else 0
+        )
         if cycle_count >= _MAX_INJECTION_CYCLES:
             while True:
                 try:
@@ -459,10 +482,12 @@ class ReActAgent(Agent[ReActEvent]):
             except asyncio.QueueEmpty:
                 break
             try:
-                await context.history.append({
-                    "role": "user",
-                    "content": f"[Injected during execution]: {msg}",
-                })
+                await context.history.append(
+                    {
+                        "role": "user",
+                        "content": f"[Injected during execution]: {msg}",
+                    }
+                )
             except Exception:
                 logger.warning(
                     "Failed to inject message into history, returning to queue: %s",

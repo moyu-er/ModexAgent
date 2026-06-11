@@ -191,7 +191,9 @@ class ApprovalTransaction:
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
-    def apply_decision(self, tool_call_id: str, decision: ApprovalDecision, *, reason: str | None = None) -> None:
+    def apply_decision(
+        self, tool_call_id: str, decision: ApprovalDecision, *, reason: str | None = None
+    ) -> None:
         """Apply a single decision. ``DENIED`` preempts all unresolved requests."""
         self.decisions[tool_call_id] = decision
         if reason:
@@ -212,8 +214,7 @@ class ApprovalTransaction:
 
     def _every_tool_decided(self) -> bool:
         return all(
-            tc_id in self.decisions
-            and self.decisions[tc_id] != ApprovalDecision.PENDING
+            tc_id in self.decisions and self.decisions[tc_id] != ApprovalDecision.PENDING
             for tc_id in (r.tool_call_id for r in self.requests)
         )
 

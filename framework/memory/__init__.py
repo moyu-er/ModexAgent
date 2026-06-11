@@ -63,9 +63,6 @@ from framework.memory.core.system import MemorySystem
 from framework.memory.core.system import MemorySystem as MemorySystemABC
 from framework.memory.default_system import DefaultMemorySystem
 from framework.memory.history_search import HistorySearchStrategy, KeywordHistorySearch
-from framework.memory.pruned.manager import PrunedManager
-from framework.memory.pruned.models import PrunedIndexEntry
-from framework.memory.pruned.storage import FilePrunedStorage, PrunedStorage
 from framework.memory.injection import (
     FullInjectionPolicy,
     MemoryInjectionPolicy,
@@ -83,6 +80,9 @@ from framework.memory.layers import (
     SessionMemoryConfig,
     UserRetentionBufferConfig,
 )
+from framework.memory.pruned.manager import PrunedManager
+from framework.memory.pruned.models import PrunedIndexEntry
+from framework.memory.pruned.storage import FilePrunedStorage, PrunedStorage
 from framework.memory.recorder import MemoryAppendRecorder, MemoryAppendSource
 from framework.memory.registry import (
     DefaultMemoryStoreRegistry,

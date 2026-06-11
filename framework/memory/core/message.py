@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 def _user_tz():
     """Lazy-import get_user_timezone to avoid circular import via framework.utils."""
     from framework.utils.timezone import get_user_timezone
+
     return get_user_timezone()
 
 
@@ -52,12 +53,8 @@ class ChatMessage(BaseModel):
     tool_calls: list[dict[str, Any]] | None = Field(
         default=None, description="assistant 请求的工具调用列表"
     )
-    tool_call_id: str | None = Field(
-        default=None, description="tool 消息对应的 tool_call_id"
-    )
-    name: str | None = Field(
-        default=None, description="工具名称（OpenAI function calling）"
-    )
+    tool_call_id: str | None = Field(default=None, description="tool 消息对应的 tool_call_id")
+    name: str | None = Field(default=None, description="工具名称（OpenAI function calling）")
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(_user_tz()).replace(microsecond=0),
         description="消息创建时间戳（用户配置时区，秒级精度）",

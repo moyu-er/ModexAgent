@@ -13,16 +13,16 @@ class ValidationResult:
 def validate_code(code: str) -> ValidationResult:
     """
     Validate Python code syntax using compile().
-    
+
     Args:
         code: Python code string to validate
-        
+
     Returns:
         ValidationResult with is_valid=True if code compiles successfully,
         otherwise is_valid=False with error details.
     """
     try:
-        compile(code, '<sandbox>', 'exec')
+        compile(code, "<sandbox>", "exec")
         return ValidationResult(is_valid=True)
     except SyntaxError as e:
         return ValidationResult(

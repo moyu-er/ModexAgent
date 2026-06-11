@@ -11,10 +11,10 @@ from typing import Any
 from framework.core.context import ContextManager
 from framework.core.graph.interrupt import GraphInterrupt
 from framework.core.llm_struct import RuntimeSafetyPolicy
-from framework.runtime.dispatch import DispatchDeadline, current_dispatch_deadline
 from framework.core.tool_manager import InMemoryToolManager
 from framework.core.types import InputMessage
 from framework.messaging.broker import BrokerMessage, MessageBroker
+from framework.runtime.dispatch import DispatchDeadline, current_dispatch_deadline
 
 from .address import AgentAddress
 from .bus import AgentMessageBus
@@ -37,6 +37,7 @@ MAX_ENVELOPE_HOPS: int = 5
 @dataclass
 class SessionMeta:
     """Per-session metadata for lifecycle tracking."""
+
     agent_name: str
     created_at: float
     last_active: float
@@ -46,6 +47,7 @@ class SessionMeta:
 @dataclass
 class SessionRetentionPolicy:
     """Controls session cleanup for subagent task sessions."""
+
     max_sessions_per_subagent: int = 10
     max_sessions_global: int = 200
     ttl_seconds: float = 86400.0
@@ -70,7 +72,7 @@ class AgentPool(AgentRegistry):
         safety: RuntimeSafetyPolicy | None = None,
         retention: SessionRetentionPolicy | None = None,
         comm_tracker: CommunicationTracker | None = None,
-    ):
+    ) -> None:
         self._agents: dict[str, AgentInstance] = {}
         self._status: dict[str, AgentState] = {}
         self._broker = broker
@@ -288,7 +290,8 @@ class AgentPool(AgentRegistry):
         try:
             if dispatch_timeout > 0:
                 deadline = DispatchDeadline(
-                    initial_timeout=dispatch_timeout, extension=extension,
+                    initial_timeout=dispatch_timeout,
+                    extension=extension,
                 )
                 token = current_dispatch_deadline.set(deadline)
                 dispatch_task = asyncio.ensure_future(coro)
@@ -338,7 +341,7 @@ class AgentPool(AgentRegistry):
                 except asyncio.CancelledError:
                     pass
             if deadline is not None:
-                current_dispatch_deadline.reset(token)  # type: ignore[possibly-undefined]
+                current_dispatch_deadline.reset(token)
             async with self._get_dispatch_lock(agent_name):
                 current = self._active_session_counts.get(agent_name, 0)
                 remaining = max(0, current - 1)
@@ -363,7 +366,9 @@ class AgentPool(AgentRegistry):
     _WATCHDOG_POLL_INTERVAL: float = 5.0
 
     async def _dispatch_watchdog(
-        self, task: asyncio.Task[None], deadline: DispatchDeadline,
+        self,
+        task: asyncio.Task[None],
+        deadline: DispatchDeadline,
     ) -> None:
         """监控 dispatch task 的可续期 deadline。过期则取消 task。"""
         try:
@@ -413,9 +418,7 @@ class AgentPool(AgentRegistry):
                             address.name,
                             session_id,
                         )
-                        task = asyncio.create_task(
-                            self._handle_inbox_wakeup(instance, session_id)
-                        )
+                        task = asyncio.create_task(self._handle_inbox_wakeup(instance, session_id))
                         self._track_agent_task(address.name, task)
                     continue
 
@@ -747,9 +750,7 @@ class AgentPool(AgentRegistry):
         """
         return self._session_locks.setdefault(session_id, asyncio.Lock())
 
-    def _track_session(
-        self, session_id: str, agent_name: str, is_dynamic: bool = False
-    ) -> None:
+    def _track_session(self, session_id: str, agent_name: str, is_dynamic: bool = False) -> None:
         """Register new session metadata. Call inside lock-protected section."""
         self._session_locks.setdefault(session_id, asyncio.Lock())
         self._session_meta[session_id] = SessionMeta(
@@ -801,7 +802,8 @@ class AgentPool(AgentRegistry):
             # Policy 2: per-subagent count cap (LRU by created_at)
             if not should_evict:
                 same_agent = [
-                    (sid, m) for sid, m in self._session_meta.items()
+                    (sid, m)
+                    for sid, m in self._session_meta.items()
                     if m.agent_name == meta.agent_name and m.is_dynamic
                 ]
                 if len(same_agent) > self._retention.max_sessions_per_subagent:
@@ -842,8 +844,11 @@ class AgentPool(AgentRegistry):
         """
         cap = self._retention.max_sessions_per_subagent
         dynamic_sessions = sorted(
-            ((sid, meta) for sid, meta in self._session_meta.items()
-             if meta.agent_name == agent_name and meta.is_dynamic),
+            (
+                (sid, meta)
+                for sid, meta in self._session_meta.items()
+                if meta.agent_name == agent_name and meta.is_dynamic
+            ),
             key=lambda x: x[1].last_active,
         )
         excess = len(dynamic_sessions) - cap
@@ -872,6 +877,7 @@ class AgentPool(AgentRegistry):
             # ── Fork context cleanup — delete persisted fork XML on session eviction ──
             try:
                 from framework.multi_agent.communication import cleanup_fork_context
+
                 cleanup_fork_context(session_id)
             except Exception:
                 pass

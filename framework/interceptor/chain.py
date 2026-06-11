@@ -88,6 +88,7 @@ class InterceptorChain:
             logger.exception("InterceptorChain tool call error: %s", e)
             call_id = call.tool_call.call_id or "" if call.tool_call else ""
             from framework.core.tool_manager import ToolResult
+
             return ToolResult(
                 tool_name=call.tool_name,
                 call_id=call_id,
@@ -214,12 +215,15 @@ class InterceptorChain:
         return _dispatch
 
     def _build_llm_stream_chain(
-        self, call: LLMStreamContext, actual: LLMStreamNext,
+        self,
+        call: LLMStreamContext,
+        actual: LLMStreamNext,
     ) -> Any:  # noqa: ANN401
         resolved = self._resolved(InterceptorScope.LLM_STREAM)
 
         async def _dispatch(
-            ctx: AgentContext, c: LLMStreamContext,
+            ctx: AgentContext,
+            c: LLMStreamContext,
         ) -> AsyncIterator[LLMStreamChunk]:
             if not resolved:
                 async for chunk in actual():

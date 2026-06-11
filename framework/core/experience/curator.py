@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import shutil
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from framework.core.experience.meta import ExperienceMetaStore
@@ -60,10 +60,7 @@ class ExperienceCurator:
             return counts
 
         # Sort by last_used ascending (None = never used → evict first)
-        evictable.sort(
-            key=lambda x: x[1] if x[1] is not None
-            else datetime.min.replace(tzinfo=timezone.utc)
-        )
+        evictable.sort(key=lambda x: x[1] if x[1] is not None else datetime.min.replace(tzinfo=UTC))
 
         for name, _ in evictable[:excess]:
             self._delete(name)

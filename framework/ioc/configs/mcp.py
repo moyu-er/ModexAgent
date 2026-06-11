@@ -28,9 +28,7 @@ class MCPServerEntry(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    transport: Literal["stdio", "sse", "streamableHttp"] | None = Field(
-        default=None, alias="type"
-    )
+    transport: Literal["stdio", "sse", "streamableHttp"] | None = Field(default=None, alias="type")
     command: str = ""
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)

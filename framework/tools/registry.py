@@ -27,7 +27,7 @@ class ToolRegistry(InMemoryToolManager):
         schemas = registry.get_definitions()
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         # 使用默认配置初始化 ToolManager
         super().__init__()
 

@@ -68,9 +68,7 @@ class InMemoryStoreRegistry(MemoryStoreRegistry):
         self,
         *,
         layer: MemoryLayerName | None = None,
-        agent_roles: Collection[str | MemoryAgentRole] | None = frozenset(
-            {MemoryAgentRole.MAIN}
-        ),
+        agent_roles: Collection[str | MemoryAgentRole] | None = frozenset({MemoryAgentRole.MAIN}),
         has_file: str | None = None,
     ) -> list[ScopeRecord]:
         records = list(self._records.values())
@@ -87,19 +85,22 @@ class InMemoryStoreRegistry(MemoryStoreRegistry):
                     continue
                 logs = await storage.read_logs()
                 has_context_archive = any(
-                    entry.get("channel") == ArchiveChannel.CONTEXT.value
-                    for entry in logs
+                    entry.get("channel") == ArchiveChannel.CONTEXT.value for entry in logs
                 )
                 has_knowledge_archive = any(
-                    entry.get("channel") == ArchiveChannel.KNOWLEDGE.value
-                    for entry in logs
+                    entry.get("channel") == ArchiveChannel.KNOWLEDGE.value for entry in logs
                 )
                 if (
-                    has_file == "messages" and await storage.load_messages()
-                    or has_file in {"history", "archive", "logs"} and logs
-                    or has_file == CONTEXT_ARCHIVE_FILE_KEY and has_context_archive
-                    or has_file == KNOWLEDGE_ARCHIVE_FILE_KEY and has_knowledge_archive
-                    or has_file == "kv" and await storage.list_keys()
+                    has_file == "messages"
+                    and await storage.load_messages()
+                    or has_file in {"history", "archive", "logs"}
+                    and logs
+                    or has_file == CONTEXT_ARCHIVE_FILE_KEY
+                    and has_context_archive
+                    or has_file == KNOWLEDGE_ARCHIVE_FILE_KEY
+                    and has_knowledge_archive
+                    or has_file == "kv"
+                    and await storage.list_keys()
                 ):
                     filtered.append(record)
             records = filtered
@@ -112,11 +113,7 @@ class InMemoryStoreRegistry(MemoryStoreRegistry):
         scope: MemoryScope | None = None,
     ) -> None:
         _ = scope
-        keys = [
-            key
-            for key in self._stores
-            if layer is None or key[0] == layer
-        ]
+        keys = [key for key in self._stores if layer is None or key[0] == layer]
         for key in keys:
             await self._stores[key].close()
             self._stores.pop(key, None)

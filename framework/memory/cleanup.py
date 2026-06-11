@@ -14,16 +14,13 @@ from __future__ import annotations
 import json
 import logging
 import time as _time
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
-
 from pathlib import Path
-from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
-from framework.utils.timezone import get_user_timezone
-
+from framework.core.types import MessageRole
 from framework.memory.core.layers import (
     ArchiveMemoryManager,
     SessionMemoryManager,
@@ -31,13 +28,13 @@ from framework.memory.core.layers import (
 )
 from framework.memory.core.models import CompressionReason
 from framework.memory.core.scope import MemoryContext
-from framework.memory.user_buffer import UserBufferEntry
-from framework.core.types import MessageRole
 from framework.memory.pruned.manager import PrunedManager
 from framework.memory.sanitizer import (
     DefaultSessionToolChainSanitizer,
     ToolChainSanitizationMode,
 )
+from framework.memory.user_buffer import UserBufferEntry
+from framework.utils.timezone import get_user_timezone
 
 if TYPE_CHECKING:
     from framework.agents.summarizer.abc import ArchiveGenerator
@@ -131,7 +128,9 @@ async def _prepare_cleanup_phase(
 
     logger.info(
         "Cleanup triggered: session=%s reason=%s total=%d",
-        context.session_id, trigger_reason.value, total_count,
+        context.session_id,
+        trigger_reason.value,
+        total_count,
     )
 
     await _backup_session(session, context, all_messages, max_backups)
@@ -139,13 +138,15 @@ async def _prepare_cleanup_phase(
     all_dicts = [m.to_dict() for m in all_messages]
     sanitizer = DefaultSessionToolChainSanitizer()
     sanitization = sanitizer.sanitize(
-        all_dicts, mode=ToolChainSanitizationMode.PERSISTENT_SESSION,
+        all_dicts,
+        mode=ToolChainSanitizationMode.PERSISTENT_SESSION,
     )
 
     if sanitization.removed_messages:
         logger.info(
             "Sanitizer removed invalid messages: session=%s removed=%d",
-            context.session_id, len(sanitization.removed_messages),
+            context.session_id,
+            len(sanitization.removed_messages),
         )
 
     sanitized = sanitization.messages
@@ -221,10 +222,12 @@ async def _generate_archive_phase(
             archive_dir = await archive.get_storage_path(context)
             if archive_dir is not None:
                 from framework.memory.stores.dir_archive import DirArchiveStorage
+
                 resolved_storage = DirArchiveStorage(archive_dir)
                 logger.info(
                     "Archive storage resolved dynamically: session=%s path=%s",
-                    context.session_id, archive_dir,
+                    context.session_id,
+                    archive_dir,
                 )
             else:
                 logger.warning(
@@ -234,7 +237,8 @@ async def _generate_archive_phase(
         except Exception:
             logger.warning(
                 "Cannot resolve archive directory dynamically: session=%s",
-                context.session_id, exc_info=True,
+                context.session_id,
+                exc_info=True,
             )
 
     if resolved_storage is None:
@@ -242,7 +246,9 @@ async def _generate_archive_phase(
             "Archive generation skipped: archive_agent present but storage unresolved. session=%s",
             context.session_id,
         )
-        return _ArchiveOutcome(generated=False, skipped=True, next_archive_id=0, resolved_storage=None)
+        return _ArchiveOutcome(
+            generated=False, skipped=True, next_archive_id=0, resolved_storage=None
+        )
 
     session_id = context.session_id
     try:
@@ -250,7 +256,9 @@ async def _generate_archive_phase(
         next_archive_id = state_data.get("next_archive_id", 1)
     except Exception:
         logger.warning(
-            "Failed to read archive state: session=%s", session_id, exc_info=True,
+            "Failed to read archive state: session=%s",
+            session_id,
+            exc_info=True,
         )
         next_archive_id = 1
 
@@ -259,24 +267,30 @@ async def _generate_archive_phase(
     except Exception:
         logger.warning(
             "Archive completeness check failed: archive_id=%d session=%s",
-            next_archive_id, session_id, exc_info=True,
+            next_archive_id,
+            session_id,
+            exc_info=True,
         )
         is_complete = False
 
     if is_complete:
         logger.info(
             "Archive %d already complete, skipping generation. session=%s",
-            next_archive_id, session_id,
+            next_archive_id,
+            session_id,
         )
         return _ArchiveOutcome(
-            generated=True, skipped=False, next_archive_id=next_archive_id,
+            generated=True,
+            skipped=False,
+            next_archive_id=next_archive_id,
             resolved_storage=resolved_storage,
         )
 
     archive_dir = resolved_storage.base_dir / str(next_archive_id)
     logger.info(
         "Starting archive generation: archive_id=%d session=%s",
-        next_archive_id, session_id,
+        next_archive_id,
+        session_id,
     )
 
     try:
@@ -288,24 +302,34 @@ async def _generate_archive_phase(
         if result.success:
             logger.info(
                 "Archive generated: archive_id=%d session=%s files=%s",
-                next_archive_id, session_id, result.files_written,
+                next_archive_id,
+                session_id,
+                result.files_written,
             )
             return _ArchiveOutcome(
-                generated=True, skipped=False, next_archive_id=next_archive_id,
+                generated=True,
+                skipped=False,
+                next_archive_id=next_archive_id,
                 resolved_storage=resolved_storage,
             )
         logger.warning(
             "Archive generation failed: archive_id=%d session=%s error=%s",
-            next_archive_id, session_id, result.error,
+            next_archive_id,
+            session_id,
+            result.error,
         )
     except Exception:
         logger.warning(
             "Archive agent crashed: archive_id=%d session=%s",
-            next_archive_id, session_id, exc_info=True,
+            next_archive_id,
+            session_id,
+            exc_info=True,
         )
 
     return _ArchiveOutcome(
-        generated=False, skipped=True, next_archive_id=next_archive_id,
+        generated=False,
+        skipped=True,
+        next_archive_id=next_archive_id,
         resolved_storage=resolved_storage,
     )
 
@@ -326,18 +350,23 @@ async def _write_pruned_phase(
     if archive_generated and archive_storage is not None and next_archive_id > 0:
         try:
             index_md = await archive_storage.read_archive_file(
-                next_archive_id, "index.md",
+                next_archive_id,
+                "index.md",
             )
             if index_md and index_md.strip():
                 pruned_topic = index_md.strip().split("\n")[0].strip() or None
         except Exception:
             logger.debug(
                 "Failed to read archive topic for pruned entry: session=%s",
-                context.session_id, exc_info=True,
+                context.session_id,
+                exc_info=True,
             )
 
     await _write_pruned_content(
-        pruned_manager, pruned_messages, context, topic=pruned_topic,
+        pruned_manager,
+        pruned_messages,
+        context,
+        topic=pruned_topic,
     )
 
 
@@ -405,7 +434,9 @@ async def _commit_session_phase(
     """
     revision = await session.get_revision(context)
     new_revision = await session.replace_messages_if_revision(
-        context, keep_messages, revision,
+        context,
+        keep_messages,
+        revision,
     )
 
     if new_revision is None:
@@ -419,7 +450,9 @@ async def _commit_session_phase(
     keep_count = len(keep_messages)
     logger.info(
         "Cleanup committed: session=%s kept=%d pruned=%d",
-        context.session_id, keep_count, prune_count,
+        context.session_id,
+        keep_count,
+        prune_count,
     )
 
     # Persist user retention entries
@@ -430,7 +463,8 @@ async def _commit_session_phase(
         except Exception:
             logger.warning(
                 "User retention persistence failed: session=%s",
-                context.session_id, exc_info=True,
+                context.session_id,
+                exc_info=True,
             )
 
     # A plain assistant in the kept region completes ALL unfinished entries
@@ -438,11 +472,7 @@ async def _commit_session_phase(
         last_plain_asst: str | None = None
         for msg in reversed(keep_messages):
             role = str(msg.get("role", ""))
-            if (
-                role == MessageRole.ASSISTANT
-                and not msg.get("tool_calls")
-                and msg.get("content")
-            ):
+            if role == MessageRole.ASSISTANT and not msg.get("tool_calls") and msg.get("content"):
                 last_plain_asst = str(msg.get("content", ""))
                 break
         if last_plain_asst is not None:
@@ -451,7 +481,8 @@ async def _commit_session_phase(
             except Exception:
                 logger.warning(
                     "URB mark_all_completed failed: session=%s",
-                    context.session_id, exc_info=True,
+                    context.session_id,
+                    exc_info=True,
                 )
 
     return keep_count, prune_count
@@ -468,17 +499,17 @@ async def _advance_archive_phase(
     """Phase 6: increment archive state and fire post-archive trigger."""
     if archive_agent is not None and archive_storage is not None and archive_generated:
         try:
-            await archive_storage.write_archive_state(
-                {"next_archive_id": next_archive_id + 1}
-            )
+            await archive_storage.write_archive_state({"next_archive_id": next_archive_id + 1})
             logger.info(
                 "Archive state advanced: next_archive_id=%d session=%s",
-                next_archive_id + 1, context.session_id,
+                next_archive_id + 1,
+                context.session_id,
             )
         except Exception:
             logger.warning(
                 "Archive state increment failed: session=%s",
-                context.session_id, exc_info=True,
+                context.session_id,
+                exc_info=True,
             )
 
     if archive_generated and on_archive_generated is not None:
@@ -518,7 +549,12 @@ async def cleanup_session(
     """
     # Phase 1: prepare
     plan = await _prepare_cleanup_phase(
-        session, context, max_messages, max_tokens, keep_ratio, max_backups,
+        session,
+        context,
+        max_messages,
+        max_tokens,
+        keep_ratio,
+        max_backups,
     )
     if plan is None:
         return CleanupResult(triggered=False)
@@ -547,7 +583,11 @@ async def cleanup_session(
 
     # Phase 2: archive generation
     archive_outcome = await _generate_archive_phase(
-        archive_agent, archive_storage, archive, plan.pruned_messages, context,
+        archive_agent,
+        archive_storage,
+        archive,
+        plan.pruned_messages,
+        context,
     )
 
     # Use resolved_storage from Phase 2 (may have been dynamically created)
@@ -723,7 +763,8 @@ def _adjust_boundary_for_tool_chains(
         call_ids = {tc.get("id") for tc in msg_before.get("tool_calls") or []}
         # Check if any tool result for these calls is at or after boundary
         has_tool_result_after = any(
-            messages[k].get("role") == MessageRole.TOOL and messages[k].get("tool_call_id") in call_ids
+            messages[k].get("role") == MessageRole.TOOL
+            and messages[k].get("tool_call_id") in call_ids
             for k in range(boundary, min(boundary + 5, len(messages)))
         )
         if has_tool_result_after:
@@ -794,7 +835,9 @@ async def _backup_session(
 
         logger.info(
             "Session backup created: session=%s path=%s total_backups=%d",
-            context.session_id, backup_path.name, min(len(existing), max_backups),
+            context.session_id,
+            backup_path.name,
+            min(len(existing), max_backups),
         )
     except Exception:
         # Backup is a safety net — failure must never block cleanup.

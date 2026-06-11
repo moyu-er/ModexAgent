@@ -11,8 +11,8 @@ from typing import Any
 class Address:
     """消息寻址实体。"""
 
-    kind: str   # 合法值: "agent", "user", "channel", "system", "group"
-    name: str   # 实体标识，如 "react_1", "123456", "qq_main"
+    kind: str  # 合法值: "agent", "user", "channel", "system", "group"
+    name: str  # 实体标识，如 "react_1", "123456", "qq_main"
 
     def __str__(self) -> str:
         return f"{self.kind}:{self.name}"

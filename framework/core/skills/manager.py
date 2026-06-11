@@ -40,7 +40,11 @@ class SkillManager:
         """Return the fully loaded, deduplicated, filtered skill list."""
         if self._cache is not None:
             return await self._cache.get_skills(
-                self._source, self._builder, self._filter, self._overrides, context,
+                self._source,
+                self._builder,
+                self._filter,
+                self._overrides,
+                context,
             )
         index = {s.name: s for s in await self._source.load()}
         index.update(self._overrides)
@@ -56,7 +60,11 @@ class SkillManager:
         """Build the ``# Skills`` prompt section."""
         if self._cache is not None:
             return await self._cache.build_prompt(
-                self._source, self._builder, self._filter, self._overrides, context,
+                self._source,
+                self._builder,
+                self._filter,
+                self._overrides,
+                context,
             )
         skills = await self.list_skills(context)
         return await self._builder.build(skills, context)

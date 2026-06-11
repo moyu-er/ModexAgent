@@ -17,10 +17,10 @@ from .exceptions import WorkspaceBoundaryError
 class WorkspacePolicyConfig:
     """Configuration for workspace boundary enforcement."""
 
-    root: str                                  # Workspace root directory
-    allow_paths: tuple[str, ...] = ()          # Extra allowed read-only paths
-    writable_paths: tuple[str, ...] = ()       # Extra allowed write paths
-    enforce: bool = True                       # False = all checks pass
+    root: str  # Workspace root directory
+    allow_paths: tuple[str, ...] = ()  # Extra allowed read-only paths
+    writable_paths: tuple[str, ...] = ()  # Extra allowed write paths
+    enforce: bool = True  # False = all checks pass
 
 
 class WorkspacePolicy:
@@ -38,9 +38,7 @@ class WorkspacePolicy:
         self._config = config
         self._root = Path(config.root).resolve()
         # Pre-resolve allowed paths for faster checks.
-        self._allowed: tuple[Path, ...] = tuple(
-            Path(p).resolve() for p in config.allow_paths
-        )
+        self._allowed: tuple[Path, ...] = tuple(Path(p).resolve() for p in config.allow_paths)
 
     @property
     def root(self) -> Path:

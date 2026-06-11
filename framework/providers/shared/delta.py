@@ -4,6 +4,7 @@ StreamDelta  — streaming chunk extraction result.
 ParsedResponse — non-streaming response extraction result.
 extract_reasoning — reasoning_content extraction from Pydantic model_extra.
 """
+
 from __future__ import annotations
 
 import json
@@ -109,14 +110,18 @@ class ParsedResponse:
                 except json.JSONDecodeError:
                     logger.warning(
                         "Malformed tool call arguments for %s (call_id=%s): %.200s",
-                        tc.function.name, tc.id, tc.function.arguments or "",
+                        tc.function.name,
+                        tc.id,
+                        tc.function.arguments or "",
                     )
                     args = {}
-                tool_calls.append(ToolCall(
-                    tool_name=tc.function.name,
-                    arguments=args,
-                    call_id=tc.id,
-                ))
+                tool_calls.append(
+                    ToolCall(
+                        tool_name=tc.function.name,
+                        arguments=args,
+                        call_id=tc.id,
+                    )
+                )
 
         usage: dict[str, int] = {}
         if response.usage is not None:

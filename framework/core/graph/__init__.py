@@ -1,4 +1,5 @@
 """Core graph abstractions."""
+
 from .constants import GraphNode
 from .engine import GraphEngine
 from .graph import Edge, Graph

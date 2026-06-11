@@ -1,4 +1,5 @@
 """Shared utilities for scoped file tools."""
+
 from __future__ import annotations
 
 from pathlib import Path

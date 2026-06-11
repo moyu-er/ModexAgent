@@ -35,9 +35,7 @@ class InMemoryMessageBroker(MessageBroker):
 
     async def send_to(self, recipient: Address, message: BrokerMessage) -> None:
         if recipient not in self._consumers:
-            logger.debug(
-                "Sending to address %s with no registered consumer", recipient
-            )
+            logger.debug("Sending to address %s with no registered consumer", recipient)
         await self._ensure_mailbox(recipient).put(message)
 
     async def publish(self, topic: str, message: BrokerMessage) -> None:
@@ -73,7 +71,7 @@ class InMemoryMessageBroker(MessageBroker):
             msg = await self._ensure_mailbox(address).get()
             if msg is _SENTINEL:
                 break
-            yield msg  # type: ignore[misc]
+            yield msg
 
     async def subscribe(self, topics: list[str]) -> AsyncIterator[BrokerMessage]:
         temp_address = Address(kind="_temp", name=str(uuid.uuid4()))

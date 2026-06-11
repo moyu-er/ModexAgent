@@ -1,4 +1,5 @@
 """StartNode — entry point for ReAct graph."""
+
 from __future__ import annotations
 
 from framework.agents.react.agent import ReActEvent

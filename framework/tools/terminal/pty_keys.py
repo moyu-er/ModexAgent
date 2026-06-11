@@ -112,6 +112,7 @@ ENTER_KEY: str = "\r"
 # the host process detects it and calls proc.sendintr().
 CTRL_C: str = "\x03"
 
+
 class _StdinWriter(ABC):
     @abstractmethod
     def write(self, data: bytes) -> object: ...

@@ -17,7 +17,7 @@ class JsonTerminalStateStore:
     Sessions are lazily restarted on first use after load.
     """
 
-    def __init__(self, storage_dir: Path, filename: str = "state.json"):
+    def __init__(self, storage_dir: Path, filename: str = "state.json") -> None:
         self._storage_dir = Path(storage_dir)
         self._file_path = self._storage_dir / filename
 
@@ -38,7 +38,7 @@ class JsonTerminalStateStore:
         if not self._file_path.exists():
             return {}
         try:
-            with open(self._file_path, "r", encoding="utf-8") as f:
+            with open(self._file_path, encoding="utf-8") as f:
                 return json.load(f)
         except (json.JSONDecodeError, OSError):
             logger.warning("Terminal state file corrupted, starting fresh")

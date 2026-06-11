@@ -12,14 +12,12 @@ from typing import Any
 
 from framework.memory.archive_models import ArchiveChannel
 from framework.memory.core.layers import MemoryLayerSet
-from framework.memory.stores.dir_archive import DirArchiveStorage
-from framework.memory.core.storage import MemoryStorage
 from framework.memory.core.scope import (
     MemoryContext,
     MemoryLayerName,
-    SessionScope,
 )
 from framework.memory.registry.base import MemoryStoreRegistry
+from framework.memory.stores.dir_archive import DirArchiveStorage
 
 logger = logging.getLogger(__name__)
 
@@ -65,10 +63,9 @@ class DefaultMemoryMaintenancePolicy(MemoryMaintenancePolicy):
         layers: MemoryLayerSet,
     ) -> list[MaintenanceResult]:
         import time
+
         results: list[MaintenanceResult] = []
-        has_work = (
-            self._archive_retention is not None or self._knowledge_retention is not None
-        )
+        has_work = self._archive_retention is not None or self._knowledge_retention is not None
         if not has_work:
             return results
 
@@ -91,7 +88,9 @@ class DefaultMemoryMaintenancePolicy(MemoryMaintenancePolicy):
                         context=ctx,
                     )
                     entries = await archive_storage.read_channel_logs(
-                        ArchiveChannel.CONTEXT.value, since_archive_id=0, limit=1_000_000,
+                        ArchiveChannel.CONTEXT.value,
+                        since_archive_id=0,
+                        limit=1_000_000,
                     )
                     if not entries:
                         continue
@@ -106,12 +105,18 @@ class DefaultMemoryMaintenancePolicy(MemoryMaintenancePolicy):
                         await archive_storage.save_channel_logs(ArchiveChannel.CONTEXT.value, kept)
                         # Also prune KNOWLEDGE channel to match retained CONTEXT entries
                         knowledge_entries = await archive_storage.read_channel_logs(
-                            ArchiveChannel.KNOWLEDGE.value, since_archive_id=0, limit=1_000_000,
+                            ArchiveChannel.KNOWLEDGE.value,
+                            since_archive_id=0,
+                            limit=1_000_000,
                         )
-                        knowledge_kept = [e for e in knowledge_entries
-                                          if int(e.get("archive_id", 0) or 0) in kept_ids]
+                        knowledge_kept = [
+                            e
+                            for e in knowledge_entries
+                            if int(e.get("archive_id", 0) or 0) in kept_ids
+                        ]
                         await archive_storage.save_channel_logs(
-                            ArchiveChannel.KNOWLEDGE.value, knowledge_kept,
+                            ArchiveChannel.KNOWLEDGE.value,
+                            knowledge_kept,
                         )
                         entries = kept
                         pruned = True
@@ -124,6 +129,7 @@ class DefaultMemoryMaintenancePolicy(MemoryMaintenancePolicy):
                             entry_time: float | None = None
                             if isinstance(created_at, str):
                                 from datetime import datetime
+
                                 entry_time = datetime.fromisoformat(created_at).timestamp()
                             elif isinstance(created_at, int | float):
                                 entry_time = float(created_at)
@@ -132,15 +138,25 @@ class DefaultMemoryMaintenancePolicy(MemoryMaintenancePolicy):
                                 continue
                             kept.append(entry)
                         if pruned and len(kept) != len(entries):
-                            kept_ids = {int(e.get("archive_id", e.get("cursor", 0)) or 0) for e in kept}
-                            await archive_storage.save_channel_logs(ArchiveChannel.CONTEXT.value, kept)
-                            knowledge_entries = await archive_storage.read_channel_logs(
-                                ArchiveChannel.KNOWLEDGE.value, since_archive_id=0, limit=1_000_000,
-                            )
-                            knowledge_kept = [e for e in knowledge_entries
-                                              if int(e.get("archive_id", 0) or 0) in kept_ids]
+                            kept_ids = {
+                                int(e.get("archive_id", e.get("cursor", 0)) or 0) for e in kept
+                            }
                             await archive_storage.save_channel_logs(
-                                ArchiveChannel.KNOWLEDGE.value, knowledge_kept,
+                                ArchiveChannel.CONTEXT.value, kept
+                            )
+                            knowledge_entries = await archive_storage.read_channel_logs(
+                                ArchiveChannel.KNOWLEDGE.value,
+                                since_archive_id=0,
+                                limit=1_000_000,
+                            )
+                            knowledge_kept = [
+                                e
+                                for e in knowledge_entries
+                                if int(e.get("archive_id", 0) or 0) in kept_ids
+                            ]
+                            await archive_storage.save_channel_logs(
+                                ArchiveChannel.KNOWLEDGE.value,
+                                knowledge_kept,
                             )
 
                     # FIFO eviction: delete oldest dirs exceeding max_archive_total,
@@ -150,7 +166,11 @@ class DefaultMemoryMaintenancePolicy(MemoryMaintenancePolicy):
                         # DirArchiveStorage manages archive directories directly.
                         # When registry returns a different storage type, look up
                         # the archive directory via the layer manager and wrap it.
-                        dir_storage = archive_storage if isinstance(archive_storage, DirArchiveStorage) else None
+                        dir_storage = (
+                            archive_storage
+                            if isinstance(archive_storage, DirArchiveStorage)
+                            else None
+                        )
                         if dir_storage is None and layers.archive is not None:
                             try:
                                 archive_dir = await layers.archive.get_storage_path(ctx)
@@ -169,14 +189,23 @@ class DefaultMemoryMaintenancePolicy(MemoryMaintenancePolicy):
                                 pruned = True
 
                     if pruned:
-                        results.append(MaintenanceResult(
-                            scope_key=record.scope_key, task="archive_retention", success=True,
-                        ))
+                        results.append(
+                            MaintenanceResult(
+                                scope_key=record.scope_key,
+                                task="archive_retention",
+                                success=True,
+                            )
+                        )
                 except Exception as exc:
                     logger.warning("Archive retention failed for %s: %s", record.scope_key, exc)
-                    results.append(MaintenanceResult(
-                        scope_key=record.scope_key, task="archive_retention", success=False, detail=str(exc),
-                    ))
+                    results.append(
+                        MaintenanceResult(
+                            scope_key=record.scope_key,
+                            task="archive_retention",
+                            success=False,
+                            detail=str(exc),
+                        )
+                    )
 
         # ── Knowledge eviction ────────────────────────────────────────────────
         if self._knowledge_retention is not None and layers.knowledge is not None:
@@ -212,6 +241,7 @@ class DefaultMemoryMaintenancePolicy(MemoryMaintenancePolicy):
                         knowledge_entry_time: float | None = None
                         if isinstance(created_at, str):
                             from datetime import datetime
+
                             knowledge_entry_time = datetime.fromisoformat(created_at).timestamp()
                         elif isinstance(created_at, int | float):
                             knowledge_entry_time = float(created_at)
@@ -232,14 +262,23 @@ class DefaultMemoryMaintenancePolicy(MemoryMaintenancePolicy):
                             pruned = True
 
                     if pruned:
-                        results.append(MaintenanceResult(
-                            scope_key=record.scope_key, task="knowledge_eviction", success=True,
-                        ))
+                        results.append(
+                            MaintenanceResult(
+                                scope_key=record.scope_key,
+                                task="knowledge_eviction",
+                                success=True,
+                            )
+                        )
                 except Exception as exc:
                     logger.warning("Knowledge eviction failed for %s: %s", record.scope_key, exc)
-                    results.append(MaintenanceResult(
-                        scope_key=record.scope_key, task="knowledge_eviction", success=False, detail=str(exc),
-                    ))
+                    results.append(
+                        MaintenanceResult(
+                            scope_key=record.scope_key,
+                            task="knowledge_eviction",
+                            success=False,
+                            detail=str(exc),
+                        )
+                    )
 
         return results
 
@@ -252,12 +291,18 @@ class SessionRetentionPolicy(ABC):
 
     @abstractmethod
     async def should_compact(
-        self, *, storage: Any, context: MemoryContext,
+        self,
+        *,
+        storage: Any,
+        context: MemoryContext,
     ) -> bool: ...
 
     @abstractmethod
     async def should_evict_checkpoint(
-        self, *, storage: Any, context: MemoryContext,
+        self,
+        *,
+        storage: Any,
+        context: MemoryContext,
     ) -> bool: ...
 
 

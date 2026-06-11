@@ -9,12 +9,12 @@ from framework.agents.summarizer.scoped_file_agent import ScopedFileAgent
 from framework.core.experience.meta import ExperienceMetaStore
 from framework.core.provider import LLMProvider
 from framework.memory.tools.experience import (
-    ExperienceReadTool,
-    ExperienceWriteTool,
+    ExperienceDeleteTool,
     ExperienceEditTool,
     ExperienceListTool,
+    ExperienceReadTool,
     ExperienceRenameDirTool,
-    ExperienceDeleteTool,
+    ExperienceWriteTool,
 )
 
 logger = logging.getLogger(__name__)
@@ -96,7 +96,8 @@ class ExperienceReviewAgent(ScopedFileAgent):
 
         logger.info(
             "ExperienceReviewAgent starting: invocation=%s session=%s",
-            invocation_id or trace_key, session_id,
+            invocation_id or trace_key,
+            session_id,
         )
 
         for attempt in range(2):
@@ -113,12 +114,14 @@ class ExperienceReviewAgent(ScopedFileAgent):
             if ok:
                 logger.info(
                     "ExperienceReviewAgent succeeded: invocation=%s attempt=%d",
-                    invocation_id or trace_key, attempt + 1,
+                    invocation_id or trace_key,
+                    attempt + 1,
                 )
                 return True
             logger.warning(
                 "ExperienceReviewAgent attempt %d failed invocation=%s",
-                attempt + 1, invocation_id or trace_key,
+                attempt + 1,
+                invocation_id or trace_key,
             )
 
         logger.error(
@@ -167,22 +170,26 @@ class ExperienceReviewAgent(ScopedFileAgent):
         for tool in tools:
             tool_manager.register(tool)
 
-        history = ListMessageHistory([
-            {"role": MessageRole.USER, "content": user_msg},
-        ])
+        history = ListMessageHistory(
+            [
+                {"role": MessageRole.USER, "content": user_msg},
+            ]
+        )
 
         # HookRunner with RunLoggingHook so ReActAgent dispatches
         # BEFORE_TURN / AFTER_TURN / tool hooks for observability.
         hook_runner = HookRunner()
-        hook_runner.add(HookSpec(
-            hook=RunLoggingHook(
-                logger_name="experience.review.agent",
-                level=logging.DEBUG,
-                max_content_chars=2000,
-                max_result_chars=2000,
-            ),
-            on_error=HookErrorPolicy.LOG,
-        ))
+        hook_runner.add(
+            HookSpec(
+                hook=RunLoggingHook(
+                    logger_name="experience.review.agent",
+                    level=logging.DEBUG,
+                    max_content_chars=2000,
+                    max_result_chars=2000,
+                ),
+                on_error=HookErrorPolicy.LOG,
+            )
+        )
 
         # Pre-built runtime — ReActAgent.run() will use it directly
         # instead of creating a default empty one.

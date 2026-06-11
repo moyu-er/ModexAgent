@@ -1,4 +1,5 @@
 """Node ABC and NodeTransition."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -15,6 +16,7 @@ R = TypeVar("R", default=Any)
 @dataclass(frozen=True)
 class NodeTransition:
     """A node's routing instruction: which node to go to next, and why."""
+
     target: str
     reason: str
 
@@ -26,6 +28,6 @@ class Node(ABC, Generic[R]):
         self.name = name
 
     @abstractmethod
-    async def execute(self, ctx: AgentContext[R]) -> NodeTransition:
+    async def execute(self, ctx: AgentContext) -> NodeTransition:
         """Execute node logic and return the next node transition."""
         ...

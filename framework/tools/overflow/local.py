@@ -47,9 +47,7 @@ class LocalFileToolOverflowStore(ToolOverflowStore):
         return self._session_dir(session_id) / self._sanitize_id(tool_call_id)
 
     async def initialize(self) -> None:
-        await asyncio.to_thread(
-            self._workspace.mkdir, parents=True, exist_ok=True
-        )
+        await asyncio.to_thread(self._workspace.mkdir, parents=True, exist_ok=True)
 
     async def store(
         self,
@@ -92,7 +90,9 @@ class LocalFileToolOverflowStore(ToolOverflowStore):
                 "total_chars": meta.total_chars,
                 "total_chunks": meta.total_chunks,
             }
-            await asyncio.to_thread(meta_path.write_text, json.dumps(meta_dict, ensure_ascii=False), encoding="utf-8")
+            await asyncio.to_thread(
+                meta_path.write_text, json.dumps(meta_dict, ensure_ascii=False), encoding="utf-8"
+            )
 
             # Write chunks — raw content, no prefix header
             for idx, chunk in enumerate(chunks if chunks else [""], start=1):

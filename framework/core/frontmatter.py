@@ -25,9 +25,10 @@ def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
         return {}, text
     try:
         import yaml
+
         frontmatter = yaml.safe_load("".join(lines[1:end])) or {}
     except Exception:
         logger.debug("Failed to parse frontmatter", exc_info=True)
         frontmatter = {}
-    content = "".join(lines[end + 1:])
+    content = "".join(lines[end + 1 :])
     return frontmatter, content

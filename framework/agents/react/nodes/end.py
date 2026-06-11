@@ -1,4 +1,5 @@
 """EndNode — builds AgentResult and marks completion."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -42,8 +43,10 @@ class EndNode(Node):
         elif response is not None and response.finish_reason == FinishReason.ERROR.value:
             error_text = response.error or response.content or "LLM request failed"
             result = AgentResult(
-                error=error_text, stop_reason=StopReason.ERROR,
-                messages=messages, attachments=ctx.attachments,
+                error=error_text,
+                stop_reason=StopReason.ERROR,
+                messages=messages,
+                attachments=ctx.attachments,
             )
             if ctx.emitter is not None:
                 await ctx.emitter.emit(ReActEvent.ERROR, error_text)
@@ -51,14 +54,17 @@ class EndNode(Node):
             result = AgentResult(
                 content=response.content or "",
                 reasoning=response.reasoning_content,
-                messages=messages, attachments=ctx.attachments,
+                messages=messages,
+                attachments=ctx.attachments,
             )
             if ctx.emitter is not None:
                 await ctx.emitter.emit(ReActEvent.FINAL_OUTPUT, result)
         else:
             result = AgentResult(
-                content="max iterations reached", stop_reason=StopReason.MAX_ITERATIONS,
-                messages=messages, attachments=ctx.attachments,
+                content="max iterations reached",
+                stop_reason=StopReason.MAX_ITERATIONS,
+                messages=messages,
+                attachments=ctx.attachments,
             )
 
         if state is not None:

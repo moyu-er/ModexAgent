@@ -9,17 +9,13 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Generic
-
-from typing_extensions import TypeVar
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
     from framework.core.emitter import AgentResult
     from framework.core.tool_manager import ToolResult
     from framework.core.types import LLMResponse, ToolCall
-
-R = TypeVar("R", default=Any)
 
 
 class HookPoint(str, Enum):
@@ -81,17 +77,17 @@ class HookResult:
 
 
 @dataclass(frozen=True)
-class HookSpec(Generic[R]):
+class HookSpec:
     """Hook 注册规格。
 
     包含 hook 实例和错误处理策略，后续用于代码装配。
     """
 
-    hook: Hook[R]
+    hook: Hook
     on_error: HookErrorPolicy = HookErrorPolicy.LOG
 
 
-class Hook(ABC, Generic[R]):
+class Hook(ABC):
     """All hooks' public base class.
 
     Replaces the old Protocol. Each concrete hook inherits from one or more
@@ -105,77 +101,75 @@ class Hook(ABC, Generic[R]):
         ...
 
 
-class BeforeTurnHook(Hook[R]):
+class BeforeTurnHook(Hook):
     _hook_point = HookPoint.BEFORE_TURN
 
     @abstractmethod
-    async def before_turn(self, ctx: AgentContext[R]) -> None: ...
+    async def before_turn(self, ctx: AgentContext) -> None: ...
 
 
-class AfterTurnHook(Hook[R]):
+class AfterTurnHook(Hook):
     _hook_point = HookPoint.AFTER_TURN
 
     @abstractmethod
-    async def after_turn(self, ctx: AgentContext[R], result: AgentResult) -> None: ...
+    async def after_turn(self, ctx: AgentContext, result: AgentResult) -> None: ...
 
 
-class BeforeIterationHook(Hook[R]):
+class BeforeIterationHook(Hook):
     _hook_point = HookPoint.BEFORE_ITERATION
 
     @abstractmethod
-    async def before_iteration(self, ctx: AgentContext[R]) -> None: ...
+    async def before_iteration(self, ctx: AgentContext) -> None: ...
 
 
-class AfterIterationHook(Hook[R]):
+class AfterIterationHook(Hook):
     _hook_point = HookPoint.AFTER_ITERATION
 
     @abstractmethod
-    async def after_iteration(self, ctx: AgentContext[R]) -> None: ...
+    async def after_iteration(self, ctx: AgentContext) -> None: ...
 
 
-class BeforeToolExecutionHook(Hook[R]):
+class BeforeToolExecutionHook(Hook):
     _hook_point = HookPoint.BEFORE_TOOL_EXECUTION
 
     @abstractmethod
     async def before_tool_execution(
-        self, ctx: AgentContext[R], tool_calls: Sequence[ToolCall]
+        self, ctx: AgentContext, tool_calls: Sequence[ToolCall]
     ) -> None: ...
 
 
-class AfterToolExecutionHook(Hook[R]):
+class AfterToolExecutionHook(Hook):
     _hook_point = HookPoint.AFTER_TOOL_EXECUTION
 
     @abstractmethod
     async def after_tool_execution(
-        self, ctx: AgentContext[R], results: Sequence[ToolResult]
+        self, ctx: AgentContext, results: Sequence[ToolResult]
     ) -> None: ...
 
 
-class AfterLLMResponseHook(Hook[R]):
+class AfterLLMResponseHook(Hook):
     _hook_point = HookPoint.AFTER_LLM_RESPONSE
 
     @abstractmethod
-    async def after_llm_response(
-        self, ctx: AgentContext[R], response: LLMResponse
-    ) -> None: ...
+    async def after_llm_response(self, ctx: AgentContext, response: LLMResponse) -> None: ...
 
 
-class OnControlCommandHook(Hook[R]):
+class OnControlCommandHook(Hook):
     _hook_point = HookPoint.ON_CONTROL_COMMAND
 
     @abstractmethod
-    async def on_control_command(self, ctx: AgentContext[R], command: Any) -> HookResult: ...  # noqa: ANN401
+    async def on_control_command(self, ctx: AgentContext, command: Any) -> HookResult: ...  # noqa: ANN401
 
 
-class FinalizeContentHook(Hook[R]):
+class FinalizeContentHook(Hook):
     _hook_point = HookPoint.FINALIZE_CONTENT
 
     @abstractmethod
-    def finalize_content(self, ctx: AgentContext[R], content: str | None) -> str | None: ...
+    def finalize_content(self, ctx: AgentContext, content: str | None) -> str | None: ...
 
 
-class FinallyTurnHook(Hook[R]):
+class FinallyTurnHook(Hook):
     _hook_point = HookPoint.FINALLY_TURN
 
     @abstractmethod
-    async def finally_turn(self, ctx: AgentContext[R], result: AgentResult | None) -> None: ...
+    async def finally_turn(self, ctx: AgentContext, result: AgentResult | None) -> None: ...

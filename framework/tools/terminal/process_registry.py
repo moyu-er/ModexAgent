@@ -176,11 +176,7 @@ class ProcessRegistry:
         else:
             threshold = self._config.initial_idle_threshold_ms
 
-        early_waiting = (
-            session.stdin_writable
-            and not velocity.is_active
-            and idle_ms >= threshold
-        )
+        early_waiting = session.stdin_writable and not velocity.is_active and idle_ms >= threshold
 
         return RunningSessionRuntime(
             stdin_writable=session.stdin_writable,

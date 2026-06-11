@@ -1,4 +1,5 @@
 """GraphEngine — drives node execution and edge routing."""
+
 from __future__ import annotations
 
 from typing import Any, Generic
@@ -23,7 +24,7 @@ class GraphEngine(Generic[R]):
     def __init__(self, graph: Graph[R]) -> None:
         self.graph = graph
 
-    async def run(self, ctx: AgentContext[R]) -> Any:
+    async def run(self, ctx: AgentContext) -> Any:
         """Single entry point. Runs from entry_node until GraphNode.END."""
         current: str = self.graph.entry_node
         while current != GraphNode.END:
@@ -38,6 +39,6 @@ class GraphEngine(Generic[R]):
                 current = self.graph.next_node(current, transition.reason)
         return self.build_result(ctx)
 
-    def build_result(self, ctx: AgentContext[R]) -> Any:
+    def build_result(self, ctx: AgentContext) -> Any:
         """Extract final result from ctx. Override for typed returns."""
         return ctx.runtime.state.custom.get(TurnCustomKey.GRAPH_RESULT) if ctx.runtime else None

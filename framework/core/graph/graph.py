@@ -1,4 +1,5 @@
 """Edge and Graph."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -14,6 +15,7 @@ R = TypeVar("R", default=Any)
 @dataclass(frozen=True)
 class Edge:
     """Directed edge between nodes. reason=None means unconditional fallback."""
+
     source: str
     target: str
     reason: str | None = None

@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 from collections.abc import AsyncIterator
 
+from framework.core.tool_manager import ToolResult
 from framework.interceptor.abc import (
     LLMStreamChunk,
     LLMStreamContext,
@@ -27,7 +28,6 @@ from framework.interceptor.abc import (
     ToolCallInterceptor,
     ToolCallNext,
 )
-from framework.core.tool_manager import ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,7 @@ async def drain_control_channel(
     # or a qualified session_id (pool agent ctx.session_id).
     try:
         from framework.multi_agent.session_id import DefaultSessionIdStrategy
+
         canonical_sid = DefaultSessionIdStrategy().normalize(ctx.session_id)
     except Exception:
         canonical_sid = ctx.session_id
@@ -90,7 +91,9 @@ async def drain_control_channel(
             if cmd_turn_uuid != turn_uuid:
                 logger.debug(
                     "Control: discarding stale %s cmd_uuid=%s current_uuid=%s",
-                    cmd_type_name, cmd_turn_uuid, turn_uuid,
+                    cmd_type_name,
+                    cmd_turn_uuid,
+                    turn_uuid,
                 )
                 continue
 
@@ -98,7 +101,8 @@ async def drain_control_channel(
         if cmd.type == ControlCommandType.CANCEL_TURN:
             logger.info(
                 "Control: executing CANCEL_TURN session=%s turn_uuid=%s",
-                ctx.session_id, turn_uuid,
+                ctx.session_id,
+                turn_uuid,
             )
             from framework.control.exceptions import AgentCancelled
 
@@ -115,7 +119,7 @@ class ControlDrainInterceptor(ToolCallInterceptor):
     propagation (InterceptorChain.around_tool_call re-raises AgentControlError).
     """
 
-    def __init__(self, channel):
+    def __init__(self, channel) -> None:
         self._channel = channel
 
     @property
@@ -129,7 +133,8 @@ class ControlDrainInterceptor(ToolCallInterceptor):
         next_call: ToolCallNext,
     ) -> ToolResult:
         await drain_control_channel(
-            self._channel, ctx,
+            self._channel,
+            ctx,
             turn_uuid=ctx.current_turn_uuid,
         )
         return await next_call()
@@ -150,7 +155,7 @@ class LlmCancelInterceptor(LLMStreamInterceptor):
     being reached.
     """
 
-    def __init__(self, channel):
+    def __init__(self, channel) -> None:
         self._channel = channel
 
     @property
@@ -165,7 +170,8 @@ class LlmCancelInterceptor(LLMStreamInterceptor):
     ) -> AsyncIterator[LLMStreamChunk]:
         async for chunk in next_stream():
             await drain_control_channel(
-                self._channel, ctx,
+                self._channel,
+                ctx,
                 turn_uuid=ctx.current_turn_uuid,
             )
             yield chunk

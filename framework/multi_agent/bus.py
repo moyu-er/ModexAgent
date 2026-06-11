@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 
 from framework.messaging.broker import Address, BrokerMessage
 from framework.multi_agent.address import AgentAddress
-from framework.multi_agent.session_id import DefaultSessionIdStrategy
 
 if TYPE_CHECKING:
     from framework.messaging.broker import MessageBroker
@@ -105,23 +104,20 @@ class LocalAgentMessageBus(AgentMessageBus):
                     sender=Address(kind="system", name="local_agent_message_bus"),
                 )
                 from framework.multi_agent.session_id import DefaultSessionIdStrategy
+
                 try:
                     parts = DefaultSessionIdStrategy().parse(session_id)
                     target_name = parts.agent_name or (
                         envelope.target.name if envelope.target else session_id
                     )
                 except ValueError:
-                    target_name = (
-                        envelope.target.name if envelope.target else str(session_id)
-                    )
+                    target_name = envelope.target.name if envelope.target else str(session_id)
                 await self._broker.send_to(
                     AgentAddress(kind="agent", name=target_name),
                     wakeup,
                 )
             except Exception:
-                logger.exception(
-                    "Failed to send broker wakeup signal for session %s", session_id
-                )
+                logger.exception("Failed to send broker wakeup signal for session %s", session_id)
 
         event = self._get_event(session_id)
         self._pending_counts[session_id] = self._pending_counts.get(session_id, 0) + 1
@@ -167,7 +163,9 @@ class LocalAgentMessageBus(AgentMessageBus):
                 invocation_id=msg.metadata.get("invocation_id") if msg.metadata else None,
                 message_id=msg.message_id,
                 timestamp=msg.timestamp,
-                metadata={k: v for k, v in msg.metadata.items() if k not in ("payload", "invocation_id")},
+                metadata={
+                    k: v for k, v in msg.metadata.items() if k not in ("payload", "invocation_id")
+                },
             )
             envelopes.append(envelope)
 

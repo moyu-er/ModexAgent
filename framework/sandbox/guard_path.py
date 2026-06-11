@@ -3,6 +3,7 @@
 Extracts absolute paths from command strings and checks they stay within
 the configured workspace root.
 """
+
 from __future__ import annotations
 
 import os
@@ -12,7 +13,6 @@ from pathlib import Path
 
 from .guard import CommandSeverity, GuardMatch, GuardResult
 from .guard_device import is_benign_device_path
-
 
 # Regex patterns for extracting absolute paths from command strings.
 # Same patterns as nanobot's _extract_absolute_paths().

@@ -49,7 +49,7 @@ class MCPToolAdapter:
         mcp_manager: MCPClientManager | None = None,
         default_prefix: bool = True,
         tool_timeout: int = _DEFAULT_TOOL_TIMEOUT,
-    ):
+    ) -> None:
         if mcp_manager is None:
             raise ValueError("mcp_manager is required")
         self.mcp_manager = mcp_manager
@@ -115,7 +115,9 @@ class MCPToolAdapter:
                         registry.register(resource_tool)
                         registered.append(resource_tool.name)
                     except ValueError as e:
-                        logger.debug("Failed to register resource tool %s: %s", resource_tool.name, e)
+                        logger.debug(
+                            "Failed to register resource tool %s: %s", resource_tool.name, e
+                        )
             except Exception as e:
                 logger.debug("Failed to list resources from %s: %s", server_name, e)
 
@@ -159,7 +161,7 @@ class MCPToolRegistry(ToolRegistry):
         self,
         mcp_manager: MCPClientManager | None = None,
         tool_timeout: int = _DEFAULT_TOOL_TIMEOUT,
-    ):
+    ) -> None:
         super().__init__()
         self._mcp_adapter: MCPToolAdapter | None = None
         self._mcp_manager = mcp_manager

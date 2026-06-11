@@ -25,7 +25,9 @@ class MultiAgentContextBuilder:
         return messages
 
     @staticmethod
-    def _build_system_block(agent_descriptor: AgentDescriptor, session_summary: str | None = None) -> list[dict[str, Any]]:
+    def _build_system_block(
+        agent_descriptor: AgentDescriptor, session_summary: str | None = None
+    ) -> list[dict[str, Any]]:
         parts = []
         if agent_descriptor.system_prompt_template:
             parts.append(agent_descriptor.system_prompt_template)

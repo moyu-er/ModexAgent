@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
-import socket as _socket
 import sys
 
 from framework.tools.terminal.prompt import drain_windows_startup
@@ -86,7 +85,7 @@ class WindowsHiddenPtyBackend(TerminalBackend):
             try:
                 raw = fobj.recv(max_size)
                 return raw.decode("utf-8", errors="replace")
-            except (_socket.timeout, TimeoutError, OSError):
+            except (TimeoutError, OSError):
                 return ""
 
         try:
@@ -94,9 +93,7 @@ class WindowsHiddenPtyBackend(TerminalBackend):
         except Exception:
             return ""
 
-    async def read_pending(
-        self, timeout: float = 5.0, max_size: int = 65536
-    ) -> TerminalRead:
+    async def read_pending(self, timeout: float = 5.0, max_size: int = 65536) -> TerminalRead:
         if self._proc is None:
             return TerminalRead(stdout="", raw="")
 
@@ -109,7 +106,7 @@ class WindowsHiddenPtyBackend(TerminalBackend):
             try:
                 raw = fobj.recv(max_size)
                 return raw.decode("utf-8", errors="replace")
-            except (_socket.timeout, TimeoutError, OSError):
+            except (TimeoutError, OSError):
                 return ""
 
         try:

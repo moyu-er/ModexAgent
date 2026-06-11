@@ -5,6 +5,7 @@ then delegates to a standard file tool.  The only additions are path
 containment, usage tracking on EXPERIENCE.md hits, and EXPERIENCE.md
 format validation after write/edit.
 """
+
 from __future__ import annotations
 
 import logging
@@ -17,10 +18,15 @@ from typing import Any
 from framework.core.experience.meta import ExperienceMetaStore
 from framework.core.experience.name_sync import auto_correct_frontmatter_name
 from framework.core.experience.source import sanitize_name
-from framework.utils.xml import xml_text
 from framework.core.experience.validation import validate_experience_md
 from framework.core.tool_manager import Tool, ToolConfig
-from framework.tools.standard.file_tool import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+from framework.tools.standard.file_tool import (
+    EditFileTool,
+    ListDirTool,
+    ReadFileTool,
+    WriteFileTool,
+)
+from framework.utils.xml import xml_text
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +133,9 @@ def _validation_result_xml(exp_name: str, validation: Any) -> str:
     return _validation_result_xml_with_extra(exp_name, validation)
 
 
-def _validation_result_xml_with_extra(exp_name: str, validation: Any, extra_warnings: list[str] | None = None) -> str:
+def _validation_result_xml_with_extra(
+    exp_name: str, validation: Any, extra_warnings: list[str] | None = None
+) -> str:
     """Build XML showing errors and warnings, plus optional extra warnings."""
     valid_attr = "true" if validation.valid else "false"
     errors_xml = ""
@@ -161,7 +169,9 @@ def _validation_result_xml_with_extra(exp_name: str, validation: Any, extra_warn
 class ExperienceReadTool(Tool):
     """Read EXPERIENCE.md or a sub-file inside an experience directory."""
 
-    def __init__(self, experience_dir: Path | Callable[[], Path], meta_store: ExperienceMetaStore) -> None:
+    def __init__(
+        self, experience_dir: Path | Callable[[], Path], meta_store: ExperienceMetaStore
+    ) -> None:
         self._meta_store = meta_store
         self._resolver = ExperiencePathResolver(experience_dir)
         self._reader = ReadFileTool()
@@ -215,7 +225,9 @@ class ExperienceReadTool(Tool):
 class ExperienceWriteTool(Tool):
     """Write content to EXPERIENCE.md or a sub-file.  Auto-creates parent directories."""
 
-    def __init__(self, experience_dir: Path | Callable[[], Path], meta_store: ExperienceMetaStore) -> None:
+    def __init__(
+        self, experience_dir: Path | Callable[[], Path], meta_store: ExperienceMetaStore
+    ) -> None:
         self._meta_store = meta_store
         self._resolver = ExperiencePathResolver(experience_dir)
         self._writer = WriteFileTool()
@@ -284,7 +296,9 @@ class ExperienceWriteTool(Tool):
 class ExperienceEditTool(Tool):
     """Edit a file inside an experience directory via find-and-replace."""
 
-    def __init__(self, experience_dir: Path | Callable[[], Path], meta_store: ExperienceMetaStore) -> None:
+    def __init__(
+        self, experience_dir: Path | Callable[[], Path], meta_store: ExperienceMetaStore
+    ) -> None:
         self._meta_store = meta_store
         self._resolver = ExperiencePathResolver(experience_dir)
         self._editor = EditFileTool()
@@ -369,7 +383,9 @@ class ExperienceEditTool(Tool):
 class ExperienceListTool(Tool):
     """List directory contents — delegates directly to the standard ls tool."""
 
-    def __init__(self, experience_dir: Path | Callable[[], Path], meta_store: ExperienceMetaStore) -> None:
+    def __init__(
+        self, experience_dir: Path | Callable[[], Path], meta_store: ExperienceMetaStore
+    ) -> None:
         self._get_dir = experience_dir if callable(experience_dir) else lambda: experience_dir
         self._meta_store = meta_store
         self._resolver = ExperiencePathResolver(experience_dir)
@@ -416,12 +432,12 @@ class ExperienceListTool(Tool):
         target_dir = base_dir
         if path is not None and path.strip():
             if ".." in path:
-                return f"<result><status>error</status><error>Invalid path — cannot contain '..'.</error></result>"
+                return "<result><status>error</status><error>Invalid path — cannot contain '..'.</error></result>"
             target_dir = base_dir / path
             try:
                 target_dir.relative_to(self._get_dir())
             except ValueError:
-                return f"<result><status>error</status><error>Path escapes experience root.</error></result>"
+                return "<result><status>error</status><error>Path escapes experience root.</error></result>"
 
         return await self._lister.execute(path=str(target_dir))
 
@@ -429,7 +445,9 @@ class ExperienceListTool(Tool):
 class ExperienceRenameDirTool(Tool):
     """Rename an experience directory (moves it on disk)."""
 
-    def __init__(self, experience_dir: Path | Callable[[], Path], meta_store: ExperienceMetaStore) -> None:
+    def __init__(
+        self, experience_dir: Path | Callable[[], Path], meta_store: ExperienceMetaStore
+    ) -> None:
         self._get_dir = experience_dir if callable(experience_dir) else lambda: experience_dir
         self._meta_store = meta_store
         self._resolver = ExperiencePathResolver(experience_dir)
@@ -502,7 +520,9 @@ class ExperienceRenameDirTool(Tool):
 class ExperienceDeleteTool(Tool):
     """Delete an experience directory and all its contents."""
 
-    def __init__(self, experience_dir: Path | Callable[[], Path], meta_store: ExperienceMetaStore) -> None:
+    def __init__(
+        self, experience_dir: Path | Callable[[], Path], meta_store: ExperienceMetaStore
+    ) -> None:
         self._get_dir = experience_dir if callable(experience_dir) else lambda: experience_dir
         self._meta_store = meta_store
         self._resolver = ExperiencePathResolver(experience_dir)
@@ -572,7 +592,9 @@ class ExperienceTool(Tool):
     corresponding atomic tool above.
     """
 
-    def __init__(self, experience_dir: Path | Callable[[], Path], meta_store: ExperienceMetaStore) -> None:
+    def __init__(
+        self, experience_dir: Path | Callable[[], Path], meta_store: ExperienceMetaStore
+    ) -> None:
         self._read = ExperienceReadTool(experience_dir, meta_store)
         self._write = ExperienceWriteTool(experience_dir, meta_store)
         self._edit = ExperienceEditTool(experience_dir, meta_store)
@@ -594,9 +616,9 @@ class ExperienceTool(Tool):
                 "- scripts/: reusable bash/python scripts meant to be executed.  Use "
                 "write with path='scripts/xxx.sh', NOT inline code blocks in EXPERIENCE.md.\n"
                 "- templates/: config file templates meant to be copied and modified.\n"
-                "- How to decide: \"Will a future agent RUN this?\" → scripts/.  "
-                "\"Will a future agent need to SEE this as evidence?\" → references/.  "
-                "\"Is this a CORE part of the workflow?\" → EXPERIENCE.md.\n"
+                '- How to decide: "Will a future agent RUN this?" → scripts/.  '
+                '"Will a future agent need to SEE this as evidence?" → references/.  '
+                '"Is this a CORE part of the workflow?" → EXPERIENCE.md.\n'
                 "\n"
                 "**When recording:** After writing EXPERIENCE.md, if any section contains "
                 "a large log, reusable script, or template, extract it to the appropriate "

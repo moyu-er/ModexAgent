@@ -41,7 +41,10 @@ class RuntimeStateCodec(ABC):
     def decode_turn(self, payload: Mapping[str, JsonValue]) -> TurnSnapshot: ...
 
     def _validate_provider_payload(self, provider_payload: Mapping[str, Any] | None) -> None:
-        if provider_payload is not None and len(provider_payload) > self._config.max_provider_payload_keys:
+        if (
+            provider_payload is not None
+            and len(provider_payload) > self._config.max_provider_payload_keys
+        ):
             raise RuntimeStateCodecError(
                 f"provider_payload has {len(provider_payload)} keys "
                 f"(max {self._config.max_provider_payload_keys})"

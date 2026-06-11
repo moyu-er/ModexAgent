@@ -13,6 +13,7 @@ from typing import Any, get_type_hints
 @dataclass
 class ParsedMetadata:
     """解析后的元数据"""
+
     name: str
     description: str
     parameters: dict[str, "ParsedParameter"]
@@ -27,6 +28,7 @@ class ParsedMetadata:
 @dataclass
 class ParsedParameter:
     """解析后的参数信息"""
+
     name: str
     type_str: str
     description: str = ""
@@ -42,16 +44,16 @@ class DocstringParser:
     def parse(func: Callable) -> ParsedMetadata:
         """
         解析函数的文档字符串。
-        
+
         支持多种格式:
         - Google Style
         - NumPy Style
         - Sphinx/RestructuredText Style
         - 简单描述
-        
+
         Args:
             func: 要解析的函数
-        
+
         Returns:
             解析后的元数据
         """
@@ -96,10 +98,24 @@ class DocstringParser:
         for line in lines:
             stripped = line.strip()
             # 遇到参数、返回值等标记停止
-            if stripped.startswith((":", "Args:", "Arguments:", "Parameters:",
-                                   "Returns:", "Yields:", "Raises:", "Example:",
-                                   "Examples:", "Note:", "Notes:", "Tags:",
-                                   "Category:", "Deprecated:")):
+            if stripped.startswith(
+                (
+                    ":",
+                    "Args:",
+                    "Arguments:",
+                    "Parameters:",
+                    "Returns:",
+                    "Yields:",
+                    "Raises:",
+                    "Example:",
+                    "Examples:",
+                    "Note:",
+                    "Notes:",
+                    "Tags:",
+                    "Category:",
+                    "Deprecated:",
+                )
+            ):
                 break
             description_lines.append(stripped)
 
@@ -238,34 +254,34 @@ class DocstringParser:
 def parse_function_metadata(func: Callable) -> ParsedMetadata:
     """
     解析函数的元数据。
-    
+
     便捷函数，使用 DocstringParser。
-    
+
     Args:
         func: 要解析的函数
-    
+
     Returns:
         解析后的元数据
-    
+
     Example:
         def get_weather(location: str, unit: str = "celsius") -> dict:
             \"\"\"
             获取指定位置的天气信息。
-            
+
             这是一个简单的天气查询工具，支持摄氏度/华氏度。
-            
+
             Args:
                 location: 城市名称，例如 "北京"
                 unit: 温度单位，"celsius" 或 "fahrenheit"
-            
+
             Returns:
                 包含天气信息的字典
-            
+
             Tags: weather, external-api
             Category: utility
             \"\"\"
             return {"temp": 25, "unit": unit}
-        
+
         metadata = parse_function_metadata(get_weather)
         print(metadata.description)  # "获取指定位置的天气信息。"
         print(metadata.tags)  # {"weather", "external-api"}
@@ -276,12 +292,12 @@ def parse_function_metadata(func: Callable) -> ParsedMetadata:
 def extract_tool_info_from_source(func: Callable) -> dict[str, Any]:
     """
     从函数源码提取完整的工具信息。
-    
+
     包括函数签名、文档字符串、类型注解等。
-    
+
     Args:
         func: 要分析的函数
-    
+
     Returns:
         包含所有工具信息的字典
     """

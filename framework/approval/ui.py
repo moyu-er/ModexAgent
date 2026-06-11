@@ -90,9 +90,7 @@ class IMUserInterface(ApprovalUserInterface):
             )
             await self._output.send(msg, session_id)
         except Exception:
-            logger.exception(
-                "IMUserInterface.render_message failed: session=%s", session_id
-            )
+            logger.exception("IMUserInterface.render_message failed: session=%s", session_id)
         return msg_id
 
     async def render_question(

@@ -28,7 +28,7 @@ class PluginContext:
     - get_config() reads from bot_config.yml plugins.configurations section.
     """
 
-    def __init__(self, plugin_name: str, config: dict[str, Any] | None = None):
+    def __init__(self, plugin_name: str, config: dict[str, Any] | None = None) -> None:
         self._name = plugin_name
         self._config = config or {}
 

@@ -10,18 +10,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    pass
+    from framework.multi_agent.registry import AgentInstance
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class _PoolEntry:
-    instance: Any  # AgentInstance — use Any to avoid circular import
+    instance: "AgentInstance"
     created_at: float
     last_used: float
 
@@ -39,7 +40,7 @@ class SubagentPool:
         ttl_seconds: float = 1800.0,
         eviction_check_interval: float = 120.0,
     ) -> None:
-        self._pool: dict[str, _PoolEntry] = {}   # key = agent_type
+        self._pool: dict[str, _PoolEntry] = {}  # key = agent_type
         self._lru_order: list[str] = []
         self._max_size = max_size
         self._ttl = ttl_seconds
@@ -53,8 +54,8 @@ class SubagentPool:
     async def acquire(
         self,
         agent_type: str,
-        factory: Callable[[], Awaitable[Any]],
-    ) -> Any:
+        factory: Callable[[], Awaitable["AgentInstance"]],
+    ) -> "AgentInstance":
         """Get or create a subagent instance for ``agent_type``.
 
         ``factory`` is called only on cache miss.
@@ -149,10 +150,7 @@ class SubagentPool:
     async def _cleanup_stale(self) -> None:
         now = time.monotonic()
         async with self._lock:
-            stale = [
-                t for t in self._lru_order
-                if now - self._pool[t].last_used > self._ttl
-            ]
+            stale = [t for t in self._lru_order if now - self._pool[t].last_used > self._ttl]
         for agent_type in stale:
             logger.info(
                 "SubagentPool: evicting stale %s (idle %.0fs)",

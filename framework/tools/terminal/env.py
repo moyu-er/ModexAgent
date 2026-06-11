@@ -23,7 +23,10 @@ def _registry_path_entries() -> list[str]:
 
     entries: list[str] = []
     for hive, subkey in (
-        (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+        (
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+        ),
         (winreg.HKEY_CURRENT_USER, r"Environment"),
     ):
         try:

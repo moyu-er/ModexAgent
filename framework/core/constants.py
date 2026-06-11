@@ -8,11 +8,13 @@ from enum import Enum, StrEnum
 
 class ToolCallType(str, Enum):
     """工具调用类型"""
+
     FUNCTION = "function"
 
 
 class ToolChoice(str, Enum):
     """工具选择策略"""
+
     AUTO = "auto"
     NONE = "none"
     REQUIRED = "required"
@@ -20,6 +22,7 @@ class ToolChoice(str, Enum):
 
 class FinishReason(str, Enum):
     """LLM 响应完成原因"""
+
     STOP = "stop"
     TOOL_CALLS = "tool_calls"
     LENGTH = "length"
@@ -47,6 +50,7 @@ class StopReason(StrEnum):
 
 class ErrorMessages:
     """错误消息常量"""
+
     NO_TOOL_REGISTRY = "没有可用的工具注册表"
     MAX_TOOL_CALLS_EXCEEDED = "达到最大工具调用次数限制"
     MAX_ITERATIONS_EXCEEDED = "达到最大迭代次数限制"
@@ -61,6 +65,7 @@ class ErrorMessages:
 
 class DefaultValues:
     """默认值常量"""
+
     SYSTEM_PROMPT = "You are a helpful AI assistant. You have access to the conversation history and can remember previous messages in the current session."
     TEMPERATURE = 0.7
     MAX_ITERATIONS = 10
@@ -82,5 +87,6 @@ class DefaultValues:
 
 class ToolSchemaConstants:
     """工具 Schema 相关常量"""
+
     TYPE_FUNCTION = "function"
     PARAM_TYPE_OBJECT = "object"

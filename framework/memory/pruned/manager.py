@@ -11,13 +11,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from framework.memory.tags import PrunedTag
 from framework.memory.pruned.models import PrunedIndexEntry
+from framework.memory.tags import PrunedTag
 from framework.utils.timezone import get_user_timezone
 from framework.utils.xml import xml_attr, xml_text
 
 if TYPE_CHECKING:
-    from framework.memory.pruned.storage import PrunedStorage, FilePrunedStorage  # type: ignore[no-redef]
+    from framework.memory.pruned.storage import (
+        PrunedStorage,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +64,13 @@ class PrunedManager:
         serializable = self._serialize_messages(pruned_messages)
         storage.write_pruned(filename, serializable)
         entry = self._build_index_entry(
-            pruned_messages, resolved_topic, cleanup_time, filename, start, end, session_id,
+            pruned_messages,
+            resolved_topic,
+            cleanup_time,
+            filename,
+            start,
+            end,
+            session_id,
         )
         storage.append_index(entry)
         storage.prune_oldest(self._max_files)
@@ -211,7 +219,9 @@ class PrunedManager:
         if topic is not None:
             return topic[: self._topic_max]
         if start is not None and end is not None:
-            result = f"{start.strftime(display_fmt)} ~ {end.strftime(display_fmt)} ({count} messages)"
+            result = (
+                f"{start.strftime(display_fmt)} ~ {end.strftime(display_fmt)} ({count} messages)"
+            )
         else:
             result = f"{cleanup_time.strftime(display_fmt)} ({count} messages)"
         return result[: self._topic_max]

@@ -81,8 +81,7 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
     async def _do_prune(self, storage: MemoryStorage) -> None:
         state = await self._load_state(storage)
         safe_delete = (
-            state.knowledge_consumed_archive_id
-            - self._config.retained_consumed_archive_pairs
+            state.knowledge_consumed_archive_id - self._config.retained_consumed_archive_pairs
         )
         if safe_delete <= 0:
             return
@@ -196,7 +195,9 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
             "archive_id": archive_id,
             "source_session_id": context.session_id,
             "source_agent_id": context.agent_id,
-            "source_agent_role": str(context.agent_role) if context.agent_role is not None else None,
+            "source_agent_role": str(context.agent_role)
+            if context.agent_role is not None
+            else None,
         }
         created_at = metadata.get("created_at")
         return {
@@ -224,14 +225,16 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
 
     async def _append_raw(self, context: MemoryContext, entry: ArchiveEntry) -> ArchiveEntry:
         storage = await self._storage_factory(context)
-        stored = await storage.append_log({
-            "summary": entry.summary,
-            "metadata": dict(entry.metadata),
-            "raw_refs": list(entry.raw_refs),
-            "session_id": context.session_id,
-            "channel": ArchiveChannel.CONTEXT.value,
-            "created_at": entry.created_at.isoformat() if entry.created_at else None,
-        })
+        stored = await storage.append_log(
+            {
+                "summary": entry.summary,
+                "metadata": dict(entry.metadata),
+                "raw_refs": list(entry.raw_refs),
+                "session_id": context.session_id,
+                "channel": ArchiveChannel.CONTEXT.value,
+                "created_at": entry.created_at.isoformat() if entry.created_at else None,
+            }
+        )
         await self._maybe_prune(context)
         created_at = stored.get("created_at")
         return ArchiveEntry(

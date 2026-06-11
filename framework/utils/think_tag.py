@@ -7,9 +7,9 @@ streaming and non-streaming paths share the same format definitions.
 from enum import Enum, auto
 
 from framework.utils.helpers import (
+    BUILTIN_THINK_FORMATS,
     ThinkExtractionResult,
     ThinkFormat,
-    BUILTIN_THINK_FORMATS,
     extract_think_prefix,
     looks_like_prefix,
 )
@@ -101,7 +101,7 @@ class ThinkTagExtractor:
             end_pos = lower.find(fmt.end_marker.lower(), start)
             if end_pos != -1:
                 reasoning = text[start:end_pos]
-                after = text[end_pos + len(fmt.end_marker):]
+                after = text[end_pos + len(fmt.end_marker) :]
                 after = self._trim_nl(after)
                 self._state = _ThinkState.DONE
                 self._buffer = ""
@@ -111,7 +111,7 @@ class ThinkTagExtractor:
             after_open = text[start:]
             suffix = _close_tag_suffix(after_open, fmt.end_marker)
             if suffix:
-                delta = after_open[:-len(suffix)] if len(after_open) > len(suffix) else None
+                delta = after_open[: -len(suffix)] if len(after_open) > len(suffix) else None
                 self._pending = suffix
             else:
                 delta = after_open
@@ -137,7 +137,7 @@ class ThinkTagExtractor:
 
         if end_pos != -1:
             before_close = combined[:end_pos]
-            after = combined[end_pos + len(end_marker):]
+            after = combined[end_pos + len(end_marker) :]
             after = self._trim_nl(after)
             self._state = _ThinkState.DONE
             self._pending = ""
@@ -145,7 +145,7 @@ class ThinkTagExtractor:
 
         suffix = _close_tag_suffix(combined, end_marker)
         if suffix:
-            safe = combined[:-len(suffix)] if len(combined) > len(suffix) else ""
+            safe = combined[: -len(suffix)] if len(combined) > len(suffix) else ""
             self._pending = suffix
             return ThinkExtractionResult(None, safe or None)
 

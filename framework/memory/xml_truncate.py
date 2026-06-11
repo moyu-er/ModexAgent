@@ -5,6 +5,7 @@ All truncation preserves XML structure — only text content inside
 truncatable_paths elements is modified. Length pre-filter avoids
 unnecessary parsing overhead.
 """
+
 from __future__ import annotations
 
 import logging
@@ -47,7 +48,10 @@ def truncate_xml_safe(
         # synthetic root and retry.
         try:
             return _truncate_xml_structured(
-                f"<r>{content}</r>", max_chars, paths, unwrap_root=True,
+                f"<r>{content}</r>",
+                max_chars,
+                paths,
+                unwrap_root=True,
             )
         except ET.ParseError:
             logger.debug("XML parse failed (multi-root), using boundary fallback")
@@ -125,9 +129,9 @@ def _truncate_xml_boundary(content: str, max_chars: int) -> str:
     # Walk backward through content to find a valid cut point
     open_tags = _find_open_tags(content, max_chars)
     for tag in reversed(open_tags):
-        prefix += f'</{tag}>'
+        prefix += f"</{tag}>"
 
-    prefix += '\n<!-- Content truncated -->'
+    prefix += "\n<!-- Content truncated -->"
     return prefix
 
 
@@ -144,16 +148,16 @@ def _find_open_tags(content: str, cut_pos: int) -> list[str]:
     n = len(prefix)
 
     while i < n:
-        if prefix[i] != '<':
+        if prefix[i] != "<":
             i += 1
             continue
 
         # Check for closing tag: </name>
-        if i + 1 < n and prefix[i + 1] == '/':
-            end = prefix.find('>', i)
+        if i + 1 < n and prefix[i + 1] == "/":
+            end = prefix.find(">", i)
             if end == -1:
                 break
-            tag_content = prefix[i + 2:end].strip()
+            tag_content = prefix[i + 2 : end].strip()
             tag_name = tag_content.split()[0] if tag_content else ""
             if tag_name and open_tags and open_tags[-1] == tag_name:
                 open_tags.pop()
@@ -161,19 +165,19 @@ def _find_open_tags(content: str, cut_pos: int) -> list[str]:
             continue
 
         # Check for self-closing tag: <name ... />
-        end = prefix.find('>', i)
+        end = prefix.find(">", i)
         if end == -1:
             # Unclosed tag starting at or before cut — we're inside a tag
             break
 
-        tag_body = prefix[i + 1:end]
+        tag_body = prefix[i + 1 : end]
         # Skip processing instructions and comments
-        if tag_body.startswith('?') or tag_body.startswith('!'):
+        if tag_body.startswith("?") or tag_body.startswith("!"):
             i = end + 1
             continue
 
         # Check if self-closing
-        if tag_body.rstrip().endswith('/'):
+        if tag_body.rstrip().endswith("/"):
             i = end + 1
             continue
 
@@ -203,7 +207,7 @@ def truncate_for_archive(content: str, max_chars: int = 1200) -> str:
         return content
 
     # Detect XML: try to preserve structure
-    if content.strip().startswith('<'):
+    if content.strip().startswith("<"):
         try:
             return truncate_xml_safe(content, max_chars) + "\n<!-- truncated for archive -->"
         except Exception:

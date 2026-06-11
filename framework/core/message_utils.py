@@ -9,7 +9,6 @@
 """
 
 from collections.abc import Sequence
-from datetime import datetime, timezone
 from typing import Any
 
 from framework.core.types import MessageRole
@@ -72,15 +71,17 @@ def normalize_agent_messages_for_llm(
             + "</agent_message>"
         )
 
-        converted.append({
-            "role": MessageRole.USER,
-            "content": xml_content,
-            "content_format": ContentFormat.XML,
-            "truncatable_paths": ["content"],
-            "name": msg_dict.get("name"),
-            "tool_calls": msg_dict.get("tool_calls"),
-            "tool_call_id": msg_dict.get("tool_call_id"),
-            "metadata": msg_dict.get("metadata"),
-        })
+        converted.append(
+            {
+                "role": MessageRole.USER,
+                "content": xml_content,
+                "content_format": ContentFormat.XML,
+                "truncatable_paths": ["content"],
+                "name": msg_dict.get("name"),
+                "tool_calls": msg_dict.get("tool_calls"),
+                "tool_call_id": msg_dict.get("tool_call_id"),
+                "metadata": msg_dict.get("metadata"),
+            }
+        )
 
     return converted, has_agent

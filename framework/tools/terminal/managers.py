@@ -12,7 +12,13 @@ from framework.tools.terminal.backends.visible_windows import VisibleWindowsPtyB
 from framework.tools.terminal.backends.windows_hidden import WindowsHiddenPtyBackend
 from framework.tools.terminal.config import TerminalRuntimeConfig
 from framework.tools.terminal.session import TerminalInfo, TerminalSession
-from framework.tools.terminal.types import Platform, ShellFamily, ShellInfo, TerminalVisibility, detect_platform_shell
+from framework.tools.terminal.types import (
+    Platform,
+    ShellFamily,
+    ShellInfo,
+    TerminalVisibility,
+    detect_platform_shell,
+)
 
 
 class TerminalManagerBase(ABC):
@@ -201,7 +207,8 @@ class LinuxTerminalManager(BaseTerminalManager):
     def __init__(self, config: TerminalRuntimeConfig | None = None) -> None:
         shell_info = detect_platform_shell()
         super().__init__(
-            shell_info=shell_info or ShellInfo(
+            shell_info=shell_info
+            or ShellInfo(
                 family=ShellFamily.BASH,
                 path="/bin/sh",
                 platform=Platform.LINUX,

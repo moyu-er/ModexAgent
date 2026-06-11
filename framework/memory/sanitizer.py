@@ -187,9 +187,10 @@ class DefaultSessionToolChainSanitizer:
 
     @staticmethod
     def _has_plain_assistant_after(
-        messages: Sequence[dict[str, Any]], tool_assistant_index: int,
+        messages: Sequence[dict[str, Any]],
+        tool_assistant_index: int,
     ) -> bool:
-        for msg in messages[tool_assistant_index + 1:]:
+        for msg in messages[tool_assistant_index + 1 :]:
             role = msg.get("role")
             if role == str(MessageRole.ASSISTANT) and not msg.get("tool_calls"):
                 return True

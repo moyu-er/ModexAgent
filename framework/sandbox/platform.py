@@ -7,6 +7,7 @@ from enum import Enum
 
 class Platform(Enum):
     """Supported platforms."""
+
     WINDOWS = "windows"
     MACOS = "darwin"
     LINUX = "linux"
@@ -15,7 +16,7 @@ class Platform(Enum):
 
 def get_platform() -> Platform:
     """Detect the current operating system platform.
-    
+
     Returns:
         Platform enum value for the current OS.
     """
@@ -31,7 +32,7 @@ def get_platform() -> Platform:
 
 def get_default_shell() -> str:
     """Get the default shell for the current platform.
-    
+
     Returns:
         Shell command string (e.g., 'bash', 'cmd.exe', 'powershell.exe').
     """
@@ -48,7 +49,7 @@ def get_default_shell() -> str:
 
 def get_shell_executable() -> str | None:
     """Get the full path to the default shell executable.
-    
+
     Returns:
         Path to shell executable or None if not found.
     """
@@ -60,11 +61,11 @@ def get_shell_executable() -> str | None:
 
 def convert_path_for_platform(path: str, target_platform: Platform | None = None) -> str:
     """Convert a path to use the correct separators for the target platform.
-    
+
     Args:
         path: The path to convert.
         target_platform: Target platform. If None, uses current platform.
-        
+
     Returns:
         Path with correct separators for the target platform.
     """
@@ -84,7 +85,7 @@ def convert_path_for_platform(path: str, target_platform: Platform | None = None
 
 def is_unix_like() -> bool:
     """Check if the current platform is Unix-like (macOS or Linux).
-    
+
     Returns:
         True if platform is macOS or Linux, False otherwise.
     """
@@ -94,7 +95,7 @@ def is_unix_like() -> bool:
 
 def get_command_separator() -> str:
     """Get the command separator for the current platform.
-    
+
     Returns:
         '&&' for Unix-like, '&' for Windows.
     """

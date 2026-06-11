@@ -31,7 +31,7 @@ class PexpectPtyBackend(TerminalBackend):
     def __init__(self) -> None:
         super().__init__()
         self._pexpect: object | None = None  # pexpect module, lazy-loaded in start()
-        self._proc: object | None = None     # pexpect.spawn
+        self._proc: object | None = None  # pexpect.spawn
         self._shell: str | None = None
         self._output_buffer = SlidingOutputBuffer()
 
@@ -49,6 +49,7 @@ class PexpectPtyBackend(TerminalBackend):
 
         if self._pexpect is None:
             import pexpect as _pexpect_mod
+
             self._pexpect = _pexpect_mod
 
         loop = asyncio.get_running_loop()
@@ -101,9 +102,7 @@ class PexpectPtyBackend(TerminalBackend):
         except Exception:
             return ""
 
-    async def read_pending(
-        self, timeout: float = 5.0, max_size: int = 65536
-    ) -> TerminalRead:
+    async def read_pending(self, timeout: float = 5.0, max_size: int = 65536) -> TerminalRead:
         raw = await self.read(timeout=timeout, max_size=max_size)
         if raw:
             self._append_to_buffer(raw)
@@ -142,7 +141,8 @@ class PexpectPtyBackend(TerminalBackend):
             loop = asyncio.get_running_loop()
             try:
                 await loop.run_in_executor(
-                    None, lambda: self._proc.terminate(force=False)  # type: ignore[union-attr]
+                    None,
+                    lambda: self._proc.terminate(force=False),  # type: ignore[union-attr]
                 )
             except Exception as exc:
                 logger.debug("pexpect terminate failed: %s", exc)
@@ -153,7 +153,8 @@ class PexpectPtyBackend(TerminalBackend):
             loop = asyncio.get_running_loop()
             try:
                 await loop.run_in_executor(
-                    None, lambda: self._proc.terminate(force=True)  # type: ignore[union-attr]
+                    None,
+                    lambda: self._proc.terminate(force=True),  # type: ignore[union-attr]
                 )
             except Exception as exc:
                 logger.debug("pexpect kill failed: %s", exc)

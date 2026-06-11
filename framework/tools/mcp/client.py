@@ -43,7 +43,7 @@ _TRANSPORT_ALIASES = {
 class BaseMCPClient(ABC):
     """MCP client base class."""
 
-    def __init__(self, name: str):
+    def __init__(self, name: str) -> None:
         self.name = name
         self.session = None
         self._tools: list[dict[str, Any]] = []
@@ -80,11 +80,13 @@ class BaseMCPClient(ABC):
             response = await self.session.list_tools()
             tools = []
             for tool in response.tools:
-                tools.append({
-                    "name": tool.name,
-                    "description": tool.description,
-                    "inputSchema": tool.inputSchema,
-                })
+                tools.append(
+                    {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "inputSchema": tool.inputSchema,
+                    }
+                )
             self._tools = tools
             return tools
         except Exception as e:
@@ -100,12 +102,14 @@ class BaseMCPClient(ABC):
             response = await self.session.list_resources()
             resources = []
             for resource in response.resources:
-                resources.append({
-                    "name": resource.name,
-                    "description": resource.description,
-                    "uri": resource.uri,
-                    "mimeType": getattr(resource, "mimeType", None),
-                })
+                resources.append(
+                    {
+                        "name": resource.name,
+                        "description": resource.description,
+                        "uri": resource.uri,
+                        "mimeType": getattr(resource, "mimeType", None),
+                    }
+                )
             return resources
         except Exception as e:
             _logger.debug("[MCP:%s] Failed to list resources: %s", self.name, e)
@@ -120,18 +124,20 @@ class BaseMCPClient(ABC):
             response = await self.session.list_prompts()
             prompts = []
             for prompt in response.prompts:
-                prompts.append({
-                    "name": prompt.name,
-                    "description": prompt.description,
-                    "arguments": [
-                        {
-                            "name": arg.name,
-                            "description": getattr(arg, "description", None),
-                            "required": getattr(arg, "required", False),
-                        }
-                        for arg in (prompt.arguments or [])
-                    ],
-                })
+                prompts.append(
+                    {
+                        "name": prompt.name,
+                        "description": prompt.description,
+                        "arguments": [
+                            {
+                                "name": arg.name,
+                                "description": getattr(arg, "description", None),
+                                "required": getattr(arg, "required", False),
+                            }
+                            for arg in (prompt.arguments or [])
+                        ],
+                    }
+                )
             return prompts
         except Exception as e:
             _logger.debug("[MCP:%s] Failed to list prompts: %s", self.name, e)
@@ -164,11 +170,19 @@ class BaseMCPClient(ABC):
         except McpError as exc:
             _logger.error(
                 "[MCP:%s] Tool '%s' MCP error: code=%s message=%s",
-                self.name, tool_name, exc.error.code, exc.error.message,
+                self.name,
+                tool_name,
+                exc.error.code,
+                exc.error.message,
             )
-            return {"success": False, "error": "MCP error [%s]: %s" % (exc.error.code, exc.error.message)}
+            return {
+                "success": False,
+                "error": "MCP error [%s]: %s" % (exc.error.code, exc.error.message),
+            }
         except Exception as e:
-            _logger.debug("[MCP:%s] Tool '%s' failed: %s: %s", self.name, tool_name, type(e).__name__, e)
+            _logger.debug(
+                "[MCP:%s] Tool '%s' failed: %s: %s", self.name, tool_name, type(e).__name__, e
+            )
             return {"success": False, "error": str(e)}
 
         content_parts = []
@@ -219,11 +233,19 @@ class BaseMCPClient(ABC):
         except McpError as exc:
             _logger.error(
                 "[MCP:%s] Resource '%s' MCP error: code=%s message=%s",
-                self.name, uri, exc.error.code, exc.error.message,
+                self.name,
+                uri,
+                exc.error.code,
+                exc.error.message,
             )
-            return {"success": False, "error": "MCP error [%s]: %s" % (exc.error.code, exc.error.message)}
+            return {
+                "success": False,
+                "error": "MCP error [%s]: %s" % (exc.error.code, exc.error.message),
+            }
         except Exception as e:
-            _logger.debug("[MCP:%s] Resource '%s' failed: %s: %s", self.name, uri, type(e).__name__, e)
+            _logger.debug(
+                "[MCP:%s] Resource '%s' failed: %s: %s", self.name, uri, type(e).__name__, e
+            )
             return {"success": False, "error": str(e)}
 
         parts = []
@@ -256,7 +278,9 @@ class BaseMCPClient(ABC):
                 timeout=timeout,
             )
         except TimeoutError:
-            _logger.debug("[MCP:%s] Prompt '%s' timed out after %ds", self.name, prompt_name, timeout)
+            _logger.debug(
+                "[MCP:%s] Prompt '%s' timed out after %ds", self.name, prompt_name, timeout
+            )
             return {"success": False, "error": "Prompt call timed out after %ds" % timeout}
         except asyncio.CancelledError:
             task = asyncio.current_task()
@@ -267,11 +291,19 @@ class BaseMCPClient(ABC):
         except McpError as exc:
             _logger.error(
                 "[MCP:%s] Prompt '%s' MCP error: code=%s message=%s",
-                self.name, prompt_name, exc.error.code, exc.error.message,
+                self.name,
+                prompt_name,
+                exc.error.code,
+                exc.error.message,
             )
-            return {"success": False, "error": "MCP error [%s]: %s" % (exc.error.code, exc.error.message)}
+            return {
+                "success": False,
+                "error": "MCP error [%s]: %s" % (exc.error.code, exc.error.message),
+            }
         except Exception as e:
-            _logger.debug("[MCP:%s] Prompt '%s' failed: %s: %s", self.name, prompt_name, type(e).__name__, e)
+            _logger.debug(
+                "[MCP:%s] Prompt '%s' failed: %s: %s", self.name, prompt_name, type(e).__name__, e
+            )
             return {"success": False, "error": str(e)}
 
         parts = []
@@ -308,7 +340,7 @@ class StdioMCPClient(BaseMCPClient):
         command: str,
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
-    ):
+    ) -> None:
         super().__init__(name)
         self.command = command
         self.args = args or []
@@ -353,7 +385,7 @@ class SSEMCPClient(BaseMCPClient):
         name: str,
         url: str,
         headers: dict[str, str] | None = None,
-    ):
+    ) -> None:
         super().__init__(name)
         self.url = url
         self.headers = headers or {}
@@ -408,7 +440,7 @@ class StreamableHttpMCPClient(BaseMCPClient):
         name: str,
         url: str,
         headers: dict[str, str] | None = None,
-    ):
+    ) -> None:
         super().__init__(name)
         self.url = url
         self.headers = headers or {}
@@ -429,9 +461,7 @@ class StreamableHttpMCPClient(BaseMCPClient):
             read, write, _ = await self._exit_stack.enter_async_context(
                 streamable_http_client(self.url, http_client=http_client)
             )
-            self.session = await self._exit_stack.enter_async_context(
-                ClientSession(read, write)
-            )
+            self.session = await self._exit_stack.enter_async_context(ClientSession(read, write))
 
             await self.session.initialize()
             self._initialized = True

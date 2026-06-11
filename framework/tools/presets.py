@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from enum import Enum
+from pathlib import Path
 
 from framework.core.tool_manager import Tool
 from framework.tools.standard import (
@@ -21,22 +22,25 @@ class ToolPreset(str, Enum):
 
     Values map to tool factory lists in TOOL_PRESETS.
     """
-    FULL = "full"               # all tools + bash + terminal
-    READ_WRITE = "read_write"   # read + write + edit + grep/find + bash (review & fix)
-    READ_ONLY = "read_only"     # read + grep/find + bash (prompt-constrained read-only)
-    MINIMAL = "minimal"         # read + write + list + grep (no edit, no bash)
-    NONE = "none"               # no standard tools — communication tools only (MCP still loaded)
-    WEB = "web"                 # web search + web reader (opt-in, not included in FULL)
+
+    FULL = "full"  # all tools + bash + terminal
+    READ_WRITE = "read_write"  # read + write + edit + grep/find + bash (review & fix)
+    READ_ONLY = "read_only"  # read + grep/find + bash (prompt-constrained read-only)
+    MINIMAL = "minimal"  # read + write + list + grep (no edit, no bash)
+    NONE = "none"  # no standard tools — communication tools only (MCP still loaded)
+    WEB = "web"  # web search + web reader (opt-in, not included in FULL)
 
 
 class ContextMode(str, Enum):
     """Subagent context mode — controls memory inheritance strategy."""
+
     FRESH = "fresh"  # clean session, no parent context inherited
-    FORK = "fork"    # system-prompt injection of truncated parent context as read-only reference
+    FORK = "fork"  # system-prompt injection of truncated parent context as read-only reference
 
 
 class ThinkingBudget(str, Enum):
     """Thinking budget annotation for subagent LLM calls."""
+
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
@@ -44,8 +48,9 @@ class ThinkingBudget(str, Enum):
 
 class SystemPromptMode(str, Enum):
     """System prompt assembly mode for subagent creation."""
+
     REPLACE = "replace"  # subagent uses its own complete prompt
-    APPEND = "append"    # subagent prompt appended after parent's
+    APPEND = "append"  # subagent prompt appended after parent's
 
 
 def _make_standard_read() -> list[Tool]:
@@ -56,23 +61,34 @@ def _make_standard_read() -> list[Tool]:
 def _make_standard_read_write() -> list[Tool]:
     """Create read+write standard tools (no bash)."""
     return [
-        ReadFileTool(), WriteFileTool(), EditFileTool(),
-        ListDirTool(), SearchFilesTool(), FindFilesTool(),
+        ReadFileTool(),
+        WriteFileTool(),
+        EditFileTool(),
+        ListDirTool(),
+        SearchFilesTool(),
+        FindFilesTool(),
     ]
 
 
 def _make_standard_full() -> list[Tool]:
     """Create full standard tools (bash registered separately)."""
     return [
-        ReadFileTool(), WriteFileTool(), EditFileTool(),
-        ListDirTool(), SearchFilesTool(), FindFilesTool(),
+        ReadFileTool(),
+        WriteFileTool(),
+        EditFileTool(),
+        ListDirTool(),
+        SearchFilesTool(),
+        FindFilesTool(),
     ]
 
 
 def _make_standard_minimal() -> list[Tool]:
     """Create minimal tools (read + write + search, no edit, no bash)."""
     return [
-        ReadFileTool(), WriteFileTool(), ListDirTool(), SearchFilesTool(),
+        ReadFileTool(),
+        WriteFileTool(),
+        ListDirTool(),
+        SearchFilesTool(),
     ]
 
 
@@ -93,13 +109,16 @@ def get_preset_tools(
     preset: ToolPreset,
     *,
     subprocess_tool_factory: Callable[[], Tool] | None = None,
+    scoped_write_dir: Path | None = None,
 ) -> list[Tool]:
     """Return the list of tools for a preset.
 
     Args:
         preset: The tool preset enum value.
         subprocess_tool_factory: If provided, creates a bash tool (SubprocessTool or CommandTool).
-                                 Always added to FULL and READ_ONLY presets.
+        scoped_write_dir: If provided and the preset lacks native write capability
+            (READ_ONLY, NONE), a ScopedWriteFileTool restricted to this directory
+            is injected so the subagent can still write OUTPUT.md.
 
     Returns:
         List of Tool instances ready for registration.
@@ -116,8 +135,21 @@ def get_preset_tools(
     factory = tool_lists[preset]
     tools: list[Tool] = factory()
 
+    # Presets without native write/edit: inject scoped tools for OUTPUT.md
+    if scoped_write_dir is not None and preset in (ToolPreset.READ_ONLY, ToolPreset.NONE):
+        from framework.memory.tools.scoped_edit import ScopedEditFileTool
+        from framework.memory.tools.scoped_write import ScopedWriteFileTool
+
+        scoped = [scoped_write_dir]
+        tools.append(ScopedWriteFileTool(allowed_dirs=scoped))
+        tools.append(ScopedEditFileTool(allowed_dirs=scoped))
+
     # Bash tool: FULL, READ_ONLY, and READ_WRITE get bash; MINIMAL and NONE do not
-    if subprocess_tool_factory is not None and preset in (ToolPreset.FULL, ToolPreset.READ_ONLY, ToolPreset.READ_WRITE):
+    if subprocess_tool_factory is not None and preset in (
+        ToolPreset.FULL,
+        ToolPreset.READ_ONLY,
+        ToolPreset.READ_WRITE,
+    ):
         tools.append(subprocess_tool_factory())
 
     return tools

@@ -14,6 +14,7 @@ import time
 
 from framework.core.tool_manager import Tool
 from framework.tools.terminal.config import TerminalRuntimeConfig
+from framework.tools.terminal.guard import check_command_writable
 from framework.tools.terminal.managers import TerminalManagerBase
 from framework.tools.terminal.process_registry import ProcessRegistry, RunningSessionRuntime
 from framework.tools.terminal.prompt import (
@@ -21,10 +22,9 @@ from framework.tools.terminal.prompt import (
     sanitize_terminal_output,
 )
 from framework.tools.terminal.pty_keys import CursorKeyMode
-from framework.tools.terminal.guard import check_command_writable
 from framework.tools.terminal.session import TerminalSession
-from framework.utils.xml import xml_text
 from framework.tools.terminal.types import CommandResultStatus, ProcessStatus, TerminalCommandStatus
+from framework.utils.xml import xml_text
 
 
 def _build_command_xml(
@@ -47,11 +47,13 @@ def _build_command_xml(
         parts.append(f"<terminal>{xml_text(terminal)}</terminal>")
     if hint is not None:
         parts.append(f"<hint>{xml_text(hint)}</hint>")
-    parts.extend([
-        f"<output>{xml_text(output)}</output>",
-        f"<status>{status.value}</status>",
-        f"<elapsed_ms>{elapsed_ms}</elapsed_ms>",
-    ])
+    parts.extend(
+        [
+            f"<output>{xml_text(output)}</output>",
+            f"<status>{status.value}</status>",
+            f"<elapsed_ms>{elapsed_ms}</elapsed_ms>",
+        ]
+    )
     if idle_ms is not None:
         parts.append(f"<idle_ms>{idle_ms}</idle_ms>")
     if pages_scrolled is not None:
@@ -146,7 +148,10 @@ class CommandTool(Tool):
         yield_window_ms = self._config.default_yield_ms
 
         result = await poll_until_settled(
-            session, self._registry, proc.id, self._config,
+            session,
+            self._registry,
+            proc.id,
+            self._config,
             yield_ms=yield_window_ms,
             timeout_seconds=timeout_seconds,
             check_input_wait=True,
@@ -163,60 +168,108 @@ class CommandTool(Tool):
         match result.outcome:
             case PollOutcome.PROCESS_EXIT:
                 self._registry.mark_exited(
-                    proc.id, exit_code=None, exit_signal=None,
+                    proc.id,
+                    exit_code=None,
+                    exit_signal=None,
                     status=ProcessStatus.COMPLETED,
                 )
                 session.set_expected_state(TerminalCommandStatus.IDLE)
-                return _inject_hint(self._format_completed(result.output_parts, result.elapsed_ms, terminal=terminal_name))
+                return _inject_hint(
+                    self._format_completed(
+                        result.output_parts, result.elapsed_ms, terminal=terminal_name
+                    )
+                )
             case PollOutcome.PROMPT_DETECTED:
                 self._registry.mark_exited(
-                    proc.id, exit_code=None, exit_signal=None,
+                    proc.id,
+                    exit_code=None,
+                    exit_signal=None,
                     status=ProcessStatus.COMPLETED,
                 )
                 session.set_expected_state(TerminalCommandStatus.IDLE)
-                return _inject_hint(self._format_completed(result.output_parts, result.elapsed_ms, terminal=terminal_name))
+                return _inject_hint(
+                    self._format_completed(
+                        result.output_parts, result.elapsed_ms, terminal=terminal_name
+                    )
+                )
             case PollOutcome.INPUT_WAIT:
                 runtime = self._registry.running_runtime(proc.id)
                 session.set_expected_state(TerminalCommandStatus.WAITING_INPUT)
-                return _inject_hint(await self._format_running(
-                    session, result.output_parts, runtime, result.elapsed_ms,
-                    detected_input_wait=True, terminal=terminal_name,
-                ))
+                return _inject_hint(
+                    await self._format_running(
+                        session,
+                        result.output_parts,
+                        runtime,
+                        result.elapsed_ms,
+                        detected_input_wait=True,
+                        terminal=terminal_name,
+                    )
+                )
             case PollOutcome.LONG_RUNNING:
                 runtime = self._registry.running_runtime(proc.id)
                 session.set_expected_state(TerminalCommandStatus.LONG_RUNNING)
-                return _inject_hint(await self._format_running(
-                    session, result.output_parts, runtime, result.elapsed_ms,
-                    terminal=terminal_name,
-                ))
+                return _inject_hint(
+                    await self._format_running(
+                        session,
+                        result.output_parts,
+                        runtime,
+                        result.elapsed_ms,
+                        terminal=terminal_name,
+                    )
+                )
             case PollOutcome.STUCK:
                 raw_idle_ms = int((time.monotonic() - session.last_byte_at) * 1000)
                 session.set_expected_state(None)
-                return _inject_hint(self._format_stuck(result.output_parts, raw_idle_ms, result.elapsed_ms, terminal=terminal_name))
+                return _inject_hint(
+                    self._format_stuck(
+                        result.output_parts, raw_idle_ms, result.elapsed_ms, terminal=terminal_name
+                    )
+                )
             case PollOutcome.PAGINATED:
                 session.set_expected_state(TerminalCommandStatus.PAGINATED)
-                return _inject_hint(self._format_paginated(result.output_parts, result.elapsed_ms, terminal=terminal_name))
+                return _inject_hint(
+                    self._format_paginated(
+                        result.output_parts, result.elapsed_ms, terminal=terminal_name
+                    )
+                )
             case PollOutcome.YIELDED:
                 session.set_expected_state(TerminalCommandStatus.EXECUTING)
-                return _inject_hint(await self._format_running(
-                    session, result.output_parts, None, result.elapsed_ms,
-                    terminal=terminal_name,
-                ))
+                return _inject_hint(
+                    await self._format_running(
+                        session,
+                        result.output_parts,
+                        None,
+                        result.elapsed_ms,
+                        terminal=terminal_name,
+                    )
+                )
             case PollOutcome.TIMED_OUT:
                 await session.terminate()
                 self._registry.mark_exited(
-                    proc.id, exit_code=None, exit_signal="TIMEOUT",
-                    status=ProcessStatus.TIMED_OUT, timed_out=True,
+                    proc.id,
+                    exit_code=None,
+                    exit_signal="TIMEOUT",
+                    status=ProcessStatus.TIMED_OUT,
+                    timed_out=True,
                 )
                 session.set_expected_state(None)
-                return _inject_hint(self._format_timed_out(result.output_parts, timeout_seconds, result.elapsed_ms, terminal=terminal_name))
+                return _inject_hint(
+                    self._format_timed_out(
+                        result.output_parts,
+                        timeout_seconds,
+                        result.elapsed_ms,
+                        terminal=terminal_name,
+                    )
+                )
 
     # ------------------------------------------------------------------
     # XML formatting
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _format_completed(output_parts: list[str], elapsed_ms: int, *, terminal: str | None = None) -> str:
+    def _format_completed(
+        output_parts: list[str], elapsed_ms: int, *, terminal: str | None = None
+    ) -> str:
         raw = "".join(output_parts)
         output = sanitize_terminal_output(raw).rstrip()
         return _build_command_xml(
@@ -248,8 +301,12 @@ class CommandTool(Tool):
                 "Use process write, send_keys, submit, or paste to provide input."
             )
             return _build_command_xml(
-                output, CommandResultStatus.WAITING_INPUT, elapsed_ms,
-                terminal=terminal, idle_ms=idle_ms, message=message,
+                output,
+                CommandResultStatus.WAITING_INPUT,
+                elapsed_ms,
+                terminal=terminal,
+                idle_ms=idle_ms,
+                message=message,
             )
 
         message = (
@@ -257,8 +314,12 @@ class CommandTool(Tool):
             "process write/send_keys/paste for input."
         )
         xml = _build_command_xml(
-            output, CommandResultStatus.EXECUTING, elapsed_ms,
-            terminal=terminal, idle_ms=idle_ms, message=message,
+            output,
+            CommandResultStatus.EXECUTING,
+            elapsed_ms,
+            terminal=terminal,
+            idle_ms=idle_ms,
+            message=message,
         )
 
         if terminal_session.cursor_key_mode == CursorKeyMode.APPLICATION:
@@ -296,8 +357,11 @@ class CommandTool(Tool):
             "or Enter for next line. Use 'terminal current' to see the full screen."
         )
         return _build_command_xml(
-            output, CommandResultStatus.PAGINATED, elapsed_ms,
-            terminal=terminal, message=message,
+            output,
+            CommandResultStatus.PAGINATED,
+            elapsed_ms,
+            terminal=terminal,
+            message=message,
         )
 
     @staticmethod
@@ -316,8 +380,12 @@ class CommandTool(Tool):
             "or terminal current to check the screen."
         )
         return _build_command_xml(
-            output, CommandResultStatus.STUCK, elapsed_ms,
-            terminal=terminal, idle_ms=raw_idle_ms, message=message,
+            output,
+            CommandResultStatus.STUCK,
+            elapsed_ms,
+            terminal=terminal,
+            idle_ms=raw_idle_ms,
+            message=message,
         )
 
     @staticmethod
@@ -335,17 +403,19 @@ class CommandTool(Tool):
             "Partial output captured above."
         )
         return _build_command_xml(
-            output, CommandResultStatus.TIMED_OUT, elapsed_ms,
-            terminal=terminal, message=message,
+            output,
+            CommandResultStatus.TIMED_OUT,
+            elapsed_ms,
+            terminal=terminal,
+            message=message,
         )
 
     @staticmethod
     def _format_rejected(
-        guard_result: "TerminalGuardResult",
+        guard_result: TerminalGuardResult,
         *,
         terminal: str | None = None,
     ) -> str:
-        from framework.tools.terminal.guard import TerminalGuardResult
         snap = guard_result.snapshot
         parts = [
             "<command_result>",
@@ -354,11 +424,13 @@ class CommandTool(Tool):
         ]
         if terminal is not None:
             parts.append(f"<terminal>{xml_text(terminal)}</terminal>")
-        parts.extend([
-            "<diagnostic>",
-            f"<status>{snap.status.value}</status>",
-            f"<idle_ms>{snap.idle_ms}</idle_ms>",
-        ])
+        parts.extend(
+            [
+                "<diagnostic>",
+                f"<status>{snap.status.value}</status>",
+                f"<idle_ms>{snap.idle_ms}</idle_ms>",
+            ]
+        )
         if snap.elapsed_ms is not None:
             parts.append(f"<elapsed_ms>{snap.elapsed_ms}</elapsed_ms>")
         if snap.cursor_line:
@@ -370,4 +442,3 @@ class CommandTool(Tool):
         parts.append("</diagnostic>")
         parts.append("</command_result>")
         return "\n".join(parts)
-

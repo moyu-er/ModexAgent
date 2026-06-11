@@ -98,9 +98,7 @@ class TerminalBackend(ABC):
         """Send input to the PTY."""
 
     @abstractmethod
-    async def read_pending(
-        self, timeout: float = 5.0, max_size: int = 65536
-    ) -> TerminalRead:
+    async def read_pending(self, timeout: float = 5.0, max_size: int = 65536) -> TerminalRead:
         """Read pending PTY output as a TerminalRead struct."""
 
     async def read(self, timeout: float = 5.0, max_size: int = 65536) -> str:

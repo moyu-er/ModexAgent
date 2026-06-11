@@ -7,7 +7,7 @@ This module provides cross-platform OS-level isolation using native mechanisms:
 
 Example:
     from framework.sandbox.isolation import IsolationManager
-    
+
     # Create isolation manager
     isolation = IsolationManager(
         filesystem_config={
@@ -18,7 +18,7 @@ Example:
             "allow_domains": ["pypi.org", "github.com"],
         }
     )
-    
+
     # Execute command in isolated environment
     with isolation.isolated_shell() as shell:
         result = shell.execute("pip install requests")
@@ -39,13 +39,14 @@ logger = logging.getLogger(__name__)
 @dataclass
 class FilesystemIsolationConfig:
     """Filesystem isolation configuration.
-    
+
     Attributes:
         allow_read: List of paths allowed for reading
         allow_write: List of paths allowed for writing
         deny_read: List of paths explicitly denied for reading
         deny_write: List of paths explicitly denied for writing
     """
+
     allow_read: list[str] = field(default_factory=list)
     allow_write: list[str] = field(default_factory=list)
     deny_read: list[str] = field(default_factory=list)
@@ -55,12 +56,13 @@ class FilesystemIsolationConfig:
 @dataclass
 class NetworkIsolationConfig:
     """Network isolation configuration.
-    
+
     Attributes:
         allow_domains: List of domains allowed for network access
         deny_domains: List of domains explicitly denied
         allow_all: Whether to allow all network access (default: False)
     """
+
     allow_domains: list[str] = field(default_factory=list)
     deny_domains: list[str] = field(default_factory=list)
     allow_all: bool = False
@@ -69,13 +71,14 @@ class NetworkIsolationConfig:
 @dataclass
 class ResourceLimits:
     """Resource limits for sandboxed processes.
-    
+
     Attributes:
         max_memory_mb: Maximum memory in MB
         max_cpu_percent: Maximum CPU percentage
         max_processes: Maximum number of processes
         timeout_seconds: Maximum execution time
     """
+
     max_memory_mb: int | None = None
     max_cpu_percent: int | None = None
     max_processes: int | None = None
@@ -85,12 +88,13 @@ class ResourceLimits:
 @dataclass
 class IsolationConfig:
     """Complete isolation configuration.
-    
+
     Attributes:
         filesystem: Filesystem isolation settings
         network: Network isolation settings
         resources: Resource limits
     """
+
     filesystem: FilesystemIsolationConfig = field(default_factory=FilesystemIsolationConfig)
     network: NetworkIsolationConfig = field(default_factory=NetworkIsolationConfig)
     resources: ResourceLimits = field(default_factory=ResourceLimits)
@@ -99,7 +103,7 @@ class IsolationConfig:
 class IsolationProvider(abc.ABC):
     """Abstract base class for OS-level isolation providers."""
 
-    def __init__(self, config: IsolationConfig):
+    def __init__(self, config: IsolationConfig) -> None:
         self.config = config
 
     @abc.abstractmethod
@@ -110,10 +114,10 @@ class IsolationProvider(abc.ABC):
     @abc.abstractmethod
     def wrap_command(self, command: list[str]) -> list[str]:
         """Wrap a command with isolation.
-        
+
         Args:
             command: The command to wrap
-            
+
         Returns:
             Modified command with isolation applied
         """
@@ -127,7 +131,7 @@ class IsolationProvider(abc.ABC):
 
 class BubblewrapProvider(IsolationProvider):
     """Linux bubblewrap-based isolation provider.
-    
+
     Uses bubblewrap (bwrap) to create a minimal sandbox with:
     - New mount namespace (filesystem isolation)
     - New network namespace (if network isolation enabled)
@@ -144,7 +148,7 @@ class BubblewrapProvider(IsolationProvider):
 
     def wrap_command(self, command: list[str]) -> list[str]:
         """Wrap command with bubblewrap.
-        
+
         Creates a sandbox with:
         - Read-only root filesystem
         - Writable tmpfs for /tmp
@@ -154,13 +158,18 @@ class BubblewrapProvider(IsolationProvider):
         bwrap_args = ["bwrap"]
 
         # Basic sandbox setup
-        bwrap_args.extend([
-            "--unshare-all",  # Unshare all namespaces
-            "--die-with-parent",  # Kill sandbox when parent dies
-            "--proc", "/proc",  # Mount new proc filesystem
-            "--dev", "/dev",  # Mount minimal dev filesystem
-            "--tmpfs", "/tmp",  # Writable tmpfs for /tmp
-        ])
+        bwrap_args.extend(
+            [
+                "--unshare-all",  # Unshare all namespaces
+                "--die-with-parent",  # Kill sandbox when parent dies
+                "--proc",
+                "/proc",  # Mount new proc filesystem
+                "--dev",
+                "/dev",  # Mount minimal dev filesystem
+                "--tmpfs",
+                "/tmp",  # Writable tmpfs for /tmp
+            ]
+        )
 
         # Filesystem isolation
         fs = self.config.filesystem
@@ -198,7 +207,7 @@ class BubblewrapProvider(IsolationProvider):
 
 class SandboxExecProvider(IsolationProvider):
     """macOS sandbox-exec-based isolation provider.
-    
+
     Uses sandbox-exec with Seatbelt profiles to enforce:
     - Filesystem access restrictions
     - Network access restrictions
@@ -214,7 +223,7 @@ class SandboxExecProvider(IsolationProvider):
 
     def _generate_profile(self) -> str:
         """Generate a Seatbelt profile for the sandbox.
-        
+
         Returns:
             Seatbelt profile string
         """
@@ -241,21 +250,17 @@ class SandboxExecProvider(IsolationProvider):
         """Wrap command with sandbox-exec."""
         profile = self._generate_profile()
 
-        return [
-            "sandbox-exec",
-            "-p", profile,
-            *command
-        ]
+        return ["sandbox-exec", "-p", profile, *command]
 
 
 class WindowsIsolationProvider(IsolationProvider):
     """Windows native isolation provider.
-    
+
     Uses Windows security mechanisms:
     - Restricted Token (CreateRestrictedToken)
     - Low Integrity Level
     - Job Objects for resource limits
-    
+
     Reference: Trae/AgentBox implementation
     """
 
@@ -268,7 +273,7 @@ class WindowsIsolationProvider(IsolationProvider):
 
     def wrap_command(self, command: list[str]) -> list[str]:
         """Wrap command with Windows isolation.
-        
+
         Note: Full implementation requires ctypes/CFFI for Win32 API calls.
         This is a simplified version using PowerShell constraints.
         """
@@ -283,7 +288,8 @@ class WindowsIsolationProvider(IsolationProvider):
         # Build a constrained execution environment
         ps_script = [
             "powershell.exe",
-            "-ExecutionPolicy", "Restricted",
+            "-ExecutionPolicy",
+            "Restricted",
             "-Command",
         ]
 
@@ -294,10 +300,12 @@ class WindowsIsolationProvider(IsolationProvider):
         # NOTE: Do NOT add Set-Location here. subprocess.Popen(cwd=...) handles
         # working directory correctly. Adding Set-Location would override it and
         # cause files to be created in the wrong directory.
-        constrained_cmd = "; ".join([
-            "$ErrorActionPreference = 'Stop'",
-            " ".join(command),
-        ])
+        constrained_cmd = "; ".join(
+            [
+                "$ErrorActionPreference = 'Stop'",
+                " ".join(command),
+            ]
+        )
 
         ps_script.append(constrained_cmd)
 
@@ -306,20 +314,20 @@ class WindowsIsolationProvider(IsolationProvider):
 
 class IsolationManager:
     """Manager for OS-level sandbox isolation.
-    
+
     Automatically selects the best available isolation provider
     for the current platform.
-    
+
     Example:
         manager = IsolationManager()
-        
+
         with manager.isolated_shell() as shell:
             result = shell.run(["pip", "install", "requests"])
     """
 
-    def __init__(self, config: IsolationConfig | None = None):
+    def __init__(self, config: IsolationConfig | None = None) -> None:
         """Initialize isolation manager.
-        
+
         Args:
             config: Isolation configuration. If None, uses defaults.
         """
@@ -360,10 +368,10 @@ class IsolationManager:
 
     def wrap_command(self, command: list[str]) -> list[str]:
         """Wrap a command with isolation.
-        
+
         Args:
             command: Command to wrap
-            
+
         Returns:
             Command with isolation applied, or original if no provider available
         """
@@ -373,11 +381,11 @@ class IsolationManager:
 
     def execute(self, command: list[str], **kwargs) -> subprocess.CompletedProcess:
         """Execute a command in isolated environment.
-        
+
         Args:
             command: Command to execute
             **kwargs: Additional arguments passed to subprocess.run
-            
+
         Returns:
             CompletedProcess result
         """
@@ -385,17 +393,12 @@ class IsolationManager:
 
         logger.debug(f"Executing isolated command: {' '.join(isolated_cmd)}")
 
-        return subprocess.run(
-            isolated_cmd,
-            capture_output=True,
-            text=True,
-            **kwargs
-        )
+        return subprocess.run(isolated_cmd, capture_output=True, text=True, **kwargs)
 
 
 def get_default_isolation() -> IsolationManager:
     """Get default isolation manager with sensible defaults.
-    
+
     Returns:
         IsolationManager with default configuration
     """
@@ -415,14 +418,14 @@ def get_default_isolation() -> IsolationManager:
 # Convenience function for quick isolation
 def isolate_command(command: list[str], **isolation_kwargs) -> subprocess.CompletedProcess:
     """Execute a command with OS-level isolation.
-    
+
     Args:
         command: Command to execute
         **isolation_kwargs: Isolation configuration options
-        
+
     Returns:
         CompletedProcess result
-        
+
     Example:
         result = isolate_command(["pip", "install", "requests"])
         print(result.stdout)

@@ -17,12 +17,14 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ToolConfig:
     """单个工具的配置"""
-    enabled: bool = True                     # 是否启用
+
+    enabled: bool = True  # 是否启用
 
 
 @dataclass
 class ToolManagerConfig:
     """ToolManager 全局配置"""
+
     pass
 
 
@@ -45,7 +47,7 @@ class Tool(DynamicSchemaProvider):
         description: str | None = None,
         parameters: dict[str, Any] | None = None,
         config: ToolConfig | None = None,
-    ):
+    ) -> None:
         # 如果子类已经定义了 name/description/parameters 作为属性，则使用它们
         # 否则使用传入的参数
         self._name = name
@@ -65,14 +67,18 @@ class Tool(DynamicSchemaProvider):
         """工具描述"""
         if self._description is not None:
             return self._description
-        raise NotImplementedError("Tool must define 'description' either via __init__ or as a property")
+        raise NotImplementedError(
+            "Tool must define 'description' either via __init__ or as a property"
+        )
 
     @property
     def parameters(self) -> dict[str, Any]:
         """工具参数定义"""
         if self._parameters is not None:
             return self._parameters
-        raise NotImplementedError("Tool must define 'parameters' either via __init__ or as a property")
+        raise NotImplementedError(
+            "Tool must define 'parameters' either via __init__ or as a property"
+        )
 
     @abstractmethod
     async def execute(self, **kwargs) -> Any:
@@ -108,7 +114,6 @@ class Tool(DynamicSchemaProvider):
         return self.get_schema()
 
 
-
 class ToolResult:
     """工具执行结果
 
@@ -126,7 +131,7 @@ class ToolResult:
         execution_time: float = 0.0,
         call_id: str | None = None,
         overflow_processed: bool = False,
-    ):
+    ) -> None:
         self.tool_name = tool_name
         self.result = result
         self.error = error
@@ -164,6 +169,7 @@ class ToolResult:
             content_format 和 truncatable_paths 元数据，供治理层截断。
         """
         from .types import MessageRole
+
         content = self.result if self.success else f"Error: {self.error}"
         content_str = str(content) if content is not None else ""
         msg: dict[str, Any] = {
@@ -180,6 +186,7 @@ class ToolResult:
         paths = get_terminal_xml_truncatable_paths(content_str)
         if paths is not None:
             from framework.memory.core.message import ContentFormat
+
             msg["content_format"] = ContentFormat.XML.value
             msg["truncatable_paths"] = paths
         return msg
@@ -199,7 +206,7 @@ class ToolManager(ABC):
     - LLM 调用
     """
 
-    def __init__(self, config: ToolManagerConfig | None = None):
+    def __init__(self, config: ToolManagerConfig | None = None) -> None:
         self.config = config or ToolManagerConfig()
 
     # ---- 工具注册/注销 ----
@@ -320,11 +327,10 @@ class ToolManager(ABC):
         return descriptions
 
 
-
 class InMemoryToolManager(ToolManager):
     """内存中的工具管理器实现"""
 
-    def __init__(self, config: ToolManagerConfig | None = None):
+    def __init__(self, config: ToolManagerConfig | None = None) -> None:
         super().__init__(config)
         self._tools: dict[str, Tool] = {}
 

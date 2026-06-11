@@ -109,8 +109,6 @@ class OutputMessage:
     timestamp: datetime = field(default_factory=datetime.now)
 
 
-
-
 @dataclass
 class ToolCall:
     """工具调用请求"""

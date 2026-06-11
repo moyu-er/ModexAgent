@@ -18,7 +18,7 @@ class ToolResultOverflowHandler:
     # LLM-facing text is centralised and can be overridden by subclasses.
     _INSTRUCTION_TEMPLATE = (
         "This result was too large and has been split into {chunk_count} chunk(s). "
-        "Chunk 1 is already shown in the <chunk index=\"1\"> element below. "
+        'Chunk 1 is already shown in the <chunk index="1"> element below. '
         "To read rest chunks through {total_chunks}, use the read tool with "
         'path="{dir_path}/$CHUNK.full.txt", replacing $CHUNK with the number you need.'
     )
@@ -58,11 +58,11 @@ class ToolResultOverflowHandler:
             f'total_chunks="{ref.chunk_count}" '
             f'current_chunk="1">\n'
             f'  <storage dir="{ref.dir_path}" session="{session_id}" tool_call="{tool_call_id}" />\n'
-            f'  <instruction>\n'
-            f'    {instruction}\n'
-            f'  </instruction>\n'
+            f"  <instruction>\n"
+            f"    {instruction}\n"
+            f"  </instruction>\n"
             f'  <chunk index="1">{cdata}</chunk>\n'
-            f'</tool_result_overflow>'
+            f"</tool_result_overflow>"
         )
         return xml, ref
 

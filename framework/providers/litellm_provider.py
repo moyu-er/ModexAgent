@@ -54,20 +54,23 @@ class LiteLLMProvider(StreamingLLMProvider):
             print(event.content, end="")
     """
 
-    _API_MSG_FIELDS: ClassVar[frozenset[str]] = frozenset({
-        "role", "content", "name", "tool_calls", "tool_call_id",
-        "function_call",
-    })
+    _API_MSG_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "role",
+            "content",
+            "name",
+            "tool_calls",
+            "tool_call_id",
+            "function_call",
+        }
+    )
 
     @staticmethod
     def _sanitize_api_messages(
         messages: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         allowed = LiteLLMProvider._API_MSG_FIELDS
-        return [
-            {k: v for k, v in msg.items() if k in allowed}
-            for msg in messages
-        ]
+        return [{k: v for k, v in msg.items() if k in allowed} for msg in messages]
 
     def __init__(
         self,
@@ -82,7 +85,7 @@ class LiteLLMProvider(StreamingLLMProvider):
         reasoning_effort: str | None = None,
         safety: RuntimeSafetyPolicy | None = None,
         **kwargs,
-    ):
+    ) -> None:
         self._model = model
         self._api_key = api_key
         self._base_url = base_url
@@ -101,11 +104,7 @@ class LiteLLMProvider(StreamingLLMProvider):
             self._timeout = timeout
             self._stream_idle_timeout = stream_idle_timeout
 
-        retry_backoff = (
-            safety.llm.retry_backoff_seconds
-            if safety is not None
-            else (2.0, 8.0)
-        )
+        retry_backoff = safety.llm.retry_backoff_seconds if safety is not None else (2.0, 8.0)
         super().__init__(retry_backoff_seconds=retry_backoff)
 
     def get_default_model(self) -> str:
@@ -128,6 +127,7 @@ class LiteLLMProvider(StreamingLLMProvider):
             return
         result = callback(value)
         import asyncio
+
         if asyncio.iscoroutine(result):
             await result
 
@@ -233,9 +233,16 @@ class LiteLLMProvider(StreamingLLMProvider):
         **kwargs,
     ) -> LLMResponse:
         return await self._execute_with_retry(
-            self._chat_stream_raw, messages, max_retries,
-            model=model, temperature=temperature, max_tokens=max_tokens, tools=tools,
-            on_content_delta=on_content_delta, on_reasoning_delta=on_reasoning_delta, **kwargs
+            self._chat_stream_raw,
+            messages,
+            max_retries,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            tools=tools,
+            on_content_delta=on_content_delta,
+            on_reasoning_delta=on_reasoning_delta,
+            **kwargs,
         )
 
     async def _chat_stream_raw(
@@ -372,7 +379,10 @@ class LiteLLMProvider(StreamingLLMProvider):
         elapsed_ms = (time.monotonic() - t0) * 1000
         logger.debug(
             "LLM stream attempt done: model=%s finish=%s content_len=%d elapsed=%.0fms",
-            params.get("model"), finish_reason, len("".join(content_parts)), elapsed_ms,
+            params.get("model"),
+            finish_reason,
+            len("".join(content_parts)),
+            elapsed_ms,
         )
 
         return LLMResponse(

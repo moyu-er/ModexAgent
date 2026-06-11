@@ -20,7 +20,7 @@ from typing import Any
 try:
     from pypdf import PdfReader as _PdfReader
 except ImportError:
-    _PdfReader = None  # type: ignore[assignment,misc]
+    _PdfReader = None
 
 try:
     import docx as _docx_mod
@@ -30,12 +30,12 @@ except ImportError:
 try:
     import openpyxl as _openpyxl_mod
 except ImportError:
-    _openpyxl_mod = None  # type: ignore[assignment]
+    _openpyxl_mod = None
 
 try:
     from pptx import Presentation as _Presentation
 except ImportError:
-    _Presentation = None  # type: ignore[assignment,misc]
+    _Presentation = None
 
 # 图片扩展名集合
 _IMAGE_EXTS = {
@@ -217,7 +217,7 @@ class MediaProcessor:
         content = processor.build_content("用户问题", result.media_blocks)
     """
 
-    def __init__(self, max_file_size: int = 50 * 1024 * 1024):
+    def __init__(self, max_file_size: int = 50 * 1024 * 1024) -> None:
         self.max_file_size = max_file_size
         self._handlers: list[MediaHandler] = [
             ImageHandler(),
@@ -331,10 +331,7 @@ class MediaProcessor:
             return None
 
         if p.stat().st_size > self.max_file_size:
-            return (
-                f"[File too large: {p.name} "
-                f"({p.stat().st_size / 1024 / 1024:.1f}MB)]"
-            )
+            return f"[File too large: {p.name} ({p.stat().st_size / 1024 / 1024:.1f}MB)]"
 
         ext = p.suffix.lower()
 

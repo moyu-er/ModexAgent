@@ -14,6 +14,7 @@ from .platform import Platform, get_platform
 @dataclass(frozen=True)
 class PlatformFallbackChain:
     """Ordered list of sandbox types to try, per platform."""
+
     linux: tuple[SandboxType, ...] = (
         SandboxType.LANDLOCK,
         SandboxType.DOCKER,
@@ -27,9 +28,7 @@ class PlatformFallbackChain:
         SandboxType.DOCKER,
         SandboxType.SUBPROCESS,
     )
-    unknown: tuple[SandboxType, ...] = (
-        SandboxType.SUBPROCESS,
-    )
+    unknown: tuple[SandboxType, ...] = (SandboxType.SUBPROCESS,)
 
     def for_platform(self, platform: Platform) -> tuple[SandboxType, ...]:
         match platform:

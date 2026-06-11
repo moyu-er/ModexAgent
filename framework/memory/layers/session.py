@@ -43,11 +43,7 @@ class ScopedSessionMemoryManager(SessionMemoryManager):
         chat_messages = self._to_chat_messages(messages)
 
         # write_id-based batch idempotency
-        write_ids = {
-            m.get("write_id")
-            for m in messages
-            if hasattr(m, "get") and m.get("write_id")
-        }
+        write_ids = {m.get("write_id") for m in messages if hasattr(m, "get") and m.get("write_id")}
         if len(write_ids) == 1:
             single_id = next(iter(write_ids))
             if single_id and await storage.get(".last_write_id") == single_id:

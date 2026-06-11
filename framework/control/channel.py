@@ -69,8 +69,8 @@ class InMemoryControlChannel(ControlChannel):
     """
 
     def __init__(self, ttl_seconds: float = _DEFAULT_TTL) -> None:
-        self._queues: dict[str, dict[ControlCommandType, deque[ControlCommand]]] = (
-            defaultdict(lambda: defaultdict(deque))
+        self._queues: dict[str, dict[ControlCommandType, deque[ControlCommand]]] = defaultdict(
+            lambda: defaultdict(deque)
         )
         self._created: dict[str, float] = {}
         self._ttl = ttl_seconds
@@ -96,11 +96,10 @@ class InMemoryControlChannel(ControlChannel):
 
             now = time.monotonic()
             matched: list[ControlCommand] = []
-            limit_ = limit if limit > 0 else float('inf')  # type: ignore[assignment]
+            limit_ = limit if limit > 0 else float("inf")
 
             types_to_scan = (
-                list(command_types) if command_types is not None
-                else list(type_queues.keys())
+                list(command_types) if command_types is not None else list(type_queues.keys())
             )
 
             for ct in types_to_scan:
@@ -150,8 +149,7 @@ class InMemoryControlChannel(ControlChannel):
             now = time.monotonic()
             result: list[ControlCommand] = []
             types_to_scan = (
-                list(command_types) if command_types is not None
-                else list(type_queues.keys())
+                list(command_types) if command_types is not None else list(type_queues.keys())
             )
 
             for ct in types_to_scan:
@@ -171,9 +169,7 @@ class InMemoryControlChannel(ControlChannel):
                     self._created.pop(cid, None)
                 if expired:
                     expired_set = frozenset(expired)
-                    type_queues[ct] = deque(
-                        c for c in q if c.command_id not in expired_set
-                    )
+                    type_queues[ct] = deque(c for c in q if c.command_id not in expired_set)
             return result
 
     @staticmethod

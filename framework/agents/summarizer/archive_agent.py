@@ -7,14 +7,15 @@ Extends :class:`ScopedFileAgent` for common ReAct wiring.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from framework.agents.summarizer.abc import (
-    _get_registry,
     ArchiveGenerator,
     ArchiveSummarizerResult,
+    _get_registry,
 )
 from framework.agents.summarizer.scoped_file_agent import ScopedFileAgent
 from framework.core.types import MessageRole
@@ -79,8 +80,7 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
         dir_line = f"\n- {archive_dir.resolve()}\n"
         prompt = prompt.replace(
             "You can ONLY read and write files in the directories listed below.",
-            "You can ONLY read and write files in the directories listed below."
-            + dir_line,
+            "You can ONLY read and write files in the directories listed below." + dir_line,
         )
         return prompt
 
@@ -95,9 +95,7 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
                 content = ""
             elif isinstance(content, list):
                 content = " ".join(
-                    str(part.get("text", ""))
-                    for part in content
-                    if isinstance(part, dict)
+                    str(part.get("text", "")) for part in content if isinstance(part, dict)
                 )
             else:
                 content = str(content)
@@ -127,9 +125,7 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
                         args_str = fn.get("arguments", "")
                         if args_str and len(args_str) > 200:
                             args_str = args_str[:200] + "..."
-                        tool_summaries.append(
-                            f"{name}({args_str})" if args_str else name
-                        )
+                        tool_summaries.append(f"{name}({args_str})" if args_str else name)
                 if tool_summaries:
                     clean["tool_names"] = tool_summaries
 
@@ -175,9 +171,7 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
                         args_str = fn.get("arguments", "")
                         if args_str and len(args_str) > 200:
                             args_str = args_str[:200] + "..."
-                        tool_names.append(
-                            f"{name}({args_str})" if args_str else name
-                        )
+                        tool_names.append(f"{name}({args_str})" if args_str else name)
                 if content:
                     lines.append(f"[assistant -> tools: {', '.join(tool_names)}] {content}")
                 else:
@@ -240,7 +234,9 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
             for fname in _ARCHIVE_FILES:
                 (archive_dir / fname).write_text("", encoding="utf-8")
             return ArchiveSummarizerResult(
-                success=True, archive_id=archive_id, files_written=_ARCHIVE_FILES,
+                success=True,
+                archive_id=archive_id,
+                files_written=_ARCHIVE_FILES,
             )
 
         user_msg = self.build_user_message(
@@ -277,15 +273,18 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
                         files_written.append(fname)
                 if files_written:
                     return ArchiveSummarizerResult(
-                        success=True, archive_id=archive_id,
+                        success=True,
+                        archive_id=archive_id,
                         files_written=tuple(files_written),
                     )
             logger.warning(
                 "ArchiveSummarizer attempt %d failed for archive_id=%d",
-                attempt + 1, archive_id,
+                attempt + 1,
+                archive_id,
             )
 
         return ArchiveSummarizerResult(
-            success=False, archive_id=archive_id,
+            success=False,
+            archive_id=archive_id,
             error="Agent failed to write archive files after 2 attempts",
         )

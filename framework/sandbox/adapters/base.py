@@ -4,12 +4,11 @@ import fnmatch
 import mimetypes
 import os
 from abc import ABC, abstractmethod
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..guard import CommandPatternGuard
     from ..env_builder import EnvironmentBuilder
+    from ..guard import CommandPatternGuard
     from ..workspace_policy import WorkspacePolicy
 
 from ..config import SandboxConfig
@@ -111,11 +110,13 @@ class SandboxAdapter(ABC):
                         mime_type, _ = mimetypes.guess_type(filepath)
                         if mime_type is None:
                             mime_type = "application/octet-stream"
-                        artifacts.append(SandboxArtifact(
-                            path=rel_path,
-                            size=size,
-                            mime_type=mime_type,
-                        ))
+                        artifacts.append(
+                            SandboxArtifact(
+                                path=rel_path,
+                                size=size,
+                                mime_type=mime_type,
+                            )
+                        )
                     except OSError:
                         continue
 

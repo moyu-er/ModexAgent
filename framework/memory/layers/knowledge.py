@@ -76,14 +76,10 @@ class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
 
             await storage.set(file_name, content)
 
-    async def retrieve(
-        self, context: MemoryContext, query: str = ""
-    ) -> LongTermMemory:
+    async def retrieve(self, context: MemoryContext, query: str = "") -> LongTermMemory:
         """Retrieve knowledge using the configured search strategy."""
         full = await self.get_all(context)
-        return await self._search_strategy.retrieve(
-            full, query=query, max_tokens=2000
-        )
+        return await self._search_strategy.retrieve(full, query=query, max_tokens=2000)
 
     async def get_all(self, context: MemoryContext) -> LongTermMemory:
         await self.ensure_defaults(context)
@@ -165,9 +161,7 @@ class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
         await self._maybe_consolidate(context, file_name, result)
         return result
 
-    async def consolidate_file(
-        self, context: MemoryContext, file_key: str
-    ) -> str | None:
+    async def consolidate_file(self, context: MemoryContext, file_key: str) -> str | None:
         """Manually trigger consolidation of a specific knowledge file.
 
         Returns the consolidated content, or None if consolidation was skipped.
@@ -190,7 +184,9 @@ class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
             return
         logger.info(
             "Knowledge file %s exceeds threshold (%d > %d tokens), consolidating",
-            file_name, tokens, self._consolidation_threshold,
+            file_name,
+            tokens,
+            self._consolidation_threshold,
         )
         await self._do_consolidate(context, file_name, content)
 
@@ -207,11 +203,13 @@ class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
                 return None
             storage = await self._storage_factory(context)
             await storage.set(file_name, consolidated)
-            await storage.append_log({
-                "file": file_name,
-                "mode": "consolidation",
-                "reason": f"auto-consolidated ({estimate_text_tokens(content)} -> {estimate_text_tokens(consolidated)} tokens)",
-            })
+            await storage.append_log(
+                {
+                    "file": file_name,
+                    "mode": "consolidation",
+                    "reason": f"auto-consolidated ({estimate_text_tokens(content)} -> {estimate_text_tokens(consolidated)} tokens)",
+                }
+            )
             logger.info(
                 "Consolidated %s: %d -> %d tokens",
                 file_name,
@@ -252,8 +250,8 @@ class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
         normalized_content = content.strip()
         if not normalized_content:
             return True
-        return normalized_content in {
-            block.strip()
-            for block in normalized_existing.splitlines()
-            if block.strip()
-        } or normalized_content in normalized_existing
+        return (
+            normalized_content
+            in {block.strip() for block in normalized_existing.splitlines() if block.strip()}
+            or normalized_content in normalized_existing
+        )

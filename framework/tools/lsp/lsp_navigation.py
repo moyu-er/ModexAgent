@@ -6,7 +6,9 @@ from typing import Any
 
 from framework.core.tool_manager import Tool
 
-_NOT_IMPLEMENTED = "LSP navigation is not yet implemented. This tool will be available in a future update."
+_NOT_IMPLEMENTED = (
+    "LSP navigation is not yet implemented. This tool will be available in a future update."
+)
 
 
 class LspNavigationTool(Tool):
@@ -38,9 +40,14 @@ class LspNavigationTool(Tool):
                     "type": "string",
                     "description": "Navigation operation to perform",
                     "enum": [
-                        "go_to_definition", "find_references", "hover",
-                        "document_symbol", "workspace_symbol",
-                        "go_to_implementation", "incoming_calls", "outgoing_calls",
+                        "go_to_definition",
+                        "find_references",
+                        "hover",
+                        "document_symbol",
+                        "workspace_symbol",
+                        "go_to_implementation",
+                        "incoming_calls",
+                        "outgoing_calls",
                     ],
                 },
                 "file": {

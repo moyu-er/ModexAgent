@@ -21,15 +21,19 @@ def create_pty_backend() -> TerminalBackend:
     """
     if sys.platform == "win32":
         from .visible_windows import VisibleWindowsPtyBackend
+
         return VisibleWindowsPtyBackend()
 
     # Linux/macOS: pexpect preferred, tmux fallback
     try:
         import pexpect  # noqa: F401 — verify pexpect is installed
+
         from .pexpect_pty import PexpectPtyBackend
+
         return PexpectPtyBackend()
     except ImportError:
         logger.debug("pexpect not available, falling back to tmux")
 
     from .tmux_pty import TmuxPtyBackend
+
     return TmuxPtyBackend()

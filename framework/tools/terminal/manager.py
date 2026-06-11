@@ -33,6 +33,7 @@ def _family_from_name(name: str) -> ShellFamily:
 
 from framework.tools.terminal.managers import TerminalManagerBase
 
+
 class TerminalManager(TerminalManagerBase):
     """Manages named terminal sessions with LRU eviction and JSON persistence.
 
@@ -54,7 +55,7 @@ class TerminalManager(TerminalManagerBase):
         backend_factory: Callable[[], Any] | None = None,
         shell_info: ShellInfo | None = None,
         visibility: bool = True,
-    ):
+    ) -> None:
         self._storage_dir = Path(storage_dir)
         self._max_terminals = max_terminals
         self._history_count = history_count
@@ -63,23 +64,26 @@ class TerminalManager(TerminalManagerBase):
         self._sessions: dict[str, TerminalSession] = {}
         self._default_terminal: str | None = None
         self._store = JsonTerminalStateStore(self._storage_dir)
-        self._shell_info = shell_info or detect_platform_shell() or ShellInfo(
-            family=ShellFamily.BASH,
-            path="bash",
-            platform=Platform.LINUX,
+        self._shell_info = (
+            shell_info
+            or detect_platform_shell()
+            or ShellInfo(
+                family=ShellFamily.BASH,
+                path="bash",
+                platform=Platform.LINUX,
+            )
         )
         if backend_factory is not None:
             self._backend_factory: Callable[..., Any] = backend_factory
         elif not visibility and sys.platform == "win32":
             from framework.tools.terminal.backends.windows_hidden import WindowsHiddenPtyBackend
+
             self._backend_factory = WindowsHiddenPtyBackend
         else:
             self._backend_factory = create_pty_backend
         self._config = TerminalRuntimeConfig()
 
-    async def get_or_create(
-        self, name: str, cwd: str | None = None
-    ) -> TerminalSession:
+    async def get_or_create(self, name: str, cwd: str | None = None) -> TerminalSession:
         """Get existing session or create a new one. Evicts LRU if at capacity."""
         if name in self._sessions:
             session = self._sessions[name]
@@ -157,10 +161,7 @@ class TerminalManager(TerminalManagerBase):
         session = self._sessions.get(name)
         if session is None:
             raise ValueError(f"Terminal '{name}' does not exist")
-        if (
-            session.backend_started
-            and not await session._backend.is_alive()
-        ):
+        if session.backend_started and not await session._backend.is_alive():
             raise ValueError(f"Terminal '{name}' has been closed")
         self._default_terminal = name
 
@@ -177,10 +178,7 @@ class TerminalManager(TerminalManagerBase):
         if session is None:
             self._default_terminal = None
             return None
-        if (
-            session.backend_started
-            and not await session._backend.is_alive()
-        ):
+        if session.backend_started and not await session._backend.is_alive():
             self._default_terminal = None
             return None
         return session
@@ -279,7 +277,8 @@ class TerminalManager(TerminalManagerBase):
 
             logger.warning(
                 "Memory pressure: cleared buffer for '%s' (was %d chars)",
-                name, size,
+                name,
+                size,
             )
             total_buffer -= size
 

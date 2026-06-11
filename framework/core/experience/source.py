@@ -58,13 +58,15 @@ class FileExperienceSource:
                         continue
                     seen.add(name)
 
-                    summaries.append(ExperienceSummary(
-                        name=name,
-                        description=str(frontmatter.get("description", "")),
-                        tags=list(frontmatter.get("tags", [])),
-                        scenario=str(frontmatter.get("scenario", "")),
-                        directory=str(exp_dir.resolve()),
-                    ))
+                    summaries.append(
+                        ExperienceSummary(
+                            name=name,
+                            description=str(frontmatter.get("description", "")),
+                            tags=list(frontmatter.get("tags", [])),
+                            scenario=str(frontmatter.get("scenario", "")),
+                            directory=str(exp_dir.resolve()),
+                        )
+                    )
                 except Exception:
                     logger.debug("Skipping malformed experience: %s", md_path, exc_info=True)
         return summaries

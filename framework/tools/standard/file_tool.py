@@ -23,9 +23,9 @@ def _resolve_path(path: str) -> Path:
 
 # -- 引号归一化与保留 -------------------------------------------------------
 
-_LEFT_SINGLE_CURLY = "\u2018"   # '
+_LEFT_SINGLE_CURLY = "\u2018"  # '
 _RIGHT_SINGLE_CURLY = "\u2019"  # '
-_LEFT_DOUBLE_CURLY = "\u201c"   # "
+_LEFT_DOUBLE_CURLY = "\u201c"  # "
 _RIGHT_DOUBLE_CURLY = "\u201d"  # "
 
 
@@ -93,7 +93,9 @@ def _apply_curly_single_quotes(s: str) -> str:
             if prev and nxt and prev.isalpha() and nxt.isalpha():
                 out.append(_RIGHT_SINGLE_CURLY)
             else:
-                out.append(_LEFT_SINGLE_CURLY if _is_opening_context(chars, i) else _RIGHT_SINGLE_CURLY)
+                out.append(
+                    _LEFT_SINGLE_CURLY if _is_opening_context(chars, i) else _RIGHT_SINGLE_CURLY
+                )
         else:
             out.append(ch)
     return "".join(out)
@@ -284,13 +286,7 @@ def _paginate_file(
 
     # ── 空文件 ──────────────────────────────────────────────
     if total_lines == 0:
-        return (
-            "(empty file)\n"
-            "\n"
-            "total_lines: 0\n"
-            "offset: 0\n"
-            "read_status: empty"
-        )
+        return "(empty file)\n\ntotal_lines: 0\noffset: 0\nread_status: empty"
 
     # ── offset 超出范围 ──────────────────────────────────────
     if offset >= total_lines:
@@ -337,10 +333,14 @@ def _paginate_file(
         # 检查读完之后是否还有更多行（仅当 limit 未触发且 char 也未触发时）
         has_more_by_limit = lines_collected >= limit
         # 如果没有被 char 截断，检查文件是否已读完
-        remaining = total_lines - (last_line_read + 1) if not char_truncated else total_lines - (last_line_read + 1)
+        remaining = (
+            total_lines - (last_line_read + 1)
+            if not char_truncated
+            else total_lines - (last_line_read + 1)
+        )
 
     # ── 计算状态 ─────────────────────────────────────────────
-    actual_start = offset + 1       # 1-based 显示
+    actual_start = offset + 1  # 1-based 显示
     actual_end = last_line_read + 1  # 1-based 显示
 
     is_complete = (not char_truncated) and (actual_end == total_lines)
@@ -357,7 +357,9 @@ def _paginate_file(
     if is_complete and not is_truncated_by_limit:
         # 完整读取
         if lines_collected < limit:
-            parts.append(f"read_lines: {actual_start}-{actual_end} (requested {limit}, file has {lines_collected} remaining)")
+            parts.append(
+                f"read_lines: {actual_start}-{actual_end} (requested {limit}, file has {lines_collected} remaining)"
+            )
         else:
             parts.append(f"read_lines: {actual_start}-{actual_end}")
         parts.append("read_status: complete")
@@ -389,7 +391,7 @@ def _paginate_file(
 class ReadFileTool(Tool):
     """读取文件内容的工具."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
     @property
@@ -409,25 +411,24 @@ class ReadFileTool(Tool):
         return {
             "type": "object",
             "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "The file path to read"
-                },
+                "path": {"type": "string", "description": "The file path to read"},
                 "offset": {
                     "type": "integer",
                     "description": "Number of lines to skip from the beginning (0-based, default: 0)",
-                    "default": 0
+                    "default": 0,
                 },
                 "limit": {
                     "type": "integer",
                     "description": f"Maximum number of lines to read (default: {_DEFAULT_LIMIT}, max: {_MAX_LIMIT})",
-                    "default": _DEFAULT_LIMIT
-                }
+                    "default": _DEFAULT_LIMIT,
+                },
             },
-            "required": ["path"]
+            "required": ["path"],
         }
 
-    async def execute(self, path: str, offset: int = 0, limit: int = _DEFAULT_LIMIT, **kwargs: Any) -> str:
+    async def execute(
+        self, path: str, offset: int = 0, limit: int = _DEFAULT_LIMIT, **kwargs: Any
+    ) -> str:
         try:
             file_path = _resolve_path(path)
             if not file_path.exists():
@@ -443,7 +444,7 @@ class ReadFileTool(Tool):
 class WriteFileTool(Tool):
     """写入内容到文件的工具."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
     @property
@@ -459,16 +460,10 @@ class WriteFileTool(Tool):
         return {
             "type": "object",
             "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "The file path to write to"
-                },
-                "content": {
-                    "type": "string",
-                    "description": "The content to write"
-                }
+                "path": {"type": "string", "description": "The file path to write to"},
+                "content": {"type": "string", "description": "The content to write"},
             },
-            "required": ["path", "content"]
+            "required": ["path", "content"],
         }
 
     async def execute(self, path: str, content: str, **kwargs: Any) -> str:
@@ -491,7 +486,7 @@ class EditFileTool(Tool):
     - 保留原始编码和换行符风格
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
     @property
@@ -516,21 +511,18 @@ class EditFileTool(Tool):
         return {
             "type": "object",
             "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "The file path to edit"
-                },
+                "path": {"type": "string", "description": "The file path to edit"},
                 "old_string": {
                     "type": "string",
                     "description": (
                         "The text to find and replace. Must match exactly in the file "
                         "(supports quote and whitespace normalization). "
                         "Empty string means create new file or write to an empty existing file."
-                    )
+                    ),
                 },
                 "new_string": {
                     "type": "string",
-                    "description": "The text to replace with. Empty string means delete old_string."
+                    "description": "The text to replace with. Empty string means delete old_string.",
                 },
                 "replace_all": {
                     "type": "boolean",
@@ -538,10 +530,10 @@ class EditFileTool(Tool):
                         "Replace all occurrences of old_string (default false). "
                         "Useful for renaming variables across the file."
                     ),
-                    "default": False
-                }
+                    "default": False,
+                },
             },
-            "required": ["path", "old_string", "new_string"]
+            "required": ["path", "old_string", "new_string"],
         }
 
     async def execute(
@@ -616,7 +608,11 @@ class EditFileTool(Tool):
             actual_new = _preserve_quote_style(old_string, actual_old, new_string)
 
             # 应用替换
-            updated = content.replace(actual_old, actual_new) if replace_all else content.replace(actual_old, actual_new, 1)
+            updated = (
+                content.replace(actual_old, actual_new)
+                if replace_all
+                else content.replace(actual_old, actual_new, 1)
+            )
 
             # 验证替换确实发生了
             if updated == content:
@@ -637,7 +633,7 @@ class EditFileTool(Tool):
 class ListDirTool(Tool):
     """列出目录内容的工具."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
     @property
@@ -652,13 +648,8 @@ class ListDirTool(Tool):
     def parameters(self) -> dict[str, Any]:
         return {
             "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "The directory path to list"
-                }
-            },
-            "required": ["path"]
+            "properties": {"path": {"type": "string", "description": "The directory path to list"}},
+            "required": ["path"],
         }
 
     async def execute(self, path: str, **kwargs: Any) -> str:
@@ -680,4 +671,3 @@ class ListDirTool(Tool):
             return "\n".join(items)
         except Exception as e:
             return f"Error listing directory: {str(e)}"
-

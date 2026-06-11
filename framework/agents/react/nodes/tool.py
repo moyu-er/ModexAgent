@@ -1,4 +1,5 @@
 """ToolNode: classify tools, suspend for approval, then batch execute."""
+
 from __future__ import annotations
 
 import logging
@@ -60,10 +61,14 @@ class ToolNode(Node):
         state.llm_response = None
         state.current_node = ReActNode.TOOL
 
-        max_tools = ctx.runtime.state.custom.get(TurnCustomKey.MAX_TOOLS_PER_TURN) if ctx.runtime else None
+        max_tools = (
+            ctx.runtime.state.custom.get(TurnCustomKey.MAX_TOOLS_PER_TURN) if ctx.runtime else None
+        )
         if max_tools is not None and len(tool_calls) > max_tools:
             if ctx.emitter is not None:
-                await ctx.emitter.emit(ReActEvent.ERROR, f"Exceeded max_tools_per_turn ({max_tools})")
+                await ctx.emitter.emit(
+                    ReActEvent.ERROR, f"Exceeded max_tools_per_turn ({max_tools})"
+                )
             return NodeTransition(ReActNode.END, ReActReason.TURN_CANCELLED)
 
         decisions = self._classify_all(tool_calls, ctx)
@@ -164,10 +169,12 @@ class ToolNode(Node):
             )
             for call in batch.calls
         ]
-        decisions = self._normalize_batch_decisions([
-            react_state.approval.decisions.get(call.call_id, ApprovalDecision.ALLOWED)
-            for call in batch.calls
-        ])
+        decisions = self._normalize_batch_decisions(
+            [
+                react_state.approval.decisions.get(call.call_id, ApprovalDecision.ALLOWED)
+                for call in batch.calls
+            ]
+        )
         self._apply_decisions_to_batch(batch, decisions)
 
         pre_approved_ids = {
@@ -254,8 +261,10 @@ class ToolNode(Node):
         # Drain control commands before tool execution
         if ctx.runtime and ctx.runtime.control_channel:
             from framework.hook.builtin.control_drain import drain_control_channel
+
             await drain_control_channel(
-                ctx.runtime.control_channel, ctx,
+                ctx.runtime.control_channel,
+                ctx,
                 turn_uuid=ctx.runtime.turn_uuid,
             )
 
@@ -308,11 +317,14 @@ class ToolNode(Node):
         if state is not None and batch is not None:
             if batch.operation_id:
                 state.update_operation(batch.operation_id, OperationStatus.COMPLETED)
-            batch.status = ToolBatchStatus.FAILED if denied_encountered else ToolBatchStatus.COMPLETED
+            batch.status = (
+                ToolBatchStatus.FAILED if denied_encountered else ToolBatchStatus.COMPLETED
+            )
 
         if ctx.runtime and ctx.runtime.hooks:
             await ctx.runtime.hooks.dispatch(
-                HookPoint.AFTER_TOOL_EXECUTION, ctx,
+                HookPoint.AFTER_TOOL_EXECUTION,
+                ctx,
                 payload=HookPayload(data={"results": tool_results}),
             )
 

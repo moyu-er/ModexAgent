@@ -25,7 +25,8 @@ class ExperienceManager:
         self._builder = builder or ExperiencePromptBuilder()
 
     async def build_prompt(
-        self, max_experiences: int = _MAX_INJECTED_EXPERIENCES,
+        self,
+        max_experiences: int = _MAX_INJECTED_EXPERIENCES,
     ) -> str:
         """Render XML metadata block for system prompt injection.
 

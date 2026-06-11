@@ -3,6 +3,7 @@
 Pool 在 dispatch 开始时创建 DispatchDeadline 并通过 ContextVar 向下传递。
 LLM 节点每完成一轮推理后续期，pool 的 watchdog 协程监控 deadline 是否过期。
 """
+
 from __future__ import annotations
 
 import time
@@ -12,7 +13,8 @@ __all__ = ["DispatchDeadline", "current_dispatch_deadline"]
 
 # Pool 设置，LLM node 读取并 renew。
 current_dispatch_deadline: ContextVar[DispatchDeadline | None] = ContextVar(
-    "current_dispatch_deadline", default=None,
+    "current_dispatch_deadline",
+    default=None,
 )
 
 

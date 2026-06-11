@@ -15,6 +15,7 @@ class AgentEvent:
 
     注意：此类不使用 ABC，以避免与 Enum 的 metaclass 冲突。
     """
+
     pass
 
 
@@ -36,6 +37,7 @@ class EmitterConfig:
             disabled_events={"plan_revision"}
         )
     """
+
     # 启用的事件类型（None 表示全部启用）
     enabled_events: set[str] | None = None
 
@@ -63,4 +65,3 @@ class EmitterConfig:
         if self.enabled_events is not None:
             return event_name in self.enabled_events
         return True
-

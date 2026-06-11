@@ -71,26 +71,34 @@ class DreamEngine:
             if not entries:
                 logger.debug(
                     "DreamEngine: no unprocessed archives session=%s invocation=%d",
-                    context.session_id, invocation_id,
+                    context.session_id,
+                    invocation_id,
                 )
                 return False
 
             # Limit per run
-            entries = entries[:self.max_consume_per_run]
+            entries = entries[: self.max_consume_per_run]
             archive_ids = [e.entry_id for e in entries if e.entry_id]
 
             logger.info(
                 "DreamEngine started: %d archive(s) ids=%s session=%s invocation=%d",
-                len(archive_ids), archive_ids, context.session_id, invocation_id,
+                len(archive_ids),
+                archive_ids,
+                context.session_id,
+                invocation_id,
             )
 
             if self._consolidator is not None:
                 result = await self._run_consolidator_limited(
-                    entries, context, str(invocation_id),
+                    entries,
+                    context,
+                    str(invocation_id),
                 )
                 logger.info(
                     "DreamEngine finished: success=%s session=%s invocation=%d",
-                    result, context.session_id, invocation_id,
+                    result,
+                    context.session_id,
+                    invocation_id,
                 )
                 return result
             return False
@@ -111,7 +119,8 @@ class DreamEngine:
         if knowledge_dir is None:
             logger.warning(
                 "DreamEngine: no knowledge storage path session=%s invocation=%s",
-                context.session_id, invocation_id,
+                context.session_id,
+                invocation_id,
             )
             return False
 
@@ -119,19 +128,21 @@ class DreamEngine:
         if archive_base is None:
             logger.warning(
                 "DreamEngine: no archive storage path session=%s invocation=%s",
-                context.session_id, invocation_id,
+                context.session_id,
+                invocation_id,
             )
             return False
 
         # Dynamic max_iterations: consolidator default + per-archive increment
         dynamic_iterations = (
-            self._consolidator.max_iterations
-            + len(archive_ids) * self.per_archive_iterations
+            self._consolidator.max_iterations + len(archive_ids) * self.per_archive_iterations
         )
 
         logger.info(
             "DreamEngine consolidating: archive_ids=%s max_iterations=%d invocation=%s",
-            archive_ids, dynamic_iterations, invocation_id,
+            archive_ids,
+            dynamic_iterations,
+            invocation_id,
         )
 
         success = await self._consolidator.consolidate(
@@ -147,7 +158,8 @@ class DreamEngine:
             await self._commit_knowledge_cursor(context, final_cursor)
             logger.info(
                 "DreamEngine cursor advanced: knowledge_consumed_archive_id=%d invocation=%s",
-                final_cursor, invocation_id,
+                final_cursor,
+                invocation_id,
             )
 
         return success
@@ -183,6 +195,7 @@ class DreamEngine:
             return 0
         try:
             from framework.memory.stores.dir_archive import DirArchiveStorage
+
             dir_storage = DirArchiveStorage(storage)
             state = await dir_storage.read_archive_state() or {}
             current: int = state.get("knowledge_invocation_id", 0)

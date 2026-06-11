@@ -8,6 +8,7 @@ Provides:
 - replace_all bypass (bulk replacement does not trigger provider adds)
 - Flush on close (awaits pending provider tasks before shutdown)
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -72,7 +73,7 @@ class MemoryAppendRecorder:
         canonical = {
             "role": msg_dict.get("role", ""),
             "content": msg_dict.get("content", ""),
-            "name": msg_dict.get("name"),          # tool name for tool results
+            "name": msg_dict.get("name"),  # tool name for tool results
             "tool_calls": msg_dict.get("tool_calls"),
             "tool_call_id": msg_dict.get("tool_call_id"),
         }
@@ -168,9 +169,7 @@ class MemoryAppendRecorder:
         messages: list[ChatMessage | dict[str, Any]],
         context: MemoryContext,
     ) -> None:
-        dict_messages = [
-            m.to_dict() if isinstance(m, ChatMessage) else dict(m) for m in messages
-        ]
+        dict_messages = [m.to_dict() if isinstance(m, ChatMessage) else dict(m) for m in messages]
         for provider in self._providers:
             try:
                 await provider.add(dict_messages, context)

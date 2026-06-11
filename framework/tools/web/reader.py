@@ -55,7 +55,9 @@ class WebReaderTool(Tool):
             config=ToolConfig(),
         )
 
-    async def execute(self, url: str = "", format: str = "markdown", timeout: int = 20, **kwargs: Any) -> str:
+    async def execute(
+        self, url: str = "", format: str = "markdown", timeout: int = 20, **kwargs: Any
+    ) -> str:
         output_format = format
 
         # --- validate -----------------------------------------------------------
@@ -68,10 +70,7 @@ class WebReaderTool(Tool):
         try:
             from markdownify import markdownify as md
         except ImportError:
-            return (
-                "Error: markdownify package not installed. "
-                "Install with: pip install markdownify"
-            )
+            return "Error: markdownify package not installed. Install with: pip install markdownify"
 
         # --- fetch --------------------------------------------------------------
         try:

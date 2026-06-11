@@ -28,8 +28,7 @@ async def connect_mcp(
     from framework.tools.mcp_adapter import MCPToolAdapter
 
     servers_dict: dict[str, object] = {
-        name: entry.model_dump(exclude_none=True)
-        for name, entry in mcp_config.servers.items()
+        name: entry.model_dump(exclude_none=True) for name, entry in mcp_config.servers.items()
     }
 
     manager = MCPClientManager(config=servers_dict)

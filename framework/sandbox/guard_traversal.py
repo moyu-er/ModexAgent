@@ -2,6 +2,7 @@
 
 Scans command strings for ``../`` or ``..\\`` path traversal sequences.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

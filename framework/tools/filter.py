@@ -16,7 +16,7 @@ class FilteredToolManager(ToolManager):
         base: ToolManager,
         allowed_tools: list[str] | None = None,
         denied_tools: list[str] | None = None,
-    ):
+    ) -> None:
         self._base = base
         self._allowed = set(allowed_tools) if allowed_tools is not None else None
         self._denied = set(denied_tools) if denied_tools else None
@@ -42,7 +42,11 @@ class FilteredToolManager(ToolManager):
         return self._base.is_registered(tool_name) and self._is_allowed(tool_name)
 
     def get_tool_descriptions(self) -> list[dict[str, Any]]:
-        return [d for d in self._base.get_tool_descriptions() if self._is_allowed(d.get("function", {}).get("name"))]
+        return [
+            d
+            for d in self._base.get_tool_descriptions()
+            if self._is_allowed(d.get("function", {}).get("name"))
+        ]
 
     async def execute(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult:
         if not self._is_allowed(tool_name):

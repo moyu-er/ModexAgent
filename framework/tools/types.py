@@ -20,6 +20,7 @@ from ..core.constants import (
 
 class ToolParameterType(str, Enum):
     """参数类型"""
+
     STRING = "string"
     INTEGER = "integer"
     NUMBER = "number"
@@ -31,9 +32,9 @@ class ToolParameterType(str, Enum):
 @dataclass
 class ToolParameter:
     """工具参数定义
-    
+
     支持复杂嵌套结构，通过 items 和 properties 定义。
-    
+
     Example:
         # 简单参数
         param = ToolParameter(
@@ -41,7 +42,7 @@ class ToolParameter:
             type=ToolParameterType.STRING,
             description="搜索查询"
         )
-        
+
         # 数组参数
         param = ToolParameter(
             name="tags",
@@ -53,7 +54,7 @@ class ToolParameter:
                 description="单个标签"
             )
         )
-        
+
         # 对象参数
         param = ToolParameter(
             name="address",
@@ -65,6 +66,7 @@ class ToolParameter:
             }
         )
     """
+
     name: str
     type: ToolParameterType
     description: str
@@ -97,13 +99,9 @@ class ToolParameter:
         # 对象类型的属性定义
         if self.type == ToolParameterType.OBJECT and self.properties:
             schema["properties"] = {
-                name: prop.to_json_schema()
-                for name, prop in self.properties.items()
+                name: prop.to_json_schema() for name, prop in self.properties.items()
             }
-            required_props = [
-                name for name, prop in self.properties.items()
-                if prop.required
-            ]
+            required_props = [name for name, prop in self.properties.items() if prop.required]
             if required_props:
                 schema["required"] = required_props
 
@@ -116,6 +114,7 @@ class ToolParameter:
 @dataclass
 class ToolDefinition:
     """工具定义"""
+
     name: str
     description: str
     parameters: list[ToolParameter]
@@ -157,10 +156,12 @@ ToolFunction = Callable[..., Any]
 # 尝试导入 Annotated，如果不支持则提供兼容方案
 try:
     from typing import Annotated
+
     HAS_ANNOTATED = True
 except ImportError:
     try:
         from typing import Annotated
+
         HAS_ANNOTATED = True
     except ImportError:
         HAS_ANNOTATED = False
@@ -171,11 +172,13 @@ except ImportError:
 try:
     from typing import Literal
     from typing import get_args as get_literal_args
+
     HAS_LITERAL = True
 except ImportError:
     try:
         from typing import Literal
         from typing import get_args as get_literal_args
+
         HAS_LITERAL = True
     except ImportError:
         HAS_LITERAL = False
@@ -188,12 +191,12 @@ def _is_annotated_type(annotation: Any) -> bool:
         return False
 
     # 检查 __class__ 名称
-    if hasattr(annotation, '__class__'):
-        if 'Annotated' in annotation.__class__.__name__:
+    if hasattr(annotation, "__class__"):
+        if "Annotated" in annotation.__class__.__name__:
             return True
 
     # 检查是否有 __metadata__ 属性
-    if hasattr(annotation, '__metadata__'):
+    if hasattr(annotation, "__metadata__"):
         return True
 
     return False
@@ -205,8 +208,8 @@ def _get_annotated_args(annotation: Any) -> tuple:
         return ()
 
     # 尝试 __args__
-    args = getattr(annotation, '__args__', None)
-    metadata = getattr(annotation, '__metadata__', None)
+    args = getattr(annotation, "__args__", None)
+    metadata = getattr(annotation, "__metadata__", None)
 
     if args and metadata:
         # Python 3.13+: __args__ 只包含实际类型，metadata 单独存储
@@ -216,7 +219,7 @@ def _get_annotated_args(annotation: Any) -> tuple:
         return args
     elif metadata is not None:
         # 只有 metadata，尝试从 __origin__ 获取类型
-        origin = getattr(annotation, '__origin__', None)
+        origin = getattr(annotation, "__origin__", None)
         if origin is not None:
             return (origin,) + tuple(metadata)
 
@@ -226,14 +229,14 @@ def _get_annotated_args(annotation: Any) -> tuple:
 def _extract_description_from_annotation(annotation: Any) -> str | None:
     """
     从注解中提取描述信息。
-    
+
     支持:
     - Annotated[str, "描述信息"]
     - Annotated[str, Field(description="...")]
-    
+
     Args:
         annotation: 类型注解
-    
+
     Returns:
         描述字符串或 None
     """
@@ -253,11 +256,11 @@ def _extract_description_from_annotation(annotation: Any) -> str | None:
             return meta
 
         # Pydantic Field 或其他有 description 的对象
-        if hasattr(meta, 'description') and meta.description:
+        if hasattr(meta, "description") and meta.description:
             return str(meta.description)
 
         # dataclasses.Field
-        if hasattr(meta, 'metadata') and meta.metadata:
+        if hasattr(meta, "metadata") and meta.metadata:
             for m in meta.metadata:
                 if isinstance(m, str):
                     return m
@@ -280,7 +283,7 @@ def _get_base_type_from_annotation(annotation: Any) -> Any:
 def _sanitize_default_value(default: Any) -> Any:
     """
     清理默认值，确保可以 JSON 序列化。
-    
+
     处理以下情况:
     - Pydantic Field 对象 -> 提取 default 值
     - inspect.Parameter.empty -> None
@@ -290,13 +293,13 @@ def _sanitize_default_value(default: Any) -> Any:
         return None
 
     # 检查是否是 Pydantic FieldInfo (Pydantic v2)
-    if hasattr(default, '__class__'):
+    if hasattr(default, "__class__"):
         class_name = default.__class__.__name__
-        if 'FieldInfo' in class_name or 'ModelField' in class_name:
+        if "FieldInfo" in class_name or "ModelField" in class_name:
             # 尝试获取 default 属性
-            if hasattr(default, 'default') and default.default is not None:
+            if hasattr(default, "default") and default.default is not None:
                 return default.default
-            if hasattr(default, 'default_factory') and default.default_factory is not None:
+            if hasattr(default, "default_factory") and default.default_factory is not None:
                 try:
                     return default.default_factory()
                 except:
@@ -310,6 +313,7 @@ def _sanitize_default_value(default: Any) -> Any:
     # 尝试 JSON 序列化
     try:
         import json
+
         json.dumps(default)
         return default
     except (TypeError, ValueError):
@@ -325,6 +329,7 @@ def _is_pydantic_model(type_hint: Any) -> bool:
     # 检查是否是 Pydantic v1/v2 BaseModel
     try:
         from pydantic import BaseModel
+
         if isinstance(type_hint, type) and issubclass(type_hint, BaseModel):
             return True
     except ImportError:
@@ -339,13 +344,13 @@ def _is_typeddict(type_hint: Any) -> bool:
         return False
 
     # 检查 __class__ 名称
-    if hasattr(type_hint, '__class__'):
-        if 'TypedDict' in type_hint.__class__.__name__:
+    if hasattr(type_hint, "__class__"):
+        if "TypedDict" in type_hint.__class__.__name__:
             return True
 
     # 检查是否是 typing.TypedDict 的子类
-    origin = getattr(type_hint, '__origin__', None)
-    if origin and 'TypedDict' in str(origin):
+    origin = getattr(type_hint, "__origin__", None)
+    if origin and "TypedDict" in str(origin):
         return True
 
     return False
@@ -356,13 +361,13 @@ def _is_literal_type(type_hint: Any) -> bool:
     if not HAS_LITERAL:
         return False
 
-    origin = getattr(type_hint, '__origin__', None)
+    origin = getattr(type_hint, "__origin__", None)
     if origin is Literal:
         return True
 
     # 检查 __class__ 名称
-    if hasattr(type_hint, '__class__'):
-        if 'Literal' in type_hint.__class__.__name__:
+    if hasattr(type_hint, "__class__"):
+        if "Literal" in type_hint.__class__.__name__:
             return True
 
     return False
@@ -373,28 +378,28 @@ def _get_literal_values(type_hint: Any) -> list[str] | None:
     if not _is_literal_type(type_hint):
         return None
 
-    args = getattr(type_hint, '__args__', ())
+    args = getattr(type_hint, "__args__", ())
     return [str(arg) for arg in args]
 
 
 def _parse_docstring_params(doc: str) -> dict[str, str]:
     """
-    从 docstring 解析参数描述。
-    
-    支持多种格式:
-    - Google Style: Args:
-    name: description
-    - NumPy Style: Parameters
-----------
-    name : type
-        description
-    - Sphinx Style: :param name: description
-    
-    Args:
-        doc: 函数的 docstring
-    
-    Returns:
-        参数名到描述的映射
+        从 docstring 解析参数描述。
+
+        支持多种格式:
+        - Google Style: Args:
+        name: description
+        - NumPy Style: Parameters
+    ----------
+        name : type
+            description
+        - Sphinx Style: :param name: description
+
+        Args:
+            doc: 函数的 docstring
+
+        Returns:
+            参数名到描述的映射
     """
     param_docs = {}
     if not doc:
@@ -414,13 +419,13 @@ def _parse_docstring_params(doc: str) -> dict[str, str]:
     args_match = re.search(
         r"(?:Args|Arguments|Params|Parameters)\s*:\s*\n(.*?)(?=\n\s*(?:Returns?|Yields?|Raises?|Example|Note|Attributes|\"\"\"|$))",
         doc,
-        re.DOTALL
+        re.DOTALL,
     )
     if args_match:
         args_text = args_match.group(1)
         # Match "name: description" or "name (type): description"
         # 处理多行描述
-        lines = args_text.split('\n')
+        lines = args_text.split("\n")
         current_param = None
         current_desc = []
 
@@ -431,14 +436,14 @@ def _parse_docstring_params(doc: str) -> dict[str, str]:
 
             # 检查是否是新参数行 (name: description 或 name (type): description)
             param_match = re.match(r"(\w+)(?:\s*\([^)]*\))?\s*:\s*(.*)", stripped)
-            if param_match and not stripped.startswith('-'):
+            if param_match and not stripped.startswith("-"):
                 # 保存之前的参数
                 if current_param and current_desc:
                     param_docs[current_param] = " ".join(current_desc)
 
                 current_param = param_match.group(1)
                 current_desc = [param_match.group(2)] if param_match.group(2) else []
-            elif current_param and line.startswith(' ' * 4):
+            elif current_param and line.startswith(" " * 4):
                 # 继续当前参数的描述（缩进4个空格以上）
                 current_desc.append(stripped)
 
@@ -467,8 +472,8 @@ def _type_hint_to_param_type(type_hint: Any) -> ToolParameterType:
         return ToolParameterType.OBJECT
 
     # 处理 Optional 和 Union
-    origin = getattr(base_type, '__origin__', None)
-    args = getattr(base_type, '__args__', ())
+    origin = getattr(base_type, "__origin__", None)
+    args = getattr(base_type, "__args__", ())
 
     if origin is not None:
         # 处理 Optional[X] = Union[X, None]
@@ -503,11 +508,11 @@ def _type_hint_to_param_type(type_hint: Any) -> ToolParameterType:
 def _parse_pydantic_model(model_class: Any, param_name: str = "") -> ToolParameter:
     """
     从 Pydantic BaseModel 解析参数定义。
-    
+
     Args:
         model_class: Pydantic BaseModel 类
         param_name: 参数名称
-    
+
     Returns:
         ToolParameter 对象
     """
@@ -526,7 +531,7 @@ def _parse_pydantic_model(model_class: Any, param_name: str = "") -> ToolParamet
         required = []
 
         # Pydantic v2
-        if hasattr(model_class, 'model_fields'):
+        if hasattr(model_class, "model_fields"):
             fields = model_class.model_fields
             for field_name, field_info in fields.items():
                 field_type = field_info.annotation
@@ -534,12 +539,7 @@ def _parse_pydantic_model(model_class: Any, param_name: str = "") -> ToolParamet
                 field_default = field_info.default
 
                 # 递归解析字段类型
-                field_param = _parse_complex_type(
-                    field_type,
-                    field_name,
-                    field_desc,
-                    field_default
-                )
+                field_param = _parse_complex_type(field_type, field_name, field_desc, field_default)
                 properties[field_name] = field_param
 
                 # 检查是否必需
@@ -547,19 +547,14 @@ def _parse_pydantic_model(model_class: Any, param_name: str = "") -> ToolParamet
                     required.append(field_name)
 
         # Pydantic v1
-        elif hasattr(model_class, '__fields__'):
+        elif hasattr(model_class, "__fields__"):
             fields = model_class.__fields__
             for field_name, field_info in fields.items():
                 field_type = field_info.outer_type_
                 field_desc = field_info.field_info.description or f"字段 {field_name}"
                 field_default = field_info.default
 
-                field_param = _parse_complex_type(
-                    field_type,
-                    field_name,
-                    field_desc,
-                    field_default
-                )
+                field_param = _parse_complex_type(field_type, field_name, field_desc, field_default)
                 properties[field_name] = field_param
 
                 if field_info.required:
@@ -581,14 +576,11 @@ def _parse_pydantic_model(model_class: Any, param_name: str = "") -> ToolParamet
 
 
 def _parse_complex_type(
-    type_hint: Any,
-    name: str,
-    description: str = "",
-    default: Any = None
+    type_hint: Any, name: str, description: str = "", default: Any = None
 ) -> ToolParameter:
     """
     解析复杂类型为 ToolParameter。
-    
+
     支持:
     - 基本类型
     - List[T] - 数组
@@ -596,13 +588,13 @@ def _parse_complex_type(
     - Optional[T] - 可选类型
     - Literal[...] - 枚举
     - Pydantic BaseModel - 嵌套对象
-    
+
     Args:
         type_hint: 类型注解
         name: 参数名称
         description: 参数描述
         default: 默认值
-    
+
     Returns:
         ToolParameter 对象
     """
@@ -621,11 +613,9 @@ def _parse_complex_type(
         description = f"参数 {name} ({type_name})"
 
     # 检查是否必需
-    origin = getattr(base_type, '__origin__', None)
-    args = getattr(base_type, '__args__', ())
-    is_optional = (
-        origin is Union and len(args) == 2 and type(None) in args
-    )
+    origin = getattr(base_type, "__origin__", None)
+    args = getattr(base_type, "__args__", ())
+    is_optional = origin is Union and len(args) == 2 and type(None) in args
     required = default is None and not is_optional
 
     # 处理 Literal 类型 -> enum
@@ -661,7 +651,7 @@ def _parse_complex_type(
 def infer_parameters_from_function(func: Callable) -> list[ToolParameter]:
     """
     从函数签名、类型注解和 docstring 推断参数定义。
-    
+
     支持复杂类型:
     - Annotated[str, "描述"] - 参数级别的注解
     - List[T] - 数组类型
@@ -669,26 +659,26 @@ def infer_parameters_from_function(func: Callable) -> list[ToolParameter]:
     - Optional[T] - 可选类型
     - Literal[...] - 枚举类型
     - Pydantic BaseModel - 嵌套对象
-    
+
     优先级:
     1. Annotated[str, "描述"] - 参数级别的注解
     2. docstring Args 部分 - 函数文档中的参数描述
     3. 类型信息 - 基于类型生成默认描述
-    
+
     Args:
         func: 要分析的函数
-    
+
     Returns:
         参数定义列表
-    
+
     Example:
         from typing import Annotated, List, Literal
         from pydantic import BaseModel
-        
+
         class Address(BaseModel):
             street: str
             city: str
-        
+
         def create_user(
             name: Annotated[str, "用户姓名"],
             age: int,
@@ -697,7 +687,7 @@ def infer_parameters_from_function(func: Callable) -> list[ToolParameter]:
             address: Address = None,
         ) -> str:
             return f"Created {name}"
-        
+
         params = infer_parameters_from_function(create_user)
     """
     sig = inspect.signature(func)
@@ -715,7 +705,7 @@ def infer_parameters_from_function(func: Callable) -> list[ToolParameter]:
 
     for name, param in sig.parameters.items():
         # 跳过 self/cls
-        if name in ('self', 'cls'):
+        if name in ("self", "cls"):
             continue
 
         # 获取原始注解（优先使用 param.annotation，因为它保留 Annotated）
@@ -735,9 +725,11 @@ def infer_parameters_from_function(func: Callable) -> list[ToolParameter]:
 
         # 3. 使用默认描述（包含类型信息）
         if not description:
-            type_name = _type_hint_to_param_type(
-                _get_base_type_from_annotation(type_hint)
-            ).value if type_hint != inspect.Parameter.empty else "string"
+            type_name = (
+                _type_hint_to_param_type(_get_base_type_from_annotation(type_hint)).value
+                if type_hint != inspect.Parameter.empty
+                else "string"
+            )
             description = f"参数 {name} ({type_name})"
 
         # 清理默认值
@@ -747,21 +739,18 @@ def infer_parameters_from_function(func: Callable) -> list[ToolParameter]:
         # 解析复杂类型
         if type_hint == inspect.Parameter.empty:
             # 无类型注解，使用字符串
-            params.append(ToolParameter(
-                name=name,
-                type=ToolParameterType.STRING,
-                description=description,
-                required=is_required,
-                default=sanitized_default,
-            ))
+            params.append(
+                ToolParameter(
+                    name=name,
+                    type=ToolParameterType.STRING,
+                    description=description,
+                    required=is_required,
+                    default=sanitized_default,
+                )
+            )
         else:
             # 使用复杂类型解析
-            tool_param = _parse_complex_type(
-                type_hint,
-                name,
-                description,
-                sanitized_default
-            )
+            tool_param = _parse_complex_type(type_hint, name, description, sanitized_default)
             params.append(tool_param)
 
     return params

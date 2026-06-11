@@ -15,7 +15,6 @@ from typing import Any
 
 from framework.core.tool_manager import Tool
 from framework.tools.terminal.types import (
-    Platform,
     ShellFamily,
     ShellInfo,
     _parse_platform,
@@ -43,14 +42,19 @@ class SubprocessExecutor(ShellExecutor):
 
     def __init__(self, shell_info: ShellInfo | None = None) -> None:
         detected = detect_platform_shell()
-        self._shell_info = shell_info or detected or ShellInfo(
-            family=ShellFamily.CMD,
-            path="cmd.exe",
-            platform=_parse_platform(platform.system().lower()),
+        self._shell_info = (
+            shell_info
+            or detected
+            or ShellInfo(
+                family=ShellFamily.CMD,
+                path="cmd.exe",
+                platform=_parse_platform(platform.system().lower()),
+            )
         )
 
     async def execute(self, command: str, working_dir: str | None = None, timeout: int = 60) -> str:
         from framework.tools.terminal.env import build_full_env
+
         cwd = working_dir or os.getcwd()
         process = await asyncio.create_subprocess_shell(
             command,
@@ -124,21 +128,15 @@ class SubprocessTool(Tool):
             "Commands run in Windows CMD. Use CMD syntax: backslashes for paths, "
             "&& for chaining, %VAR% for environment variables."
         ),
-        ShellFamily.ZSH: (
-            "Commands run in zsh. Compatible with bash syntax."
-        ),
-        ShellFamily.SH: (
-            "Commands run in sh. Use basic POSIX syntax."
-        ),
+        ShellFamily.ZSH: ("Commands run in zsh. Compatible with bash syntax."),
+        ShellFamily.SH: ("Commands run in sh. Use basic POSIX syntax."),
     }
 
     @property
     def description(self) -> str:
         """Dynamically generate description based on actual shell type."""
         shell_info = self._executor.shell_info()
-        parts = [
-            f"Execute a shell command using {shell_info.name} and return its output."
-        ]
+        parts = [f"Execute a shell command using {shell_info.name} and return its output."]
 
         family_desc = self._FAMILY_DESCRIPTIONS.get(shell_info.family)
         if family_desc:
@@ -157,16 +155,13 @@ class SubprocessTool(Tool):
         return {
             "type": "object",
             "properties": {
-                "command": {
-                    "type": "string",
-                    "description": "The shell command to execute"
-                },
+                "command": {"type": "string", "description": "The shell command to execute"},
                 "working_dir": {
                     "type": "string",
-                    "description": "Optional working directory for the command"
-                }
+                    "description": "Optional working directory for the command",
+                },
             },
-            "required": ["command"]
+            "required": ["command"],
         }
 
     async def execute(self, command: str, working_dir: str | None = None, **kwargs: object) -> str:

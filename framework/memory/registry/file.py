@@ -121,10 +121,12 @@ class DefaultMemoryStoreRegistry(MemoryStoreRegistry):
             scope_dir = self._scope_dir(layer, scope_key)
             if layer == MemoryLayerName.KNOWLEDGE:
                 from framework.memory.stores.markdown_knowledge import MarkdownKnowledgeStorage
+
                 storage = MarkdownKnowledgeStorage(scope_dir, layer=layer)
             elif layer == MemoryLayerName.ARCHIVE:
                 from framework.memory.stores.dir_archive import DirArchiveStorage
-                storage: MemoryStorage = DirArchiveStorage(scope_dir)  # type: ignore[assignment]
+
+                storage: MemoryStorage = DirArchiveStorage(scope_dir)
             else:
                 storage = DefaultScopedStorage(scope_dir, layer=layer)
             await storage.initialize()
@@ -141,17 +143,17 @@ class DefaultMemoryStoreRegistry(MemoryStoreRegistry):
         self,
         *,
         layer: MemoryLayerName | None = None,
-        agent_roles: Collection[str | MemoryAgentRole] | None = frozenset(
-            {MemoryAgentRole.MAIN}
-        ),
+        agent_roles: Collection[str | MemoryAgentRole] | None = frozenset({MemoryAgentRole.MAIN}),
         has_file: str | None = None,
     ) -> list[ScopeRecord]:
         if not self.root.exists():
             return []
         allowed_roles = {str(role) for role in agent_roles} if agent_roles is not None else None
-        layer_dirs = [self.root / str(layer)] if layer is not None else [
-            path for path in self.root.iterdir() if path.is_dir()
-        ]
+        layer_dirs = (
+            [self.root / str(layer)]
+            if layer is not None
+            else [path for path in self.root.iterdir() if path.is_dir()]
+        )
         records: list[ScopeRecord] = []
         for layer_dir in layer_dirs:
             if not layer_dir.exists():
@@ -190,11 +192,7 @@ class DefaultMemoryStoreRegistry(MemoryStoreRegistry):
         scope: MemoryScope | None = None,
     ) -> None:
         _ = scope
-        keys = [
-            key
-            for key in self._stores
-            if layer is None or key[0] == layer
-        ]
+        keys = [key for key in self._stores if layer is None or key[0] == layer]
         for key in keys:
             await self._stores[key].close()
             self._stores.pop(key, None)

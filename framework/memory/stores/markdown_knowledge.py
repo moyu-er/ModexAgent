@@ -61,9 +61,7 @@ class MarkdownKnowledgeStorage(DefaultScopedStorage):
 
     async def list_keys(self, prefix: str = "") -> list[str]:
         md_files = [
-            f.name
-            for f in self.directory.glob("*.md")
-            if f.is_file() and f.name.startswith(prefix)
+            f.name for f in self.directory.glob("*.md") if f.is_file() and f.name.startswith(prefix)
         ]
         kv_keys = await super().list_keys(prefix)
         return sorted(set(md_files + kv_keys))

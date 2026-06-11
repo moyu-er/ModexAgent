@@ -16,8 +16,8 @@ def _sanitize_input(text: str) -> str:
     ``\\u200b/huashu-design`` is still recognized as a slash command.
     """
     stripped = text.lstrip(
-        "​‌‍‎‏"   # zero-width / directional
-        "﻿"                            # BOM
+        "​‌‍‎‏"  # zero-width / directional
+        "﻿"  # BOM
         "  ᠎  　"  # Unicode spaces strip() may miss
     )
     return stripped

@@ -38,8 +38,7 @@ def create_agent(
         provider = default_llm_provider
     else:
         raise ValueError(
-            f"Agent '{cfg.name}' has no llm config and no "
-            f"default_llm_provider provided."
+            f"Agent '{cfg.name}' has no llm config and no default_llm_provider provided."
         )
 
     return ReActAgent(provider=provider, mode="full")

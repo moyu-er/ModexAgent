@@ -1,4 +1,5 @@
 """User retention buffer — pruned user context with completion tracking."""
+
 from __future__ import annotations
 
 import hashlib
@@ -8,7 +9,6 @@ from typing import Any
 
 from framework.core.types import MessageRole
 from framework.memory.core.message import ChatMessage
-from framework.memory.core.scope import MemoryContext
 
 
 @dataclass(frozen=True)
@@ -34,7 +34,9 @@ class UserBufferEntry:
     truncatable_paths: list[str] | None = None
 
     @classmethod
-    def from_message(cls, message: ChatMessage | dict[str, Any], *, pruned_at: float) -> UserBufferEntry:
+    def from_message(
+        cls, message: ChatMessage | dict[str, Any], *, pruned_at: float
+    ) -> UserBufferEntry:
         """Create an entry from a pruned session message."""
         if isinstance(message, ChatMessage):
             # to_dict() omits content_format when it is the default (PLAIN),
@@ -110,7 +112,9 @@ class UserBufferEntry:
         if value is None:
             return ""
         if isinstance(value, list):
-            return json.dumps([dict(item) for item in value if isinstance(item, dict)], ensure_ascii=False)
+            return json.dumps(
+                [dict(item) for item in value if isinstance(item, dict)], ensure_ascii=False
+            )
         return str(value)
 
     @staticmethod
@@ -126,6 +130,7 @@ class UserBufferEntry:
     @staticmethod
     def _parse_timestamp_str(value: str, fallback: float) -> float:
         from datetime import datetime
+
         from framework.utils.timezone import get_user_timezone
 
         tz = get_user_timezone()
@@ -156,6 +161,7 @@ class UserBufferEntry:
         d = asdict(self)
         # Convert float timestamp to session-style readable format
         from datetime import datetime
+
         from framework.utils.timezone import get_user_timezone
 
         dt = datetime.fromtimestamp(self.pruned_user_created_at, tz=get_user_timezone())
@@ -172,19 +178,25 @@ class UserBufferEntry:
             if not isinstance(content, str):
                 content = str(content)
             source = data.get("pruned_user_source_agent")
-            fp = str(data.get("fingerprint")
-                or cls._make_fingerprint(role, content, str(source) if source else None))
+            fp = str(
+                data.get("fingerprint")
+                or cls._make_fingerprint(role, content, str(source) if source else None)
+            )
             content_format = data.get("content_format")
             truncatable_paths = data.get("truncatable_paths")
             return cls(
                 pruned_user_role=role,
                 pruned_user_content=content,
                 pruned_user_source_agent=str(source) if source is not None else None,
-                pruned_user_created_at=cls._coerce_timestamp(data.get("pruned_user_created_at"), fallback=0.0),
+                pruned_user_created_at=cls._coerce_timestamp(
+                    data.get("pruned_user_created_at"), fallback=0.0
+                ),
                 completing_assistant_content=data.get("completing_assistant_content"),
                 fingerprint=fp,
                 content_format=str(content_format) if content_format is not None else None,
-                truncatable_paths=list(truncatable_paths) if isinstance(truncatable_paths, list) else None,
+                truncatable_paths=list(truncatable_paths)
+                if isinstance(truncatable_paths, list)
+                else None,
             )
         except (TypeError, ValueError):
             return None

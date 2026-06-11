@@ -1,4 +1,5 @@
 """In-memory storage backend for testing and ephemeral use."""
+
 from __future__ import annotations
 
 import time
@@ -174,9 +175,7 @@ class InMemoryStorage:
         *,
         layer: str | None = None,
         has_file: str | None = None,
-        agent_roles: Collection[str | MemoryAgentRole] | None = frozenset(
-            {MemoryAgentRole.MAIN}
-        ),
+        agent_roles: Collection[str | MemoryAgentRole] | None = frozenset({MemoryAgentRole.MAIN}),
     ) -> list[ScopeRecord]:
         async with self.get_lock().read():
             records = list(self._scope_records.values())
@@ -192,9 +191,5 @@ class InMemoryStorage:
                     if bool(self._data.get(record.scope_key, {}).get("__messages__"))
                 ]
             elif has_file == "history":
-                records = [
-                    record
-                    for record in records
-                    if bool(self._logs.get(record.scope_key))
-                ]
+                records = [record for record in records if bool(self._logs.get(record.scope_key))]
             return records

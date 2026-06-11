@@ -187,17 +187,20 @@ class DefaultWorkspaceContext(WorkspaceContext):
         # Check 2: target validity
         if not target.exists():
             return self._fail(
-                f"{_prefix}: path not found: '{target}'", CdError.PATH_NOT_FOUND,
+                f"{_prefix}: path not found: '{target}'",
+                CdError.PATH_NOT_FOUND,
             )
         if not target.is_dir():
             return self._fail(
-                f"{_prefix}: not a directory: '{target}'", CdError.NOT_A_DIRECTORY,
+                f"{_prefix}: not a directory: '{target}'",
+                CdError.NOT_A_DIRECTORY,
             )
 
         # Check 3: agent idle (fast CPU check, before I/O)
         if self._active_checker is not None and self._active_checker():
             return self._fail(
-                f"{_prefix}: agents are busy, try again later", CdError.AGENTS_BUSY,
+                f"{_prefix}: agents are busy, try again later",
+                CdError.AGENTS_BUSY,
             )
 
         # Check 4: writable
@@ -218,7 +221,8 @@ class DefaultWorkspaceContext(WorkspaceContext):
         except Exception:
             logger.exception("Callback failed during workspace switch, not switching")
             return self._fail(
-                f"{_prefix}: internal error, reverted", CdError.CALLBACK_ERROR,
+                f"{_prefix}: internal error, reverted",
+                CdError.CALLBACK_ERROR,
             )
 
         # Execute: OS chdir
@@ -238,11 +242,7 @@ class DefaultWorkspaceContext(WorkspaceContext):
         # State update
         self._current = target
 
-        notice = (
-            f"switched to: {target}"
-            if target != self._home
-            else f"returned to home: {target}"
-        )
+        notice = f"switched to: {target}" if target != self._home else f"returned to home: {target}"
         return CdResult(
             success=True,
             current_path=target,

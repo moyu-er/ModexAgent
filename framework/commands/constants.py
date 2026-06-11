@@ -34,9 +34,13 @@ class BuiltinCommand(StrEnum):
     PWD = "pwd"
 
 
-NOTICE_INVALID_COMMAND = "Invalid command syntax. Commands must look like /command or /command text."
+NOTICE_INVALID_COMMAND = (
+    "Invalid command syntax. Commands must look like /command or /command text."
+)
 NOTICE_UNKNOWN_COMMAND = "Unknown command: /{command}. No such command or skill is available."
-NOTICE_SKILL_NOT_FOUND = "Skill not found: /{command}. Check the skill name or use a built-in command."
+NOTICE_SKILL_NOT_FOUND = (
+    "Skill not found: /{command}. Check the skill name or use a built-in command."
+)
 NOTICE_NO_PENDING_APPROVAL = "No pending approval request."
 NOTICE_APPROVAL_BLOCKS_CONTINUE = "A pending approval request exists. Use /approve or /deny first."
 NOTICE_COMMAND_FAILED = "Command failed: {reason}"

@@ -1,4 +1,5 @@
 """File-based storage backend for cross-platform persistence."""
+
 from __future__ import annotations
 
 import contextlib
@@ -172,9 +173,7 @@ class FileStorage:
         *,
         layer: str | None = None,
         has_file: str | None = None,
-        agent_roles: Collection[str | MemoryAgentRole] | None = frozenset(
-            {MemoryAgentRole.MAIN}
-        ),
+        agent_roles: Collection[str | MemoryAgentRole] | None = frozenset({MemoryAgentRole.MAIN}),
     ) -> list[ScopeRecord]:
         if not self.workspace.exists():
             return []

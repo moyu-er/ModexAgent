@@ -1,4 +1,5 @@
 """Agent notification hooks — max-iteration and missed-communication alerts."""
+
 from __future__ import annotations
 
 import logging
@@ -28,7 +29,7 @@ class AgentNotificationService:
         output_adapter: OutputAdapter,
         agent_bus: AgentMessageBus,
         session_strategy: DefaultSessionIdStrategy | None = None,
-    ):
+    ) -> None:
         self._output_adapter = output_adapter
         self._agent_bus = agent_bus
         self._session_strategy = session_strategy or DefaultSessionIdStrategy()
@@ -38,18 +39,17 @@ class AgentNotificationService:
         ctx: AgentContext,
         xml_content: str,
     ) -> None:
-        if (
-            ctx.session_meta is not None
-            and ctx.session_meta.comm_kind == AgentCommKind.SUBAGENT
-        ):
+        if ctx.session_meta is not None and ctx.session_meta.comm_kind == AgentCommKind.SUBAGENT:
             await self._notify_parent(ctx, xml_content)
         else:
             await self._notify_user(ctx, xml_content)
 
     async def _notify_user(self, ctx: AgentContext, xml: str) -> None:
         from framework.core.types import OutputMessage
+
         await self._output_adapter.send(
-            OutputMessage(content=xml), ctx.session_id,
+            OutputMessage(content=xml),
+            ctx.session_id,
         )
 
     async def _notify_parent(self, ctx: AgentContext, xml: str) -> None:
@@ -67,6 +67,7 @@ class AgentNotificationService:
 
         from framework.multi_agent.address import AgentAddress
         from framework.multi_agent.envelope import AgentMessageEnvelope
+
         envelope = AgentMessageEnvelope(
             payload={"content": xml, "message_type": "agent_result"},
             source=AgentAddress(name=ctx.session_meta.agent_name),
@@ -85,7 +86,7 @@ class MaxIterationNotifyHook:
     Routing is handled internally by AgentNotificationService.
     """
 
-    def __init__(self, notification_service: AgentNotificationService | None = None):
+    def __init__(self, notification_service: AgentNotificationService | None = None) -> None:
         self._svc = notification_service
 
     async def after_turn(self, ctx: AgentContext, result: AgentResult) -> None:
@@ -94,11 +95,7 @@ class MaxIterationNotifyHook:
         if getattr(result, "stop_reason", None) != "max_iterations":
             return
 
-        agent_name = (
-            ctx.session_meta.agent_name
-            if ctx.session_meta
-            else "unknown"
-        )
+        agent_name = ctx.session_meta.agent_name if ctx.session_meta else "unknown"
         invocation_id = ctx.session_meta.invocation_id if ctx.session_meta else None
 
         content = result.content or ""
@@ -107,6 +104,7 @@ class MaxIterationNotifyHook:
             truncated += "\n... (truncated)"
 
         from framework.multi_agent.message_xml import build_agent_result
+
         xml = build_agent_result(
             source=agent_name,
             invocation_id=invocation_id,

@@ -40,7 +40,7 @@ class TerminalTool(Tool):
         cwd: Initial working directory (only for open).
     """
 
-    def __init__(self, manager: TerminalManagerBase, registry: ProcessRegistry | None = None):
+    def __init__(self, manager: TerminalManagerBase, registry: ProcessRegistry | None = None) -> None:
         super().__init__()
         self._manager = manager
         self._registry = registry
@@ -242,7 +242,9 @@ class TerminalTool(Tool):
             if history:
                 parts.append("<history>")
                 for rec in history[-3:]:
-                    parts.append(f'  <record command="{xml_attr(rec.command)}" timestamp="{int(rec.timestamp)}" />')
+                    parts.append(
+                        f'  <record command="{xml_attr(rec.command)}" timestamp="{int(rec.timestamp)}" />'
+                    )
                 parts.append("</history>")
 
             if session.last_status:

@@ -1,4 +1,5 @@
 """Approval configuration dataclasses."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -12,6 +13,7 @@ class ToolApprovalConfig:
     Empty list means ALL paths require approval.
     ["*"] means NO paths require approval.
     """
+
     allowed_paths: list[str] = field(default_factory=list)
 
 
@@ -23,5 +25,6 @@ class AgentApprovalConfig:
     tools: mapping from tool name to its approval config.
         Tools not in this mapping are NOT subject to approval.
     """
+
     enabled: bool = False
     tools: dict[str, ToolApprovalConfig] = field(default_factory=dict)

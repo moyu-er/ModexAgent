@@ -4,6 +4,7 @@ Uses openai.AsyncOpenAI for Chat Completions API.
 All response parsing goes through shared intermediate types
 (StreamDelta, ParsedResponse) -- no hasattr/getattr, no bare dicts.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -13,8 +14,8 @@ import time
 from collections.abc import Callable
 from typing import Any, ClassVar
 
-from openai import AsyncOpenAI
 import httpx
+from openai import AsyncOpenAI
 
 from framework.core.constants import FinishReason
 from framework.core.llm_struct import (
@@ -58,7 +59,7 @@ class OpenAIProvider(StreamingLLMProvider):
         reasoning_effort: str | None = None,
         extra_headers: dict[str, str] | None = None,
         safety: RuntimeSafetyPolicy | None = None,
-    ):
+    ) -> None:
         self._model = model
         self._temperature = temperature
         self._max_tokens = max_tokens
@@ -73,11 +74,7 @@ class OpenAIProvider(StreamingLLMProvider):
             self._timeout = timeout
             self._stream_idle_timeout = stream_idle_timeout
 
-        retry_backoff = (
-            safety.llm.retry_backoff_seconds
-            if safety is not None
-            else (2.0, 8.0)
-        )
+        retry_backoff = safety.llm.retry_backoff_seconds if safety is not None else (2.0, 8.0)
         super().__init__(retry_backoff_seconds=retry_backoff)
 
         self._client = AsyncOpenAI(
@@ -126,12 +123,16 @@ class OpenAIProvider(StreamingLLMProvider):
         **kwargs,
     ) -> LLMResponse:
         return await self._execute_with_retry(
-            self._chat_stream_raw, messages, max_retries,
-            model=model, temperature=temperature, max_tokens=max_tokens,
+            self._chat_stream_raw,
+            messages,
+            max_retries,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
             tools=tools,
             on_content_delta=on_content_delta,
             on_reasoning_delta=on_reasoning_delta,
-            **kwargs
+            **kwargs,
         )
 
     async def _chat_stream_raw(
@@ -146,8 +147,13 @@ class OpenAIProvider(StreamingLLMProvider):
         **kwargs,
     ) -> LLMResponse:
         params = self._build_params(
-            messages=messages, model=model, temperature=temperature,
-            max_tokens=max_tokens, tools=tools, stream=True, **kwargs,
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            tools=tools,
+            stream=True,
+            **kwargs,
         )
         t0 = time.monotonic()
         logger.debug("OpenAI stream start: model=%s", params["model"])
@@ -161,7 +167,9 @@ class OpenAIProvider(StreamingLLMProvider):
             error_info = classify_openai_error(exc)
             logger.warning(
                 "OpenAI stream failed: kind=%s elapsed=%.0fms message=%s",
-                error_info.kind.value, elapsed_ms, error_info.message[:200],
+                error_info.kind.value,
+                elapsed_ms,
+                error_info.message[:200],
             )
             return LLMResponse(
                 content=f"Error calling LLM: {error_info.message}",
@@ -187,13 +195,14 @@ class OpenAIProvider(StreamingLLMProvider):
                 )
             except StopAsyncIteration:
                 break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 with contextlib.suppress(Exception):
                     await stream.close()
                 partial_content = "".join(content_parts)
                 logger.warning(
                     "OpenAI stream idle timeout after %.1fs, partial_content_len=%d",
-                    self._stream_idle_timeout, len(partial_content),
+                    self._stream_idle_timeout,
+                    len(partial_content),
                 )
                 return build_timeout_response(
                     provider="openai",
@@ -251,7 +260,10 @@ class OpenAIProvider(StreamingLLMProvider):
         elapsed_ms = (time.monotonic() - t0) * 1000
         logger.debug(
             "OpenAI stream done: model=%s finish=%s content_len=%d elapsed=%.0fms",
-            params["model"], finish_reason, len("".join(content_parts)), elapsed_ms,
+            params["model"],
+            finish_reason,
+            len("".join(content_parts)),
+            elapsed_ms,
         )
 
         return LLMResponse(
@@ -274,10 +286,16 @@ class OpenAIProvider(StreamingLLMProvider):
     # Everything else (content_format, truncatable_paths, metadata,
     # meta_context_lossy, etc.) is governance-internal and must not
     # reach external providers.
-    _API_MSG_FIELDS: ClassVar[frozenset[str]] = frozenset({
-        "role", "content", "name", "tool_calls", "tool_call_id",
-        "function_call",
-    })
+    _API_MSG_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "role",
+            "content",
+            "name",
+            "tool_calls",
+            "tool_call_id",
+            "function_call",
+        }
+    )
 
     @staticmethod
     def _sanitize_api_messages(
@@ -285,10 +303,7 @@ class OpenAIProvider(StreamingLLMProvider):
     ) -> list[dict[str, Any]]:
         """Strip governance-internal fields from messages before API call."""
         allowed = OpenAIProvider._API_MSG_FIELDS
-        return [
-            {k: v for k, v in msg.items() if k in allowed}
-            for msg in messages
-        ]
+        return [{k: v for k, v in msg.items() if k in allowed} for msg in messages]
 
     def _build_params(
         self,

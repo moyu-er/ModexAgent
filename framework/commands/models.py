@@ -64,21 +64,18 @@ class CommandHandlingResult:
 
 class CommandProcessor(ABC):
     @abstractmethod
-    def parse(self, text: str) -> CommandParseResult:
-        ...
+    def parse(self, text: str) -> CommandParseResult: ...
 
     @abstractmethod
     def dispatch_policy(
         self,
         invocation: SlashCommandInvocation,
         context: CommandContext,
-    ) -> CommandDispatchPolicy:
-        ...
+    ) -> CommandDispatchPolicy: ...
 
     @abstractmethod
     async def handle(
         self,
         text: str,
         context: CommandContext,
-    ) -> CommandHandlingResult:
-        ...
+    ) -> CommandHandlingResult: ...

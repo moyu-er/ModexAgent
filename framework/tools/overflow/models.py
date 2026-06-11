@@ -8,7 +8,7 @@ class OverflowMetadata:
     tool_name: str
     tool_call_id: str
     session_id: str
-    created_at: str       # ISO 8601
+    created_at: str  # ISO 8601
     total_chars: int
     total_chunks: int
 

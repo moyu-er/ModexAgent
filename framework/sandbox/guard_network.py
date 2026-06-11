@@ -2,6 +2,7 @@
 
 Scans commands for URLs targeting private/internal addresses.
 """
+
 from __future__ import annotations
 
 import ipaddress
@@ -13,19 +14,18 @@ from urllib.parse import urlparse
 
 from .guard import CommandSeverity, GuardMatch, GuardResult
 
-
 # Blocked private/internal networks (same as nanobot)
 _BLOCKED_NETWORKS: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = [
-    ipaddress.ip_network("0.0.0.0/8"),         # Current network
-    ipaddress.ip_network("10.0.0.0/8"),        # RFC1918 private
-    ipaddress.ip_network("100.64.0.0/10"),     # Carrier-grade NAT
-    ipaddress.ip_network("127.0.0.0/8"),       # Loopback
-    ipaddress.ip_network("169.254.0.0/16"),    # Link-local / cloud metadata
-    ipaddress.ip_network("172.16.0.0/12"),     # RFC1918 private
-    ipaddress.ip_network("192.168.0.0/16"),    # RFC1918 private
-    ipaddress.ip_network("::1/128"),           # IPv6 loopback
-    ipaddress.ip_network("fc00::/7"),          # IPv6 unique local
-    ipaddress.ip_network("fe80::/10"),         # IPv6 link-local
+    ipaddress.ip_network("0.0.0.0/8"),  # Current network
+    ipaddress.ip_network("10.0.0.0/8"),  # RFC1918 private
+    ipaddress.ip_network("100.64.0.0/10"),  # Carrier-grade NAT
+    ipaddress.ip_network("127.0.0.0/8"),  # Loopback
+    ipaddress.ip_network("169.254.0.0/16"),  # Link-local / cloud metadata
+    ipaddress.ip_network("172.16.0.0/12"),  # RFC1918 private
+    ipaddress.ip_network("192.168.0.0/16"),  # RFC1918 private
+    ipaddress.ip_network("::1/128"),  # IPv6 loopback
+    ipaddress.ip_network("fc00::/7"),  # IPv6 unique local
+    ipaddress.ip_network("fe80::/10"),  # IPv6 link-local
 ]
 
 # URL extraction regex for command strings

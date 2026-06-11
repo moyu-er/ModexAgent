@@ -5,6 +5,7 @@ For path traversal detection see ``guard_traversal.py``.
 For SSRF detection see ``guard_network.py``.
 For command-string path boundary checks see ``guard_path.py``.
 """
+
 from __future__ import annotations
 
 import re
@@ -45,8 +46,6 @@ class CommandPatternGuardConfig:
 
     extra_deny_patterns: list[str] = field(default_factory=list)
     allow_patterns: list[str] = field(default_factory=list)
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -215,10 +214,7 @@ class CommandPatternGuard:
 
         # Step 4 -- return denied result.
         if matches:
-            parts = [
-                f"[{m.severity.value}] {m.description} ({m.category})"
-                for m in matches
-            ]
+            parts = [f"[{m.severity.value}] {m.description} ({m.category})" for m in matches]
             reason = "Command denied: " + "; ".join(parts)
             return GuardResult(
                 allowed=False,
@@ -259,5 +255,3 @@ class CommandPatternGuard:
             )
 
         return rules
-
-
