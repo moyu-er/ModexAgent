@@ -9,7 +9,6 @@ TDD cycle:
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import sys
 from pathlib import Path
@@ -107,7 +106,10 @@ class TestPoolExperienceReviewWiring:
             )
 
             added_hooks = [call.args[0] for call in mock_pipeline.hook_runner.add.call_args_list]
-            hook_types = [type(h.hook).__name__ if hasattr(h, "hook") else type(h).__name__ for h in added_hooks]
+            hook_types = [
+                type(h.hook).__name__ if hasattr(h, "hook") else type(h).__name__
+                for h in added_hooks
+            ]
 
             assert "ExperienceReviewHook" in hook_types, (
                 f"Expected ExperienceReviewHook in pipeline hooks, got: {hook_types}. "
@@ -204,9 +206,12 @@ class TestExperienceReviewHookExecution:
         # Mock the ReActAgent.run so we don't need a real LLM,
         # but make it emit a complete event so trace is written.
         async def _mock_run(context, emitter):
-            from framework.core.emitter import AgentResult
             from framework.core.constants import StopReason
-            await emitter.emit_complete(AgentResult(content="done", stop_reason=StopReason.COMPLETED))
+            from framework.core.emitter import AgentResult
+
+            await emitter.emit_complete(
+                AgentResult(content="done", stop_reason=StopReason.COMPLETED)
+            )
             return AgentResult(content="done", stop_reason=StopReason.COMPLETED)
 
         agent._react_agent = MagicMock()
@@ -243,9 +248,12 @@ class TestExperienceReviewHookExecution:
         meta = PerFileExperienceMetaStore(exp_dir)
 
         async def _mock_run(context, emitter):
-            from framework.core.emitter import AgentResult
             from framework.core.constants import StopReason
-            await emitter.emit_complete(AgentResult(content="done", stop_reason=StopReason.COMPLETED))
+            from framework.core.emitter import AgentResult
+
+            await emitter.emit_complete(
+                AgentResult(content="done", stop_reason=StopReason.COMPLETED)
+            )
             return AgentResult(content="done", stop_reason=StopReason.COMPLETED)
 
         agent._react_agent = MagicMock()
@@ -271,9 +279,9 @@ class TestExperienceReviewHookExecution:
     async def test_experience_review_hook_after_turn_logs_info(self, tmp_path: Path) -> None:
         """ExperienceReviewHook.after_turn must log INFO when triggering review."""
         from framework.agents.experience.review_agent import ExperienceReviewAgent
-        from framework.core.experience.meta import PerFileExperienceMetaStore
-        from framework.core.emitter import AgentResult
         from framework.core.constants import StopReason
+        from framework.core.emitter import AgentResult
+        from framework.core.experience.meta import PerFileExperienceMetaStore
         from framework.memory.history import ListMessageHistory
 
         exp_dir = tmp_path / "experiences"
@@ -293,12 +301,14 @@ class TestExperienceReviewHookExecution:
         hook._turn_counter = 10
 
         ctx = MagicMock()
-        ctx.history = ListMessageHistory([
-            {"role": "user", "content": "hello"},
-            {"role": "assistant", "content": "hi"},
-            {"role": "user", "content": "world"},
-            {"role": "assistant", "content": "earth"},
-        ])
+        ctx.history = ListMessageHistory(
+            [
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "hi"},
+                {"role": "user", "content": "world"},
+                {"role": "assistant", "content": "earth"},
+            ]
+        )
 
         result = AgentResult(content="earth", stop_reason=StopReason.COMPLETED, messages=[])
 

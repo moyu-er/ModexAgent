@@ -2,32 +2,29 @@
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, AsyncMock
-
-import pytest
+from unittest.mock import MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from framework.core.agent import AgentContext
 from framework.core.context import InMemoryContextManager
-from framework.core.emitter import AgentResult
 from framework.memory.history import ListMessageHistory
 
 
 class TestContextManagerConstruction:
     """验证不同 context_manager 类型的构造。"""
 
-    async def test_inmemory_context_manager_save_load(self):
+    async def test_inmemory_context_manager_save_load(self) -> None:
         cm = InMemoryContextManager(base_system_prompt="test prompt")
         state = await cm.load("s1")
         assert state.system_prompt == "test prompt"
 
-    async def test_inmemory_context_system_prompt_construction(self):
+    async def test_inmemory_context_system_prompt_construction(self) -> None:
         cm = InMemoryContextManager(base_system_prompt="You are helpful")
         prompt = await cm.build_system_prompt(tool_manager=MagicMock())
         assert "You are helpful" in (prompt or "")
 
-    async def test_inmemory_context_is_reusable(self):
+    async def test_inmemory_context_is_reusable(self) -> None:
         cm = InMemoryContextManager(base_system_prompt="inmemory")
         state1 = await cm.load("any_id")
         state2 = await cm.load("any_id")
@@ -38,7 +35,7 @@ class TestContextManagerConstruction:
 class TestAgentContextConstruction:
     """验证 AgentContext 构造和字段。"""
 
-    def test_minimal_agent_context(self):
+    def test_minimal_agent_context(self) -> None:
         """Minimal AgentContext has correct defaults."""
         ctx = AgentContext(
             system_prompt="test",
@@ -51,15 +48,18 @@ class TestAgentContextConstruction:
         assert ctx.max_iterations == 10
         assert ctx.runtime is None
 
-    def test_agent_context_with_runtime_context_manager(self):
+    def test_agent_context_with_runtime_context_manager(self) -> None:
         """AgentContext with runtime passes RuntimeContextManager through services."""
         from framework.core.runtime_context import RuntimeContextManager
-        from framework.runtime.services import AgentRuntime, AgentRuntimeServices
-        from framework.runtime.models import TurnIdentity, TurnStateBase
         from framework.runtime.enums import AgentKind, TurnPhase
+        from framework.runtime.models import TurnIdentity, TurnStateBase
+        from framework.runtime.services import AgentRuntime, AgentRuntimeServices
+
         mgr = RuntimeContextManager()
         identity = TurnIdentity(agent_id="test", session_id="s1", turn_id="t1")
-        state = TurnStateBase(identity=identity, agent_kind=AgentKind.REACT, phase=TurnPhase.CREATED)
+        state = TurnStateBase(
+            identity=identity, agent_kind=AgentKind.REACT, phase=TurnPhase.CREATED
+        )
         services = AgentRuntimeServices(runtime_context_manager=mgr)
         ctx = AgentContext(
             system_prompt="test",
@@ -72,14 +72,17 @@ class TestAgentContextConstruction:
         assert ctx.runtime is not None
         assert ctx.runtime.services.runtime_context_manager is mgr
 
-    def test_agent_context_with_safety_policy(self):
+    def test_agent_context_with_safety_policy(self) -> None:
         """AgentContext passes safety policy through services."""
-        from framework.runtime.services import AgentRuntime, AgentRuntimeServices
-        from framework.runtime.models import TurnIdentity, TurnStateBase
         from framework.runtime.enums import AgentKind, TurnPhase
+        from framework.runtime.models import TurnIdentity, TurnStateBase
+        from framework.runtime.services import AgentRuntime, AgentRuntimeServices
+
         safety = MagicMock()
         identity = TurnIdentity(agent_id="test", session_id="s1", turn_id="t1")
-        state = TurnStateBase(identity=identity, agent_kind=AgentKind.REACT, phase=TurnPhase.CREATED)
+        state = TurnStateBase(
+            identity=identity, agent_kind=AgentKind.REACT, phase=TurnPhase.CREATED
+        )
         services = AgentRuntimeServices(safety=safety)
         ctx = AgentContext(
             system_prompt="test",
@@ -95,7 +98,7 @@ class TestAgentContextConstruction:
 class TestAgentContextIsolation:
     """验证不同 session 之间 AgentContext 的隔离性。"""
 
-    def test_different_sessions_have_independent_contexts(self):
+    def test_different_sessions_have_independent_contexts(self) -> None:
         """Different sessions have independent state."""
         ctx1 = AgentContext(
             system_prompt="prompt1",

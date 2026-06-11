@@ -1,4 +1,5 @@
 """PoolRouter — session→pool dispatch with /pool_name switching."""
+
 from __future__ import annotations
 
 import json
@@ -97,7 +98,7 @@ class PoolRouter:
     async def _handle_switch(self, session_id: str, pool_name: str) -> None:
         self._session_store.set(session_id, pool_name)
         await self._output_adapter.send(
-            OutputMessage(content=f"switch to \"{pool_name}\" pool"),
+            OutputMessage(content=f'switch to "{pool_name}" pool'),
             session_id,
         )
         logger.info("Session %s switched to pool '%s'", session_id, pool_name)

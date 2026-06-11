@@ -49,12 +49,12 @@ class QQBotService(BotService):
 
         # Load .env BEFORE AppConfig.from_yaml() so ${LLM_API_KEY} resolves
         from dotenv import load_dotenv
+
         load_dotenv(config_dir.parent / ".env")
 
         # IOC config — primary config source
         app_cfg = AppConfig.from_yaml(yaml_path)
-        print(f"[IOC] Loaded: {len(app_cfg.agents)} agents, "
-              f"MCP={app_cfg.mcp is not None}")
+        print(f"[IOC] Loaded: {len(app_cfg.agents)} agents, MCP={app_cfg.mcp is not None}")
 
         # QQ adapter config (business layer)
         config_loader = ConfigLoader(config_dir)
@@ -80,8 +80,12 @@ class QQBotService(BotService):
 
         # Pass app_config only — MCP servers come from sibling mcp.json
         super().__init__(
-            config_dir, input_adapter, output_adapter, emitter_factory,
-            mode=mode, app_config=app_cfg,
+            config_dir,
+            input_adapter,
+            output_adapter,
+            emitter_factory,
+            mode=mode,
+            app_config=app_cfg,
         )
 
 
@@ -111,6 +115,7 @@ def _install_signal_handlers(service: BotService) -> None:
     - Windows: ``signal.signal(SIGINT)`` — SIGTERM is uncatchable
       on Windows (TerminateProcess), so only SIGINT is registered.
     """
+
     def _graceful_shutdown() -> None:
         logger.info("Shutdown signal received, setting _shutdown_event")
         service._shutdown_event.set()

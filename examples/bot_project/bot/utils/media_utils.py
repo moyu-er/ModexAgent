@@ -21,9 +21,7 @@ def _sanitize_filename(name: str) -> str:
     """清理文件名，防止路径遍历和特殊字符问题。"""
     import re
 
-    _safe_name_re = re.compile(
-        r"[^\w.\-()\[\]（）【】\u4e00-\u9fff]+", re.UNICODE
-    )
+    _safe_name_re = re.compile(r"[^\w.\-()\[\]（）【】\u4e00-\u9fff]+", re.UNICODE)
     name = (name or "").strip()
     name = Path(name).name
     name = _safe_name_re.sub("_", name).strip("._ ")
@@ -58,9 +56,7 @@ async def download_file(
             try:
                 with urlopen(url, timeout=120) as resp:  # noqa: S310
                     if resp.status != 200:
-                        print(
-                            f"[MediaUtils] Download failed: status={resp.status} url={url}"
-                        )
+                        print(f"[MediaUtils] Download failed: status={resp.status} url={url}")
                         return None
 
                     # 推断扩展名
@@ -104,9 +100,7 @@ async def download_file(
                                 break
                             downloaded += len(chunk)
                             if downloaded > max_bytes:
-                                print(
-                                    f"[MediaUtils] Download exceeded max_bytes={max_bytes}"
-                                )
+                                print(f"[MediaUtils] Download exceeded max_bytes={max_bytes}")
                                 f.close()
                                 tmp_path.unlink(missing_ok=True)
                                 return None

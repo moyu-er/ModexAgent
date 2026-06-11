@@ -1,4 +1,5 @@
 """PoolInstance — runtime container for one agent pool."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -32,4 +33,5 @@ class PoolInstance:
     @property
     def main_address(self):
         from framework.multi_agent.address import AgentAddress
+
         return AgentAddress(kind="agent", name=self.main_agent_name)

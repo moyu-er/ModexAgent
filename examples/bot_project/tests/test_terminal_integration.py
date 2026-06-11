@@ -7,17 +7,17 @@ available, and SubprocessTool always uses SubprocessExecutor.
 from __future__ import annotations
 
 import sys
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import AsyncIterator
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
-
 from bot.service.core import BotService
+
 from framework.core.types import InputMessage
 from framework.pipeline.adapters import InputAdapter, NullOutputAdapter
-from framework.tools.terminal.subprocess_tool import SubprocessTool, SubprocessExecutor
+from framework.tools.terminal.subprocess_tool import SubprocessTool
 from framework.tools.terminal.tool import TerminalTool
 
 
@@ -38,7 +38,7 @@ class _InputAdapter(InputAdapter):
 
 
 @pytest.fixture
-def service():
+def service() -> BotService:
     return BotService(
         config_dir=Path("examples/bot_project/config"),
         input_adapter=_InputAdapter(),
@@ -53,6 +53,7 @@ class TestTerminalManagerInitialization:
     def test_bash_available_creates_terminal_manager(self, service) -> None:
         """When bash is on PATH, BotService should create a TerminalManager."""
         import shutil
+
         bash_path = shutil.which("bash")
         if not bash_path:
             pytest.skip("bash not available on this system")
@@ -63,12 +64,14 @@ class TestTerminalManagerInitialization:
 
         # Verify that _make_shell_tool always uses SubprocessTool with SubprocessExecutor.
         from bot.service.builders import _make_shell_tool
+
         shell_tool = _make_shell_tool()
         assert isinstance(shell_tool, SubprocessTool)
 
     def test_shell_tool_always_uses_subprocess_executor(self, service) -> None:
         """SubprocessTool must use SubprocessExecutor regardless of terminal_manager."""
         from bot.service.builders import _make_shell_tool
+
         from framework.tools.terminal.manager import TerminalManager
 
         # Even with a TerminalManager, SubprocessTool still uses SubprocessExecutor
@@ -114,8 +117,8 @@ class TestTerminalToolActions:
 
     def test_terminal_tool_interrupt_targets_default(self, service) -> None:
         """INTERRUPT should target the default terminal session."""
-        from framework.tools.terminal.tool import TerminalTool
         from framework.tools.terminal.manager import TerminalManager
+        from framework.tools.terminal.tool import TerminalTool
 
         tm = TerminalManager(backend_factory=lambda: object())
         tool = TerminalTool(tm)
