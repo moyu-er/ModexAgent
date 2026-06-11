@@ -33,8 +33,8 @@ class TestAgentContextToMessages:
         msgs = await ctx.to_messages()
         roles = [m["role"] for m in msgs]
         assert "system" not in roles  # system messages not in to_messages() output
-        assert {"role": "user", "content": "hi"} in msgs
-        assert {"role": "assistant", "content": "hello"} in msgs
+        assert any(m.get("role") == "user" and m.get("content") == "hi" for m in msgs)
+        assert any(m.get("role") == "assistant" and m.get("content") == "hello" for m in msgs)
         assert all(
             m["content"] != "[Earlier conversation compressed] summary" for m in msgs
         )

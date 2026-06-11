@@ -87,7 +87,7 @@ class MCPTool(Tool):
 
         normalized_params = _normalize_schema_for_openai(parameters)
 
-        effective_config = config if config is not None else ToolConfig(timeout=float(tool_timeout))
+        effective_config = config if config is not None else ToolConfig()
 
         super().__init__(
             name=full_name,
@@ -145,7 +145,7 @@ class MCPResourceTool(Tool):
     ):
         full_name = f"mcp_{server_name}_resource_{resource_name}"
 
-        effective_config = config if config is not None else ToolConfig(timeout=float(resource_timeout))
+        effective_config = config if config is not None else ToolConfig()
 
         super().__init__(
             name=full_name,
@@ -207,7 +207,7 @@ class MCPPromptTool(Tool):
             if arg.get("required"):
                 required.append(arg["name"])
 
-        effective_config = config if config is not None else ToolConfig(timeout=float(prompt_timeout))
+        effective_config = config if config is not None else ToolConfig()
 
         super().__init__(
             name=full_name,

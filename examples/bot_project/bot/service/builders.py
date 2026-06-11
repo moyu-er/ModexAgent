@@ -44,6 +44,7 @@ from framework.multi_agent.session_id import DefaultSessionIdStrategy
 from framework.multi_agent.tools import CommunicationTarget, CommunicationTargetStore, SendToAgentTool
 from framework.pipeline.adapters import OutputAdapter
 from framework.tools import MCPClientManager
+from framework.tools.terminal import TerminalManagerBase
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +125,7 @@ async def _load_agent_mcp_tools(
 
         tools: list[Tool] = []
         for name in registry.list_tools():
-            t = registry.get(name)
+            t = registry.get_tool(name)
             if t is not None:
                 tools.append(t)
         logger.info("Agent %s: %d MCP tools loaded from %s", agent_name, len(tools), mcp_json.name)
@@ -170,7 +171,7 @@ class AgentBuilderMixin:
     # ── Tool Registration (code-driven, no config dict) ──
 
     async def _register_tools(
-        self, terminal_manager: Any | None = None
+        self, terminal_manager: TerminalManagerBase | None = None
     ) -> None:
         if self.tool_manager is None:
             return
@@ -276,9 +277,7 @@ class AgentBuilderMixin:
         tools: list[Tool],
         agent_name: str | None = None,
     ) -> InMemoryToolManager:
-        tm = InMemoryToolManager(config=ToolManagerConfig(
-            max_workers=10, enable_parallel=True, parallel_max_workers=5,
-        ))
+        tm = InMemoryToolManager(config=ToolManagerConfig())
         for tool in tools:
             tm.register(tool)
 

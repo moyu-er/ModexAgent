@@ -581,9 +581,7 @@ class AgentCommunicationService:
         )
         from framework.tools.presets import get_preset_tools
 
-        tm = InMemoryToolManager(config=ToolManagerConfig(
-            max_workers=10, enable_parallel=True, parallel_max_workers=5,
-        ))
+        tm = InMemoryToolManager(config=ToolManagerConfig())
 
         # Bash tool factory: use SubprocessTool for subagents (no terminal)
         from framework.tools.terminal import SubprocessTool

@@ -398,12 +398,7 @@ class BotService(AgentBuilderMixin):
         # ── Pipeline mode continues below ──
 
         # 3. Create ToolManager
-        tm_config = ToolManagerConfig(
-            max_workers=10,
-            enable_parallel=True,
-            parallel_max_workers=5,
-        )
-        self.tool_manager = InMemoryToolManager(config=tm_config)
+        self.tool_manager = InMemoryToolManager(config=ToolManagerConfig())
 
         # 3a. Create TerminalManager — degrade to subprocess only when no shell at all.
         main_cfg = self._main_agent_cfg

@@ -467,9 +467,7 @@ async def _build_pool_tool_manager(
     data_dir: Path,
     workspace_context: Any = None,
 ) -> tuple[InMemoryToolManager, Any | None]:
-    tm = InMemoryToolManager(config=ToolManagerConfig(
-        max_workers=10, enable_parallel=True, parallel_max_workers=5,
-    ))
+    tm = InMemoryToolManager(config=ToolManagerConfig())
     for tool in _make_file_tools():
         tm.register(tool)
 

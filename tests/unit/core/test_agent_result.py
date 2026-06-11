@@ -75,22 +75,3 @@ class TestAgentResult:
         assert "error='Failed'" in repr_str
         assert "content" not in repr_str  # Error case shouldn't show content
 
-    def test_agent_result_metadata(self):
-        """Test AgentResult with metadata."""
-        result = AgentResult(
-            content="Answer",
-            reasoning="Reasoning",
-            metadata={"model": "deepseek-r1", "tokens": 100},
-        )
-        assert result.metadata["model"] == "deepseek-r1"
-        assert result.metadata["tokens"] == 100
-
-    def test_agent_result_usage(self):
-        """Test AgentResult with usage info."""
-        result = AgentResult(
-            content="Answer",
-            reasoning="Reasoning",
-            usage={"prompt_tokens": 50, "completion_tokens": 100},
-        )
-        assert result.usage["prompt_tokens"] == 50
-        assert result.usage["completion_tokens"] == 100

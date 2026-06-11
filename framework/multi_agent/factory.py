@@ -20,7 +20,7 @@ try:
 except ImportError:
     LiteLLMProvider = None  # type: ignore[misc,assignment]
 
-from framework.core.skills.filter import SkillWhitelistFilter
+from framework.core.skills.filter import AllowListFilter
 from framework.core.skills.manager import SkillManager
 from framework.hook import HookRunner
 from framework.hook.builtin import InboxFlushHook
@@ -174,12 +174,14 @@ class DefaultAgentFactory(AgentFactory):
             denied_tools=descriptor.denied_tools,
         )
 
-        # Skill manager filtering (wrap if skills configured)
+        # Skill manager filtering (rebuild with filter if skills configured)
         skill_mgr = skill_manager or self._skill_manager
         if descriptor.allowed_skills is not None and skill_mgr is not None:
-            skill_mgr = SkillWhitelistFilter(
-                base=skill_mgr,
-                allowed_skills=descriptor.allowed_skills,
+            skill_mgr = SkillManager(
+                source=skill_mgr._source,
+                skill_filter=AllowListFilter(names=set(descriptor.allowed_skills)),
+                builder=skill_mgr._builder,
+                cache=skill_mgr._cache,
             )
 
         agent_hooks: list[Any] = list(self._default_hooks) + list(hooks or [])

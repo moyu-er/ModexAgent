@@ -52,7 +52,7 @@ class ErrorMessages:
     MAX_ITERATIONS_EXCEEDED = "达到最大迭代次数限制"
     TOOL_NOT_FOUND = "Tool '{name}' not found"
     TOOL_DISABLED = "Tool '{name}' is disabled"
-    REGISTRY_NOT_SET = "ToolRegistry not set. Call set_registries() first."
+    REGISTRY_NOT_SET = "ToolManager not set. Call set_registries() first."
     NO_REGISTRY_PROVIDED = "No registry provided"
     TOOL_NOT_IN_REGISTRY = "Tool '{name}' not found in registry"
     INVALID_ARGUMENTS_JSON = "Invalid arguments JSON: {args}"

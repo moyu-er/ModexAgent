@@ -42,7 +42,7 @@ class WebSearchTool(Tool):
                 },
                 "required": ["query"],
             },
-            config=ToolConfig(timeout=30.0),
+            config=ToolConfig(),
         )
 
     async def execute(self, query: str = "", max_results: int = 5, **kwargs: Any) -> str:

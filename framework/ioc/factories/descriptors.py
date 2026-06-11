@@ -58,11 +58,7 @@ def _make_standard_tools() -> list[Tool]:
 # ── Tool manager building ──
 
 def _build_tool_manager(tools: list[Tool]) -> InMemoryToolManager:
-    tm = InMemoryToolManager(
-        config=ToolManagerConfig(
-            max_workers=10, enable_parallel=True, parallel_max_workers=5,
-        )
-    )
+    tm = InMemoryToolManager(config=ToolManagerConfig())
     for tool in tools:
         tm.register(tool)
     return tm

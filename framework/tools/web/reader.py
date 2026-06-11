@@ -52,7 +52,7 @@ class WebReaderTool(Tool):
                 },
                 "required": ["url"],
             },
-            config=ToolConfig(timeout=60.0),
+            config=ToolConfig(),
         )
 
     async def execute(self, url: str = "", format: str = "markdown", timeout: int = 20, **kwargs: Any) -> str:
