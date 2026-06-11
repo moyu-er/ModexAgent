@@ -638,15 +638,10 @@ class AgentCommunicationService:
         """Build the subagent tool manager from template configuration.
 
         Uses template.tool_preset to determine which tools to register.
-        Falls back to template.standard_tools for backward compatibility.
+        Subagents get standard + MCP tools only. No communication tools.
+        Communication is handled automatically by SubagentAutoSendHook.
         """
         from framework.core.tool_manager import InMemoryToolManager, ToolManagerConfig
-        from framework.multi_agent.address import AgentAddress
-        from framework.multi_agent.tools import (
-            CommunicationTarget,
-            CommunicationTargetStore,
-            SendToAgentTool,
-        )
         from framework.tools.presets import get_preset_tools
 
         tm = InMemoryToolManager(config=ToolManagerConfig())
@@ -672,23 +667,6 @@ class AgentCommunicationService:
                         "Failed to load MCP tools for subagent %s from %s",
                         agent_name, mcp_json,
                     )
-
-        # Communication tools — subagent sees only parent (name only, no kind/desc)
-        subagent_store = CommunicationTargetStore(for_subagent=True)
-        subagent_store.add(CommunicationTarget(
-            name=parent_name, kind=AgentCommKind.NORMAL,
-        ))
-        subagent_address = AgentAddress(name=agent_name)
-
-        tm.register(SendToAgentTool(
-            store=subagent_store,
-            source=subagent_address,
-            broker=self._broker,
-            registry=self._registry,
-            agent_bus=self._agent_bus,
-            service=self,
-            comm_tracker=self._comm_tracker,
-        ))
 
         return tm
 
