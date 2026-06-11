@@ -50,25 +50,20 @@ class AgentTemplateRegistry:
                         logger.warning("Skipping invalid template: %s", yml_path)
                         continue
 
-                    # Parse pi-aligned fields with fallback
-                    # tool_preset takes precedence; standard_tools is deprecated fallback
-                    standard_tools = raw.get("standard_tools", True)
+                    # Parse tool_preset — defaults to READ_WRITE if not specified
                     tool_preset_raw = raw.get("tool_preset")
                     if tool_preset_raw is not None:
                         try:
                             tool_preset = ToolPreset(tool_preset_raw)
                         except ValueError:
                             logger.warning(
-                                "Invalid tool_preset '%s' in %s, falling back to 'full'",
-                                tool_preset_raw, yml_path,
+                                "Invalid tool_preset '%s' in %s, falling back to 'read_write'",
+                                tool_preset_raw,
+                                yml_path,
                             )
-                            tool_preset = ToolPreset.FULL
-                    elif standard_tools is False:
-                        # Backward compat: old templates with standard_tools=false
-                        # but no tool_preset → no standard tools, comm+MCP only
-                        tool_preset = ToolPreset.NONE
+                            tool_preset = ToolPreset.READ_WRITE
                     else:
-                        tool_preset = ToolPreset.FULL
+                        tool_preset = ToolPreset.READ_WRITE
 
                     context_mode_raw = raw.get("context_mode", "fresh")
                     try:
@@ -76,7 +71,8 @@ class AgentTemplateRegistry:
                     except ValueError:
                         logger.warning(
                             "Invalid context_mode '%s' in %s, falling back to 'fresh'",
-                            context_mode_raw, yml_path,
+                            context_mode_raw,
+                            yml_path,
                         )
                         context_mode = ContextMode.FRESH
 
@@ -86,7 +82,8 @@ class AgentTemplateRegistry:
                     except ValueError:
                         logger.warning(
                             "Invalid thinking_budget '%s' in %s, falling back to 'medium'",
-                            thinking_budget_raw, yml_path,
+                            thinking_budget_raw,
+                            yml_path,
                         )
                         thinking_budget = ThinkingBudget.MEDIUM
 
@@ -96,36 +93,41 @@ class AgentTemplateRegistry:
                     except ValueError:
                         logger.warning(
                             "Invalid system_prompt_mode '%s' in %s, falling back to 'replace'",
-                            system_prompt_mode_raw, yml_path,
+                            system_prompt_mode_raw,
+                            yml_path,
                         )
                         system_prompt_mode = SystemPromptMode.REPLACE
 
                     fork_max_messages = raw.get("fork_max_messages", 80)
-                    if isinstance(fork_max_messages, bool) or not isinstance(fork_max_messages, int) or fork_max_messages < 1:
+                    if (
+                        isinstance(fork_max_messages, bool)
+                        or not isinstance(fork_max_messages, int)
+                        or fork_max_messages < 1
+                    ):
                         fork_max_messages = 80
 
                     template = AgentTemplate(
                         agent_type=raw["agent_type"],
                         description=raw.get("description", ""),
                         max_steps=raw.get("max_steps", 20),
-                        standard_tools=standard_tools,
                         tool_preset=tool_preset,
                         use_terminal=raw.get("use_terminal", True),
                         terminal_visibility=raw.get("terminal_visibility", True),
                         context_mode=context_mode,
                         thinking_budget=thinking_budget,
                         default_reads=raw.get("default_reads", []),
-                        progress_tracking=raw.get("progress_tracking", False),
                         visible_targets=raw.get("visible_targets"),
                         system_prompt_mode=system_prompt_mode,
                         fork_max_messages=fork_max_messages,
                         memory=(
                             MemoryConfig.model_validate(raw["memory"])
-                            if raw.get("memory") else None
+                            if raw.get("memory")
+                            else None
                         ),
                         skills=(
                             SkillsConfig(roots=raw["skills"]["roots"])
-                            if raw.get("skills") else None
+                            if raw.get("skills")
+                            else None
                         ),
                     )
                     self._templates[pool_name][template.agent_type] = template

@@ -65,9 +65,9 @@ class SubagentAutoSendHook(FinallyTurnHook):
 
         # 1. Derive artifact paths from session_id (deterministic)
         trace_dir = self._runtime_dir / "trace" / session_id
-        output_path = self._runtime_dir / "output" / session_id / "output.md"
+        output_path = self._runtime_dir / "output" / session_id / "OUTPUT.md"
 
-        # 2. Check output.md status
+        # 2. Check OUTPUT.md status
         output_status = "written" if output_path.exists() else "missing"
 
         # 3. Determine stop condition
@@ -79,15 +79,17 @@ class SubagentAutoSendHook(FinallyTurnHook):
             error = result.error
             content = result.content or ""
 
-        is_normal, hint = self._classify_stop(stop_reason, output_status, error)
-
-        # 4. Truncate last assistant output
-        summary = self._truncate_content(content, max_chars=1500)
-
-        # 5. Get invocation_id from session_meta
+        # 4. Get invocation_id from session_meta
         invocation_id = ""
         if ctx.session_meta is not None:
             invocation_id = ctx.session_meta.invocation_id or ""
+
+        is_normal, hint = self._classify_stop(
+            stop_reason, output_status, error, invocation_id,
+        )
+
+        # 5. Truncate last assistant output
+        summary = self._truncate_content(content, max_chars=1500)
 
         # 6. Build XML notification
         xml = self._build_xml(
@@ -100,7 +102,7 @@ class SubagentAutoSendHook(FinallyTurnHook):
             hint=hint,
             summary=summary,
             trace_dir_rel=f"trace/{session_id}/operations.jsonl",
-            output_path_rel=f"output/{session_id}/output.md",
+            output_path_rel=f"output/{session_id}/OUTPUT.md",
             output_status=output_status,
         )
 
@@ -109,24 +111,48 @@ class SubagentAutoSendHook(FinallyTurnHook):
 
     # -- stop classification --------------------------------------------------
 
+    # Stop reasons that indicate the turn did NOT complete normally.
+    _NON_NORMAL_STOPS: frozenset[str] = frozenset({
+        "max_iterations",
+        "turn_cancelled",
+        "timeout",
+    })
+
     @staticmethod
     def _classify_stop(
-        stop_reason: str, output_status: str, error: str | None,
+        stop_reason: str,
+        output_status: str,
+        error: str | None,
+        invocation_id: str = "",
     ) -> tuple[bool, str]:
+        """Classify whether the stop was normal and produce an actionable hint.
+
+        The hint tells the parent agent HOW to continue — always including the
+        invocation_id so the parent can resume this exact session.
+        """
+        resume = (
+            f" To continue, send a message with invocation_id={invocation_id}."
+            if invocation_id
+            else ""
+        )
         if error:
             return False, (
-                "Subagent crashed with an error. "
-                "You may want to restart with a new invocation_id."
+                f"Subagent crashed with error: {error}. Task is incomplete. "
+                "Check the trace for details. The subagent session can be resumed — "
+                f"send a message with invocation_id={invocation_id} to continue."
+                if invocation_id
+                else f"Subagent crashed with error: {error}. Task is incomplete."
             )
-        if stop_reason == "max_iterations":
+        if stop_reason in SubagentAutoSendHook._NON_NORMAL_STOPS:
             return False, (
-                "Subagent hit step limit — task may be incomplete. "
-                "Continue with same invocation_id to resume."
+                f"Subagent stopped with {stop_reason} — task is incomplete."
+                f"{resume}"
             )
         if output_status == "missing":
             return False, (
-                "Subagent finished but output.md was not written. "
-                "You may want to re-run this task."
+                "Subagent finished but OUTPUT.md was not written — "
+                "the deliverable is missing (results may be in conversation only)."
+                f"{resume}"
             )
         return True, ""
 
@@ -170,7 +196,10 @@ class SubagentAutoSendHook(FinallyTurnHook):
     # -- notification ---------------------------------------------------------
 
     async def _notify_parent(
-        self, ctx: AgentContext, session_id: str, xml: str,
+        self,
+        ctx: AgentContext,
+        session_id: str,
+        xml: str,
     ) -> None:
         """Send XML notification to parent agent's inbox."""
         from framework.multi_agent.address import AgentAddress
@@ -182,18 +211,21 @@ class SubagentAutoSendHook(FinallyTurnHook):
             parts = strategy.parse(session_id)
         except ValueError:
             logger.warning(
-                "SubagentAutoSendHook: cannot parse session_id %s", session_id,
+                "SubagentAutoSendHook: cannot parse session_id %s",
+                session_id,
             )
             return
 
         conversation_id = parts.conversation_id
         invocation_id = parts.invocation_id or ""
         inbox_key = strategy.format(
-            conversation_id=conversation_id, agent_name=self._parent_name,
+            conversation_id=conversation_id,
+            agent_name=self._parent_name,
         )
 
         # Strip think tags from the XML summary (defense in depth)
         from framework.hook.builtin.inbox_flush import InboxFlushHook
+
         xml = InboxFlushHook._sanitize_content(xml)
 
         envelope = AgentMessageEnvelope(
@@ -214,7 +246,9 @@ class SubagentAutoSendHook(FinallyTurnHook):
             await self._agent_bus.send(inbox_key, envelope)
             logger.info(
                 "SubagentAutoSendHook: notified parent %s (agent=%s, session=%s)",
-                self._parent_name, self._self_name, session_id,
+                self._parent_name,
+                self._self_name,
+                session_id,
             )
         except Exception:
             logger.exception(

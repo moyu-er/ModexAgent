@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from framework.control.channel import InMemoryControlChannel
-    from framework.pipeline.pipeline import AgentPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +25,7 @@ from framework.hook import HookRunner
 from framework.hook.builtin import InboxFlushHook
 from framework.tools.filter import FilteredToolManager
 
+from .comm_kind import AgentCommKind
 from .descriptor import AgentDescriptor, AgentInstance
 from .inbox.consumer import InboxConsumer
 from .inbox.producer import InboxProducer
@@ -78,7 +78,8 @@ class DefaultAgentFactory(AgentFactory):
         default_interceptor_chain: Any | None = None,
         default_turn_store: Any | None = None,
         control_channel: InMemoryControlChannel | None = None,
-    ):
+        trace_store: Any | None = None,
+    ) -> None:
         self._default_llm_provider = default_llm_provider
         self._default_tool_manager = default_tool_manager
         self._skill_manager = skill_manager
@@ -91,6 +92,7 @@ class DefaultAgentFactory(AgentFactory):
         self._default_interceptor_chain = default_interceptor_chain
         self._default_turn_store = default_turn_store
         self._control_channel = control_channel
+        self._trace_store = trace_store
         self._inbox_producer = InboxProducer(inbox_server) if inbox_server else None
         self._inbox_consumer = InboxConsumer(inbox_server) if inbox_server else None
         # Shared runtime-context manager across all agents created by this factory.
@@ -116,6 +118,7 @@ class DefaultAgentFactory(AgentFactory):
         """根据 execution_strategy 返回对应的 agent builder 类。"""
         if execution_strategy in ("react", "pipeline"):
             from framework.agents.react.builder import ReActAgentBuilder
+
             return ReActAgentBuilder
         return None
 
@@ -175,7 +178,14 @@ class DefaultAgentFactory(AgentFactory):
         )
 
         # Skill manager filtering (rebuild with filter if skills configured)
-        skill_mgr = skill_manager or self._skill_manager
+        # Subagents must NOT inherit the main agent's SkillManager —
+        # they either have their own skills or none at all.
+        if skill_manager is not None:
+            skill_mgr = skill_manager
+        elif descriptor.comm_kind != AgentCommKind.SUBAGENT:
+            skill_mgr = self._skill_manager
+        else:
+            skill_mgr = None
         if descriptor.allowed_skills is not None and skill_mgr is not None:
             skill_mgr = SkillManager(
                 source=skill_mgr._source,
@@ -205,8 +215,7 @@ class DefaultAgentFactory(AgentFactory):
 
         if broker is None:
             logger.warning(
-                "Creating pipeline agent with isolated broker. "
-                "Pass broker= for mesh communication."
+                "Creating pipeline agent with isolated broker. Pass broker= for mesh communication."
             )
             broker = InMemoryMessageBroker()
             await broker.start()
@@ -242,9 +251,8 @@ class DefaultAgentFactory(AgentFactory):
         agent_interceptor_chain = None
         if self._default_interceptor_chain is not None:
             from framework.interceptor.chain import InterceptorChain
-            agent_interceptor_chain = InterceptorChain(
-                self._default_interceptor_chain.interceptors
-            )
+
+            agent_interceptor_chain = InterceptorChain(self._default_interceptor_chain.interceptors)
         pipeline = AgentPipeline(
             agent=agent,
             context_manager=ctx_mgr,
@@ -265,6 +273,19 @@ class DefaultAgentFactory(AgentFactory):
             router=DefaultMeshRouter(),
             control_channel=self._control_channel,
         )
+
+        # Auto-inject TraceCollectorHook — ALL agents get per-session trace
+        if self._trace_store is not None:
+            from framework.hook import HookErrorPolicy, HookSpec
+            from framework.trace import TraceCollectorHook
+
+            trace_hook = TraceCollectorHook(store=self._trace_store)
+            if pipeline.hook_runner is not None:
+                pipeline.hook_runner.add(
+                    HookSpec(hook=trace_hook, on_error=HookErrorPolicy.LOG)
+                )
+            else:
+                pipeline.hooks.append(trace_hook)
 
         return AgentInstance(
             descriptor=descriptor,

@@ -18,9 +18,8 @@ class AgentTemplate:
     they must not appear in template config.
 
     Pi-aligned fields (tool_preset, context_mode, thinking_budget,
-    default_reads, progress_tracking) were added for the coding pool
-    redesign. tool_preset controls tool registration; context_mode
-    controls memory inheritance.
+    default_reads) were added for the coding pool redesign. tool_preset
+    controls tool registration; context_mode controls memory inheritance.
 
     thinking_budget is reserved for future LLM reasoning-budget control
     — it is parsed from YAML but not yet consumed by any LLM config path.
@@ -36,11 +35,7 @@ class AgentTemplate:
     max_steps: int = 20
 
     # ── tool policy ──
-    # standard_tools is DEPRECATED; use tool_preset instead.
-    # When template YAML has standard_tools: false without tool_preset,
-    # template_registry translates it to tool_preset=NONE.
-    standard_tools: bool = True
-    tool_preset: ToolPreset = ToolPreset.FULL
+    tool_preset: ToolPreset = ToolPreset.READ_WRITE
     use_terminal: bool = True
     terminal_visibility: bool = True  # True=prefer visible, False=prefer hidden
 
@@ -48,7 +43,6 @@ class AgentTemplate:
     context_mode: ContextMode = ContextMode.FRESH
     thinking_budget: ThinkingBudget = ThinkingBudget.MEDIUM
     default_reads: list[str] = field(default_factory=list)
-    progress_tracking: bool = False
     visible_targets: list[str] | None = None  # None=all NORMAL agents visible; list=restrict
 
     # ── system prompt control ──

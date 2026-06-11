@@ -36,7 +36,10 @@ _NORMAL_PARAMS: dict[str, Any] = {
     "type": "object",
     "properties": {
         "target_agent": {"type": "string", "description": "Name of the target agent."},
-        "content": {"type": "string", "description": "Complete task description with necessary context."},
+        "content": {
+            "type": "string",
+            "description": "Complete task description with necessary context.",
+        },
         "invocation_id": {
             "type": ["string", "null"],
             "description": (
@@ -112,27 +115,38 @@ class CommunicationTargetStore:
         return self._build_subagent() if self._for_subagent else self._build_normal()
 
     def _build_normal(self) -> str:
-        lines = ["Dispatch a task to another agent. Results arrive in your next turn."]
+        lines = [
+            "Dispatch a task to another agent for BACKGROUND execution.",
+            "",
+            "This tool is ASYNCHRONOUS — the target agent works independently.",
+            "Do NOT wait or try to read result files after calling immediately.",
+            "Just wait for the notification that arrives when the agent finishes.",
+            "",
+        ]
         if not self._targets:
             lines.append("No targets currently available.")
             return "\n".join(lines)
-        lines.append("")
         lines.append("Available targets:")
         for t in self._targets.values():
             entry = f"  - {t.name} ({t.kind.value})"
             if t.description:
                 entry += f": {t.description}"
             lines.append(entry)
-        lines.extend([
-            "",
-            "Usage:",
-            "  target_agent: Name from the list above.",
-            "  content: Complete task description with context.",
-            "  invocation_id: Omit or null to start a new task. To continue",
-            "    an existing session, pass the invocation_id from the agent's last reply.",
-            "",
-            "Important: Does NOT wait for result. Results arrive in your next turn.",
-        ])
+        lines.extend(
+            [
+                "",
+                "Usage:",
+                "  target_agent: Name from the list above.",
+                "  content: Complete task description with all needed context.",
+                "  invocation_id: Omit or null to start a new task. To continue",
+                "    an existing session, pass the invocation_id from a previous",
+                "    incomplete notification.",
+                "",
+                "The tool result shows trace/output paths — these are for LATER",
+                "reference only. The files are NOT ready yet. Wait for the",
+                "notification, then read the Output file for the deliverable.",
+            ]
+        )
         return "\n".join(lines)
 
     def _build_subagent(self) -> str:
@@ -144,15 +158,17 @@ class CommunicationTargetStore:
         lines.append("Your parent:")
         for t in self._targets.values():
             lines.append(f"  - {t.name}")
-        lines.extend([
-            "",
-            "Usage:",
-            "  target_agent: Name from above.",
-            '  content: "NEED_DECISION: <question>" for blocking decisions,',
-            '    "PROGRESS_UPDATE: <info>" for non-blocking updates.',
-            "",
-            "Important: You can ONLY message your parent.",
-        ])
+        lines.extend(
+            [
+                "",
+                "Usage:",
+                "  target_agent: Name from above.",
+                '  content: "NEED_DECISION: <question>" for blocking decisions,',
+                '    "PROGRESS_UPDATE: <info>" for non-blocking updates.',
+                "",
+                "Important: You can ONLY message your parent.",
+            ]
+        )
         return "\n".join(lines)
 
 
@@ -213,9 +229,11 @@ class SendToAgentTool(Tool):
         target_agent = str(kwargs.get("target_agent", ""))
         content = str(kwargs.get("content", ""))
         invocation_id_value = kwargs.get("invocation_id")
-        if invocation_id_value is None:
-            invocation_id = None
-        elif isinstance(invocation_id_value, str) and invocation_id_value.strip().lower() == "null":
+        if (
+            invocation_id_value is None
+            or isinstance(invocation_id_value, str)
+            and invocation_id_value.strip().lower() == "null"
+        ):
             invocation_id = None
         else:
             invocation_id: str | None = str(invocation_id_value)
@@ -228,11 +246,14 @@ class SendToAgentTool(Tool):
         if context is None:
             return "Error: no agent context available"
         return await self._service.send_async(
-            target_agent=target_agent, content=content,
-            invocation_id=invocation_id, context=context,
+            target_agent=target_agent,
+            content=content,
+            invocation_id=invocation_id,
+            context=context,
         )
 
     @staticmethod
     def _get_context() -> AgentContext | None:
         from framework.core.agent import current_agent_context
+
         return current_agent_context.get(None)
