@@ -18,8 +18,8 @@ from framework.memory.injection import RestrictedInjectionPolicy
 from framework.memory.layers.config import (
     ArchiveMemoryConfig,
     MemoryLayerConfigSet,
-    UserRetentionBufferConfig,
     SessionMemoryConfig,
+    UserRetentionBufferConfig,
 )
 from framework.memory.system import MemorySystemContextManager, create_memory_system
 from framework.multi_agent import AgentAddress, AgentDescriptor
@@ -28,23 +28,27 @@ from framework.multi_agent.descriptor import AgentLLMConfig
 
 # ── Standard tool builders (code objects, no config) ──
 
+
 def _make_file_tools() -> list[Tool]:
     from framework.tools.standard import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+
     return [
-        ReadFileTool(),  # type: ignore[no-untyped-call]
-        WriteFileTool(),  # type: ignore[no-untyped-call]
-        EditFileTool(),  # type: ignore[no-untyped-call]
-        ListDirTool(),  # type: ignore[no-untyped-call]
+        ReadFileTool(),
+        WriteFileTool(),
+        EditFileTool(),
+        ListDirTool(),
     ]
 
 
 def _make_shell_tool(timeout: int = 60) -> Tool:
     from framework.tools.terminal import SubprocessTool
+
     return SubprocessTool(timeout=timeout)
 
 
 def _make_search_tools() -> list[Tool]:
     from framework.tools.standard import FindFilesTool, SearchFilesTool
+
     return [
         SearchFilesTool(),  # type: ignore[no-untyped-call]
         FindFilesTool(),  # type: ignore[no-untyped-call]
@@ -57,6 +61,7 @@ def _make_standard_tools() -> list[Tool]:
 
 # ── Tool manager building ──
 
+
 def _build_tool_manager(tools: list[Tool]) -> InMemoryToolManager:
     tm = InMemoryToolManager(config=ToolManagerConfig())
     for tool in tools:
@@ -66,6 +71,7 @@ def _build_tool_manager(tools: list[Tool]) -> InMemoryToolManager:
 
 # ── Memory building ──
 
+
 def build_session_only_memory(
     cfg: MemoryConfig | None,
     workspace: Path,
@@ -73,6 +79,7 @@ def build_session_only_memory(
     agent_role: MemoryAgentRole,
     system_prompt: str = "",
     pruned_manager: Any | None = None,
+    output_base_dir: Path | None = None,
 ) -> MemorySystemContextManager:
     """Create a session-only memory system for a subagent."""
     max_messages = 50
@@ -108,11 +115,15 @@ def build_session_only_memory(
         default_agent_id=agent_id,
         default_agent_role=agent_role,
         base_system_prompt=system_prompt,
-        injection_policy=RestrictedInjectionPolicy(max_session_messages=max_messages, pruned_manager=pruned_manager),
+        injection_policy=RestrictedInjectionPolicy(
+            max_session_messages=max_messages, pruned_manager=pruned_manager
+        ),
+        output_base_dir=output_base_dir,
     )
 
 
 # ── Skill building ──
+
 
 def _build_skill_manager(
     _name: str,
@@ -123,7 +134,7 @@ def _build_skill_manager(
     if not skill_roots:
         return None
 
-    from framework.core.skills import FileSkillSource, DefaultSkillBuilder, SkillManager
+    from framework.core.skills import DefaultSkillBuilder, FileSkillSource, SkillManager
 
     directories = [project_dir / r for r in skill_roots]
     found = [d for d in directories if d.exists()]
@@ -131,7 +142,9 @@ def _build_skill_manager(
         return None
 
     source = FileSkillSource(
-        directories=found, cache=True, layout="directory",
+        directories=found,
+        cache=True,
+        layout="directory",
         skill_filename="SKILL.md",
     )
     builder = DefaultSkillBuilder(base_path=project_dir)
@@ -139,6 +152,7 @@ def _build_skill_manager(
 
 
 # ── Descriptor building ──
+
 
 async def build_subagent_descriptor(
     agent_cfg: AgentConfig,
@@ -150,15 +164,27 @@ async def build_subagent_descriptor(
 ) -> tuple[AgentDescriptor, InMemoryToolManager, Any | None, Any]:
     """Build a subagent: descriptor + tool_manager + skill_manager + memory_context.
 
-    Tool selection is config-driven via AgentConfig fields:
-      - standard_tools: bool  → register file/shell/search tools
-      - standard_tools: bool → register file/shell/search tools
+    Standard tools are always registered (read_write is the default).
+    MCP tools are loaded from config/mcp/{agent_name}.json if available.
     """
     subagent_name = agent_cfg.name
 
     # Standard tools
-    subagent_tools: list[Tool] = list(_make_standard_tools()) if agent_cfg.standard_tools else []
+    subagent_tools: list[Tool] = list(_make_standard_tools())
     tool_manager = _build_tool_manager(subagent_tools)
+
+    # MCP tools from per-agent config: config/mcp/{agent_name}.json
+    mcp_json = project_dir / "config" / "mcp" / f"{subagent_name}.json"
+    if mcp_json.exists():
+        try:
+            from framework.multi_agent.communication import _load_per_agent_mcp
+            await _load_per_agent_mcp(tool_manager, mcp_json, subagent_name)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception(
+                "Failed to load MCP tools for subagent %s from %s",
+                subagent_name, mcp_json,
+            )
 
     # Skills
     skill_roots = agent_cfg.skills.roots if agent_cfg.skills else []
@@ -167,8 +193,11 @@ async def build_subagent_descriptor(
     # Memory
     system_prompt = agent_cfg.system_prompt or DEFAULT_SYSTEM_PROMPT
     memory_ctx = build_session_only_memory(
-        agent_cfg.memory, workspace, subagent_name,
-        MemoryAgentRole.SUBAGENT, system_prompt,
+        agent_cfg.memory,
+        workspace,
+        subagent_name,
+        MemoryAgentRole.SUBAGENT,
+        system_prompt,
     )
 
     _ = llm  # reserved for future per-subagent LLM override

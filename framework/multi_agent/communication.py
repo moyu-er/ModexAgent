@@ -22,7 +22,6 @@ from framework.multi_agent.tools import CommunicationTarget, CommunicationTarget
 
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
-    from framework.memory.core.system import MemorySystem
     from framework.messaging.broker import MessageBroker
     from framework.multi_agent.address import AgentAddress
     from framework.multi_agent.bus import AgentMessageBus
@@ -72,14 +71,43 @@ async def _load_per_agent_mcp(
 
     servers = raw.get("mcpServers") or raw.get("servers") or {}
     if not servers:
+        logger.info("Agent %s: MCP config %s has no servers defined", agent_name, mcp_json.name)
         return
 
+    logger.info(
+        "Agent %s: loading MCP from %s — %d server(s): %s",
+        agent_name, mcp_json.name, len(servers), list(servers.keys()),
+    )
     servers = _resolve_env_in(servers)
     manager = MCPClientManager(config=servers)
-    await manager.initialize()
+
+    # Wrap with a hard timeout so unreachable servers never block
+    # subagent creation. httpx has its own timeout, but DNS / TCP
+    # handshake can still hang on some platforms.
+    import asyncio as _asyncio
+
+    try:
+        await _asyncio.wait_for(manager.initialize(), timeout=15.0)
+    except _asyncio.TimeoutError:
+        logger.warning(
+            "Agent %s: MCP initialization timed out after 15s for %s — "
+            "server(s) %s unreachable; continuing without MCP tools",
+            agent_name, mcp_json.name, list(servers.keys()),
+        )
+        return
+    except Exception:
+        logger.exception(
+            "Agent %s: MCP initialization failed for %s",
+            agent_name, mcp_json.name,
+        )
+        return
 
     if not manager.connected_servers:
-        logger.warning("Agent %s: MCP config %s — no servers connected", agent_name, mcp_json.name)
+        logger.warning(
+            "Agent %s: MCP config %s — %d server(s) configured but NONE connected "
+            "(check MCP_BEARER_TOKEN env var and network)",
+            agent_name, mcp_json.name, len(servers),
+        )
         return
 
     adapter = MCPToolAdapter(mcp_manager=manager, default_prefix=True, tool_timeout=60)
@@ -88,14 +116,16 @@ async def _load_per_agent_mcp(
 
     registered = 0
     for name in registry.list_tools():
-        tool = registry.get(name)
+        tool = registry.get_tool(name)
         if tool is not None:
             tool_manager.register(tool)
             registered += 1
 
     logger.info(
         "Agent %s: %d MCP tools loaded from %s",
-        agent_name, registered, mcp_json.name,
+        agent_name,
+        registered,
+        mcp_json.name,
     )
 
 
@@ -110,6 +140,8 @@ class AgentSendResult:
     created_new_task: bool
     error: str | None = None
     warning: str | None = None
+    trace_dir: Path | None = None
+    output_path: Path | None = None
 
 
 def _messages_to_xml(messages: list[Any], parent_name: str) -> str:
@@ -129,7 +161,7 @@ def _messages_to_xml(messages: list[Any], parent_name: str) -> str:
             name_attr = f' name="{msg.name}"'
         lines.append(f'  <message index="{i}" role="{role}"{name_attr}>')
         lines.append(f"    <![CDATA[{content_str}]]>")
-        lines.append(f"  </message>")
+        lines.append("  </message>")
     lines.append("</forked_context>")
     return "\n".join(lines)
 
@@ -196,9 +228,24 @@ class AgentCommunicationService:
             return AgentAddress(name=meta.agent_name)
         return self._source
 
-    def _resolve_target(self, target_agent: str) -> tuple[AgentCommKind | None, AgentTemplate | None]:
-        """Resolve target_agent to comm_kind + optional template."""
-        # 1. Check if registered in registry (AgentPool)
+    def _resolve_target(
+        self, target_agent: str
+    ) -> tuple[AgentCommKind | None, AgentTemplate | None]:
+        """Resolve target_agent to comm_kind + optional template.
+
+        Templates are checked BEFORE the pool registry so that each new
+        invocation creates a fresh agent instance with the correct
+        OUTPUT.md path in its system prompt.  Already-running agents are
+        discovered through the pool registry only when no template matches.
+        """
+        # 1. Check template registry FIRST — ensures new invocations get
+        #    a fresh agent with correct OUTPUT.md path
+        if self._template_registry is not None and self._pool_name is not None:
+            template = self._template_registry.get_template(self._pool_name, target_agent)
+            if template is not None:
+                return AgentCommKind.SUBAGENT, template
+
+        # 2. Check if registered in pool (already-running agent)
         descriptor = self._registry.get_descriptor(target_agent)
         if descriptor is not None:
             return descriptor.comm_kind, None
@@ -206,12 +253,6 @@ class AgentCommunicationService:
         profile = self._registry.get_profile(target_agent)
         if profile is not None:
             return profile.comm_kind, None
-
-        # 2. Check if it's a template type name
-        if self._template_registry is not None and self._pool_name is not None:
-            template = self._template_registry.get_template(self._pool_name, target_agent)
-            if template is not None:
-                return AgentCommKind.SUBAGENT, template
 
         return None, None
 
@@ -253,7 +294,7 @@ class AgentCommunicationService:
 
         runtime_dir = self._runtime_dir or Path(".")
         trace_dir = runtime_dir / "trace" / session_id
-        output_path = runtime_dir / "output" / session_id / "output.md"
+        output_path = runtime_dir / "output" / session_id / "OUTPUT.md"
 
         trace_dir.mkdir(parents=True, exist_ok=True)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -286,6 +327,16 @@ class AgentCommunicationService:
 
         name = template.agent_type
 
+        # ── Ensure invocation_id and create trace/output directories ──
+        _inv_id, _trace_dir, _output_path = self._ensure_invocation(
+            target_agent=name,
+            conversation_id=conversation_id,
+            invocation_id=invocation_id,
+            target_kind=AgentCommKind.SUBAGENT,
+        )
+        # Use the validated/generated invocation_id
+        invocation_id = _inv_id or invocation_id
+
         # ── Dynamic parent — the agent that dispatched this subagent ──
         parent_name = (source or self._source).name
 
@@ -301,17 +352,44 @@ class AgentCommunicationService:
             system_prompt = DEFAULT_SYSTEM_PROMPT
 
         # ── Append mode: concat parent prompt before subagent prompt ──
-        from framework.tools.presets import SystemPromptMode
+        from framework.tools.presets import SystemPromptMode, ToolPreset
 
         if template.system_prompt_mode == SystemPromptMode.APPEND:
             parent_prompt = ""
             parent_name_for_append = parent_name
             if self._pool is not None:
                 parent_instance = self._pool.get(parent_name_for_append)
-                if parent_instance is not None and parent_instance.descriptor.system_prompt_template:
+                if (
+                    parent_instance is not None
+                    and parent_instance.descriptor.system_prompt_template
+                ):
                     parent_prompt = parent_instance.descriptor.system_prompt_template
             if parent_prompt:
                 system_prompt = parent_prompt + "\n\n---\n\n" + system_prompt
+
+        # ── OUTPUT.md base dir — passed to MemorySystemContextManager so
+        # OutputMdProvider can compute the correct per-session path at turn time.
+        # No static injection into system_prompt — the path is always fresh. ──
+        output_base_dir: Path | None = None
+        if self._runtime_dir is not None:
+            output_base_dir = self._runtime_dir / "output"
+
+        # ── Read-only guard: remind agent not to modify project files ──
+        if template.tool_preset == ToolPreset.READ_ONLY:
+            guard = (
+                "\n\n---\n\n"
+                "## Read-Only Mode\n\n"
+                "You are in read-only mode for project files. Your task is to read, "
+                "search, and analyze — NOT to modify project source code.\n\n"
+                "- Your `write` and `edit` tools are restricted to the output directory "
+                "(for writing OUTPUT.md) — they will NOT work on project paths.\n"
+                "- Your `bash` tool is for reading/searching only. Do NOT use it to "
+                "modify, delete, or create files.\n"
+                "- Do NOT use shell redirection (> / >>) or heredocs to write files.\n"
+                "- **You CAN and MUST use `write` to save OUTPUT.md** — "
+                "the path shown above is in your allowed write directory."
+            )
+            system_prompt = system_prompt + guard
 
         # ── Memory: session-scoped, no knowledge layer ──
         from framework.ioc.factories.descriptors import build_session_only_memory
@@ -319,7 +397,8 @@ class AgentCommunicationService:
 
         memory_workspace = self._memory_dir or (
             self._project_dir / "data" / "memory" / self._pool_name
-            if self._project_dir and self._pool_name else Path(".")
+            if self._project_dir and self._pool_name
+            else Path(".")
         )
         subagent_ctx = build_session_only_memory(
             cfg=template.memory,
@@ -328,30 +407,28 @@ class AgentCommunicationService:
             agent_role=MemoryAgentRole.SUBAGENT,
             system_prompt=system_prompt,
             pruned_manager=self._pruned_manager,
+            output_base_dir=output_base_dir,
         )
 
         # ── Fork context: two-stage truncation → XML → persist → system prompt ──
-        from framework.tools.presets import ContextMode
         from framework.memory.core.scope import MemoryContext
+        from framework.tools.presets import ContextMode
 
         if template.context_mode == ContextMode.FORK and self._project_dir is not None:
-            fork_workspace = (
-                self._memory_dir
-                or (self._project_dir / "data" / "memory" / self._pool_name
-                    if self._pool_name
-                    else self._project_dir / "data" / "memory")
+            fork_workspace = self._memory_dir or (
+                self._project_dir / "data" / "memory" / self._pool_name
+                if self._pool_name
+                else self._project_dir / "data" / "memory"
             )
-            fork_file = (
-                fork_workspace / "fork_contexts"
-                / f"{name}_{invocation_id}.xml"
-            )
+            fork_file = fork_workspace / "fork_contexts" / f"{name}_{invocation_id}.xml"
 
             if fork_file.exists():
                 # ── Resume: load persisted fork context ──
                 fork_xml = fork_file.read_text(encoding="utf-8")
                 logger.info(
                     "Fork context: loaded persisted file for %s/%s",
-                    name, invocation_id,
+                    name,
+                    invocation_id,
                 )
             else:
                 # ── Initial creation: two-stage truncate + persist ──
@@ -371,7 +448,8 @@ class AgentCommunicationService:
                     subagent_memory = getattr(subagent_ctx, "memory_system", None)
                     if subagent_memory is not None:
                         parent_messages = await subagent_memory.get_history(
-                            parent_ctx, max_messages=10000,
+                            parent_ctx,
+                            max_messages=10000,
                         )
 
                         if parent_messages:
@@ -388,6 +466,7 @@ class AgentCommunicationService:
                                 from framework.memory.context_governance import (
                                     LossyContentCompactionGovernance,
                                 )
+
                                 lc = template.memory.governance.lossy_compaction
                                 governor = LossyContentCompactionGovernance(
                                     tool_result_head_chars=lc.tool_result_head_chars,
@@ -397,9 +476,15 @@ class AgentCommunicationService:
                                     tool_args_head_chars=lc.tool_args_head_chars,
                                 )
                                 from framework.memory.core.message import ChatMessage
+
                                 msg_dicts: list[dict[str, Any]] = [
-                                    m.model_dump() if hasattr(m, "model_dump")
-                                    else (m if isinstance(m, dict) else {"role": "unknown", "content": str(m)})
+                                    m.model_dump()
+                                    if hasattr(m, "model_dump")
+                                    else (
+                                        m
+                                        if isinstance(m, dict)
+                                        else {"role": "unknown", "content": str(m)}
+                                    )
                                     for m in truncated
                                 ]
                                 compacted = await governor.apply(msg_dicts)
@@ -414,7 +499,8 @@ class AgentCommunicationService:
                     else:
                         logger.warning(
                             "Fork context: context manager lacks memory_system attribute, "
-                            "fork context will be empty for %s", name,
+                            "fork context will be empty for %s",
+                            name,
                         )
 
                     # Persist
@@ -422,7 +508,8 @@ class AgentCommunicationService:
                     fork_file.write_text(fork_xml, encoding="utf-8")
                     logger.info(
                         "Fork context: persisted for %s/%s",
-                        name, invocation_id,
+                        name,
+                        invocation_id,
                     )
                 except Exception:
                     logger.exception(
@@ -441,43 +528,11 @@ class AgentCommunicationService:
             )
             system_prompt = system_prompt + fork_preamble
 
-        # ── Progress tracking prompt ──
-        if template.progress_tracking:
-            progress_instruction = (
-                "\n\n---\n\n"
-                "## Progress Tracking\n"
-                "Maintain a file called `progress.md` in the current working directory.\n"
-                "Update it after each significant step with:\n"
-                "- What was checked/done\n"
-                "- What was found\n"
-                "- What remains\n"
-                "Keep it concise — this is a scratch file for coordination, not documentation."
-            )
-            system_prompt = system_prompt + progress_instruction
-
-        # ── Inject output.md protocol into system prompt ──
-        if self._runtime_dir is not None:
-            output_session_id = self._session_strategy.format(
-                conversation_id=conversation_id,
-                agent_name=name,
-                invocation_id=invocation_id,
-            )
-            output_path = self._runtime_dir / "output" / output_session_id / "output.md"
-            output_protocol = (
-                "\n\n---\n\n"
-                "## Output Protocol\n\n"
-                "Your task result MUST be written to this file:\n"
-                f"  {output_path}\n\n"
-                "- This file is your deliverable. What you say in conversation is transient.\n"
-                "- Write your final answer, analysis, or implementation result here.\n"
-                "- The system will notify your caller with this path when you finish.\n"
-                "- Do NOT rely on communication tools for result delivery — write to this file."
-            )
-            system_prompt = system_prompt + output_protocol
-
         # ── Tool manager: standard + MCP + communication ──
         subagent_tm = await self._build_subagent_tool_manager(
-            template, agent_name=name, parent_name=parent_name,
+            template,
+            agent_name=name,
+            parent_name=parent_name,
         )
 
         # ── Skill manager ──
@@ -487,12 +542,15 @@ class AgentCommunicationService:
             existing = [d for d in skill_roots if d.exists()]
             if existing:
                 from framework.core.skills import (
-                    FileSkillSource,
                     DefaultSkillBuilder,
+                    FileSkillSource,
                     SkillManager,
                 )
+
                 skill_source = FileSkillSource(
-                    directories=existing, cache=True, layout="directory",
+                    directories=existing,
+                    cache=True,
+                    layout="directory",
                     skill_filename="SKILL.md",
                 )
                 builder = DefaultSkillBuilder(base_path=self._project_dir)
@@ -546,10 +604,13 @@ class AgentCommunicationService:
             # use the same path construction to reference it
             _fw = (
                 self._memory_dir
-                or (self._project_dir / "data" / "memory" / self._pool_name
+                or (
+                    self._project_dir / "data" / "memory" / self._pool_name
                     if self._project_dir and self._pool_name
-                    else self._project_dir / "data" / "memory")
-                if self._project_dir else None
+                    else self._project_dir / "data" / "memory"
+                )
+                if self._project_dir
+                else None
             )
             if _fw is not None:
                 _fork_path = _fw / "fork_contexts" / f"{name}_{invocation_id}.xml"
@@ -558,6 +619,7 @@ class AgentCommunicationService:
 
         effective_source = source or self._source
         from framework.multi_agent.message_xml import build_agent_message
+
         xml_content = build_agent_message(
             source=effective_source.name,
             invocation_id=invocation_id,
@@ -576,16 +638,20 @@ class AgentCommunicationService:
 
         logger.info(
             "Dynamic subagent created: %s (template=%s, invocation_id=%s)",
-            name, template.agent_type, invocation_id,
+            name,
+            template.agent_type,
+            invocation_id,
         )
 
         # Add to target store (no-op if template target already exists from init)
         if self._target_store is not None:
-            self._target_store.add(CommunicationTarget(
-                name=name,
-                kind=AgentCommKind.SUBAGENT,
-                description=template.description,
-            ))
+            self._target_store.add(
+                CommunicationTarget(
+                    name=name,
+                    kind=AgentCommKind.SUBAGENT,
+                    description=template.description,
+                )
+            )
 
         return AgentSendResult(
             target_agent=name,
@@ -593,6 +659,8 @@ class AgentCommunicationService:
             session_id=session_id,
             invocation_id=invocation_id,
             created_new_task=True,
+            trace_dir=_trace_dir,
+            output_path=_output_path,
         )
 
     def _wire_subagent_hooks(self, agent_name: str, parent_name: str = "main") -> None:
@@ -613,26 +681,39 @@ class AgentCommunicationService:
                 pipeline.hooks.append(hook)
 
         if self._inbox_consumer is not None:
-            _add_hook(sub_instance.pipeline, InboxFlushHook(
-                consumer=self._inbox_consumer, agent_name=agent_name,
-            ))
+            _add_hook(
+                sub_instance.pipeline,
+                InboxFlushHook(
+                    consumer=self._inbox_consumer,
+                    agent_name=agent_name,
+                ),
+            )
 
         if self._agent_bus is not None:
-            _add_hook(sub_instance.pipeline, SubagentAutoSendHook(
-                agent_bus=self._agent_bus,
-                self_name=agent_name,
-                parent_name=parent_name,
-                runtime_dir=self._runtime_dir,
-            ))
+            _add_hook(
+                sub_instance.pipeline,
+                SubagentAutoSendHook(
+                    agent_bus=self._agent_bus,
+                    self_name=agent_name,
+                    parent_name=parent_name,
+                    runtime_dir=self._runtime_dir,
+                ),
+            )
 
         if self._notification_service is not None:
             from framework.hook.notification import MaxIterationNotifyHook
-            _add_hook(sub_instance.pipeline, MaxIterationNotifyHook(
-                notification_service=self._notification_service,
-            ))
+
+            _add_hook(
+                sub_instance.pipeline,
+                MaxIterationNotifyHook(
+                    notification_service=self._notification_service,
+                ),
+            )
 
     async def _build_subagent_tool_manager(
-        self, template: AgentTemplate, agent_name: str,
+        self,
+        template: AgentTemplate,
+        agent_name: str,
         parent_name: str = "main",
     ):
         """Build the subagent tool manager from template configuration.
@@ -652,8 +733,17 @@ class AgentCommunicationService:
         def _make_bash() -> SubprocessTool:
             return SubprocessTool(timeout=60)
 
-        # Register preset tools
-        for tool in get_preset_tools(template.tool_preset, subprocess_tool_factory=_make_bash):
+        # Register preset tools — pass scoped_write_dir so READ_ONLY agents
+        # (scout, oracle) can still write OUTPUT.md via restricted write tool.
+        scoped_write_dir: Path | None = None
+        if self._runtime_dir is not None:
+            scoped_write_dir = self._runtime_dir / "output"
+
+        for tool in get_preset_tools(
+            template.tool_preset,
+            subprocess_tool_factory=_make_bash,
+            scoped_write_dir=scoped_write_dir,
+        ):
             tm.register(tool)
 
         # MCP tools from per-agent config file: config/mcp/{agentType}.json
@@ -665,8 +755,20 @@ class AgentCommunicationService:
                 except Exception:
                     logger.exception(
                         "Failed to load MCP tools for subagent %s from %s",
-                        agent_name, mcp_json,
+                        agent_name,
+                        mcp_json,
                     )
+            else:
+                logger.info(
+                    "Subagent %s: no MCP config at %s (agent_type=%s)",
+                    agent_name, mcp_json, template.agent_type,
+                )
+        else:
+            logger.warning(
+                "Subagent %s: _project_dir is None — MCP loading skipped. "
+                "Ensure project_dir is passed to AgentCommunicationService.",
+                agent_name,
+            )
 
         return tm
 
@@ -700,7 +802,11 @@ class AgentCommunicationService:
         invocation_id: str | None,
         context: AgentContext,
     ) -> str:
-        """Send asynchronously via inbox. Returns acknowledgement text."""
+        """Send asynchronously via inbox. Returns acknowledgement text.
+
+        For subagent targets includes trace/output paths so the caller can
+        monitor progress and read the deliverable.
+        """
         result = await self._send(
             target_agent=target_agent,
             content=content,
@@ -710,10 +816,27 @@ class AgentCommunicationService:
         )
         if result is None or result.error:
             return f"Error: {result.error if result else 'unknown'}"
-        text = f"Message sent to {target_agent}." + (
-            f" invocation_id: {result.invocation_id}" if result.invocation_id else ""
-        )
-        return text
+        lines = [
+            f"Task dispatched to '{target_agent}' — running in background.",
+            "",
+            "ⓘ  The subagent works asynchronously. You will receive an inbox",
+            "notification when it finishes. Do NOT read the files below yet —",
+            "they are not ready and may not exist until the subagent completes.",
+            "",
+        ]
+        if result.invocation_id:
+            lines.append(f"invocation_id: {result.invocation_id}")
+        if result.trace_dir is not None:
+            lines.append(f"Trace (after notification): {result.trace_dir}/operations.jsonl")
+        if result.output_path is not None:
+            lines.append(f"Output (after notification): {result.output_path}")
+        lines.extend([
+            "",
+            "When the notification arrives, read the Output file for the",
+            "deliverable. If the notification says the task is incomplete,",
+            "use the invocation_id above to resume the subagent session.",
+        ])
+        return "\n".join(lines)
 
     async def _send(
         self,
@@ -729,8 +852,11 @@ class AgentCommunicationService:
         session_meta = context.session_meta
         if session_meta is None:
             return AgentSendResult(
-                target_agent=target_agent, target_kind=AgentCommKind.NORMAL,
-                session_id="", invocation_id=None, created_new_task=False,
+                target_agent=target_agent,
+                target_kind=AgentCommKind.NORMAL,
+                session_id="",
+                invocation_id=None,
+                created_new_task=False,
                 error="No agent session metadata available",
             )
 
@@ -741,8 +867,11 @@ class AgentCommunicationService:
         target_kind, template = self._resolve_target(target_agent)
         if target_kind is None:
             return AgentSendResult(
-                target_agent=target_agent, target_kind=AgentCommKind.NORMAL,
-                session_id="", invocation_id=None, created_new_task=False,
+                target_agent=target_agent,
+                target_kind=AgentCommKind.NORMAL,
+                session_id="",
+                invocation_id=None,
+                created_new_task=False,
                 error=f"Target agent '{target_agent}' not found",
             )
 
@@ -777,8 +906,10 @@ class AgentCommunicationService:
         # inbox with immediate wakeup so the consumer can process it concurrently with
         # any other active session. Continuations (existing invocation_id) fall through
         # to the original normal delivery path below.
-        if target_kind == AgentCommKind.SUBAGENT and template is None and (
-            invocation_id is None or invocation_id.strip() == ""
+        if (
+            target_kind == AgentCommKind.SUBAGENT
+            and template is None
+            and (invocation_id is None or invocation_id.strip() == "")
         ):
             # Subagent-to-subagent still forbidden
             if session_meta.comm_kind == AgentCommKind.SUBAGENT:
@@ -791,8 +922,13 @@ class AgentCommunicationService:
                     error="Subagents can only reply to normal agents; send subagent-to-subagent requests through a normal agent.",
                 )
 
-            # Generate new invocation_id for the new task
-            resolved_invocation_id = _uuid_mod.uuid4().hex[:_TASK_ID_BYTES]
+            # Ensure invocation and create trace/output directories
+            resolved_invocation_id, trace_dir, output_path = self._ensure_invocation(
+                target_agent=target_agent,
+                conversation_id=conversation_id,
+                invocation_id=None,
+                target_kind=AgentCommKind.SUBAGENT,
+            )
 
             session_id = self._session_strategy.format(
                 conversation_id=conversation_id,
@@ -801,6 +937,7 @@ class AgentCommunicationService:
             )
 
             from framework.multi_agent.message_xml import build_agent_message
+
             xml_content = build_agent_message(
                 source=effective_source.name,
                 invocation_id=resolved_invocation_id,
@@ -832,8 +969,10 @@ class AgentCommunicationService:
             else:
                 if envelope.target is None:
                     return AgentSendResult(
-                        target_agent=target_agent, target_kind=target_kind,
-                        session_id=session_id, invocation_id=resolved_invocation_id,
+                        target_agent=target_agent,
+                        target_kind=target_kind,
+                        session_id=session_id,
+                        invocation_id=resolved_invocation_id,
                         created_new_task=True,
                         error="No target address for broker delivery",
                     )
@@ -845,10 +984,15 @@ class AgentCommunicationService:
                 session_id=session_id,
                 invocation_id=resolved_invocation_id,
                 created_new_task=True,
+                trace_dir=trace_dir,
+                output_path=output_path,
             )
 
         # 3. Validate invocation_id
-        if session_meta.comm_kind == AgentCommKind.SUBAGENT and target_kind == AgentCommKind.SUBAGENT:
+        if (
+            session_meta.comm_kind == AgentCommKind.SUBAGENT
+            and target_kind == AgentCommKind.SUBAGENT
+        ):
             return AgentSendResult(
                 target_agent=target_agent,
                 target_kind=target_kind,
@@ -860,8 +1004,11 @@ class AgentCommunicationService:
         normalized_invocation_id, error = self._validate_invocation_id(invocation_id, target_kind)
         if error is not None:
             return AgentSendResult(
-                target_agent=target_agent, target_kind=target_kind,
-                session_id="", invocation_id=None, created_new_task=False,
+                target_agent=target_agent,
+                target_kind=target_kind,
+                session_id="",
+                invocation_id=None,
+                created_new_task=False,
                 error=error,
             )
 
@@ -881,6 +1028,7 @@ class AgentCommunicationService:
             envelope_invocation_id = session_meta.invocation_id
 
         from framework.multi_agent.message_xml import build_agent_message
+
         effective_source_name = effective_source.name
         xml_content = build_agent_message(
             source=effective_source_name,
@@ -899,7 +1047,10 @@ class AgentCommunicationService:
 
         # 6. Record communication tracker events
         if self._comm_tracker is not None and envelope.invocation_id is not None:
-            if target_kind == AgentCommKind.NORMAL and session_meta.comm_kind == AgentCommKind.SUBAGENT:
+            if (
+                target_kind == AgentCommKind.NORMAL
+                and session_meta.comm_kind == AgentCommKind.SUBAGENT
+            ):
                 self._comm_tracker.acknowledge(
                     invocation_id=envelope.invocation_id,
                     reply_from=effective_source.name,
@@ -926,8 +1077,10 @@ class AgentCommunicationService:
         else:
             if envelope.target is None:
                 return AgentSendResult(
-                    target_agent=target_agent, target_kind=target_kind,
-                    session_id=session_id, invocation_id=normalized_invocation_id,
+                    target_agent=target_agent,
+                    target_kind=target_kind,
+                    session_id=session_id,
+                    invocation_id=normalized_invocation_id,
                     created_new_task=created_new_task,
                     error="No target address for broker delivery",
                 )

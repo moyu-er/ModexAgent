@@ -26,6 +26,7 @@ _logger = logging.getLogger(__name__)
 
 class MCPConnectionError(Exception):
     """MCP connection error."""
+
     pass
 
 
@@ -38,7 +39,7 @@ class MCPClientManager:
     3. streamable_http transport (Streamable HTTP)
     """
 
-    def __init__(self, config: dict[str, Any] | None = None):
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
         """Initialize MCP client manager.
 
         Args:
@@ -62,7 +63,9 @@ class MCPClientManager:
         servers = self._custom_config.items()
 
         for name, server_config in servers:
-            enabled = server_config.get("enabled", True) if isinstance(server_config, dict) else True
+            enabled = (
+                server_config.get("enabled", True) if isinstance(server_config, dict) else True
+            )
 
             if not enabled:
                 _logger.info("[MCP Manager] Skipping disabled server: %s", name)
@@ -106,7 +109,11 @@ class MCPClientManager:
                     transport = TransportType.STDIO
                 elif server_config.get("url"):
                     url = server_config["url"]
-                    transport = TransportType.SSE if url.rstrip("/").endswith("/sse") else TransportType.STREAMABLE_HTTP
+                    transport = (
+                        TransportType.SSE
+                        if url.rstrip("/").endswith("/sse")
+                        else TransportType.STREAMABLE_HTTP
+                    )
                 else:
                     _logger.warning("[MCP:%s] No command or url configured, skipping", name)
                     await server_stack.aclose()
@@ -291,7 +298,7 @@ class MCPClientManager:
             httpx.AsyncClient(
                 headers=headers or None,
                 follow_redirects=True,
-                timeout=None,
+                timeout=httpx.Timeout(connect=10.0, read=60.0, write=30.0, pool=5.0),
             )
         )
         read, write, _ = await server_stack.enter_async_context(
@@ -356,10 +363,13 @@ class MCPClientManager:
             if success:
                 return True
             if attempt < max_retries - 1:
-                delay = min(base_delay * (2 ** attempt), max_delay)
+                delay = min(base_delay * (2**attempt), max_delay)
                 _logger.info(
                     "[MCP Manager] Retrying %s in %.1fs (attempt %d/%d)",
-                    server_name, delay, attempt + 1, max_retries,
+                    server_name,
+                    delay,
+                    attempt + 1,
+                    max_retries,
                 )
                 await asyncio.sleep(delay)
         return False
@@ -377,7 +387,9 @@ class MCPClientManager:
             if server_name is not None:
                 config = self._custom_config.get(server_name)
                 if not config:
-                    _logger.warning("[MCP Manager] No config for server '%s', cannot reconnect", server_name)
+                    _logger.warning(
+                        "[MCP Manager] No config for server '%s', cannot reconnect", server_name
+                    )
                     return False
                 await self.disconnect(server_name)
                 result = await self._connect_single(server_name, config)
