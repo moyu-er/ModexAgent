@@ -1,4 +1,5 @@
 """Unified validation for EXPERIENCE.md format."""
+
 from __future__ import annotations
 
 import re
@@ -12,6 +13,7 @@ _NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]*$")
 @dataclass
 class ValidationResult:
     """Result of EXPERIENCE.md format validation."""
+
     valid: bool
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -41,19 +43,13 @@ def validate_experience_md(text: str, *, dir_name: str | None = None) -> Validat
         if not stripped.startswith("---"):
             errors.append("Missing YAML frontmatter — file must start with '---'.")
         else:
-            errors.append(
-                "Invalid YAML frontmatter — opening '---' found but "
-                "no closing '---'."
-            )
+            errors.append("Invalid YAML frontmatter — opening '---' found but no closing '---'.")
         return ValidationResult(valid=False, errors=errors)
 
     # Rule 2: name field (format check)
     name_val = str(frontmatter.get("name", "")).strip()
     if not name_val:
-        errors.append(
-            "Missing required field 'name' in frontmatter "
-            "(must be a non-empty string)."
-        )
+        errors.append("Missing required field 'name' in frontmatter (must be a non-empty string).")
     elif not _NAME_RE.match(name_val):
         errors.append(
             f"Invalid name '{name_val}' — must start with a letter and contain "
@@ -72,8 +68,7 @@ def validate_experience_md(text: str, *, dir_name: str | None = None) -> Validat
     desc_val = frontmatter.get("description")
     if not desc_val or not str(desc_val).strip():
         errors.append(
-            "Missing required field 'description' in frontmatter "
-            "(must be a non-empty string)."
+            "Missing required field 'description' in frontmatter (must be a non-empty string)."
         )
 
     # Rule 4: body content

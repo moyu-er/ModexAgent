@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-
-from framework.utils.file_io import read_json_robust
 import logging
 import re
 from abc import ABC, abstractmethod
 from pathlib import Path
+
+from framework.utils.file_io import read_json_robust
 
 from .codec import RuntimeStateCodecRegistry
 from .enums import OperationStatus, TurnPhase
@@ -142,7 +142,9 @@ class JsonFileTurnStateStore(TurnStateStore):
 
     async def save_turn(self, snapshot: TurnSnapshot) -> None:
         if snapshot.phase in _ACTIVE_PHASES:
-            existing = await self._find_active_turn(snapshot.identity.agent_id, snapshot.identity.session_id)
+            existing = await self._find_active_turn(
+                snapshot.identity.agent_id, snapshot.identity.session_id
+            )
             if existing is not None and existing.identity.turn_id != snapshot.identity.turn_id:
                 raise ActiveTurnConflictError(
                     f"Active turn already exists for agent={snapshot.identity.agent_id} "
@@ -164,6 +166,7 @@ class JsonFileTurnStateStore(TurnStateStore):
             return None
         agent_kind_raw = data.get("agent_kind", "react")
         from .enums import AgentKind as AK
+
         agent_kind = AK(agent_kind_raw)
         codec = self._codec_registry.get(agent_kind)
         return codec.decode_turn(data)
@@ -178,7 +181,9 @@ class JsonFileTurnStateStore(TurnStateStore):
         session_id = scope.session_id
 
         if agent_id is not None and session_id is not None:
-            dir_path = self._dir(TurnIdentity(agent_id=agent_id, session_id=session_id, turn_id="_"))
+            dir_path = self._dir(
+                TurnIdentity(agent_id=agent_id, session_id=session_id, turn_id="_")
+            )
             if dir_path.exists():
                 for f in dir_path.glob("*.json"):
                     snap = await self._load_file(f)
@@ -215,6 +220,7 @@ class JsonFileTurnStateStore(TurnStateStore):
         try:
             agent_kind_raw = data.get("agent_kind", "react")
             from .enums import AgentKind as AK
+
             agent_kind = AK(agent_kind_raw)
             codec = self._codec_registry.get(agent_kind)
             return codec.decode_turn(data)
@@ -292,6 +298,7 @@ class InMemoryRuntimeCommandStore(RuntimeCommandStore):
 
     async def mark_command_applied(self, command_id: str) -> None:
         import time
+
         cmd = self._store.get(command_id)
         if cmd is not None:
             cmd.status = OperationStatus.COMPLETED
@@ -339,22 +346,26 @@ class JsonFileRuntimeCommandStore(RuntimeCommandStore):
                     continue
                 from .enums import ControlCommandKind
                 from .enums import OperationStatus as OS
-                result.append(ControlCommandState(
-                    command_id=data["command_id"],
-                    kind=ControlCommandKind(data["kind"]),
-                    agent_id=data["agent_id"],
-                    session_id=data.get("session_id"),
-                    payload=data.get("payload", {}),
-                    status=OS(data.get("status", "created")),
-                    created_at=data.get("created_at", 0),
-                    applied_at=data.get("applied_at"),
-                ))
+
+                result.append(
+                    ControlCommandState(
+                        command_id=data["command_id"],
+                        kind=ControlCommandKind(data["kind"]),
+                        agent_id=data["agent_id"],
+                        session_id=data.get("session_id"),
+                        payload=data.get("payload", {}),
+                        status=OS(data.get("status", "created")),
+                        created_at=data.get("created_at", 0),
+                        applied_at=data.get("applied_at"),
+                    )
+                )
             except Exception:
                 logger.exception("Failed to load command from %s", f)
         return result
 
     async def mark_command_applied(self, command_id: str) -> None:
         import time
+
         path = self._path(command_id)
         data = read_json_robust(path)
         if data is not None:

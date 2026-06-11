@@ -39,10 +39,20 @@ class MemoryContext:
 
     def with_defaults(self, **defaults: Any) -> "MemoryContext":
         """Return a new MemoryContext with default values for missing fields."""
-        current = {key: getattr(self, key) for key in [
-            "session_id", "user_id", "tenant_id", "agent_id", "agent_role",
-            "channel", "chat_id", "sender_agent", "receiver_agent",
-        ]}
+        current = {
+            key: getattr(self, key)
+            for key in [
+                "session_id",
+                "user_id",
+                "tenant_id",
+                "agent_id",
+                "agent_role",
+                "channel",
+                "chat_id",
+                "sender_agent",
+                "receiver_agent",
+            ]
+        }
         for key, default_value in defaults.items():
             if hasattr(self, key) and current[key] is None and default_value is not None:
                 current[key] = default_value
@@ -202,7 +212,7 @@ class CompositeScope(MemoryScope):
     例如 CompositeScope(TenantScope(), UserScope()) 会生成 "tenant_id:user_id"。
     """
 
-    def __init__(self, *scopes: MemoryScope):
+    def __init__(self, *scopes: MemoryScope) -> None:
         self.scopes = scopes
 
     def get_scope_key(self, context: MemoryContext) -> str:

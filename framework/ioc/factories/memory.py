@@ -22,8 +22,8 @@ def _build_memory_layer_config(cfg: MemoryConfig) -> MemoryLayerConfigSet:
     """
     from framework.memory.layers.config import (
         MemoryLayerConfigSet,
-        UserRetentionBufferConfig,
         SessionMemoryConfig,
+        UserRetentionBufferConfig,
     )
 
     user_retention_config = UserRetentionBufferConfig(

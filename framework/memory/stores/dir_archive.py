@@ -1,10 +1,11 @@
 """Directory-based archive storage with per-archive-id MD files."""
+
 from __future__ import annotations
 
 import json
 import logging
 import shutil
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -13,13 +14,11 @@ from framework.memory.core.storage import MemoryStorage
 from framework.utils.file_io import read_json_robust
 
 if TYPE_CHECKING:
-    from framework.memory.core.lock import AioRWLock
+    pass
 
 logger = logging.getLogger(__name__)
 
-_REQUIRED_ARCHIVE_FILES: frozenset[str] = frozenset(
-    {"context.md", "knowledge.md", "index.md"}
-)
+_REQUIRED_ARCHIVE_FILES: frozenset[str] = frozenset({"context.md", "knowledge.md", "index.md"})
 
 
 class DirArchiveStorage(MemoryStorage):
@@ -39,6 +38,7 @@ class DirArchiveStorage(MemoryStorage):
 
     def __init__(self, base_dir: Path) -> None:
         from framework.memory.core.lock import AioRWLock
+
         super().__init__(AioRWLock())
         self._base = base_dir
 
@@ -51,7 +51,6 @@ class DirArchiveStorage(MemoryStorage):
 
     def get_lock(self):
         """Return the read-write lock for this storage instance."""
-        from framework.memory.core.lock import AioRWLock
         return self._lock
 
     # -- properties ----------------------------------------------------------
@@ -80,9 +79,7 @@ class DirArchiveStorage(MemoryStorage):
             encoding="utf-8",
         )
 
-    async def append_channel_log(
-        self, channel: str, entry: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def append_channel_log(self, channel: str, entry: dict[str, Any]) -> dict[str, Any]:
         """Append *entry* to the log for *channel* and return the stored record.
 
         Reads ``next_archive_id`` from state (defaulting to 1), creates the
@@ -118,8 +115,7 @@ class DirArchiveStorage(MemoryStorage):
 
         # Sort numerically by archive ID (oldest first)
         numeric_dirs = [
-            child for child in self._base.iterdir()
-            if child.is_dir() and child.name.isdigit()
+            child for child in self._base.iterdir() if child.is_dir() and child.name.isdigit()
         ]
         numeric_dirs.sort(key=lambda p: int(p.name))
 
@@ -143,17 +139,11 @@ class DirArchiveStorage(MemoryStorage):
                 break
         return results
 
-    async def save_channel_logs(
-        self, channel: str, entries: list[dict[str, Any]]
-    ) -> None:
+    async def save_channel_logs(self, channel: str, entries: list[dict[str, Any]]) -> None:
         """Remove archive directories not present in *entries*."""
         if not self._base.exists():
             return
-        kept_ids: set[int] = {
-            int(e.get("archive_id", 0))
-            for e in entries
-            if e.get("archive_id")
-        }
+        kept_ids: set[int] = {int(e.get("archive_id", 0)) for e in entries if e.get("archive_id")}
         for child in list(self._base.iterdir()):
             if child.is_dir() and child.name.isdigit():
                 aid = int(child.name)
@@ -236,6 +226,7 @@ class DirArchiveStorage(MemoryStorage):
 
     def _revision(self) -> StorageRevision:
         from datetime import UTC, datetime
+
         return StorageRevision(
             message_count=0,
             updated_at=datetime.now(UTC),
@@ -290,9 +281,7 @@ class DirArchiveStorage(MemoryStorage):
 
     # -- MD-file-specific methods --------------------------------------------
 
-    async def write_archive_file(
-        self, archive_id: int, filename: str, content: str
-    ) -> int:
+    async def write_archive_file(self, archive_id: int, filename: str, content: str) -> int:
         """Write *content* to ``{base_dir}/{archive_id}/{filename}``.
 
         Creates the archive directory if needed.  Returns the byte count
@@ -304,18 +293,14 @@ class DirArchiveStorage(MemoryStorage):
         target.write_text(content, encoding="utf-8")
         return len(content.encode("utf-8"))
 
-    async def read_archive_file(
-        self, archive_id: int, filename: str
-    ) -> str | None:
+    async def read_archive_file(self, archive_id: int, filename: str) -> str | None:
         """Read a file from an archive directory.  Returns ``None`` if missing."""
         target = self._base / str(archive_id) / filename
         if not target.exists():
             return None
         return target.read_text(encoding="utf-8")
 
-    async def list_archives(
-        self, since_id: int = 0, limit: int = 100
-    ) -> list[int]:
+    async def list_archives(self, since_id: int = 0, limit: int = 100) -> list[int]:
         """List archive IDs > *since_id*, in descending order."""
         if not self._base.exists():
             return []

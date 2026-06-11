@@ -7,13 +7,10 @@ import tempfile
 import time
 from pathlib import Path
 
-from ..guard import CommandPatternGuard, CommandPatternGuardConfig
-from ..env_builder import EnvironmentBuilder, EnvBuilderConfig
-from ..workspace_policy import WorkspacePolicy, WorkspacePolicyConfig
-from ..exceptions import CommandRejectedError
-
 from ..config import SandboxConfig
-from ..exceptions import SandboxError
+from ..env_builder import EnvironmentBuilder
+from ..exceptions import CommandRejectedError
+from ..guard import CommandPatternGuard
 from ..isolation import (
     FilesystemIsolationConfig,
     IsolationConfig,
@@ -23,6 +20,7 @@ from ..isolation import (
 from ..platform import get_shell_command_args
 from ..types import SandboxResult
 from ..validation import validate_code
+from ..workspace_policy import WorkspacePolicy
 from .base import SandboxAdapter
 
 logger = logging.getLogger(__name__)
@@ -49,7 +47,7 @@ class SubprocessSandbox(SandboxAdapter):
     def is_available(self) -> bool:
         return True
 
-    def __init__(self, config: SandboxConfig | None = None):
+    def __init__(self, config: SandboxConfig | None = None) -> None:
         self.config = config or SandboxConfig()
         self._command_guard: CommandPatternGuard | None = None
         self._env_builder: EnvironmentBuilder | None = None
@@ -84,6 +82,7 @@ class SubprocessSandbox(SandboxAdapter):
         """Lazily create EnvironmentBuilder from config."""
         if self._env_builder is None:
             from ..env_builder import EnvBuilderConfig, EnvPolicy
+
             cfg = self.config
             policy = cfg.env_policy if cfg else EnvPolicy.STANDARD
             self._env_builder = EnvironmentBuilder(EnvBuilderConfig(policy=policy))

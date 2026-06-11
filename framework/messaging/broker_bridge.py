@@ -23,7 +23,7 @@ class BrokerInputAdapter(InputAdapter):
         broker: MessageBroker,
         address: Address,
         deduplicator: Any | None = None,
-    ):
+    ) -> None:
         self.broker = broker
         self.address = address
         self._running = False
@@ -67,17 +67,27 @@ def _broker_msg_to_input_message(msg: BrokerMessage) -> InputMessage:
     sender = msg.sender
     metadata = dict(payload.get("metadata", {}))
     # 透传 AgentMessageEnvelope 路由字段到 metadata
-    for key in ("conversation_id", "agent_session_id", "message_id", "in_reply_to", "message_type", "invocation_id"):
+    for key in (
+        "conversation_id",
+        "agent_session_id",
+        "message_id",
+        "in_reply_to",
+        "message_type",
+        "invocation_id",
+    ):
         value = payload.get(key) or msg.headers.get(key)
         if value:
             metadata[key] = value
 
     # Mark XML content format for agent messages so governance can protect XML structure
-    _xml_message_types = frozenset({"agent_message", "subagent_result", "task_request", "agent_result"})
+    _xml_message_types = frozenset(
+        {"agent_message", "subagent_result", "task_request", "agent_result"}
+    )
     content_fmt = None
     trunc_paths = None
     if metadata.get("message_type") in _xml_message_types:
         from framework.memory.core.message import ContentFormat
+
         content_fmt = ContentFormat.XML
         trunc_paths = ["content"]
 
@@ -118,7 +128,7 @@ class BrokerOutputAdapter(OutputAdapter):
         sender: Address,
         default_recipient: Address | None = None,
         default_topic: str | None = None,
-    ):
+    ) -> None:
         if not default_recipient and not default_topic:
             raise ValueError("Must provide default_recipient or default_topic")
         self.broker = broker
@@ -197,7 +207,7 @@ class BrokerBridgeService:
         restart_max_retries: int = 5,
         restart_backoff_seconds: float = 5.0,
         restart_max_window_seconds: float = 300.0,
-    ):
+    ) -> None:
         self.broker = broker
         self.input_bindings = dict(input_bindings or {})
         self.output_routes = list(output_routes or [])

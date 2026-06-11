@@ -152,7 +152,7 @@ class ContextManager(ABC):
 class InMemoryContextManager(ContextManager):
     """内存中的上下文管理器"""
 
-    def __init__(self, base_system_prompt: str = ""):
+    def __init__(self, base_system_prompt: str = "") -> None:
         self.base_system_prompt = base_system_prompt
         self._sessions: dict[str, ContextState] = {}
 
@@ -232,5 +232,3 @@ class InMemoryContextManager(ContextManager):
         if "platform" in info:
             lines.append(f"Platform: {info['platform']}")
         return "\n".join(lines)
-
-

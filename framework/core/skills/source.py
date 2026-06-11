@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any
 
 from framework.core.frontmatter import parse_frontmatter as _parse_frontmatter
 
@@ -37,9 +36,7 @@ class SkillSource(ABC):
         Default implementation raises ``NotImplementedError``.
         Subclasses that support resource discovery should override this.
         """
-        raise NotImplementedError(
-            f"{self.__class__.__name__} does not implement list_resources()"
-        )
+        raise NotImplementedError(f"{self.__class__.__name__} does not implement list_resources()")
 
     async def load(self) -> list[Skill]:
         """Load all skills（default implementation）."""
@@ -151,7 +148,9 @@ class FileSkillSource(SkillSource):
                     for rtype in self._resource_dirs:
                         rdir = skill_dir / rtype
                         if rdir.exists() and rdir.is_dir():
-                            auto_resources.append(SkillResource(name=rtype, type=rtype, path=str(rdir)))
+                            auto_resources.append(
+                                SkillResource(name=rtype, type=rtype, path=str(rdir))
+                            )
                     frontmatter_resources = [
                         SkillResource(**r) for r in frontmatter.get("resources", [])
                     ]
@@ -285,9 +284,7 @@ class CompositeSkillSource(SkillSource):
                         index[summary.name] = summary
                     elif self._merge_strategy == "error":
                         if summary.name in index:
-                            raise ValueError(
-                                f"Duplicate skill '{summary.name}' across sources"
-                            )
+                            raise ValueError(f"Duplicate skill '{summary.name}' across sources")
                         index[summary.name] = summary
                     else:
                         index.setdefault(summary.name, summary)

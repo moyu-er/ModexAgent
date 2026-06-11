@@ -46,7 +46,7 @@ class RunLoggingHook(AfterLLMResponseHook, BeforeToolExecutionHook, AfterToolExe
         self._max_result_chars = max_result_chars
 
     @staticmethod
-    def _get_agent_name(ctx: AgentContext[Any]) -> str:
+    def _get_agent_name(ctx: AgentContext) -> str:
         if ctx.session_meta is not None:
             return ctx.session_meta.agent_name
         if ctx.identity is not None:
@@ -54,19 +54,18 @@ class RunLoggingHook(AfterLLMResponseHook, BeforeToolExecutionHook, AfterToolExe
         return "<unknown>"
 
     @staticmethod
-    def _get_iteration(ctx: AgentContext[Any]) -> int:
+    def _get_iteration(ctx: AgentContext) -> int:
         if ctx.runtime is not None:
             return getattr(ctx.runtime.state, "iteration", 0)
         return 0
 
-    async def after_llm_response(self, ctx: AgentContext[Any], response: LLMResponse) -> None:
+    async def after_llm_response(self, ctx: AgentContext, response: LLMResponse) -> None:
         tool_names = [call.tool_name for call in response.tool_calls]
         agent = self._get_agent_name(ctx)
         iteration = self._get_iteration(ctx)
         self._logger.log(
             self._level,
-            "[LLM] session_id=%s agent=%s iter=%s finish_reason=%s "
-            "tools=%s usage=%s\ncontent=%s",
+            "[LLM] session_id=%s agent=%s iter=%s finish_reason=%s tools=%s usage=%s\ncontent=%s",
             ctx.session_id,
             agent,
             iteration,
@@ -78,7 +77,7 @@ class RunLoggingHook(AfterLLMResponseHook, BeforeToolExecutionHook, AfterToolExe
 
     async def before_tool_execution(
         self,
-        ctx: AgentContext[Any],
+        ctx: AgentContext,
         tool_calls: Sequence[ToolCall] | None = None,
     ) -> None:
         if tool_calls is None:
@@ -99,7 +98,7 @@ class RunLoggingHook(AfterLLMResponseHook, BeforeToolExecutionHook, AfterToolExe
 
     async def after_tool_execution(
         self,
-        ctx: AgentContext[Any],
+        ctx: AgentContext,
         results: Sequence[ToolResult] | None = None,
     ) -> None:
         if results is None:

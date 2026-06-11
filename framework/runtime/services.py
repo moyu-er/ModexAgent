@@ -91,7 +91,7 @@ class AgentRuntime:
     @property
     def turn_uuid(self) -> str | None:
         """Current turn UUID for control command scoping."""
-        return self.state.custom.get(TurnCustomKey.TURN_UUID)  # type: ignore[return-value]
+        return self.state.custom.get(TurnCustomKey.TURN_UUID)
 
     @property
     def control_channel(self) -> InMemoryControlChannel | None:

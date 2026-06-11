@@ -71,9 +71,7 @@ def _enable_vt_mode() -> None:
 
     mode = wintypes.DWORD()
     if kernel32.GetConsoleMode(h_stdout, ctypes.byref(mode)):
-        kernel32.SetConsoleMode(
-            h_stdout, mode.value | ENABLE_VIRTUAL_TERMINAL_PROCESSING
-        )
+        kernel32.SetConsoleMode(h_stdout, mode.value | ENABLE_VIRTUAL_TERMINAL_PROCESSING)
 
 
 def _disable_console_echo() -> None:
@@ -129,8 +127,10 @@ def _resize_console(rows: int = _PTY_ROWS, cols: int = _PTY_COLS) -> None:
 
     class SMALL_RECT(ctypes.Structure):
         _fields_ = [
-            ("Left", wintypes.SHORT), ("Top", wintypes.SHORT),
-            ("Right", wintypes.SHORT), ("Bottom", wintypes.SHORT),
+            ("Left", wintypes.SHORT),
+            ("Top", wintypes.SHORT),
+            ("Right", wintypes.SHORT),
+            ("Bottom", wintypes.SHORT),
         ]
 
     # argtypes needed so ctypes passes COORD by value (not by reference).
@@ -159,8 +159,10 @@ def _get_console_size() -> tuple[int, int] | None:
 
     class SMALL_RECT(ctypes.Structure):
         _fields_ = [
-            ("Left", wintypes.SHORT), ("Top", wintypes.SHORT),
-            ("Right", wintypes.SHORT), ("Bottom", wintypes.SHORT),
+            ("Left", wintypes.SHORT),
+            ("Top", wintypes.SHORT),
+            ("Right", wintypes.SHORT),
+            ("Bottom", wintypes.SHORT),
         ]
 
     class CONSOLE_SCREEN_BUFFER_INFO(ctypes.Structure):
@@ -212,12 +214,12 @@ _VK_MAP: dict[int, str] = {
     0x26: "\x1b[A",  # VK_UP
     0x27: "\x1b[C",  # VK_RIGHT
     0x28: "\x1b[B",  # VK_DOWN
-    0x21: "\x1b[5~", # VK_PRIOR (Page Up)
-    0x22: "\x1b[6~", # VK_NEXT  (Page Down)
+    0x21: "\x1b[5~",  # VK_PRIOR (Page Up)
+    0x22: "\x1b[6~",  # VK_NEXT  (Page Down)
     0x23: "\x1b[F",  # VK_END
     0x24: "\x1b[H",  # VK_HOME
-    0x2D: "\x1b[2~", # VK_INSERT
-    0x2E: "\x1b[3~", # VK_DELETE
+    0x2D: "\x1b[2~",  # VK_INSERT
+    0x2E: "\x1b[3~",  # VK_DELETE
 }
 
 _LEFT_CTRL = 0x0008
@@ -293,9 +295,13 @@ def _stdin_to_pty(proc: WritablePty, stdin: TextIO) -> None:
     # Open CONIN$ — always refers to THIS console's input buffer.
     GENERIC_READ = 0x80000000
     h_conin = kernel32.CreateFileW(
-        "CONIN$", GENERIC_READ,
+        "CONIN$",
+        GENERIC_READ,
         0x0003,  # FILE_SHARE_READ | FILE_SHARE_WRITE
-        None, 3, 0, None,  # OPEN_EXISTING
+        None,
+        3,
+        0,
+        None,  # OPEN_EXISTING
     )
     if h_conin in (-1, None) or h_conin == ctypes.c_void_p(-1).value:
         return
@@ -343,7 +349,9 @@ def _stdin_to_pty(proc: WritablePty, stdin: TextIO) -> None:
                 continue
 
             text = _translate_key(
-                ke.wVirtualKeyCode, ke.uChar, ke.dwControlKeyState,
+                ke.wVirtualKeyCode,
+                ke.uChar,
+                ke.dwControlKeyState,
             )
             if text is not None:
                 proc.write(text)
@@ -353,7 +361,9 @@ def _stdin_to_pty(proc: WritablePty, stdin: TextIO) -> None:
         kernel32.CloseHandle(h_conin)
 
 
-def _spawn_pty(shell: str, cwd: str | None = None, env: dict[str, str] | None = None) -> VisiblePtyProcess:
+def _spawn_pty(
+    shell: str, cwd: str | None = None, env: dict[str, str] | None = None
+) -> VisiblePtyProcess:
     """Spawn the visible host PTY using pywinpty's WinPTY backend."""
     import winpty
 
@@ -390,7 +400,7 @@ def main() -> None:
                     break
                 proc.fileobj.settimeout(_READ_TIMEOUT)  # type: ignore[union-attr]
                 raw = proc.fileobj.recv(65536)  # type: ignore[union-attr]
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except (OSError, ConnectionResetError):
                 break

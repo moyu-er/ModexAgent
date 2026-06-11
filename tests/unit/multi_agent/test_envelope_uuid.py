@@ -14,7 +14,7 @@ class TestEnvelopeUUID:
             payload={"content": "hello"},
             source=AgentAddress(name="main"),
             conversation_id="conv-1",
-            agent_session_id="conv-1:main",
+            agent_session_id="conv-1.main",
         )
         assert envelope.invocation_id is None
 
@@ -24,7 +24,7 @@ class TestEnvelopeUUID:
             source=AgentAddress(name="main"),
             target=AgentAddress(name="office-expert"),
             conversation_id="conv-1",
-            agent_session_id="conv-1:office-expert:task-1",
+            agent_session_id="conv-1.office-expert.task-1",
             invocation_id="task-1",
         )
         assert envelope.invocation_id == "task-1"
@@ -35,7 +35,7 @@ class TestEnvelopeUUID:
             source=AgentAddress(name="main"),
             target=AgentAddress(name="office-expert"),
             conversation_id="conv-1",
-            agent_session_id="conv-1:office-expert:task-1",
+            agent_session_id="conv-1.office-expert.task-1",
             invocation_id="task-1",
         )
         broker_msg = envelope.to_broker_message()
@@ -51,7 +51,7 @@ class TestEnvelopeUUID:
             source=AgentAddress(name="main"),
             target=AgentAddress(name="reviewer"),
             conversation_id="conv-1",
-            agent_session_id="conv-1:reviewer",
+            agent_session_id="conv-1.reviewer",
         )
         broker_msg = envelope.to_broker_message()
         assert "invocation_id" not in broker_msg.headers
@@ -65,7 +65,7 @@ class TestEnvelopeUUID:
             payload={"content": "hello"},
             source=AgentAddress(name="sub"),
             conversation_id="conv-1",
-            agent_session_id="conv-1:main",
+            agent_session_id="conv-1.main",
             invocation_id="abc123",
             metadata={"extra": "value"},
         )

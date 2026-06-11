@@ -47,9 +47,9 @@ via a communication tool call for you to receive the message.
 
    ```
    send_to_agent(
-     target_agent="office-expert",
-     content="Please process this document: ...",
-     invocation_id=""
+     target_agent="some_subagent",
+     content="Please review these changes: ...",
+     invocation_id=null
    )
    ```
 
@@ -57,6 +57,5 @@ via a communication tool call for you to receive the message.
 
 ### Common Mistakes (must avoid)
 
-- :x: Only writing "please process this file" in your text → subagent never sees it
+- :x: Only writing "please process this" in your text → subagent never sees it
 - :white_check_mark: Putting the task description as `content` in a `send_to_agent` call
-- :x: Subagent outputting results then stopping → you never receive them (must use tool call to send)

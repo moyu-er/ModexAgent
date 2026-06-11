@@ -36,7 +36,7 @@ class LLMProvider(ABC):
                 return "gpt-4"
     """
 
-    def __init__(self, retry_backoff_seconds: tuple[float, ...] = (2.0, 8.0)):
+    def __init__(self, retry_backoff_seconds: tuple[float, ...] = (2.0, 8.0)) -> None:
         self._retry_backoff_seconds = retry_backoff_seconds
 
     @abstractmethod
@@ -47,7 +47,7 @@ class LLMProvider(ABC):
         temperature: float = 0.7,
         max_tokens: int | None = None,
         tools: list[dict] | None = None,
-        **kwargs
+        **kwargs,
     ) -> LLMResponse:
         """
         非流式聊天完成。
@@ -95,12 +95,18 @@ class LLMProvider(ABC):
         max_tokens: int | None = None,
         tools: list[dict] | None = None,
         max_retries: int = 3,
-        **kwargs
+        **kwargs,
     ) -> LLMResponse:
         """调用 chat() 并在遇到临时错误时重试"""
         return await self._execute_with_retry(
-            self.chat, messages, max_retries,
-            model=model, temperature=temperature, max_tokens=max_tokens, tools=tools, **kwargs
+            self.chat,
+            messages,
+            max_retries,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            tools=tools,
+            **kwargs,
         )
 
     async def _execute_with_retry(self, fn, messages, max_retries, **kwargs):
@@ -179,16 +185,28 @@ class LLMProvider(ABC):
         """
         error_text = str(error).lower()
         transient_markers = (
-            "429", "500", "502", "503", "504",
-            "rate limit", "timeout", "timed out", "connection",
-            "server error", "internal server",
-            "overloaded", "temporarily unavailable",
-            "empty response", "invalid response",
+            "429",
+            "500",
+            "502",
+            "503",
+            "504",
+            "rate limit",
+            "timeout",
+            "timed out",
+            "connection",
+            "server error",
+            "internal server",
+            "overloaded",
+            "temporarily unavailable",
+            "empty response",
+            "invalid response",
         )
         for marker in transient_markers:
             if marker in error_text:
                 # 配额/计费错误不应重试
-                return not ("insufficient_quota" in error_text or "billing hard limit" in error_text)
+                return not (
+                    "insufficient_quota" in error_text or "billing hard limit" in error_text
+                )
         return False
 
 
@@ -207,7 +225,7 @@ class StreamingLLMProvider(LLMProvider):
         temperature: float = 0.7,
         max_tokens: int | None = None,
         tools: list[dict] | None = None,
-        **kwargs
+        **kwargs,
     ) -> LLMResponse:
         """非流式聊天完成。
 
@@ -217,10 +235,15 @@ class StreamingLLMProvider(LLMProvider):
         等只有 streaming 模式才有的收益。
         """
         return await self.chat_stream_with_retry(
-            messages=messages, model=model, temperature=temperature,
-            max_tokens=max_tokens, tools=tools,
-            on_content_delta=None, on_reasoning_delta=None,
-            max_retries=1, **kwargs,
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            tools=tools,
+            on_content_delta=None,
+            on_reasoning_delta=None,
+            max_retries=1,
+            **kwargs,
         )
 
     async def chat_with_retry(
@@ -231,7 +254,7 @@ class StreamingLLMProvider(LLMProvider):
         max_tokens: int | None = None,
         tools: list[dict] | None = None,
         max_retries: int = 3,
-        **kwargs
+        **kwargs,
     ) -> LLMResponse:
         """带重试的非流式聊天完成。
 
@@ -241,10 +264,15 @@ class StreamingLLMProvider(LLMProvider):
         等只有 streaming 模式才有的收益。
         """
         return await self.chat_stream_with_retry(
-            messages=messages, model=model, temperature=temperature,
-            max_tokens=max_tokens, tools=tools,
-            on_content_delta=None, on_reasoning_delta=None,
-            max_retries=max_retries, **kwargs,
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            tools=tools,
+            on_content_delta=None,
+            on_reasoning_delta=None,
+            max_retries=max_retries,
+            **kwargs,
         )
 
     @abstractmethod
@@ -257,7 +285,7 @@ class StreamingLLMProvider(LLMProvider):
         tools: list[dict] | None = None,
         on_content_delta: Callable[[str], Any] | None = None,
         on_reasoning_delta: Callable[[str], Any] | None = None,
-        **kwargs
+        **kwargs,
     ) -> LLMResponse:
         """
         流式聊天完成。
@@ -287,7 +315,7 @@ class StreamingLLMProvider(LLMProvider):
         max_retries: int = 0,
         on_content_delta: Callable[[str], Any] | None = None,
         on_reasoning_delta: Callable[[str], Any] | None = None,
-        **kwargs
+        **kwargs,
     ) -> LLMResponse:
         """调用 chat_stream() 并在遇到临时错误时重试。
 
@@ -295,7 +323,14 @@ class StreamingLLMProvider(LLMProvider):
         已通过 on_content_delta 回调发送给用户，重试会造成重复 delta。
         """
         return await self._execute_with_retry(
-            self.chat_stream, messages, max_retries,
-            model=model, temperature=temperature, max_tokens=max_tokens, tools=tools,
-            on_content_delta=on_content_delta, on_reasoning_delta=on_reasoning_delta, **kwargs
+            self.chat_stream,
+            messages,
+            max_retries,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            tools=tools,
+            on_content_delta=on_content_delta,
+            on_reasoning_delta=on_reasoning_delta,
+            **kwargs,
         )

@@ -120,9 +120,7 @@ class ToolOverflowStore(ABC):
         all_ids = await self.list_tool_call_ids(request.session_id)
 
         # 1. Delete entries whose call_id is no longer in session history.
-        to_delete = [
-            tcid for tcid in all_ids if tcid not in request.kept_call_ids
-        ]
+        to_delete = [tcid for tcid in all_ids if tcid not in request.kept_call_ids]
 
         # 2. Enforce max count on the surviving (kept) entries.
         kept = [tcid for tcid in all_ids if tcid not in to_delete]

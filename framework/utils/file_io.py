@@ -85,15 +85,16 @@ def read_jsonl_robust(path: Path) -> list[dict[str, Any]]:
                     logger.warning(
                         "%s was encoded as %s (expected UTF-8).  "
                         "Data recovered and re-encoded as UTF-8.",
-                        path, encoding,
+                        path,
+                        encoding,
                     )
                     _rewrite_jsonl(path, messages)
                 return messages
             # Decoded but zero valid lines → corrupt
             logger.warning(
-                "%s decoded as %s but contained no valid JSON lines.  "
-                "Treating as corrupted.",
-                path, encoding,
+                "%s decoded as %s but contained no valid JSON lines.  Treating as corrupted.",
+                path,
+                encoding,
             )
             break
 
@@ -124,7 +125,9 @@ def _parse_jsonl_lines(path: Path, encoding: str) -> list[dict[str, Any]]:
             except json.JSONDecodeError:
                 logger.warning(
                     "Skipping unparseable line in %s (encoding=%s): %.80r",
-                    path, encoding, line[:200],
+                    path,
+                    encoding,
+                    line[:200],
                 )
     return messages
 
@@ -157,14 +160,16 @@ def _backup(path: Path, kind: str) -> None:
     try:
         shutil.move(str(path), str(backup_path))
         logger.error(
-            "%s %s is corrupted (cannot decode with any encoding).  "
-            "Backed up to %s.",
-            kind, path, backup_path,
+            "%s %s is corrupted (cannot decode with any encoding).  Backed up to %s.",
+            kind,
+            path,
+            backup_path,
         )
     except OSError as exc:
         logger.error(
             "Cannot back up corrupted %s: %s.  Removing file.",
-            path, exc,
+            path,
+            exc,
         )
         with contextlib.suppress(OSError):
             path.unlink()

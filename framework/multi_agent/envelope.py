@@ -85,9 +85,18 @@ class AgentMessageEnvelope:
             in_reply_to=headers.get("in_reply_to") or None,
             correlation_id=msg.correlation_id,
             timestamp=msg.timestamp,
-            metadata={k: v for k, v in headers.items() if k not in {
-                "conversation_id", "agent_session_id", "message_id",
-                "in_reply_to", "message_type", "invocation_id",
-            }},
+            metadata={
+                k: v
+                for k, v in headers.items()
+                if k
+                not in {
+                    "conversation_id",
+                    "agent_session_id",
+                    "message_id",
+                    "in_reply_to",
+                    "message_type",
+                    "invocation_id",
+                }
+            },
             hop_count=int(headers.get("hop_count", 0)),
         )

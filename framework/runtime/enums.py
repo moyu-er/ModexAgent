@@ -37,6 +37,9 @@ class OperationKind(StrEnum):
     TOOL_CALL = "tool_call"
     APPROVAL = "approval"
     CONTROL_COMMAND = "control_command"
+    TURN_START = "turn_start"
+    TURN_END = "turn_end"
+    ERROR = "error"
 
 
 class OperationStatus(StrEnum):
@@ -133,3 +136,4 @@ class TurnCustomKey(StrEnum):
     MAX_TOOLS_PER_TURN = "max_tools_per_turn"
     TURN_UUID = "_turn_uuid"
     INJECTION_CYCLE_COUNT = "_injection_cycle_count"
+    TRACE_ID = "_trace_id"

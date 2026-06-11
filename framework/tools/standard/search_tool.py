@@ -18,8 +18,16 @@ from ...core.tool_manager import Tool
 
 # Directories excluded from search by all backends.
 DEFAULT_EXCLUDES = [
-    ".git", ".venv", "venv", "node_modules", "__pycache__",
-    ".mypy_cache", ".pytest_cache", ".ruff_cache", ".idea", ".vscode",
+    ".git",
+    ".venv",
+    "venv",
+    "node_modules",
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".idea",
+    ".vscode",
 ]
 
 
@@ -47,7 +55,7 @@ async def _async_subprocess_run(*args: Any, **kwargs: Any) -> subprocess.Complet
 class SearchFilesTool(Tool):
     ABSOLUTE_MAX_RESULTS = 200
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
     @property
@@ -70,39 +78,39 @@ class SearchFilesTool(Tool):
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Search pattern (regex or literal text)"
+                    "description": "Search pattern (regex or literal text)",
                 },
                 "path": {
                     "type": "string",
                     "description": "Directory to search in (default: current directory)",
-                    "default": "."
+                    "default": ".",
                 },
                 "file_pattern": {
                     "type": "string",
                     "description": "Glob filter for files, e.g. '*.py' (default: all files)",
-                    "default": "*"
+                    "default": "*",
                 },
                 "regex": {
                     "type": "boolean",
                     "description": "If true, query is a regex; if false, literal text match",
-                    "default": True
+                    "default": True,
                 },
                 "max_results": {
                     "type": "integer",
                     "description": f"Maximum matches to return (default: 50, hard cap: {self.ABSOLUTE_MAX_RESULTS})",
                     "default": 50,
                     "minimum": 1,
-                    "maximum": self.ABSOLUTE_MAX_RESULTS
+                    "maximum": self.ABSOLUTE_MAX_RESULTS,
                 },
                 "context_lines": {
                     "type": "integer",
                     "description": "Lines of context before/after each match (default: 2)",
                     "default": 2,
                     "minimum": 0,
-                    "maximum": 10
-                }
+                    "maximum": 10,
+                },
             },
-            "required": ["query"]
+            "required": ["query"],
         }
 
     async def execute(
@@ -174,8 +182,10 @@ class SearchFilesTool(Tool):
             "rg",
             "--vimgrep",
             f"-C{context_lines}",
-            "--max-count", str(max_results),
-            "--max-filesize", "10M",
+            "--max-count",
+            str(max_results),
+            "--max-filesize",
+            "10M",
         ]
         for d in DEFAULT_EXCLUDES:
             cmd.extend(["--glob", f"!{d}"])
@@ -193,9 +203,7 @@ class SearchFilesTool(Tool):
         cmd.extend([query, str(search_path)])
 
         try:
-            proc = await _async_subprocess_run(
-                cmd, capture_output=True, text=True, timeout=30
-            )
+            proc = await _async_subprocess_run(cmd, capture_output=True, text=True, timeout=30)
             if proc.returncode not in (0, 1):
                 return f"Error: ripgrep failed (exit {proc.returncode}): {proc.stderr[:200]}"
             if not proc.stdout.strip():
@@ -288,8 +296,11 @@ class SearchFilesTool(Tool):
         context_lines: int,
     ) -> str:
         cmd = [
-            "git", "-C", str(search_path),
-            "grep", "-n",
+            "git",
+            "-C",
+            str(search_path),
+            "grep",
+            "-n",
             f"-C{context_lines}",
             "--untracked",
         ]
@@ -300,9 +311,7 @@ class SearchFilesTool(Tool):
         cmd.extend(["-e", query, "--", file_pattern])
 
         try:
-            proc = await _async_subprocess_run(
-                cmd, capture_output=True, text=True, timeout=30
-            )
+            proc = await _async_subprocess_run(cmd, capture_output=True, text=True, timeout=30)
             if proc.returncode not in (0, 1):
                 return f"Error: git grep failed (exit {proc.returncode}): {proc.stderr[:200]}"
             return self._parse_git_grep_output(proc.stdout, max_results)
@@ -375,7 +384,7 @@ class SearchFilesTool(Tool):
         except (ValueError, IndexError):
             return None
         file_path = raw_line[:dash_idx]
-        text = raw_line[second_dash + 1:]
+        text = raw_line[second_dash + 1 :]
         return file_path, lnum, text.rstrip("\n\r")
 
     # ------------------------------------------------------------------
@@ -421,18 +430,20 @@ class SearchFilesTool(Tool):
                 if pattern.search(line_text):
                     ctx_before = [
                         (ln, txt.rstrip("\n\r"))
-                        for ln, txt in all_lines[max(0, i - context_lines):i]
+                        for ln, txt in all_lines[max(0, i - context_lines) : i]
                     ]
                     ctx_after = [
                         (ln, txt.rstrip("\n\r"))
-                        for ln, txt in all_lines[i + 1:min(len(all_lines), i + 1 + context_lines)]
+                        for ln, txt in all_lines[i + 1 : min(len(all_lines), i + 1 + context_lines)]
                     ]
                     rel_path = str(
                         file_path.relative_to(search_path)
                         if file_path.is_relative_to(search_path)
                         else file_path
                     )
-                    results.append((rel_path, line_no, line_text.rstrip("\n\r"), ctx_before, ctx_after))
+                    results.append(
+                        (rel_path, line_no, line_text.rstrip("\n\r"), ctx_before, ctx_after)
+                    )
                     if len(results) >= max_results:
                         return self._format_results(results, max_results)
 
@@ -472,7 +483,7 @@ class SearchFilesTool(Tool):
 class FindFilesTool(Tool):
     ABSOLUTE_MAX_RESULTS = 500
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
     @property
@@ -494,22 +505,22 @@ class FindFilesTool(Tool):
             "properties": {
                 "pattern": {
                     "type": "string",
-                    "description": "Glob pattern to match file names, e.g. '*.py' or '**/*test*.py'"
+                    "description": "Glob pattern to match file names, e.g. '*.py' or '**/*test*.py'",
                 },
                 "path": {
                     "type": "string",
                     "description": "Directory to search in (default: current directory)",
-                    "default": "."
+                    "default": ".",
                 },
                 "max_results": {
                     "type": "integer",
                     "description": f"Maximum files to return (default: 100, hard cap: {self.ABSOLUTE_MAX_RESULTS})",
                     "default": 100,
                     "minimum": 1,
-                    "maximum": self.ABSOLUTE_MAX_RESULTS
-                }
+                    "maximum": self.ABSOLUTE_MAX_RESULTS,
+                },
             },
-            "required": ["pattern"]
+            "required": ["pattern"],
         }
 
     async def execute(
@@ -546,9 +557,7 @@ class FindFilesTool(Tool):
             cmd.extend(["--exclude", d])
         cmd.extend([pattern, str(search_path)])
         try:
-            proc = await _async_subprocess_run(
-                cmd, capture_output=True, text=True, timeout=30
-            )
+            proc = await _async_subprocess_run(cmd, capture_output=True, text=True, timeout=30)
             if proc.returncode != 0:
                 return f"Error: fd failed (exit {proc.returncode}): {proc.stderr[:200]}"
             files = [ln.strip() for ln in proc.stdout.strip().splitlines() if ln.strip()]
@@ -593,7 +602,5 @@ class FindFilesTool(Tool):
         for f in files[:max_results]:
             lines.append(f)
         if total > max_results:
-            lines.append(
-                f"[... {total - max_results} more files not shown (limit: {max_results})]"
-            )
+            lines.append(f"[... {total - max_results} more files not shown (limit: {max_results})]")
         return "\n".join(lines)

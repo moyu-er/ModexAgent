@@ -28,7 +28,6 @@ from framework.memory.context_governance import ContextGovernance
 from framework.memory.core.message import ChatMessage
 from framework.memory.core.scope import MemoryAgentRole, MemoryContext
 from framework.memory.core.system import (
-    ContextManagedMemorySystem,
     MemorySystem,  # noqa: F401 — re-export
 )
 from framework.memory.default_system import DefaultMemorySystem
@@ -36,6 +35,7 @@ from framework.memory.layers.config import MemoryLayerConfigSet
 from framework.memory.layers.factory import MemoryLayerFactory
 from framework.memory.lifecycle import MemoryMaintenancePolicy
 from framework.memory.pruned.manager import PrunedManager
+
 # UserRetentionBuffer injection moved to framework.memory.user_buffer (Task 6 stub)
 from framework.memory.registry.file import DefaultMemoryStoreRegistry
 
@@ -125,12 +125,8 @@ class MemorySystemContextManager(ContextManager):
         base_system_prompt: str = "",
         injection_policy: Any | None = None,
         experience_manager: ExperienceManager | None = None,
-    ):
-        # Invariant: URB completion hook and injection governance must be
-        # both enabled or both disabled. The hook is wired when
-        # layers.user_retention is not None (via ScopedMessageHistory);
-        # injection is wired when wrap_governance sees a non-None URB.
-        # We validate here that both paths agree.
+        output_base_dir: Path | None = None,
+    ) -> None:
         from framework.memory.injection import FullInjectionPolicy
 
         self.memory_system: DefaultMemorySystem = memory_system
@@ -138,13 +134,12 @@ class MemorySystemContextManager(ContextManager):
         self.default_agent_id = default_agent_id
         self.default_agent_role = default_agent_role
         self.base_system_prompt = base_system_prompt
-        self.injection_policy: Any = (
-            injection_policy or FullInjectionPolicy()
-        )
+        self.injection_policy: Any = injection_policy or FullInjectionPolicy()
         self._last_session_id: str | None = None
         self._context_cache: dict[str, MemoryContext] = {}
         self._max_context_cache_size = 1000
         self._experience_manager = experience_manager
+        self._output_base_dir: Path | None = output_base_dir
 
     def wrap_governance(
         self,
@@ -234,9 +229,9 @@ class MemorySystemContextManager(ContextManager):
             BasePromptProvider,
             ExperienceProvider,
             KnowledgeProvider,
-            PrunedProvider,
             ProviderBlocksProvider,
             ProviderPrefetchProvider,
+            PrunedProvider,
             RuntimeProvider,
             SkillProvider,
         )
@@ -280,6 +275,12 @@ class MemorySystemContextManager(ContextManager):
         # 2. Base system prompt (static)
         if self.base_system_prompt:
             providers.append(BasePromptProvider(self.base_system_prompt))
+
+        # 2b. OUTPUT.md path — dynamic per-session (subagents only)
+        if self._output_base_dir is not None:
+            from framework.memory.pipeline.providers import OutputMdProvider
+
+            providers.append(OutputMdProvider(self._output_base_dir, session_id))
 
         # 3. Memory layers from injection policy (disclaimer + knowledge + blocks + prefetch)
         if result.system_prompt:
@@ -337,6 +338,7 @@ class MemorySystemContextManager(ContextManager):
         # 9. Skills (static)
         if skill_manager is not None:
             from framework.core.skills import ResolutionContext
+
             skill_prompt = await skill_manager.build_prompt(
                 ResolutionContext.from_runtime(tool_manager=tool_manager)
             )
@@ -366,7 +368,8 @@ class MemorySystemContextManager(ContextManager):
             system_prompt = _DEFAULT_SYSTEM_PROMPT
 
         history = self.memory_system.create_message_history(
-            context=ctx, initial_messages=result.messages,
+            context=ctx,
+            initial_messages=result.messages,
         )
         return ContextState(
             system_prompt=system_prompt,
@@ -518,14 +521,16 @@ class MemorySystemContextManager(ContextManager):
 
     @staticmethod
     def _format_runtime_info(info: dict[str, Any]) -> str:
-        from datetime import datetime
         import sys
+        from datetime import datetime
 
         lines = ["## Runtime"]
         current_date = str(info.get("current_time") or datetime.now().strftime("%Y-%m-%d"))
         lines.append(f"Current Date: {current_date}")
 
         platform_raw = str(info.get("platform") or sys.platform)
-        platform_name = {"win32": "Windows", "darwin": "macOS", "linux": "Linux"}.get(platform_raw, platform_raw)
+        platform_name = {"win32": "Windows", "darwin": "macOS", "linux": "Linux"}.get(
+            platform_raw, platform_raw
+        )
         lines.append(f"Platform: {platform_name}")
         return "\n".join(lines)

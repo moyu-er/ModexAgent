@@ -6,7 +6,9 @@ from typing import Any
 
 from framework.core.tool_manager import Tool
 
-_NOT_IMPLEMENTED = "LSP diagnostics is not yet implemented. This tool will be available in a future update."
+_NOT_IMPLEMENTED = (
+    "LSP diagnostics is not yet implemented. This tool will be available in a future update."
+)
 
 
 class LspDiagnosticsTool(Tool):

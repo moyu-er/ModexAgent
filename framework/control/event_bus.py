@@ -77,9 +77,7 @@ class CallbackControlEventBus(ControlEventBus):
     ) -> None:
         if event_type not in self._handlers:
             self._handlers[event_type] = []
-        self._handlers[event_type].append(
-            Subscription(handler=handler, session_id=session_id)
-        )
+        self._handlers[event_type].append(Subscription(handler=handler, session_id=session_id))
 
     def unsubscribe(
         self,
@@ -90,7 +88,7 @@ class CallbackControlEventBus(ControlEventBus):
         """取消订阅。*session_id* 为 None 时移除该 handler 所有订阅。"""
         subs = self._handlers.get(event_type, [])
         self._handlers[event_type] = [
-            s for s in subs
-            if not (s.handler is handler
-                    and (session_id is None or s.session_id == session_id))
+            s
+            for s in subs
+            if not (s.handler is handler and (session_id is None or s.session_id == session_id))
         ]

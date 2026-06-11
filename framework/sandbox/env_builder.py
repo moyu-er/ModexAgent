@@ -16,8 +16,8 @@ from enum import Enum
 class EnvPolicy(str, Enum):
     """How aggressively to sanitize the environment."""
 
-    MINIMAL = "minimal"          # Essential vars only
-    STANDARD = "standard"        # Essential + development vars
+    MINIMAL = "minimal"  # Essential vars only
+    STANDARD = "standard"  # Essential + development vars
     PASSTHROUGH = "passthrough"  # Full os.environ copy
 
 
@@ -41,19 +41,40 @@ class EnvironmentBuilder:
     4. Per-call ``overrides`` (highest priority)
     """
 
-    _UNIX_MINIMAL: frozenset[str] = frozenset({
-        "HOME", "LANG", "TERM", "PYTHONUNBUFFERED",
-    })
+    _UNIX_MINIMAL: frozenset[str] = frozenset(
+        {
+            "HOME",
+            "LANG",
+            "TERM",
+            "PYTHONUNBUFFERED",
+        }
+    )
 
-    _UNIX_STANDARD: frozenset[str] = _UNIX_MINIMAL | frozenset({
-        "PATH", "USER", "LC_ALL", "PYTHONIOENCODING",
-    })
+    _UNIX_STANDARD: frozenset[str] = _UNIX_MINIMAL | frozenset(
+        {
+            "PATH",
+            "USER",
+            "LC_ALL",
+            "PYTHONIOENCODING",
+        }
+    )
 
-    _WINDOWS_CRITICAL: frozenset[str] = frozenset({
-        "SYSTEMROOT", "COMSPEC", "USERPROFILE", "APPDATA",
-        "LOCALAPPDATA", "PATHEXT", "TEMP", "TMP",
-        "PROGRAMFILES", "HOMEDRIVE", "HOMEPATH", "PATH",
-    })
+    _WINDOWS_CRITICAL: frozenset[str] = frozenset(
+        {
+            "SYSTEMROOT",
+            "COMSPEC",
+            "USERPROFILE",
+            "APPDATA",
+            "LOCALAPPDATA",
+            "PATHEXT",
+            "TEMP",
+            "TMP",
+            "PROGRAMFILES",
+            "HOMEDRIVE",
+            "HOMEPATH",
+            "PATH",
+        }
+    )
 
     def __init__(self, config: EnvBuilderConfig | None = None) -> None:
         self._config = config or EnvBuilderConfig()
@@ -83,17 +104,12 @@ class EnvironmentBuilder:
                 # that may be missing from os.environ (e.g. when launched
                 # from an IDE).
                 from framework.tools.terminal.env import build_full_env
+
                 full_env = build_full_env()
-                env = {
-                    key: value
-                    for key in base_keys
-                    if (value := full_env.get(key)) is not None
-                }
+                env = {key: value for key in base_keys if (value := full_env.get(key)) is not None}
             else:
                 env = {
-                    key: value
-                    for key in base_keys
-                    if (value := os.environ.get(key)) is not None
+                    key: value for key in base_keys if (value := os.environ.get(key)) is not None
                 }
 
         # 2. Inherit specific extra vars from os.environ.

@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 def _safe_dir_name(session_id: str) -> str:
-    safe = re.sub(r'[^\w\-.]', '_', session_id)
+    safe = re.sub(r"[^\w\-.]", "_", session_id)
     if len(safe) > 200:
         import base64
 
@@ -214,6 +214,7 @@ class LocalFileInboxServer(InboxServer):
         if len(safe_name) >= 200:
             try:
                 import base64
+
                 return base64.urlsafe_b64decode(safe_name.encode()).decode()
             except Exception:
                 pass

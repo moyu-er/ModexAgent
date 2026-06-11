@@ -3,7 +3,6 @@
 from dataclasses import dataclass
 from typing import NamedTuple
 
-
 # ---------------------------------------------------------------------------
 # Thinking-chain extraction
 # ---------------------------------------------------------------------------
@@ -59,7 +58,7 @@ def _extract_format_prefix(text: str, fmt: ThinkFormat) -> ThinkExtractionResult
         return ThinkExtractionResult(None, None)
 
     reasoning = text[start:end_pos]
-    after = text[end_pos + len(fmt.end_marker):]
+    after = text[end_pos + len(fmt.end_marker) :]
     # 去掉闭标签后紧跟的换行
     if after.startswith("\r\n"):
         after = after[2:]

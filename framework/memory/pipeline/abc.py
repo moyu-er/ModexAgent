@@ -1,4 +1,5 @@
 """SystemPromptProvider ABC — versioned, cacheable system prompt section."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

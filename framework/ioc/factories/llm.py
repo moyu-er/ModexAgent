@@ -52,7 +52,7 @@ def create_llm_provider(
         from framework.providers.openai_provider import OpenAIProvider
 
         return OpenAIProvider(
-            model=config.model[len(_OPENAI_PREFIX):],
+            model=config.model[len(_OPENAI_PREFIX) :],
             api_key=config.api_key or None,
             base_url=config.base_url or None,
             temperature=config.temperature,

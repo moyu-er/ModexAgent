@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 try:
     import docker
     from docker.errors import DockerException
+
     DOCKER_AVAILABLE = True
 except ImportError:
     docker = None
@@ -19,7 +20,7 @@ except ImportError:
 
 def check_docker_available() -> bool:
     """Check if Docker is available and the daemon is running.
-    
+
     Returns:
         True if Docker is available and responding, False otherwise.
     """
@@ -41,7 +42,7 @@ def check_docker_available() -> bool:
 
 def get_docker_info() -> dict[str, Any] | None:
     """Get Docker system information.
-    
+
     Returns:
         Docker info dict or None if Docker is not available.
     """
@@ -58,7 +59,7 @@ def get_docker_info() -> dict[str, Any] | None:
 
 def check_windows_linux_containers() -> bool:
     """Check if Windows Docker is configured for Linux containers.
-    
+
     Returns:
         True if Docker supports Linux containers, False otherwise.
         On non-Windows platforms, always returns True if Docker is available.
@@ -88,7 +89,7 @@ def check_windows_linux_containers() -> bool:
 
 def get_docker_version() -> str | None:
     """Get Docker version string.
-    
+
     Returns:
         Docker version string or None if not available.
     """
@@ -106,10 +107,10 @@ def get_docker_version() -> str | None:
 
 def check_docker_version_requirement(min_version: str = "20.10") -> bool:
     """Check if Docker version meets minimum requirement.
-    
+
     Args:
         min_version: Minimum required version string (e.g., "20.10").
-        
+
     Returns:
         True if version meets requirement or can't be determined, False otherwise.
     """
@@ -143,7 +144,7 @@ def check_docker_version_requirement(min_version: str = "20.10") -> bool:
 class DockerPlatformChecker:
     """Helper class to check Docker platform compatibility."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._available: bool | None = None
         self._info: dict[str, Any] | None = None
 
@@ -167,7 +168,7 @@ class DockerPlatformChecker:
 
     def get_status_report(self) -> dict[str, Any]:
         """Get a comprehensive status report.
-        
+
         Returns:
             Dict with availability, platform, version, and recommendations.
         """

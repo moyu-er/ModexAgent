@@ -129,7 +129,9 @@ class ReActTurnState(TurnStateBase):
     def active_tool_batch(self) -> ToolBatchState | None:
         for b in reversed(self.tool_batches):
             if b.status not in (
-                ToolBatchStatus.COMPLETED, ToolBatchStatus.FAILED, ToolBatchStatus.CANCELLED,
+                ToolBatchStatus.COMPLETED,
+                ToolBatchStatus.FAILED,
+                ToolBatchStatus.CANCELLED,
             ):
                 return b
         return None
@@ -179,7 +181,9 @@ class ReActSnapshotPolicy(SnapshotPolicy):
 
     def capture(self, state: TurnStateBase, reason: SnapshotReason) -> TurnSnapshot:
         if not isinstance(state, ReActTurnState):
-            raise TypeError(f"ReActSnapshotPolicy requires ReActTurnState, got {type(state).__name__}")
+            raise TypeError(
+                f"ReActSnapshotPolicy requires ReActTurnState, got {type(state).__name__}"
+            )
         return TurnSnapshot(
             identity=state.identity,
             agent_kind=AgentKind.REACT,
@@ -207,7 +211,9 @@ class ReActSnapshotPolicy(SnapshotPolicy):
                             ToolCallSnapshotKey.TOOL_NAME.value: tc.tool_name,
                             ToolCallSnapshotKey.ARGUMENTS.value: dict(tc.arguments.values),
                             ToolCallSnapshotKey.APPROVAL_ID.value: tc.approval_id,
-                            ToolCallSnapshotKey.DECISION.value: tc.decision.value if tc.decision else None,
+                            ToolCallSnapshotKey.DECISION.value: tc.decision.value
+                            if tc.decision
+                            else None,
                             ToolCallSnapshotKey.STATUS.value: tc.status.value,
                         }
                         for tc in b.calls
@@ -217,7 +223,9 @@ class ReActSnapshotPolicy(SnapshotPolicy):
             ],
         }
         if state.approval is not None:
-            payload[ReActSnapshotPayloadKey.APPROVAL.value] = self.serialize_approval(state.approval)
+            payload[ReActSnapshotPayloadKey.APPROVAL.value] = self.serialize_approval(
+                state.approval
+            )
         return payload
 
     @staticmethod
@@ -234,17 +242,20 @@ class ReActSnapshotPolicy(SnapshotPolicy):
                     ApprovalRequestSnapshotKey.TOOL_CALL_ID.value: r.tool_call_id,
                     ApprovalRequestSnapshotKey.TOOL_NAME.value: r.tool_name,
                     ApprovalRequestSnapshotKey.ARGUMENTS.value: dict(r.arguments.values),
-                    ApprovalRequestSnapshotKey.TIER.value: r.tier.value if hasattr(r.tier, "value") else str(r.tier),
+                    ApprovalRequestSnapshotKey.TIER.value: r.tier.value
+                    if hasattr(r.tier, "value")
+                    else str(r.tier),
                     ApprovalRequestSnapshotKey.ITERATION.value: r.iteration,
                     ApprovalRequestSnapshotKey.CREATED_AT.value: r.created_at,
                 }
                 for r in tx.requests
             ],
             ApprovalSnapshotKey.DECISIONS.value: {
-                k: v.value if hasattr(v, "value") else str(v)
-                for k, v in tx.decisions.items()
+                k: v.value if hasattr(v, "value") else str(v) for k, v in tx.decisions.items()
             },
-            ApprovalSnapshotKey.STATUS.value: tx.status.value if hasattr(tx.status, "value") else str(tx.status),
+            ApprovalSnapshotKey.STATUS.value: tx.status.value
+            if hasattr(tx.status, "value")
+            else str(tx.status),
             ApprovalSnapshotKey.DENY_REASON.value: tx.deny_reason,
         }
 
@@ -264,32 +275,42 @@ class ReActSnapshotPolicy(SnapshotPolicy):
                     ApprovalRequestState(
                         request_id=str(request_data[ApprovalRequestSnapshotKey.REQUEST_ID.value]),
                         approval_id=str(request_data[ApprovalRequestSnapshotKey.APPROVAL_ID.value]),
-                        tool_call_id=str(request_data[ApprovalRequestSnapshotKey.TOOL_CALL_ID.value]),
+                        tool_call_id=str(
+                            request_data[ApprovalRequestSnapshotKey.TOOL_CALL_ID.value]
+                        ),
                         tool_name=str(request_data[ApprovalRequestSnapshotKey.TOOL_NAME.value]),
                         arguments=ToolArguments(
-                            values=dict(request_data.get(ApprovalRequestSnapshotKey.ARGUMENTS.value, {}) or {}),
+                            values=dict(
+                                request_data.get(ApprovalRequestSnapshotKey.ARGUMENTS.value, {})
+                                or {}
+                            ),
                         ),
                         tier=ApprovalTier(str(request_data[ApprovalRequestSnapshotKey.TIER.value])),
                         iteration=int(request_data[ApprovalRequestSnapshotKey.ITERATION.value]),
-                        created_at=float(request_data.get(
-                            ApprovalRequestSnapshotKey.CREATED_AT.value,
-                            snapshot.created_at,
-                        )),
+                        created_at=float(
+                            request_data.get(
+                                ApprovalRequestSnapshotKey.CREATED_AT.value,
+                                snapshot.created_at,
+                            )
+                        ),
                     )
                 )
 
         raw_decisions = approval_data.get(ApprovalSnapshotKey.DECISIONS.value, {})
         decisions = {
             str(key): ApprovalDecision(str(value))
-            for key, value in dict(raw_decisions if isinstance(raw_decisions, Mapping) else {}).items()
+            for key, value in dict(
+                raw_decisions if isinstance(raw_decisions, Mapping) else {}
+            ).items()
         }
         return ApprovalTransaction(
             approval_id=str(approval_data[ApprovalSnapshotKey.APPROVAL_ID.value]),
             turn_id=str(approval_data[ApprovalSnapshotKey.TURN_ID.value]),
-            subject_type=ApprovalSubjectType(str(approval_data[ApprovalSnapshotKey.SUBJECT_TYPE.value])),
+            subject_type=ApprovalSubjectType(
+                str(approval_data[ApprovalSnapshotKey.SUBJECT_TYPE.value])
+            ),
             subject_ids=[
-                str(item)
-                for item in approval_data.get(ApprovalSnapshotKey.SUBJECT_IDS.value, [])
+                str(item) for item in approval_data.get(ApprovalSnapshotKey.SUBJECT_IDS.value, [])
             ],
             requests=requests,
             decisions=decisions,
@@ -334,7 +355,9 @@ class ReActSnapshotPolicy(SnapshotPolicy):
                                 call_id=str(call_data[ToolCallSnapshotKey.CALL_ID.value]),
                                 tool_name=str(call_data[ToolCallSnapshotKey.TOOL_NAME.value]),
                                 arguments=ToolArguments(
-                                    values=dict(call_data.get(ToolCallSnapshotKey.ARGUMENTS.value, {}) or {}),
+                                    values=dict(
+                                        call_data.get(ToolCallSnapshotKey.ARGUMENTS.value, {}) or {}
+                                    ),
                                 ),
                                 approval_id=call_data.get(ToolCallSnapshotKey.APPROVAL_ID.value),  # type: ignore[arg-type]
                                 decision=(
@@ -342,7 +365,9 @@ class ReActSnapshotPolicy(SnapshotPolicy):
                                     if raw_decision is not None
                                     else None
                                 ),
-                                status=ToolCallStatus(str(call_data[ToolCallSnapshotKey.STATUS.value])),
+                                status=ToolCallStatus(
+                                    str(call_data[ToolCallSnapshotKey.STATUS.value])
+                                ),
                             )
                         )
                 state.tool_batches.append(
@@ -401,9 +426,7 @@ class ReActRuntimeStateCodec(RuntimeStateCodec):
                 "agent_kind": snapshot.resume_point.agent_kind.value,
                 "phase": snapshot.resume_point.phase.value,
             },
-            "message_delta": [
-                self._encode_message_delta(md) for md in snapshot.message_delta
-            ],
+            "message_delta": [self._encode_message_delta(md) for md in snapshot.message_delta],
             "state_payload": dict(snapshot.state_payload),
         }
 

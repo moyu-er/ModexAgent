@@ -41,9 +41,7 @@ class MemoryStoreRegistry(ABC):
         self,
         *,
         layer: MemoryLayerName | None = None,
-        agent_roles: Collection[str | MemoryAgentRole] | None = frozenset(
-            {MemoryAgentRole.MAIN}
-        ),
+        agent_roles: Collection[str | MemoryAgentRole] | None = frozenset({MemoryAgentRole.MAIN}),
         has_file: str | None = None,
     ) -> list[ScopeRecord]:
         pass

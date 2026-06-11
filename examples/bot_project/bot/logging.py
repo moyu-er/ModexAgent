@@ -18,8 +18,7 @@ def setup_logging() -> None:
 
     log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     detailed_format = (
-        "%(asctime)s - %(name)s - %(levelname)s - "
-        "[%(filename)s:%(lineno)d] - %(message)s"
+        "%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s"
     )
 
     root_logger = logging.getLogger()

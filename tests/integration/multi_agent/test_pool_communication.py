@@ -195,8 +195,8 @@ async def test_subagent_replies_to_main_via_communication_service():
     assert "main" in result
     assert "Error" not in result
 
-    # The reply should be in main's inbox: "conv-1:main"
-    has_pending = await bus.has_pending("conv-1:main")
+    # The reply should be in main's inbox: "conv-1.main" (dot separator, filesystem-safe)
+    has_pending = await bus.has_pending("conv-1.main")
     assert has_pending, "Main agent should have pending reply in inbox"
 
     await pool.shutdown_all()

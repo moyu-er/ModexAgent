@@ -1,595 +1,431 @@
-"""Tests for SubagentAutoSendHook.
+"""Tests for SubagentAutoSendHook (FinallyTurnHook rewrite).
 
 Covers:
-- Auto-forwarding when agent forgets to call send_to_agent
-- Skipping when RuntimeContext records a communication tool call
-- Skipping when content is empty
-- before_turn is a no-op (clearing is done by ReActAgent)
-- Content sanitization strips LLM reasoning tags
-- Peer 3-part and pool 2-part session_id handling
+- Completed with OUTPUT.md → XML notification with output_status=written
+- Error crash → is_normal=false, crash hint
+- max_iterations → step limit hint
+- No agent_bus → no error (graceful no-op)
+- result=None → crash notification
+- OUTPUT.md missing → output_status=missing, hint
 """
 
-from unittest.mock import AsyncMock, MagicMock
+import re
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from framework.core.agent import AgentContext
-from framework.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
-from framework.runtime.models import TurnIdentity, TurnStateBase
-from framework.runtime.services import AgentRuntime, AgentRuntimeServices
+from framework.core.agent import AgentContext, AgentSessionMeta
+from framework.core.constants import StopReason
 from framework.core.emitter import AgentResult
-from framework.core.runtime_context import InMemoryRuntimeContext, RuntimeContextManager
-from framework.core.tool_manager import ToolManager
-from framework.memory.history import ListMessageHistory
+from framework.core.tool_manager import InMemoryToolManager, ToolManagerConfig
 from framework.hook.builtin import SubagentAutoSendHook
-
-
-class TestSubagentAutoSendHook:
-    """Verify after_turn auto-forward logic with RuntimeContext-based detection."""
-
-    def _make_bus(self):
-        bus = MagicMock()
-        bus.send = AsyncMock()
-        return bus
-
-    def _make_ctx(self, history_entries, session_id="conv_001:main", runtime_mgr=None):
-        history = ListMessageHistory(list(history_entries))
-        identity = TurnIdentity(agent_id="test", session_id=session_id, turn_id="t1")
-        state = TurnStateBase(identity=identity, agent_kind=AgentKind.REACT, phase=TurnPhase.RUNNING)
-        services = AgentRuntimeServices(runtime_context_manager=runtime_mgr)
-        return AgentContext(
-            system_prompt="",
-            history=history,
-            tool_manager=MagicMock(spec=ToolManager),
-            session_id=session_id,
-            runtime=AgentRuntime(services=services, state=state),
-            identity=identity,
-        )
-
-    # ------------------------------------------------------------------
-    # 1. Auto-forward when no communication tool was called
-    # ------------------------------------------------------------------
-
-    async def test_auto_sends_when_no_tool_call(self):
-        """Content exists and no send_to_agent in context → bus.send is called."""
-        bus = self._make_bus()
-        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
-        mgr = RuntimeContextManager()
-        ctx = self._make_ctx([], runtime_mgr=mgr)
-        result = AgentResult(content="Task completed successfully.")
-
-        # RuntimeContext is empty (no tool calls recorded)
-        await hook.after_turn(ctx, result)
-
-        bus.send.assert_awaited_once()
-        args, _ = bus.send.await_args
-        inbox_key, envelope = args
-        assert inbox_key == "conv_001:main"
-        assert "<agent_result" in envelope.payload["content"]
-        assert 'source="office-expert"' in envelope.payload["content"]
-        assert 'status="completed"' in envelope.payload["content"]
-        assert "Task completed successfully." in envelope.payload["content"]
-        assert envelope.source.name == "office-expert"
-        assert envelope.target.name == "main"
-
-    # ------------------------------------------------------------------
-    # 2. Skip when RuntimeContext has a communication tool call
-    # ------------------------------------------------------------------
-
-    async def test_skips_when_send_to_agent_async_recorded(self):
-        """send_to_agent was recorded → bus.send is NOT called (legacy name compat)."""
-        bus = self._make_bus()
-        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
-        mgr = RuntimeContextManager()
-        ctx = self._make_ctx([], runtime_mgr=mgr)
-        result = AgentResult(content="Already sent via tool.")
-
-        rc = await mgr.get_context("conv_001:main")
-        await rc.record_tool_call("send_to_agent", {"target_agent": "main"}, "ok")
-
-        await hook.after_turn(ctx, result)
-        bus.send.assert_not_awaited()
-
-    async def test_skips_when_send_to_agent_recorded(self):
-        """send_to_agent was recorded → bus.send is NOT called."""
-        bus = self._make_bus()
-        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
-        mgr = RuntimeContextManager()
-        ctx = self._make_ctx([], runtime_mgr=mgr)
-        result = AgentResult(content="Already sent via tool.")
-
-        rc = await mgr.get_context("conv_001:main")
-        await rc.record_tool_call("send_to_agent", {"target_agent": "main"}, "ok")
-
-        await hook.after_turn(ctx, result)
-        bus.send.assert_not_awaited()
-
-    # ------------------------------------------------------------------
-    # 3. Auto-forward when only non-communication tools were called
-    # ------------------------------------------------------------------
-
-    async def test_auto_forwards_with_non_comm_tools(self):
-        """search tool was called but not send_to_agent → bus.send IS called."""
-        bus = self._make_bus()
-        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
-        mgr = RuntimeContextManager()
-        ctx = self._make_ctx([], runtime_mgr=mgr)
-        result = AgentResult(content="Search results...")
-
-        rc = await mgr.get_context("conv_001:main")
-        await rc.record_tool_call("search", {"q": "foo"}, "results")
-
-        await hook.after_turn(ctx, result)
-        bus.send.assert_awaited_once()
-
-    # ------------------------------------------------------------------
-    # 4. Skip when content is empty
-    # ------------------------------------------------------------------
-
-    async def test_skips_when_content_empty(self):
-        """Result content is empty → bus.send is NOT called."""
-        bus = self._make_bus()
-        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
-        ctx = self._make_ctx([])
-        result = AgentResult(content="")
-
-        await hook.after_turn(ctx, result)
-        bus.send.assert_not_awaited()
-
-    # ------------------------------------------------------------------
-    # 5. Skip when result is None
-    # ------------------------------------------------------------------
-
-    async def test_skips_when_result_none(self):
-        """Result is None → bus.send is NOT called."""
-        bus = self._make_bus()
-        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
-        ctx = self._make_ctx([])
-
-        await hook.after_turn(ctx, None)
-        bus.send.assert_not_awaited()
-
-    # ------------------------------------------------------------------
-    # 6. before_turn is a no-op (clearing done by ReActAgent)
-    # ------------------------------------------------------------------
-
-    async def test_before_turn_is_noop(self):
-        """before_turn does nothing; it exists for hook interface compliance."""
-        bus = self._make_bus()
-        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
-        ctx = self._make_ctx([])
-
-        # Should not raise
-        await hook.before_turn(ctx)
-
-    # ------------------------------------------------------------------
-    # 7. Auto-forward works after context is cleared (new turn)
-    # ------------------------------------------------------------------
-
-    async def test_auto_forwards_after_context_cleared(self):
-        """Simulate: tool sends → context cleared → new turn auto-forwards."""
-        bus = self._make_bus()
-        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
-        mgr = RuntimeContextManager()
-        ctx = self._make_ctx([], runtime_mgr=mgr)
-
-        # Turn 1: tool sends
-        rc = await mgr.get_context("conv_001:main")
-        await rc.record_tool_call("send_to_agent", {"to": "main"}, "ok")
-        result1 = AgentResult(content="Sent via tool.")
-        await hook.after_turn(ctx, result1)
-        bus.send.assert_not_awaited()
-
-        # Turn 2: context cleared (simulating ReActAgent._clear_runtime_context)
-        # Also clear _communicated so the hook treats this as a fresh cycle.
-        await rc.clear()
-        hook._communicated.discard(ctx.session_id)
-        result2 = AgentResult(content="No tool this turn.")
-        await hook.after_turn(ctx, result2)
-        bus.send.assert_awaited_once()
-
-    # ------------------------------------------------------------------
-    # 8. Content sanitization strips think tags
-    # ------------------------------------------------------------------
-
-    async def test_sanitizes_think_tags(self):
-        """Auto-forwarded content has <think/> tags stripped inside XML wrapper."""
-        bus = self._make_bus()
-        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
-        ctx = self._make_ctx([])
-        result = AgentResult(
-            content="<think\nLLM reasoning here\n</think\n任务完成了！文档已创建。"
-        )
-
-        await hook.after_turn(ctx, result)
-
-        bus.send.assert_awaited_once()
-        args, _ = bus.send.await_args
-        _, envelope = args
-        content = envelope.payload["content"]
-        assert "<think" not in content
-        assert "LLM reasoning here" not in content
-        assert "任务完成了！文档已创建。" in content
-        assert "<agent_result" in content
-
-    # ------------------------------------------------------------------
-    # 9. Content sanitization strips multiple tag types
-    # ------------------------------------------------------------------
-
-    async def test_sanitizes_multiple_tag_types(self):
-        """Strip <think/>, <reasoning/>, <reflection/> tags inside XML wrapper."""
-        bus = self._make_bus()
-        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
-        ctx = self._make_ctx([])
-        result = AgentResult(
-            content="<reasoning>step 1</reasoning><think\ndepth analysis</think\nFinal answer."
-        )
-
-        await hook.after_turn(ctx, result)
-
-        bus.send.assert_awaited_once()
-        args, _ = bus.send.await_args
-        _, envelope = args
-        content = envelope.payload["content"]
-        assert "<reasoning>" not in content
-        assert "</reasoning>" not in content
-        assert "<think" not in content
-        assert "step 1" not in content
-        assert "depth analysis" not in content
-        assert "Final answer." in content
-        assert "<agent_result" in content
-
-    # ------------------------------------------------------------------
-    # 10. Subagent session: agent_session_id routes to main's user session
-    # ------------------------------------------------------------------
-
-    async def test_subagent_session_preserves_agent_session_id(self):
-        """Subagent session → agent_session_id = main_session(conv) (routes to main's user session)."""
-        bus = self._make_bus()
-        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
-        subagent_session = "conv_001:office-expert"
-        ctx = self._make_ctx([], session_id=subagent_session)
-        result = AgentResult(content="Subagent task done.")
-
-        await hook.after_turn(ctx, result)
-
-        bus.send.assert_awaited_once()
-        args, _ = bus.send.await_args
-        _, envelope = args
-        assert envelope.agent_session_id == "conv_001:main"
-
-    # ------------------------------------------------------------------
-    # 11. Subagent session: inbox_key is main's user session (2-part)
-    # ------------------------------------------------------------------
-
-    async def test_subagent_session_inbox_key_is_two_part(self):
-        """inbox_key for inbox delivery is always {cid}:main (2-part)."""
-        bus = self._make_bus()
-        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
-        ctx = self._make_ctx([], session_id="conv_001:office-expert")
-        result = AgentResult(content="Done.")
-
-        await hook.after_turn(ctx, result)
-
-        bus.send.assert_awaited_once()
-        args, _ = bus.send.await_args
-        inbox_key, _ = args
-        assert inbox_key == "conv_001:main"
-        assert inbox_key.count(":") == 1
-
-    # ------------------------------------------------------------------
-    # 12. Subagent session: conversation_id extracted correctly
-    # ------------------------------------------------------------------
-
-    async def test_subagent_session_conversation_id_extracted(self):
-        """conversation_id is extracted from the session via strategy.parse()."""
-        bus = self._make_bus()
-        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
-        ctx = self._make_ctx([], session_id="user_abc:office-expert")
-        result = AgentResult(content="Done.")
-
-        await hook.after_turn(ctx, result)
-
-        bus.send.assert_awaited_once()
-        args, _ = bus.send.await_args
-        _, envelope = args
-        assert envelope.conversation_id == "user_abc"
-
-    # ------------------------------------------------------------------
-    # 13. Pool session: routes to main's user session
-    # ------------------------------------------------------------------
-
-    async def test_pool_session_preserves_agent_session_id(self):
-        """2-part pool session → agent_session_id = main_session(conv)."""
-        bus = self._make_bus()
-        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
-        pool_session = "conv_001:office-expert"
-        ctx = self._make_ctx([], session_id=pool_session)
-        result = AgentResult(content="Done.")
-
-        await hook.after_turn(ctx, result)
-
-        bus.send.assert_awaited_once()
-        args, _ = bus.send.await_args
-        inbox_key, envelope = args
-        assert envelope.agent_session_id == "conv_001:main"
-        assert inbox_key == "conv_001:main"
-
-    async def test_non_default_parent_name_uses_correct_session(self):
-        """parent_name != 'main' → inbox_key uses correct parent name."""
-        bus = self._make_bus()
-        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="qq_bot")
-        ctx = self._make_ctx([], session_id="conv_001:office-expert")
-        result = AgentResult(content="Done.")
-
-        await hook.after_turn(ctx, result)
-
-        bus.send.assert_awaited_once()
-        args, _ = bus.send.await_args
-        inbox_key, envelope = args
-        assert inbox_key == "conv_001:qq_bot"
-        assert envelope.agent_session_id == "conv_001:qq_bot"
-        assert envelope.target.name == "qq_bot"
-
-    # ------------------------------------------------------------------
-    # 14. Skip auto-forward when stop_reason is max_iterations
-    # ------------------------------------------------------------------
-
-    async def test_auto_forwards_when_max_iterations(self):
-        """stop_reason=max_iterations → bus.send IS called.
-        The subagent may have produced partial output that the parent needs to see,
-        even if it hit its step limit. The actual stop_reason is forwarded so
-        the parent knows why the subagent stopped."""
-        bus = self._make_bus()
-        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
-        ctx = self._make_ctx([])
-        result = AgentResult(content="agent ran out of steps", stop_reason="max_iterations")
-
-        await hook.after_turn(ctx, result)
-
-        bus.send.assert_awaited_once()
-
-    # ------------------------------------------------------------------
-    # 15. Still auto-forwards with normal stop reason (no regression)
-    # ------------------------------------------------------------------
-
-    async def test_still_auto_forwards_when_normal_stop_reason(self):
-        """stop_reason='completed' (not max_iterations) → auto-forward still fires."""
-        bus = self._make_bus()
-        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
-        ctx = self._make_ctx([])
-        result = AgentResult(content="Task done.", stop_reason="completed")
-
-        await hook.after_turn(ctx, result)
-
-        bus.send.assert_awaited_once()
-
-    async def test_still_auto_forwards_when_no_stop_reason(self):
-        """stop_reason is None (default) → auto-forward still fires."""
-        bus = self._make_bus()
-        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
-        ctx = self._make_ctx([])
-        result = AgentResult(content="Task done.")
-
-        await hook.after_turn(ctx, result)
-
-        bus.send.assert_awaited_once()
-
-    # ------------------------------------------------------------------
-    # 16. Default hook is safe — no-op when agent_bus is None
-    # ------------------------------------------------------------------
-
-    async def test_noop_when_agent_bus_is_none(self):
-        """Default constructor (agent_bus=None) → after_turn is a no-op, no crash."""
-        hook = SubagentAutoSendHook()
-        ctx = self._make_ctx([])
-        result = AgentResult(content="Some output.")
-
-        # Must not raise
-        await hook.after_turn(ctx, result)
-
-    # ------------------------------------------------------------------
-    # 17. Skip when history already has inbox message from self (no runtime_mgr)
-    # ------------------------------------------------------------------
-
-    async def test_skips_when_history_has_inbox_message_from_self__no_runtime_mgr(self):
-        """RuntimeContextManager is None but history already contains an inbox
-        message sent by this subagent → bus.send is NOT called.
-
-        This reproduces the duplicate-send bug: when RuntimeContext is unavailable,
-        the hook should fall back to checking history for evidence that the agent
-        already communicated via send_to_agent.
-        """
-        bus = self._make_bus()
-        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
-        # No runtime_mgr → rc will be None
-        history_entries = [
-            {
-                "role": "agent",
-                "source_agent": "office-expert",
-                "content": "<agent_message>Already sent</agent_message>",
-                "meta_inbox": True,
-                "meta_source": "office-expert",
-                "meta_target_agent": "main",
-            }
-        ]
-        ctx = self._make_ctx(history_entries, runtime_mgr=None)
-        result = AgentResult(content="Task completed successfully.")
-
-        await hook.after_turn(ctx, result)
-        bus.send.assert_not_awaited()
-
-    # ------------------------------------------------------------------
-    # 18. Skip when history already has inbox message from self (empty tool_calls)
-    # ------------------------------------------------------------------
-
-    async def test_skips_when_history_has_inbox_message_from_self__empty_tool_calls(self):
-        """RuntimeContext exists but get_tool_calls() is empty (e.g. hook missed
-        recording), and history already contains an inbox message from this
-        subagent → bus.send is NOT called.
-        """
-        bus = self._make_bus()
-        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
-        mgr = RuntimeContextManager()
-        history_entries = [
-            {
-                "role": "agent",
-                "source_agent": "office-expert",
-                "content": "<agent_message>Already sent</agent_message>",
-                "meta_inbox": True,
-                "meta_source": "office-expert",
-                "meta_target_agent": "main",
-            }
-        ]
-        ctx = self._make_ctx(history_entries, runtime_mgr=mgr)
-        result = AgentResult(content="Task completed successfully.")
-
-        # RuntimeContext is empty (no tool calls recorded)
-        await hook.after_turn(ctx, result)
-        bus.send.assert_not_awaited()
-
-    # ------------------------------------------------------------------
-    # 19. Still forwards when inbox message is from a DIFFERENT agent
-    # ------------------------------------------------------------------
-
-    async def test_auto_forwards_when_history_has_inbox_message_from_other_agent(self):
-        """History has an inbox message but from a different agent → bus.send IS
-        called (this subagent has not yet communicated)."""
-        bus = self._make_bus()
-        hook = SubagentAutoSendHook(agent_bus=bus, self_name="office-expert", parent_name="main")
-        history_entries = [
-            {
-                "role": "agent",
-                "source_agent": "query_12306",
-                "content": "<agent_message>12306 result</agent_message>",
-                "meta_inbox": True,
-                "meta_source": "query-12306",
-                "meta_target_agent": "main",
-            }
-        ]
-        ctx = self._make_ctx(history_entries, runtime_mgr=None)
-        result = AgentResult(content="Task completed successfully.")
-
-        await hook.after_turn(ctx, result)
-        bus.send.assert_awaited_once()
-
-
-# ── MaxIterationNotifyHook + SubagentAutoSendHook non-overlap tests ──
-
-
-class TestMaxIterationAndAutoSendNonOverlap:
-    """Prove that SubagentAutoSendHook and MaxIterationNotifyHook don't duplicate.
-
-    Semantics:
-      - normal stop, no send_to_agent → SubagentAutoSendHook auto-forwards
-      - max_iterations stop              → MaxIterationNotifyHook notifies, SubagentAutoSendHook stays silent
+from framework.memory.history import ListMessageHistory
+from framework.multi_agent.bus import LocalAgentMessageBus
+from framework.multi_agent.comm_kind import AgentCommKind
+from framework.multi_agent.inbox.consumer import InboxConsumer
+from framework.multi_agent.inbox.producer import InboxProducer
+from framework.multi_agent.inbox.server_local import LocalFileInboxServer
+
+
+def _make_bus(tmpdir: Path) -> LocalAgentMessageBus:
+    server = LocalFileInboxServer(workspace=tmpdir / "inbox")
+    producer = InboxProducer(server=server)
+    consumer = InboxConsumer(server=server)
+    return LocalAgentMessageBus(producer=producer, consumer=consumer)
+
+
+def _make_context(
+    session_id: str,
+    agent_name: str = "worker",
+    invocation_id: str = "a1b2c3d4",
+) -> AgentContext:
+    return AgentContext(
+        system_prompt="test",
+        history=ListMessageHistory(),
+        tool_manager=InMemoryToolManager(config=ToolManagerConfig()),
+        session_id=session_id,
+        session_meta=AgentSessionMeta(
+            conversation_id="conv123",
+            agent_name=agent_name,
+            comm_kind=AgentCommKind.SUBAGENT,
+            invocation_id=invocation_id,
+        ),
+    )
+
+
+def _extract_xml_field(xml: str, tag: str) -> str:
+    """Extract text content from a simple XML tag in the notification."""
+    pattern = rf"<{tag}>(.*?)</{tag}>"
+    m = re.search(pattern, xml, re.DOTALL)
+    return m.group(1).strip() if m else ""
+
+
+def _mock_output_exists(runtime_dir: Path, session_id: str):
+    """Return a patch that makes the output_path.exist() return True.
+
+    session_id contains colons (e.g. conv123.worker:a1b2c3d4) which are
+    illegal in Windows path components. We cannot create the real file,
+    so we mock Path.exists to return True for exactly that path.
     """
+    expected = runtime_dir / "output" / session_id / "OUTPUT.md"
 
-    @staticmethod
-    def _make_ctx(session_id="conv_001:sub", runtime_mgr=None):
-        from unittest.mock import MagicMock
+    def _exists(self):
+        if self == expected:
+            return True
+        return Path.__exists__(self) if hasattr(Path, "__exists__") else False
 
-        history = ListMessageHistory([])
-        identity = TurnIdentity(agent_id="sub", session_id=session_id, turn_id="t1")
-        state = TurnStateBase(identity=identity, agent_kind=AgentKind.REACT, phase=TurnPhase.RUNNING)
-        services = AgentRuntimeServices(runtime_context_manager=runtime_mgr)
-        return AgentContext(
-            system_prompt="",
-            history=history,
-            tool_manager=MagicMock(spec=ToolManager),
-            session_id=session_id,
-            runtime=AgentRuntime(services=services, state=state),
-            identity=identity,
+    return patch.object(Path, "exists", _exists)
+
+
+class TestSubagentAutoSendHookFinallyTurn:
+    """Verify finally_turn always-fire notification logic."""
+
+    async def test_completed_with_output_sends_xml(self, tmp_path: Path):
+        """OUTPUT.md exists → XML with output_status=written, is_normal=true."""
+        runtime_dir = tmp_path / "runtime"
+        session_id = "conv123.worker:a1b2c3d4"
+
+        bus = _make_bus(tmp_path)
+        hook = SubagentAutoSendHook(
+            agent_bus=bus,
+            self_name="worker",
+            parent_name="main",
+            runtime_dir=runtime_dir,
+        )
+        ctx = _make_context(session_id)
+        result = AgentResult(content="Done.", stop_reason=StopReason.COMPLETED)
+
+        with _mock_output_exists(runtime_dir, session_id):
+            await hook.finally_turn(ctx, result)
+
+        msgs = await bus.consume("conv123.main", block=False)
+        assert len(msgs) == 1
+        xml = msgs[0].payload["content"]
+        assert "<subagent_notification>" in xml
+        assert _extract_xml_field(xml, "output_status") == "written"
+        assert _extract_xml_field(xml, "status") == "completed"
+        assert _extract_xml_field(xml, "is_normal") == "true"
+        assert _extract_xml_field(xml, "stop_reason") == "completed"
+
+    async def test_error_crash_sends_hint(self, tmp_path: Path):
+        """Error result → is_normal=false, crash hint."""
+        runtime_dir = tmp_path / "runtime"
+        session_id = "conv123.worker:a1b2c3d4"
+
+        bus = _make_bus(tmp_path)
+        hook = SubagentAutoSendHook(
+            agent_bus=bus,
+            self_name="worker",
+            parent_name="main",
+            runtime_dir=runtime_dir,
+        )
+        ctx = _make_context(session_id)
+        result = AgentResult(
+            content="",
+            stop_reason=StopReason.ERROR,
+            error="Division by zero",
         )
 
-    def _make_auto_send_hook(self, bus, name="sub"):
-        return SubagentAutoSendHook(agent_bus=bus, self_name=name, parent_name="main")
+        await hook.finally_turn(ctx, result)
 
-    # ── MaxIterationNotifyHook tests ──
+        msgs = await bus.consume("conv123.main", block=False)
+        assert len(msgs) == 1
+        xml = msgs[0].payload["content"]
+        assert _extract_xml_field(xml, "is_normal") == "false"
+        assert _extract_xml_field(xml, "status") == "incomplete"
+        assert "crashed with error" in _extract_xml_field(xml, "hint")
+        assert "Division by zero" in _extract_xml_field(xml, "hint")
+        assert _extract_xml_field(xml, "error") == "Division by zero"
 
-    @staticmethod
-    def _make_notify_svc():
-        svc = AsyncMock()
-        svc.notify = AsyncMock()
-        return svc
+    async def test_max_iterations_sends_hint(self, tmp_path: Path):
+        """max_iterations → is_normal=false, step limit hint."""
+        runtime_dir = tmp_path / "runtime"
+        session_id = "conv123.worker:a1b2c3d4"
 
-    async def test_maxiter_notify_fires_when_max_iterations(self):
-        """MaxIterationNotifyHook sends notification when stop_reason is max_iterations."""
-        from framework.hook.notification import MaxIterationNotifyHook
+        bus = _make_bus(tmp_path)
+        hook = SubagentAutoSendHook(
+            agent_bus=bus,
+            self_name="worker",
+            parent_name="main",
+            runtime_dir=runtime_dir,
+        )
+        ctx = _make_context(session_id)
+        result = AgentResult(
+            content="Partial work...",
+            stop_reason=StopReason.MAX_ITERATIONS,
+        )
 
-        svc = self._make_notify_svc()
-        hook = MaxIterationNotifyHook(notification_service=svc)
-        ctx = self._make_ctx()
-        result = AgentResult(content="Ran out.", stop_reason="max_iterations")
+        # With OUTPUT.md present, the only issue is max_iterations
+        with _mock_output_exists(runtime_dir, session_id):
+            await hook.finally_turn(ctx, result)
 
-        await hook.after_turn(ctx, result)
+        msgs = await bus.consume("conv123.main", block=False)
+        assert len(msgs) == 1
+        xml = msgs[0].payload["content"]
+        assert _extract_xml_field(xml, "is_normal") == "false"
+        assert "max_iterations" in _extract_xml_field(xml, "hint")
+        assert "is incomplete" in _extract_xml_field(xml, "hint")
+        assert _extract_xml_field(xml, "stop_reason") == "max_iterations"
 
-        svc.notify.assert_awaited_once()
-
-    async def test_maxiter_notify_silent_when_normal_stop(self):
-        """MaxIterationNotifyHook does NOT notify when stop_reason is normal."""
-        from framework.hook.notification import MaxIterationNotifyHook
-
-        svc = self._make_notify_svc()
-        hook = MaxIterationNotifyHook(notification_service=svc)
-        ctx = self._make_ctx()
-        result = AgentResult(content="Done.", stop_reason="completed")
-
-        await hook.after_turn(ctx, result)
-
-        svc.notify.assert_not_awaited()
-
-    async def test_maxiter_notify_noop_when_svc_is_none(self):
-        """Default constructor → after_turn returns without raising."""
-        from framework.hook.notification import MaxIterationNotifyHook
-
-        hook = MaxIterationNotifyHook()
-        ctx = self._make_ctx()
-        result = AgentResult(content="Done.", stop_reason="max_iterations")
+    async def test_no_agent_bus_noop(self):
+        """No bus → no error, hook is a graceful no-op."""
+        hook = SubagentAutoSendHook(
+            agent_bus=None,
+            self_name="worker",
+            parent_name="main",
+        )
+        ctx = _make_context("conv123.worker:a1b2c3d4")
+        result = AgentResult(content="Done.")
 
         # Must not raise
-        await hook.after_turn(ctx, result)
+        await hook.finally_turn(ctx, result)
 
-    # ── Non-overlap at max_iterations ──
+    async def test_no_result_sends_error_notification(self, tmp_path: Path):
+        """result=None → crash notification (subagent crashed)."""
+        runtime_dir = tmp_path / "runtime"
+        session_id = "conv123.worker:a1b2c3d4"
 
-    async def test_at_maxiter_auto_send_forwards_when_no_send_to_agent(self):
-        """max_iterations + no send_to_agent → both hooks fire.
-        SubagentAutoSendHook forwards partial output to parent
-        (subagent may have useful work to report even at step limit)."""
-        from unittest.mock import MagicMock
-        from framework.hook.notification import MaxIterationNotifyHook
+        bus = _make_bus(tmp_path)
+        hook = SubagentAutoSendHook(
+            agent_bus=bus,
+            self_name="worker",
+            parent_name="main",
+            runtime_dir=runtime_dir,
+        )
+        ctx = _make_context(session_id)
 
-        bus = MagicMock()
-        bus.send = AsyncMock()
-        notify_svc = self._make_notify_svc()
+        await hook.finally_turn(ctx, result=None)
 
-        auto_send = self._make_auto_send_hook(bus)
-        maxiter_hook = MaxIterationNotifyHook(notification_service=notify_svc)
-        ctx = self._make_ctx()
-        result = AgentResult(content="Out of steps.", stop_reason="max_iterations")
+        msgs = await bus.consume("conv123.main", block=False)
+        assert len(msgs) == 1
+        xml = msgs[0].payload["content"]
+        assert _extract_xml_field(xml, "is_normal") == "false"
+        assert _extract_xml_field(xml, "error") == "subagent crashed"
+        assert _extract_xml_field(xml, "stop_reason") == "error"
 
-        await maxiter_hook.after_turn(ctx, result)
-        await auto_send.after_turn(ctx, result)
+    async def test_output_status_missing_when_no_file(self, tmp_path: Path):
+        """No OUTPUT.md → output_status=missing, hint about re-running."""
+        runtime_dir = tmp_path / "runtime"
+        session_id = "conv123.worker:a1b2c3d4"
 
-        notify_svc.notify.assert_awaited_once()
-        bus.send.assert_awaited_once()
+        # Do NOT create OUTPUT.md — Path.exists() returns False naturally
+        bus = _make_bus(tmp_path)
+        hook = SubagentAutoSendHook(
+            agent_bus=bus,
+            self_name="worker",
+            parent_name="main",
+            runtime_dir=runtime_dir,
+        )
+        ctx = _make_context(session_id)
+        result = AgentResult(content="Done.", stop_reason=StopReason.COMPLETED)
 
-    # ── Non-overlap at normal stop ──
+        await hook.finally_turn(ctx, result)
 
-    async def test_at_normal_stop_only_auto_send_fires_not_maxiter_notify(self):
-        """Normal stop → SubagentAutoSendHook auto-forwards, MaxIterationNotifyHook is silent."""
-        from unittest.mock import MagicMock
-        from framework.hook.notification import MaxIterationNotifyHook
+        msgs = await bus.consume("conv123.main", block=False)
+        assert len(msgs) == 1
+        xml = msgs[0].payload["content"]
+        assert _extract_xml_field(xml, "output_status") == "missing"
+        assert "OUTPUT.md was not written" in _extract_xml_field(xml, "hint")
+        assert _extract_xml_field(xml, "is_normal") == "false"
 
-        bus = MagicMock()
-        bus.send = AsyncMock()
-        notify_svc = self._make_notify_svc()
+    async def test_invocation_id_from_session_meta(self, tmp_path: Path):
+        """invocation_id is extracted from session_meta and included in XML."""
+        runtime_dir = tmp_path / "runtime"
+        session_id = "conv123.worker:abc12345"
 
-        auto_send = self._make_auto_send_hook(bus)
-        maxiter_hook = MaxIterationNotifyHook(notification_service=notify_svc)
-        ctx = self._make_ctx()
-        result = AgentResult(content="Task done.", stop_reason="completed")
+        bus = _make_bus(tmp_path)
+        hook = SubagentAutoSendHook(
+            agent_bus=bus,
+            self_name="worker",
+            parent_name="main",
+            runtime_dir=runtime_dir,
+        )
+        ctx = _make_context(session_id, invocation_id="abc12345")
+        result = AgentResult(content="Done.")
 
-        await auto_send.after_turn(ctx, result)
-        await maxiter_hook.after_turn(ctx, result)
+        await hook.finally_turn(ctx, result)
 
-        bus.send.assert_awaited_once()
-        notify_svc.notify.assert_not_awaited()
+        msgs = await bus.consume("conv123.main", block=False)
+        assert len(msgs) == 1
+        xml = msgs[0].payload["content"]
+        assert _extract_xml_field(xml, "invocation_id") == "abc12345"
+
+    async def test_think_tags_stripped_from_summary(self, tmp_path: Path):
+        """Think tags in content are stripped before truncation."""
+        runtime_dir = tmp_path / "runtime"
+        session_id = "conv123.worker:a1b2c3d4"
+
+        bus = _make_bus(tmp_path)
+        hook = SubagentAutoSendHook(
+            agent_bus=bus,
+            self_name="worker",
+            parent_name="main",
+            runtime_dir=runtime_dir,
+        )
+        ctx = _make_context(session_id)
+        result = AgentResult(
+            content="<think\nreasoning here\n</think\nActual answer.",
+        )
+
+        await hook.finally_turn(ctx, result)
+
+        msgs = await bus.consume("conv123.main", block=False)
+        assert len(msgs) == 1
+        xml = msgs[0].payload["content"]
+        summary = _extract_xml_field(xml, "summary")
+        assert "reasoning here" not in summary
+        assert "Actual answer." in summary
+
+    async def test_non_default_parent_name(self, tmp_path: Path):
+        """parent_name != 'main' → inbox_key routes to correct parent."""
+        runtime_dir = tmp_path / "runtime"
+        session_id = "conv123.worker:a1b2c3d4"
+
+        bus = _make_bus(tmp_path)
+        hook = SubagentAutoSendHook(
+            agent_bus=bus,
+            self_name="worker",
+            parent_name="qq_bot",
+            runtime_dir=runtime_dir,
+        )
+        ctx = _make_context(session_id)
+        result = AgentResult(content="Done.")
+
+        await hook.finally_turn(ctx, result)
+
+        msgs = await bus.consume("conv123.qq_bot", block=False)
+        assert len(msgs) == 1
+        assert msgs[0].payload["metadata"]["agent_type"] == "worker"
+
+
+class TestSubagentAutoSendHookClassifyStop:
+    """Unit tests for _classify_stop static method."""
+
+    def test_error_returns_false_with_hint(self):
+        is_normal, hint = SubagentAutoSendHook._classify_stop(
+            "completed", "written", "Division by zero",
+        )
+        assert is_normal is False
+        assert "crashed" in hint
+        assert "Division by zero" in hint
+        assert "incomplete" in hint.lower()
+
+    def test_error_with_invocation_id_includes_it(self):
+        is_normal, hint = SubagentAutoSendHook._classify_stop(
+            "completed", "written", "timeout", invocation_id="abc123",
+        )
+        assert is_normal is False
+        assert "invocation_id=abc123" in hint
+
+    def test_max_iterations_returns_false_with_hint(self):
+        is_normal, hint = SubagentAutoSendHook._classify_stop(
+            "max_iterations", "written", None,
+        )
+        assert is_normal is False
+        assert "max_iterations" in hint
+        assert "incomplete" in hint.lower()
+
+    def test_max_iterations_with_invocation_id_includes_it(self):
+        is_normal, hint = SubagentAutoSendHook._classify_stop(
+            "max_iterations", "written", None, invocation_id="xyz789",
+        )
+        assert is_normal is False
+        assert "invocation_id=xyz789" in hint
+
+    def test_missing_output_returns_false_with_hint(self):
+        is_normal, hint = SubagentAutoSendHook._classify_stop(
+            "completed", "missing", None,
+        )
+        assert is_normal is False
+        assert "OUTPUT.md was not written" in hint
+
+    def test_missing_output_with_invocation_id_includes_it(self):
+        is_normal, hint = SubagentAutoSendHook._classify_stop(
+            "completed", "missing", None, invocation_id="resume123",
+        )
+        assert is_normal is False
+        assert "invocation_id=resume123" in hint
+
+    def test_completed_with_output_returns_true(self):
+        is_normal, hint = SubagentAutoSendHook._classify_stop(
+            "completed", "written", None,
+        )
+        assert is_normal is True
+        assert hint == ""
+
+    def test_cancelled_with_output_returns_true(self):
+        is_normal, hint = SubagentAutoSendHook._classify_stop(
+            "cancelled", "written", None,
+        )
+        assert is_normal is True
+        assert hint == ""
+
+
+class TestSubagentAutoSendHookTruncateContent:
+    """Unit tests for _truncate_content class method."""
+
+    def test_short_content_unchanged(self):
+        assert SubagentAutoSendHook._truncate_content("hello", max_chars=1500) == "hello"
+
+    def test_long_content_truncated(self):
+        content = "x" * 2000
+        result = SubagentAutoSendHook._truncate_content(content, max_chars=1500)
+        assert result.startswith("x" * 1500)
+        assert "[...truncated," in result
+
+    def test_think_tags_stripped(self):
+        content = "<think\nreasoning\n</think\nFinal answer."
+        result = SubagentAutoSendHook._truncate_content(content)
+        assert "reasoning" not in result
+        assert "Final answer." in result
+
+    def test_multiple_tag_types_stripped(self):
+        content = "<reasoning>step 1</reasoning><think\ndepth\n</think\nFinal."
+        result = SubagentAutoSendHook._truncate_content(content)
+        assert "step 1" not in result
+        assert "depth" not in result
+        assert "Final." in result
+
+
+class TestSubagentAutoSendHookBuildXml:
+    """Unit tests for _build_xml static method."""
+
+    def test_xml_structure(self):
+        xml = SubagentAutoSendHook._build_xml(
+            agent_name="worker",
+            invocation_id="abc123",
+            status="completed",
+            stop_reason="completed",
+            is_normal=True,
+            error="",
+            hint="",
+            summary="Task done.",
+            trace_dir_rel="trace/conv123.worker:abc123/operations.jsonl",
+            output_path_rel="output/conv123.worker:abc123/OUTPUT.md",
+            output_status="written",
+        )
+        assert "<subagent_notification>" in xml
+        assert "</subagent_notification>" in xml
+        assert "<agent>worker</agent>" in xml
+        assert "<invocation_id>abc123</invocation_id>" in xml
+        assert "<is_normal>true</is_normal>" in xml
+        assert "<error></error>" in xml
+        assert "<summary>Task done.</summary>" in xml
+        assert "<output_status>written</output_status>" in xml
+
+    def test_xml_escapes_special_chars(self):
+        xml = SubagentAutoSendHook._build_xml(
+            agent_name="worker",
+            invocation_id="abc",
+            status="incomplete",
+            stop_reason="error",
+            is_normal=False,
+            error="crashed <with> &special 'chars'",
+            hint="Try again",
+            summary="",
+            trace_dir_rel="t",
+            output_path_rel="o",
+            output_status="missing",
+        )
+        assert "<subagent_notification>" in xml
+        # xml_text wraps in CDATA when special chars present
+        assert "CDATA" in xml or ("&lt;" in xml and "&amp;" in xml)

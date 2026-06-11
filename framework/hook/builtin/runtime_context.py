@@ -25,22 +25,20 @@ class RuntimeContextHook(BeforeTurnHook, BeforeToolExecutionHook, AfterToolExecu
 
     _PENDING_KEY = "_pending_tool_calls"
 
-    async def before_turn(self, ctx: AgentContext[Any]) -> None:
+    async def before_turn(self, ctx: AgentContext) -> None:
         rt = ctx.runtime
         if rt is None:
             return
         rt_mgr = rt.services.runtime_context_manager
         if rt_mgr is not None and rt._runtime_context is None:
-            rt._runtime_context = await rt_mgr.get_context(
-                ctx.session_id, None
-            )
+            rt._runtime_context = await rt_mgr.get_context(ctx.session_id, None)
         rc = rt._runtime_context
         if rc is not None:
             await rc.clear()
 
     async def before_tool_execution(
         self,
-        ctx: AgentContext[Any],
+        ctx: AgentContext,
         tool_calls: list[Any] | None = None,
     ) -> None:
         if ctx.runtime is None:
@@ -51,7 +49,7 @@ class RuntimeContextHook(BeforeTurnHook, BeforeToolExecutionHook, AfterToolExecu
 
     async def after_tool_execution(
         self,
-        ctx: AgentContext[Any],
+        ctx: AgentContext,
         results: list[Any] | None = None,
     ) -> None:
         if ctx.runtime is None:
@@ -67,9 +65,7 @@ class RuntimeContextHook(BeforeTurnHook, BeforeToolExecutionHook, AfterToolExecu
         if results:
             for r in results:
                 if isinstance(r, ToolResult):
-                    result_map[r.call_id] = (
-                        f"Error: {r.error}" if r.error else str(r.result)
-                    )
+                    result_map[r.call_id] = f"Error: {r.error}" if r.error else str(r.result)
                 elif isinstance(r, dict) and r.get("role") == "tool":
                     result_map[r.get("tool_call_id")] = r.get("content", "")
 

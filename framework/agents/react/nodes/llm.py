@@ -1,4 +1,5 @@
 """LLMNode — assembles messages, calls LLM, writes assistant message."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -60,7 +61,8 @@ class LLMNode(Node):
         async def actual_iteration():
             if ctx.emitter is not None:
                 await ctx.emitter.emit(
-                    ReActEvent.ITERATION_START, {"iteration": state.iteration},
+                    ReActEvent.ITERATION_START,
+                    {"iteration": state.iteration},
                 )
 
             if runtime and runtime.hooks:
@@ -69,8 +71,10 @@ class LLMNode(Node):
             # Drain control commands before LLM call
             if ctx.runtime and ctx.runtime.control_channel:
                 from framework.hook.builtin.control_drain import drain_control_channel
+
                 await drain_control_channel(
-                    ctx.runtime.control_channel, ctx,
+                    ctx.runtime.control_channel,
+                    ctx,
                     turn_uuid=ctx.runtime.turn_uuid,
                 )
 
@@ -82,15 +86,18 @@ class LLMNode(Node):
 
             if runtime and runtime.hooks:
                 await runtime.hooks.dispatch(
-                    HookPoint.AFTER_LLM_RESPONSE, ctx,
+                    HookPoint.AFTER_LLM_RESPONSE,
+                    ctx,
                     payload=HookPayload(data={"response": response}),
                 )
 
             # Drain control commands after LLM response
             if ctx.runtime and ctx.runtime.control_channel:
                 from framework.hook.builtin.control_drain import drain_control_channel
+
                 await drain_control_channel(
-                    ctx.runtime.control_channel, ctx,
+                    ctx.runtime.control_channel,
+                    ctx,
                     turn_uuid=ctx.runtime.turn_uuid,
                 )
 
@@ -108,7 +115,9 @@ class LLMNode(Node):
                 content = strip_think(content) or ""
 
             assistant_msg = build_assistant_message(
-                content, response.tool_calls, response.reasoning_content,
+                content,
+                response.tool_calls,
+                response.reasoning_content,
             )
             await ctx.history.append(assistant_msg)
             state.llm_response = response
@@ -118,7 +127,8 @@ class LLMNode(Node):
             )
 
         if (
-            runtime and runtime.interceptors
+            runtime
+            and runtime.interceptors
             and runtime.interceptors.has_scope(InterceptorScope.ITERATION)
         ):
             await runtime.interceptors.around_iteration(
@@ -139,9 +149,13 @@ class LLMNode(Node):
             return NodeTransition(ReActNode.TOOL, ReActReason.HAS_TOOLS)
 
         if ctx.emitter is not None:
-            await ctx.emitter.emit(ReActEvent.ITERATION_END, {
-                "iteration": state.iteration, "has_tool_calls": False,
-            })
+            await ctx.emitter.emit(
+                ReActEvent.ITERATION_END,
+                {
+                    "iteration": state.iteration,
+                    "has_tool_calls": False,
+                },
+            )
         return NodeTransition(ReActNode.END, ReActReason.NO_TOOLS)
 
     async def _build_messages(self, ctx: AgentContext) -> list[dict[str, object]]:
@@ -163,7 +177,9 @@ class LLMNode(Node):
         return messages
 
     async def _call_llm(
-        self, messages: list[dict[str, object]], ctx: AgentContext,
+        self,
+        messages: list[dict[str, object]],
+        ctx: AgentContext,
     ) -> LLMResponse:
         emitter = ctx.emitter
         use_streaming = False
@@ -183,7 +199,9 @@ class LLMNode(Node):
         return await self._call_non_streaming(messages, ctx)
 
     async def _stream_plain(
-        self, messages: list[dict[str, object]], ctx: AgentContext,
+        self,
+        messages: list[dict[str, object]],
+        ctx: AgentContext,
     ) -> LLMResponse:
         async def _on_content(delta: str) -> None:
             if delta and ctx.emitter is not None:
@@ -207,7 +225,9 @@ class LLMNode(Node):
         return response
 
     async def _call_non_streaming(
-        self, messages: list[dict[str, object]], ctx: AgentContext,
+        self,
+        messages: list[dict[str, object]],
+        ctx: AgentContext,
     ) -> LLMResponse:
         response = await self._agent.provider.chat(
             messages=messages,

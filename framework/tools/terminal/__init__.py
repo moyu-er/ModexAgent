@@ -16,7 +16,11 @@ from framework.tools.terminal.process_registry import ProcessRegistry
 from framework.tools.terminal.process_tool import ProcessTool
 from framework.tools.terminal.session import CommandRecord, TerminalInfo, TerminalSession
 from framework.tools.terminal.state_store import JsonTerminalStateStore
-from framework.tools.terminal.subprocess_tool import ShellExecutor, SubprocessExecutor, SubprocessTool
+from framework.tools.terminal.subprocess_tool import (
+    ShellExecutor,
+    SubprocessExecutor,
+    SubprocessTool,
+)
 from framework.tools.terminal.tool import TerminalAction, TerminalTool
 
 __all__ = [

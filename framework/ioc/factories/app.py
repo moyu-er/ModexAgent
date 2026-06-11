@@ -10,11 +10,10 @@ from pathlib import Path
 
 from framework.core.provider import LLMProvider
 from framework.core.tool_manager import InMemoryToolManager, Tool
-from framework.ioc.configs.agent import AgentConfig
 from framework.ioc.configs.app import AppConfig
 from framework.ioc.factories.agent import create_agent
 from framework.ioc.factories.llm import create_llm_provider
-from framework.ioc.factories.memory import create_memory, DefaultMemorySystem
+from framework.ioc.factories.memory import DefaultMemorySystem, create_memory
 from framework.ioc.factories.tools import connect_mcp, create_tool_manager, register_mcp_tools
 from framework.tools.mcp_adapter import MCPToolAdapter
 

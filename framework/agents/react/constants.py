@@ -1,4 +1,5 @@
 """ReAct graph constants — node names, transition reasons, metadata keys."""
+
 from enum import StrEnum
 
 from framework.core.constants import StopReason

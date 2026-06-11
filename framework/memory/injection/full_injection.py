@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
 from framework.memory.core.models import (
     InjectionResult,
     MemoryBudget,
@@ -11,8 +12,8 @@ from framework.memory.core.models import (
 from framework.memory.core.scope import MemoryContext
 from framework.memory.core.system import MemorySystem
 from framework.memory.injection.policy import MemoryInjectionPolicy
-from framework.memory.tags import ArchiveTag, KnowledgeTag
 from framework.memory.pruned.manager import PrunedManager
+from framework.memory.tags import ArchiveTag, KnowledgeTag
 from framework.memory.utils import estimate_text_tokens
 from framework.utils.xml import xml_attr, xml_text
 
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class _PromptSection:
     """Internal: section content with priority for sorting during assembly."""
+
     content: str
     priority: int = 0
 
@@ -120,36 +122,42 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                 if knowledge_dir:
                     file_attr = f' file="{xml_attr(str((knowledge_dir / "SOUL.md").resolve()))}"'
                 tag = KnowledgeTag.YOUR_IDENTITY.value
-                xml_parts.extend([
-                    f'<{tag}{file_attr} editable="true"'
-                    f' description="Who you are: personality, principles, and behavior rules">'
-                    f"\n{xml_text(knowledge.soul)}\n"
-                    f"</{tag}>",
-                ])
+                xml_parts.extend(
+                    [
+                        f'<{tag}{file_attr} editable="true"'
+                        f' description="Who you are: personality, principles, and behavior rules">'
+                        f"\n{xml_text(knowledge.soul)}\n"
+                        f"</{tag}>",
+                    ]
+                )
 
             if knowledge.user:
                 file_attr = ""
                 if knowledge_dir:
                     file_attr = f' file="{xml_attr(str((knowledge_dir / "USER.md").resolve()))}"'
                 tag = KnowledgeTag.USER_PROFILE.value
-                xml_parts.extend([
-                    f'<{tag}{file_attr} editable="true"'
-                    f' description="Facts about the user: name, preferences, habits, communication style">'
-                    f"\n{xml_text(knowledge.user)}\n"
-                    f"</{tag}>",
-                ])
+                xml_parts.extend(
+                    [
+                        f'<{tag}{file_attr} editable="true"'
+                        f' description="Facts about the user: name, preferences, habits, communication style">'
+                        f"\n{xml_text(knowledge.user)}\n"
+                        f"</{tag}>",
+                    ]
+                )
 
             if knowledge.memory:
                 file_attr = ""
                 if knowledge_dir:
                     file_attr = f' file="{xml_attr(str((knowledge_dir / "MEMORY.md").resolve()))}"'
                 tag = KnowledgeTag.KNOWN_FACTS.value
-                xml_parts.extend([
-                    f'<{tag}{file_attr} editable="false"'
-                    f' description="Known facts about the project: conventions, decisions, verified solutions">'
-                    f"\n{xml_text(knowledge.memory)}\n"
-                    f"</{tag}>",
-                ])
+                xml_parts.extend(
+                    [
+                        f'<{tag}{file_attr} editable="false"'
+                        f' description="Known facts about the project: conventions, decisions, verified solutions">'
+                        f"\n{xml_text(knowledge.memory)}\n"
+                        f"</{tag}>",
+                    ]
+                )
 
             if xml_parts:
                 xml_content = "\n".join(xml_parts)
@@ -171,13 +179,15 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                 heading = (
                     "### Knowledge Files\n\n"
                     "Self-maintained files storing your personality, user preferences, "
-                    "and learned facts. Files with `editable=\"true\"` can be updated "
+                    'and learned facts. Files with `editable="true"` can be updated '
                     "via file tools to evolve your knowledge over time.\n\n"
                 )
-                sections.append(_PromptSection(
-                    content=heading + xml_content,
-                    priority=100,
-                ))
+                sections.append(
+                    _PromptSection(
+                        content=heading + xml_content,
+                        priority=100,
+                    )
+                )
         except Exception:
             logger.debug("Knowledge injection skipped", exc_info=True)
 
@@ -221,7 +231,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
 
         # Read context.md from each archive (ascending by archive_id: oldest first)
         records: list[str] = []
-        for aid in sorted(archive_ids)[:self._archive_inject_count]:
+        for aid in sorted(archive_ids)[: self._archive_inject_count]:
             try:
                 content = await storage.read_archive_file(aid, "context.md")
             except Exception:
@@ -231,14 +241,12 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                 continue
 
             truncated = len(content) > self._archive_inject_max_chars
-            display = content[:self._archive_inject_max_chars] + "..." if truncated else content
+            display = content[: self._archive_inject_max_chars] + "..." if truncated else content
 
             full_path = self._archive_file_path(archive_dir, aid)
             st = ArchiveTag.SUMMARY.value
             records.append(
-                f'<{st} number="{aid}"'
-                f' file="{xml_attr(full_path)}"'
-                f'>\n{xml_text(display)}\n</{st}>'
+                f'<{st} number="{aid}" file="{xml_attr(full_path)}">\n{xml_text(display)}\n</{st}>'
             )
 
         if not records:
@@ -250,11 +258,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
             "Read the `context.md` file at each path for the full details.\n\n"
         )
         ct = ArchiveTag.CONTAINER.value
-        xml = (
-            f"<{ct}>\n"
-            + "\n".join(records)
-            + f"\n</{ct}>"
-        )
+        xml = f"<{ct}>\n" + "\n".join(records) + f"\n</{ct}>"
         sections.append(_PromptSection(content=heading + xml, priority=70))
 
     def _archive_file_path(self, archive_dir: Path, archive_id: int) -> str:
@@ -262,7 +266,9 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         return str((archive_dir / str(archive_id) / "context.md").resolve())
 
     def _inject_pruned_catalog(
-        self, sections: list[_PromptSection], context: MemoryContext,
+        self,
+        sections: list[_PromptSection],
+        context: MemoryContext,
     ) -> None:
         if self._pruned_manager is None:
             return
@@ -280,10 +286,12 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
             try:
                 block = provider.system_prompt_block()
                 if block:
-                    sections.append(_PromptSection(
-                        content=block,
-                        priority=60,
-                    ))
+                    sections.append(
+                        _PromptSection(
+                            content=block,
+                            priority=60,
+                        )
+                    )
             except Exception:
                 logger.debug("Provider block failed for %s", provider.name, exc_info=True)
 
@@ -299,16 +307,16 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         try:
             prefetch = await memory_system.prefetch_memories(query, context)
             if prefetch:
-                sections.append(_PromptSection(
-                    content=f"<related_facts>\n{xml_text(prefetch)}\n</related_facts>",
-                    priority=50,
-                ))
+                sections.append(
+                    _PromptSection(
+                        content=f"<related_facts>\n{xml_text(prefetch)}\n</related_facts>",
+                        priority=50,
+                    )
+                )
         except Exception:
             logger.debug("Provider prefetch failed", exc_info=True)
 
-    def _trim_by_priority(
-        self, sections: list[_PromptSection]
-    ) -> list[_PromptSection]:
+    def _trim_by_priority(self, sections: list[_PromptSection]) -> list[_PromptSection]:
         """Sort by priority descending and optionally trim to token budget."""
         sorted_sections = sorted(sections, key=lambda s: s.priority, reverse=True)
         max_tokens = self._budget.max_system_prompt_tokens

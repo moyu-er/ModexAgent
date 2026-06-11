@@ -9,8 +9,6 @@ from framework.core.tool_manager import Tool
 from framework.tools.ast.engine import (
     AST_UNAVAILABLE_MSG,
     AstNotAvailableError,
-    AstParseError,
-    AstQueryError,
     is_ast_available,
     replace_in_file,
 )

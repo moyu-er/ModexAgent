@@ -17,24 +17,22 @@
 #
 # ── Coding Pool Agent Summary ──
 #
-#   Agent           | Preset     | Context | Think  | Steps | Terminal |
-#   ----------------|------------|---------|--------|-------|----------|
-#   coding (main)   | full*      | persist | -      | 100   | -        |
-#   scout           | read_only  | fresh   | low    | 40    | -        |
-#   context-builder | read_only  | fresh   | medium | 60    | -        |
-#   planner         | minimal    | fork    | high   | 80    | -        |
-#   worker          | full       | fork    | high   | 150   | true     |
-#   reviewer        | read_write | fresh   | high   | 100   | -        |
-#   oracle          | read_only  | fork    | high   | 60    | -        |
-#   delegate        | full       | fresh   | medium | 50    | -        |
+#   Agent           | Preset     | Context | Think  | Steps |
+#   ----------------|------------|---------|--------|-------|
+#   coding (main)   | —          | persist | —      | 100   |
+#   scout           | read_only  | fresh   | low    | 40    |
+#   context-builder | read_only  | fresh   | medium | 60    |
+#   planner         | read_only  | fork    | high   | 80    |
+#   worker          | —          | fork    | high   | 150   |
+#   reviewer        | —          | fresh   | high   | 100   |
+#   oracle          | read_only  | fork    | high   | 60    |
+#   delegate        | —          | fresh   | medium | 50    |
 #
-#   * Main agent extra_tools: ast_grep_search, ast_grep_replace,
-#     lsp_diagnostics, lsp_navigation.
-#   Fork context: parent session messages truncated (count → governance),
-#     formatted as XML, and injected into subagent system prompt (not session
-#     messages). Persisted to fork_contexts/*.xml for resume across restarts.
-#   Bash tool: SubprocessTool (stateless) for subagents;
-#     CommandTool/TerminalTool (stateful persistent session) for main agent.
+#   "—" = default (read_write). Only non-default presets shown.
+#   Main agent extra_tools: ast_grep_search, ast_grep_replace,
+#   lsp_diagnostics, lsp_navigation.
+#   Bash: SubprocessTool (stateless) for subagents;
+#     CommandTool/TerminalTool (stateful) for main agent.
 
 llm:
   model: "${LLM_MODEL:-openai/MiniMax-M2.5}"
@@ -69,9 +67,8 @@ agents:
   - name: coding
     role: main
     max_steps: 100
-    standard_tools: true
-    use_terminal: true
-    terminal_visibility: true
+    use_terminal: false
+    terminal_visibility: false
     experience:
       enabled: true
     extra_tools: ["ast_grep_search", "ast_grep_replace", "lsp_diagnostics", "lsp_navigation"]

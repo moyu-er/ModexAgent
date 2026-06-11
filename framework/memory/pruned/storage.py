@@ -97,7 +97,8 @@ class FilePrunedStorage(PrunedStorage):
             except (TypeError, ValueError) as exc:
                 logger.warning(
                     "Skipping invalid index entry in %s: %s",
-                    index_path, exc,
+                    index_path,
+                    exc,
                 )
         return entries
 

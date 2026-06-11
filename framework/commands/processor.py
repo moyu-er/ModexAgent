@@ -39,9 +39,7 @@ class SlashCommandProcessor(CommandProcessor):
         self._invalid_handler = invalid_handler or InvalidCommandHandler()
         self._unknown_handler = unknown_handler or UnknownCommandHandler()
         self._handler_by_name = {
-            name: handler
-            for handler in self._handlers
-            for name in handler.names
+            name: handler for handler in self._handlers for name in handler.names
         }
 
     @classmethod

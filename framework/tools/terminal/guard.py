@@ -47,9 +47,7 @@ _SUGGESTIONS: dict[TerminalCommandStatus, str] = {
         "or 'terminal current' to check the screen."
     ),
     TerminalCommandStatus.PAGINATED: (
-        "Terminal is in a pager. "
-        "Use 'process send_keys' with 'q' to quit, "
-        "or Space to scroll."
+        "Terminal is in a pager. Use 'process send_keys' with 'q' to quit, or Space to scroll."
     ),
 }
 
@@ -60,21 +58,25 @@ _MESSAGES: dict[TerminalCommandStatus, str] = {
     TerminalCommandStatus.PAGINATED: "Terminal is not ready: a pager is active.",
 }
 
-_COMMAND_ALLOWED: frozenset[TerminalCommandStatus] = frozenset({
-    TerminalCommandStatus.IDLE,
-    TerminalCommandStatus.UNKNOWN,
-    TerminalCommandStatus.COMPLETED,
-    TerminalCommandStatus.TIMED_OUT,
-})
+_COMMAND_ALLOWED: frozenset[TerminalCommandStatus] = frozenset(
+    {
+        TerminalCommandStatus.IDLE,
+        TerminalCommandStatus.UNKNOWN,
+        TerminalCommandStatus.COMPLETED,
+        TerminalCommandStatus.TIMED_OUT,
+    }
+)
 
-_PROCESS_ALLOWED: frozenset[TerminalCommandStatus] = frozenset({
-    TerminalCommandStatus.IDLE,
-    TerminalCommandStatus.UNKNOWN,
-    TerminalCommandStatus.WAITING_INPUT,
-    TerminalCommandStatus.PAGINATED,
-    TerminalCommandStatus.COMPLETED,
-    TerminalCommandStatus.TIMED_OUT,
-})
+_PROCESS_ALLOWED: frozenset[TerminalCommandStatus] = frozenset(
+    {
+        TerminalCommandStatus.IDLE,
+        TerminalCommandStatus.UNKNOWN,
+        TerminalCommandStatus.WAITING_INPUT,
+        TerminalCommandStatus.PAGINATED,
+        TerminalCommandStatus.COMPLETED,
+        TerminalCommandStatus.TIMED_OUT,
+    }
+)
 
 
 async def _check_writable(

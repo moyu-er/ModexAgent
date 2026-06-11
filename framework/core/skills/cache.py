@@ -172,7 +172,10 @@ class DirectorySkillCache(SkillCache):
         changed = False
         for directory in self._directories:
             current_names = self._list_skill_names(
-                directory, self._layout, self._skill_filename, self._exclude_names,
+                directory,
+                self._layout,
+                self._skill_filename,
+                self._exclude_names,
             )
             prev = self._dir_states.get(directory)
             if prev is None or current_names != prev.names:
@@ -212,7 +215,10 @@ class DirectorySkillCache(SkillCache):
 
         for directory in self._directories:
             current_names = self._list_skill_names(
-                directory, self._layout, self._skill_filename, self._exclude_names,
+                directory,
+                self._layout,
+                self._skill_filename,
+                self._exclude_names,
             )
             prev = self._dir_states.get(directory)
             if prev is None or current_names != prev.names:

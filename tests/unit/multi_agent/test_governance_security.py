@@ -4,19 +4,33 @@ import pytest
 
 from framework.core.emitter import AgentResult
 from framework.core.tool_manager import (
-    FunctionalTool,
     InMemoryToolManager,
+    Tool,
 )
 from framework.messaging.broker import Address, BrokerMessage
 from framework.messaging.broker_memory import InMemoryMessageBroker
 from framework.multi_agent.address import AgentAddress
-from framework.core.skills.filter import SkillWhitelistFilter as AgentSkillManager
+from framework.core.skills.filter import AllowListFilter
 from framework.utils.context_builder import MultiAgentContextBuilder
 from framework.utils.deduplicator import MessageDeduplicator
 from framework.multi_agent.descriptor import AgentDescriptor
 from framework.multi_agent.envelope import AgentMessageEnvelope
 from framework.tools.filter import FilteredToolManager
 from framework.utils.sanitizer import ContentSanitizer
+
+
+class _DummyTool(Tool):
+    """Minimal Tool subclass for governance tests."""
+
+    def __init__(self, name: str):
+        super().__init__(
+            name=name,
+            description=f"dummy {name}",
+            parameters={"type": "object", "properties": {}},
+        )
+
+    async def execute(self, **kwargs):
+        return "ok"
 
 
 class TestAgentMessageEnvelope:
@@ -26,12 +40,12 @@ class TestAgentMessageEnvelope:
             source=AgentAddress(kind="agent", name="a"),
             target=AgentAddress(kind="agent", name="b"),
             conversation_id="conv1",
-            agent_session_id="conv1:b",
+            agent_session_id="conv1.b",
             message_id="msg123",
         )
         bm = env.to_broker_message()
         assert bm.headers["conversation_id"] == "conv1"
-        assert bm.headers["agent_session_id"] == "conv1:b"
+        assert bm.headers["agent_session_id"] == "conv1.b"
         assert bm.headers["message_id"] == "msg123"
         assert bm.sender == Address(kind="agent", name="a")
 
@@ -42,7 +56,7 @@ class TestAgentMessageEnvelope:
             recipient=Address(kind="agent", name="b"),
             headers={
                 "conversation_id": "conv1",
-                "agent_session_id": "conv1:b",
+                "agent_session_id": "conv1.b",
                 "message_id": "msg123",
                 "message_type": "agent_message",
             },
@@ -50,7 +64,7 @@ class TestAgentMessageEnvelope:
         env = AgentMessageEnvelope.from_broker_message(bm)
         assert env is not None
         assert env.conversation_id == "conv1"
-        assert env.agent_session_id == "conv1:b"
+        assert env.agent_session_id == "conv1.b"
         assert env.message_id == "msg123"
 
     def test_from_broker_message_missing_headers_returns_none(self) -> None:
@@ -89,8 +103,8 @@ class TestMessageDeduplicator:
 class TestFilteredToolManager:
     def test_whitelist(self) -> None:
         base = InMemoryToolManager()
-        base.register(FunctionalTool("calc", "calc", {"type": "object"}, lambda x: x))
-        base.register(FunctionalTool("bash", "bash", {"type": "object"}, lambda x: x))
+        base.register(_DummyTool("calc"))
+        base.register(_DummyTool("bash"))
         filtered = FilteredToolManager(base, allowed_tools=["calc"])
         assert filtered.get_tool("calc") is not None
         assert filtered.get_tool("bash") is None
@@ -98,8 +112,8 @@ class TestFilteredToolManager:
 
     def test_blacklist(self) -> None:
         base = InMemoryToolManager()
-        base.register(FunctionalTool("calc", "calc", {"type": "object"}, lambda x: x))
-        base.register(FunctionalTool("bash", "bash", {"type": "object"}, lambda x: x))
+        base.register(_DummyTool("calc"))
+        base.register(_DummyTool("bash"))
         filtered = FilteredToolManager(base, denied_tools=["bash"])
         assert "bash" not in filtered.list_tools()
         assert "calc" in filtered.list_tools()
@@ -107,7 +121,7 @@ class TestFilteredToolManager:
     @pytest.mark.asyncio
     async def test_execute_blocks_denied(self) -> None:
         base = InMemoryToolManager()
-        base.register(FunctionalTool("bash", "bash", {"type": "object"}, lambda x: x))
+        base.register(_DummyTool("bash"))
         filtered = FilteredToolManager(base, denied_tools=["bash"])
         result = await filtered.execute("bash", {})
         assert "not allowed" in result.error.lower()
@@ -115,15 +129,16 @@ class TestFilteredToolManager:
 
 class TestAgentSkillManager:
     @pytest.mark.asyncio
-    async def test_is_skill_allowed(self) -> None:
+    async def test_allow_list_filter(self) -> None:
         from framework.core.skills import InlineSkillSource
         from framework.core.skills.manager import SkillManager
+        from framework.core.skills.models import Skill
 
-        source = InlineSkillSource([])
-        base = SkillManager(source)
-        mgr = AgentSkillManager(base, allowed_skills=["python"])
-        assert mgr.is_skill_allowed("python") is True
-        assert mgr.is_skill_allowed("java") is False
+        python_skill = Skill(name="python", content="python skill", description="")
+        source = InlineSkillSource([python_skill])
+        mgr = SkillManager(source, skill_filter=AllowListFilter(names={"python"}))
+        skills = await mgr.list_skills()
+        assert [s.name for s in skills] == ["python"]
 
 
 class TestContentSanitizer:

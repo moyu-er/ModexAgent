@@ -146,8 +146,11 @@ class ListMessageHistory(MessageHistory):
 # Shared helpers (used by Pipeline)
 # ---------------------------------------------------------------------------
 
+
 async def history_to_list(
-    history: MessageHistory | list[ChatMessage | dict[str, Any]] | Sequence[ChatMessage | dict[str, Any]],
+    history: MessageHistory
+    | list[ChatMessage | dict[str, Any]]
+    | Sequence[ChatMessage | dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """将 MessageHistory 或消息列表转换为 list[dict]。
 
@@ -167,7 +170,9 @@ async def history_to_list(
 
 
 async def inject_attachments_to_history(
-    history: MessageHistory | list[ChatMessage | dict[str, Any]] | Sequence[ChatMessage | dict[str, Any]],
+    history: MessageHistory
+    | list[ChatMessage | dict[str, Any]]
+    | Sequence[ChatMessage | dict[str, Any]],
     attachments: list[str],
 ) -> list[dict[str, Any]] | None:
     """将 attachments 注入到最后一条 assistant 消息的 metadata 中。
@@ -198,7 +203,9 @@ async def inject_attachments_to_history(
 
 
 async def restore_multimodal_in_history(
-    history: MessageHistory | list[ChatMessage | dict[str, Any]] | Sequence[ChatMessage | dict[str, Any]],
+    history: MessageHistory
+    | list[ChatMessage | dict[str, Any]]
+    | Sequence[ChatMessage | dict[str, Any]],
     multimodal_content: str | list[dict[str, Any]],
     logger: Any | None = None,
 ) -> list[dict[str, Any]] | None:

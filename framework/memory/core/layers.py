@@ -96,6 +96,7 @@ class SessionMemoryManager(ABC):
         efficient in-lock transform.
         """
         import copy
+
         revision = await self.get_revision(context)
         messages = await self.get_all_messages(context)
         result = transform(copy.deepcopy(messages))

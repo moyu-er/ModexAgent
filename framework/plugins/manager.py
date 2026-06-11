@@ -46,16 +46,18 @@ class PluginManager:
         await pm.shutdown_providers()
     """
 
-    def __init__(self, user_plugins_dir: Path | None = None):
+    def __init__(self, user_plugins_dir: Path | None = None) -> None:
         self._contexts: dict[str, PluginContext] = {}
         self._user_plugins_dir = user_plugins_dir or Path.home() / ".af" / "plugins"
 
         # Collected components (populated after discover_and_load)
-        self._tools: list[tuple[Tool, str]] = []            # (Tool, plugin_name)
-        self._hooks: list[tuple[Hook, str]] = []             # (Hook, plugin_name)
+        self._tools: list[tuple[Tool, str]] = []  # (Tool, plugin_name)
+        self._hooks: list[tuple[Hook, str]] = []  # (Hook, plugin_name)
         self._memory_providers: list[tuple[MemoryProvider, str]] = []  # (Provider, name)
-        self._skill_sources: list[tuple[SkillSource, str]] = []     # (Source, plugin_name)
-        self._memory_system_modifiers: list[tuple[Callable[[object], None], str]] = []  # (modifier, plugin_name)
+        self._skill_sources: list[tuple[SkillSource, str]] = []  # (Source, plugin_name)
+        self._memory_system_modifiers: list[
+            tuple[Callable[[object], None], str]
+        ] = []  # (modifier, plugin_name)
         self._providers_initialized = False
         self._initialized_provider_names: set[str] = set()
 
@@ -76,12 +78,8 @@ class PluginManager:
         configs = plugin_configs or {}
 
         # Priority: bundled -> user -> entry_points
-        self._load_from_directory(
-            Path(__file__).parent / "bundled", configs, source="bundled"
-        )
-        self._load_from_directory(
-            self._user_plugins_dir, configs, source="user"
-        )
+        self._load_from_directory(Path(__file__).parent / "bundled", configs, source="bundled")
+        self._load_from_directory(self._user_plugins_dir, configs, source="user")
         self._load_from_entry_points(configs)
 
         self._collect_all()
@@ -97,9 +95,7 @@ class PluginManager:
             len(self._memory_system_modifiers),
         )
 
-    def _load_from_directory(
-        self, directory: Path, configs: dict[str, dict], source: str
-    ) -> None:
+    def _load_from_directory(self, directory: Path, configs: dict[str, dict], source: str) -> None:
         """Scan a directory for plugin subdirectories."""
         if not directory.exists():
             return
@@ -150,7 +146,7 @@ class PluginManager:
                 return
 
             module = importlib.util.module_from_spec(spec)
-            module.__package__ = module_name  # type: ignore[attr-defined]
+            module.__package__ = module_name
             sys.modules[module_name] = module
 
             # Pre-register and execute sibling .py files as submodules so
@@ -163,7 +159,7 @@ class PluginManager:
                 sub_spec = importlib.util.spec_from_file_location(sub_name, py_file)
                 if sub_spec is not None and sub_spec.loader is not None:
                     sub_module = importlib.util.module_from_spec(sub_spec)
-                    sub_module.__package__ = module_name  # type: ignore[attr-defined]
+                    sub_module.__package__ = module_name
                     sys.modules[sub_name] = sub_module
                     sub_spec.loader.exec_module(sub_module)
 
@@ -191,9 +187,7 @@ class PluginManager:
         except Exception as e:
             logger.warning("Failed to load plugin '%s': %s", plugin_name, e)
 
-    def _load_from_entry_points(
-        self, configs: dict[str, dict]
-    ) -> None:
+    def _load_from_entry_points(self, configs: dict[str, dict]) -> None:
         """Discover plugins from PyPI entry_points."""
         try:
             eps = importlib.metadata.entry_points()
@@ -261,9 +255,7 @@ class PluginManager:
             for modifier, mod_plugin_name in collected.get("memory_system_modifiers", []):
                 self._memory_system_modifiers.append((modifier, mod_plugin_name))
 
-    def scan_directory(
-        self, directory: Path, configs: dict[str, dict] | None = None
-    ) -> None:
+    def scan_directory(self, directory: Path, configs: dict[str, dict] | None = None) -> None:
         """Scan an additional directory for plugins and collect their components.
 
         Intended for project-local plugins that live alongside the application
@@ -295,10 +287,7 @@ class PluginManager:
     @property
     def available_providers(self) -> list[MemoryProvider]:
         """Return providers that successfully initialized."""
-        return [
-            p for p, _ in self._memory_providers
-            if p.name in self._initialized_provider_names
-        ]
+        return [p for p, _ in self._memory_providers if p.name in self._initialized_provider_names]
 
     @property
     def skill_sources(self) -> list[tuple[Any, str]]:
@@ -334,7 +323,8 @@ class PluginManager:
             if not provider.is_available():
                 logger.warning(
                     "Provider '%s' (plugin: %s) not available, skipping",
-                    provider.name, plugin_name,
+                    provider.name,
+                    plugin_name,
                 )
                 continue
             try:
@@ -345,7 +335,9 @@ class PluginManager:
             except Exception as e:
                 logger.error(
                     "Provider '%s' (plugin: %s) init failed: %s",
-                    provider.name, plugin_name, e,
+                    provider.name,
+                    plugin_name,
+                    e,
                 )
         return initialized
 
@@ -376,11 +368,11 @@ class PluginManager:
             if collected["skill_sources"]:
                 components.append(f"{len(collected['skill_sources'])} skills")
             if collected["memory_system_modifiers"]:
-                components.append(
-                    f"{len(collected['memory_system_modifiers'])} modifiers"
-                )
-            result.append({
-                "name": name,
-                "components": ", ".join(components) or "none",
-            })
+                components.append(f"{len(collected['memory_system_modifiers'])} modifiers")
+            result.append(
+                {
+                    "name": name,
+                    "components": ", ".join(components) or "none",
+                }
+            )
         return result

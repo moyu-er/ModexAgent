@@ -13,7 +13,6 @@ from ..core.types import InputMessage, MessageRole
 from ..memory.core.message import ContentFormat
 from ..memory.history import (
     ListMessageHistory,
-    MessageHistory,
     history_to_list,
 )
 from ..memory.xml_truncate import truncate_xml_safe
@@ -52,7 +51,6 @@ async def assemble_context(
     Returns: context_state
     """
     source_agent = input_metadata.get("source_agent")
-
 
     # Build multimodal content
     if media_blocks and _media_processor is not None:
@@ -140,7 +138,8 @@ async def assemble_context(
             ),
             message_type=(
                 route_result.envelope_metadata.get("message_type", "agent_message")
-                if route_result else "agent_message"
+                if route_result
+                else "agent_message"
             ),
             conversation_id=route_result.conversation_id if route_result else session_id,
             agent_session_id=session_id,
@@ -162,8 +161,10 @@ async def assemble_context(
                     part for part in (context_state.system_prompt, sideband_prompt) if part
                 )
         non_system = [m for m in built_messages if m.get("role") != "system"]
-        if append_user_message and user_message.get("role") == MessageRole.USER and not any(
-            m.get("role") == MessageRole.USER for m in non_system
+        if (
+            append_user_message
+            and user_message.get("role") == MessageRole.USER
+            and not any(m.get("role") == MessageRole.USER for m in non_system)
         ):
             non_system = list(non_system) + [user_message]
         try:

@@ -34,7 +34,7 @@ class ExperiencePromptBuilder:
                 attrs.append(f'tags="{xml_attr(",".join(exp.tags))}"')
             if exp.scenario:
                 attrs.append(f'scenario="{xml_attr(exp.scenario)}"')
-            parts.append(f'  <experience {" ".join(attrs)}>')
+            parts.append(f"  <experience {' '.join(attrs)}>")
             if exp.description:
                 parts.append(f"    <description>{xml_text(exp.description)}</description>")
             parts.append("  </experience>")

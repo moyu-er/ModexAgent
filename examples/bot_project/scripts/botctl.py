@@ -29,6 +29,7 @@ BOT_MARKER = "bot_service.py"
 
 # ── helpers ──────────────────────────────────────────────────────────────
 
+
 def _bot_dir() -> Path:
     return Path(__file__).resolve().parent.parent
 
@@ -72,6 +73,7 @@ def _is_running(pid: int) -> bool:
 
 
 # ── process discovery (cmdline-based, strict) ────────────────────────────
+
 
 def _scan_bot_cmdlines() -> set[int]:
     """Return raw PIDs from cmdline scan (may include recently-exited)."""
@@ -140,6 +142,7 @@ def _find_bot_pids() -> set[int]:
 
 
 # ── termination ──────────────────────────────────────────────────────────
+
 
 def _terminate_root(pid: int, grace_period: int = 5) -> bool:
     """Kill *pid* only (no tree walk).  Safe for self-restart scenarios."""
@@ -219,6 +222,7 @@ def _terminate_tree(pid: int, grace_period: int = 15) -> bool:
 
 # ── public commands ──────────────────────────────────────────────────────
 
+
 def stop() -> bool:
     """Stop every bot_service.py process on the system."""
     pids = _find_bot_pids()
@@ -233,7 +237,7 @@ def stop() -> bool:
             continue
         print(f"Stopping bot (pid={pid})...")
         if _terminate_tree(pid):
-            print(f"  stopped.")
+            print("  stopped.")
         else:
             print(f"  ERROR: failed to kill (pid={pid})")
             all_ok = False
@@ -335,7 +339,7 @@ def restart() -> bool:
         print(f"Stopping old bot (pid={pid})...")
         # _terminate_root (no /t) so we don't cascade into the new process tree.
         if _terminate_root(pid):
-            print(f"  stopped.")
+            print("  stopped.")
         else:
             print(f"  WARNING: could not kill old bot (pid={pid})")
 
@@ -343,6 +347,7 @@ def restart() -> bool:
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -357,7 +362,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Command to run (default: restart)",
     )
     parser.add_argument(
-        "-h", "--help", "-help", "--h",
+        "-h",
+        "--help",
+        "-help",
+        "--h",
         action="help",
         default=argparse.SUPPRESS,
         help="Show this help message and exit.",

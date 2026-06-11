@@ -51,7 +51,9 @@ class OverflowCleaner:
         self._cancel_timer(session_id)
         loop = asyncio.get_running_loop()
         self._timers[session_id] = loop.call_later(
-            self._merge_window, self._on_timer, session_id,
+            self._merge_window,
+            self._on_timer,
+            session_id,
         )
 
     async def flush(self) -> None:

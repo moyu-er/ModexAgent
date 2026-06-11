@@ -13,6 +13,7 @@ from framework.ioc.configs.skills import SkillsConfig
 
 class TerminalConfig(BaseModel):
     """Per-pool terminal settings."""
+
     storage_dir: str = "data/terminals"
     max_terminals: int = 5
 
@@ -38,4 +39,3 @@ class PoolConfig(BaseModel):
             if a.role == "main":
                 return a.name
         raise ValueError("Pool must have exactly one agent with role='main'")
-

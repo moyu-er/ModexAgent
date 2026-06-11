@@ -14,9 +14,9 @@ from framework.ioc.factories.descriptors import build_subagent_descriptor
 
 class TestBuildSubagentDescriptorQuery12306:
     @pytest.mark.anyio
-    async def test_query_12306_mcp_only(self) -> None:
+    async def test_query_12306_standard_tools(self) -> None:
         app_cfg = AppConfig(llm=LLMConfig())
-        agent_cfg = AgentConfig(name="query-12306", standard_tools=False)
+        agent_cfg = AgentConfig(name="query-12306")
         project_dir = Path("/tmp")
         workspace = Path("/tmp/memory")
 
@@ -25,7 +25,9 @@ class TestBuildSubagentDescriptorQuery12306:
             safety=None, llm=None,
         )
         assert desc.address.name == "query-12306"
-        assert len(tm.list_tools()) == 0  # no standard tools, MCP added later
+        # Standard tools always registered (read_write default)
+        assert "read" in tm.list_tools()
+        assert "write" in tm.list_tools()
         assert sm is None
 
     @pytest.mark.anyio
@@ -47,7 +49,6 @@ class TestBuildSubagentDescriptorQuery12306:
         assert "write" in tools
         assert "bash" in tools
         assert "grep" in tools
-        assert desc.max_tools_per_turn == 10
 
 
 class TestBuildSubagentDescriptor:
@@ -67,4 +68,3 @@ class TestBuildSubagentDescriptor:
         assert "spawn_subagent" not in tools  # denied
         assert "send_message" not in tools  # denied
         assert desc.context_strategy == "persistent"
-        assert desc.streaming_to_user is True

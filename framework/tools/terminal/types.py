@@ -67,27 +67,27 @@ class ProcessStatus(StrEnum):
 class CommandResultStatus(StrEnum):
     """CommandTool return status — used in command_result XML."""
 
-    COMPLETED     = "completed"
-    EXECUTING     = "executing"      # was: running
-    TIMED_OUT     = "timed_out"
-    PAGINATED     = "paginated"
+    COMPLETED = "completed"
+    EXECUTING = "executing"  # was: running
+    TIMED_OUT = "timed_out"
+    PAGINATED = "paginated"
     WAITING_INPUT = "waiting_input"  # was: input_wait
-    STUCK         = "stuck"          # new
-    REJECTED      = "rejected"
+    STUCK = "stuck"  # new
+    REJECTED = "rejected"
 
 
 class TerminalCommandStatus(StrEnum):
     """Unified terminal status — used by terminal current, CommandTool, and session layer."""
 
-    UNKNOWN       = "unknown"
-    IDLE          = "idle"
-    EXECUTING     = "executing"
-    LONG_RUNNING  = "long_running"
+    UNKNOWN = "unknown"
+    IDLE = "idle"
+    EXECUTING = "executing"
+    LONG_RUNNING = "long_running"
     WAITING_INPUT = "waiting_input"
-    STUCK         = "stuck"
-    COMPLETED     = "completed"
-    TIMED_OUT     = "timed_out"
-    PAGINATED     = "paginated"
+    STUCK = "stuck"
+    COMPLETED = "completed"
+    TIMED_OUT = "timed_out"
+    PAGINATED = "paginated"
 
 
 # XML root tag → list of element names whose text content is safe to truncate.

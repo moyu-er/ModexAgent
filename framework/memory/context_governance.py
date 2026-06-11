@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
@@ -26,6 +25,7 @@ def estimate_token_count(messages: list[dict[str, Any]]) -> int:
     """Rough token estimate from character count (chars / 4)."""
     total = sum(len(str(m.get("content", ""))) for m in messages)
     return total // 4
+
 
 META_CONTEXT_LOSSY = "meta_context_lossy"
 META_ORIGINAL_CHARS = "meta_original_chars"
@@ -114,8 +114,12 @@ class LossyContentCompactionGovernance(ContextGovernance):
         keep_range_ratio: float = 0.5,
     ) -> None:
         self._limits = {
-            str(MessageRole.TOOL): tool_result_head_chars if isinstance(tool_result_head_chars, int) else None,
-            str(MessageRole.ASSISTANT): assistant_head_chars if isinstance(assistant_head_chars, int) else None,
+            str(MessageRole.TOOL): tool_result_head_chars
+            if isinstance(tool_result_head_chars, int)
+            else None,
+            str(MessageRole.ASSISTANT): assistant_head_chars
+            if isinstance(assistant_head_chars, int)
+            else None,
             str(MessageRole.AGENT): agent_head_chars if isinstance(agent_head_chars, int) else None,
             str(MessageRole.USER): user_head_chars if isinstance(user_head_chars, int) else None,
         }
@@ -126,7 +130,9 @@ class LossyContentCompactionGovernance(ContextGovernance):
     async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []
         length = len(messages)
-        max_range = max(0, min(length - self.keep_range_count, int(length * (1.0 - self.keep_range_ratio))))
+        max_range = max(
+            0, min(length - self.keep_range_count, int(length * (1.0 - self.keep_range_ratio)))
+        )
         if max_range <= 0:
             return messages
         for i, msg in enumerate(messages):
@@ -144,14 +150,21 @@ class LossyContentCompactionGovernance(ContextGovernance):
 
             limit = self._limits.get(role)
             content = updated.get("content")
-            if limit is not None and limit > 0 and isinstance(content, str) and len(content) > limit:
+            if (
+                limit is not None
+                and limit > 0
+                and isinstance(content, str)
+                and len(content) > limit
+            ):
                 fmt = str(updated.get("content_format", "plain"))
                 if fmt == "xml":
                     paths: list[str] = updated.get("truncatable_paths") or ["content"]
                     updated["content"] = truncate_xml_safe(content, limit, paths)
                 else:
                     updated["content"] = self._truncate_content(
-                        content, limit, role,
+                        content,
+                        limit,
+                        role,
                         source_agent=str(updated.get("source_agent", "")),
                     )
                 updated[META_CONTEXT_LOSSY] = True
@@ -235,6 +248,7 @@ class LossyContentCompactionGovernance(ContextGovernance):
         Returns a new dict, or None when no string value needs truncation.
         """
         import json
+
         longest_key: str | None = None
         longest_val: str = ""
         longest_len = 0
@@ -258,10 +272,12 @@ class LossyContentCompactionGovernance(ContextGovernance):
             f"Field '{longest_key}' truncated: "
             f"{longest_len:,} → ~{max(0, longest_len - excess):,} chars"
         )
-        metadata_overhead = len(
-            json.dumps({"_gv_truncated": True, "_gv_truncation_info": info},
-                       ensure_ascii=False)
-        ) + 40  # safety margin for JSON escaping
+        metadata_overhead = (
+            len(
+                json.dumps({"_gv_truncated": True, "_gv_truncation_info": info}, ensure_ascii=False)
+            )
+            + 40
+        )  # safety margin for JSON escaping
 
         new_val_len = longest_len - excess - metadata_overhead
         new_val_len = max(200, min(new_val_len, longest_len))
@@ -281,10 +297,14 @@ class LossyContentCompactionGovernance(ContextGovernance):
         source_agent: str = "",
     ) -> str:
         suffix = f"\n[Context content truncated for role={role}; original chars={len(content)}]"
-        prefix = f"[From Agent {source_agent}]\n" if role == str(MessageRole.AGENT) and source_agent else ""
+        prefix = (
+            f"[From Agent {source_agent}]\n"
+            if role == str(MessageRole.AGENT) and source_agent
+            else ""
+        )
         body = content
         if prefix and body.startswith(prefix):
-            body = body[len(prefix):]
+            body = body[len(prefix) :]
         reserved = len(prefix) + len(suffix)
         if prefix and reserved >= limit:
             return prefix + suffix.lstrip()
@@ -364,31 +384,35 @@ class UserRetentionBufferInjectionGovernance(ContextGovernance):
         ut = UrbTag.USER_MSG.value
         yt = UrbTag.YOU_RESPONSE.value
         lines = [
-            f'<{ct}>',
-            '<!-- Recent conversation history pruned for context space. -->',
-            '<!-- user_msg without you_response = this user message was not yet answered. -->',
+            f"<{ct}>",
+            "<!-- Recent conversation history pruned for context space. -->",
+            "<!-- user_msg without you_response = this user message was not yet answered. -->",
         ]
         for e in entries:
             user_text = self._truncate_entry_content(
-                e.pruned_user_content, self._max_user_chars,
-                e.content_format, e.truncatable_paths,
+                e.pruned_user_content,
+                self._max_user_chars,
+                e.content_format,
+                e.truncatable_paths,
             )
             assistant_text = ""
             if e.completing_assistant_content:
                 assistant_text = self._truncate_entry_content(
-                    e.completing_assistant_content, self._max_assistant_chars,
-                    e.content_format, e.truncatable_paths,
+                    e.completing_assistant_content,
+                    self._max_assistant_chars,
+                    e.content_format,
+                    e.truncatable_paths,
                 )
             if not user_text and not assistant_text:
                 continue
 
             role_attr = ' role="agent"' if e.pruned_user_role == str(MessageRole.AGENT) else ""
-            lines.append(f'  <{et}{role_attr}>')
-            lines.append(f'    <{ut}>{xml_text(user_text)}</{ut}>')
+            lines.append(f"  <{et}{role_attr}>")
+            lines.append(f"    <{ut}>{xml_text(user_text)}</{ut}>")
             if assistant_text:
-                lines.append(f'    <{yt}>{xml_text(assistant_text)}</{yt}>')
-            lines.append(f'  </{et}>')
-        lines.append(f'</{ct}>')
+                lines.append(f"    <{yt}>{xml_text(assistant_text)}</{yt}>")
+            lines.append(f"  </{et}>")
+        lines.append(f"</{ct}>")
 
         # Only emit the message if we have at least one non-empty entry
         if len(lines) <= 2:  # only opening + closing tags
@@ -470,7 +494,9 @@ class TokenBudgetGovernance(ContextGovernance):
         if not messages:
             return []
 
-        system_messages = [dict(msg) for msg in messages if msg.get("role") == str(MessageRole.SYSTEM)][:1]
+        system_messages = [
+            dict(msg) for msg in messages if msg.get("role") == str(MessageRole.SYSTEM)
+        ][:1]
         non_system = [dict(msg) for msg in messages if msg.get("role") != str(MessageRole.SYSTEM)]
 
         if not non_system:
@@ -508,6 +534,7 @@ class TokenBudgetGovernance(ContextGovernance):
 
 class MicrocompactGovernance(ContextGovernance):
     """将旧的可压缩 tool result 替换为一行摘要，保留最近 N 个。"""
+
     def __init__(
         self,
         keep_recent: int = 10,
@@ -516,12 +543,17 @@ class MicrocompactGovernance(ContextGovernance):
     ) -> None:
         self._keep_recent = keep_recent
         self._min_chars = min_chars
-        self._whitelist_tools = frozenset(whitelist_tools) if whitelist_tools is not None else frozenset()
+        self._whitelist_tools = (
+            frozenset(whitelist_tools) if whitelist_tools is not None else frozenset()
+        )
 
     async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         compactable_indices: list[int] = []
         for idx, msg in enumerate(messages):
-            if msg.get("role") == str(MessageRole.TOOL) and msg.get("name") not in self._whitelist_tools:
+            if (
+                msg.get("role") == str(MessageRole.TOOL)
+                and msg.get("name") not in self._whitelist_tools
+            ):
                 compactable_indices.append(idx)
 
         if len(compactable_indices) <= self._keep_recent:

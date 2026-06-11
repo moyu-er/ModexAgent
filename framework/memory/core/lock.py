@@ -22,7 +22,9 @@ class StorageLock(ABC):
         pass
 
     @abstractmethod
-    def write(self, timeout: float | None = None) -> AbstractAsyncContextManager[StorageLockContext]:
+    def write(
+        self, timeout: float | None = None
+    ) -> AbstractAsyncContextManager[StorageLockContext]:
         """Return an async context manager for write access."""
         pass
 
@@ -204,8 +206,7 @@ class FileStorageLock(StorageLock):
             import filelock
         except ImportError as exc:
             raise ImportError(
-                "filelock is required for FileStorageLock. "
-                "Install it with: pip install filelock"
+                "filelock is required for FileStorageLock. Install it with: pip install filelock"
             ) from exc
         self._lock_file = Path(lock_file)
         # thread_local=False is required because run_in_executor dispatches
@@ -247,7 +248,11 @@ class FileStorageLock(StorageLock):
 
         async def release(self) -> None:
             current = asyncio.current_task()
-            if self._is_write and self._owner._writer_task is not None and self._owner._writer_task == current:
+            if (
+                self._is_write
+                and self._owner._writer_task is not None
+                and self._owner._writer_task == current
+            ):
                 self._owner._writer_depth -= 1
                 if self._owner._writer_depth == 0:
                     self._owner._writer_task = None

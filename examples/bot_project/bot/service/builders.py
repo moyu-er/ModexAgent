@@ -9,41 +9,50 @@ from __future__ import annotations
 import logging
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from bot.plugins.integration import PluginIntegration
-from framework import InMemoryToolManager, ToolManagerConfig, LLMProvider
+from framework import InMemoryToolManager, LLMProvider, ToolManagerConfig
 from framework.core.context import ContextManager
+
+if TYPE_CHECKING:
+    from framework.ioc.configs.agent import AgentConfig as IOCAgentConfig
+    from framework.workspace import DefaultWorkspaceContext
 from framework.core.skills import (
     CompositeSkillSource,
+    DefaultSkillBuilder,
     DirectorySkillCache,
     FileSkillSource,
-    DefaultSkillBuilder,
     SkillManager,
 )
 from framework.core.tool_manager import Tool
 from framework.ioc.configs.app import AppConfig
 from framework.memory.core.scope import MemoryAgentRole, MemoryContext, SessionScope
 from framework.memory.injection import RestrictedInjectionPolicy
-from framework.memory.pruned.manager import PrunedManager
 from framework.memory.layers.config import (
     ArchiveMemoryConfig,
     MemoryLayerConfigSet,
-    UserRetentionBufferConfig,
     SessionMemoryConfig,
+    UserRetentionBufferConfig,
 )
+from framework.memory.pruned.manager import PrunedManager
 from framework.memory.system import MemorySystemContextManager, create_memory_system
 from framework.messaging.broker_memory import InMemoryMessageBroker
 from framework.multi_agent import (
     AgentAddress,
+    AgentMessageBus,
     AgentPool,
     CommunicationTracker,
-    AgentMessageBus,
 )
 from framework.multi_agent.session_id import DefaultSessionIdStrategy
-from framework.multi_agent.tools import CommunicationTarget, CommunicationTargetStore, SendToAgentTool
+from framework.multi_agent.tools import (
+    CommunicationTarget,
+    CommunicationTargetStore,
+    SendToAgentTool,
+)
 from framework.pipeline.adapters import OutputAdapter
 from framework.tools import MCPClientManager
+from framework.tools.terminal import TerminalManagerBase
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +67,10 @@ def resolve_system_prompt(agent_cfg: Any, project_dir: Path) -> str:
 
 # ── Standard tool builders (code objects, no config) ──
 
+
 def _make_file_tools() -> list[Tool]:
     from framework.tools.standard import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+
     return [ReadFileTool(), WriteFileTool(), EditFileTool(), ListDirTool()]
 
 
@@ -67,20 +78,19 @@ def _make_shell_tool(
     terminal_manager: Any | None = None,
     timeout: int = 60,
 ) -> Tool:
-    from framework.tools.terminal import SubprocessTool, SubprocessExecutor
+    from framework.tools.terminal import SubprocessExecutor, SubprocessTool
+
     return SubprocessTool(executor=SubprocessExecutor(), timeout=timeout)
 
 
 def _make_search_tools() -> list[Tool]:
     from framework.tools.standard import FindFilesTool, SearchFilesTool
+
     return [SearchFilesTool(), FindFilesTool()]
 
 
-def _make_standard_tools() -> list[Tool]:
-    return _make_file_tools() + [_make_shell_tool()] + _make_search_tools()
-
-
 # ── MCP tool helpers ──
+
 
 async def _load_agent_mcp_tools(
     agent_name: str,
@@ -124,7 +134,7 @@ async def _load_agent_mcp_tools(
 
         tools: list[Tool] = []
         for name in registry.list_tools():
-            t = registry.get(name)
+            t = registry.get_tool(name)
             if t is not None:
                 tools.append(t)
         logger.info("Agent %s: %d MCP tools loaded from %s", agent_name, len(tools), mcp_json.name)
@@ -148,6 +158,9 @@ class AgentBuilderMixin:
     _app_config: AppConfig | None
     mode: Literal["pipeline", "pool"]
 
+    # Workspace — writeable instance attr on BotService
+    workspace_context: DefaultWorkspaceContext | None
+
     # Core components
     tool_manager: InMemoryToolManager | None
     output_adapter: OutputAdapter
@@ -167,11 +180,27 @@ class AgentBuilderMixin:
     _subagent_memory_systems: dict[str, Any]
     _additional_subagent_memory_systems: dict[str, Any]
 
+    # ── Properties provided by BotService ──
+
+    @property
+    def _project_dir(self) -> Path:
+        """Project root directory. Implemented by BotService."""
+        raise NotImplementedError
+
+    @property
+    def _main_agent_cfg(self) -> IOCAgentConfig | None:
+        """Main agent config by role. Implemented by BotService."""
+        raise NotImplementedError
+
+    # ── Method stubs — implemented by BotService ──
+
+    def _find_subagent_cfg(self) -> IOCAgentConfig | None:
+        """Find the first subagent config. Implemented by BotService."""
+        raise NotImplementedError
+
     # ── Tool Registration (code-driven, no config dict) ──
 
-    async def _register_tools(
-        self, terminal_manager: Any | None = None
-    ) -> None:
+    async def _register_tools(self, terminal_manager: TerminalManagerBase | None = None) -> None:
         if self.tool_manager is None:
             return
 
@@ -179,12 +208,19 @@ class AgentBuilderMixin:
             self.tool_manager.register(tool)
 
         if terminal_manager is not None:
-            from framework.tools.terminal import TerminalTool, CommandTool, ProcessTool, ProcessRegistry
+            from framework.tools.terminal import (
+                CommandTool,
+                ProcessRegistry,
+                ProcessTool,
+                TerminalTool,
+            )
             from framework.tools.terminal.config import TerminalRuntimeConfig
 
             cfg = TerminalRuntimeConfig()
             registry = ProcessRegistry(config=cfg)
-            self.tool_manager.register(CommandTool(manager=terminal_manager, registry=registry, config=cfg))
+            self.tool_manager.register(
+                CommandTool(manager=terminal_manager, registry=registry, config=cfg)
+            )
             self.tool_manager.register(ProcessTool(registry=registry, manager=terminal_manager))
             self.tool_manager.register(TerminalTool(terminal_manager))
         else:
@@ -197,6 +233,7 @@ class AgentBuilderMixin:
         print("   [OK] Standard tools registered (file + search)")
 
         from bot.tools.custom import SendFileToUserTool
+
         self.tool_manager.register(SendFileToUserTool(output_adapter=self.output_adapter))
         print("   [OK] send_file_to_user registered")
 
@@ -208,6 +245,7 @@ class AgentBuilderMixin:
             return
 
         try:
+            assert self._app_config is not None
             main_cfg = next(
                 (a for a in self._app_config.agents if a.role == "main"),
                 self._app_config.agents[0] if self._app_config.agents else None,
@@ -215,12 +253,16 @@ class AgentBuilderMixin:
             if main_cfg is None:
                 return
 
-            mcp_tools, self.mcp_manager = await _load_agent_mcp_tools(main_cfg.name, self._project_dir)
+            mcp_tools, self.mcp_manager = await _load_agent_mcp_tools(
+                main_cfg.name, self._project_dir
+            )
             for tool in mcp_tools:
                 self.tool_manager.register(tool)
 
             if mcp_tools:
-                logger.info("Registered %d MCP tools for main agent '%s'", len(mcp_tools), main_cfg.name)
+                logger.info(
+                    "Registered %d MCP tools for main agent '%s'", len(mcp_tools), main_cfg.name
+                )
 
         except ImportError as e:
             logger.warning("MCP adapter not available: %s", e)
@@ -231,6 +273,7 @@ class AgentBuilderMixin:
         if self.tool_manager is None or self.broker is None:
             return
 
+        assert self._app_config is not None
         agents = self._app_config.agents
         if len(agents) <= 1:
             return
@@ -244,14 +287,18 @@ class AgentBuilderMixin:
         if self.agent_bus is not None:
             from framework.multi_agent.comm_kind import AgentCommKind
             from framework.multi_agent.communication import AgentCommunicationService
+
             comm_store = CommunicationTargetStore()
             # Populate from other configured agents
             for a in agents:
                 if a.name != parent_name:
-                    comm_store.add(CommunicationTarget(
-                        name=a.name, kind=AgentCommKind.SUBAGENT,
-                        description=getattr(a, "description", ""),
-                    ))
+                    comm_store.add(
+                        CommunicationTarget(
+                            name=a.name,
+                            kind=AgentCommKind.SUBAGENT,
+                            description=getattr(a, "description", ""),
+                        )
+                    )
             service = AgentCommunicationService(
                 source=parent_address,
                 broker=self.broker,
@@ -260,13 +307,20 @@ class AgentBuilderMixin:
                 session_strategy=strategy,
                 comm_tracker=self.communication_tracker,
                 target_store=comm_store,
+                project_dir=self._project_dir,
+                runtime_dir=self.workspace_context.data_dir / "runtime_state",
             )
-            self.tool_manager.register(SendToAgentTool(
-                store=comm_store,
-                source=parent_address, broker=self.broker, registry=self.agent_pool,
-                agent_bus=self.agent_bus, service=service,
-                comm_tracker=self.communication_tracker,
-            ))
+            self.tool_manager.register(
+                SendToAgentTool(
+                    store=comm_store,
+                    source=parent_address,
+                    broker=self.broker,
+                    registry=self.agent_pool,
+                    agent_bus=self.agent_bus,
+                    service=service,
+                    comm_tracker=self.communication_tracker,
+                )
+            )
             print("   [OK] send_to_agent registered")
 
     # ── Subagent Tool Manager (code-driven) ──
@@ -276,9 +330,7 @@ class AgentBuilderMixin:
         tools: list[Tool],
         agent_name: str | None = None,
     ) -> InMemoryToolManager:
-        tm = InMemoryToolManager(config=ToolManagerConfig(
-            max_workers=10, enable_parallel=True, parallel_max_workers=5,
-        ))
+        tm = InMemoryToolManager(config=ToolManagerConfig())
         for tool in tools:
             tm.register(tool)
 
@@ -292,7 +344,9 @@ class AgentBuilderMixin:
     # ── Skill Management ──
 
     def _get_subagent_skill_manager(
-        self, name: str, extra_dirs: list[Path] | None = None,
+        self,
+        name: str,
+        extra_dirs: list[Path] | None = None,
     ) -> SkillManager | None:
         cache_key = f"{name}:{':'.join(str(d) for d in extra_dirs)}" if extra_dirs else name
         if cache_key in self._subagent_skill_managers:
@@ -305,33 +359,48 @@ class AgentBuilderMixin:
         ]
         found_default = [d for d in default_dirs if d.exists()]
         if found_default:
-            sources.append(FileSkillSource(
-                directories=found_default, cache=True, layout="directory",
-                skill_filename="SKILL.md",
-            ))
+            sources.append(
+                FileSkillSource(
+                    directories=found_default,
+                    cache=True,
+                    layout="directory",
+                    skill_filename="SKILL.md",
+                )
+            )
 
         if extra_dirs:
             found_extra = [d for d in extra_dirs if d.exists()]
             if found_extra:
-                sources.append(FileSkillSource(
-                    directories=found_extra, cache=True, layout="flat",
-                    skill_filename="SKILL.md",
-                ))
+                sources.append(
+                    FileSkillSource(
+                        directories=found_extra,
+                        cache=True,
+                        layout="flat",
+                        skill_filename="SKILL.md",
+                    )
+                )
 
         if not sources:
             return None
 
-        source = (CompositeSkillSource(sources=sources, merge_strategy="last_wins")
-                  if len(sources) > 1 else sources[0])
+        source = (
+            CompositeSkillSource(sources=sources, merge_strategy="last_wins")
+            if len(sources) > 1
+            else sources[0]
+        )
         builder = DefaultSkillBuilder(base_path=self._project_dir)
 
         all_dirs: list[Path] = []
         for s in sources:
             all_dirs.extend(s.directories)
-        cache = DirectorySkillCache(
-            directories=all_dirs,
-            layout="directory",
-        ) if sources else None
+        cache = (
+            DirectorySkillCache(
+                directories=all_dirs,
+                layout="directory",
+            )
+            if sources
+            else None
+        )
 
         mgr = SkillManager(source=source, builder=builder, cache=cache)
         self._subagent_skill_managers[cache_key] = mgr
@@ -365,11 +434,14 @@ class AgentBuilderMixin:
             user_retention=UserRetentionBufferConfig(enabled=True),
         )
 
-    async def _create_subagent_memory(self, sub_name: str, base_system_prompt: str = "") -> ContextManager:
+    async def _create_subagent_memory(
+        self, sub_name: str, base_system_prompt: str = ""
+    ) -> ContextManager:
         from framework.memory.core.scope import MemoryAgentRole
 
         subagent_cfg = self._find_subagent_cfg()
         sub_memory_cfg = subagent_cfg.memory if subagent_cfg else None
+        assert self.workspace_context is not None
         data_dir = self.workspace_context.data_dir
         sub_dir = data_dir / "memory" / "subagents" / sub_name
         sub_dir.mkdir(parents=True, exist_ok=True)
@@ -412,10 +484,13 @@ class AgentBuilderMixin:
             self.plugin_integration.inject_memory_system_modifiers(memory_system)
         self._subagent_memory_systems[sub_name] = memory_system
         return MemorySystemContextManager(
-            memory_system=memory_system, default_agent_id=sub_name,
+            memory_system=memory_system,
+            default_agent_id=sub_name,
             default_agent_role=MemoryAgentRole.SUBAGENT,
             base_system_prompt=base_system_prompt,
-            injection_policy=RestrictedInjectionPolicy(max_session_messages=20, pruned_manager=self.pruned_manager),
+            injection_policy=RestrictedInjectionPolicy(
+                max_session_messages=20, pruned_manager=self.pruned_manager
+            ),
         )
 
     # ── Context Routing ──
@@ -439,10 +514,13 @@ class AgentBuilderMixin:
         if memory_system is None:
             return
         try:
-            ctx = MemoryContext(session_id=session_id, user_id="default",
-                                agent_id=sub_name, agent_role=MemoryAgentRole.SUBAGENT)
+            ctx = MemoryContext(
+                session_id=session_id,
+                user_id="default",
+                agent_id=sub_name,
+                agent_role=MemoryAgentRole.SUBAGENT,
+            )
             await memory_system.clear(ctx)
             logger.info("Cleaned up subagent memory for session: %s", session_id)
         except Exception:
             logger.exception("Failed to clean up subagent memory for session: %s", session_id)
-

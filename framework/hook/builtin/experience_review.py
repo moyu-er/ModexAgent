@@ -17,20 +17,20 @@ import asyncio
 import json
 import logging
 import uuid
-from collections.abc import Callable
-from datetime import datetime, timezone
+from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
+from framework.agents.experience.review_agent import ExperienceReviewAgent
 from framework.core.agent import AgentContext
 from framework.core.constants import StopReason
 from framework.core.emitter import AgentResult
-from framework.hook.abc import AfterTurnHook
-
-from framework.agents.experience.review_agent import ExperienceReviewAgent
 from framework.core.experience.meta import ExperienceMetaStore
 from framework.core.experience.name_sync import auto_correct_frontmatter_name
 from framework.core.experience.source import FileExperienceSource
 from framework.core.experience.validation import validate_experience_md
+from framework.hook.abc import AfterTurnHook
 
 logger = logging.getLogger(__name__)
 
@@ -48,10 +48,12 @@ class ExperienceReviewHook(AfterTurnHook):
     """
 
     # Tool names that indicate the agent is already managing experiences
-    _EXP_EDIT_TOOL_NAMES = frozenset({
-        "experience_write",
-        "experience_edit",
-    })
+    _EXP_EDIT_TOOL_NAMES = frozenset(
+        {
+            "experience_write",
+            "experience_edit",
+        }
+    )
 
     def __init__(
         self,
@@ -98,7 +100,10 @@ class ExperienceReviewHook(AfterTurnHook):
 
         logger.info(
             "ExperienceReviewHook: ENTERED turn=%s stop_reason=%s history_len=%s pending=%s",
-            self._turn_counter, result.stop_reason, history_len, bool(self._pending),
+            self._turn_counter,
+            result.stop_reason,
+            history_len,
+            bool(self._pending),
         )
 
         # Gate 0: async mutex
@@ -114,7 +119,8 @@ class ExperienceReviewHook(AfterTurnHook):
         if skip_reason:
             logger.info(
                 "ExperienceReviewHook: skipped (%s) turn=%s",
-                skip_reason, self._turn_counter,
+                skip_reason,
+                self._turn_counter,
             )
             return
 
@@ -132,7 +138,8 @@ class ExperienceReviewHook(AfterTurnHook):
         invocation_id = uuid.uuid4().hex
         logger.info(
             "ExperienceReviewHook: triggering review invocation=%s turn=%s",
-            invocation_id, self._turn_counter,
+            invocation_id,
+            self._turn_counter,
         )
 
         task = asyncio.create_task(
@@ -186,9 +193,7 @@ class ExperienceReviewHook(AfterTurnHook):
             logger.debug("Failed to build existing experiences XML", exc_info=True)
             return ""
 
-    async def _do_review(
-        self, snapshot: str, existing_xml: str, invocation_id: str
-    ) -> None:
+    async def _do_review(self, snapshot: str, existing_xml: str, invocation_id: str) -> None:
         before = self._scan_experience_dir()
         try:
             ok = await self._agent.review(
@@ -200,7 +205,8 @@ class ExperienceReviewHook(AfterTurnHook):
             )
             logger.info(
                 "ExperienceReviewHook: review completed invocation=%s ok=%s",
-                invocation_id, ok,
+                invocation_id,
+                ok,
             )
         except asyncio.CancelledError:
             logger.info(
@@ -251,7 +257,7 @@ class ExperienceReviewHook(AfterTurnHook):
             mtime = after[name]
             record = self._meta_store.get(name)
             if record is not None:
-                dt = datetime.fromtimestamp(mtime, tz=timezone.utc)
+                dt = datetime.fromtimestamp(mtime, tz=UTC)
                 record.last_used_at = dt.isoformat()
                 if record.created_at is None:
                     record.created_at = dt.isoformat()
@@ -280,9 +286,7 @@ class ExperienceReviewHook(AfterTurnHook):
                 except OSError:
                     pass
                 self._meta_store.remove(name)
-                logger.warning(
-                    "Removed invalid experience: %s (%s)", name, result.errors
-                )
+                logger.warning("Removed invalid experience: %s (%s)", name, result.errors)
                 continue
 
             # Auto-correct frontmatter name to match directory name
@@ -406,7 +410,7 @@ class ExperienceReviewHook(AfterTurnHook):
 
         return False
 
-    def _capture_snapshot(self, messages: list) -> str:
+    def _capture_snapshot(self, messages: Sequence[Any]) -> str:
         """Extract recent user/assistant messages as a text snapshot."""
         if not messages:
             return ""

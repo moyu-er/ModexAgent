@@ -15,12 +15,12 @@ from framework.commands.constants import (
     CommandAction,
     CommandDispatchPolicy,
 )
-from framework.memory.core.message import ContentFormat
 from framework.commands.models import (
     CommandContext,
     CommandHandlingResult,
     SlashCommandInvocation,
 )
+from framework.memory.core.message import ContentFormat
 from framework.utils.xml import xml_attr, xml_text
 
 logger = logging.getLogger(__name__)
@@ -29,24 +29,21 @@ logger = logging.getLogger(__name__)
 class CommandHandler(ABC):
     @property
     @abstractmethod
-    def names(self) -> Collection[str]:
-        ...
+    def names(self) -> Collection[str]: ...
 
     @abstractmethod
     def dispatch_policy(
         self,
         invocation: SlashCommandInvocation,
         context: CommandContext,
-    ) -> CommandDispatchPolicy:
-        ...
+    ) -> CommandDispatchPolicy: ...
 
     @abstractmethod
     async def handle(
         self,
         invocation: SlashCommandInvocation,
         context: CommandContext,
-    ) -> CommandHandlingResult:
-        ...
+    ) -> CommandHandlingResult: ...
 
 
 class ApprovalCommandHandler(CommandHandler):

@@ -107,9 +107,7 @@ class MemoryStorage(ABC):
         """Persist archive state. Default: write to KV store."""
         await self.set(".archive_state", state)
 
-    async def append_channel_log(
-        self, channel: str, entry: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def append_channel_log(self, channel: str, entry: dict[str, Any]) -> dict[str, Any]:
         """Append entry to channel log. Default: delegate to append_log."""
         return await self.append_log({**entry, "channel": channel})
 
@@ -130,9 +128,7 @@ class MemoryStorage(ABC):
             and int(entry.get("archive_id", 0) or 0) > since_archive_id
         ][:limit]
 
-    async def save_channel_logs(
-        self, channel: str, entries: list[dict[str, Any]]
-    ) -> None:
+    async def save_channel_logs(self, channel: str, entries: list[dict[str, Any]]) -> None:
         """Atomically replace channel log. Default: merge via read_logs + save_logs."""
         all_entries = await self.read_logs(since_cursor=0, limit=1_000_000)
         other = [e for e in all_entries if e.get("channel") != channel]

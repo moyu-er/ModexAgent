@@ -19,8 +19,8 @@ from framework.memory.archive_models import (
     ArchiveState,
     ArchiveWrite,
 )
-from framework.memory.sanitizer import ToolChainSanitizationIssue
 from framework.memory.core.message import ChatMessage
+from framework.memory.sanitizer import ToolChainSanitizationIssue
 
 
 @dataclass(frozen=True)
@@ -120,6 +120,7 @@ class KnowledgeBudget:
 @dataclass(frozen=True)
 class InjectionResult:
     """Output of injection policy."""
+
     system_prompt: str
     messages: list[ChatMessage]
 

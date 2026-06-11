@@ -3,6 +3,7 @@
 classify_openai_error — isinstance-based classification with string-scan fallback.
 No getattr/hasattr. All attribute access is on known openai exception types.
 """
+
 from __future__ import annotations
 
 import logging
@@ -13,15 +14,16 @@ logger = logging.getLogger(__name__)
 
 try:
     from openai import (
+        APIConnectionError,
         APIStatusError,
         APITimeoutError,
-        APIConnectionError,
         AuthenticationError,
         BadRequestError,
         InternalServerError,
         PermissionDeniedError,
         RateLimitError,
     )
+
     HAS_OPENAI = True
 except ImportError:
     HAS_OPENAI = False
@@ -47,19 +49,34 @@ def classify_openai_error(exc: Exception) -> LLMErrorInfo:
             return LLMErrorInfo(LLMErrorKind.CONNECTION, message, "openai", should_retry=True)
 
         if isinstance(exc, InternalServerError):
-            return LLMErrorInfo(LLMErrorKind.SERVER, message, "openai",
-                                status_code=exc.status_code, should_retry=True)
+            return LLMErrorInfo(
+                LLMErrorKind.SERVER,
+                message,
+                "openai",
+                status_code=exc.status_code,
+                should_retry=True,
+            )
 
         if isinstance(exc, RateLimitError):
             return classify_rate_limit(exc, message)
 
         if isinstance(exc, (AuthenticationError, PermissionDeniedError)):
-            return LLMErrorInfo(LLMErrorKind.AUTH, message, "openai",
-                                status_code=exc.status_code, should_retry=False)
+            return LLMErrorInfo(
+                LLMErrorKind.AUTH,
+                message,
+                "openai",
+                status_code=exc.status_code,
+                should_retry=False,
+            )
 
         if isinstance(exc, BadRequestError):
-            return LLMErrorInfo(LLMErrorKind.INVALID_REQUEST, message, "openai",
-                                status_code=exc.status_code, should_retry=False)
+            return LLMErrorInfo(
+                LLMErrorKind.INVALID_REQUEST,
+                message,
+                "openai",
+                status_code=exc.status_code,
+                should_retry=False,
+            )
 
         # Any other APIStatusError — extract body for structured details
         if isinstance(exc, APIStatusError):
@@ -91,15 +108,21 @@ def classify_api_status(exc, message: str) -> LLMErrorInfo:
         error_type = body.get("error", {}).get("type", "")
         if error_type and status_code == 429:
             if error_type == "insufficient_quota" or "quota" in error_type.lower():
-                return LLMErrorInfo(LLMErrorKind.QUOTA, message, "openai", status_code, should_retry=False)
-            return LLMErrorInfo(LLMErrorKind.RATE_LIMIT, message, "openai", status_code, should_retry=True)
+                return LLMErrorInfo(
+                    LLMErrorKind.QUOTA, message, "openai", status_code, should_retry=False
+                )
+            return LLMErrorInfo(
+                LLMErrorKind.RATE_LIMIT, message, "openai", status_code, should_retry=True
+            )
 
     if status_code in (401, 403):
         return LLMErrorInfo(LLMErrorKind.AUTH, message, "openai", status_code, should_retry=False)
     if 500 <= status_code < 600:
         return LLMErrorInfo(LLMErrorKind.SERVER, message, "openai", status_code, should_retry=True)
     if status_code == 429:
-        return LLMErrorInfo(LLMErrorKind.RATE_LIMIT, message, "openai", status_code, should_retry=True)
+        return LLMErrorInfo(
+            LLMErrorKind.RATE_LIMIT, message, "openai", status_code, should_retry=True
+        )
 
     return LLMErrorInfo(LLMErrorKind.UNKNOWN, message, "openai", status_code, should_retry=False)
 

@@ -39,9 +39,7 @@ from framework.pipeline.filters import ChainedContentFilter, WhitespaceFilter
 QQ_FILE_TYPE_IMAGE = 1
 QQ_FILE_TYPE_FILE = 4
 
-_IMAGE_EXTS = {
-    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".ico", ".svg"
-}
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".ico", ".svg"}
 
 
 def _guess_send_file_type(filename: str) -> int:
@@ -83,7 +81,11 @@ class QQInputAdapter(InputAdapter):
         self.last_input_metadata: dict[str, Any] = {}
 
         # 媒体文件保存目录
-        self._media_dir = Path(media_dir) if media_dir else Path(__file__).resolve().parent.parent.parent / "data" / "media" / "qq"
+        self._media_dir = (
+            Path(media_dir)
+            if media_dir
+            else Path(__file__).resolve().parent.parent.parent / "data" / "media" / "qq"
+        )
         self._media_dir.mkdir(parents=True, exist_ok=True)
 
     @property
@@ -97,12 +99,12 @@ class QQInputAdapter(InputAdapter):
 
         try:
             import botpy
+
             self._botpy = botpy
             return botpy
         except ImportError as err:
             raise ImportError(
-                "QQInputAdapter requires qq-botpy. "
-                "Install with: pip install qq-botpy"
+                "QQInputAdapter requires qq-botpy. Install with: pip install qq-botpy"
             ) from err
 
     def is_allowed(self, sender_id: str) -> bool:
@@ -189,10 +191,7 @@ class QQInputAdapter(InputAdapter):
         while self._running:
             try:
                 # 等待消息，带超时以便检查运行状态
-                message = await asyncio.wait_for(
-                    self._message_queue.get(),
-                    timeout=1.0
-                )
+                message = await asyncio.wait_for(self._message_queue.get(), timeout=1.0)
                 yield message
             except TimeoutError:
                 continue
@@ -207,7 +206,7 @@ class QQInputAdapter(InputAdapter):
 
             # 获取用户信息
             author = data.author
-            user_id = str(getattr(author, 'id', None) or getattr(author, 'user_openid', 'unknown'))
+            user_id = str(getattr(author, "id", None) or getattr(author, "user_openid", "unknown"))
 
             # 检查是否允许
             if not self.is_allowed(user_id):
@@ -241,17 +240,21 @@ class QQInputAdapter(InputAdapter):
                         else:
                             shown_name = filename or url
                             recv_lines.append(f"- {shown_name}\n  saved: [download failed]")
-                        att_meta.append({
-                            "url": url,
-                            "filename": filename,
-                            "saved_path": local_path,
-                        })
+                        att_meta.append(
+                            {
+                                "url": url,
+                                "filename": filename,
+                                "saved_path": local_path,
+                            }
+                        )
 
             # 将附件信息附加到 content
             if recv_lines:
-                tag = "[Image]" if any(
-                    Path(p).suffix.lower() in _IMAGE_EXTS for p in attachments
-                ) else "[File]"
+                tag = (
+                    "[Image]"
+                    if any(Path(p).suffix.lower() in _IMAGE_EXTS for p in attachments)
+                    else "[File]"
+                )
                 file_block = "Received files:\n" + "\n".join(recv_lines)
                 content = f"{content}\n\n{file_block}" if content else f"{tag}\n{file_block}"
 
@@ -305,7 +308,9 @@ class QQInputAdapter(InputAdapter):
         except Exception as e:
             print(f"[QQInputAdapter] Error handling message: {e}")
             import traceback
+
             traceback.print_exc()
+
 
 class QQOutputAdapter(OutputAdapter):
     """QQ Bot 输出适配器 - V2 架构
@@ -318,9 +323,11 @@ class QQOutputAdapter(OutputAdapter):
     def __init__(self, qq_input_adapter: QQInputAdapter):
         self._qq_input = qq_input_adapter
         self._delta_buffers: dict[str, list[str]] = {}  # 用于流式输出的缓冲
-        self.content_filter = ChainedContentFilter([
-            WhitespaceFilter(),
-        ])
+        self.content_filter = ChainedContentFilter(
+            [
+                WhitespaceFilter(),
+            ]
+        )
         self._msg_seq: int = 1  # 用于避免 QQ API 去重
 
     @property
@@ -363,7 +370,11 @@ class QQOutputAdapter(OutputAdapter):
                     is_group=is_group,
                 )
                 if not ok:
-                    filename = os.path.basename(urlparse(media_ref).path) or os.path.basename(media_ref) or "file"
+                    filename = (
+                        os.path.basename(urlparse(media_ref).path)
+                        or os.path.basename(media_ref)
+                        or "file"
+                    )
                     await self._send_text_only(
                         chat_id=chat_id,
                         is_group=is_group,
@@ -384,6 +395,7 @@ class QQOutputAdapter(OutputAdapter):
         except Exception as e:
             print(f"[QQOutputAdapter] Error sending message: {e}")
             import traceback
+
             traceback.print_exc()
 
     async def _send_text_only(
@@ -560,7 +572,9 @@ class QQOutputAdapter(OutputAdapter):
             print(f"[QQOutputAdapter] Base64 upload failed: {e}")
             return None
 
-    async def send_delta(self, delta: str, session_id: str, metadata: dict[str, Any] | None = None) -> None:
+    async def send_delta(
+        self, delta: str, session_id: str, metadata: dict[str, Any] | None = None
+    ) -> None:
         """发送流式增量（QQ 伪流式：缓冲到内存，不立即发送）
 
         QQ 不支持真正的流式传输，所以我们缓冲所有增量，

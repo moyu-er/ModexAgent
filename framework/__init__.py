@@ -26,7 +26,6 @@ from .core.tool_manager import (
     InMemoryToolManager,
     Tool,
     ToolConfig,
-    ToolExecutionMode,
     ToolManager,
     ToolManagerConfig,
     ToolResult,
@@ -63,7 +62,6 @@ __all__ = [
     # 工具管理
     "ToolManager",
     "InMemoryToolManager",
-    "ToolExecutionMode",
     "ToolConfig",
     "ToolManagerConfig",
     # Agent

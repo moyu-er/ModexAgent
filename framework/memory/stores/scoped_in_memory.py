@@ -127,9 +127,7 @@ class InMemoryScopedStorage(MemoryStorage):
             self._archive_state = dict(state)
             self._touch()
 
-    async def append_channel_log(
-        self, channel: str, entry: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def append_channel_log(self, channel: str, entry: dict[str, Any]) -> dict[str, Any]:
         async with self.get_lock().write():
             archive_id = int(entry.get("archive_id", 0) or 0)
             stored = {
@@ -157,9 +155,7 @@ class InMemoryScopedStorage(MemoryStorage):
             ]
             return filtered[:limit] if limit else filtered
 
-    async def save_channel_logs(
-        self, channel: str, entries: list[dict[str, Any]]
-    ) -> None:
+    async def save_channel_logs(self, channel: str, entries: list[dict[str, Any]]) -> None:
         async with self.get_lock().write():
             self._channel_logs[channel] = list(entries)
             self._touch()

@@ -50,9 +50,7 @@ class ScopedFileAgent:
         from framework.core.provider import LLMProvider
 
         if not isinstance(provider, LLMProvider):
-            raise TypeError(
-                f"provider must be LLMProvider, got {type(provider).__name__}"
-            )
+            raise TypeError(f"provider must be LLMProvider, got {type(provider).__name__}")
 
         self._provider = provider
         self.max_iterations: int = max_iterations
@@ -98,9 +96,11 @@ class ScopedFileAgent:
         for tool in tools:
             tool_manager.register(tool)
 
-        history = ListMessageHistory([
-            {"role": MessageRole.USER, "content": user_msg},
-        ])
+        history = ListMessageHistory(
+            [
+                {"role": MessageRole.USER, "content": user_msg},
+            ]
+        )
         context = AgentContext(
             system_prompt=system_prompt,
             history=history,

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -55,7 +55,7 @@ class SummarizerTrajectoryEmitter(ContentEmitter[Any]):
             return
         try:
             entry = {
-                "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+                "timestamp": datetime.now(tz=UTC).isoformat(),
                 "session_id": self._session_id,
                 "agent": self._agent_name,
                 **payload,
@@ -86,7 +86,9 @@ class SummarizerTrajectoryEmitter(ContentEmitter[Any]):
             self._current_reasoning = ""
             logger.info(
                 "[%s] iteration=%d session=%s",
-                self._agent_name, self._iteration, self._session_id,
+                self._agent_name,
+                self._iteration,
+                self._session_id,
             )
             self._write_trace({"phase": "iteration_start", "iteration": self._iteration})
 
@@ -94,13 +96,18 @@ class SummarizerTrajectoryEmitter(ContentEmitter[Any]):
             has_tools = isinstance(data, dict) and data.get("has_tool_calls")
             logger.info(
                 "[%s] iteration=%d ended has_tools=%s session=%s",
-                self._agent_name, self._iteration, has_tools, self._session_id,
+                self._agent_name,
+                self._iteration,
+                has_tools,
+                self._session_id,
             )
-            self._write_trace({
-                "phase": "iteration_end",
-                "iteration": self._iteration,
-                "has_tool_calls": has_tools,
-            })
+            self._write_trace(
+                {
+                    "phase": "iteration_end",
+                    "iteration": self._iteration,
+                    "has_tool_calls": has_tools,
+                }
+            )
 
         elif event_name == "model_output":
             if isinstance(data, str):
@@ -116,14 +123,19 @@ class SummarizerTrajectoryEmitter(ContentEmitter[Any]):
             arguments = dict(tc.arguments) if tc else {}
             logger.info(
                 "[%s] tool start: %s args=%s session=%s",
-                self._agent_name, tool_name, arguments, self._session_id,
+                self._agent_name,
+                tool_name,
+                arguments,
+                self._session_id,
             )
-            self._write_trace({
-                "phase": "tool_call_start",
-                "iteration": self._iteration,
-                "tool_name": tool_name,
-                "arguments": arguments,
-            })
+            self._write_trace(
+                {
+                    "phase": "tool_call_start",
+                    "iteration": self._iteration,
+                    "tool_name": tool_name,
+                    "arguments": arguments,
+                }
+            )
 
         elif event_name == "tool_call_end":
             tc_result = data if isinstance(data, tuple) and len(data) >= 2 else None
@@ -132,24 +144,32 @@ class SummarizerTrajectoryEmitter(ContentEmitter[Any]):
             tool_name = tc.tool_name if isinstance(tc, ToolCall) else ""
             success = isinstance(tr, ToolResult) and tr.error is None
             error = tr.error if isinstance(tr, ToolResult) else None
-            result_preview = str(tr.result)[:200] if isinstance(tr, ToolResult) and tr.result else ""
+            result_preview = (
+                str(tr.result)[:200] if isinstance(tr, ToolResult) and tr.result else ""
+            )
             logger.info(
                 "[%s] tool end: %s success=%s session=%s",
-                self._agent_name, tool_name, success, self._session_id,
+                self._agent_name,
+                tool_name,
+                success,
+                self._session_id,
             )
-            self._write_trace({
-                "phase": "tool_call_end",
-                "iteration": self._iteration,
-                "tool_name": tool_name,
-                "success": success,
-                "error": error,
-                "result_preview": result_preview,
-            })
+            self._write_trace(
+                {
+                    "phase": "tool_call_end",
+                    "iteration": self._iteration,
+                    "tool_name": tool_name,
+                    "success": success,
+                    "error": error,
+                    "result_preview": result_preview,
+                }
+            )
 
         elif event_name == "max_iterations":
             logger.warning(
                 "[%s] max iterations reached session=%s",
-                self._agent_name, self._session_id,
+                self._agent_name,
+                self._session_id,
             )
             self._write_trace({"phase": "max_iterations", "iteration": self._iteration})
 
@@ -165,19 +185,27 @@ class SummarizerTrajectoryEmitter(ContentEmitter[Any]):
         content_preview = (result.content or self._current_content)[:200]
         logger.info(
             "[%s] turn complete: phase=%s stop_reason=%s session=%s content_preview=%r",
-            self._agent_name, phase, result.stop_reason, self._session_id, content_preview,
+            self._agent_name,
+            phase,
+            result.stop_reason,
+            self._session_id,
+            content_preview,
         )
-        self._write_trace({
-            "phase": phase,
-            "stop_reason": result.stop_reason,
-            "error": result.error,
-            "content_preview": content_preview,
-            "reasoning_preview": self._current_reasoning[:200],
-        })
+        self._write_trace(
+            {
+                "phase": phase,
+                "stop_reason": result.stop_reason,
+                "error": result.error,
+                "content_preview": content_preview,
+                "reasoning_preview": self._current_reasoning[:200],
+            }
+        )
 
     async def emit_error(self, error: str) -> None:
         logger.error(
             "[%s] error: %s session=%s",
-            self._agent_name, error, self._session_id,
+            self._agent_name,
+            error,
+            self._session_id,
         )
         self._write_trace({"phase": "error", "error": error})

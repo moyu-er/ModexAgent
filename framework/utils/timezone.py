@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone as _dt_timezone, timedelta, tzinfo
+from datetime import UTC, datetime, timedelta, tzinfo
+from datetime import timezone as _dt_timezone
 from functools import lru_cache
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 def _local_timezone() -> tzinfo:
     """Return the server's local timezone — cross-platform safe."""
     tz = datetime.now().astimezone().tzinfo
-    return tz if tz is not None else _dt_timezone.utc
+    return tz if tz is not None else UTC
 
 
 @lru_cache(maxsize=1)

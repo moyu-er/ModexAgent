@@ -15,7 +15,6 @@ from framework.memory.core.models import LongTermMemory
 from framework.memory.core.scope import (
     MemoryContext,
     MemoryLayerName,
-    SessionScope,
 )
 from framework.memory.core.system import (
     ContextManagedMemorySystem,
@@ -26,11 +25,11 @@ from framework.memory.history import MessageHistory
 if TYPE_CHECKING:
     from framework.agents.summarizer.abc import ArchiveGenerator, KnowledgeConsolidatorBase
     from framework.memory.stores.dir_archive import DirArchiveStorage
+from framework.core.types import MessageRole
 from framework.memory.lifecycle import MemoryMaintenancePolicy
 from framework.memory.pruned.manager import PrunedManager
 from framework.memory.recorder import MemoryAppendRecorder
 from framework.memory.registry.base import MemoryStoreRegistry
-from framework.core.types import MessageRole
 
 logger = logging.getLogger(__name__)
 
@@ -441,6 +440,7 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
     async def _resolve_archive_storage(self, context: MemoryContext) -> Any:
         archive = self._layers.archive
         from framework.memory.core.scope import UserScope
+
         scope = archive.get_scope() if archive is not None else UserScope()
         return await self._registry.resolve(
             layer=MemoryLayerName.ARCHIVE,

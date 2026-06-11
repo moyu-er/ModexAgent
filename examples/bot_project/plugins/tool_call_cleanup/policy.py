@@ -54,9 +54,14 @@ class ToolCallCleanupPolicy:
             return list(messages)
 
         result = [
-            m for m in messages
+            m
+            for m in messages
             if m.get("role") != "tool"
-            and not (m.get("role") == "assistant" and m.get("tool_calls") and len(m.get("tool_calls")) >= 1)
+            and not (
+                m.get("role") == "assistant"
+                and m.get("tool_calls")
+                and len(m.get("tool_calls")) >= 1
+            )
         ]
 
         logger.debug(

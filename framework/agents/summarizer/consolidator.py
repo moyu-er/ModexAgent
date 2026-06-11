@@ -12,8 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from framework.agents.summarizer.abc import (
-    _get_registry,
     KnowledgeConsolidatorBase,
+    _get_registry,
 )
 from framework.agents.summarizer.scoped_file_agent import ScopedFileAgent
 
@@ -60,9 +60,8 @@ class KnowledgeConsolidator(ScopedFileAgent, KnowledgeConsolidatorBase):
             archive_sections="__ARCHIVE_SECTIONS__",
             current_knowledge_sections="__CURRENT_KNOWLEDGE_SECTIONS__",
         )
-        return (
-            template.replace("__ARCHIVE_SECTIONS__", archive_sections_text)
-            .replace("__CURRENT_KNOWLEDGE_SECTIONS__", current_knowledge_sections_text)
+        return template.replace("__ARCHIVE_SECTIONS__", archive_sections_text).replace(
+            "__CURRENT_KNOWLEDGE_SECTIONS__", current_knowledge_sections_text
         )
 
     # -- public entry point -------------------------------------------------
@@ -95,14 +94,10 @@ class KnowledgeConsolidator(ScopedFileAgent, KnowledgeConsolidatorBase):
             if km_path.exists():
                 raw = km_path.read_text(encoding="utf-8")
                 archive_sections.append(
-                    f"## Archive {aid} — knowledge.md\n"
-                    f"<!-- source: archive {aid} -->\n"
-                    f"{raw}"
+                    f"## Archive {aid} — knowledge.md\n<!-- source: archive {aid} -->\n{raw}"
                 )
             else:
-                archive_sections.append(
-                    f"## Archive {aid} — knowledge.md\n(empty)"
-                )
+                archive_sections.append(f"## Archive {aid} — knowledge.md\n(empty)")
 
         # Current knowledge files (first 2000 chars each for context)
         knowledge_context: list[str] = []
@@ -111,10 +106,7 @@ class KnowledgeConsolidator(ScopedFileAgent, KnowledgeConsolidatorBase):
             if fpath.exists():
                 content = fpath.read_text(encoding="utf-8")
                 if len(content) > 2000:
-                    content = (
-                        content[:2000]
-                        + f"\n... ({len(content)} chars total)"
-                    )
+                    content = content[:2000] + f"\n... ({len(content)} chars total)"
                 knowledge_context.append(f"## Current {fname}\n{content}")
             else:
                 knowledge_context.append(f"## Current {fname}\n(empty file)")
@@ -131,7 +123,8 @@ class KnowledgeConsolidator(ScopedFileAgent, KnowledgeConsolidatorBase):
 
         logger.info(
             "KnowledgeConsolidator starting: archives=%s invocation=%s",
-            archive_ids, invocation_id or trace_key,
+            archive_ids,
+            invocation_id or trace_key,
         )
 
         for attempt in range(2):
@@ -151,12 +144,16 @@ class KnowledgeConsolidator(ScopedFileAgent, KnowledgeConsolidatorBase):
                 # decide no updates are needed — that is still success.
                 logger.info(
                     "KnowledgeConsolidator succeeded: archives=%s invocation=%s attempt=%d",
-                    archive_ids, invocation_id or trace_key, attempt + 1,
+                    archive_ids,
+                    invocation_id or trace_key,
+                    attempt + 1,
                 )
                 return True
             logger.warning(
                 "KnowledgeConsolidator attempt %d failed archive_ids=%s invocation=%s",
-                attempt + 1, archive_ids, invocation_id or trace_key,
+                attempt + 1,
+                archive_ids,
+                invocation_id or trace_key,
             )
 
         return False

@@ -20,22 +20,13 @@ from framework.workspace import DefaultWorkspaceContext, WorkspaceSwitchCallback
 
 if TYPE_CHECKING:
     from framework.commands.processor import SlashCommandProcessor
+    from framework.core.experience.manager import ExperienceManager
     from framework.hook.builtin.experience_review import ExperienceReviewHook
+    from framework.memory.pruned.manager import PrunedManager
     from framework.runtime.codec import RuntimeStateCodecRegistry
     from framework.runtime.store import JsonFileRuntimeCommandStore, JsonFileTurnStateStore
-    from framework.memory.pruned.manager import PrunedManager
-    from framework.core.experience.manager import ExperienceManager
 
 from bot.plugins.integration import PluginIntegration
-from framework.control.event_bus import CallbackControlEventBus
-from framework.memory.default_system import DefaultMemorySystem
-from framework.core.context import ContextManager
-from framework.memory.consolidation.dream_engine import DreamEngine
-from framework.multi_agent.bus import AgentMessageBus
-from framework.runtime.services import AgentRuntime
-from framework.runtime.store import TurnStateStore
-from framework.tools.mcp.manager import MCPClientManager
-from framework.tools.terminal.manager import TerminalManager
 from bot.utils.config_loader import ConfigLoader
 from framework import (
     AgentPipeline,
@@ -44,8 +35,10 @@ from framework import (
     ReActAgent,
     ToolManagerConfig,
 )
-from framework.control.channel import InMemoryControlChannel
 from framework.approval.ui import IMUserInterface
+from framework.control.channel import InMemoryControlChannel
+from framework.control.event_bus import CallbackControlEventBus
+from framework.core.context import ContextManager
 from framework.core.emitter import ContentEmitter
 from framework.core.llm_struct import (
     LLMTimeoutPolicy,
@@ -53,15 +46,15 @@ from framework.core.llm_struct import (
     TurnTimeoutPolicy,
 )
 from framework.core.skills import (
+    DefaultSkillBuilder,
     DirectorySkillCache,
     FileSkillSource,
-    DefaultSkillBuilder,
     ResolutionContext,
     SkillManager,
 )
+from framework.hook.abc import Hook
 from framework.hook.builtin import InboxFlushHook
 from framework.hook.runner import HookRunner
-from framework.hook.abc import Hook
 from framework.interceptor.builtin import (
     ToolResultLimitInterceptor,
 )
@@ -73,7 +66,9 @@ from framework.ioc.configs.memory import MemoryConfig as IOCMemoryConfig
 from framework.ioc.factories.governance import create_governance
 from framework.ioc.factories.llm import create_llm_provider
 from framework.ioc.factories.memory import create_memory
+from framework.memory.consolidation.dream_engine import DreamEngine
 from framework.memory.core.scope import MemoryContext
+from framework.memory.default_system import DefaultMemorySystem
 from framework.memory.injection import FullInjectionPolicy
 from framework.memory.system import MemorySystemContextManager
 from framework.messaging.broker_bridge import (
@@ -90,13 +85,17 @@ from framework.multi_agent import (
     DefaultMeshRouter,
     SessionRetentionPolicy,
 )
-from framework.multi_agent.bus import LocalAgentMessageBus
+from framework.multi_agent.bus import AgentMessageBus, LocalAgentMessageBus
 from framework.multi_agent.descriptor import AgentLLMConfig
 from framework.multi_agent.inbox.consumer import InboxConsumer
 from framework.multi_agent.inbox.producer import InboxProducer
 from framework.multi_agent.inbox.server_local import LocalFileInboxServer
 from framework.pipeline.adapters import InputAdapter, OutputAdapter
+from framework.runtime.services import AgentRuntime
+from framework.runtime.store import TurnStateStore
+from framework.tools.mcp.manager import MCPClientManager
 from framework.tools.overflow.cleaner import OverflowCleaner
+from framework.tools.terminal.manager import TerminalManager
 
 from .builders import AgentBuilderMixin
 from .pool_builder import create_pool
@@ -329,6 +328,7 @@ class BotService(AgentBuilderMixin):
 
     def _resolve_path(self, config_key: str, default_relative: str) -> Path:
         """Resolve a path from AppConfig paths, falling back to a relative default."""
+        assert self._app_config is not None, "AppConfig not loaded"
         paths = self._app_config.paths
         config_value = getattr(paths, config_key, None)
         if config_value:
@@ -349,6 +349,7 @@ class BotService(AgentBuilderMixin):
         # 1. Load config (IOC AppConfig is the only source of truth)
         if self._app_config is None:
             self._app_config = self._load_app_config()
+        assert self._app_config is not None, "AppConfig must be loaded before initialize"
         print(f"[OK] Config loaded ({len(self._app_config.agents)} agents via IOC)")
 
         # 1.5 Create WorkspaceContext
@@ -358,6 +359,7 @@ class BotService(AgentBuilderMixin):
             home=self._project_dir,
             active_checker=self._make_active_checker(),
         )
+        assert self.workspace_context is not None
 
         # Restore last workspace
         restore_result = await self.workspace_context.restore()
@@ -398,12 +400,7 @@ class BotService(AgentBuilderMixin):
         # ── Pipeline mode continues below ──
 
         # 3. Create ToolManager
-        tm_config = ToolManagerConfig(
-            max_workers=10,
-            enable_parallel=True,
-            parallel_max_workers=5,
-        )
-        self.tool_manager = InMemoryToolManager(config=tm_config)
+        self.tool_manager = InMemoryToolManager(config=ToolManagerConfig())
 
         # 3a. Create TerminalManager — degrade to subprocess only when no shell at all.
         main_cfg = self._main_agent_cfg
@@ -553,10 +550,10 @@ class BotService(AgentBuilderMixin):
         if main_cfg is not None and main_cfg.experience is not None:
             exp_cfg = main_cfg.experience
             if exp_cfg.enabled:
-                from framework.core.experience.manager import ExperienceManager
-                from framework.core.experience.source import FileExperienceSource
-                from framework.core.experience.meta import PerFileExperienceMetaStore
                 from framework.agents.experience.review_agent import ExperienceReviewAgent
+                from framework.core.experience.manager import ExperienceManager
+                from framework.core.experience.meta import PerFileExperienceMetaStore
+                from framework.core.experience.source import FileExperienceSource
                 from framework.hook.builtin.experience_review import ExperienceReviewHook
 
                 # Shared dynamic path lambda — workspace-safe via workspace_context
@@ -593,6 +590,7 @@ class BotService(AgentBuilderMixin):
 
                 # ---- Experience Tool (dynamic path via lambda — workspace-safe) ----
                 from framework.memory.tools.experience import ExperienceTool
+
                 self.tool_manager.register(ExperienceTool(_exp_path, exp_meta))
                 print("   [OK] experience tool registered (action=read/write/edit/list/rename)")
 
@@ -696,6 +694,8 @@ class BotService(AgentBuilderMixin):
 
     async def _initialize_pipeline(self, main_skill_manager: SkillManager | None) -> None:
         """Initialize pipeline-mode runtime."""
+        assert self._app_config is not None, "AppConfig not loaded"
+        assert self.workspace_context is not None, "WorkspaceContext not initialized"
         if self.broker is None:
             raise RuntimeError("Broker is not initialized")
         if self.agent_factory is None:
@@ -799,6 +799,8 @@ class BotService(AgentBuilderMixin):
 
     async def _initialize_pool(self) -> None:
         """Initialize pool-mode with multiple pools."""
+        assert self._app_config is not None, "AppConfig not loaded"
+        assert self.workspace_context is not None, "WorkspaceContext not initialized"
         pool_configs = self._app_config.pools
         if not pool_configs:
             raise RuntimeError("No pools defined. Add .yml files to config/pools/")
@@ -918,7 +920,7 @@ class BotService(AgentBuilderMixin):
         print(f"[INFO] Switch commands: /{' /'.join(self._pools.keys())}")
         print(f"[INFO] Default pool: {self._app_config.multi_agent.default_pool}")
 
-    def _make_active_checker(self) -> "Callable[[], bool]":
+    def _make_active_checker(self) -> Callable[[], bool]:
         """构造活跃 agent 检查器。
 
         检查所有 Pipeline（主 pipeline + 所有 pool 的 agent）
@@ -928,6 +930,7 @@ class BotService(AgentBuilderMixin):
         Returns:
             True 表示有活跃 agent，应拒绝 cd。
         """
+
         def check() -> bool:
             if self.pipeline is not None and self.pipeline.has_active_sessions():
                 return True
@@ -935,6 +938,7 @@ class BotService(AgentBuilderMixin):
                 if pool_inst.pool.has_active_sessions():
                     return True
             return False
+
         return check
 
     # ------------------------------------------------------------------ #
@@ -953,12 +957,9 @@ class BotService(AgentBuilderMixin):
         await self._rebuild_shared_infrastructure(new_dir)
 
     async def _on_ws_terminal_reset(self, _old_dir: Path, _new_dir: Path) -> None:
-        """② Close all terminal sessions."""
-        await self._close_all_terminals(suppress_errors=False)
-        for pool_inst in self._pools.values():
-            if pool_inst.terminal_manager is not None:
-                for name in list(pool_inst.terminal_manager.list_names()):
-                    await pool_inst.terminal_manager.close(name)
+        """② Close all terminal sessions. _close_all_terminals covers both
+        pipeline and pool terminal managers."""
+        await self._close_all_terminals(suppress_errors=True)
 
     # ------------------------------------------------------------------ #
     # Workspace switch helpers
@@ -969,9 +970,7 @@ class BotService(AgentBuilderMixin):
 
         Used by both workspace-switch callbacks and BotService.stop().
         """
-        for mgr in [self.terminal_manager] + [
-            pi.terminal_manager for pi in self._pools.values()
-        ]:
+        for mgr in [self.terminal_manager] + [pi.terminal_manager for pi in self._pools.values()]:
             if mgr is None:
                 continue
             for name in list(mgr.list_names()):
@@ -993,7 +992,8 @@ class BotService(AgentBuilderMixin):
             if interceptor.handler is None:
                 continue
             new_store = LocalFileToolOverflowStore(
-                workspace=new_dir, max_chunk_size=10_000,
+                workspace=new_dir,
+                max_chunk_size=10_000,
             )
             interceptor.handler._store = new_store
             if interceptor.handler._cleaner is not None:
@@ -1005,25 +1005,35 @@ class BotService(AgentBuilderMixin):
         main_mem = main_cfg.memory if main_cfg else self._app_config.memory
         if self.provider is None:
             return
-        self.memory_system, self._turn_store, self._command_store = (
-            await self._rebuild_memory_for_target(
-                new_dir,
-                self._ws_memory(new_dir),
-                self._ws_runtime(new_dir),
-                main_mem,
-                self.provider,
-                self.context_manager,
-                pipeline=self.pipeline,
-            )
+        (
+            self.memory_system,
+            self._turn_store,
+            self._command_store,
+        ) = await self._rebuild_memory_for_target(
+            new_dir,
+            self._ws_memory(new_dir),
+            self._ws_runtime(new_dir),
+            main_mem,
+            self.provider,
+            self.context_manager,
+            pipeline=self.pipeline,
         )
         self.pruned_manager = self.memory_system.pruned_manager
         await self._rebuild_experience(new_dir)
 
     async def _rebuild_pool_memory(self, new_dir: Path) -> None:
-        """Rebuild pool-mode memory + runtime stores + experience for every pool."""
+        """Rebuild pool-mode memory + runtime stores + experience for every pool.
+
+        Also updates factory._default_turn_store and factory._trace_store so
+        NEW subagents created after cd write to the new data directory.
+        """
         for pool_inst in self._pools.values():
             main_inst = pool_inst.pool._agents.get(pool_inst.main_agent_name)
-            pool_inst.memory_system, _, _ = await self._rebuild_memory_for_target(
+            (
+                new_memory,
+                new_turn_store,
+                new_cmd_store,
+            ) = await self._rebuild_memory_for_target(
                 new_dir,
                 self._ws_memory(new_dir) / pool_inst.name,
                 self._ws_runtime(new_dir) / pool_inst.name,
@@ -1032,6 +1042,15 @@ class BotService(AgentBuilderMixin):
                 pool_inst.context_manager,
                 pipeline=main_inst.pipeline if main_inst else None,
             )
+            pool_inst.memory_system = new_memory
+            # Update factory defaults so subagents created after cd
+            # write trace/turns to the new workspace
+            factory = pool_inst.pool._agent_factory
+            factory._default_turn_store = new_turn_store
+            if factory._trace_store is not None:
+                factory._trace_store._base_dir = (
+                    self._ws_runtime(new_dir) / pool_inst.name / "trace"
+                )
         await self._rebuild_experience(new_dir)
 
     async def _stop_background_tasks(self) -> None:
@@ -1127,12 +1146,15 @@ class BotService(AgentBuilderMixin):
         )
         self.plugin_integration.inject_memory_system_modifiers(new_memory)
         await self._init_long_term_defaults(
-            new_data_dir, memory_cfg, memory_system=new_memory,
+            new_data_dir,
+            memory_cfg,
+            memory_system=new_memory,
         )
 
         # New runtime stores
         new_turn_store = JsonFileTurnStateStore(
-            runtime_dir / "turns", self._runtime_codec_registry,
+            runtime_dir / "turns",
+            self._runtime_codec_registry,
         )
         new_cmd_store = JsonFileRuntimeCommandStore(
             runtime_dir / "commands",
@@ -1161,7 +1183,9 @@ class BotService(AgentBuilderMixin):
         from framework.core.experience.source import FileExperienceSource
 
         def _new_manager(pool_name: str, agent_name: str) -> ExperienceManager:
-            exp_dir = BotService._ws_experience(new_data_dir, pool_name=pool_name, agent_name=agent_name)
+            exp_dir = BotService._ws_experience(
+                new_data_dir, pool_name=pool_name, agent_name=agent_name
+            )
             exp_dir.mkdir(parents=True, exist_ok=True)
             return ExperienceManager(source=FileExperienceSource(directories=[exp_dir]))
 
@@ -1214,12 +1238,17 @@ class BotService(AgentBuilderMixin):
         self._start_dream_task()
 
     def _update_communication_paths(self, new_data_dir: Path) -> None:
-        """更新 pool 模式下 AgentCommunicationService 的路径引用。"""
+        """更新 pool 模式下 AgentCommunicationService 的路径引用。
+
+        cd 切换 workspace 后，memory、pruned、runtime 都需要指向新数据目录，
+        否则 trace/output 会写到旧目录。
+        """
         for pool_inst in self._pools.values():
             svc = pool_inst.communication_service
             if svc is not None:
                 svc._memory_dir = self._ws_memory(new_data_dir) / pool_inst.name
                 svc._pruned_manager = pool_inst.memory_system.pruned_manager
+                svc._runtime_dir = new_data_dir / "runtime_state" / pool_inst.name
 
     def _find_subagent_cfg(self) -> IOCAgentConfig | None:
         """Find the first subagent config by role."""
@@ -1300,17 +1329,15 @@ class BotService(AgentBuilderMixin):
         """Build HookRunner from collected hooks with default HookSpec.
 
         Default hooks (always present):
-          - RuntimeContextHook — records tool calls for SubagentAutoSendHook
-          - SubagentAutoSendHook — fallback forward when send_to_agent not called
           - MaxIterationNotifyHook — notify parent/user when max_iterations hit
+
+        Note: SubagentAutoSendHook is wired separately by _wire_subagent_hooks()
+        in AgentCommunicationService, with proper agent_bus and runtime_dir args.
         """
         from framework.hook import HookErrorPolicy, HookRunner, HookSpec
-        from framework.hook.builtin import RuntimeContextHook, SubagentAutoSendHook
         from framework.hook.notification import MaxIterationNotifyHook
 
         runner = HookRunner()
-        runner.add(HookSpec(hook=RuntimeContextHook(), on_error=HookErrorPolicy.LOG))
-        runner.add(HookSpec(hook=SubagentAutoSendHook(), on_error=HookErrorPolicy.LOG))
         runner.add(HookSpec(hook=MaxIterationNotifyHook(), on_error=HookErrorPolicy.LOG))
         for hook in hooks:
             runner.add(HookSpec(hook=hook, on_error=HookErrorPolicy.LOG))
@@ -1343,9 +1370,7 @@ class BotService(AgentBuilderMixin):
             else self._project_dir
         )
         max_chars = 50_000
-        overflow_store = LocalFileToolOverflowStore(
-            workspace=overflow_dir, max_chunk_size=10_000
-        )
+        overflow_store = LocalFileToolOverflowStore(workspace=overflow_dir, max_chunk_size=10_000)
         overflow_cleaner = OverflowCleaner(overflow_store)
         overflow_handler = ToolResultOverflowHandler(
             store=overflow_store,
@@ -1363,6 +1388,7 @@ class BotService(AgentBuilderMixin):
             ControlDrainInterceptor,
             LlmCancelInterceptor,
         )
+
         chain.add(ControlDrainInterceptor(channel=self.control_channel))
         chain.add(LlmCancelInterceptor(channel=self.control_channel))
 
@@ -1378,8 +1404,12 @@ class BotService(AgentBuilderMixin):
 
         _ = skill_manager
         if workspace_ctx is not None:
-            from framework.workspace.handlers import CdCommandHandler, ExitCommandHandler, PwdCommandHandler
             from framework.commands.handlers import build_default_builtin_handlers
+            from framework.workspace.handlers import (
+                CdCommandHandler,
+                ExitCommandHandler,
+                PwdCommandHandler,
+            )
 
             handlers = list(build_default_builtin_handlers())
             handlers.append(CdCommandHandler(workspace_ctx))
@@ -1405,7 +1435,6 @@ class BotService(AgentBuilderMixin):
             await pool.broker_bridge.start()
             # Start per-pool experience curator background loop
             if pool.experience_curator is not None:
-
                 # Derive interval from pool config
                 interval = 3600
                 main_cfg = next(
@@ -1421,7 +1450,9 @@ class BotService(AgentBuilderMixin):
                     self._curator_background_loop(pool.experience_curator, interval),
                 )
                 self._tasks.append(pool.experience_curator_task)
-                print(f"   [OK] Pool '{pool.name}': ExperienceCurator started (interval={interval}s)")
+                print(
+                    f"   [OK] Pool '{pool.name}': ExperienceCurator started (interval={interval}s)"
+                )
 
         self._start_dream_task()
 
@@ -1537,8 +1568,10 @@ class BotService(AgentBuilderMixin):
             abs_template_dir = str((self._project_dir / raw_template_dir).resolve())
             # KnowledgeMemoryConfig is frozen — replace the whole config object
             from dataclasses import replace as _dc_replace
+
             lt_mgr._config = _dc_replace(
-                lt_mgr._config, default_templates_dir=abs_template_dir,
+                lt_mgr._config,
+                default_templates_dir=abs_template_dir,
             )
 
         defaults: dict[str, str] = {
@@ -1568,8 +1601,8 @@ class BotService(AgentBuilderMixin):
             return
 
         from framework.memory.lifecycle import (
-            DefaultMemoryMaintenancePolicy,
             DefaultArchiveRetentionPolicy,
+            DefaultMemoryMaintenancePolicy,
         )
 
         # Wire archive retention with max_archive_total for FIFO eviction
@@ -1682,7 +1715,8 @@ class BotService(AgentBuilderMixin):
         if count > 0:
             logger.info(
                 "Archive trigger: %d unprocessed archive(s), running DreamEngine session=%s",
-                count, context.session_id,
+                count,
+                context.session_id,
             )
             try:
                 await self.dream_engine.run(context)

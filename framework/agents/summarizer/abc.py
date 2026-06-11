@@ -13,8 +13,10 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+if TYPE_CHECKING:
+    from framework.memory.prompts import PromptRegistry
 
 # ── Shared result types ────────────────────────────────────────────────────────
 
@@ -31,14 +33,15 @@ class ArchiveSummarizerResult:
 
 # ── Shared utilities ───────────────────────────────────────────────────────────
 
-_prompt_registry: Any | None = None
+_prompt_registry: PromptRegistry | None = None
 
 
-def _get_registry() -> Any:
+def _get_registry() -> PromptRegistry:
     """Return cached PromptRegistry, loading on first access."""
     global _prompt_registry
     if _prompt_registry is None:
         from framework.memory.prompts import create_default_registry
+
         _prompt_registry = create_default_registry()
     return _prompt_registry
 

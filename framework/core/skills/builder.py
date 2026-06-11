@@ -37,12 +37,9 @@ def _render_skill_xml(skills: list[Skill]) -> str:
     ]
     for skill in skills:
         dir_path = str(Path(skill.location).parent.resolve()) if skill.location else ""
-        parts.append(
-            f'  <skill name="{xml_attr(skill.name)}" '
-            f'directory="{xml_attr(dir_path)}">'
-        )
+        parts.append(f'  <skill name="{xml_attr(skill.name)}" directory="{xml_attr(dir_path)}">')
         if skill.description:
-            parts.append(f'    <description>{xml_text(skill.description)}</description>')
+            parts.append(f"    <description>{xml_text(skill.description)}</description>")
         parts.append("  </skill>")
     parts.append("</available_skills>")
     return "\n".join(parts)

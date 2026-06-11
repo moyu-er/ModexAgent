@@ -40,15 +40,13 @@ from ..approval.constants import ApprovalDecision
 from ..approval.response import parse_input_command
 from ..approval.types import ApprovalAction
 from ..approval.ui import ApprovalUserInterface
+from ..control.exceptions import AgentControlError
 from ..core.agent import Agent, AgentContext, AgentSessionMeta
-from ..multi_agent.comm_kind import AgentCommKind
-from ..multi_agent.session_id import DefaultSessionIdStrategy
 from ..core.context import ContextManager
 from ..core.emitter import AgentResult, StreamingAwareEmitter
 from ..core.graph.interrupt import GraphInterrupt
 from ..core.runtime_context import RuntimeContextManager
 from ..core.tool_manager import ToolManager
-from ..control.exceptions import AgentControlError
 from ..core.types import InputMessage
 from ..memory import ContextGovernance, MemoryContext
 from ..memory.consolidation import DreamEngine
@@ -59,10 +57,12 @@ from ..multi_agent import (
     AgentDescriptor,
     AgentMessageRouter,
 )
+from ..multi_agent.comm_kind import AgentCommKind
+from ..multi_agent.session_id import DefaultSessionIdStrategy
+from ..runtime.dream_locks import _dream_locks
 from ..runtime.enums import SnapshotReason, TurnCustomKey, TurnPhase
 from ..runtime.models import StateQueryScope, TurnSnapshot
 from ..runtime.services import AgentRuntimeServices
-from ..runtime.dream_locks import _dream_locks
 from ..utils.context_builder import MultiAgentContextBuilder
 from ..utils.deduplicator import MessageDeduplicator
 from .adapters import InputAdapter, OutputAdapter, OutputMessage
@@ -95,8 +95,6 @@ async def _safe_flush(ctx_mgr: Any, session_id: str, *, timeout: float) -> None:
         logger.error("Memory flush timeout for %s", session_id)
     except Exception:
         logger.exception("Memory flush failed for %s", session_id)
-
-
 
 
 class AgentPipeline:
@@ -149,7 +147,7 @@ class AgentPipeline:
         command_store: RuntimeCommandStore | None = None,
         runtime_services: AgentRuntimeServices | None = None,
         command_processor: CommandProcessor | None = None,
-    ):
+    ) -> None:
         """
         Args:
             ...
@@ -260,7 +258,8 @@ class AgentPipeline:
                     except Exception:
                         logger.debug(
                             "Failed to send post-stop notification session=%s",
-                            input_msg.session_id, exc_info=True,
+                            input_msg.session_id,
+                            exc_info=True,
                         )
                     pass
                 except Exception as e:
@@ -661,9 +660,8 @@ class AgentPipeline:
                     and base_services.runtime_context_manager is not None
                     else self.runtime_context_manager
                 ),
-                control_channel=self.control_channel or (
-                    base_services.control_channel if base_services is not None else None
-                ),
+                control_channel=self.control_channel
+                or (base_services.control_channel if base_services is not None else None),
             )
             agent_context.runtime = AgentRuntime(services=services, state=react_state)
             agent_context.runtime.state.custom[TurnCustomKey.MAX_TOOLS_PER_TURN] = None
@@ -677,9 +675,8 @@ class AgentPipeline:
             agent_context.runtime = AgentRuntime(
                 services=AgentRuntimeServices(
                     governance=governance,
-                    control_channel=self.control_channel or (
-                        base_services.control_channel if base_services is not None else None
-                    ),
+                    control_channel=self.control_channel
+                    or (base_services.control_channel if base_services is not None else None),
                 ),
                 state=ReActTurnState(
                     identity=turn_identity,
@@ -715,8 +712,8 @@ class AgentPipeline:
             AgentResult on successful turn, None if GraphInterrupt for approval.
         """
         # 设置当前 conversation_id 上下文变量（供 subagent 通信工具使用）
-        from ..multi_agent.session_id import DefaultSessionIdStrategy
         from ..multi_agent.context import current_conversation_id
+        from ..multi_agent.session_id import DefaultSessionIdStrategy
 
         raw_id = input_metadata.get("conversation_id") or session_id
         parts = DefaultSessionIdStrategy().parse(raw_id)

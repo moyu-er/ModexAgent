@@ -1,7 +1,7 @@
 agent_type: planner
 description: "Creates implementation plans from context and requirements"
 max_steps: 80
-tool_preset: minimal
+tool_preset: read_only
 context_mode: fork
 thinking_budget: high
 # NOTE: default_reads is not implemented yet — field reserved for future use

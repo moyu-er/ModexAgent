@@ -165,7 +165,9 @@ class MemoryLayerFactory:
         layer: MemoryLayerName,
         scope: MemoryScope | None = None,
     ) -> StorageFactory:
-        effective_scope = scope or (SessionScope() if layer == MemoryLayerName.SESSION else UserScope())
+        effective_scope = scope or (
+            SessionScope() if layer == MemoryLayerName.SESSION else UserScope()
+        )
 
         async def resolve(context: MemoryContext) -> MemoryStorage:
             return await registry.resolve(layer=layer, scope=effective_scope, context=context)

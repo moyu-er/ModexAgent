@@ -7,7 +7,10 @@ import logging
 import os
 from typing import Any
 
-from framework.tools.terminal.backends.base import TerminalBackend, extract_current_segment_from_buffer
+from framework.tools.terminal.backends.base import (
+    TerminalBackend,
+    extract_current_segment_from_buffer,
+)
 from framework.tools.terminal.prompt import is_prompt_ready
 from framework.tools.terminal.pty_keys import CTRL_C
 from framework.tools.terminal.results import TerminalRead, TerminalSegment
@@ -34,9 +37,7 @@ class TmuxPtyBackend(TerminalBackend):
         try:
             import libtmux
         except ImportError as e:
-            raise ImportError(
-                "libtmux is required on Unix. Install: pip install libtmux"
-            ) from e
+            raise ImportError("libtmux is required on Unix. Install: pip install libtmux") from e
         self._libtmux = libtmux
         self._server: Any = libtmux.Server()
         self._session: Any = None
@@ -80,7 +81,9 @@ class TmuxPtyBackend(TerminalBackend):
 
         logger.info(
             "tmux session started: %s (shell=%s). Attach: tmux attach -t %s",
-            self._session_name, self._shell, self._session_name,
+            self._session_name,
+            self._shell,
+            self._session_name,
         )
 
     async def drain_startup(self) -> None:
@@ -93,9 +96,7 @@ class TmuxPtyBackend(TerminalBackend):
                 return
             await asyncio.sleep(_DRAIN_POLL)
             elapsed += _DRAIN_POLL
-            text = await loop.run_in_executor(
-                None, lambda: "\n".join(self._pane.capture_pane())
-            )
+            text = await loop.run_in_executor(None, lambda: "\n".join(self._pane.capture_pane()))
             if is_prompt_ready(text):
                 self._last_capture = text
                 logger.debug("tmux drain_startup: ready after %.1fs", elapsed)
@@ -114,9 +115,7 @@ class TmuxPtyBackend(TerminalBackend):
         if self._pane is None:
             raise RuntimeError("tmux session not started")
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(
-            None, lambda: self._pane.send_keys(data, enter=False)
-        )
+        await loop.run_in_executor(None, lambda: self._pane.send_keys(data, enter=False))
 
     async def read(self, timeout: float = 5.0, max_size: int = 65536) -> str:
         if self._pane is None:
@@ -124,9 +123,7 @@ class TmuxPtyBackend(TerminalBackend):
         await asyncio.sleep(min(timeout, 0.5))
 
         loop = asyncio.get_running_loop()
-        current = await loop.run_in_executor(
-            None, lambda: "\n".join(self._pane.capture_pane())
-        )
+        current = await loop.run_in_executor(None, lambda: "\n".join(self._pane.capture_pane()))
 
         if self._last_capture is None:
             self._last_capture = current
@@ -161,9 +158,7 @@ class TmuxPtyBackend(TerminalBackend):
             return False
         loop = asyncio.get_running_loop()
         try:
-            sessions = await loop.run_in_executor(
-                None, lambda: self._server.sessions
-            )
+            sessions = await loop.run_in_executor(None, lambda: self._server.sessions)
             return any(s.name == self._session_name for s in sessions)
         except Exception:
             return False
@@ -172,9 +167,7 @@ class TmuxPtyBackend(TerminalBackend):
         if self._session is not None:
             loop = asyncio.get_running_loop()
             try:
-                await loop.run_in_executor(
-                    None, self._session.kill_session
-                )
+                await loop.run_in_executor(None, self._session.kill_session)
             except Exception:
                 pass
             self._session = None
@@ -190,9 +183,7 @@ class TmuxPtyBackend(TerminalBackend):
             if any(name.endswith(s) for s in ("bash", "zsh", "sh")):
                 await self.write("\x01\x0b")
 
-    async def read_pending(
-        self, timeout: float = 5.0, max_size: int = 65536
-    ) -> TerminalRead:
+    async def read_pending(self, timeout: float = 5.0, max_size: int = 65536) -> TerminalRead:
         raw = await self.read(timeout=timeout, max_size=max_size)
         return TerminalRead(stdout=raw, raw=raw)
 
@@ -200,9 +191,7 @@ class TmuxPtyBackend(TerminalBackend):
         if self._pane is None:
             return TerminalSegment(text="")
         loop = asyncio.get_running_loop()
-        text = await loop.run_in_executor(
-            None, lambda: "\n".join(self._pane.capture_pane())
-        )
+        text = await loop.run_in_executor(None, lambda: "\n".join(self._pane.capture_pane()))
         return extract_current_segment_from_buffer(text)
 
     async def interrupt(self) -> None:

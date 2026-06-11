@@ -17,12 +17,14 @@ from enum import StrEnum
 
 class CommDirection(StrEnum):
     """Direction of a tracked communication."""
+
     SENT = "sent"
     RECEIVED = "received"
 
 
 class CommStatus(StrEnum):
     """Status of a tracked communication."""
+
     PENDING = "pending"
     ACKNOWLEDGED = "acknowledged"
     TIMED_OUT = "timed_out"
@@ -31,6 +33,7 @@ class CommStatus(StrEnum):
 @dataclass
 class CommRecord:
     """A single communication record tracking one message exchange."""
+
     record_id: str
     owner_agent: str
     direction: CommDirection
@@ -61,6 +64,7 @@ class CommRecord:
 @dataclass
 class CommunicationDigest:
     """Summary of all communications for a specific agent session."""
+
     agent_name: str
     pending_sent: list[CommRecord] = field(default_factory=list)
     pending_received: list[CommRecord] = field(default_factory=list)
@@ -233,9 +237,7 @@ class CommunicationTracker:
             return ""
 
         lines = ["## Pending Communications"]
-        lines.append(
-            "You have outstanding communications that require replies:\n"
-        )
+        lines.append("You have outstanding communications that require replies:\n")
 
         for record in digest.pending_sent:
             lines.append(
@@ -264,10 +266,7 @@ class CommunicationTracker:
         """Remove oldest acknowledged records if exceeding max."""
         if len(self._records) <= self._max_records:
             return
-        acknowledged = sorted(
-            (k, r) for k, r in self._records.items()
-            if not r.is_pending
-        )
+        acknowledged = sorted((k, r) for k, r in self._records.items() if not r.is_pending)
         excess = len(self._records) - self._max_records
         for k, _r in acknowledged[:excess]:
             del self._records[k]

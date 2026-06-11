@@ -58,7 +58,7 @@ class DreamEngineConfig(BaseModel):
 
     enabled: bool = False
     interval: int = 1200
-    max_consume_per_run: int = 3   # process up to N archives per run
+    max_consume_per_run: int = 3  # process up to N archives per run
 
 
 class LossyConfig(BaseModel):
@@ -86,9 +86,9 @@ class ArchiveConfig(BaseModel):
     enabled: bool = False
     max_entries: int = 1000
     retained_consumed_pairs: int = 3
-    max_archive_count: int = 10    # trigger knowledge update when this many undigested
-    max_archive_total: int = 20    # max archive dirs on disk (FIFO eviction)
-    max_archive_inject: int = 3    # how many recent archives to inject into system prompt
+    max_archive_count: int = 10  # trigger knowledge update when this many undigested
+    max_archive_total: int = 20  # max archive dirs on disk (FIFO eviction)
+    max_archive_inject: int = 3  # how many recent archives to inject into system prompt
 
 
 class KnowledgeConfig(BaseModel):
@@ -165,15 +165,17 @@ class MemoryConfig(BaseModel):
         """
         # Migrate short_term → session (only if caller explicitly passed short_term)
         if "short_term" in self.model_fields_set and self.short_term is not None:
-            logger.warning(
-                "MemoryConfig.short_term is deprecated, use session instead"
+            logger.warning("MemoryConfig.short_term is deprecated, use session instead")
+            object.__setattr__(
+                self,
+                "session",
+                SessionConfig(
+                    max_messages=self.short_term.max_messages,
+                    max_tokens=self.short_term.max_tokens,
+                    keep_ratio_for_messages=self.short_term.keep_ratio_for_messages,
+                    keep_ratio_for_token=self.short_term.keep_ratio_for_token,
+                ),
             )
-            object.__setattr__(self, "session", SessionConfig(
-                max_messages=self.short_term.max_messages,
-                max_tokens=self.short_term.max_tokens,
-                keep_ratio_for_messages=self.short_term.keep_ratio_for_messages,
-                keep_ratio_for_token=self.short_term.keep_ratio_for_token,
-            ))
 
         # Migrate long_term → archive + knowledge (only if caller explicitly passed long_term)
         if "long_term" in self.model_fields_set and self.long_term is not None:
@@ -189,10 +191,14 @@ class MemoryConfig(BaseModel):
                     object.__setattr__(self, "archive", ArchiveConfig(**current))
 
                 if self.knowledge is None:
-                    object.__setattr__(self, "knowledge", KnowledgeConfig(
-                        enabled=True,
-                        default_templates_dir=self.long_term.default_templates_dir,
-                    ))
+                    object.__setattr__(
+                        self,
+                        "knowledge",
+                        KnowledgeConfig(
+                            enabled=True,
+                            default_templates_dir=self.long_term.default_templates_dir,
+                        ),
+                    )
                 else:
                     current = self.knowledge.model_dump()
                     current["enabled"] = True

@@ -68,7 +68,7 @@ class ToolResultLimitInterceptor(ToolCallInterceptor):
 
         # 3. No handler — fallback to old truncation
         if self._handler is None:
-            truncated = result_str[:self._max_chars] + (
+            truncated = result_str[: self._max_chars] + (
                 f"\n... (truncated, {len(result_str)} chars total)"
             )
             return ToolResult(
@@ -96,7 +96,7 @@ class ToolResultLimitInterceptor(ToolCallInterceptor):
             logger.exception("Overflow store failed for %s/%s", session_id, tool_call_id)
             return ToolResult(
                 tool_name=result.tool_name,
-                result=result_str[:self._max_chars],
+                result=result_str[: self._max_chars],
                 call_id=result.call_id,
                 overflow_processed=False,
             )

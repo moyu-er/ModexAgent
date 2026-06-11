@@ -28,8 +28,7 @@ async def connect_mcp(
     from framework.tools.mcp_adapter import MCPToolAdapter
 
     servers_dict: dict[str, object] = {
-        name: entry.model_dump(exclude_none=True)
-        for name, entry in mcp_config.servers.items()
+        name: entry.model_dump(exclude_none=True) for name, entry in mcp_config.servers.items()
     }
 
     manager = MCPClientManager(config=servers_dict)
@@ -70,24 +69,16 @@ async def register_mcp_tools(
 
 def create_tool_manager(
     tools: list[Tool],
-    max_workers: int = 10,
 ) -> InMemoryToolManager:
     """Create an InMemoryToolManager pre-populated with the given tools.
 
     Args:
         tools: List of Tool objects from framework, MCP, or business code.
-        max_workers: Max concurrent tool executions.
 
     Returns:
         Configured InMemoryToolManager with all tools registered.
     """
-    tm = InMemoryToolManager(
-        config=ToolManagerConfig(
-            max_workers=max_workers,
-            enable_parallel=True,
-            parallel_max_workers=5,
-        )
-    )
+    tm = InMemoryToolManager(config=ToolManagerConfig())
     for tool in tools:
         tm.register(tool)
     return tm

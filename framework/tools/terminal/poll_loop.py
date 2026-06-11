@@ -13,7 +13,11 @@ from enum import StrEnum
 
 from framework.tools.terminal.config import TerminalRuntimeConfig
 from framework.tools.terminal.process_registry import ProcessRegistry
-from framework.tools.terminal.prompt import detect_pager_entry, is_waiting_for_input, resolve_cursor_line
+from framework.tools.terminal.prompt import (
+    detect_pager_entry,
+    is_waiting_for_input,
+    resolve_cursor_line,
+)
 from framework.tools.terminal.session import TerminalSession
 
 

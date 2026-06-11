@@ -55,9 +55,7 @@ class RuntimeAssembler:
             return AgentRuntime(services=AgentRuntimeServices(), state=state)
 
         interceptor_chain = (
-            InterceptorChain(list(config.interceptors))
-            if config.interceptors is not None
-            else None
+            InterceptorChain(list(config.interceptors)) if config.interceptors is not None else None
         )
 
         approval = None

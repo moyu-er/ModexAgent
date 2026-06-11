@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 # Constants & Enums
 # ---------------------------------------------------------------------------
 
+
 class BlockType(StrEnum):
     """多模态消息 block 类型（OpenAI 兼容格式）。"""
 
@@ -73,6 +74,7 @@ UNKNOWN_PLACEHOLDER = "[media: (unknown)]"
 # Structured types
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class MediaInfo:
     """媒体文件元信息（sanitize 后写入 message.metadata.media_info）。"""
@@ -94,6 +96,7 @@ class MediaInfo:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _get_block_url(block: dict[str, Any], block_type: BlockType) -> str:
     """从 block 中提取 URL。"""
@@ -164,6 +167,7 @@ def _extract_mime_from_data_url(url: str) -> str:
 # ---------------------------------------------------------------------------
 # ContentTransformer ABC
 # ---------------------------------------------------------------------------
+
 
 class ContentTransformer(ABC):
     """多媒体内容转换器基类。
@@ -285,9 +289,7 @@ class Base64SanitizeTransformer(ContentTransformer):
                 data_payload, _ = _get_block_data(block, BlockType(block_type))
                 if data_payload.startswith(UrlPrefix.DATA):
                     sanitized.append(self._make_text_placeholder(block))
-                    media_info.append(
-                        self._make_media_info(block, data_payload, str(block_type))
-                    )
+                    media_info.append(self._make_media_info(block, data_payload, str(block_type)))
                 else:
                     sanitized.append(block)
             else:
@@ -308,17 +310,11 @@ class Base64SanitizeTransformer(ContentTransformer):
             placeholder = UNKNOWN_PLACEHOLDER
         return {_K.TYPE: BlockType.TEXT, _K.TEXT: placeholder}
 
-    def _make_media_info(
-        self, block: dict[str, Any], url: str, media_type: str
-    ) -> MediaInfo:
+    def _make_media_info(self, block: dict[str, Any], url: str, media_type: str) -> MediaInfo:
         path = _get_meta_path(block)
         mime = _extract_mime_from_data_url(url)
         name = Path(path).name if path else UNKNOWN_NAME
-        placeholder = (
-            self._placeholder_template.format(name=name)
-            if path
-            else UNKNOWN_PLACEHOLDER
-        )
+        placeholder = self._placeholder_template.format(name=name) if path else UNKNOWN_PLACEHOLDER
         return MediaInfo(
             media_type=media_type,
             path=path,
@@ -330,6 +326,7 @@ class Base64SanitizeTransformer(ContentTransformer):
 # ---------------------------------------------------------------------------
 # CompositeTransformer
 # ---------------------------------------------------------------------------
+
 
 class CompositeTransformer(ContentTransformer):
     """按顺序组合多个 transformer。
@@ -347,7 +344,7 @@ class CompositeTransformer(ContentTransformer):
         ])
     """
 
-    def __init__(self, transformers: list[ContentTransformer]):
+    def __init__(self, transformers: list[ContentTransformer]) -> None:
         self._transformers = transformers
 
     async def transform_message(self, message: dict[str, Any]) -> dict[str, Any]:

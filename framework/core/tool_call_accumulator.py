@@ -18,10 +18,11 @@ from ..core.types import ToolCall
 @dataclass
 class ToolCallChunk:
     """工具调用块 - 来自单个chunk的部分数据"""
-    index: int                      # 工具调用索引(支持多个工具调用)
-    id: str | None = None       # 工具调用ID
-    name: str | None = None     # 函数名
-    args: str | None = None     # 参数JSON字符串(可能不完整)
+
+    index: int  # 工具调用索引(支持多个工具调用)
+    id: str | None = None  # 工具调用ID
+    name: str | None = None  # 函数名
+    args: str | None = None  # 参数JSON字符串(可能不完整)
 
 
 def _try_repair_json(raw: str) -> dict[str, Any]:
@@ -37,18 +38,18 @@ def _try_repair_json(raw: str) -> dict[str, Any]:
         return {}
 
     # 1. Trailing comma before closing } or ]
-    s = re.sub(r',\s*([}\]])', r'\1', s)
+    s = re.sub(r",\s*([}\]])", r"\1", s)
 
     # 2. Unescaped literal newlines / tabs inside string values
-    s = s.replace('\r\n', '\\n').replace('\r', '\\n').replace('\n', '\\n').replace('\t', '\\t')
+    s = s.replace("\r\n", "\\n").replace("\r", "\\n").replace("\n", "\\n").replace("\t", "\\t")
 
     # 3. Truncated — try closing open brackets
-    open_curly = s.count('{') - s.count('}')
-    open_square = s.count('[') - s.count(']')
+    open_curly = s.count("{") - s.count("}")
+    open_square = s.count("[") - s.count("]")
     if open_curly > 0:
-        s += '}' * open_curly
+        s += "}" * open_curly
     if open_square > 0:
-        s += ']' * open_square
+        s += "]" * open_square
 
     try:
         result = json.loads(s)
@@ -60,6 +61,7 @@ def _try_repair_json(raw: str) -> dict[str, Any]:
 @dataclass
 class AccumulatingToolCall:
     """累积中的工具调用"""
+
     index: int
     id: str = ""
     name: str = ""
@@ -123,7 +125,9 @@ class AccumulatingToolCall:
 
         # 检查 call_id 是否存在
         if not self.id:
-            raise ValueError(f"Tool call '{self.name}' is missing call_id. This indicates a parsing error.")
+            raise ValueError(
+                f"Tool call '{self.name}' is missing call_id. This indicates a parsing error."
+            )
 
         return ToolCall(
             call_id=self.id,
@@ -149,7 +153,9 @@ class AccumulatingToolCall:
 
         # 检查 call_id 是否存在
         if not self.id:
-            raise ValueError(f"Tool call '{self.name}' is missing call_id. This indicates a parsing error.")
+            raise ValueError(
+                f"Tool call '{self.name}' is missing call_id. This indicates a parsing error."
+            )
 
         return ToolCall(
             call_id=self.id,
@@ -189,7 +195,7 @@ class ToolCallAccumulator:
         pending = accumulator.get_pending()
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """初始化累积器"""
         self._accumulating: dict[int, AccumulatingToolCall] = {}
         self._completed: list[ToolCall] = []

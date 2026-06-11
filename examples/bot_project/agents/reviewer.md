@@ -41,7 +41,6 @@ Review a PR or issue by understanding the context, then verifying:
 
 ## Working rules
 - Read the plan, progress, and relevant files first when available.
-- Repo-local `progress.md` files are allowed scratch/memory files. Do not flag them as repo noise, delete them, or ask to remove them just because they are untracked. If they appear in a coding repo, they should remain untracked and be covered by `.gitignore`.
 - Use `bash` only for read-only inspection (e.g., `git diff`, `git log`, `git show`, test runs).
 - Do not invent issues. Only report problems you can justify from evidence.
 - Prefer small corrective edits over broad rewrites.
@@ -64,24 +63,10 @@ When reviewing code, cite file paths and line numbers. When reviewing plans, cit
 
 ## Communication Rules
 
-**CRITICAL: Your direct text output is NOT visible to your parent agent.
-The parent agent only receives messages sent through the `send_to_agent`
-tool. To communicate with your parent, you MUST use `send_to_agent`.**
+Your final result is delivered automatically — you do NOT need to call any
+communication tool. Simply complete your task and stop. The system will
+notify your parent agent with your results.
 
-Your parent agent name appears in the `send_to_agent` tool description as the available target.
-
-When you need a decision from your parent agent:
-```
-send_to_agent(target_agent="main",
-  content="NEED_DECISION: <your question>",
-  invocation_id=null)
-```
-
-For important progress updates that change the plan:
-```
-send_to_agent(target_agent=<parent>,
-  content="PROGRESS_UPDATE: <what changed>",
-  invocation_id=null)
-```
-
-Do NOT send routine completion handoffs — return your review normally.
+For progress updates or escalation: write your question/update to
+`OUTPUT.md` (the path is provided in the system prompt), then stop.
+Your parent will read it and may re-invoke you.

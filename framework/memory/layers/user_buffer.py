@@ -1,4 +1,5 @@
 """User retention buffer layer — storage-backed lifecycle for pruned user context."""
+
 from __future__ import annotations
 
 import logging
@@ -72,9 +73,7 @@ class ScopedUserRetentionBuffer(UserRetentionBuffer):
         entries: Sequence[Any],
     ) -> None:
         """Replace all entries for *context*."""
-        typed: list[UserBufferEntry] = [
-            e for e in entries if isinstance(e, UserBufferEntry)
-        ]
+        typed: list[UserBufferEntry] = [e for e in entries if isinstance(e, UserBufferEntry)]
         await self._save_entries(context, typed)
 
     async def clear(self, context: MemoryContext) -> None:
@@ -185,7 +184,7 @@ class ScopedUserRetentionBuffer(UserRetentionBuffer):
 
         # FIFO: drop oldest entries from the front
         if len(entries) > max_entries:
-            entries = entries[len(entries) - max_entries:]
+            entries = entries[len(entries) - max_entries :]
 
         # Per-entry content truncation (deferred imports to avoid circular deps)
         is_xml = str(ContentFormat.XML)
@@ -201,12 +200,16 @@ class ScopedUserRetentionBuffer(UserRetentionBuffer):
             assistant = entry.completing_assistant_content
             if assistant is not None and len(assistant) > max_assistant:
                 if entry.content_format == is_xml:
-                    assistant = truncate_xml_safe(assistant, max_assistant, entry.truncatable_paths or [])
+                    assistant = truncate_xml_safe(
+                        assistant, max_assistant, entry.truncatable_paths or []
+                    )
                 else:
                     assistant = assistant[:max_assistant]
 
             if user != entry.pruned_user_content or assistant != entry.completing_assistant_content:
-                result.append(replace(entry, pruned_user_content=user, completing_assistant_content=assistant))
+                result.append(
+                    replace(entry, pruned_user_content=user, completing_assistant_content=assistant)
+                )
             else:
                 result.append(entry)
         return result

@@ -14,6 +14,7 @@ from framework.pipeline.adapters import OutputAdapter
 
 logger = logging.getLogger(__name__)
 
+
 class SendFileToUserTool(Tool):
     """Send a local file to the current user."""
 

@@ -20,7 +20,7 @@ from typing import Any
 from framework.tools.terminal.prompt import drain_windows_startup
 from framework.tools.terminal.pty_keys import CTRL_C
 from framework.tools.terminal.results import SlidingOutputBuffer, TerminalRead, TerminalSegment
-from framework.tools.terminal.types import Platform, TerminalVisibility, _family_from_path
+from framework.tools.terminal.types import Platform, TerminalVisibility
 
 from .base import TerminalBackend, extract_current_segment_from_buffer
 
@@ -91,11 +91,9 @@ class VisibleWindowsPtyBackend(TerminalBackend):
         try:
             self._sock, _ = await loop.run_in_executor(None, _accept)
             self._sock.settimeout(_READ_TIMEOUT)
-        except socket.timeout:
+        except TimeoutError:
             self._proc.kill()
-            raise RuntimeError(
-                "Visible terminal host process did not connect within 10s"
-            ) from None
+            raise RuntimeError("Visible terminal host process did not connect within 10s") from None
         finally:
             server.close()
 
@@ -113,12 +111,10 @@ class VisibleWindowsPtyBackend(TerminalBackend):
         try:
             raw = self._sock.recv(max_size)
             return raw.decode("utf-8", errors="replace")
-        except socket.timeout:
+        except TimeoutError:
             return ""
 
-    async def read_pending(
-        self, timeout: float = 5.0, max_size: int = 65536
-    ) -> TerminalRead:
+    async def read_pending(self, timeout: float = 5.0, max_size: int = 65536) -> TerminalRead:
         raw = await self.read(timeout=timeout, max_size=max_size)
         if raw:
             self._append_to_buffer(raw)

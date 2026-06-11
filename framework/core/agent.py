@@ -113,7 +113,7 @@ current_agent_context: contextvars.ContextVar[AgentContext] = contextvars.Contex
     "current_agent_context"
 )
 
-E = TypeVar('E', bound=AgentEvent)
+E = TypeVar("E", bound=AgentEvent)
 
 
 class Agent(ABC, Generic[E]):
@@ -165,4 +165,4 @@ class Agent(ABC, Generic[E]):
         Returns:
             该 Agent 的事件枚举类（如 ReActEvent）
         """
-        return cls.event_enum  # type: ignore
+        return cls.event_enum

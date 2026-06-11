@@ -1,19 +1,6 @@
 # Sandbox module — isolated command/code execution with security guards.
 # For usage examples, see examples/sandbox/.
 
-from .env_builder import EnvBuilderConfig, EnvPolicy, EnvironmentBuilder
-from .guard import (
-    CommandPatternGuard,
-    CommandPatternGuardConfig,
-    CommandSeverity,
-    GuardMatch,
-    GuardResult,
-)
-from .guard_device import BENIGN_DEVICE_PATHS, is_benign_device_path
-from .guard_pipeline import GuardPipeline
-from .guard_traversal import PathTraversalConfig, PathTraversalGuard
-from .workspace_policy import WorkspacePolicy, WorkspacePolicyConfig
-
 from .adapters.base import SandboxAdapter
 from .adapters.docker import DockerSandbox
 from .adapters.e2b import E2BSandbox
@@ -26,6 +13,7 @@ from .docker_utils import (
     check_windows_linux_containers,
 )
 from .enums import SandboxType
+from .env_builder import EnvBuilderConfig, EnvironmentBuilder, EnvPolicy
 from .exceptions import (
     CommandRejectedError,
     SandboxError,
@@ -40,12 +28,23 @@ from .factory import (
     get_sandbox,
     list_available_adapters,
 )
+from .guard import (
+    CommandPatternGuard,
+    CommandPatternGuardConfig,
+    CommandSeverity,
+    GuardMatch,
+    GuardResult,
+)
+from .guard_device import BENIGN_DEVICE_PATHS, is_benign_device_path
+from .guard_pipeline import GuardPipeline
+from .guard_traversal import PathTraversalConfig, PathTraversalGuard
 from .platform import (
     Platform,
     get_default_shell,
     get_platform,
 )
 from .types import SandboxResult
+from .workspace_policy import WorkspacePolicy, WorkspacePolicyConfig
 
 __all__ = [
     "SandboxResult",

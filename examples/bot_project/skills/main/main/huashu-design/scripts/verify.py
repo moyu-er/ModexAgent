@@ -16,14 +16,12 @@ Usage:
 
 import argparse
 import sys
-import os
-import time
 from pathlib import Path
 
 
 def parse_viewport(s):
-    w, h = s.split('x')
-    return {'width': int(w), 'height': int(h)}
+    w, h = s.split("x")
+    return {"width": int(w), "height": int(h)}
 
 
 def verify_html(html_path, viewports=None, slides=0, output_dir=None, show=False, wait=2000):
@@ -40,7 +38,7 @@ def verify_html(html_path, viewports=None, slides=0, output_dir=None, show=False
         sys.exit(1)
 
     if output_dir is None:
-        output_dir = html_path.parent / 'screenshots'
+        output_dir = html_path.parent / "screenshots"
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -48,7 +46,7 @@ def verify_html(html_path, viewports=None, slides=0, output_dir=None, show=False
     stem = html_path.stem
 
     if viewports is None:
-        viewports = [{'width': 1440, 'height': 900}]
+        viewports = [{"width": 1440, "height": 900}]
 
     console_errors = []
     page_errors = []
@@ -60,21 +58,28 @@ def verify_html(html_path, viewports=None, slides=0, output_dir=None, show=False
             context = browser.new_context(viewport=viewport, device_scale_factor=2)
             page = context.new_page()
 
-            page.on("console", lambda msg: console_errors.append(f"[{msg.type}] {msg.text}") if msg.type in ("error", "warning") else None)
+            page.on(
+                "console",
+                lambda msg: (
+                    console_errors.append(f"[{msg.type}] {msg.text}")
+                    if msg.type in ("error", "warning")
+                    else None
+                ),
+            )
             page.on("pageerror", lambda err: page_errors.append(str(err)))
 
             print(f"\n→ 打开 {file_url} @ {viewport['width']}x{viewport['height']}")
-            page.goto(file_url, wait_until='networkidle')
+            page.goto(file_url, wait_until="networkidle")
             page.wait_for_timeout(wait)
 
             if slides > 0:
                 for i in range(slides):
                     screenshot_path = output_dir / f"{stem}-slide-{str(i + 1).zfill(2)}.png"
                     page.screenshot(path=str(screenshot_path), full_page=False)
-                    print(f"  ✓ slide {i+1} → {screenshot_path.name}")
+                    print(f"  ✓ slide {i + 1} → {screenshot_path.name}")
 
                     if i < slides - 1:
-                        page.keyboard.press('ArrowRight')
+                        page.keyboard.press("ArrowRight")
                         page.wait_for_timeout(500)
             else:
                 suffix = f"-{viewport['width']}x{viewport['height']}" if len(viewports) > 1 else ""
@@ -125,16 +130,15 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("html_path", help="HTML file path")
-    parser.add_argument("--viewports", default="1440x900",
-                        help="逗号分隔的viewport列表，格式 WxH（默认 1440x900）")
-    parser.add_argument("--slides", type=int, default=0,
-                        help="幻灯片模式：截取前N张（需要HTML支持ArrowRight翻页）")
-    parser.add_argument("--output", default=None,
-                        help="输出目录（默认HTML所在目录的screenshots/）")
-    parser.add_argument("--show", action="store_true",
-                        help="非headless，打开真实浏览器窗口")
-    parser.add_argument("--wait", type=int, default=2000,
-                        help="打开页面后等待的毫秒数（默认2000）")
+    parser.add_argument(
+        "--viewports", default="1440x900", help="逗号分隔的viewport列表，格式 WxH（默认 1440x900）"
+    )
+    parser.add_argument(
+        "--slides", type=int, default=0, help="幻灯片模式：截取前N张（需要HTML支持ArrowRight翻页）"
+    )
+    parser.add_argument("--output", default=None, help="输出目录（默认HTML所在目录的screenshots/）")
+    parser.add_argument("--show", action="store_true", help="非headless，打开真实浏览器窗口")
+    parser.add_argument("--wait", type=int, default=2000, help="打开页面后等待的毫秒数（默认2000）")
 
     args = parser.parse_args()
 

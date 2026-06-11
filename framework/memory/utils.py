@@ -9,29 +9,31 @@ from typing import Any
 
 from framework.memory.core.message import ChatMessage
 
-EMPTY_MEMORY_SUMMARY_MARKERS = frozenset({
-    "(no conversation content)",
-    "(no summary)",
-    "(nothing)",
-    "(no semantic content)",
-    "nothing to summarize",
-    "no relevant content",
-    "no meaningful information",
-    "no content",
-    "no information",
-    "no data",
-    "no context",
-    "no conversation",
-    "empty conversation",
-    "the conversation is empty",
-    "the conversation was brief",
-    "this conversation",
-    "n/a",
-    "none",
-    "empty",
-    "brief exchange",
-    "short conversation",
-})
+EMPTY_MEMORY_SUMMARY_MARKERS = frozenset(
+    {
+        "(no conversation content)",
+        "(no summary)",
+        "(nothing)",
+        "(no semantic content)",
+        "nothing to summarize",
+        "no relevant content",
+        "no meaningful information",
+        "no content",
+        "no information",
+        "no data",
+        "no context",
+        "no conversation",
+        "empty conversation",
+        "the conversation is empty",
+        "the conversation was brief",
+        "this conversation",
+        "n/a",
+        "none",
+        "empty",
+        "brief exchange",
+        "short conversation",
+    }
+)
 
 
 def _is_meaningless_summary(summary: str) -> bool:
@@ -52,8 +54,12 @@ def _is_meaningless_summary(summary: str) -> bool:
 
     # Only generic meta-references, no concrete nouns/verbs
     generic_phrases = (
-        "the user", "the assistant", "this conversation",
-        "a conversation", "the conversation", "some messages",
+        "the user",
+        "the assistant",
+        "this conversation",
+        "a conversation",
+        "the conversation",
+        "some messages",
     )
     # If the entire summary is just one generic phrase, reject it
     for phrase in generic_phrases:
@@ -93,6 +99,7 @@ def safe_atomic_replace(tmp_path: Path, target_path: Path) -> None:
         target_path.write_text(content, encoding="utf-8")
         with contextlib.suppress(OSError):
             tmp_path.unlink()
+
 
 _RUNTIME_PREFIX_RE = re.compile(
     r"^\[Runtime Context\]\s*\n.*?\n\n",

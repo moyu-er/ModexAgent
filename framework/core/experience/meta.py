@@ -1,14 +1,15 @@
 """Per-experience metadata storage — no memory cache, direct disk I/O."""
+
 from __future__ import annotations
 
 import json
 import logging
 import tempfile
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable
 
 from framework.memory.utils import safe_atomic_replace
 
@@ -78,7 +79,7 @@ class ExperienceMetaStore(ABC):
 
     @staticmethod
     def _touch_timestamps(record: ExperienceMetaRecord) -> None:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         record.last_used_at = now
         if record.created_at is None:
             record.created_at = now
@@ -168,7 +169,9 @@ class PerFileExperienceMetaStore(ExperienceMetaStore):
             path.parent.mkdir(parents=True, exist_ok=True)
             data = asdict(record)
             fd, tmp = tempfile.mkstemp(
-                dir=str(path.parent), prefix=".meta_", suffix=".tmp",
+                dir=str(path.parent),
+                prefix=".meta_",
+                suffix=".tmp",
             )
             try:
                 with open(fd, "w", encoding="utf-8") as f:

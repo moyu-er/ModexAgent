@@ -169,6 +169,7 @@ class Interceptor(ABC):
 
 class ToolCallInterceptor(Interceptor):
     """TOOL_CALL scope interceptor ABC."""
+
     _scope = InterceptorScope.TOOL_CALL
 
     @abstractmethod
@@ -184,6 +185,7 @@ class ToolCallInterceptor(Interceptor):
 
 class TurnInterceptor(Interceptor):
     """TURN scope interceptor ABC."""
+
     _scope = InterceptorScope.TURN
 
     @abstractmethod
@@ -198,6 +200,7 @@ class TurnInterceptor(Interceptor):
 
 class IterationInterceptor(Interceptor):
     """ITERATION scope interceptor ABC."""
+
     _scope = InterceptorScope.ITERATION
 
     @abstractmethod
@@ -213,6 +216,7 @@ class IterationInterceptor(Interceptor):
 
 class LLMStreamInterceptor(Interceptor):
     """LLM_STREAM scope interceptor ABC."""
+
     _scope = InterceptorScope.LLM_STREAM
 
     async def around_llm_stream(

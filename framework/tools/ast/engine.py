@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 _TREE_SITTER_AVAILABLE = False
 try:
     import tree_sitter  # noqa: F401
+
     _TREE_SITTER_AVAILABLE = True
 except ImportError:
     pass
@@ -30,6 +31,7 @@ except ImportError:
 _TREE_SITTER_PYTHON_AVAILABLE = False
 try:
     import tree_sitter_python  # noqa: F401
+
     _TREE_SITTER_PYTHON_AVAILABLE = True
 except ImportError:
     pass
@@ -37,6 +39,7 @@ except ImportError:
 _TREE_SITTER_JAVA_AVAILABLE = False
 try:
     import tree_sitter_java  # noqa: F401
+
     _TREE_SITTER_JAVA_AVAILABLE = True
 except ImportError:
     pass
@@ -55,20 +58,24 @@ AST_UNAVAILABLE_MSG = (
 
 class AstNotAvailableError(RuntimeError):
     """Raised when tree-sitter or a grammar is not installed."""
+
     pass
 
 
 class AstParseError(RuntimeError):
     """Raised when source code fails to parse."""
+
     pass
 
 
 class AstQueryError(RuntimeError):
     """Raised when a query pattern is invalid."""
+
     pass
 
 
 # ── Language resolution ──
+
 
 def _resolve_language(language: str) -> Any:
     """Get a tree-sitter Language object for the given language name.
@@ -87,9 +94,11 @@ def _resolve_language(language: str) -> Any:
     lang_map: dict[str, Any] = {}
     if _TREE_SITTER_PYTHON_AVAILABLE:
         import tree_sitter_python
+
         lang_map["python"] = tree_sitter.Language(tree_sitter_python.language())
     if _TREE_SITTER_JAVA_AVAILABLE:
         import tree_sitter_java
+
         lang_map["java"] = tree_sitter.Language(tree_sitter_java.language())
 
     lang = lang_map.get(language)
@@ -126,9 +135,11 @@ _EXT_MAP: dict[str, tuple[str, ...]] = {
 
 # ── AST Match dataclass ──
 
+
 @dataclass
 class AstMatch:
     """A single AST pattern match in a source file."""
+
     file_path: str
     line: int
     column: int
@@ -137,6 +148,7 @@ class AstMatch:
 
 
 # ── Core engine functions ──
+
 
 def _node_text(node: Any) -> str:
     """Extract text from a tree-sitter node, handling bytes/str."""
@@ -205,13 +217,15 @@ def search_in_file(
 
         if outermost_node is not None:
             start = outermost_node.start_point
-            matches.append(AstMatch(
-                file_path=file_path,
-                line=start[0] + 1,   # 0-based → 1-based
-                column=start[1] + 1,  # 0-based → 1-based
-                text=_node_text(outermost_node),
-                captures=captures,
-            ))
+            matches.append(
+                AstMatch(
+                    file_path=file_path,
+                    line=start[0] + 1,  # 0-based → 1-based
+                    column=start[1] + 1,  # 0-based → 1-based
+                    text=_node_text(outermost_node),
+                    captures=captures,
+                )
+            )
 
     return matches
 
@@ -243,7 +257,10 @@ def search_in_directory(
             continue
         # Skip common non-project directories
         parts = file_path.parts
-        if any(p.startswith(".") or p in ("node_modules", "__pycache__", "venv", ".venv") for p in parts):
+        if any(
+            p.startswith(".") or p in ("node_modules", "__pycache__", "venv", ".venv")
+            for p in parts
+        ):
             continue
 
         try:

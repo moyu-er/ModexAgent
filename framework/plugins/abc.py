@@ -144,6 +144,4 @@ class MemoryProvider(ABC):
 
         Only required when get_tool_schemas() returns non-empty.
         """
-        raise NotImplementedError(
-            f"Provider '{self.name}' does not handle tool calls"
-        )
+        raise NotImplementedError(f"Provider '{self.name}' does not handle tool calls")

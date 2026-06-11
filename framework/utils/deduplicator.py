@@ -6,7 +6,7 @@ import time
 class MessageDeduplicator:
     """基于 message_id 的消息去重器，支持 TTL 过期清理。"""
 
-    def __init__(self, max_size: int = 1000, ttl_seconds: float = 300.0):
+    def __init__(self, max_size: int = 1000, ttl_seconds: float = 300.0) -> None:
         self._max_size = max_size
         self._ttl_seconds = ttl_seconds
         self._seen: dict[str, float] = {}

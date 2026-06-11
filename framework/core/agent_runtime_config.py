@@ -20,8 +20,8 @@ class BusyInputMode(str, Enum):
     """Agent 忙碌时收到新消息的处理模式。"""
 
     INTERRUPT = "interrupt"  # 中断当前 turn → 新消息
-    QUEUE = "queue"          # 排队 → injection_queue
-    STEER = "steer"          # 引导 → INJECT_STEER
+    QUEUE = "queue"  # 排队 → injection_queue
+    STEER = "steer"  # 引导 → INJECT_STEER
 
 
 @dataclass

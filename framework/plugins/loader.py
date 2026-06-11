@@ -7,10 +7,10 @@ Each inject_* method is independent and can be called separately.
 import logging
 
 from framework.core.skills.manager import SkillManager
+from framework.core.tool_manager import InMemoryToolManager
 from framework.hook import Hook
 from framework.memory.system import MemorySystemContextManager
 from framework.plugins.manager import PluginManager
-from framework.core.tool_manager import InMemoryToolManager
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class PluginLoader:
         loader.inject_skill_sources(skill_manager)
     """
 
-    def __init__(self, plugin_manager: PluginManager):
+    def __init__(self, plugin_manager: PluginManager) -> None:
         self._pm = plugin_manager
 
     def inject_tools(self, tool_manager: InMemoryToolManager) -> list[str]:
@@ -46,7 +46,9 @@ class PluginLoader:
             except Exception as e:
                 logger.warning(
                     "Failed to inject tool '%s' from plugin '%s': %s",
-                    tool.name, plugin_name, e,
+                    tool.name,
+                    plugin_name,
+                    e,
                 )
         if injected:
             logger.info("Injected %d plugin tools: %s", len(injected), injected)
@@ -94,13 +96,12 @@ class PluginLoader:
             try:
                 memory_system.add_provider(provider)
                 injected.append(provider.name)
-                logger.info(
-                    "Provider '%s' injected into MemorySystem", provider.name
-                )
+                logger.info("Provider '%s' injected into MemorySystem", provider.name)
             except Exception as e:
                 logger.warning(
                     "Failed to add provider '%s' to MemorySystem: %s",
-                    provider.name, e,
+                    provider.name,
+                    e,
                 )
         return injected
 
@@ -131,7 +132,8 @@ class PluginLoader:
             except Exception as e:
                 logger.warning(
                     "Failed to apply memory_system modifier from '%s': %s",
-                    plugin_name, e,
+                    plugin_name,
+                    e,
                 )
         return applied
 
@@ -152,7 +154,8 @@ class PluginLoader:
             except Exception as e:
                 logger.warning(
                     "Failed to inject skill source from '%s': %s",
-                    plugin_name, e,
+                    plugin_name,
+                    e,
                 )
         if injected:
             logger.info("Injected %d plugin skill sources", len(injected))

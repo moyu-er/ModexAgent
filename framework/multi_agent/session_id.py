@@ -1,4 +1,4 @@
-"""Unified session ID strategy — receiver-owned ``{conv}:{agent}[:{invocation_id}]`` format.
+"""Unified session ID strategy — receiver-owned ``{conv}.{agent}[.{invocation_id}]`` format.
 
 All agents use receiver-owned session IDs. Sender information belongs in
 ``AgentMessageEnvelope.source``, never in the session id.
@@ -6,6 +6,10 @@ All agents use receiver-owned session IDs. Sender information belongs in
 The ``invocation_id`` is a task-scoped routing identifier. Currently
 generated via ``uuid4().hex[:8]``, but the field name describes what it
 IS (a task invocation identifier), not HOW it is generated.
+
+Dot (``.``) is used as separator because it is filesystem-safe on all platforms
+(Windows, macOS, Linux) — no sanitizer needed when session_id is used as a
+directory name.
 """
 
 from __future__ import annotations
@@ -28,7 +32,7 @@ class AgentSessionParts:
 
 
 class DefaultSessionIdStrategy:
-    """Unified ``{conversation_id}:{agent_name}[:{invocation_id}]`` format.
+    """Unified ``{conversation_id}.{agent_name}[.{invocation_id}]`` format.
 
     Usage::
 
@@ -36,19 +40,19 @@ class DefaultSessionIdStrategy:
 
         # format
         session_id = strategy.format(conversation_id="conv-1", agent_name="main")
-        # → "conv-1:main"
+        # → "conv-1.main"
 
         task_id = strategy.format(
             conversation_id="conv-1", agent_name="office-expert", invocation_id="a1b2c3",
         )
-        # → "conv-1:office-expert:a1b2c3"
+        # → "conv-1.office-expert.a1b2c3"
 
         # parse
-        parts = strategy.parse("conv-1:office-expert:a1b2c3")
+        parts = strategy.parse("conv-1.office-expert.a1b2c3")
         # → AgentSessionParts(conversation_id="conv-1", agent_name="office-expert", invocation_id="a1b2c3")
     """
 
-    SEP: str = ":"
+    SEP: str = "."
 
     def __init__(self, main_agent_name: str = "main") -> None:
         self._main_name = main_agent_name
@@ -139,7 +143,9 @@ class DefaultSessionIdStrategy:
         if not conversation_id or not agent_name:
             raise ValueError(f"Invalid agent session id: {session_id!r}")
         if invocation_id == "":
-            raise ValueError(f"Invalid agent session id: {session_id!r} (empty invocation_id segment)")
+            raise ValueError(
+                f"Invalid agent session id: {session_id!r} (empty invocation_id segment)"
+            )
         return AgentSessionParts(
             conversation_id=conversation_id,
             agent_name=agent_name,

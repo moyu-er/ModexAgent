@@ -7,12 +7,12 @@ import time
 from pathlib import Path
 
 from ..config import SandboxConfig
-from ..env_builder import EnvBuilderConfig, EnvPolicy, EnvironmentBuilder
+from ..env_builder import EnvBuilderConfig, EnvironmentBuilder, EnvPolicy
 from ..exceptions import SandboxUnavailableError
-from ..guard import CommandPatternGuard, CommandPatternGuardConfig
+from ..guard import CommandPatternGuard
 from ..types import SandboxResult
 from ..validation import validate_code
-from ..workspace_policy import WorkspacePolicy, WorkspacePolicyConfig
+from ..workspace_policy import WorkspacePolicy
 from .base import SandboxAdapter
 
 LANDLOCK_AVAILABLE = False
@@ -45,7 +45,7 @@ class LandlockSandbox(SandboxAdapter):
     def is_available(self) -> bool:
         return _check_landlock_available()
 
-    def __init__(self, config: SandboxConfig | None = None):
+    def __init__(self, config: SandboxConfig | None = None) -> None:
         self.config = config or SandboxConfig()
         self._command_guard: CommandPatternGuard | None = None
         self._env_builder: EnvironmentBuilder | None = None
@@ -120,7 +120,9 @@ class LandlockSandbox(SandboxAdapter):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=tmpdir,
-                env=self._get_env_builder().build(overrides={"SANDBOX_ARTIFACTS_DIR": self._get_artifacts_dir(cfg)}),
+                env=self._get_env_builder().build(
+                    overrides={"SANDBOX_ARTIFACTS_DIR": self._get_artifacts_dir(cfg)}
+                ),
                 preexec_fn=ruleset.restrict_self,
             )
 
@@ -203,7 +205,9 @@ class LandlockSandbox(SandboxAdapter):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=work_dir,
-                env=self._get_env_builder().build(overrides={"SANDBOX_ARTIFACTS_DIR": self._get_artifacts_dir(cfg)}),
+                env=self._get_env_builder().build(
+                    overrides={"SANDBOX_ARTIFACTS_DIR": self._get_artifacts_dir(cfg)}
+                ),
                 preexec_fn=ruleset.restrict_self,
                 shell=True,
             )

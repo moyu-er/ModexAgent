@@ -40,24 +40,10 @@ Keep the plan concrete. Another agent should be able to execute it without guess
 
 ## Communication Rules
 
-**CRITICAL: Your direct text output is NOT visible to your parent agent.
-The parent agent only receives messages sent through the `send_to_agent`
-tool. To communicate with your parent, you MUST use `send_to_agent`.**
+Your final result is delivered automatically — you do NOT need to call any
+communication tool. Simply complete your task and stop. The system will
+notify your parent agent with your results.
 
-Your parent agent name appears in the `send_to_agent` tool description as the available target.
-
-When you need a decision from your parent agent:
-```
-send_to_agent(target_agent="main",
-  content="NEED_DECISION: <your question>",
-  invocation_id=null)
-```
-
-For important progress updates that change the plan:
-```
-send_to_agent(target_agent=<parent>,
-  content="PROGRESS_UPDATE: <what changed>",
-  invocation_id=null)
-```
-
-Do NOT send routine completion handoffs — return your plan normally.
+For progress updates or escalation: write your question/update to
+`OUTPUT.md` (the path is provided in the system prompt), then stop.
+Your parent will read it and may re-invoke you.

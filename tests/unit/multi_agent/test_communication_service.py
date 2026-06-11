@@ -157,7 +157,7 @@ class TestCommunicationService:
         result = await svc.send_async(
             target_agent="reviewer", content="hello", invocation_id="", context=ctx,
         )
-        assert "Message sent to reviewer" in result
+        assert "Task dispatched to 'reviewer'" in result
 
     @pytest.mark.asyncio
     async def test_normal_target_with_concrete_uuid_errors(self) -> None:
@@ -169,7 +169,7 @@ class TestCommunicationService:
         result = await svc.send_async(
             target_agent="reviewer", content="hello", invocation_id="abc123", context=ctx,
         )
-        assert "Message sent to reviewer" in result
+        assert "Task dispatched to 'reviewer'" in result
 
     @pytest.mark.asyncio
     async def test_subagent_empty_uuid_creates_task(self) -> None:
@@ -224,8 +224,8 @@ class TestCommunicationService:
         assert bus.sent == []
         assert len(bus.sent_silent) == 1
         session_id, envelope = bus.sent_silent[0]
-        assert session_id == "conv-1:office-expert:task-42"
-        assert envelope.agent_session_id == "conv-1:office-expert:task-42"
+        assert session_id == "conv-1.office-expert.task-42"
+        assert envelope.agent_session_id == "conv-1.office-expert.task-42"
         assert envelope.invocation_id == "task-42"
 
     @pytest.mark.asyncio
@@ -249,7 +249,7 @@ class TestCommunicationService:
             agent_name="main",
             target_agent="office-expert",
             invocation_id="task-42",
-            session_id="conv-1:office-expert:task-42",
+            session_id="conv-1.office-expert.task-42",
             content_summary="please do work",
         )
         tracker.record_receive(

@@ -111,9 +111,7 @@ class FullDumpKnowledgeStrategy(KnowledgeSearchStrategy):
             truncated = truncated[:last_para]
         return truncated
 
-    def _truncate_dict(
-        self, files: dict[str, str], max_tokens: int
-    ) -> dict[str, str]:
+    def _truncate_dict(self, files: dict[str, str], max_tokens: int) -> dict[str, str]:
         """Truncate a dict of file contents to fit within token budget."""
         total = sum(estimate_text_tokens(v) for v in files.values())
         if total <= max_tokens:

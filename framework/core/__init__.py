@@ -33,11 +33,9 @@ from .tool_call_accumulator import (
     parse_tool_call_chunks_from_delta,
 )
 from .tool_manager import (
-    FunctionalTool,
     InMemoryToolManager,
     Tool,
     ToolConfig,
-    ToolExecutionMode,
     ToolManager,
     ToolManagerConfig,
     ToolResult,
@@ -75,8 +73,6 @@ __all__ = [
     "ToolManager",
     "InMemoryToolManager",
     "Tool",
-    "FunctionalTool",
-    "ToolExecutionMode",
     "ToolConfig",
     "ToolManagerConfig",
     # V2 新架构 - Agent

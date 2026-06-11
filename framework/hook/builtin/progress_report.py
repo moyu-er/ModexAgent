@@ -35,7 +35,7 @@ _STOP_REASON_ERROR = "error"
 _STOP_REASON_TURN_CANCELLED = "turn_cancelled"
 
 
-def _get_agent_name(ctx: AgentContext[Any]) -> str:
+def _get_agent_name(ctx: AgentContext) -> str:
     if ctx.session_meta is not None:
         return ctx.session_meta.agent_name
     if ctx.identity is not None:
@@ -43,12 +43,12 @@ def _get_agent_name(ctx: AgentContext[Any]) -> str:
     return "<unknown>"
 
 
-def _get_iteration(ctx: AgentContext[Any]) -> int:
+def _get_iteration(ctx: AgentContext) -> int:
     state = ctx.runtime.state if ctx.runtime else None
     return getattr(state, "iteration", 0)
 
 
-def _get_max_iterations(ctx: AgentContext[Any]) -> int:
+def _get_max_iterations(ctx: AgentContext) -> int:
     return ctx.max_iterations
 
 
@@ -72,14 +72,16 @@ class ProgressReportHook(
     def __init__(self, event_bus: ControlEventBus) -> None:
         self._event_bus = event_bus
 
-    async def before_iteration(self, ctx: AgentContext[Any]) -> None:
+    async def before_iteration(self, ctx: AgentContext) -> None:
         await self._emit(ctx, {"phase": "iteration_start"})
 
-    async def after_iteration(self, ctx: AgentContext[Any]) -> None:
+    async def after_iteration(self, ctx: AgentContext) -> None:
         await self._emit(ctx, {"phase": "iteration_end"})
 
     async def before_tool_execution(
-        self, ctx: AgentContext[Any], tool_calls: list[ToolCall],
+        self,
+        ctx: AgentContext,
+        tool_calls: list[ToolCall],
     ) -> None:
         for tc in tool_calls:
             payload: dict[str, Any] = {
@@ -91,7 +93,9 @@ class ProgressReportHook(
             await self._emit(ctx, payload)
 
     async def after_tool_execution(
-        self, ctx: AgentContext[Any], results: list[ToolResult],
+        self,
+        ctx: AgentContext,
+        results: list[ToolResult],
     ) -> None:
         for r in results:
             payload: dict[str, Any] = {
@@ -104,7 +108,9 @@ class ProgressReportHook(
             await self._emit(ctx, payload)
 
     async def after_llm_response(
-        self, ctx: AgentContext[Any], response: LLMResponse,
+        self,
+        ctx: AgentContext,
+        response: LLMResponse,
     ) -> None:
         payload: dict[str, Any] = {
             "phase": "llm_response",
@@ -119,7 +125,9 @@ class ProgressReportHook(
         await self._emit(ctx, payload)
 
     async def after_turn(
-        self, ctx: AgentContext[Any], result: AgentResult,
+        self,
+        ctx: AgentContext,
+        result: AgentResult,
     ) -> None:
         stop_reason = result.stop_reason
         if stop_reason == _STOP_REASON_MAX_ITERATIONS:
@@ -140,17 +148,19 @@ class ProgressReportHook(
 
         await self._emit(ctx, payload)
 
-    async def _emit(self, ctx: AgentContext[Any], payload: dict[str, Any]) -> None:
+    async def _emit(self, ctx: AgentContext, payload: dict[str, Any]) -> None:
         payload["agent_name"] = _get_agent_name(ctx)
         payload["session_id"] = ctx.session_id
         payload["iteration"] = _get_iteration(ctx)
         payload["max_iterations"] = _get_max_iterations(ctx)
         try:
-            await self._event_bus.emit(ControlEvent(
-                event_id=uuid.uuid4().hex,
-                type=ControlEventType.AGENT_PROGRESS,
-                scope=ControlScope(session_id=ctx.session_id),
-                payload=payload,
-            ))
+            await self._event_bus.emit(
+                ControlEvent(
+                    event_id=uuid.uuid4().hex,
+                    type=ControlEventType.AGENT_PROGRESS,
+                    scope=ControlScope(session_id=ctx.session_id),
+                    payload=payload,
+                )
+            )
         except Exception:
             logger.debug("ProgressReportHook emit failed", exc_info=True)

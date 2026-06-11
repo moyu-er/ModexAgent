@@ -1,4 +1,5 @@
 """ReActGraph — clean or full ReAct loop as a Graph."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
@@ -15,9 +16,7 @@ if TYPE_CHECKING:
 
 
 class ReActGraph(Graph):
-
-    def __init__(self, agent: ReActAgent, *,
-                 mode: Literal["clean", "full"] = "full") -> None:
+    def __init__(self, agent: ReActAgent, *, mode: Literal["clean", "full"] = "full") -> None:
         super().__init__(name=f"react_{mode}")
 
         self.add_node(StartNode())

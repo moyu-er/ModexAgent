@@ -1,4 +1,4 @@
-﻿"""Tool argument matching for path-based tool approval classification.
+"""Tool argument matching for path-based tool approval classification.
 
 ArgumentMatcher is used by ApprovalRuntime.classifier to check whether
 tool path arguments fall within allowed directories. It is NOT an approval
@@ -7,7 +7,6 @@ interceptor — it is a pure classification helper."""
 from __future__ import annotations
 
 import fnmatch
-from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -63,8 +62,13 @@ class ArgumentMatcher:
 
     def _extract_paths(self, arguments: dict[str, Any]) -> list[str]:
         path_keys = {
-            "path", "file_path", "target", "dest",
-            "directory", "dir", "working_dir",
+            "path",
+            "file_path",
+            "target",
+            "dest",
+            "directory",
+            "dir",
+            "working_dir",
         }
         paths: list[str] = []
         for key, value in arguments.items():

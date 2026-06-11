@@ -4,7 +4,6 @@ max_steps: 60
 tool_preset: read_only
 context_mode: fresh
 thinking_budget: low
-progress_tracking: true
 memory:
   session:
     max_messages: 150

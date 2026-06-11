@@ -6,16 +6,15 @@ from typing import Any
 
 from framework.core.tool_manager import Tool
 from framework.tools.terminal.config import TerminalRuntimeConfig
-from framework.tools.terminal.guard import check_process_writable
+from framework.tools.terminal.guard import TerminalGuardResult, check_process_writable
 from framework.tools.terminal.managers import TerminalManagerBase
-from framework.tools.terminal.guard import TerminalGuardResult
 from framework.tools.terminal.process_registry import (
     ProcessRegistry,
     ProcessSession,
 )
 from framework.tools.terminal.pty_keys import (
-    CursorKeyMode,
     ENTER_KEY,
+    CursorKeyMode,
     ProcessAction,
     encode_key_sequence,
     encode_paste,
@@ -27,7 +26,10 @@ from framework.utils.xml import xml_text
 
 # Re-export ProcessAction for test / external use
 __all__ = [
-    "ProcessTool", "SendKeysParams", "PasteParams", "WriteParams",
+    "ProcessTool",
+    "SendKeysParams",
+    "PasteParams",
+    "WriteParams",
     "ProcessAction",
 ]
 
@@ -64,7 +66,10 @@ async def _drain_terminal_after_action(
     from framework.tools.terminal.prompt import sanitize_terminal_output
 
     result = await poll_until_settled(
-        terminal_session, registry, session_id, config,
+        terminal_session,
+        registry,
+        session_id,
+        config,
         yield_ms=config.default_yield_ms,
         timeout_seconds=config.default_command_timeout_seconds,
         check_input_wait=False,
@@ -161,7 +166,7 @@ class ProcessTool(Tool):
             "If a command prompts for a password, STOP and ask the user. "
             "Only use write for passwords after the user explicitly provides one.\n"
             "After providing input, use 'terminal current' to check the result.\n"
-            f"To answer a prompt: process {_A.WRITE} data=\"USER_PROVIDED_VALUE\" submit=true.\n"
+            f'To answer a prompt: process {_A.WRITE} data="USER_PROVIDED_VALUE" submit=true.\n'
             "Use send_keys for TUI programs (arrows, escape, Ctrl+C).\n"
             "Use interrupt/kill to stop commands."
         )
@@ -188,7 +193,7 @@ class ProcessTool(Tool):
                 "hex": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": f"Hex bytes for {_A.SEND_KEYS}, e.g. [\"1b\", \"0d\"]",
+                    "description": f'Hex bytes for {_A.SEND_KEYS}, e.g. ["1b", "0d"]',
                 },
                 "literal": {
                     "type": "string",
@@ -265,7 +270,9 @@ class ProcessTool(Tool):
     # helpers
     # ------------------------------------------------------------------
 
-    async def _resolve_terminal(self) -> tuple[TerminalSession, ProcessSession | None, ProcessSession | None]:
+    async def _resolve_terminal(
+        self,
+    ) -> tuple[TerminalSession, ProcessSession | None, ProcessSession | None]:
         terminal_session = await self._manager.get_default()
         if terminal_session is None:
             raise ValueError("No default terminal session available")
@@ -325,7 +332,9 @@ class ProcessTool(Tool):
     async def _do_write(self, params: WriteParams, *, repeat: int = 1) -> str:
         terminal_session, running, _finished = await self._resolve_terminal()
         if running is None:
-            return _build_process_xml(_A.WRITE.value, "[Error] No running process session found for default terminal")
+            return _build_process_xml(
+                _A.WRITE.value, "[Error] No running process session found for default terminal"
+            )
 
         guard_result = await check_process_writable(terminal_session, config=self._config)
         if guard_result is not None:
@@ -336,17 +345,23 @@ class ProcessTool(Tool):
         ending = ENTER_KEY if params.submit else ""
         payload = params.data + ending
         raw_output, actual = await self._batch_write_with_early_stop(
-            terminal_session, payload, repeat,
+            terminal_session,
+            payload,
+            repeat,
         )
 
         drained = await _drain_terminal_after_action(
-            terminal_session, self._registry, running.id, self._config,
+            terminal_session,
+            self._registry,
+            running.id,
+            self._config,
         )
         output = (raw_output + drained) if drained else raw_output
         output = output or "(no output)"
 
         return _build_process_xml(
-            _A.WRITE.value, output,
+            _A.WRITE.value,
+            output,
             terminal_name=terminal_session.name,
             session_id=running.id,
             bytes_written=len(params.data) * actual,
@@ -355,28 +370,39 @@ class ProcessTool(Tool):
     async def _do_submit(self, *, repeat: int = 1) -> str:
         terminal_session, running, _finished = await self._resolve_terminal()
         if running is None:
-            return _build_process_xml(_A.SUBMIT.value, "[Error] No running process session found for default terminal")
+            return _build_process_xml(
+                _A.SUBMIT.value, "[Error] No running process session found for default terminal"
+            )
 
         ending = ENTER_KEY
         raw_output, actual = await self._batch_write_with_early_stop(
-            terminal_session, ending, repeat,
+            terminal_session,
+            ending,
+            repeat,
         )
 
         drained = await _drain_terminal_after_action(
-            terminal_session, self._registry, running.id, self._config,
+            terminal_session,
+            self._registry,
+            running.id,
+            self._config,
         )
         output = (raw_output + drained) if drained else raw_output
         output = output or "(no output)"
 
         return _build_process_xml(
-            _A.SUBMIT.value, output,
-            terminal_name=terminal_session.name, session_id=running.id,
+            _A.SUBMIT.value,
+            output,
+            terminal_name=terminal_session.name,
+            session_id=running.id,
         )
 
     async def _do_send_keys(self, params: SendKeysParams) -> str:
         terminal_session, running, _finished = await self._resolve_terminal()
         if running is None:
-            return _build_process_xml(_A.SEND_KEYS.value, "[Error] No running process session found for default terminal")
+            return _build_process_xml(
+                _A.SEND_KEYS.value, "[Error] No running process session found for default terminal"
+            )
 
         cursor_mode = running.cursor_key_mode
 
@@ -412,34 +438,48 @@ class ProcessTool(Tool):
 
         # Drain output after send_keys
         output = await _drain_terminal_after_action(
-            terminal_session, self._registry, running.id, self._config,
+            terminal_session,
+            self._registry,
+            running.id,
+            self._config,
         )
 
         return _build_process_xml(
-            _A.SEND_KEYS.value, output or "(no output)",
-            terminal_name=terminal_session.name, session_id=running.id,
+            _A.SEND_KEYS.value,
+            output or "(no output)",
+            terminal_name=terminal_session.name,
+            session_id=running.id,
         )
 
     async def _do_paste(self, params: PasteParams) -> str:
         terminal_session, running, _finished = await self._resolve_terminal()
         if running is None:
-            return _build_process_xml(_A.PASTE.value, "[Error] No running process session found for default terminal")
+            return _build_process_xml(
+                _A.PASTE.value, "[Error] No running process session found for default terminal"
+            )
 
         payload = encode_paste(params.text, bracketed=terminal_session.bracketed_paste_enabled)
         await terminal_session.write(payload.decode("utf-8", errors="surrogateescape"))
 
         output = await _drain_terminal_after_action(
-            terminal_session, self._registry, running.id, self._config,
+            terminal_session,
+            self._registry,
+            running.id,
+            self._config,
         )
         return _build_process_xml(
-            _A.PASTE.value, output or "(no output)",
-            terminal_name=terminal_session.name, session_id=running.id,
+            _A.PASTE.value,
+            output or "(no output)",
+            terminal_name=terminal_session.name,
+            session_id=running.id,
         )
 
     async def _do_interrupt(self) -> str:
         terminal_session, running, _finished = await self._resolve_terminal()
         if running is None:
-            return _build_process_xml(_A.INTERRUPT.value, "[Error] No running process session found for default terminal")
+            return _build_process_xml(
+                _A.INTERRUPT.value, "[Error] No running process session found for default terminal"
+            )
 
         await terminal_session.interrupt()
         # Give the signal time to propagate through the PTY.
@@ -459,19 +499,25 @@ class ProcessTool(Tool):
         segment = await terminal_session.current_segment()
         if segment.is_empty_prompt:
             self._registry.mark_exited(
-                running.id, exit_code=None, exit_signal="SIGINT",
+                running.id,
+                exit_code=None,
+                exit_signal="SIGINT",
                 status=ProcessStatus.KILLED,
             )
 
         return _build_process_xml(
-            _A.INTERRUPT.value, output,
-            terminal_name=terminal_session.name, session_id=running.id,
+            _A.INTERRUPT.value,
+            output,
+            terminal_name=terminal_session.name,
+            session_id=running.id,
         )
 
     async def _do_kill(self) -> str:
         terminal_session, running, _finished = await self._resolve_terminal()
         if running is None:
-            return _build_process_xml(_A.KILL.value, "[Error] No running process session found for default terminal")
+            return _build_process_xml(
+                _A.KILL.value, "[Error] No running process session found for default terminal"
+            )
 
         await terminal_session.terminate()
         self._registry.mark_exited(
@@ -481,17 +527,22 @@ class ProcessTool(Tool):
             status=ProcessStatus.KILLED,
         )
         return _build_process_xml(
-            _A.KILL.value, f"Killed session {running.id} — backend terminated, terminal closed.",
-            terminal_name=terminal_session.name, session_id=running.id,
+            _A.KILL.value,
+            f"Killed session {running.id} — backend terminated, terminal closed.",
+            terminal_name=terminal_session.name,
+            session_id=running.id,
         )
 
     async def _do_clear(self) -> str:
         _terminal, _running, finished = await self._resolve_terminal()
         if finished is None:
-            return _build_process_xml(_A.CLEAR.value, "[Error] No finished process session found for default terminal")
+            return _build_process_xml(
+                _A.CLEAR.value, "[Error] No finished process session found for default terminal"
+            )
         self._registry.delete(finished.id)
         return _build_process_xml(
-            _A.CLEAR.value, f"Cleared finished session {finished.id}.",
+            _A.CLEAR.value,
+            f"Cleared finished session {finished.id}.",
             terminal_name=_terminal.name,
         )
 
@@ -508,18 +559,22 @@ class ProcessTool(Tool):
             )
             self._registry.delete(running.id)
             return _build_process_xml(
-                _A.REMOVE.value, f"Killed and removed session {running.id}.",
+                _A.REMOVE.value,
+                f"Killed and removed session {running.id}.",
                 terminal_name=terminal_session.name,
             )
 
         if finished is not None:
             self._registry.delete(finished.id)
             return _build_process_xml(
-                _A.REMOVE.value, f"Removed finished session {finished.id}.",
+                _A.REMOVE.value,
+                f"Removed finished session {finished.id}.",
                 terminal_name=terminal_session.name,
             )
 
-        return _build_process_xml(_A.REMOVE.value, "[Error] No process session found for default terminal")
+        return _build_process_xml(
+            _A.REMOVE.value, "[Error] No process session found for default terminal"
+        )
 
     # ------------------------------------------------------------------
     # rejected response
@@ -527,7 +582,7 @@ class ProcessTool(Tool):
 
     def _format_write_rejected(
         self,
-        guard_result: "TerminalGuardResult",
+        guard_result: TerminalGuardResult,
         *,
         terminal_name: str | None = None,
     ) -> str:
@@ -541,11 +596,13 @@ class ProcessTool(Tool):
         ]
         if terminal_name:
             parts.append(f"<terminal>{xml_text(terminal_name)}</terminal>")
-        parts.extend([
-            "<diagnostic>",
-            f"<status>{snap.status.value}</status>",
-            f"<idle_ms>{snap.idle_ms}</idle_ms>",
-        ])
+        parts.extend(
+            [
+                "<diagnostic>",
+                f"<status>{snap.status.value}</status>",
+                f"<idle_ms>{snap.idle_ms}</idle_ms>",
+            ]
+        )
         if snap.cursor_line:
             parts.append(f"<cursor>{xml_text(snap.cursor_line)}</cursor>")
         if snap.suggestion:

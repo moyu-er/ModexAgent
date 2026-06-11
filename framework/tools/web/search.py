@@ -42,7 +42,7 @@ class WebSearchTool(Tool):
                 },
                 "required": ["query"],
             },
-            config=ToolConfig(timeout=30.0),
+            config=ToolConfig(),
         )
 
     async def execute(self, query: str = "", max_results: int = 5, **kwargs: Any) -> str:
@@ -55,10 +55,7 @@ class WebSearchTool(Tool):
         try:
             from ddgs import DDGS
         except ImportError:
-            return (
-                "Error: ddgs package not installed. "
-                "Install with: pip install ddgs"
-            )
+            return "Error: ddgs package not installed. Install with: pip install ddgs"
 
         # --- search (DDGS is synchronous → run in thread) -----------------------
         def _do_search() -> list[dict[str, str]]:
@@ -75,7 +72,7 @@ class WebSearchTool(Tool):
         if not results:
             return f"No results found for: {query}"
 
-        lines = [f"Found {len(results)} results for \"{query}\":"]
+        lines = [f'Found {len(results)} results for "{query}":']
         for i, r in enumerate(results, 1):
             lines.append(f"\n{i}. {r.get('title', 'No title')}")
             lines.append(f"   URL: {r.get('href', '')}")

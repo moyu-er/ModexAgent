@@ -212,9 +212,7 @@ class RuntimeContextManager:
         scope_key = self._resolve_scope_key(session_id, metadata)
         await self._store.clear(scope_key)
 
-    def _resolve_scope_key(
-        self, session_id: str, metadata: dict[str, Any] | None
-    ) -> str:
+    def _resolve_scope_key(self, session_id: str, metadata: dict[str, Any] | None) -> str:
         meta = metadata or {}
         mem_ctx = MemoryContext(
             session_id=session_id,

@@ -38,8 +38,7 @@ def build_agent_result(
     """Build <agent_result> XML for hook-generated turn results."""
     inv_attr = f' invocation_id="{xml_attr(invocation_id)}"' if invocation_id else ""
     lines = [
-        f'<agent_result source="{xml_attr(source)}"{inv_attr}'
-        f' status="{xml_attr(status)}">',
+        f'<agent_result source="{xml_attr(source)}"{inv_attr} status="{xml_attr(status)}">',
         f"  <stop_reason>{xml_text(stop_reason)}</stop_reason>",
         f"  <content>{xml_text(content)}</content>",
         "</agent_result>",

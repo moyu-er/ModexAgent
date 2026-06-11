@@ -1,9 +1,10 @@
 agent_type: reviewer
 description: "Versatile review specialist for code diffs, plans, and solutions"
 max_steps: 100
-tool_preset: read_write
 context_mode: fresh
-thinking_budget: high
+thinking_budget: medium
+skills:
+  roots: ["skills/coding/reviewer"]
 # NOTE: default_reads is not implemented yet — field reserved for future use
 memory:
   session:

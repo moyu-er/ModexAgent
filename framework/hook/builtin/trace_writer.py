@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import logging.handlers
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from framework.control.types import ControlEvent, ControlEventType
@@ -44,7 +44,7 @@ class TraceFileWriter:
             return
         try:
             entry = {
-                "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+                "timestamp": datetime.now(tz=UTC).isoformat(),
                 **event.payload,
             }
             line = json.dumps(entry, ensure_ascii=False, default=str)

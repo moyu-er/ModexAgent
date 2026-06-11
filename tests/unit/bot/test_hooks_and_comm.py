@@ -34,19 +34,21 @@ class TestHookConfiguration:
         assert hook._svc is svc
         # No parent_name field — routing is internal to AgentNotificationService
 
-    def test_subagent_auto_send_hook_has_parent_and_notification(self):
-        """SubagentAutoSendHook receives parent_name and optional notification_service."""
+    def test_subagent_auto_send_hook_has_parent_and_runtime_dir(self):
+        """SubagentAutoSendHook receives parent_name and optional runtime_dir."""
+        from pathlib import Path
+
         from framework.hook.builtin import SubagentAutoSendHook
 
         hook = SubagentAutoSendHook(
             agent_bus=None,
             self_name="reviewer",
             parent_name="coding",
-            notification_service="mock_svc",
+            runtime_dir=Path("/tmp/runtime"),
         )
         assert hook._self_name == "reviewer"
         assert hook._parent_name == "coding"
-        assert hook._svc == "mock_svc"
+        assert hook._runtime_dir == Path("/tmp/runtime")
 
     def test_notification_service_no_parent_map(self):
         """AgentNotificationService no longer uses parent_map — derives parent from session_meta."""
@@ -216,14 +218,16 @@ class TestHookWiringPerAgent:
         assert SubagentAutoSendHook is not None
         assert MaxIterationNotifyHook is not None
 
-    def test_subagent_auto_send_has_notification_service(self):
-        """SubagentAutoSendHook receives notification_service for missed_communication."""
+    def test_subagent_auto_send_has_runtime_dir(self):
+        """SubagentAutoSendHook receives runtime_dir for deterministic path derivation."""
+        from pathlib import Path
+
         from framework.hook.builtin import SubagentAutoSendHook
 
         hook = SubagentAutoSendHook(
             agent_bus=None,
             self_name="test_sub",
             parent_name="test_main",
-            notification_service="fake_svc",
+            runtime_dir=Path("/tmp/rt"),
         )
-        assert hook._svc == "fake_svc"
+        assert hook._runtime_dir == Path("/tmp/rt")

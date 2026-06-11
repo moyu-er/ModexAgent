@@ -22,7 +22,7 @@ class ContentFilter(ABC):
 class ChainedContentFilter(ContentFilter):
     """Chain multiple filters together."""
 
-    def __init__(self, filters: list[ContentFilter]):
+    def __init__(self, filters: list[ContentFilter]) -> None:
         self.filters = filters
 
     async def apply(self, message: OutputMessage) -> OutputMessage:
@@ -39,7 +39,7 @@ class ReasoningContentFilter(ContentFilter):
         - ``keep``:   do nothing
     """
 
-    def __init__(self, mode: str = "strip"):
+    def __init__(self, mode: str = "strip") -> None:
         self.mode = mode
 
     async def apply(self, message: OutputMessage) -> OutputMessage:
@@ -52,7 +52,7 @@ class ReasoningContentFilter(ContentFilter):
 class WhitespaceFilter(ContentFilter):
     """Clean up excessive whitespace."""
 
-    def __init__(self, collapse_lines: bool = True, strip_edges: bool = True):
+    def __init__(self, collapse_lines: bool = True, strip_edges: bool = True) -> None:
         self.collapse_lines = collapse_lines
         self.strip_edges = strip_edges
 

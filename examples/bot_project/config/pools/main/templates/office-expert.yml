@@ -1,7 +1,6 @@
 agent_type: office-expert
 description: "处理 Office 文档（Word/Excel/PPT/PDF），支持格式转换、内容提取、编辑批注"
 max_steps: 30
-standard_tools: true
 memory:
   session:
     max_messages: 80

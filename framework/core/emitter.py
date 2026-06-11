@@ -31,11 +31,14 @@ class AgentResult:
     reasoning 字段用于存储 DeepSeek R1、Kimi 等模型返回的推理内容。
     messages 字段用于存储本次执行生成的所有历史消息（包括 assistant 的 tool_calls 和 tool 结果消息）。
     """
+
     content: str | None = None  # 最终输出内容
     reasoning: str | None = None  # 推理/思考过程（新增）
     stop_reason: StopReason = StopReason.COMPLETED
     error: str | None = None
-    messages: Sequence[ChatMessage | dict[str, Any]] = field(default_factory=list)  # 本次执行生成的历史消息
+    messages: Sequence[ChatMessage | dict[str, Any]] = field(
+        default_factory=list
+    )  # 本次执行生成的历史消息
     partial_content: str | None = None  # 取消时保留的部分内容
     attachments: list[str] = field(default_factory=list)  # 要发送给用户的附件路径列表
 
@@ -45,7 +48,7 @@ class AgentResult:
         return f"AgentResult(content={self.content!r}, reasoning={'...' if self.reasoning else None}, stop_reason={self.stop_reason})"
 
 
-E = TypeVar('E', bound=AgentEvent)
+E = TypeVar("E", bound=AgentEvent)
 
 
 class ContentEmitter(ABC, Generic[E]):
@@ -62,7 +65,7 @@ class ContentEmitter(ABC, Generic[E]):
     泛型参数 E 是 Agent 特定的事件枚举类型，例如 ReActEvent。
     """
 
-    def __init__(self, config: EmitterConfig | None = None):
+    def __init__(self, config: EmitterConfig | None = None) -> None:
         self.config = config or EmitterConfig()
 
     def wants_streaming(self) -> bool:
@@ -191,7 +194,7 @@ class StreamingAwareEmitter(ContentEmitter[E]):
         config: EmitterConfig | None = None,
         *,
         send_timeout: float | None = None,
-    ):
+    ) -> None:
         super().__init__(config)
         self.output_adapter = output_adapter
         self.session_id = session_id
@@ -225,13 +228,16 @@ class StreamingAwareEmitter(ContentEmitter[E]):
             logger.error(
                 "Output adapter %s timeout after %.1fs for session=%s (op=%s)",
                 getattr(self.output_adapter, "name", "unknown"),
-                self._send_timeout, self.session_id, log_label,
+                self._send_timeout,
+                self.session_id,
+                log_label,
             )
         except Exception:
             logger.exception(
                 "Output adapter %s failed for session=%s (op=%s)",
                 getattr(self.output_adapter, "name", "unknown"),
-                self.session_id, log_label,
+                self.session_id,
+                log_label,
             )
 
     async def emit_delta(self, delta: str) -> None:
@@ -278,6 +284,7 @@ class StreamingAwareEmitter(ContentEmitter[E]):
         # 转发 result 中的 attachments（即使在流式模式下也需显式发送）
         if result.attachments:
             from ..core.types import OutputMessage
+
             await self._safe_adapter_send(
                 OutputMessage(content="", attachments=result.attachments),
                 log_label="attachments",
@@ -292,6 +299,7 @@ class StreamingAwareEmitter(ContentEmitter[E]):
         默认实现：通过 OutputAdapter 发送错误消息。
         """
         from ..core.types import OutputMessage
+
         await self._safe_adapter_send(
             OutputMessage(content=f"Error: {error}"),
             log_label="emit_error",
@@ -308,6 +316,7 @@ class StreamingAwareEmitter(ContentEmitter[E]):
                 await self._flush_buffers()
         elif event_name == "error":
             from ..core.types import OutputMessage
+
             await self._safe_adapter_send(
                 OutputMessage(content=f"Error: {data}"),
                 log_label="on_event_error",
@@ -321,10 +330,11 @@ class StreamingAwareEmitter(ContentEmitter[E]):
             await self._safe_adapter_send(
                 OutputMessage(
                     content=self._content_buffer,
-                    metadata={"reasoning": self._reasoning_buffer} if self._reasoning_buffer else {}
+                    metadata={"reasoning": self._reasoning_buffer}
+                    if self._reasoning_buffer
+                    else {},
                 ),
                 log_label="flush_buffers",
             )
             self._content_buffer = ""
             self._reasoning_buffer = ""
-

@@ -4,7 +4,7 @@ import json
 import logging
 import tempfile
 import warnings
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -33,19 +33,19 @@ class ExperienceUsageTracker:
     # -- public API -------------------------------------------------------
 
     def bump_use(self, name: str) -> None:
-        self._mutate(name, lambda r: r.update(
-            use_count=r.get("use_count", 0) + 1))
+        self._mutate(name, lambda r: r.update(use_count=r.get("use_count", 0) + 1))
 
     def bump_view(self, name: str) -> None:
-        self._mutate(name, lambda r: r.update(
-            view_count=r.get("view_count", 0) + 1))
+        self._mutate(name, lambda r: r.update(view_count=r.get("view_count", 0) + 1))
 
     def update_timestamp(self, name: str) -> None:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
+
         def _apply(r: dict[str, Any]) -> None:
             r["last_used_at"] = now
             if "created_at" not in r:
                 r["created_at"] = now
+
         self._mutate(name, _apply)
 
     def remove_record(self, name: str) -> None:
@@ -69,7 +69,9 @@ class ExperienceUsageTracker:
                 data[new_name] = record
         except Exception:
             logger.debug(
-                "Failed to migrate usage record %s → %s", old_name, new_name,
+                "Failed to migrate usage record %s → %s",
+                old_name,
+                new_name,
                 exc_info=True,
             )
 
@@ -78,7 +80,7 @@ class ExperienceUsageTracker:
 
         Preserves existing created_at.
         """
-        dt = datetime.fromtimestamp(mtime, tz=timezone.utc)
+        dt = datetime.fromtimestamp(mtime, tz=UTC)
 
         def _apply(r: dict[str, Any]) -> None:
             r["last_used_at"] = dt.isoformat()
@@ -127,7 +129,9 @@ class ExperienceUsageTracker:
     def _save_all(self, data: dict[str, dict[str, Any]]) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(
-            dir=str(self._path.parent), prefix=".usage_", suffix=".tmp",
+            dir=str(self._path.parent),
+            prefix=".usage_",
+            suffix=".tmp",
         )
         try:
             with open(fd, "w", encoding="utf-8") as f:

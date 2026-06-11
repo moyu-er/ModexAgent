@@ -1,4 +1,5 @@
 """Approval system constants."""
+
 from enum import StrEnum
 
 

@@ -6,13 +6,6 @@
       "headers": {
         "Authorization": "Bearer ${MCP_BEARER_TOKEN}"
       }
-    },
-    "fetch": {
-      "type": "streamable_http",
-      "url": "https://mcp.api-inference.modelscope.net/1697ff30a27342/mcp",
-      "headers": {
-        "Authorization": "Bearer ${MCP_BEARER_TOKEN}"
-      }
     }
   }
 }

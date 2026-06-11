@@ -6,7 +6,7 @@ from pathlib import Path
 from ..config import SandboxConfig
 from ..env_builder import EnvBuilderConfig, EnvironmentBuilder
 from ..exceptions import SandboxUnavailableError
-from ..guard import CommandPatternGuard, CommandPatternGuardConfig
+from ..guard import CommandPatternGuard
 from ..types import SandboxResult
 from ..validation import validate_code
 from .base import SandboxAdapter
@@ -45,7 +45,7 @@ class DockerSandbox(SandboxAdapter):
     def is_available(self) -> bool:
         return _check_docker_available()
 
-    def __init__(self, config: SandboxConfig | None = None):
+    def __init__(self, config: SandboxConfig | None = None) -> None:
         self.config = config or SandboxConfig()
         self._client = None
         self._command_guard: CommandPatternGuard | None = None

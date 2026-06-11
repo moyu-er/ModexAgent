@@ -82,12 +82,12 @@ class MCPTool(Tool):
         config: ToolConfig | None = None,
         tool_timeout: int = _DEFAULT_TOOL_TIMEOUT,
         use_prefix: bool = True,
-    ):
+    ) -> None:
         full_name = f"mcp_{server_name}_{tool_name}" if use_prefix else tool_name
 
         normalized_params = _normalize_schema_for_openai(parameters)
 
-        effective_config = config if config is not None else ToolConfig(timeout=float(tool_timeout))
+        effective_config = config if config is not None else ToolConfig()
 
         super().__init__(
             name=full_name,
@@ -142,10 +142,10 @@ class MCPResourceTool(Tool):
         mcp_manager: Any,
         config: ToolConfig | None = None,
         resource_timeout: int = _DEFAULT_TOOL_TIMEOUT,
-    ):
+    ) -> None:
         full_name = f"mcp_{server_name}_resource_{resource_name}"
 
-        effective_config = config if config is not None else ToolConfig(timeout=float(resource_timeout))
+        effective_config = config if config is not None else ToolConfig()
 
         super().__init__(
             name=full_name,
@@ -190,11 +190,11 @@ class MCPPromptTool(Tool):
         server_name: str,
         prompt_name: str,
         description: str,
-        arguments_def: list,
+        arguments_def: list[dict[str, Any]],
         mcp_manager: Any,
         config: ToolConfig | None = None,
         prompt_timeout: int = _DEFAULT_TOOL_TIMEOUT,
-    ):
+    ) -> None:
         full_name = f"mcp_{server_name}_prompt_{prompt_name}"
 
         properties: dict[str, Any] = {}
@@ -207,11 +207,12 @@ class MCPPromptTool(Tool):
             if arg.get("required"):
                 required.append(arg["name"])
 
-        effective_config = config if config is not None else ToolConfig(timeout=float(prompt_timeout))
+        effective_config = config if config is not None else ToolConfig()
 
         super().__init__(
             name=full_name,
-            description="[MCP Prompt] %s\nReturns a filled prompt template that can be used as a workflow guide." % description,
+            description="[MCP Prompt] %s\nReturns a filled prompt template that can be used as a workflow guide."
+            % description,
             parameters={
                 "type": "object",
                 "properties": properties,
@@ -238,7 +239,10 @@ class MCPPromptTool(Tool):
             reconnected = await self._mcp_manager.reconnect_with_retry(self._server_name)
             if reconnected:
                 result = await self._mcp_manager.get_prompt(
-                    self._server_name, self._prompt_name, arguments=kwargs, timeout=self._prompt_timeout
+                    self._server_name,
+                    self._prompt_name,
+                    arguments=kwargs,
+                    timeout=self._prompt_timeout,
                 )
 
         if not result.get("success"):

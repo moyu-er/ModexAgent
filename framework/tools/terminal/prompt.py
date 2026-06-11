@@ -62,25 +62,51 @@ def sanitize_terminal_output(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 INPUT_PROMPT_MARKERS: tuple[str, ...] = (
-    "password", "passphrase", "login:", "username:",
-    "user name:", "enter password", "enter passphrase",
-    "[y/n]", "[Y/n]", "[yes/no]", "(yes/no)",
-    "pin:", "token:", "passcode", "code:",
-    "verification code:", "2fa code:", "otp:",
+    "password",
+    "passphrase",
+    "login:",
+    "username:",
+    "user name:",
+    "enter password",
+    "enter passphrase",
+    "[y/n]",
+    "[Y/n]",
+    "[yes/no]",
+    "(yes/no)",
+    "pin:",
+    "token:",
+    "passcode",
+    "code:",
+    "verification code:",
+    "2fa code:",
+    "otp:",
     "press any key to continue",
-    "overwrite", "replace",
+    "overwrite",
+    "replace",
     "confirm",
-    "current password", "new password", "retype password", "repeat password",
-    "(y/n)", "[y/N]", "(Y/n)",
+    "current password",
+    "new password",
+    "retype password",
+    "repeat password",
+    "(y/n)",
+    "[y/N]",
+    "(Y/n)",
 )
 
 # Markers that can coincidentally appear in legitimate output
 # (e.g. "Hashing password: 50% done" or "Confirming transaction...").
 # These need extra validation: the line must end with prompt-ending
 # punctuation (':', '?', ']', ')') — otherwise it's likely output, not a prompt.
-_AMBIGUOUS_MARKERS: frozenset[str] = frozenset({
-    "password", "passphrase", "confirm", "overwrite", "replace", "passcode",
-})
+_AMBIGUOUS_MARKERS: frozenset[str] = frozenset(
+    {
+        "password",
+        "passphrase",
+        "confirm",
+        "overwrite",
+        "replace",
+        "passcode",
+    }
+)
 
 # Characters that typically terminate an input prompt line.
 _PROMPT_ENDING_CHARS: tuple[str, ...] = (":", "?", "]", ")")
@@ -131,31 +157,39 @@ def is_waiting_for_input(output: str) -> bool:
 
 
 PROMPT_SUFFIXES: tuple[str, ...] = (
-    "$ ",  "# ",  "> ",  "% ",  ": ",
-    "$",   "#",   ">",   "%",   ":",
+    "$ ",
+    "# ",
+    "> ",
+    "% ",
+    ": ",
+    "$",
+    "#",
+    ">",
+    "%",
+    ":",
 )
 
 PROMPT_PATTERNS: list[re.Pattern[str]] = [
     # General shell prompts
-    re.compile(r'\$\s*$'),
-    re.compile(r'#\s*$'),
-    re.compile(r'%\s*$'),
+    re.compile(r"\$\s*$"),
+    re.compile(r"#\s*$"),
+    re.compile(r"%\s*$"),
     # Path-based prompts (need path context)
-    re.compile(r'PS\s+\S*>\s*$'),
-    re.compile(r'[A-Za-z]:\\[^>\n]*>\s*$'),
-    re.compile(r'/[^>\n]*>\s*$'),
+    re.compile(r"PS\s+\S*>\s*$"),
+    re.compile(r"[A-Za-z]:\\[^>\n]*>\s*$"),
+    re.compile(r"/[^>\n]*>\s*$"),
     # user@host patterns
-    re.compile(r'\S+@\S+[^$\n]*\$\s*$'),
-    re.compile(r'\S+@\S+[^#\n]*#\s*$'),
+    re.compile(r"\S+@\S+[^$\n]*\$\s*$"),
+    re.compile(r"\S+@\S+[^#\n]*#\s*$"),
     # Colon-ending prompts
-    re.compile(r'\S+@\S*[^:\n]*:\s*$'),
+    re.compile(r"\S+@\S*[^:\n]*:\s*$"),
     # ^ anchor required: prevents matching trailing "user: " inside "[sudo] password for user: "
-    re.compile(r'^\w+:\s*$'),
+    re.compile(r"^\w+:\s*$"),
     # Python REPL (must be exactly 3 >, NOT PowerShell continuation >>)
-    re.compile(r'>>>\s*$'),
+    re.compile(r">>>\s*$"),
     # Single-char no-trailing-space (most permissive, last)
-    re.compile(r'[^>$\n#%]\$$'),
-    re.compile(r'[^>\n]>$'),
+    re.compile(r"[^>$\n#%]\$$"),
+    re.compile(r"[^>\n]>$"),
 ]
 
 
@@ -330,13 +364,13 @@ def _is_prompt_with_command(line: str) -> bool:
         idx = stripped.find(marker)
         if idx < 0:
             continue
-        prefix = stripped[:idx + 1]  # include the marker character
+        prefix = stripped[: idx + 1]  # include the marker character
         if not is_prompt_ready(prefix):
             continue
         # Text after the marker must look like a real command.
         # Digits immediately after "$ " suggest currency/number output,
         # not a command (e.g. "Total cost: $ 42.50").
-        after = stripped[idx + len(marker):]
+        after = stripped[idx + len(marker) :]
         if after and after[0].isdigit():
             continue
         return True
@@ -366,7 +400,8 @@ def extract_last_command_output(text: str) -> str:
         return ""
 
     prompt_indexes = [
-        idx for idx, line in enumerate(lines)
+        idx
+        for idx, line in enumerate(lines)
         if is_prompt_ready(line) or _is_prompt_with_command(line)
     ]
 

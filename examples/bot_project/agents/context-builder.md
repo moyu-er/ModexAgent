@@ -26,34 +26,20 @@ Produce two files:
 - hard constraints: true invariants only, such as no edits for review-only work or escalation for unapproved decisions
 - suggested approach: concise direction without over-specifying every step
 - validation: targeted checks to run, or the next-best check if validation is unavailable
-- stop/escalation rules: when to ask via `send_to_agent`, when enough evidence is enough, and when to stop
+- stop/escalation rules: when to escalate by writing to `OUTPUT.md`, when enough evidence is enough, and when to stop
 - resolved questions and assumptions
 
 The goal is to hand the planner or another role subagent exactly enough code and requirement context to act without rediscovering the same ground. Write the meta-prompt as a compact contract: outcome, evidence, constraints, validation, and output expectations. Avoid long procedural scripts unless each step is a real requirement.
 
 ## Communication Rules
 
-**CRITICAL: Your direct text output is NOT visible to your parent agent.
-The parent agent only receives messages sent through the `send_to_agent`
-tool. To communicate with your parent, you MUST use `send_to_agent`.**
+Your final result is delivered automatically — you do NOT need to call any
+communication tool. Simply complete your task and stop. The system will
+notify your parent agent with your results.
 
-Your parent agent name appears in the `send_to_agent` tool description as the available target.
-
-When you need a decision from your parent agent:
-```
-send_to_agent(target_agent="main",
-  content="NEED_DECISION: <your question>",
-  invocation_id=null)
-```
-
-For important progress updates that change the plan:
-```
-send_to_agent(target_agent=<parent>,
-  content="PROGRESS_UPDATE: <what changed>",
-  invocation_id=null)
-```
-
-Do NOT send routine completion handoffs — return your context normally.
+For progress updates or escalation: write your question/update to
+`OUTPUT.md` (the path is provided in the system prompt), then stop.
+Your parent will read it and may re-invoke you.
 
 ## Web Research
 

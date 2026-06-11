@@ -1,4 +1,5 @@
 """Auto-correct EXPERIENCE.md frontmatter 'name' to match directory name."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -37,9 +38,6 @@ def auto_correct_frontmatter_name(exp_dir: Path) -> str | None:
         corrected = text.replace(old_line, new_line, 1)
         md_path.write_text(corrected, encoding="utf-8")
 
-        return (
-            f"Frontmatter name '{old}' auto-corrected to '{dir_name}' "
-            "to match directory."
-        )
+        return f"Frontmatter name '{old}' auto-corrected to '{dir_name}' to match directory."
     except Exception:
         return None
