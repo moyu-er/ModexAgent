@@ -136,3 +136,4 @@ class TurnCustomKey(StrEnum):
     MAX_TOOLS_PER_TURN = "max_tools_per_turn"
     TURN_UUID = "_turn_uuid"
     INJECTION_CYCLE_COUNT = "_injection_cycle_count"
+    TRACE_ID = "_trace_id"
