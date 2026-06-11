@@ -170,6 +170,9 @@ async def create_pool(
         )
 
     # 7. AgentFactory (creates RuntimeContextManager internally for tool-call tracking)
+    from framework.trace import JsonFileTraceStore
+
+    trace_store = JsonFileTraceStore(base_dir=runtime_data_dir / "trace")
     factory = DefaultAgentFactory(
         default_llm_provider=provider,
         default_tool_manager=tool_manager,
@@ -180,6 +183,7 @@ async def create_pool(
         default_interceptor_chain=shared_interceptor_chain,
         default_turn_store=turn_store,
         control_channel=control_channel,
+        trace_store=trace_store,
     )
 
     # 8. AgentPool
@@ -255,6 +259,7 @@ async def create_pool(
         notification_service=notification_service,
         main_agent_name=main_agent_name,
         pruned_manager=memory_system.pruned_manager,
+        runtime_dir=runtime_data_dir,
     )
     # Communication target store — shared between SendToAgentTool and AgentCommunicationService
     main_store = CommunicationTargetStore()

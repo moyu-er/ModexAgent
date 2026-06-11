@@ -350,7 +350,6 @@ class BotService(AgentBuilderMixin):
         if self._app_config is None:
             self._app_config = self._load_app_config()
         assert self._app_config is not None, "AppConfig must be loaded before initialize"
-        assert self._app_config.llm is not None, "LLM config required"
         print(f"[OK] Config loaded ({len(self._app_config.agents)} agents via IOC)")
 
         # 1.5 Create WorkspaceContext
@@ -696,7 +695,6 @@ class BotService(AgentBuilderMixin):
     async def _initialize_pipeline(self, main_skill_manager: SkillManager | None) -> None:
         """Initialize pipeline-mode runtime."""
         assert self._app_config is not None, "AppConfig not loaded"
-        assert self._app_config.llm is not None, "LLM config required"
         assert self.workspace_context is not None, "WorkspaceContext not initialized"
         if self.broker is None:
             raise RuntimeError("Broker is not initialized")
@@ -959,12 +957,9 @@ class BotService(AgentBuilderMixin):
         await self._rebuild_shared_infrastructure(new_dir)
 
     async def _on_ws_terminal_reset(self, _old_dir: Path, _new_dir: Path) -> None:
-        """② Close all terminal sessions."""
-        await self._close_all_terminals(suppress_errors=False)
-        for pool_inst in self._pools.values():
-            if pool_inst.terminal_manager is not None:
-                for name in list(pool_inst.terminal_manager.list_names()):
-                    await pool_inst.terminal_manager.close(name)
+        """② Close all terminal sessions. _close_all_terminals covers both
+        pipeline and pool terminal managers."""
+        await self._close_all_terminals(suppress_errors=True)
 
     # ------------------------------------------------------------------ #
     # Workspace switch helpers
@@ -1027,10 +1022,18 @@ class BotService(AgentBuilderMixin):
         await self._rebuild_experience(new_dir)
 
     async def _rebuild_pool_memory(self, new_dir: Path) -> None:
-        """Rebuild pool-mode memory + runtime stores + experience for every pool."""
+        """Rebuild pool-mode memory + runtime stores + experience for every pool.
+
+        Also updates factory._default_turn_store and factory._trace_store so
+        NEW subagents created after cd write to the new data directory.
+        """
         for pool_inst in self._pools.values():
             main_inst = pool_inst.pool._agents.get(pool_inst.main_agent_name)
-            pool_inst.memory_system, _, _ = await self._rebuild_memory_for_target(
+            (
+                new_memory,
+                new_turn_store,
+                new_cmd_store,
+            ) = await self._rebuild_memory_for_target(
                 new_dir,
                 self._ws_memory(new_dir) / pool_inst.name,
                 self._ws_runtime(new_dir) / pool_inst.name,
@@ -1039,6 +1042,15 @@ class BotService(AgentBuilderMixin):
                 pool_inst.context_manager,
                 pipeline=main_inst.pipeline if main_inst else None,
             )
+            pool_inst.memory_system = new_memory
+            # Update factory defaults so subagents created after cd
+            # write trace/turns to the new workspace
+            factory = pool_inst.pool._agent_factory
+            factory._default_turn_store = new_turn_store
+            if factory._trace_store is not None:
+                factory._trace_store._base_dir = (
+                    self._ws_runtime(new_dir) / pool_inst.name / "trace"
+                )
         await self._rebuild_experience(new_dir)
 
     async def _stop_background_tasks(self) -> None:
@@ -1226,12 +1238,17 @@ class BotService(AgentBuilderMixin):
         self._start_dream_task()
 
     def _update_communication_paths(self, new_data_dir: Path) -> None:
-        """更新 pool 模式下 AgentCommunicationService 的路径引用。"""
+        """更新 pool 模式下 AgentCommunicationService 的路径引用。
+
+        cd 切换 workspace 后，memory、pruned、runtime 都需要指向新数据目录，
+        否则 trace/output 会写到旧目录。
+        """
         for pool_inst in self._pools.values():
             svc = pool_inst.communication_service
             if svc is not None:
                 svc._memory_dir = self._ws_memory(new_data_dir) / pool_inst.name
                 svc._pruned_manager = pool_inst.memory_system.pruned_manager
+                svc._runtime_dir = new_data_dir / "runtime_state" / pool_inst.name
 
     def _find_subagent_cfg(self) -> IOCAgentConfig | None:
         """Find the first subagent config by role."""
@@ -1311,17 +1328,15 @@ class BotService(AgentBuilderMixin):
         """Build HookRunner from collected hooks with default HookSpec.
 
         Default hooks (always present):
-          - RuntimeContextHook — records tool calls for SubagentAutoSendHook
-          - SubagentAutoSendHook — fallback forward when send_to_agent not called
           - MaxIterationNotifyHook — notify parent/user when max_iterations hit
+
+        Note: SubagentAutoSendHook is wired separately by _wire_subagent_hooks()
+        in AgentCommunicationService, with proper agent_bus and runtime_dir args.
         """
         from framework.hook import HookErrorPolicy, HookRunner, HookSpec
-        from framework.hook.builtin import RuntimeContextHook, SubagentAutoSendHook
         from framework.hook.notification import MaxIterationNotifyHook
 
         runner = HookRunner()
-        runner.add(HookSpec(hook=RuntimeContextHook(), on_error=HookErrorPolicy.LOG))
-        runner.add(HookSpec(hook=SubagentAutoSendHook(), on_error=HookErrorPolicy.LOG))
         runner.add(HookSpec(hook=MaxIterationNotifyHook(), on_error=HookErrorPolicy.LOG))
         for hook in hooks:
             runner.add(HookSpec(hook=hook, on_error=HookErrorPolicy.LOG))

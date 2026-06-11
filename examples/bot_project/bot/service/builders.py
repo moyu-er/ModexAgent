@@ -89,10 +89,6 @@ def _make_search_tools() -> list[Tool]:
     return [SearchFilesTool(), FindFilesTool()]
 
 
-def _make_standard_tools() -> list[Tool]:
-    return _make_file_tools() + [_make_shell_tool()] + _make_search_tools()
-
-
 # ── MCP tool helpers ──
 
 
@@ -311,6 +307,8 @@ class AgentBuilderMixin:
                 session_strategy=strategy,
                 comm_tracker=self.communication_tracker,
                 target_store=comm_store,
+                project_dir=self._project_dir,
+                runtime_dir=self.workspace_context.data_dir / "runtime_state",
             )
             self.tool_manager.register(
                 SendToAgentTool(
