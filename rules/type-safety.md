@@ -19,4 +19,5 @@
    extension boundary or compatibility layer. Prefer explicit typed attributes and
    method calls so contracts stay visible and checkable.
 7. Use ABC (Abstract Base Classes) for defining interfaces and extension points, avoid using Protocols.
-8. Avoid isinstance.
+8. Function or field called by an OBJECT must has the exact function/field in the type annotated on OBJECT.
+9. Avoid isinstance.
