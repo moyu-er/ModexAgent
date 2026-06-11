@@ -4,6 +4,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+from framework.core.agent import AgentContext, AgentSessionMeta
 from framework.multi_agent.comm_kind import AgentCommKind
 from framework.multi_agent.message_xml import build_agent_message, build_agent_result
 from framework.multi_agent.template import AgentTemplate
@@ -462,7 +463,7 @@ class TestSubagentIsolation:
             project = Path(tmp)
             _write_files(project, "main", "helper",
                 "agent_type: helper\ndescription: Test\nmax_steps: 10\n"
-                "standard_tools: true\nuse_terminal: false\n",
+                "use_terminal: false\n",
                 "You are a helper.")
 
             registry = AgentTemplateRegistry(project)
@@ -498,7 +499,9 @@ class TestSubagentIsolation:
             )
 
             tool_names = set(passed_tm.list_tools())
-            assert "send_to_agent" in tool_names
+            assert "send_to_agent" not in tool_names, (
+                "Subagent must NOT have communication tools (notification via hook)"
+            )
             assert "read" in tool_names
             assert "write" in tool_names
             assert "mcp_playwright_browser_navigate" not in tool_names, (
@@ -706,8 +709,8 @@ class TestSessionRoutingSameAgentDifferentInvocation:
 
         # Different invocation_ids must produce different session IDs
         assert sid_a != sid_b
-        assert sid_a == "conv-1:query-12306:abc123"
-        assert sid_b == "conv-1:query-12306:def456"
+        assert sid_a == "conv-1.query-12306.abc123"
+        assert sid_b == "conv-1.query-12306.def456"
 
     def test_same_invocation_produces_same_session(self):
         from framework.multi_agent.session_id import DefaultSessionIdStrategy
@@ -792,21 +795,17 @@ class TestSessionRoutingSameAgentDifferentInvocation:
             assert "Error" not in str(result1)
             assert mock_pool.register_resident.call_count == 1
 
-            # ---- Second call: invocation_id="" again → agent already registered ----
-            # Simulate: helper is now registered in registry
-            mock_registry.get_descriptor.return_value = AgentDescriptor(
-                address=AgentAddress(name="helper"),
-                comm_kind=AgentCommKind.SUBAGENT,
-            )
-
+            # ---- Second call: invocation_id="" again → new agent instance ----
+            # Template is checked first, so each new invocation creates a fresh
+            # agent with the correct OUTPUT.md path in its system prompt.
             result2 = await service.send_async(
                 target_agent="helper", content="second task",
                 invocation_id="", context=ctx,
             )
             assert "Error" not in str(result2)
-            # Must NOT call register_resident again
-            assert mock_pool.register_resident.call_count == 1, (
-                "Second invocation_id='' must not re-create already-registered agent"
+            # Each new invocation creates a new agent instance (template-first lookup)
+            assert mock_pool.register_resident.call_count == 2, (
+                "Second invocation_id='' must create a new agent instance via template"
             )
             # The two calls must have different invocation_ids
             inv1 = result1.split("invocation_id: ")[1] if "invocation_id:" in result1 else ""
@@ -889,3 +888,432 @@ class TestSubagentSafetyHooks:
 
         # Should not raise
         service._wire_subagent_hooks("worker")
+
+
+class TestOutputMdInjection:
+    """Verify OUTPUT.md protocol is injected into subagent system prompt
+    with the correct absolute path and scoped-write alignment."""
+
+    def test_output_md_path_contains_session_structure(self):
+        """OUTPUT.md path must contain session-id components and end with OUTPUT.md."""
+        from pathlib import Path as _Path
+
+        from framework.multi_agent.session_id import DefaultSessionIdStrategy
+
+        strategy = DefaultSessionIdStrategy()
+        session_id = strategy.format(
+            conversation_id="conv-1", agent_name="reviewer", invocation_id="abc123",
+        )
+        runtime_dir = _Path(tempfile.gettempdir()) / "runtime_state" / "coding"
+        output_path = runtime_dir / "output" / session_id / "OUTPUT.md"
+
+        # Must be absolute (runtime_dir is absolute → output_path is absolute)
+        assert output_path.is_absolute(), "OUTPUT.md path must be absolute"
+        assert str(output_path).endswith("OUTPUT.md")
+        assert "conv-1.reviewer.abc123" in str(output_path)
+        assert "output" in str(output_path)
+
+    def test_scoped_write_dir_covers_output_md(self):
+        """READ_ONLY scoped_write_dir must be the parent of OUTPUT.md's directory."""
+        from pathlib import Path as _Path
+
+        from framework.multi_agent.session_id import DefaultSessionIdStrategy
+
+        strategy = DefaultSessionIdStrategy()
+        session_id = strategy.format(
+            conversation_id="conv-1", agent_name="scout", invocation_id="xyz789",
+        )
+        runtime_dir = _Path(tempfile.gettempdir()) / "runtime_state" / "coding"
+        scoped_write_dir = runtime_dir / "output"
+        output_path = runtime_dir / "output" / session_id / "OUTPUT.md"
+
+        # The scoped write allowed dir must be an ancestor of OUTPUT.md
+        output_resolved = output_path.resolve()
+        scoped_resolved = scoped_write_dir.resolve()
+        assert str(output_resolved).startswith(str(scoped_resolved)), (
+            f"OUTPUT.md path ({output_resolved}) must be under "
+            f"scoped_write_dir ({scoped_resolved})"
+        )
+
+    def test_read_only_template_gets_scoped_write_tools(self):
+        """READ_ONLY template must receive ScopedWriteFileTool + ScopedEditFileTool."""
+        import tempfile
+        from pathlib import Path as _Path
+
+        from framework.tools.presets import ToolPreset, get_preset_tools
+
+        scoped_dir = _Path(tempfile.gettempdir()) / "output"
+        tools = get_preset_tools(ToolPreset.READ_ONLY, scoped_write_dir=scoped_dir)
+        tool_names = {t.name for t in tools}
+
+        assert "write" in tool_names, "READ_ONLY must have write tool for OUTPUT.md"
+        assert "edit" in tool_names, "READ_ONLY must have edit tool for OUTPUT.md"
+        # The write tool description mentions it is scoped to allowed directories
+        write_tool = next(t for t in tools if t.name == "write")
+        desc = write_tool.description
+        assert "You can ONLY write" in desc or "ONLY" in desc.upper(), (
+            "Scoped write tool must indicate path restriction in description"
+        )
+
+    def test_full_template_does_not_get_scoped_tools(self):
+        """READ_WRITE template uses standard write/edit, not scoped versions."""
+        from framework.tools.presets import ToolPreset, get_preset_tools
+
+        tools = get_preset_tools(ToolPreset.READ_WRITE)
+        tool_names = {t.name for t in tools}
+        assert "write" in tool_names
+        assert "edit" in tool_names
+
+    def test_no_scoped_dir_means_no_write_for_read_only(self):
+        """READ_ONLY without scoped_write_dir gets no write/edit at all."""
+        from framework.tools.presets import ToolPreset, get_preset_tools
+
+        tools = get_preset_tools(ToolPreset.READ_ONLY, scoped_write_dir=None)
+        tool_names = {t.name for t in tools}
+
+        assert "write" not in tool_names, (
+            "Without scoped_write_dir, READ_ONLY must not get write"
+        )
+        assert "edit" not in tool_names, (
+            "Without scoped_write_dir, READ_ONLY must not get edit"
+        )
+
+    async def test_system_prompt_includes_output_md_protocol(self):
+        """The subagent system prompt must contain OUTPUT.md with absolute path."""
+        import tempfile
+        from pathlib import Path as _Path
+
+        from framework.multi_agent.address import AgentAddress
+        from framework.multi_agent.communication import AgentCommunicationService
+        from framework.multi_agent.template import AgentTemplate
+        from framework.multi_agent.template_registry import AgentTemplateRegistry
+        from framework.tools.presets import ToolPreset
+
+        # Set up template registry — correct directory layout:
+        #   config/pools/{pool}/templates/{type}.yml
+        project = _Path(tempfile.mkdtemp())
+        pool_tpl_dir = project / "config" / "pools" / "main" / "templates"
+        pool_tpl_dir.mkdir(parents=True)
+        (pool_tpl_dir / "helper.yml").write_text(
+            "agent_type: helper\ndescription: Test\ntool_preset: read_only\nmax_steps: 10\n"
+        )
+        registry = AgentTemplateRegistry(project)
+        template = registry.get_template("main", "helper")
+        assert template is not None, (
+            f"Template not found — check dir: {pool_tpl_dir}, "
+            f"files: {list(pool_tpl_dir.iterdir()) if pool_tpl_dir.exists() else 'N/A'}"
+        )
+        assert template.tool_preset == ToolPreset.READ_ONLY
+
+        # Create service with runtime_dir → OUTPUT.md protocol injected
+        runtime_dir = _Path(tempfile.mkdtemp()) / "runtime"
+        mock_pool = _make_mock_pool()
+        mock_broker = AsyncMock()
+
+        service = AgentCommunicationService(
+            source=AgentAddress(name="main"),
+            broker=mock_broker,
+            registry=MagicMock(),
+            pool=mock_pool,
+            pool_name="main",
+            project_dir=project,
+            template_registry=registry,
+            runtime_dir=runtime_dir,
+        )
+
+        ctx = AgentContext(
+            system_prompt="",
+            history=MagicMock(),
+            tool_manager=MagicMock(),
+            session_meta=AgentSessionMeta(
+                conversation_id="conv-1", agent_name="main",
+                comm_kind=AgentCommKind.NORMAL,
+            ),
+        )
+        result = await service.send_async(
+            target_agent="helper", content="do something",
+            invocation_id="", context=ctx,
+        )
+
+        assert "Error" not in str(result)
+        call_args = mock_pool.register_resident.call_args
+        descriptor = call_args[0][0]
+        system_prompt = descriptor.system_prompt_template
+        assert system_prompt is not None
+
+        # OUTPUT.md is now in the dynamic OutputMdProvider, not in the static
+        # descriptor.system_prompt_template. Verify via build_system_prompt().
+        ctx_mgr = call_args[1].get("context_manager")
+        assert ctx_mgr is not None, "context_manager must be passed"
+        built = await ctx_mgr.build_system_prompt(tool_manager=None)
+        assert "OUTPUT.md" in built
+        assert "CRITICAL" in built
+        assert "`write` tool" in built
+        # For READ_ONLY: must mention scoped write access (in static prompt)
+        assert "Read-Only Mode" in system_prompt
+
+    async def test_output_md_before_fork_context(self):
+        """OUTPUT.md section must appear BEFORE fork context in built prompt."""
+        import tempfile
+        from pathlib import Path as _Path
+
+        from framework.multi_agent.address import AgentAddress
+        from framework.multi_agent.communication import AgentCommunicationService
+        from framework.multi_agent.template import AgentTemplate
+        from framework.multi_agent.template_registry import AgentTemplateRegistry
+        from framework.tools.presets import ContextMode, ToolPreset
+
+        project = _Path(tempfile.mkdtemp())
+        pool_tpl_dir = project / "config" / "pools" / "main" / "templates"
+        pool_tpl_dir.mkdir(parents=True)
+        (pool_tpl_dir / "helper.yml").write_text(
+            "agent_type: helper\ndescription: Test\n"
+            "tool_preset: read_only\ncontext_mode: fork\nmax_steps: 10\n"
+        )
+        registry = AgentTemplateRegistry(project)
+        template = registry.get_template("main", "helper")
+        assert template is not None and template.context_mode == ContextMode.FORK
+
+        runtime_dir = _Path(tempfile.mkdtemp()) / "runtime"
+        mock_pool = _make_mock_pool()
+        mock_broker = AsyncMock()
+
+        service = AgentCommunicationService(
+            source=AgentAddress(name="main"),
+            broker=mock_broker,
+            registry=MagicMock(),
+            pool=mock_pool,
+            pool_name="main",
+            project_dir=project,
+            template_registry=registry,
+            runtime_dir=runtime_dir,
+        )
+
+        ctx = AgentContext(
+            system_prompt="",
+            history=MagicMock(),
+            tool_manager=MagicMock(),
+            session_meta=AgentSessionMeta(
+                conversation_id="conv-1", agent_name="main",
+                comm_kind=AgentCommKind.NORMAL,
+            ),
+        )
+        await service.send_async(
+            target_agent="helper", content="do something",
+            invocation_id="", context=ctx,
+        )
+
+        call_args = mock_pool.register_resident.call_args
+        ctx_mgr = call_args[1].get("context_manager")
+        assert ctx_mgr is not None
+        # Load sets _last_session_id so OutputMdProvider gets the right session
+        await ctx_mgr.load(session_id="conv-1.helper.abc123")
+        built = await ctx_mgr.build_system_prompt(tool_manager=None)
+
+        # OUTPUT.md (from OutputMdProvider) must appear before Fork Context
+        # (Fork Context is in base_system_prompt via descriptor, not ctx_mgr)
+        assert "OUTPUT.md" in built
+        assert "CRITICAL" in built
+
+    async def test_built_system_prompt_contains_output_md(self):
+        """OutputMdProvider injects per-session OUTPUT.md path dynamically."""
+        import tempfile
+        from pathlib import Path as _Path
+
+        from framework.memory.core.scope import MemoryAgentRole
+        from framework.ioc.factories.descriptors import build_session_only_memory
+        from framework.ioc.configs.memory import MemoryConfig
+
+        runtime_dir = _Path(tempfile.mkdtemp()) / "runtime"
+        session_id = "conv-1.reviewer.abc123"
+        output_path = runtime_dir / "output" / session_id / "OUTPUT.md"
+        output_base_dir = runtime_dir / "output"
+
+        system_prompt = "You are a code reviewer."
+
+        workspace = _Path(tempfile.mkdtemp()) / "memory"
+        ctx_mgr = build_session_only_memory(
+            cfg=MemoryConfig(),
+            workspace=workspace,
+            agent_id="reviewer",
+            agent_role=MemoryAgentRole.SUBAGENT,
+            system_prompt=system_prompt,
+            output_base_dir=output_base_dir,
+        )
+
+        # load() sets _last_session_id so OutputMdProvider gets the right session
+        await ctx_mgr.load(session_id)
+        built = await ctx_mgr.build_system_prompt(tool_manager=None)
+
+        assert "OUTPUT.md" in built
+        assert str(output_path) in built, (
+            f"Built prompt must contain the absolute OUTPUT.md path: {output_path}"
+        )
+        assert "CRITICAL" in built
+        assert "`write` tool" in built
+
+
+class TestSubagentToolInstanceIsolation:
+    """Every subagent must get independent tool instances — no object sharing.
+
+    Two subagents created from the same template must NOT share:
+    - tool_manager objects
+    - individual tool instances (e.g. ReadFileTool)
+    - MCP connections / managers
+
+    This is critical for MCP: if subagents share a tool_manager, one
+    subagent's MCP tools would leak into another.
+    """
+
+    async def test_two_subagents_get_distinct_tool_managers(self):
+        """Each _create_dynamic_subagent call creates a new InMemoryToolManager."""
+        from framework.multi_agent.address import AgentAddress
+        from framework.multi_agent.communication import AgentCommunicationService
+        from framework.multi_agent.template_registry import AgentTemplateRegistry
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            _write_files(project, "main", "helper",
+                "agent_type: helper\ndescription: Test\nmax_steps: 10\n"
+                "use_terminal: false\ntool_preset: read_only\n",
+                "You are a helper.")
+
+            registry = AgentTemplateRegistry(project)
+            template = registry.get_template("main", "helper")
+            assert template is not None
+
+            service = AgentCommunicationService(
+                source=AgentAddress(name="main"),
+                broker=AsyncMock(),
+                registry=MagicMock(),
+                pool=_make_mock_pool(),
+                pool_name="main",
+                project_dir=project,
+            )
+
+            # Create two subagents
+            result_a = await service._create_dynamic_subagent(
+                template=template, conversation_id="conv-1",
+                invocation_id="inv-a", content="task A",
+            )
+            result_b = await service._create_dynamic_subagent(
+                template=template, conversation_id="conv-1",
+                invocation_id="inv-b", content="task B",
+            )
+
+            assert result_a.error is None
+            assert result_b.error is None
+
+            # Extract tool_managers from register_resident calls
+            pool = service._pool
+            call_args_list = pool.register_resident.call_args_list
+            assert len(call_args_list) == 2
+
+            tm_a = call_args_list[0][1]["tool_manager"]
+            tm_b = call_args_list[1][1]["tool_manager"]
+
+            # Must be different objects
+            assert tm_a is not tm_b, (
+                "Subagents must get distinct tool_manager instances, "
+                "not the same object"
+            )
+
+    async def test_tool_instances_not_shared_between_subagents(self):
+        """Registering a tool in one subagent's manager must not affect the other."""
+        from framework.multi_agent.address import AgentAddress
+        from framework.multi_agent.communication import AgentCommunicationService
+        from framework.multi_agent.template_registry import AgentTemplateRegistry
+        from framework.tools.standard import ReadFileTool
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            _write_files(project, "main", "helper",
+                "agent_type: helper\ndescription: Test\nmax_steps: 10\n"
+                "use_terminal: false\n",
+                "You are a helper.")
+
+            registry = AgentTemplateRegistry(project)
+            template = registry.get_template("main", "helper")
+            assert template is not None
+
+            service = AgentCommunicationService(
+                source=AgentAddress(name="main"),
+                broker=AsyncMock(),
+                registry=MagicMock(),
+                pool=_make_mock_pool(),
+                pool_name="main",
+                project_dir=project,
+            )
+
+            result_a = await service._create_dynamic_subagent(
+                template=template, conversation_id="conv-1",
+                invocation_id="inv-a", content="task A",
+            )
+            result_b = await service._create_dynamic_subagent(
+                template=template, conversation_id="conv-1",
+                invocation_id="inv-b", content="task B",
+            )
+
+            pool = service._pool
+            tm_a = pool.register_resident.call_args_list[0][1]["tool_manager"]
+            tm_b = pool.register_resident.call_args_list[1][1]["tool_manager"]
+
+            # The actual tool INSTANCES should be different objects
+            tool_a = tm_a.get_tool("read")
+            tool_b = tm_b.get_tool("read")
+            assert tool_a is not None
+            assert tool_b is not None
+            assert tool_a is not tool_b, (
+                "Preset tool instances must NOT be shared between subagents. "
+                "Each subagent gets its own ReadFileTool instance."
+            )
+
+    async def test_subagents_have_independent_preset_tool_instances(self):
+        """Two subagents with READ_ONLY preset each get their own tool instances."""
+        from framework.multi_agent.address import AgentAddress
+        from framework.multi_agent.communication import AgentCommunicationService
+        from framework.multi_agent.template_registry import AgentTemplateRegistry
+        from framework.tools.presets import ToolPreset
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            _write_files(project, "main", "scout",
+                "agent_type: scout\ndescription: Scout\ntool_preset: read_only\n"
+                "max_steps: 10\nuse_terminal: false\n",
+                "You are a scout.")
+
+            registry = AgentTemplateRegistry(project)
+            template = registry.get_template("main", "scout")
+            assert template is not None
+            assert template.tool_preset == ToolPreset.READ_ONLY
+
+            service = AgentCommunicationService(
+                source=AgentAddress(name="main"),
+                broker=AsyncMock(),
+                registry=MagicMock(),
+                pool=_make_mock_pool(),
+                pool_name="main",
+                project_dir=project,
+            )
+
+            await service._create_dynamic_subagent(
+                template=template, conversation_id="conv-1",
+                invocation_id="inv-1", content="task 1",
+            )
+            await service._create_dynamic_subagent(
+                template=template, conversation_id="conv-1",
+                invocation_id="inv-2", content="task 2",
+            )
+
+            pool = service._pool
+            tm_1 = pool.register_resident.call_args_list[0][1]["tool_manager"]
+            tm_2 = pool.register_resident.call_args_list[1][1]["tool_manager"]
+
+            for tool_name in tm_1.list_tools():
+                t1 = tm_1.get_tool(tool_name)
+                t2 = tm_2.get_tool(tool_name)
+                assert t1 is not None and t2 is not None
+                assert t1 is not t2, (
+                    f"Tool '{tool_name}': instances must be distinct. "
+                    f"Subagent 1 and 2 got the same object ({id(t1)} == {id(t2)})."
+                )

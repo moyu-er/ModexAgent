@@ -21,7 +21,6 @@ def test_registry_loads_templates():
 agent_type: helper
 description: A helper agent
 max_steps: 10
-standard_tools: false
 """)
 
         registry = AgentTemplateRegistry(project)
@@ -29,9 +28,8 @@ standard_tools: false
         assert len(templates) == 1
         assert templates[0].agent_type == "helper"
         assert templates[0].max_steps == 10
-        # standard_tools: false + no tool_preset → NONE (backward compat)
-        assert templates[0].tool_preset == ToolPreset.NONE
-        assert templates[0].standard_tools is False
+        # No tool_preset → default READ_WRITE
+        assert templates[0].tool_preset == ToolPreset.READ_WRITE
 
 
 def test_registry_pool_isolation():

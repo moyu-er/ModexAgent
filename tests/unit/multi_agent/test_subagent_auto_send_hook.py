@@ -1,12 +1,12 @@
 """Tests for SubagentAutoSendHook (FinallyTurnHook rewrite).
 
 Covers:
-- Completed with output.md → XML notification with output_status=written
+- Completed with OUTPUT.md → XML notification with output_status=written
 - Error crash → is_normal=false, crash hint
 - max_iterations → step limit hint
 - No agent_bus → no error (graceful no-op)
 - result=None → crash notification
-- output.md missing → output_status=missing, hint
+- OUTPUT.md missing → output_status=missing, hint
 """
 
 import re
@@ -62,11 +62,11 @@ def _extract_xml_field(xml: str, tag: str) -> str:
 def _mock_output_exists(runtime_dir: Path, session_id: str):
     """Return a patch that makes the output_path.exist() return True.
 
-    session_id contains colons (e.g. conv123:worker:a1b2c3d4) which are
+    session_id contains colons (e.g. conv123.worker:a1b2c3d4) which are
     illegal in Windows path components. We cannot create the real file,
     so we mock Path.exists to return True for exactly that path.
     """
-    expected = runtime_dir / "output" / session_id / "output.md"
+    expected = runtime_dir / "output" / session_id / "OUTPUT.md"
 
     def _exists(self):
         if self == expected:
@@ -80,9 +80,9 @@ class TestSubagentAutoSendHookFinallyTurn:
     """Verify finally_turn always-fire notification logic."""
 
     async def test_completed_with_output_sends_xml(self, tmp_path: Path):
-        """output.md exists → XML with output_status=written, is_normal=true."""
+        """OUTPUT.md exists → XML with output_status=written, is_normal=true."""
         runtime_dir = tmp_path / "runtime"
-        session_id = "conv123:worker:a1b2c3d4"
+        session_id = "conv123.worker:a1b2c3d4"
 
         bus = _make_bus(tmp_path)
         hook = SubagentAutoSendHook(
@@ -97,7 +97,7 @@ class TestSubagentAutoSendHookFinallyTurn:
         with _mock_output_exists(runtime_dir, session_id):
             await hook.finally_turn(ctx, result)
 
-        msgs = await bus.consume("conv123:main", block=False)
+        msgs = await bus.consume("conv123.main", block=False)
         assert len(msgs) == 1
         xml = msgs[0].payload["content"]
         assert "<subagent_notification>" in xml
@@ -109,7 +109,7 @@ class TestSubagentAutoSendHookFinallyTurn:
     async def test_error_crash_sends_hint(self, tmp_path: Path):
         """Error result → is_normal=false, crash hint."""
         runtime_dir = tmp_path / "runtime"
-        session_id = "conv123:worker:a1b2c3d4"
+        session_id = "conv123.worker:a1b2c3d4"
 
         bus = _make_bus(tmp_path)
         hook = SubagentAutoSendHook(
@@ -127,18 +127,19 @@ class TestSubagentAutoSendHookFinallyTurn:
 
         await hook.finally_turn(ctx, result)
 
-        msgs = await bus.consume("conv123:main", block=False)
+        msgs = await bus.consume("conv123.main", block=False)
         assert len(msgs) == 1
         xml = msgs[0].payload["content"]
         assert _extract_xml_field(xml, "is_normal") == "false"
         assert _extract_xml_field(xml, "status") == "incomplete"
-        assert "crashed with an error" in _extract_xml_field(xml, "hint")
+        assert "crashed with error" in _extract_xml_field(xml, "hint")
+        assert "Division by zero" in _extract_xml_field(xml, "hint")
         assert _extract_xml_field(xml, "error") == "Division by zero"
 
     async def test_max_iterations_sends_hint(self, tmp_path: Path):
         """max_iterations → is_normal=false, step limit hint."""
         runtime_dir = tmp_path / "runtime"
-        session_id = "conv123:worker:a1b2c3d4"
+        session_id = "conv123.worker:a1b2c3d4"
 
         bus = _make_bus(tmp_path)
         hook = SubagentAutoSendHook(
@@ -153,15 +154,16 @@ class TestSubagentAutoSendHookFinallyTurn:
             stop_reason=StopReason.MAX_ITERATIONS,
         )
 
-        # With output.md present, the only issue is max_iterations
+        # With OUTPUT.md present, the only issue is max_iterations
         with _mock_output_exists(runtime_dir, session_id):
             await hook.finally_turn(ctx, result)
 
-        msgs = await bus.consume("conv123:main", block=False)
+        msgs = await bus.consume("conv123.main", block=False)
         assert len(msgs) == 1
         xml = msgs[0].payload["content"]
         assert _extract_xml_field(xml, "is_normal") == "false"
-        assert "step limit" in _extract_xml_field(xml, "hint")
+        assert "max_iterations" in _extract_xml_field(xml, "hint")
+        assert "is incomplete" in _extract_xml_field(xml, "hint")
         assert _extract_xml_field(xml, "stop_reason") == "max_iterations"
 
     async def test_no_agent_bus_noop(self):
@@ -171,7 +173,7 @@ class TestSubagentAutoSendHookFinallyTurn:
             self_name="worker",
             parent_name="main",
         )
-        ctx = _make_context("conv123:worker:a1b2c3d4")
+        ctx = _make_context("conv123.worker:a1b2c3d4")
         result = AgentResult(content="Done.")
 
         # Must not raise
@@ -180,7 +182,7 @@ class TestSubagentAutoSendHookFinallyTurn:
     async def test_no_result_sends_error_notification(self, tmp_path: Path):
         """result=None → crash notification (subagent crashed)."""
         runtime_dir = tmp_path / "runtime"
-        session_id = "conv123:worker:a1b2c3d4"
+        session_id = "conv123.worker:a1b2c3d4"
 
         bus = _make_bus(tmp_path)
         hook = SubagentAutoSendHook(
@@ -193,7 +195,7 @@ class TestSubagentAutoSendHookFinallyTurn:
 
         await hook.finally_turn(ctx, result=None)
 
-        msgs = await bus.consume("conv123:main", block=False)
+        msgs = await bus.consume("conv123.main", block=False)
         assert len(msgs) == 1
         xml = msgs[0].payload["content"]
         assert _extract_xml_field(xml, "is_normal") == "false"
@@ -201,11 +203,11 @@ class TestSubagentAutoSendHookFinallyTurn:
         assert _extract_xml_field(xml, "stop_reason") == "error"
 
     async def test_output_status_missing_when_no_file(self, tmp_path: Path):
-        """No output.md → output_status=missing, hint about re-running."""
+        """No OUTPUT.md → output_status=missing, hint about re-running."""
         runtime_dir = tmp_path / "runtime"
-        session_id = "conv123:worker:a1b2c3d4"
+        session_id = "conv123.worker:a1b2c3d4"
 
-        # Do NOT create output.md — Path.exists() returns False naturally
+        # Do NOT create OUTPUT.md — Path.exists() returns False naturally
         bus = _make_bus(tmp_path)
         hook = SubagentAutoSendHook(
             agent_bus=bus,
@@ -218,17 +220,17 @@ class TestSubagentAutoSendHookFinallyTurn:
 
         await hook.finally_turn(ctx, result)
 
-        msgs = await bus.consume("conv123:main", block=False)
+        msgs = await bus.consume("conv123.main", block=False)
         assert len(msgs) == 1
         xml = msgs[0].payload["content"]
         assert _extract_xml_field(xml, "output_status") == "missing"
-        assert "output.md was not written" in _extract_xml_field(xml, "hint")
+        assert "OUTPUT.md was not written" in _extract_xml_field(xml, "hint")
         assert _extract_xml_field(xml, "is_normal") == "false"
 
     async def test_invocation_id_from_session_meta(self, tmp_path: Path):
         """invocation_id is extracted from session_meta and included in XML."""
         runtime_dir = tmp_path / "runtime"
-        session_id = "conv123:worker:abc12345"
+        session_id = "conv123.worker:abc12345"
 
         bus = _make_bus(tmp_path)
         hook = SubagentAutoSendHook(
@@ -242,7 +244,7 @@ class TestSubagentAutoSendHookFinallyTurn:
 
         await hook.finally_turn(ctx, result)
 
-        msgs = await bus.consume("conv123:main", block=False)
+        msgs = await bus.consume("conv123.main", block=False)
         assert len(msgs) == 1
         xml = msgs[0].payload["content"]
         assert _extract_xml_field(xml, "invocation_id") == "abc12345"
@@ -250,7 +252,7 @@ class TestSubagentAutoSendHookFinallyTurn:
     async def test_think_tags_stripped_from_summary(self, tmp_path: Path):
         """Think tags in content are stripped before truncation."""
         runtime_dir = tmp_path / "runtime"
-        session_id = "conv123:worker:a1b2c3d4"
+        session_id = "conv123.worker:a1b2c3d4"
 
         bus = _make_bus(tmp_path)
         hook = SubagentAutoSendHook(
@@ -266,7 +268,7 @@ class TestSubagentAutoSendHookFinallyTurn:
 
         await hook.finally_turn(ctx, result)
 
-        msgs = await bus.consume("conv123:main", block=False)
+        msgs = await bus.consume("conv123.main", block=False)
         assert len(msgs) == 1
         xml = msgs[0].payload["content"]
         summary = _extract_xml_field(xml, "summary")
@@ -276,7 +278,7 @@ class TestSubagentAutoSendHookFinallyTurn:
     async def test_non_default_parent_name(self, tmp_path: Path):
         """parent_name != 'main' → inbox_key routes to correct parent."""
         runtime_dir = tmp_path / "runtime"
-        session_id = "conv123:worker:a1b2c3d4"
+        session_id = "conv123.worker:a1b2c3d4"
 
         bus = _make_bus(tmp_path)
         hook = SubagentAutoSendHook(
@@ -290,7 +292,7 @@ class TestSubagentAutoSendHookFinallyTurn:
 
         await hook.finally_turn(ctx, result)
 
-        msgs = await bus.consume("conv123:qq_bot", block=False)
+        msgs = await bus.consume("conv123.qq_bot", block=False)
         assert len(msgs) == 1
         assert msgs[0].payload["metadata"]["agent_type"] == "worker"
 
@@ -304,20 +306,44 @@ class TestSubagentAutoSendHookClassifyStop:
         )
         assert is_normal is False
         assert "crashed" in hint
+        assert "Division by zero" in hint
+        assert "incomplete" in hint.lower()
+
+    def test_error_with_invocation_id_includes_it(self):
+        is_normal, hint = SubagentAutoSendHook._classify_stop(
+            "completed", "written", "timeout", invocation_id="abc123",
+        )
+        assert is_normal is False
+        assert "invocation_id=abc123" in hint
 
     def test_max_iterations_returns_false_with_hint(self):
         is_normal, hint = SubagentAutoSendHook._classify_stop(
             "max_iterations", "written", None,
         )
         assert is_normal is False
-        assert "step limit" in hint
+        assert "max_iterations" in hint
+        assert "incomplete" in hint.lower()
+
+    def test_max_iterations_with_invocation_id_includes_it(self):
+        is_normal, hint = SubagentAutoSendHook._classify_stop(
+            "max_iterations", "written", None, invocation_id="xyz789",
+        )
+        assert is_normal is False
+        assert "invocation_id=xyz789" in hint
 
     def test_missing_output_returns_false_with_hint(self):
         is_normal, hint = SubagentAutoSendHook._classify_stop(
             "completed", "missing", None,
         )
         assert is_normal is False
-        assert "output.md was not written" in hint
+        assert "OUTPUT.md was not written" in hint
+
+    def test_missing_output_with_invocation_id_includes_it(self):
+        is_normal, hint = SubagentAutoSendHook._classify_stop(
+            "completed", "missing", None, invocation_id="resume123",
+        )
+        assert is_normal is False
+        assert "invocation_id=resume123" in hint
 
     def test_completed_with_output_returns_true(self):
         is_normal, hint = SubagentAutoSendHook._classify_stop(
@@ -373,8 +399,8 @@ class TestSubagentAutoSendHookBuildXml:
             error="",
             hint="",
             summary="Task done.",
-            trace_dir_rel="trace/conv123:worker:abc123/operations.jsonl",
-            output_path_rel="output/conv123:worker:abc123/output.md",
+            trace_dir_rel="trace/conv123.worker:abc123/operations.jsonl",
+            output_path_rel="output/conv123.worker:abc123/OUTPUT.md",
             output_status="written",
         )
         assert "<subagent_notification>" in xml

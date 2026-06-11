@@ -40,12 +40,12 @@ class TestAgentMessageEnvelope:
             source=AgentAddress(kind="agent", name="a"),
             target=AgentAddress(kind="agent", name="b"),
             conversation_id="conv1",
-            agent_session_id="conv1:b",
+            agent_session_id="conv1.b",
             message_id="msg123",
         )
         bm = env.to_broker_message()
         assert bm.headers["conversation_id"] == "conv1"
-        assert bm.headers["agent_session_id"] == "conv1:b"
+        assert bm.headers["agent_session_id"] == "conv1.b"
         assert bm.headers["message_id"] == "msg123"
         assert bm.sender == Address(kind="agent", name="a")
 
@@ -56,7 +56,7 @@ class TestAgentMessageEnvelope:
             recipient=Address(kind="agent", name="b"),
             headers={
                 "conversation_id": "conv1",
-                "agent_session_id": "conv1:b",
+                "agent_session_id": "conv1.b",
                 "message_id": "msg123",
                 "message_type": "agent_message",
             },
@@ -64,7 +64,7 @@ class TestAgentMessageEnvelope:
         env = AgentMessageEnvelope.from_broker_message(bm)
         assert env is not None
         assert env.conversation_id == "conv1"
-        assert env.agent_session_id == "conv1:b"
+        assert env.agent_session_id == "conv1.b"
         assert env.message_id == "msg123"
 
     def test_from_broker_message_missing_headers_returns_none(self) -> None:
