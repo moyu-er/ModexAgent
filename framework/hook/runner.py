@@ -21,6 +21,7 @@ from framework.hook.abc import (
     BeforeToolExecutionHook,
     BeforeTurnHook,
     FinalizeContentHook,
+    FinallyTurnHook,
     HookErrorPolicy,
     HookPayload,
     HookPoint,
@@ -74,6 +75,10 @@ class _ControlCommandPayload(TypedDict, total=False):
 
 class _FinalizeContentPayload(TypedDict, total=False):
     content: "str | None"
+
+
+class _FinallyTurnPayload(TypedDict, total=False):
+    result: "AgentResult | None"
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +140,12 @@ async def _call_finalize_content(
     return hook.finalize_content(ctx, kw.get("content"))
 
 
+async def _call_finally_turn(
+    hook: FinallyTurnHook, ctx: AgentContext[R], **kw: Unpack[_FinallyTurnPayload]
+) -> None:
+    await hook.finally_turn(ctx, kw.get("result"))
+
+
 _HOOK_DISPATCH: dict[HookPoint, tuple[type, Callable[..., Any]]] = {
     HookPoint.BEFORE_TURN: (BeforeTurnHook, _call_before_turn),
     HookPoint.AFTER_TURN: (AfterTurnHook, _call_after_turn),
@@ -145,6 +156,7 @@ _HOOK_DISPATCH: dict[HookPoint, tuple[type, Callable[..., Any]]] = {
     HookPoint.AFTER_LLM_RESPONSE: (AfterLLMResponseHook, _call_after_llm_response),
     HookPoint.ON_CONTROL_COMMAND: (OnControlCommandHook, _call_on_control_command),
     HookPoint.FINALIZE_CONTENT: (FinalizeContentHook, _call_finalize_content),
+    HookPoint.FINALLY_TURN: (FinallyTurnHook, _call_finally_turn),
 }
 
 

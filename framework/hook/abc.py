@@ -37,6 +37,7 @@ class HookPoint(str, Enum):
     AFTER_LLM_RESPONSE = "after_llm_response"
     ON_CONTROL_COMMAND = "on_control_command"
     FINALIZE_CONTENT = "finalize_content"
+    FINALLY_TURN = "finally_turn"
 
 
 class HookErrorPolicy(str, Enum):
@@ -171,3 +172,10 @@ class FinalizeContentHook(Hook[R]):
 
     @abstractmethod
     def finalize_content(self, ctx: AgentContext[R], content: str | None) -> str | None: ...
+
+
+class FinallyTurnHook(Hook[R]):
+    _hook_point = HookPoint.FINALLY_TURN
+
+    @abstractmethod
+    async def finally_turn(self, ctx: AgentContext[R], result: AgentResult | None) -> None: ...
