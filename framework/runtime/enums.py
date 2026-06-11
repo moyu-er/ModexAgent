@@ -37,6 +37,9 @@ class OperationKind(StrEnum):
     TOOL_CALL = "tool_call"
     APPROVAL = "approval"
     CONTROL_COMMAND = "control_command"
+    TURN_START = "turn_start"
+    TURN_END = "turn_end"
+    ERROR = "error"
 
 
 class OperationStatus(StrEnum):
