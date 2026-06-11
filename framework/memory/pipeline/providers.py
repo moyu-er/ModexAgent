@@ -3,11 +3,13 @@
 Each provider wraps one data source and provides versioned, cacheable content.
 Providers are ordered by their position in the pipeline list (not by priority).
 """
+
 from __future__ import annotations
 
 import hashlib
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from framework.memory.pipeline.abc import SystemPromptProvider
@@ -185,9 +187,7 @@ class ArchiveProvider(SystemPromptProvider):
             full_path = str((archive_dir / str(aid) / "context.md").resolve())
             st = ArchiveTag.SUMMARY.value
             records.append(
-                f'<{st} number="{aid}"'
-                f' file="{xml_attr(full_path)}"'
-                f">\n{xml_text(display)}\n</{st}>"
+                f'<{st} number="{aid}" file="{xml_attr(full_path)}">\n{xml_text(display)}\n</{st}>'
             )
 
         if not records:
@@ -222,3 +222,41 @@ class PrunedProvider(SystemPromptProvider):
             return xml or ""
         except Exception:
             return ""
+
+
+class OutputMdProvider(SystemPromptProvider):
+    """Dynamic OUTPUT.md path — computed per-turn from session_id.
+
+    Every invocation gets the correct OUTPUT.md path, regardless of
+    whether the subagent is pool-reused or freshly created.
+    """
+
+    def __init__(self, output_base_dir: Path, session_id: str) -> None:
+        super().__init__()
+        self._output_base_dir = output_base_dir
+        self._session_id = session_id
+
+    async def _fetch_version(self) -> str:
+        return self._session_id  # per-session → always refresh on session change
+
+    async def _fetch_content(self) -> str:
+        output_path = self._output_base_dir / self._session_id / "OUTPUT.md"
+        return (
+            "## CRITICAL: Your Output File (OUTPUT.md)\n\n"
+            "You MUST write your final deliverable to this exact file "
+            "using the `write` tool:\n\n"
+            f"  {output_path}\n\n"
+            "**Rules — failure to follow these means your work is lost:**\n\n"
+            "1. **Write to OUTPUT.md before your final message.** "
+            "Use the `write` or `edit` tool with the path above.\n"
+            "2. **What you say in conversation is NOT your deliverable.** "
+            "Only the content of OUTPUT.md reaches your caller.\n"
+            "3. **Do NOT summarise in conversation and skip OUTPUT.md.** "
+            "Your caller reads OUTPUT.md, not your chat messages.\n"
+            "4. **Write the COMPLETE result** — full analysis, code, or report.\n"
+            "5. **You have write access to this path** even if other "
+            "directories are read-only. The `write` or `edit` tool works for this file.\n"
+            "\n"
+            "**Workflow:** do your task → use `write` or `edit` to save OUTPUT.md → "
+            "say briefly \"done, see OUTPUT.md\" as your final message."
+        )

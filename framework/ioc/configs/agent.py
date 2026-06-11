@@ -66,9 +66,10 @@ class AgentConfig(BaseModel):
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
     max_steps: int = 20
     tools: list[Tool] = Field(default_factory=list)  # code-passed only
-    standard_tools: bool = True  # register read/write/edit/list/shell/search
     use_terminal: bool = False  # master switch: false = SubprocessExecutor, skip terminal tools
-    terminal_visibility: bool = False  # True=prefer visible, False=prefer hidden; degrades through chain
+    terminal_visibility: bool = (
+        False  # True=prefer visible, False=prefer hidden; degrades through chain
+    )
     memory: MemoryConfig | None = None
     skills: SkillsConfig | None = None
     approval: ApprovalConfig | None = None

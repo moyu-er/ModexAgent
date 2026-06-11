@@ -1,4 +1,5 @@
 """SystemPromptPipeline — ordered collection of versioned prompt providers."""
+
 from __future__ import annotations
 
 import logging
