@@ -1,28 +1,32 @@
-"""SubagentAutoSendHook — agent 自动转发 Hook。
+"""SubagentAutoSendHook — always-fire result notification for subagents.
 
-确保 agent 内容总是转发给父 agent（main），即使 LLM 忘记调用 send_to_agent。
-这是一个安全网，不替代系统提示词指引。
+Fires on FINALLY_TURN (guaranteed) — no communication tool check needed.
+Subagents have no communication tools; this hook is the sole notification path.
 """
 
 from __future__ import annotations
 
 import logging
 import re
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from framework.hook.abc import FinallyTurnHook
 
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
+    from framework.core.emitter import AgentResult
     from framework.multi_agent.bus import AgentMessageBus
-
-from framework.hook.abc import AfterTurnHook
 
 logger = logging.getLogger(__name__)
 
 
-class SubagentAutoSendHook(AfterTurnHook):
-    """Peer agent auto-send hook。
+class SubagentAutoSendHook(FinallyTurnHook):
+    """Always-fire result notification for subagents.
 
-    在 agent turn 结束后自动将内容转发给父 agent。
+    Fires on FINALLY_TURN (success, error, cancel, max_iterations — always).
+    Derives trace_dir and output_path deterministically from session_id.
+    Sends XML notification to parent inbox.
     """
 
     @property
@@ -44,187 +48,186 @@ class SubagentAutoSendHook(AfterTurnHook):
         agent_bus: AgentMessageBus | None = None,
         self_name: str = "",
         parent_name: str = "main",
-        notification_service: Any | None = None,  # noqa: ANN401
+        runtime_dir: Path | None = None,
     ) -> None:
         self._agent_bus = agent_bus
         self._self_name = self_name
         self._parent_name = parent_name
-        self._svc = notification_service
-        # Track sessions where the subagent has already sent a message
-        # via send_to_agent (send_to_agent_async kept for transition compat).
-        # happened in a session, subsequent turns should not auto-forward.
-        self._communicated: set[str] = set()
+        self._runtime_dir = runtime_dir or Path(".")
 
-    async def _already_sent_in_history(self, history: Any) -> bool:
-        """Check if history already contains an inbox message from this agent.
+    # -- FINALLY_TURN (always fires) ------------------------------------------
 
-        This is a fallback detection mechanism used when RuntimeContext
-        tool-call tracking is unavailable or incomplete.
-        """
-        try:
-            history_list = await history.to_list()
-        except Exception:
-            return False
-        safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", self._self_name)[:64] or "agent"
-        for msg in history_list:
-            if getattr(msg, "meta_inbox", None) and getattr(msg, "source_agent", None) == safe_name:
-                return True
-        return False
-
-    async def before_turn(self, ctx: AgentContext) -> None:
-        """No-op kept for backward compatibility with existing callers."""
-        pass
-
-    async def after_turn(self, ctx: AgentContext, result: Any = None) -> None:  # noqa: ANN401
-        if not result or not getattr(result, "content", None):
-            return
-
-        rt = ctx.runtime
-        if rt is None:
-            return
-        rc = rt._runtime_context
-        if rc is None:
-            rt_mgr = rt.services.runtime_context_manager
-            if rt_mgr is not None:
-                rc = await rt_mgr.get_context(
-                    ctx.session_id, None
-                )
-                rt._runtime_context = rc
-        if rc is not None:
-            calls = await rc.get_tool_calls()
-            sent_tools = {"send_to_agent"}
-            if any(c.tool_name in sent_tools for c in calls):
-                self._communicated.add(ctx.session_id)
-                logger.debug(
-                    "SubagentAutoSendHook: skipped, message already sent via tool (agent=%s)",
-                    self._self_name,
-                )
-                return
-
-        # Fallback: check history for evidence that this agent already sent
-        # an inbox message (e.g. via send_to_agent tool). This catches the
-        # case where RuntimeContext tool-call tracking is unavailable or
-        # failed to record the send_to_agent call.
-        if await self._already_sent_in_history(ctx.history):
-            self._communicated.add(ctx.session_id)
-            logger.debug(
-                "SubagentAutoSendHook: skipped, inbox message found in history (agent=%s)",
-                self._self_name,
-            )
-            return
-
-        # Already communicated in this session — skip auto-forward
-        if ctx.session_id in self._communicated:
-            logger.debug(
-                "SubagentAutoSendHook: skipped, already communicated (agent=%s)",
-                self._self_name,
-            )
-            return
-
-        # Also forward on max_iterations — the subagent may have produced
-        # output that the parent needs to see, even if it hit its step limit.
-        # MaxIterationNotifyHook handles notification separately.
-
-        # No agent_bus wired yet — no-op (wired later by pool/subagent service)
+    async def finally_turn(self, ctx: AgentContext, result: AgentResult | None) -> None:
         if self._agent_bus is None:
             return
 
-        agent_bus = self._agent_bus  # narrow None
-
-        # Derive reply target from session_meta, fallback to parent_name
-        reply_target = self._parent_name
-        invocation_id: str | None = None
-
-        if ctx.session_meta is not None:
-            invocation_id = ctx.session_meta.invocation_id if hasattr(ctx.session_meta, 'invocation_id') else None
-
         session_id = ctx.session_id or ""
+
+        # 1. Derive artifact paths from session_id (deterministic)
+        trace_dir = self._runtime_dir / "trace" / session_id
+        output_path = self._runtime_dir / "output" / session_id / "output.md"
+
+        # 2. Check output.md status
+        output_status = "written" if output_path.exists() else "missing"
+
+        # 3. Determine stop condition
+        stop_reason: str = "error"
+        error: str | None = "subagent crashed"
+        content = ""
+        if result is not None:
+            stop_reason = result.stop_reason or "error"
+            error = result.error
+            content = result.content or ""
+
+        is_normal, hint = self._classify_stop(stop_reason, output_status, error)
+
+        # 4. Truncate last assistant output
+        summary = self._truncate_content(content, max_chars=1500)
+
+        # 5. Get invocation_id from session_meta
+        invocation_id = ""
+        if ctx.session_meta is not None:
+            invocation_id = ctx.session_meta.invocation_id or ""
+
+        # 6. Build XML notification
+        xml = self._build_xml(
+            agent_name=self._self_name,
+            invocation_id=invocation_id,
+            status="completed" if is_normal else "incomplete",
+            stop_reason=stop_reason,
+            is_normal=is_normal,
+            error=error or "",
+            hint=hint,
+            summary=summary,
+            trace_dir_rel=f"trace/{session_id}/operations.jsonl",
+            output_path_rel=f"output/{session_id}/output.md",
+            output_status=output_status,
+        )
+
+        # 7. Send to parent inbox
+        await self._notify_parent(ctx, session_id, xml)
+
+    # -- stop classification --------------------------------------------------
+
+    @staticmethod
+    def _classify_stop(
+        stop_reason: str, output_status: str, error: str | None,
+    ) -> tuple[bool, str]:
+        if error:
+            return False, (
+                "Subagent crashed with an error. "
+                "You may want to restart with a new invocation_id."
+            )
+        if stop_reason == "max_iterations":
+            return False, (
+                "Subagent hit step limit — task may be incomplete. "
+                "Continue with same invocation_id to resume."
+            )
+        if output_status == "missing":
+            return False, (
+                "Subagent finished but output.md was not written. "
+                "You may want to re-run this task."
+            )
+        return True, ""
+
+    # -- XML builder ----------------------------------------------------------
+
+    @staticmethod
+    def _build_xml(
+        *,
+        agent_name: str,
+        invocation_id: str,
+        status: str,
+        stop_reason: str,
+        is_normal: bool,
+        error: str,
+        hint: str,
+        summary: str,
+        trace_dir_rel: str,
+        output_path_rel: str,
+        output_status: str,
+    ) -> str:
+        from framework.utils.xml import xml_text
+
+        return (
+            "<subagent_notification>\n"
+            f"  <agent>{xml_text(agent_name)}</agent>\n"
+            f"  <invocation_id>{xml_text(invocation_id)}</invocation_id>\n"
+            f"  <status>{xml_text(status)}</status>\n"
+            f"  <stop_reason>{xml_text(stop_reason)}</stop_reason>\n"
+            f"  <is_normal>{str(is_normal).lower()}</is_normal>\n"
+            f"  <error>{xml_text(error)}</error>\n"
+            f"  <hint>{xml_text(hint)}</hint>\n"
+            f"  <summary>{xml_text(summary)}</summary>\n"
+            f"  <artifacts>\n"
+            f"    <trace>{xml_text(trace_dir_rel)}</trace>\n"
+            f"    <output>{xml_text(output_path_rel)}</output>\n"
+            f"    <output_status>{xml_text(output_status)}</output_status>\n"
+            f"  </artifacts>\n"
+            f"</subagent_notification>"
+        )
+
+    # -- notification ---------------------------------------------------------
+
+    async def _notify_parent(
+        self, ctx: AgentContext, session_id: str, xml: str,
+    ) -> None:
+        """Send XML notification to parent agent's inbox."""
         from framework.multi_agent.address import AgentAddress
         from framework.multi_agent.envelope import AgentMessageEnvelope
-        from framework.multi_agent.message_xml import build_agent_result
         from framework.multi_agent.session_id import DefaultSessionIdStrategy
 
         strategy = DefaultSessionIdStrategy(main_agent_name=self._parent_name)
-        parts = strategy.parse(session_id)
+        try:
+            parts = strategy.parse(session_id)
+        except ValueError:
+            logger.warning(
+                "SubagentAutoSendHook: cannot parse session_id %s", session_id,
+            )
+            return
+
         conversation_id = parts.conversation_id
-        invocation_id = parts.invocation_id
-        inbox_key = strategy.format(conversation_id=conversation_id, agent_name=reply_target)
-
-        logger.info(
-            "SubagentAutoSendHook: auto-forwarding subagent %s content to %s (len=%d)",
-            self._self_name,
-            reply_target,
-            len(result.content),
+        invocation_id = parts.invocation_id or ""
+        inbox_key = strategy.format(
+            conversation_id=conversation_id, agent_name=self._parent_name,
         )
 
-        sanitized = self._sanitize_forward_content(result.content)
-
-        # Use the actual stop_reason from the result so the parent agent knows
-        # why the subagent stopped (completed, max_iterations, error, etc.)
-        actual_stop_reason = getattr(result, "stop_reason", None) or "completed"
-
-        xml_content = build_agent_result(
-            source=self._self_name,
-            invocation_id=invocation_id,
-            status="completed",
-            stop_reason=actual_stop_reason,
-            content=sanitized,
-        )
+        # Strip think tags from the XML summary (defense in depth)
+        from framework.hook.builtin.inbox_flush import InboxFlushHook
+        xml = InboxFlushHook._sanitize_content(xml)
 
         envelope = AgentMessageEnvelope(
             payload={
-                "content": xml_content,
+                "content": xml,
                 "message_type": "agent_result",
-                "metadata": {"agent_type": self._self_name},
+                "metadata": {"agent_type": self._self_name, "format": "xml"},
             },
             source=AgentAddress(name=self._self_name),
-            target=AgentAddress(name=reply_target),
+            target=AgentAddress(name=self._parent_name),
             message_type="agent_result",
             conversation_id=conversation_id,
             agent_session_id=inbox_key,
-            invocation_id=parts.invocation_id,
+            invocation_id=invocation_id,
         )
 
-        forwarded = False
         try:
-            await agent_bus.send(inbox_key, envelope)
-            forwarded = True
+            await self._agent_bus.send(inbox_key, envelope)
             logger.info(
-                "Auto-forwarded subagent %s content to %s (session=%s)",
-                self._self_name,
-                self._parent_name,
-                session_id,
+                "SubagentAutoSendHook: notified parent %s (agent=%s, session=%s)",
+                self._parent_name, self._self_name, session_id,
             )
         except Exception:
             logger.exception(
-                "Failed to auto-forward subagent %s content to %s",
-                self._self_name,
+                "SubagentAutoSendHook: failed to notify parent %s",
                 self._parent_name,
             )
 
-        # Send XML notification if notification_service is configured
-        if self._svc is not None and forwarded:
-            try:
-                notification_xml = build_agent_result(
-                    source=self._self_name,
-                    invocation_id=invocation_id,
-                    status="missed_communication",
-                    stop_reason="missed_communication",
-                    content=sanitized[:2000] if sanitized else "",
-                )
-                await self._svc.notify(ctx=ctx, xml_content=notification_xml)
-            except Exception:
-                logger.exception(
-                    "Failed to send missed_communication notification for %s",
-                    self._self_name,
-                )
+    # -- content helpers ------------------------------------------------------
 
     @classmethod
-    def _sanitize_forward_content(cls, content: str) -> str:
-        """Strip LLM reasoning tags and apply inbox sanitization."""
-        from framework.hook.builtin.inbox_flush import InboxFlushHook
-
+    def _truncate_content(cls, content: str, max_chars: int = 1500) -> str:
         content = cls._THINK_PAIRED_RE.sub("", content)
         content = cls._THINK_TAG_RE.sub("", content)
-        content = InboxFlushHook._sanitize_content(content)
-        return content
+        if len(content) <= max_chars:
+            return content
+        return content[:max_chars] + f"\n[...truncated, {len(content) - max_chars} more chars]"

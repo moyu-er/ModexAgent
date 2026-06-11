@@ -622,6 +622,7 @@ class AgentCommunicationService:
                 agent_bus=self._agent_bus,
                 self_name=agent_name,
                 parent_name=parent_name,
+                runtime_dir=self._runtime_dir,
             ))
 
         if self._notification_service is not None:
