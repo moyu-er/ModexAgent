@@ -50,6 +50,7 @@ references
 .*
 !.gitignore
 !.python-version
+!.github
 uv.lock
 trace
 
