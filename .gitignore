@@ -57,6 +57,7 @@ trace
 node_modules
 package.json
 package-lock.json
+*.tsbuildinfo
 
 openspec
 design_doc/

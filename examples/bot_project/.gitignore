@@ -58,8 +58,13 @@ data
 *.pptx
 *.xlsx
 *.pdf
-*.ts
-*.js
 workspace
-package.json
-package-lock.json
+
+# ── Frontend: keep sources + dist; re-block generated cruft ──
+!webui/
+!webui/package.json
+!webui/package-lock.json
+!bot/web/dist/
+webui/node_modules/
+webui/dist/
+*.tsbuildinfo

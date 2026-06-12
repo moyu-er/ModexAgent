@@ -103,6 +103,14 @@ class PoolRouter:
         )
         logger.info("Session %s switched to pool '%s'", session_id, pool_name)
 
+    def set_pool(self, session_id: str, pool_name: str) -> None:
+        """Set pool routing for a session without sending a notification.
+
+        Used by WebUI to switch pools via UI selector (not slash commands).
+        """
+        self._session_store.set(session_id, pool_name)
+        logger.info("Session %s pool set to '%s' (external)", session_id, pool_name)
+
     async def _route_to_pool(self, msg: InputMessage, pool: Any) -> None:
         metadata = dict(msg.metadata) if msg.metadata else {}
         metadata.setdefault("conversation_id", msg.session_id)

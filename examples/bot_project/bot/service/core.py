@@ -1,8 +1,6 @@
 """BotService core — generic bot orchestration for any InputAdapter/OutputAdapter pair.
 
-Supports two runtime modes:
-- pipeline: single AgentPipeline.
-- pool: AgentPool with resident agents, BrokerBridgeService routes messages.
+Runtime: AgentPool with resident agents, BrokerBridgeService routes messages.
 """
 
 from __future__ import annotations
@@ -13,7 +11,7 @@ import logging
 import traceback
 from collections.abc import Callable, Coroutine
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from framework.core.experience.curator import ExperienceCurator
 from framework.workspace import DefaultWorkspaceContext, WorkspaceSwitchCallback
@@ -24,16 +22,13 @@ if TYPE_CHECKING:
     from framework.hook.builtin.experience_review import ExperienceReviewHook
     from framework.memory.pruned.manager import PrunedManager
     from framework.runtime.codec import RuntimeStateCodecRegistry
-    from framework.runtime.store import JsonFileRuntimeCommandStore, JsonFileTurnStateStore
+    from framework.runtime.store import JsonFileRuntimeCommandStore, JsonFileTurnStateStore, TurnStateStore
 
 from bot.plugins.integration import PluginIntegration
 from bot.utils.config_loader import ConfigLoader
 from framework import (
     AgentPipeline,
-    InMemoryToolManager,
     LLMProvider,
-    ReActAgent,
-    ToolManagerConfig,
 )
 from framework.approval.ui import IMUserInterface
 from framework.control.channel import InMemoryControlChannel
@@ -46,14 +41,9 @@ from framework.core.llm_struct import (
     TurnTimeoutPolicy,
 )
 from framework.core.skills import (
-    DefaultSkillBuilder,
-    DirectorySkillCache,
-    FileSkillSource,
-    ResolutionContext,
     SkillManager,
 )
 from framework.hook.abc import Hook
-from framework.hook.builtin import InboxFlushHook
 from framework.hook.runner import HookRunner
 from framework.interceptor.builtin import (
     ToolResultLimitInterceptor,
@@ -63,39 +53,26 @@ from framework.interceptor.chain import InterceptorChain
 from framework.ioc.configs.agent import AgentConfig as IOCAgentConfig
 from framework.ioc.configs.app import AppConfig
 from framework.ioc.configs.memory import MemoryConfig as IOCMemoryConfig
-from framework.ioc.factories.governance import create_governance
-from framework.ioc.factories.llm import create_llm_provider
 from framework.ioc.factories.memory import create_memory
 from framework.memory.consolidation.dream_engine import DreamEngine
 from framework.memory.core.scope import MemoryContext
 from framework.memory.default_system import DefaultMemorySystem
-from framework.memory.injection import FullInjectionPolicy
 from framework.memory.system import MemorySystemContextManager
 from framework.messaging.broker_bridge import (
     BrokerBridgeService,
 )
 from framework.messaging.broker_memory import InMemoryMessageBroker
 from framework.multi_agent import (
-    AgentAddress,
-    AgentDescriptor,
-    AgentFactory,
     AgentPool,
     CommunicationTracker,
-    DefaultAgentFactory,
-    DefaultMeshRouter,
     SessionRetentionPolicy,
 )
 from framework.multi_agent.bus import AgentMessageBus, LocalAgentMessageBus
-from framework.multi_agent.descriptor import AgentLLMConfig
 from framework.multi_agent.inbox.consumer import InboxConsumer
 from framework.multi_agent.inbox.producer import InboxProducer
 from framework.multi_agent.inbox.server_local import LocalFileInboxServer
 from framework.pipeline.adapters import InputAdapter, OutputAdapter
-from framework.runtime.services import AgentRuntime
-from framework.runtime.store import TurnStateStore
-from framework.tools.mcp.manager import MCPClientManager
 from framework.tools.overflow.cleaner import OverflowCleaner
-from framework.tools.terminal.manager import TerminalManager
 
 from .builders import AgentBuilderMixin
 from .pool_builder import create_pool
@@ -152,10 +129,7 @@ class BotService(AgentBuilderMixin):
     Can be used for QQ, Discord, Feishu, DingTalk, Telegram, CLI, etc.
     Just provide the corresponding adapters and an Emitter factory.
 
-    Modes:
-    - pipeline: single AgentPipeline (default).
-    - pool: resident AgentPool with MessageBroker routing.
-
+    Runtime: AgentPool with MessageBroker routing.
     Accepts an IOC AppConfig object as the single source of truth.
     """
 
@@ -165,7 +139,6 @@ class BotService(AgentBuilderMixin):
         input_adapter: InputAdapter,
         output_adapter: OutputAdapter,
         emitter_factory: Callable[[str], ContentEmitter],
-        mode: Literal["pipeline", "pool"] = "pipeline",
         *,
         app_config: AppConfig | None = None,
     ):
@@ -174,31 +147,16 @@ class BotService(AgentBuilderMixin):
         self.input_adapter = input_adapter
         self.output_adapter = output_adapter
         self.emitter_factory = emitter_factory
-        self.mode = mode
         self._app_config = app_config
 
-        # Components (single-pool fields for pipeline mode)
-        self.pipeline: AgentPipeline | None = None
-        self.agent_pool: AgentPool | None = None
+        # Shared components
         self.broker_bridge: BrokerBridgeService | None = None
         self.agent_bus: AgentMessageBus | None = None
-        self.tool_manager: InMemoryToolManager | None = None
-        self.mcp_manager: MCPClientManager | None = None
-        self.memory_system: DefaultMemorySystem | None = None
-        self.context_manager: ContextManager | None = None
-        self.agent: ReActAgent | None = None
-        self.agent_factory: AgentFactory | None = None
         self.communication_tracker: CommunicationTracker | None = None
         self.broker: InMemoryMessageBroker | None = None
         self.inbox_server: LocalFileInboxServer | None = None
         self.inbox_producer: InboxProducer | None = None
         self.inbox_consumer: InboxConsumer | None = None
-
-        # Terminal management
-        self.terminal_manager: TerminalManager | None = None
-
-        # Runtime components
-        self.provider: LLMProvider | None = None
 
         # Multi-pool (for pool mode)
         self._pools: dict[str, PoolInstance] = {}
@@ -343,7 +301,6 @@ class BotService(AgentBuilderMixin):
         """Initialize all components."""
         print("=" * 60)
         print(">> Initializing Bot Service")
-        print(f"   mode={self.mode}")
         print("=" * 60)
 
         # 1. Load config (IOC AppConfig is the only source of truth)
@@ -381,421 +338,20 @@ class BotService(AgentBuilderMixin):
         await self.broker.start()
         print("[OK] Broker initialized")
 
-        # 2.5 Build shared interceptor chain (used by both modes)
+        # 2.5 Build shared interceptor chain
         self.interceptor_chain = self._build_interceptor_chain()
 
         # 2.6 Build shared control channel
         self.control_channel = self._build_control_channel()
 
-        # ── Pool mode: dispatch early, skip pipeline-specific setup ──
-        if self.mode == "pool":
-            # Plugins are OFF by default in pool mode.
-            from bot.plugins.integration import PluginIntegration as _PI
+        # Plugins are OFF by default in pool mode.
+        from bot.plugins.integration import PluginIntegration as _PI
 
-            self.plugin_integration = _PI(config={"enabled": False})
-            await self._initialize_pool()
-            self._print_pool_info()
-            return
-
-        # ── Pipeline mode continues below ──
-
-        # 3. Create ToolManager
-        self.tool_manager = InMemoryToolManager(config=ToolManagerConfig())
-
-        # 3a. Create TerminalManager — degrade to subprocess only when no shell at all.
-        main_cfg = self._main_agent_cfg
-        if main_cfg and main_cfg.use_terminal:
-            from framework.tools.terminal.types import detect_platform_shell
-
-            shell_info = detect_platform_shell()
-            if shell_info is not None:
-                try:
-                    from framework.tools.terminal import TerminalManager
-
-                    visibility: bool = getattr(main_cfg, "terminal_visibility", True)
-                    self.terminal_manager = TerminalManager(
-                        max_terminals=getattr(self._app_config, "terminal", {}).get(
-                            "max_terminals", 5
-                        ),
-                        shell_info=shell_info,
-                        visibility=visibility,
-                    )
-                    print(
-                        f"[OK] TerminalManager initialized ({shell_info.family.value}: {shell_info.path}, {visibility}, lazy)"
-                    )
-                except Exception as e:
-                    logger.warning("TerminalManager initialization failed: %s", e)
-                    self.terminal_manager = None
-            else:
-                self.terminal_manager = None
-                print("[INFO] No shell found — terminal tools disabled, subprocess only")
-        else:
-            self.terminal_manager = None
-            print("[INFO] TerminalManager disabled (use_terminal=false)")
-
-        await self._register_tools(terminal_manager=self.terminal_manager)
-        await self._register_mcp_tools()
-        print(
-            f"[OK] ToolManager initialized, {len(self.tool_manager.list_tools())} tools registered"
-        )
-
-        # -- Plugin system --
-        # Plugins are OFF by default. Only enabled if `plugins:` section
-        # in bot_config.yml has `enabled: true`.
-        plugins_cfg = self._app_config.plugins
-        if plugins_cfg is not None and plugins_cfg.enabled:
-            local_plugins_dir = self._project_dir / "plugins"
-            self.plugin_integration = PluginIntegration(
-                plugins_cfg.model_dump(),
-                extra_plugin_dirs=[local_plugins_dir] if local_plugins_dir.exists() else [],
-            )
-            has_plugins = await self.plugin_integration.discover_and_load()
-            if has_plugins:
-                self.plugin_integration.inject_tools(self.tool_manager)
-                print(
-                    f"[OK] Plugin system loaded, {len(self.plugin_integration.list_plugins())} plugins active"
-                )
-            else:
-                print("[INFO] No plugins found")
-        else:
-            # Stub integration: no-op for downstream injection calls.
-            from bot.plugins.integration import PluginIntegration as _PI
-
-            self.plugin_integration = _PI(config={"enabled": False})
-            print("[INFO] Plugins disabled (no `plugins.enabled: true` in config)")
-
-        # 4. Create LLM Provider
-        self.provider = create_llm_provider(self._app_config.llm, self._app_config.safety)
-        print(f"[OK] LLM Provider: {self._app_config.llm.model}")
-
-        # 5. Initialize MemorySystem using IOC factory
-        data_dir = self.workspace_context.data_dir
-        memory_dir = self._ws_memory(data_dir)
-        memory_dir.mkdir(parents=True, exist_ok=True)
-        main_cfg = self._main_agent_cfg
-        main_memory_cfg = main_cfg.memory if main_cfg else self._app_config.memory
-        self.memory_system = create_memory(
-            main_memory_cfg or IOCMemoryConfig(),
-            self.provider,
-            memory_dir,
-        )
-        await self.memory_system.initialize()
-
-        self.pruned_manager = self.memory_system.pruned_manager
-        self.context_manager = MemorySystemContextManager(
-            memory_system=self.memory_system,
-            default_agent_id=main_cfg.name if main_cfg else "main",
-            default_agent_role="main",
-            base_system_prompt=main_cfg.system_prompt if main_cfg else "",
-            injection_policy=FullInjectionPolicy(pruned_manager=self.pruned_manager),
-        )
-        print(f"[OK] MemorySystem initialized (registry: {memory_dir})")
-
-        # Inject plugin Memory Providers
-        await self.plugin_integration.inject_memory_providers(
-            self.memory_system,
-            init_kwargs={
-                "llm_provider": self.provider,
-                "workspace": data_dir,
-            },
-        )
-
-        # Inject plugin MemorySystem modifiers (e.g. tool_call_cleanup)
-        self.plugin_integration.inject_memory_system_modifiers(self.memory_system)
-
-        # 5.5 Initialize long-term defaults, maintenance, and dream engine
-        await self._init_long_term_defaults(data_dir, main_memory_cfg)
-        await self._init_maintenance_task(main_memory_cfg)
-        self._init_dream()
-
-        # Wire archive trigger callback so cleanup_session can check archive
-        # and trigger DreamEngine whenever unprocessed archives exist.
-        if self.memory_system is not None:
-            self.memory_system.set_archive_trigger_callback(self._archive_trigger)
-
-        # 6. Create SkillManager (main agent has its own)
-        main_skill_manager: SkillManager | None = None
-        main_skills_dir = self._resolve_path("skills_dir", "skills/main")
-        if main_skills_dir.exists():
-            source = FileSkillSource(
-                directories=[main_skills_dir],
-                cache=True,
-                layout="directory",
-                skill_filename="SKILL.md",
-            )
-            cache = DirectorySkillCache(
-                directories=[main_skills_dir],
-                layout="directory",
-            )
-            builder = DefaultSkillBuilder(base_path=self._project_dir)
-            main_skill_manager = SkillManager(
-                source=source,
-                builder=builder,
-                cache=cache,
-            )
-            available_skills = await main_skill_manager.list_skills(
-                ResolutionContext.from_runtime(tool_manager=self.tool_manager)
-            )
-            print(
-                f"[OK] SkillManager initialized, main agent loaded {len(available_skills)} skills"
-            )
-
-            self.plugin_integration.inject_skill_sources(main_skill_manager)
-            print("[OK] Plugin skill sources injected")
-        else:
-            print(f"[WARN] Skills directory not found: {main_skills_dir}")
-
-        # ---- Experience Manager (only for agents with experience.enabled) ----
-        main_cfg = self._main_agent_cfg
-        if main_cfg is not None and main_cfg.experience is not None:
-            exp_cfg = main_cfg.experience
-            if exp_cfg.enabled:
-                from framework.agents.experience.review_agent import ExperienceReviewAgent
-                from framework.core.experience.manager import ExperienceManager
-                from framework.core.experience.meta import PerFileExperienceMetaStore
-                from framework.core.experience.source import FileExperienceSource
-                from framework.hook.builtin.experience_review import ExperienceReviewHook
-
-                # Shared dynamic path lambda — workspace-safe via workspace_context
-                def _exp_path() -> Path:
-                    return BotService._ws_experience(
-                        self.workspace_context.data_dir,
-                        pool_name=self._default_pool_name,
-                        agent_name=main_cfg.name,
-                    )
-
-                _exp_path().mkdir(parents=True, exist_ok=True)
-
-                exp_source = FileExperienceSource(directories=[_exp_path()])
-                self._experience_manager = ExperienceManager(source=exp_source)
-
-                if self.context_manager is not None:
-                    self.context_manager._experience_manager = self._experience_manager
-
-                exp_meta = PerFileExperienceMetaStore(_exp_path)
-                exp_review_agent = ExperienceReviewAgent(
-                    provider=self.provider,
-                    max_iterations=exp_cfg.max_iterations,
-                )
-                exp_review_hook = ExperienceReviewHook(
-                    review_agent=exp_review_agent,
-                    experience_dir=_exp_path,
-                    meta_store=exp_meta,
-                    min_messages=exp_cfg.min_messages,
-                    exp_cooldown_turns=exp_cfg.exp_cooldown_turns,
-                )
-
-                self._experience_hook = exp_review_hook
-                self._experience_review_agent = exp_review_agent
-
-                # ---- Experience Tool (dynamic path via lambda — workspace-safe) ----
-                from framework.memory.tools.experience import ExperienceTool
-
-                self.tool_manager.register(ExperienceTool(_exp_path, exp_meta))
-                print("   [OK] experience tool registered (action=read/write/edit/list/rename)")
-
-                # ---- Experience Curator (background lifecycle) ----
-                from framework.core.experience.curator import ExperienceCurator
-
-                exp_curator = ExperienceCurator(
-                    experience_dir=_exp_path,
-                    meta_store=exp_meta,
-                    max_experiences=exp_cfg.max_experiences,
-                )
-                self._experience_curator = exp_curator
-                self._experience_curator_task = asyncio.create_task(
-                    self._curator_background_loop(exp_curator, exp_cfg.curator_interval),
-                )
-                self._tasks.append(self._experience_curator_task)
-
-                print(f"[OK] Experience layer initialized (dir: {_exp_path()})")
-
-        # 6.5 Create InboxServer / Producer / Consumer
-        inbox_dir = self._ws_inbox(data_dir)
-        self.inbox_server = LocalFileInboxServer(workspace=inbox_dir)
-        self.inbox_producer = InboxProducer(server=self.inbox_server)
-        self.inbox_consumer = InboxConsumer(server=self.inbox_server)
-        print(f"[OK] InboxServer initialized (storage: {inbox_dir})")
-
-        # Collect runtime hooks for factory injection
-        runtime_hooks = self._collect_run_hooks()
-
-        # 7. Create AgentFactory (with runtime components)
-        hook_runner = self._build_hook_runner(runtime_hooks)
-        interceptor_chain = self._build_interceptor_chain()
-
-        # Start overflow cleaner
-        if self.interceptor_chain is not None:
-            for interceptor in self.interceptor_chain.interceptors:
-                if isinstance(interceptor, ToolResultLimitInterceptor):
-                    if interceptor.handler is not None:
-                        self._overflow_cleaner = interceptor.handler._cleaner
-                        break
-
-        self.agent_factory = DefaultAgentFactory(
-            default_llm_provider=self.provider,
-            default_tool_manager=self.tool_manager,
-            skill_manager=main_skill_manager,
-            inbox_server=self.inbox_server,
-            default_hooks=runtime_hooks,
-            default_hook_runner=hook_runner,
-            default_interceptor_chain=interceptor_chain,
-        )
-
-        # 7.5 Initialize approval infrastructure
-        self._approval_workspace = self._ws_approval(data_dir)
-        self._im_ui = IMUserInterface(
-            output_adapter=self.output_adapter,
-            channel=self.control_channel,
-        )
-        print(f"[OK] Approval infrastructure initialized (workspace: {self._approval_workspace})")
-
-        # 7.6 Initialize typed runtime stores (TurnStateStore + RuntimeCommandStore)
-        from framework.agents.react.state import ReActRuntimeStateCodec
-        from framework.runtime.codec import RuntimeStateCodecRegistry
-        from framework.runtime.enums import AgentKind
-        from framework.runtime.store import JsonFileRuntimeCommandStore, JsonFileTurnStateStore
-
-        runtime_data_dir = self._ws_runtime(data_dir)
-        codec_registry = RuntimeStateCodecRegistry({AgentKind.REACT: ReActRuntimeStateCodec()})
-        self._runtime_codec_registry = codec_registry
-        self._turn_store = JsonFileTurnStateStore(runtime_data_dir / "turns", codec_registry)
-        self._command_store = JsonFileRuntimeCommandStore(runtime_data_dir / "commands")
-        print("[OK] Typed runtime stores initialized (data/runtime_state/)")
-
-        # 8. Create ReActAgent (main agent in full mode with approval)
-        self.agent = ReActAgent(provider=self.provider, mode="full")
-        print("[OK] ReActAgent initialized")
-
-        # 9. Initialize pipeline runtime
-        await self._initialize_pipeline(main_skill_manager)
-        # 10. Register multi-agent tools
-        await self._register_multi_agent_tools()
-        print(f"[OK] Multi-agent tools registered, total: {len(self.tool_manager.list_tools())}")
-
-        # 11. Display LLM config
-        print("\n[INFO] LLM config:")
-        print(f"   Model: {self._app_config.llm.model}")
-        print(f"   max_tokens: {self._app_config.llm.max_tokens}")
-        print(f"   temperature: {self._app_config.llm.temperature}")
-
-        # 12. Display architecture info
-        print("\n[ARCH] Components:")
-        print(f"   - InputAdapter: {self.input_adapter.name}")
-        print(f"   - OutputAdapter: {self.output_adapter.name}")
-        print(f"   - ToolManager: {type(self.tool_manager).__name__}")
-        print(f"   - ContextManager: {type(self.context_manager).__name__}")
-        print(f"   - Agent: {self.agent.name}")
-        print(f"   - AgentFactory: {type(self.agent_factory).__name__}")
-        print("   - InboxServer: LocalFileInboxServer")
-        print(f"   - Mode: {self.mode}")
+        self.plugin_integration = _PI(config={"enabled": False})
+        await self._initialize_pool()
+        self._print_pool_info()
 
         print("=" * 60)
-
-    async def _initialize_pipeline(self, main_skill_manager: SkillManager | None) -> None:
-        """Initialize pipeline-mode runtime."""
-        assert self._app_config is not None, "AppConfig not loaded"
-        assert self.workspace_context is not None, "WorkspaceContext not initialized"
-        if self.broker is None:
-            raise RuntimeError("Broker is not initialized")
-        if self.agent_factory is None:
-            raise RuntimeError("AgentFactory is not initialized")
-        if self.inbox_producer is None:
-            raise RuntimeError("InboxProducer is not initialized")
-        if self.inbox_consumer is None:
-            raise RuntimeError("InboxConsumer is not initialized")
-
-        main_cfg = self._main_agent_cfg
-        parent_agent_name = main_cfg.name if main_cfg else "main"
-        main_address = AgentAddress(kind="agent", name=parent_agent_name)
-        main_descriptor = AgentDescriptor(
-            address=main_address,
-            llm_config=AgentLLMConfig(
-                model=self._app_config.llm.model,
-                temperature=self._app_config.llm.temperature,
-                max_tokens=self._app_config.llm.max_tokens,
-            ),
-            system_prompt_template=main_cfg.system_prompt if main_cfg else "",
-            context_strategy="persistent",
-            max_iterations=main_cfg.max_steps if main_cfg else 40,
-            execution_strategy="react",
-            safety_policy=self.safety_policy,
-        )
-        inbox_flush_hook = InboxFlushHook(
-            consumer=self.inbox_consumer,
-            agent_name=parent_agent_name,
-        )
-
-        if self.agent is None:
-            raise RuntimeError("Agent is not initialized")
-        if self.tool_manager is None:
-            raise RuntimeError("ToolManager is not initialized")
-
-        pipeline_hooks: list[Hook[Any]] = [inbox_flush_hook]  # type: ignore[type-arg]
-
-        if self._experience_hook is not None:
-            pipeline_hooks.append(self._experience_hook)
-
-        pipeline_hooks.extend(self._collect_run_hooks())
-
-        # Pipeline mode observability
-        from framework.control import CallbackControlEventBus, ControlEventType
-        from framework.hook.builtin import ProgressReportHook, TraceFileWriter
-
-        self._event_bus = CallbackControlEventBus()
-        trace_dir = self._project_dir / "logs"
-        trace_dir.mkdir(exist_ok=True)
-        self._trace_writer = TraceFileWriter(path=trace_dir / "trace.jsonl")
-        await self._event_bus.subscribe(ControlEventType.AGENT_PROGRESS, self._trace_writer.handle)
-        pipeline_hooks.append(ProgressReportHook(event_bus=self._event_bus))
-
-        # Build AgentRuntime via framework RuntimeAssembler
-        runtime = await self._assemble_runtime(hooks=self._build_hook_runner(pipeline_hooks))
-        command_processor = self._build_main_command_processor(
-            main_skill_manager,
-            workspace_ctx=self.workspace_context,
-        )
-        self.command_processor = command_processor
-
-        self.pipeline = AgentPipeline(
-            agent=self.agent,
-            context_manager=self.context_manager,
-            tool_manager=self.tool_manager,
-            input_adapter=self.input_adapter,
-            output_adapter=self.output_adapter,
-            emitter_factory=self.emitter_factory,
-            dream_engine=self.dream_engine,
-            dream_interval=self._dream_interval,
-            max_iterations=main_cfg.max_steps if main_cfg else 40,
-            skill_manager=main_skill_manager,  # type: ignore[arg-type]
-            hook_runner=self._build_hook_runner(pipeline_hooks),
-            interceptor_chain=self.interceptor_chain,
-            context_manager_factory=self._get_context_manager,
-            governance=create_governance(self._main_memory_cfg, self._app_config.llm.max_tokens),
-            safety=self.safety_policy,
-            approval_workspace=str(self._approval_workspace),
-            user_interface=self._im_ui,
-            turn_store=self._turn_store,
-            command_store=self._command_store,
-            runtime_services=runtime.services,
-            control_channel=self.control_channel,
-            command_processor=command_processor,
-            router=DefaultMeshRouter(),
-            agent_descriptor=main_descriptor,
-        )
-        # Configure control command interception on the input adapter
-        if self.control_channel is not None and self.command_processor is not None:
-            self.input_adapter.configure_control_filter(
-                control_channel=self.control_channel,
-                command_processor=self.command_processor,
-                output_adapter=self.output_adapter,
-                session_checker=self.pipeline.is_session_active if self.pipeline else None,
-                turn_uuid_getter=self.pipeline.get_active_turn_uuid if self.pipeline else None,
-            )
-
-        print("[OK] AgentPipeline initialized")
-        print(f"   Input: {self.input_adapter.name}")
-        print(f"   Output: {self.output_adapter.name}")
 
     async def _initialize_pool(self) -> None:
         """Initialize pool-mode with multiple pools."""
@@ -884,6 +440,7 @@ class BotService(AgentBuilderMixin):
                 control_channel=self.control_channel,
                 command_processor=self.command_processor,
                 workspace_context=self.workspace_context,
+                emitter_factory=self.emitter_factory,
             )
             print(f"[OK] Pool '{pool_name}' created")
 
@@ -923,17 +480,13 @@ class BotService(AgentBuilderMixin):
     def _make_active_checker(self) -> Callable[[], bool]:
         """构造活跃 agent 检查器。
 
-        检查所有 Pipeline（主 pipeline + 所有 pool 的 agent）
-        是否有正在运行的 agent turn（含 subagent）。
-        subagent 运行在父 agent 的 session task 中，已被覆盖。
+        检查所有 pool 的 agent 是否有正在运行的 agent turn（含 subagent）。
 
         Returns:
             True 表示有活跃 agent，应拒绝 cd。
         """
 
         def check() -> bool:
-            if self.pipeline is not None and self.pipeline.has_active_sessions():
-                return True
             for pool_inst in self._pools.values():
                 if pool_inst.pool.has_active_sessions():
                     return True
@@ -949,16 +502,12 @@ class BotService(AgentBuilderMixin):
         """① Stop background + rebuild stores (atomic)."""
         await self._stop_background_tasks()
         self._clear_subagent_caches()
-        if self.mode == "pool":
-            await self._rebuild_pool_memory(new_dir)
-            self._update_communication_paths(new_dir)
-        else:
-            await self._rebuild_pipeline_memory(new_dir)
+        await self._rebuild_pool_memory(new_dir)
+        self._update_communication_paths(new_dir)
         await self._rebuild_shared_infrastructure(new_dir)
 
     async def _on_ws_terminal_reset(self, _old_dir: Path, _new_dir: Path) -> None:
-        """② Close all terminal sessions. _close_all_terminals covers both
-        pipeline and pool terminal managers."""
+        """② Close all terminal sessions."""
         await self._close_all_terminals(suppress_errors=True)
 
     # ------------------------------------------------------------------ #
@@ -966,11 +515,11 @@ class BotService(AgentBuilderMixin):
     # ------------------------------------------------------------------ #
 
     async def _close_all_terminals(self, *, suppress_errors: bool = True) -> None:
-        """Close every terminal session (self + pools).
+        """Close every terminal session across all pools.
 
         Used by both workspace-switch callbacks and BotService.stop().
         """
-        for mgr in [self.terminal_manager] + [pi.terminal_manager for pi in self._pools.values()]:
+        for mgr in [pi.terminal_manager for pi in self._pools.values()]:
             if mgr is None:
                 continue
             for name in list(mgr.list_names()):
@@ -998,28 +547,6 @@ class BotService(AgentBuilderMixin):
             interceptor.handler._store = new_store
             if interceptor.handler._cleaner is not None:
                 interceptor.handler._cleaner._store = new_store
-
-    async def _rebuild_pipeline_memory(self, new_dir: Path) -> None:
-        """Rebuild pipeline-mode memory + stores + experience."""
-        main_cfg = self._main_agent_cfg
-        main_mem = main_cfg.memory if main_cfg else self._app_config.memory
-        if self.provider is None:
-            return
-        (
-            self.memory_system,
-            self._turn_store,
-            self._command_store,
-        ) = await self._rebuild_memory_for_target(
-            new_dir,
-            self._ws_memory(new_dir),
-            self._ws_runtime(new_dir),
-            main_mem,
-            self.provider,
-            self.context_manager,
-            pipeline=self.pipeline,
-        )
-        self.pruned_manager = self.memory_system.pruned_manager
-        await self._rebuild_experience(new_dir)
 
     async def _rebuild_pool_memory(self, new_dir: Path) -> None:
         """Rebuild pool-mode memory + runtime stores + experience for every pool.
@@ -1063,16 +590,11 @@ class BotService(AgentBuilderMixin):
             with contextlib.suppress(asyncio.CancelledError):
                 await self._dream_task
             self._dream_task = None
-        # Collect all pipelines (pipeline mode + pool mode agents)
-        pipelines: list[AgentPipeline] = []
-        if self.pipeline is not None:
-            pipelines.append(self.pipeline)
+        # Clear injection queues on all pool agent pipelines
         for pi in self._pools.values():
             for ai in pi.pool._agents.values():
                 if ai.pipeline is not None:
-                    pipelines.append(ai.pipeline)
-        for p in pipelines:
-            p._injection_queues.clear()
+                    ai.pipeline._injection_queues.clear()
 
     def _clear_subagent_caches(self) -> None:
         """清空 subagent 缓存的 memory/skill 引用，避免指向旧路径。"""
@@ -1171,11 +693,8 @@ class BotService(AgentBuilderMixin):
     async def _rebuild_experience(self, new_data_dir: Path) -> None:
         """Rebuild the injection-side experience manager on workspace switch.
 
-        Tools, meta_store, and curator resolve lazily (via lambda capturing
-        workspace_context.data_dir) so they need no rebuild — PerFileExperienceMetaStore
-        auto-resolves to the new path after /cd.  Only the prompt-injection
-        ExperienceManager needs a fresh FileExperienceSource pointing at the new
-        data directory.
+        Each pool's context_manager gets its own ExperienceManager pointing
+        at the new data directory.
         """
         if self._experience_manager is None:
             return
@@ -1189,16 +708,6 @@ class BotService(AgentBuilderMixin):
             exp_dir.mkdir(parents=True, exist_ok=True)
             return ExperienceManager(source=FileExperienceSource(directories=[exp_dir]))
 
-        # Pipeline mode
-        main_cfg = self._main_agent_cfg
-        if self.context_manager is not None:
-            agent_name = main_cfg.name if main_cfg else "main"
-            mgr = _new_manager(self._default_pool_name, agent_name)
-            self._experience_manager = mgr
-            if hasattr(self.context_manager, "_experience_manager"):
-                self.context_manager._experience_manager = mgr
-
-        # Pool mode — each pool's context_manager gets its own manager
         for pool_inst in self._pools.values():
             main_agent_name = "main"
             agents = getattr(pool_inst.config, "agents", []) or []
@@ -1213,10 +722,7 @@ class BotService(AgentBuilderMixin):
         print(f"[OK] Experience injection rebuilt for workspace: {new_data_dir}")
 
     async def _rebuild_shared_infrastructure(self, new_data_dir: Path) -> None:
-        """更新共享基础设施：inbox + approval + overflow + dream。
-
-        Pipeline 和 Pool 模式共用此方法。
-        """
+        """更新共享基础设施：inbox + approval + overflow + dream。"""
         # Inbox
         inbox_dir = self._ws_inbox(new_data_dir)
         inbox_dir.mkdir(parents=True, exist_ok=True)
@@ -1231,10 +737,7 @@ class BotService(AgentBuilderMixin):
         # Overflow store
         self._rebuild_overflow_store(new_data_dir)
         # Dream engine + task
-        if self.mode == "pool":
-            await self._init_pool_dream_engine()
-        else:
-            self._init_dream()
+        await self._init_pool_dream_engine()
         self._start_dream_task()
 
     def _update_communication_paths(self, new_data_dir: Path) -> None:
@@ -1423,12 +926,7 @@ class BotService(AgentBuilderMixin):
     # ------------------------------------------------------------------ #
 
     async def start(self) -> None:
-        if self.mode == "pipeline":
-            if self.pipeline:
-                await self.pipeline.run()
-            return
-
-        # Pool mode: start all pool bridges, then PoolRouter
+        # Start all pool bridges, then PoolRouter
         await self.input_adapter.start()
         for pool in self._pools.values():
             await pool.broker_bridge.start()
@@ -1460,60 +958,6 @@ class BotService(AgentBuilderMixin):
         await self._shutdown_event.wait()
 
     # ------------------------------------------------------------------ #
-    # Runtime assembly
-    # ------------------------------------------------------------------ #
-
-    async def _assemble_runtime(self, hooks: HookRunner[Any] | None = None) -> AgentRuntime:  # type: ignore[type-arg]
-        """Build AgentRuntime via framework RuntimeAssembler.
-
-        The only difference between pipeline and pool mode is the hooks source.
-        Everything else — classifier, strategy, control, governance — is identical.
-        """
-        from framework.agents.react.approval import TieredToolApprovalClassifier
-        from framework.agents.react.assembler import RuntimeAssembler, RuntimeServicesConfig
-        from framework.approval.config import AgentApprovalConfig, ToolApprovalConfig
-
-        # Read agent-level approval config from AppConfig
-        main_cfg = self._main_agent_cfg
-        approval_cfg = main_cfg.approval if main_cfg else None
-        if approval_cfg is not None:
-            enabled = approval_cfg.enabled
-            tools_approval: dict[str, ToolApprovalConfig] = {
-                name: ToolApprovalConfig(allowed_paths=entry.allowed_paths)
-                for name, entry in approval_cfg.tools.items()
-            }
-        else:
-            enabled = True
-            tools_approval = {}
-
-        approval_config = AgentApprovalConfig(enabled=enabled, tools=tools_approval)
-
-        runtime = await RuntimeAssembler.assemble(
-            RuntimeServicesConfig(
-                mode="full",
-                hooks=hooks,
-                interceptors=list(self.interceptor_chain.interceptors)
-                if self.interceptor_chain
-                else None,
-                approval_classifier=TieredToolApprovalClassifier(
-                    config=approval_config,
-                    argument_matcher=ArgumentMatcher(project_root=self._project_dir),
-                ),
-                turn_store=self._turn_store,
-                control_channel=self.control_channel,
-                project_root=self._project_dir,
-                governance=create_governance(
-                    self._main_memory_cfg, self._app_config.llm.max_tokens
-                ),
-                safety=self.safety_policy,
-            )
-        )
-        print(
-            f"[OK] AgentRuntime built (approval enabled={enabled}, tools={list(tools_approval.keys())})"
-        )
-        return runtime
-
-    # ------------------------------------------------------------------ #
     # Memory helpers
     # ------------------------------------------------------------------ #
 
@@ -1522,7 +966,7 @@ class BotService(AgentBuilderMixin):
         _data_dir: Path,
         main_memory_cfg: IOCMemoryConfig | None,
         *,
-        memory_system: DefaultMemorySystem | None = None,
+        memory_system: DefaultMemorySystem,
     ) -> None:
         """Initialize default long-term memory files if knowledge is enabled.
 
@@ -1548,7 +992,7 @@ class BotService(AgentBuilderMixin):
         if not knowledge_enabled:
             return
 
-        ms = memory_system or self.memory_system
+        ms = memory_system
         if ms is None:
             return
 
@@ -1591,73 +1035,6 @@ class BotService(AgentBuilderMixin):
 
         print("   [OK] Long-term memory defaults ensured")
 
-    async def _init_maintenance_task(
-        self,
-        main_memory_cfg: IOCMemoryConfig | None,
-    ) -> None:
-        """Initialize and start background maintenance via DefaultMemoryMaintenancePolicy."""
-        if self.memory_system is None:
-            return
-
-        from framework.memory.lifecycle import (
-            DefaultArchiveRetentionPolicy,
-            DefaultMemoryMaintenancePolicy,
-        )
-
-        # Wire archive retention with max_archive_total for FIFO eviction
-        archive_retention = None
-        if main_memory_cfg is not None and main_memory_cfg.archive is not None:
-            max_total = main_memory_cfg.archive.max_archive_total
-            if max_total is not None and max_total > 0:
-                archive_retention = DefaultArchiveRetentionPolicy(max_archive_total=max_total)
-
-        self._maintenance_policy = DefaultMemoryMaintenancePolicy(
-            archive_retention_policy=archive_retention,
-        )
-
-        scan_interval = 300
-        self._maintenance_task = asyncio.create_task(self._maintenance_loop(scan_interval))
-        print(f"   [OK] MaintenanceService started (scan_interval={scan_interval}s)")
-
-    async def _maintenance_loop(self, interval: float) -> None:
-        """Background loop for memory maintenance using maintenance policy."""
-        while not self._shutdown_event.is_set():
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(self._shutdown_event.wait(), timeout=interval)
-            if self._shutdown_event.is_set():
-                break
-            try:
-                results = await self._maintenance_policy.scan_once(
-                    registry=self.memory_system.store_registry,
-                    layers=self.memory_system.layers,
-                )
-                compacted = [r.scope_key for r in results if r.success]
-                if compacted:
-                    logger.info("Maintenance scan completed scopes: %s", compacted)
-            except Exception:
-                logger.exception("Maintenance scan loop error")
-
-    def _init_dream(self) -> None:
-        if self._main_memory_cfg is None or self._main_memory_cfg.dream_engine is None:
-            return
-        if not self._main_memory_cfg.dream_engine.enabled:
-            return
-        if self.memory_system is None or self.provider is None:
-            return
-        if (
-            self.memory_system.archive_manager is None
-            or self.memory_system.knowledge_manager is None
-        ):
-            return
-
-        dream_cfg = self._main_memory_cfg.dream_engine
-        self._dream_interval = dream_cfg.interval
-        self.dream_engine = self._build_dream_engine(
-            memory_system=self.memory_system,
-            dream_cfg=dream_cfg,
-        )
-        logger.info("DreamEngine initialized, pipeline mode, interval=%ds", self._dream_interval)
-
     async def _init_pool_dream_engine(self) -> None:
         default_pool = self._pools.get(self._default_pool_name)
         if default_pool is None:
@@ -1697,30 +1074,6 @@ class BotService(AgentBuilderMixin):
             max_consume_per_run=dream_cfg.max_consume_per_run,
             consolidator=memory_system.knowledge_consolidator,
         )
-
-    async def _archive_trigger(self, context: MemoryContext) -> None:
-        """Callback invoked after each archive is generated.
-
-        Triggers DreamEngine.run() whenever there are unprocessed archive entries.
-        DreamEngine.run() handles its own locking and no-op when idle.
-        """
-        if self.dream_engine is None:
-            return
-        try:
-            count = await self.memory_system.get_unprocessed_history_count(context)
-        except Exception:
-            logger.debug("Archive trigger: failed to get unprocessed count", exc_info=True)
-            return
-        if count > 0:
-            logger.info(
-                "Archive trigger: %d unprocessed archive(s), running DreamEngine session=%s",
-                count,
-                context.session_id,
-            )
-            try:
-                await self.dream_engine.run(context)
-            except Exception:
-                logger.warning("Archive trigger: DreamEngine.run() failed", exc_info=True)
 
     async def _curator_background_loop(self, curator: object, interval: int) -> None:
         """Periodically run the ExperienceCurator to manage experience lifecycle."""
@@ -1789,9 +1142,6 @@ class BotService(AgentBuilderMixin):
             self._router_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._router_task
-        if self.mcp_manager is not None:
-            with contextlib.suppress(BaseException):
-                await self.mcp_manager.disconnect_all()
         # Shut down all pools in one pass
         for pi in self._pools.values():
             if pi.experience_curator_task is not None:

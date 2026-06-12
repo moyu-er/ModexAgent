@@ -396,7 +396,7 @@ class TestQQBotServiceIntegration:
 
     @pytest.mark.asyncio
     async def test_bot_service_pool_mode_bridge_routing(self, tmp_path):
-        """BotService(mode='pool') 通过 BrokerBridgeService 正确路由输入/输出。"""
+        """BotService 通过 BrokerBridgeService 正确路由输入/输出。"""
         import sys
         from pathlib import Path
 
@@ -477,18 +477,8 @@ llm:
   temperature: 0.7
   max_tokens: 100
 
-agent:
-  system_prompt: "You are a test agent."
-  max_iterations: 1
-
-memory:
-  short_term:
-    max_messages: 10
-    max_tokens: 100
-    budget_ratio: 0.5
-
 multi_agent:
-  parent_agent_name: main
+  default_pool: main
   enabled: false
 
 tools:
@@ -502,6 +492,31 @@ mcp:
 """,
             encoding="utf-8",
         )
+        pools_dir = config_dir / "pools"
+        pools_dir.mkdir()
+        (pools_dir / "main.yml").write_text(
+            """
+llm:
+  model: mock-model
+  api_key: test-key
+  base_url: ""
+  temperature: 0.7
+  max_tokens: 100
+
+agents:
+  - name: main
+    role: main
+    system_prompt: "You are a test agent."
+    max_steps: 1
+
+memory:
+  short_term:
+    max_messages: 10
+    max_tokens: 100
+    budget_ratio: 0.5
+""",
+            encoding="utf-8",
+        )
 
         input_adapter = _MockInputAdapter()
         output_adapter = _MockOutputAdapter()
@@ -510,13 +525,14 @@ mcp:
             from framework.agents.react import ReActEvent
             return _BufferingEmitter[ReActEvent]()
 
-        with patch("bot.service.core.create_llm_provider", return_value=_MockProvider()):
+        with patch("bot.service.pool_builder.create_llm_provider", return_value=_MockProvider()), patch(
+            "bot.service.pool_builder._load_agent_mcp_tools", return_value=([], None)
+        ):
             service = BotService(
                 config_dir=config_dir,
                 input_adapter=input_adapter,
                 output_adapter=output_adapter,
                 emitter_factory=_emitter_factory,
-                mode="pool",
             )
             await service.initialize()
 
@@ -542,8 +558,8 @@ mcp:
             await service.stop()
 
     @pytest.mark.asyncio
-    async def test_bot_service_pipeline_mode_memory_system_initialized(self, tmp_path):
-        """BotService(mode='pipeline') 初始化后 MemorySystem 和 ContextManager 应正确创建。"""
+    async def test_bot_service_pool_registers_subagent_residents(self, tmp_path):
+        """pool 模式下 initialize 后主 Agent 应为常驻代理，且注册了 send_to_agent 工具。"""
         import sys
         from pathlib import Path
 
@@ -570,8 +586,6 @@ mcp:
         class _MockOutputAdapter(OutputAdapter):
             @property
             def name(self): return "mock_output"
-            @property
-            def supports_streaming(self): return False
             async def send(self, message: OutputMessage, session_id: str): pass
             async def send_delta(self, delta: str, session_id: str, metadata=None): pass
             async def flush_deltas(self, session_id: str): pass
@@ -588,303 +602,64 @@ mcp:
 llm:
   model: mock
   api_key: key
-  temperature: 0.7
-agent:
-  system_prompt: "test"
+multi_agent:
+  enabled: true
+  default_pool: main
+tools:
+  file_tools:
+    enabled: false
+  shell_tools:
+    enabled: false
+mcp:
+  servers: {}
+""",
+            encoding="utf-8",
+        )
+        pools_dir = config_dir / "pools"
+        pools_dir.mkdir()
+        (pools_dir / "main.yml").write_text(
+            """
+llm:
+  model: mock
+  api_key: key
+agents:
+  - name: main
+    role: main
+    system_prompt: "test"
+  - name: helper
+    role: subagent
+    system_prompt: "helper"
 memory:
   short_term:
-    max_messages: 5
-    max_tokens: 50
+    max_messages: 10
+    max_tokens: 100
     budget_ratio: 0.5
-multi_agent:
-  enabled: false
-tools:
-  file_tools:
-    enabled: false
-  shell_tools:
-    enabled: false
-mcp:
-  servers: {}
 """,
             encoding="utf-8",
         )
 
-        with patch("bot.service.core.create_llm_provider", return_value=_MockProvider()):
+        with patch("bot.service.pool_builder.create_llm_provider", return_value=_MockProvider()), patch(
+            "bot.service.pool_builder._load_agent_mcp_tools", return_value=([], None)
+        ):
             service = BotService(
                 config_dir=config_dir,
                 input_adapter=_MockInputAdapter(),
                 output_adapter=_MockOutputAdapter(),
                 emitter_factory=lambda sid: None,
-                mode="pipeline",
             )
             await service.initialize()
 
-            assert service.memory_system is not None
-            assert service.context_manager is not None
-            assert service.inbox_server is not None
-            assert service.inbox_producer is not None
-            assert service.inbox_consumer is not None
-            assert service.pipeline is not None
-            assert service.subagent_service is None
-
-            await service.stop()
-
-    @pytest.mark.asyncio
-    async def test_bot_service_stop_cleans_up_resources(self, tmp_path):
-        """stop() 应正确清理 pipeline、broker、agent_bus、subagent_manager 等资源。"""
-        import sys
-        from pathlib import Path
-
-        qq_project = Path(__file__).parent.parent.parent / "examples" / "bot_project"
-        if str(qq_project) not in sys.path:
-            sys.path.insert(0, str(qq_project))
-
-        from bot_service import BotService
-
-        from framework.core.types import LLMResponse
-        from framework.pipeline.adapters import InputAdapter, OutputAdapter, OutputMessage
-
-        class _MockInputAdapter(InputAdapter):
-            @property
-            def name(self): return "mock_input"
-            async def start(self): pass
-            async def stop(self): pass
-            def receive(self):
-                async def _gen():
-                    if False:
-                        yield None
-                return _gen()
-
-        class _MockOutputAdapter(OutputAdapter):
-            @property
-            def name(self): return "mock_output"
-            @property
-            def supports_streaming(self): return False
-            async def send(self, message: OutputMessage, session_id: str): pass
-            async def send_delta(self, delta: str, session_id: str, metadata=None): pass
-            async def flush_deltas(self, session_id: str): pass
-
-        class _MockProvider:
-            async def chat(self, messages=None, **kwargs):
-                return LLMResponse(content="ok")
-            def get_default_model(self): return "mock"
-
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        (config_dir / "bot_config.yml").write_text(
-            """
-llm:
-  model: mock
-  api_key: key
-agent:
-  system_prompt: "test"
-multi_agent:
-  enabled: false
-tools:
-  file_tools:
-    enabled: false
-  shell_tools:
-    enabled: false
-mcp:
-  servers: {}
-""",
-            encoding="utf-8",
-        )
-
-        with patch("bot.service.core.create_llm_provider", return_value=_MockProvider()):
-            service = BotService(
-                config_dir=config_dir,
-                input_adapter=_MockInputAdapter(),
-                output_adapter=_MockOutputAdapter(),
-                emitter_factory=lambda sid: None,
-                mode="pipeline",
-            )
-            await service.initialize()
-
-            # 启动 pipeline 后再停止
-            asyncio.create_task(service.pipeline.run())
-            await asyncio.sleep(0.05)
-            await service.stop()
-
-            # 验证 pipeline 已停止
-            assert service.pipeline._running is False
-            # 验证 broker 已停止（InMemoryMessageBroker 内部 _running=False）
-            assert service.broker._running is False
-
-    @pytest.mark.asyncio
-    async def test_bot_service_pipeline_registers_multi_agent_tools(self, tmp_path):
-        """pipeline 模式下 initialize 后应多 Agent 工具被正确注册到 ToolManager。"""
-        import sys
-        from pathlib import Path
-
-        qq_project = Path(__file__).parent.parent.parent / "examples" / "bot_project"
-        if str(qq_project) not in sys.path:
-            sys.path.insert(0, str(qq_project))
-
-        from bot_service import BotService
-
-        from framework.core.types import LLMResponse
-        from framework.pipeline.adapters import InputAdapter, OutputAdapter, OutputMessage
-
-        class _MockInputAdapter(InputAdapter):
-            @property
-            def name(self): return "mock_input"
-            async def start(self): pass
-            async def stop(self): pass
-            def receive(self):
-                async def _gen():
-                    if False:
-                        yield None
-                return _gen()
-
-        class _MockOutputAdapter(OutputAdapter):
-            @property
-            def name(self): return "mock_output"
-            @property
-            def supports_streaming(self): return False
-            async def send(self, message: OutputMessage, session_id: str): pass
-            async def send_delta(self, delta: str, session_id: str, metadata=None): pass
-            async def flush_deltas(self, session_id: str): pass
-
-        class _MockProvider:
-            async def chat(self, messages=None, **kwargs):
-                return LLMResponse(content="ok")
-            def get_default_model(self): return "mock"
-
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        (config_dir / "bot_config.yml").write_text(
-            """
-llm:
-  model: mock
-  api_key: key
-agent:
-  system_prompt: "test"
-multi_agent:
-  enabled: true
-agents:
-  - name: main
-    role: main
-    system_prompt: "test"
-  - name: helper
-    role: subagent
-    system_prompt: "helper"
-tools:
-  file_tools:
-    enabled: false
-  shell_tools:
-    enabled: false
-mcp:
-  servers: {}
-""",
-            encoding="utf-8",
-        )
-
-        with patch("bot.service.core.create_llm_provider", return_value=_MockProvider()):
-            service = BotService(
-                config_dir=config_dir,
-                input_adapter=_MockInputAdapter(),
-                output_adapter=_MockOutputAdapter(),
-                emitter_factory=lambda sid: None,
-                mode="pool",
-            )
-            await service.initialize()
-
-            tool_names = service.tool_manager.list_tools()
-            assert "send_to_agent" in tool_names
-            assert "send_message" not in tool_names
-            assert "send_message_async" not in tool_names
-            assert "dispatch_task" not in tool_names
-            assert "spawn_subagent" not in tool_names
-
-            await service.stop()
-
-    @pytest.mark.asyncio
-    async def test_bot_service_pool_registers_subagent_residents(self, tmp_path):
-        """pool 模式下 initialize 后子 Agent 应被注册为 AgentPool 常驻代理。"""
-        import sys
-        from pathlib import Path
-
-        qq_project = Path(__file__).parent.parent.parent / "examples" / "bot_project"
-        if str(qq_project) not in sys.path:
-            sys.path.insert(0, str(qq_project))
-
-        from bot_service import BotService
-
-        from framework.core.types import LLMResponse
-        from framework.pipeline.adapters import InputAdapter, OutputAdapter, OutputMessage
-
-        class _MockInputAdapter(InputAdapter):
-            @property
-            def name(self): return "mock_input"
-            async def start(self): pass
-            async def stop(self): pass
-            def receive(self):
-                async def _gen():
-                    if False:
-                        yield None
-                return _gen()
-
-        class _MockOutputAdapter(OutputAdapter):
-            @property
-            def name(self): return "mock_output"
-            @property
-            def supports_streaming(self): return False
-            async def send(self, message: OutputMessage, session_id: str): pass
-            async def send_delta(self, delta: str, session_id: str, metadata=None): pass
-            async def flush_deltas(self, session_id: str): pass
-
-        class _MockProvider:
-            async def chat(self, messages=None, **kwargs):
-                return LLMResponse(content="ok")
-            def get_default_model(self): return "mock"
-
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        (config_dir / "bot_config.yml").write_text(
-            """
-llm:
-  model: mock
-  api_key: key
-agent:
-  system_prompt: "test"
-multi_agent:
-  enabled: true
-agents:
-  - name: main
-    role: main
-    system_prompt: "test"
-  - name: helper
-    role: subagent
-    system_prompt: "helper"
-tools:
-  file_tools:
-    enabled: false
-  shell_tools:
-    enabled: false
-mcp:
-  servers: {}
-""",
-            encoding="utf-8",
-        )
-
-        with patch("bot.service.core.create_llm_provider", return_value=_MockProvider()):
-            service = BotService(
-                config_dir=config_dir,
-                input_adapter=_MockInputAdapter(),
-                output_adapter=_MockOutputAdapter(),
-                emitter_factory=lambda sid: None,
-                mode="pool",
-            )
-            await service.initialize()
-
-            assert service.agent_pool is not None
-            resident_names = [d.address.name for d in service.agent_pool.list_agents()]
+            # Pool should exist and have the main agent as resident
+            pool = service._pools["main"].pool
+            assert pool is not None
+            resident_names = [d.address.name for d in pool.list_agents()]
             assert "main" in resident_names
-            assert "helper" in resident_names
-            helper = service.agent_pool.get("helper")
-            assert helper is not None
-            assert "send_to_agent" in helper.tool_manager.list_tools()
+
+            # Main agent should have send_to_agent tool (for communicating with subagents)
+            main_agent = pool.get("main")
+            assert main_agent is not None
+            assert main_agent.pipeline is not None
+            assert "send_to_agent" in main_agent.pipeline.tool_manager.list_tools()
 
             await service.stop()
 

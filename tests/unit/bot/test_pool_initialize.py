@@ -116,7 +116,6 @@ class TestPoolModeInitializeNoTopLevelLlm:
             input_adapter=_StubInput(),
             output_adapter=_StubOutput(),
             emitter_factory=lambda s: None,
-            mode="pool",
         )
         # Simulate what initialize() does — load config first
         bot._app_config = bot._load_app_config()
@@ -143,7 +142,6 @@ class TestPoolModeInitializeNoTopLevelLlm:
             input_adapter=_StubInput(),
             output_adapter=_StubOutput(),
             emitter_factory=lambda s: None,
-            mode="pool",
             app_config=cfg,
         )
 

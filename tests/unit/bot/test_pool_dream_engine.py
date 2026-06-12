@@ -1,6 +1,6 @@
-"""Test that Pool mode starts DreamEngine background loop.
+"""Test that BotService starts DreamEngine background loop.
 
-Regression test for: Pool mode never starts DreamEngine, causing knowledge
+Regression test for: BotService never starts DreamEngine, causing knowledge
 files to never update even when archives accumulate.
 """
 
@@ -82,16 +82,16 @@ def pool_mode_config_with_dream() -> AppConfig:
     )
 
 
-class TestPoolModeDreamEngineStartup:
-    """Verify Pool mode starts DreamEngine background loop."""
+class TestBotServiceDreamEngineStartup:
+    """Verify BotService starts DreamEngine background loop."""
 
     @pytest.mark.asyncio
-    async def test_pool_mode_starts_dream_background_loop(
+    async def test_starts_dream_background_loop(
         self, pool_mode_config_with_dream: AppConfig
     ) -> None:
-        """Pool mode start() must create a background task for DreamEngine.
+        """start() must create a background task for DreamEngine.
 
-        Regression: Previously, Pool mode's start() only started PoolRouter
+        Regression: Previously, start() only started PoolRouter
         but never called _dream_background_loop(), leaving DreamEngine idle
         and knowledge files never updating.
         """
@@ -102,7 +102,6 @@ class TestPoolModeDreamEngineStartup:
             input_adapter=_StubInput(),
             output_adapter=_StubOutput(),
             emitter_factory=lambda s: None,
-            mode="pool",
             app_config=pool_mode_config_with_dream,
         )
 
@@ -135,7 +134,7 @@ class TestPoolModeDreamEngineStartup:
 
         bot._dream_background_loop = patched_dream_loop
 
-        # Start in pool mode (should trigger dream loop)
+        # Start (should trigger dream loop)
         start_task = asyncio.create_task(bot.start())
 
         # Wait a bit for start() to execute
@@ -143,8 +142,8 @@ class TestPoolModeDreamEngineStartup:
 
         # Verify dream background loop was started
         assert loop_started.is_set(), (
-            "Pool mode start() did NOT start DreamEngine background loop. "
-            "Regression: _dream_background_loop() was never called in pool mode."
+            "start() did NOT start DreamEngine background loop. "
+            "Regression: _dream_background_loop() was never called."
         )
 
         # Clean up
@@ -154,8 +153,8 @@ class TestPoolModeDreamEngineStartup:
             await start_task
 
     @pytest.mark.asyncio
-    async def test_pool_mode_without_dream_engine_does_not_crash(self) -> None:
-        """Pool mode without dream_engine config should not crash."""
+    async def test_without_dream_engine_does_not_crash(self) -> None:
+        """BotService without dream_engine config should not crash."""
         from bot.service.core import BotService
 
         cfg = AppConfig(
@@ -174,7 +173,6 @@ class TestPoolModeDreamEngineStartup:
             input_adapter=_StubInput(),
             output_adapter=_StubOutput(),
             emitter_factory=lambda s: None,
-            mode="pool",
             app_config=cfg,
         )
 
@@ -202,33 +200,23 @@ class TestPoolModeDreamEngineStartup:
         with contextlib.suppress(asyncio.CancelledError):
             await start_task
 
-    def test_pipeline_mode_initializes_dream_engine(self) -> None:
-        """Pipeline mode should initialize DreamEngine (existing behavior)."""
+    def test_has_dream_engine_methods(self) -> None:
+        """BotService should expose DreamEngine lifecycle methods."""
         from bot.service.core import BotService
-
-        cfg = AppConfig(
-            llm=LLMConfig(model="test-model", api_key="k"),
-            agents=[{"name": "main", "role": "main", "max_steps": 5}],
-        )
 
         bot = BotService(
             config_dir=Path("."),
             input_adapter=_StubInput(),
             output_adapter=_StubOutput(),
             emitter_factory=lambda s: None,
-            mode="pipeline",
-            app_config=cfg,
         )
 
-        # In pipeline mode, _init_dream should be called during initialize()
-        # We can't easily test the full initialize() without mocking many things,
-        # but we can verify the method exists and the field is set up
-        assert hasattr(bot, "_init_dream")
+        assert hasattr(bot, "_init_pool_dream_engine")
         assert hasattr(bot, "_dream_background_loop")
 
 
-class TestPoolModeDreamEngineStop:
-    """Verify Pool mode properly stops DreamEngine background loop."""
+class TestBotServiceDreamEngineStop:
+    """Verify BotService properly stops DreamEngine background loop."""
 
     @pytest.mark.asyncio
     async def test_stop_cancels_dream_task(self) -> None:
@@ -240,7 +228,6 @@ class TestPoolModeDreamEngineStop:
             input_adapter=_StubInput(),
             output_adapter=_StubOutput(),
             emitter_factory=lambda s: None,
-            mode="pool",
         )
 
         # Simulate a running dream task

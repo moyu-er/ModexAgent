@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+from framework.core.emitter import ContentEmitter
 
 from framework.control.channel import InMemoryControlChannel
 from framework.core.llm_struct import RuntimeSafetyPolicy
@@ -78,6 +81,7 @@ async def create_pool(
     control_channel: InMemoryControlChannel | None = None,
     command_processor: Any = None,
     workspace_context: Any = None,
+    emitter_factory: Callable[[str], ContentEmitter] | None = None,
 ) -> PoolInstance:
 
     main_cfg = next(a for a in pool_cfg.agents if a.role == "main")
@@ -169,11 +173,11 @@ async def create_pool(
             pool_name,
         )
 
-    # 7. AgentFactory (creates RuntimeContextManager internally for tool-call tracking)
+    # 7. AgentFactory — wrap to inject custom emitter for ALL agents (resident + subagent)
     from framework.trace import JsonFileTraceStore
 
     trace_store = JsonFileTraceStore(base_dir=runtime_data_dir / "trace")
-    factory = DefaultAgentFactory(
+    base_factory = DefaultAgentFactory(
         default_llm_provider=provider,
         default_tool_manager=tool_manager,
         skill_manager=skill_manager,
@@ -185,6 +189,18 @@ async def create_pool(
         control_channel=control_channel,
         trace_store=trace_store,
     )
+
+    # Wrap create_agent so dynamic subagents also get the custom emitter.
+    _orig_create = base_factory.create_agent
+
+    async def _create_with_emitter(*args: Any, **kwargs: Any) -> Any:
+        instance = await _orig_create(*args, **kwargs)
+        if emitter_factory is not None and instance.pipeline is not None:
+            instance.pipeline.emitter_factory = emitter_factory
+        return instance
+
+    base_factory.create_agent = _create_with_emitter  # type: ignore[method-assign]
+    factory: DefaultAgentFactory = base_factory
 
     # 8. AgentPool
     session_strategy = DefaultSessionIdStrategy(main_agent_name=main_agent_name)

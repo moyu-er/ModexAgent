@@ -1,0 +1,1 @@
+"""modexbot CLI package."""
