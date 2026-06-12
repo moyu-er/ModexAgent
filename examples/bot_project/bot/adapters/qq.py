@@ -302,6 +302,11 @@ class QQInputAdapter(InputAdapter):
             # 记录最近一次输入 metadata，供 OutputAdapter 区分 C2C / 群聊
             self.last_input_metadata = metadata
 
+            # Tag this conversation as QQ-originated for channel-aware emitters.
+            from bot.adapters.channels import set_conv_channel
+
+            set_conv_channel(user_id, "qq")
+
             # 放入队列
             await self._message_queue.put(message)
 
