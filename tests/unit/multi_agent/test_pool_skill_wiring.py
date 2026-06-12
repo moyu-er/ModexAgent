@@ -16,6 +16,7 @@ from framework.core.skills import FileSkillSource, DefaultSkillBuilder, SkillMan
 from framework.core.skills.cache import DirectorySkillCache
 from framework.core.types import InputMessage
 from framework.multi_agent import DefaultAgentFactory, AgentPool
+from unittest.mock import MagicMock
 from framework.multi_agent.address import AgentAddress
 from framework.multi_agent.descriptor import AgentDescriptor
 from framework.messaging.broker_memory import InMemoryMessageBroker
@@ -53,7 +54,7 @@ async def test_factory_passes_skill_manager_to_pipeline() -> None:
         await broker.start()
         try:
             factory = DefaultAgentFactory(
-                default_llm_provider=None,  # not needed for this test
+                default_llm_provider=MagicMock(),
                 skill_manager=skill_mgr,
             )
 
@@ -108,6 +109,7 @@ async def test_pool_skill_manager_end_to_end() -> None:
         await broker.start()
         try:
             factory = DefaultAgentFactory(
+                default_llm_provider=MagicMock(),
                 skill_manager=skill_mgr,
             )
 

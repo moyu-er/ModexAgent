@@ -11,7 +11,7 @@ class TestDefaultMeshRouter:
         result = router.route(InputMessage(content="hello", session_id="chat-1"))
 
         assert result.conversation_id == "chat-1"
-        assert result.agent_session_id == "chat-1:main"
+        assert result.agent_session_id == "chat-1.main"
         assert result.agent_name == "main"
 
     def test_defaults_external_conversation_to_current_agent_name(self) -> None:
@@ -23,7 +23,7 @@ class TestDefaultMeshRouter:
         )
 
         assert result.conversation_id == "chat-1"
-        assert result.agent_session_id == "chat-1:office-expert"
+        assert result.agent_session_id == "chat-1.office-expert"
         assert result.agent_name == "office-expert"
 
     def test_parses_agent_name_from_three_part_task_session(self) -> None:
@@ -33,12 +33,12 @@ class TestDefaultMeshRouter:
             InputMessage(
                 content="task",
                 session_id="chat-1",
-                metadata={"agent_session_id": "chat-1:office-expert:task-42"},
+                metadata={"agent_session_id": "chat-1.office-expert.task-42"},
             )
         )
 
         assert result.conversation_id == "chat-1"
-        assert result.agent_session_id == "chat-1:office-expert:task-42"
+        assert result.agent_session_id == "chat-1.office-expert.task-42"
         assert result.agent_name == "office-expert"
 
     def test_uses_agent_session_conversation_when_metadata_omits_conversation(self) -> None:
@@ -48,10 +48,10 @@ class TestDefaultMeshRouter:
             InputMessage(
                 content="task",
                 session_id="transport-session",
-                metadata={"agent_session_id": "chat-1:office-expert:task-42"},
+                metadata={"agent_session_id": "chat-1.office-expert.task-42"},
             )
         )
 
         assert result.conversation_id == "chat-1"
-        assert result.agent_session_id == "chat-1:office-expert:task-42"
+        assert result.agent_session_id == "chat-1.office-expert.task-42"
         assert result.agent_name == "office-expert"

@@ -44,7 +44,7 @@ async def test_write_rejects_outside_dir(tmp_path: Path) -> None:
     tool = ScopedWriteFileTool(allowed_dirs=[tmp_path])
     result = await tool.execute(path="/tmp/outside.txt", content="nope")
     assert not result.success
-    assert "outside allowed directories" in result.error
+    assert "ACCESS DENIED" in result.error
 
 
 @pytest.mark.asyncio

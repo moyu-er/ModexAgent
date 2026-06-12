@@ -41,7 +41,7 @@ def sample_descriptor():
 
 @pytest.mark.asyncio
 async def test_default_agent_factory_pipeline_uses_mesh_router(sample_descriptor, any_broker):
-    factory = DefaultAgentFactory()
+    factory = DefaultAgentFactory(default_llm_provider=MagicMock())
     instance = await factory.create_agent(sample_descriptor, broker=any_broker)
 
     assert instance.pipeline is not None

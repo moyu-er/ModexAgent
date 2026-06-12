@@ -4,8 +4,7 @@
 
 设计原则：
 - 内部存储使用 `role: "agent"` + `source_agent` 字段，语义清晰
-- 调用 LLM 前映射为 `role: "user"` + `name` 字段 + 内容前缀
-- 系统提示词中声明 agent 消息来源，帮助 LLM 区分人类用户与其他 Agent
+- 调用 LLM 前映射为 `role: "user"` + `name` 字段 + XML 信封
 """
 
 from collections.abc import Sequence
@@ -14,14 +13,6 @@ from typing import Any
 from framework.core.types import MessageRole
 from framework.memory.core.message import ChatMessage, ContentFormat
 from framework.utils.xml import xml_attr, xml_text
-
-AGENT_COMMUNICATION_SYSTEM_NOTE = (
-    "\n\n## Agent Messages\n"
-    "Messages in <agent_message> or <agent_result> XML format are from other agents, not the human user. "
-    "Treat them as input from collaborators. If a response is needed, use your available "
-    "communication tool (`send_to_agent`) with `target_agent` set to the sender name."
-)
-
 
 def _msg_to_dict(msg: ChatMessage | dict[str, Any]) -> dict[str, Any]:
     """将 ChatMessage 或 dict 统一转换为 dict。"""

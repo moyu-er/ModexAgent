@@ -13,10 +13,9 @@ from framework.core.tool_manager import InMemoryToolManager, Tool, ToolManagerCo
 from framework.ioc.configs.agent import AgentConfig
 from framework.ioc.configs.app import AppConfig
 from framework.ioc.configs.memory import MemoryConfig
-from framework.memory.core.scope import MemoryAgentRole, SessionScope
+from framework.memory.core.scope import MemoryAgentRole
 from framework.memory.injection import RestrictedInjectionPolicy
 from framework.memory.layers.config import (
-    ArchiveMemoryConfig,
     MemoryLayerConfigSet,
     SessionMemoryConfig,
     UserRetentionBufferConfig,
@@ -88,7 +87,7 @@ def build_session_only_memory(
 
     layer_config = MemoryLayerConfigSet(
         session=SessionMemoryConfig(max_messages=max_messages),
-        archive=ArchiveMemoryConfig(scope=SessionScope()),
+        archive=None,
         knowledge=None,
         user_retention=UserRetentionBufferConfig(enabled=True),
     )
@@ -105,7 +104,7 @@ def build_session_only_memory(
     memory_system = create_memory_system(
         workspace=workspace,
         config=layer_config,
-        session_only=False,
+        session_only=True,
         cleanup_config=cleanup_config,
         pruned_manager=pruned_manager,
     )

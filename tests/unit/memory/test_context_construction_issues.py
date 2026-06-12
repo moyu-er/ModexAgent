@@ -215,7 +215,7 @@ class TestPrioritySectionTrimming:
     async def test_low_priority_sections_dropped_first(self):
         """When token budget is exceeded, lowest priority sections drop first."""
         policy = FullInjectionPolicy(
-            budget=MemoryBudget(max_system_prompt_tokens=200),
+            budget=MemoryBudget(max_system_prompt_tokens=500),
         )
         memory_system = FakeMemorySystem(messages=[])
 

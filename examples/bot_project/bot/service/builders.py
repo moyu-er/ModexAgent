@@ -27,10 +27,9 @@ from framework.core.skills import (
 )
 from framework.core.tool_manager import Tool
 from framework.ioc.configs.app import AppConfig
-from framework.memory.core.scope import MemoryAgentRole, MemoryContext, SessionScope
+from framework.memory.core.scope import MemoryAgentRole, MemoryContext
 from framework.memory.injection import RestrictedInjectionPolicy
 from framework.memory.layers.config import (
-    ArchiveMemoryConfig,
     MemoryLayerConfigSet,
     SessionMemoryConfig,
     UserRetentionBufferConfig,
@@ -429,7 +428,7 @@ class AgentBuilderMixin:
             max_messages = int(session.get("max_messages", max_messages))
         return MemoryLayerConfigSet(
             session=SessionMemoryConfig(max_messages=max_messages),
-            archive=ArchiveMemoryConfig(scope=SessionScope()),
+            archive=None,
             knowledge=None,
             user_retention=UserRetentionBufferConfig(enabled=True),
         )
@@ -459,25 +458,12 @@ class AgentBuilderMixin:
             "keep_ratio": st.keep_ratio_for_messages if st else 0.4,
         }
 
-        # Inherit archive/knowledge agents from the main memory system so subagents
-        # also generate archives and consolidate knowledge when enabled.
-        archive_agent: Any | None = None
-        knowledge_consolidator: Any | None = None
-        if self.context_manager is not None:
-            main_memory = getattr(self.context_manager, "memory_system", None)
-            if main_memory is not None:
-                archive_agent = getattr(main_memory, "_archive_agent", None)
-                knowledge_consolidator = main_memory.knowledge_consolidator
-
         memory_system = create_memory_system(
             workspace=sub_dir,
             config=self._session_only_memory_config(sub_memory_cfg),
-            session_only=False,
+            session_only=True,
             cleanup_config=cleanup_config,
             pruned_manager=self.pruned_manager,
-            archive_agent=archive_agent,
-            archive_storage=None,
-            knowledge_consolidator=knowledge_consolidator,
         )
         await memory_system.initialize()
         if self.plugin_integration:
