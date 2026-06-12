@@ -89,6 +89,31 @@ class _FakeInjectableMemorySystem(MemorySystem):
     def __init__(self, archive_dir: Path) -> None:
         self._archive_dir = archive_dir
 
+    async def initialize(self) -> None:
+        pass
+
+    async def close(self) -> None:
+        pass
+
+    def create_message_history(
+        self, context: Any, initial_messages: Any = None
+    ) -> Any:
+        from framework.memory.history import ListMessageHistory
+        return ListMessageHistory()
+
+    async def add_messages(self, context: Any, messages: Any) -> None:
+        pass
+
+    async def search(self, query: str, context: Any, limit: int = 5) -> list:
+        return []
+
+    async def clear(self, context: Any) -> None:
+        pass
+
+    async def get_knowledge(self, context: Any) -> Any:
+        from framework.memory.core.models import LongTermMemory
+        return LongTermMemory()
+
     async def get_storage_path(self, context: Any) -> Path | None:
         return self._archive_dir
 

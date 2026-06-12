@@ -123,7 +123,7 @@ async def test_urb_fifo_eviction(registry: InMemoryStoreRegistry):
     layer_set = _make_layer_set(registry)
     ctx = MemoryContext(session_id="test-fifo")
 
-    for i in range(8):  # max_entries=5, so 3 should evict
+    for i in range(8):  # max_entries=3, so 5 should evict
         entry = UserBufferEntry.from_message(
             {"role": "user", "content": f"msg-{i}"},
             pruned_at=time.time(),
@@ -131,9 +131,9 @@ async def test_urb_fifo_eviction(registry: InMemoryStoreRegistry):
         await layer_set.user_retention.upsert_pruned_user(ctx, entry)
 
     entries = await layer_set.user_retention.get_entries(ctx)
-    assert len(entries) == 5
+    assert len(entries) == 3
     contents = [e.pruned_user_content for e in entries]
-    assert "msg-3" in contents  # oldest kept
+    assert "msg-5" in contents  # oldest kept
     assert "msg-7" in contents  # newest kept
     assert "msg-0" not in contents  # evicted
 

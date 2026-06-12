@@ -158,7 +158,7 @@ class MemorySystemContextManager(ContextManager):
         )
         from framework.memory.layers.config import UserRetentionBufferConfig
 
-        # Mirror the URB layer's default entry limit (5) for injection.
+        # Mirror the URB layer's default entry limit (3) for injection.
         injector = UserRetentionBufferInjectionGovernance(
             urb=urb,
             context_factory=lambda: (
