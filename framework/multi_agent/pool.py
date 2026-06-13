@@ -712,7 +712,10 @@ class AgentPool(AgentRegistry):
             conversation_id=conversation_id, agent_name=descriptor.address.name
         )
         content = msg.payload.get("content", "")
-        metadata = {"conversation_id": conversation_id, "agent_session_id": session_id}
+        # Preserve original metadata (user_id, chat_id, etc.) from the adapter layer
+        metadata = dict(msg.payload.get("metadata") or {})
+        metadata.setdefault("conversation_id", conversation_id)
+        metadata["agent_session_id"] = session_id
         if instance.pipeline is not None:
             lock = self.get_lock(session_id)
             async with lock:

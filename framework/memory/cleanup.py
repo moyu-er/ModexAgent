@@ -252,8 +252,15 @@ async def _generate_archive_phase(
 
     session_id = context.session_id
     try:
-        state_data = await resolved_storage.read_archive_state() or {}
-        next_archive_id = state_data.get("next_archive_id", 1)
+        # Atomically reserve the next archive_id under write lock.
+        # This prevents concurrent sessions from getting the same ID.
+        async with resolved_storage.get_lock().write():
+            state_data = await resolved_storage.read_archive_state() or {}
+            next_archive_id = state_data.get("next_archive_id", 1)
+            # Reserve immediately — increment and persist while holding the lock
+            await resolved_storage.write_archive_state(
+                {"next_archive_id": next_archive_id + 1}
+            )
     except Exception:
         logger.warning(
             "Failed to read archive state: session=%s",
@@ -496,21 +503,17 @@ async def _advance_archive_phase(
     context: MemoryContext,
     on_archive_generated: Callable[[], Awaitable[None]] | None,
 ) -> None:
-    """Phase 6: increment archive state and fire post-archive trigger."""
+    """Phase 6: fire post-archive trigger.
+
+    Archive state (next_archive_id) is already advanced atomically in
+    Phase 2 (_generate_archive_phase) so no state write is needed here.
+    """
     if archive_agent is not None and archive_storage is not None and archive_generated:
-        try:
-            await archive_storage.write_archive_state({"next_archive_id": next_archive_id + 1})
-            logger.info(
-                "Archive state advanced: next_archive_id=%d session=%s",
-                next_archive_id + 1,
-                context.session_id,
-            )
-        except Exception:
-            logger.warning(
-                "Archive state increment failed: session=%s",
-                context.session_id,
-                exc_info=True,
-            )
+        logger.info(
+            "Archive state already advanced: next_archive_id=%d session=%s",
+            next_archive_id + 1,
+            context.session_id,
+        )
 
     if archive_generated and on_archive_generated is not None:
         try:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import os
@@ -38,6 +39,7 @@ class DefaultMemoryStoreRegistry(MemoryStoreRegistry):
     def __init__(self, root: Path | str) -> None:
         self.root = Path(root)
         self._stores: dict[tuple[MemoryLayerName, str], MemoryStorage] = {}
+        self._lock = asyncio.Lock()
 
     async def initialize(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -47,6 +49,13 @@ class DefaultMemoryStoreRegistry(MemoryStoreRegistry):
             await storage.close()
 
     def _scope_dir(self, layer: MemoryLayerName, scope_key: str) -> Path:
+        """Return the storage directory for *layer* and *scope_key*.
+
+        When *scope_key* is empty (GlobalScope, single-user mode), the
+        directory is just ``{root}/{layer}/`` — no user-level subdir.
+        """
+        if not scope_key:
+            return self.root / str(layer)
         return self.root / str(layer) / sanitize_scope_key(scope_key)
 
     def _metadata_path(self, layer: MemoryLayerName, scope_key: str) -> Path:
@@ -116,21 +125,33 @@ class DefaultMemoryStoreRegistry(MemoryStoreRegistry):
         await self.initialize()
         scope_key = scope.get_scope_key(context)
         cache_key = (layer, scope_key)
+        # Fast path: already cached
         storage = self._stores.get(cache_key)
-        if storage is None:
-            scope_dir = self._scope_dir(layer, scope_key)
-            if layer == MemoryLayerName.KNOWLEDGE:
-                from framework.memory.stores.markdown_knowledge import MarkdownKnowledgeStorage
+        if storage is not None:
+            self._write_scope_metadata(
+                layer=layer,
+                scope_key=scope_key,
+                context=context,
+                storage_path=storage.directory,
+            )
+            return storage
+        # Slow path: create under lock to prevent TOCTOU race
+        async with self._lock:
+            storage = self._stores.get(cache_key)
+            if storage is None:
+                scope_dir = self._scope_dir(layer, scope_key)
+                if layer == MemoryLayerName.KNOWLEDGE:
+                    from framework.memory.stores.markdown_knowledge import MarkdownKnowledgeStorage
 
-                storage = MarkdownKnowledgeStorage(scope_dir, layer=layer)
-            elif layer == MemoryLayerName.ARCHIVE:
-                from framework.memory.stores.dir_archive import DirArchiveStorage
+                    storage = MarkdownKnowledgeStorage(scope_dir, layer=layer)
+                elif layer == MemoryLayerName.ARCHIVE:
+                    from framework.memory.stores.dir_archive import DirArchiveStorage
 
-                storage: MemoryStorage = DirArchiveStorage(scope_dir)
-            else:
-                storage = DefaultScopedStorage(scope_dir, layer=layer)
-            await storage.initialize()
-            self._stores[cache_key] = storage
+                    storage: MemoryStorage = DirArchiveStorage(scope_dir)
+                else:
+                    storage = DefaultScopedStorage(scope_dir, layer=layer)
+                await storage.initialize()
+                self._stores[cache_key] = storage
         self._write_scope_metadata(
             layer=layer,
             scope_key=scope_key,

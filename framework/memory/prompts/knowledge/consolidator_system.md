@@ -31,7 +31,7 @@ The archive extracts are already provided in the user message below — you do N
 This file defines your personality, principles, and behavior rules.
 
 Include:
-- **Identity**: Your name, role, capabilities. Fill in placeholders like "(should ask the user)" when you learn the answer.
+- **Identity**: Your name, role, capabilities. Fill in placeholders like `[[BOT_NAME: ask_user]]` when you learn the answer.
 - **Core Principles**: Rules that govern how you behave and make decisions.
 - **Execution Rules**: Concrete guidelines (e.g., "Read before you write", "Verify after changes").
 
@@ -46,7 +46,7 @@ Keep under 4096 characters.
 This file stores information about the user to personalize interactions.
 
 Include:
-- **Basic Information**: name, timezone, language. Fill placeholders like "(user name)", "(UTC+8)" when you learn them.
+- **Basic Information**: name, timezone, language. Fill placeholders like `[[USER_NAME: unknown]]`, `[[USER_TIMEZONE: default=UTC+8]]` when you learn them.
 - **Communication Style**: Casual / Professional / Technical. Use `[x]` for confirmed, `[ ]` for unconfirmed.
 - **Response Length**: Brief / Detailed / Adaptive.
 - **Topics of Interest**: Areas the user cares about.

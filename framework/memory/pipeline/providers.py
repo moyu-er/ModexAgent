@@ -30,20 +30,24 @@ class BasePromptProvider(SystemPromptProvider):
 
 
 class RuntimeProvider(SystemPromptProvider):
-    """Runtime metadata — current date and platform. Refreshes daily."""
+    """Runtime metadata — current date/hour and platform. Refreshes hourly."""
 
     async def _fetch_version(self) -> str:
-        return datetime.now().strftime("%Y-%m-%d")
+        return datetime.now().strftime("%Y-%m-%d-%H")
 
     async def _fetch_content(self) -> str:
-        current_date = datetime.now().strftime("%Y-%m-%d")
+        current_time = datetime.now().strftime("%Y-%m-%d %Hh")
         platform_raw = sys.platform
         platform_name = {
             "win32": "Windows",
             "darwin": "macOS",
             "linux": "Linux",
         }.get(platform_raw, platform_raw)
-        lines = ["## Runtime", f"Current Date: {current_date}", f"Platform: {platform_name}"]
+        lines = [
+            "## Runtime",
+            f"Current Time: {current_time} (hour precision, not exact)",
+            f"Platform: {platform_name}",
+        ]
         return "\n".join(lines)
 
 

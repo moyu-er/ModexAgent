@@ -56,8 +56,10 @@ class WindowsHiddenPtyBackend(TerminalBackend):
 
         import winpty
 
+        # Pass argv as a single-element list so paths containing spaces
+        # (e.g. "C:\Program Files\Git\bin\bash.exe") are not split by shlex.
         self._proc = winpty.PtyProcess.spawn(
-            shell,
+            [shell],
             cwd=cwd,
             env=env,
             dimensions=(30, 120),

@@ -89,6 +89,7 @@ class ArchiveConfig(BaseModel):
     max_archive_count: int = 10  # trigger knowledge update when this many undigested
     max_archive_total: int = 20  # max archive dirs on disk (FIFO eviction)
     max_archive_inject: int = 3  # how many recent archives to inject into system prompt
+    scope: str = "user"  # "user"→UserScope (per-user isolation), "global"→GlobalScope (shared)
 
 
 class KnowledgeConfig(BaseModel):
@@ -96,6 +97,7 @@ class KnowledgeConfig(BaseModel):
 
     enabled: bool = False
     default_templates_dir: str | None = None
+    scope: str = "user"  # "user"→UserScope (per-user isolation), "global"→GlobalScope (shared)
 
 
 class GovernanceConfig(BaseModel):

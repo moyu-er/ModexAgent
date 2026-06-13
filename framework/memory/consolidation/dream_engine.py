@@ -29,6 +29,9 @@ class DreamEngine:
     Processes unprocessed archive entries through a ReAct-based
     KnowledgeConsolidator agent that reads archive files, inspects
     current knowledge, and produces targeted updates.
+
+    Uses per-user locks so consolidation for user A does not block
+    user B — each user's archive/knowledge storage is independent.
     """
 
     def __init__(
@@ -47,17 +50,32 @@ class DreamEngine:
         self.max_consume_per_run = max_consume_per_run
         self.per_archive_iterations = per_archive_iterations
         self._consolidator = consolidator
-        self._lock = asyncio.Lock()
+        self._locks: dict[str, asyncio.Lock] = {}
+
+    def _get_lock(self, context: MemoryContext) -> asyncio.Lock:
+        """Return the per-user lock for *context*.
+
+        Archive storage is scoped by UserScope, so two different users
+        have independent state.json files and can consolidate concurrently.
+        """
+        user_key = context.user_id or "default"
+        lock = self._locks.get(user_key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[user_key] = lock
+        return lock
 
     async def run(self, context: MemoryContext) -> bool:
-        if self._lock.locked():
+        lock = self._get_lock(context)
+        if lock.locked():
             logger.info(
-                "DreamEngine skipped: already running session=%s",
+                "DreamEngine skipped: already running user=%s session=%s",
+                context.user_id or "default",
                 context.session_id,
             )
             return False
 
-        async with self._lock:
+        async with lock:
             # Acquire invocation ID from archive state (self-incrementing counter,
             # same pattern as next_archive_id). Must be inside the lock to avoid
             # races on the counter.

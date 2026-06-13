@@ -14,7 +14,6 @@
 | `inbox_flush.py` | `InboxFlushHook` | before_turn, before_iteration | Flushes inbox messages at turn start |
 | `subagent_auto_send.py` | `SubagentAutoSendHook` | after_turn | Auto-forwards to subagents when LLM forgets send_message |
 | `progress_report.py` | `ProgressReportHook` | multiple (before/after_iteration, before/after_tool_execution, after_llm_response, after_turn) | Pushes progress events to ControlEventBus |
-| `trace_writer.py` | `TraceFileWriter` | (event subscriber) | Writes trace events to JSONL file |
 
 ## Design Rules
 - One hook class per file

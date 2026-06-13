@@ -87,7 +87,7 @@ class TmuxPtyBackend(TerminalBackend):
         )
 
     async def drain_startup(self) -> None:
-        """Poll capture_pane until a prompt appears, then suppress pagers."""
+        """Poll capture_pane until a prompt appears."""
         loop = asyncio.get_running_loop()
         elapsed = 0.0
         while elapsed < _DRAIN_TIMEOUT:
@@ -100,7 +100,8 @@ class TmuxPtyBackend(TerminalBackend):
             if is_prompt_ready(text):
                 self._last_capture = text
                 logger.debug("tmux drain_startup: ready after %.1fs", elapsed)
-                # Drain remaining startup output for readline shells
+                # Drain remaining startup output for readline shells.
+                # Pager suppression is handled by PAGER=cat in build_full_env().
                 if self._shell:
                     name = self._shell.lower()
                     if any(name.endswith(s) for s in ("bash", "zsh", "sh")):

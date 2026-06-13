@@ -195,11 +195,15 @@ class ChatScope(MemoryScope):
 
 
 class GlobalScope(MemoryScope):
-    """全局共享，无视任何上下文字段。"""
+    """全局共享，无视任何上下文字段。
+
+    Returns empty scope_key so the storage path has no user-level subdirectory
+    in single-user mode: ``archive/`` instead of ``archive/global/``.
+    """
 
     def get_scope_key(self, context: MemoryContext) -> str:
         _ = context
-        return "global"
+        return ""
 
     @property
     def name(self) -> str:

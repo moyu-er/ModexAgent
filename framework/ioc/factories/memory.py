@@ -40,20 +40,26 @@ def _build_memory_layer_config(cfg: MemoryConfig) -> MemoryLayerConfigSet:
     # Archive config (new field, migrated from long_term if old config used)
     archive_config = None
     if cfg.archive is not None and cfg.archive.enabled:
+        from framework.memory.core.scope import GlobalScope, UserScope
         from framework.memory.layers.config import ArchiveMemoryConfig
 
+        archive_scope = GlobalScope() if cfg.archive.scope == "global" else UserScope()
         archive_config = ArchiveMemoryConfig(
             max_entries=cfg.archive.max_entries,
             retained_consumed_archive_pairs=cfg.archive.retained_consumed_pairs,
+            scope=archive_scope,
         )
 
     # Knowledge config (new field, migrated from long_term if old config used)
     knowledge_config = None
     if cfg.knowledge is not None and cfg.knowledge.enabled:
+        from framework.memory.core.scope import GlobalScope, UserScope
         from framework.memory.layers.config import KnowledgeMemoryConfig
 
+        knowledge_scope = GlobalScope() if cfg.knowledge.scope == "global" else UserScope()
         knowledge_config = KnowledgeMemoryConfig(
             default_templates_dir=cfg.knowledge.default_templates_dir,
+            scope=knowledge_scope,
         )
 
     return MemoryLayerConfigSet(
