@@ -5,13 +5,17 @@ import { MessageBubble } from "./MessageBubble";
 export interface ChatViewProps {
   messages: UIMessage[];
   isStreaming: boolean;
+  isPending: boolean;
   onSend: (content: string) => void;
+  readOnly?: boolean;
 }
 
 export const ChatView: FC<ChatViewProps> = ({
   messages,
   isStreaming,
+  isPending,
   onSend,
+  readOnly = false,
 }) => {
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -22,8 +26,9 @@ export const ChatView: FC<ChatViewProps> = ({
   }, [messages]);
 
   const submit = (): void => {
+    if (readOnly) return;
     const trimmed = input.trim();
-    if (!trimmed || isStreaming) {
+    if (!trimmed || isStreaming || isPending) {
       return;
     }
     onSend(trimmed);
@@ -61,26 +66,44 @@ export const ChatView: FC<ChatViewProps> = ({
 
       {/* Input area */}
       <div className="border-t border-gray-800 p-4">
-        <form onSubmit={handleSubmit} className="flex gap-2">
-          <textarea
-            value={input}
-            onChange={(e): void => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={
-              isStreaming ? "Waiting for response..." : "Type a message..."
-            }
-            disabled={isStreaming}
-            rows={2}
-            className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-500 resize-none focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
-          />
-          <button
-            type="submit"
-            disabled={isStreaming || !input.trim()}
-            className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Send
-          </button>
-        </form>
+        {readOnly ? (
+          <div className="flex gap-2">
+            <input
+              type="text"
+              disabled
+              placeholder="Subagent session — read only"
+              className="flex-1 bg-gray-800/50 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-500 placeholder-gray-600 cursor-not-allowed"
+            />
+            <button
+              type="button"
+              disabled
+              className="px-4 py-2 bg-gray-700 text-gray-500 text-sm font-medium rounded-lg cursor-not-allowed"
+            >
+              Send
+            </button>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="flex gap-2">
+            <textarea
+              value={input}
+              onChange={(e): void => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={
+                isPending ? "Initializing session..." : isStreaming ? "Waiting for response..." : "Type a message..."
+              }
+              disabled={isStreaming || isPending}
+              rows={6}
+              className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-500 resize-none overflow-y-auto max-h-40 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
+            />
+            <button
+              type="submit"
+              disabled={isStreaming || isPending || !input.trim()}
+              className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Send
+            </button>
+          </form>
+        )}
       </div>
     </div>
   );

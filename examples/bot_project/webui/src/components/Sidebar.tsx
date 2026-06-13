@@ -1,32 +1,38 @@
 import { useState, type FC } from "react";
-import type { ConversationInfo } from "../types/events";
 import type { PoolInfo } from "../lib/api";
+import { WorkspaceBrowser } from "./WorkspaceBrowser";
+import { SessionTree, type TreeNode } from "./SessionTree";
 
 export interface SidebarProps {
-  conversations: ConversationInfo[];
+  sessionTree: TreeNode[];
   pools: PoolInfo[];
   selected: string | null;
   workspace: string;
-  onSelect: (conversationId: string) => void;
+  isHome: boolean;
+  activePool: string;
+  onSelect: (sessionId: string) => void;
   onNew: (pool: string) => void;
+  onDelete: (sessionId: string) => void;
+  onWorkspaceChanged: (cwd: string) => void;
+  onGoHome: () => void;
+  onPoolChange: (pool: string) => void;
 }
 
 export const Sidebar: FC<SidebarProps> = ({
-  conversations,
+  sessionTree,
   pools,
   selected,
   workspace,
+  isHome,
+  activePool,
   onSelect,
   onNew,
+  onDelete,
+  onWorkspaceChanged,
+  onGoHome,
+  onPoolChange,
 }) => {
-  const [activePool, setActivePool] = useState<string>(
-    pools.length > 0 ? pools[0].name : "main",
-  );
-
-  // Filter conversations to the active pool
-  const poolConvs = conversations.filter(
-    (c) => (c.pool || "main") === activePool,
-  );
+  const [browserOpen, setBrowserOpen] = useState(false);
 
   const handleNew = (): void => {
     onNew(activePool);
@@ -34,17 +40,41 @@ export const Sidebar: FC<SidebarProps> = ({
 
   return (
     <div className="w-full bg-gray-900 border-r border-gray-800 flex flex-col h-full">
-      {/* Workspace indicator */}
-      {workspace && (
-        <div className="px-4 py-2 border-b border-gray-800">
-          <span className="text-[9px] font-semibold text-gray-600 uppercase tracking-wider">
+      {/* Workspace indicator (click to browse) */}
+      <div className="px-3 py-2 border-b border-gray-800">
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] font-semibold text-gray-600 uppercase tracking-wider">
             Workspace
           </span>
-          <p className="text-[11px] text-gray-400 font-mono truncate mt-0.5">
-            {workspace}
-          </p>
+          {!isHome && (
+            <button
+              type="button"
+              onClick={onGoHome}
+              title="Return to home workspace (exit)"
+              className="text-gray-500 hover:text-gray-200 transition-colors flex items-center gap-0.5"
+            >
+              <span className="text-[10px]">↩</span>
+              <span className="text-[10px] font-medium">Home</span>
+            </button>
+          )}
         </div>
-      )}
+        <button
+          type="button"
+          onClick={(): void => setBrowserOpen(true)}
+          title="Browse for workspace folder"
+          className="w-full text-left text-xs text-gray-400 font-mono truncate mt-0.5 hover:text-gray-200 hover:bg-gray-800/50 rounded px-1 py-0.5 -ml-1 transition-colors cursor-pointer flex items-center gap-1"
+        >
+          <span className="shrink-0 text-xs">📂</span>
+          <span className="truncate">{workspace || "(not set)"}</span>
+        </button>
+      </div>
+
+      {/* Workspace file browser modal */}
+      <WorkspaceBrowser
+        open={browserOpen}
+        onClose={(): void => setBrowserOpen(false)}
+        onChanged={(cwd): void => onWorkspaceChanged(cwd)}
+      />
 
       {/* Header */}
       <div className="p-4 border-b border-gray-800">
@@ -58,7 +88,7 @@ export const Sidebar: FC<SidebarProps> = ({
         <div className="px-4 py-2 border-b border-gray-800">
           <select
             value={activePool}
-            onChange={(e): void => setActivePool(e.target.value)}
+            onChange={(e): void => onPoolChange(e.target.value)}
             className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 focus:outline-none focus:border-blue-500"
           >
             {pools.map((p) => (
@@ -70,32 +100,20 @@ export const Sidebar: FC<SidebarProps> = ({
         </div>
       )}
 
-      {/* Conversation list (filtered by pool) */}
+      {/* Session tree */}
       <div className="flex-1 overflow-y-auto">
-        {poolConvs.length === 0 && (
-          <p className="px-4 py-3 text-xs text-gray-600">
+        {sessionTree.length === 0 ? (
+          <p className="px-4 py-3 text-xs text-gray-500">
             No conversations in {activePool}
           </p>
+        ) : (
+          <SessionTree
+            tree={sessionTree}
+            selected={selected}
+            onSelect={onSelect}
+            onDelete={onDelete}
+          />
         )}
-        {poolConvs.map((conv) => {
-          const isSelected = conv.conversation_id === selected;
-          return (
-            <button
-              key={conv.conversation_id}
-              type="button"
-              onClick={(): void => onSelect(conv.conversation_id)}
-              className={`w-full text-left px-4 py-2 text-sm transition-colors border-l-2 ${
-                isSelected
-                  ? "bg-gray-800 border-blue-500 text-gray-100"
-                  : "border-transparent text-gray-400 hover:bg-gray-800/50 hover:text-gray-300"
-              }`}
-            >
-              <span className="block truncate font-mono text-[11px]">
-                {conv.conversation_id}
-              </span>
-            </button>
-          );
-        })}
       </div>
 
       {/* New Conversation button */}
