@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import logging
 import uuid as _uuid_mod
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from framework.pipeline.adapters import OutputAdapter
 
 from framework.multi_agent.address import AgentAddress
 from framework.multi_agent.comm_kind import AgentCommKind
@@ -198,6 +201,9 @@ class AgentCommunicationService:
         pruned_manager: Any | None = None,
         target_store: CommunicationTargetStore | None = None,
         runtime_dir: Path | None = None,
+        # ── Injection points for bot-layer customization ──
+        output_adapter_factory: Callable[[], OutputAdapter] | None = None,
+        on_subagent_created: Callable[[str, str], Awaitable[None]] | None = None,
     ) -> None:
         self._source = source
         self._broker = broker
@@ -220,6 +226,8 @@ class AgentCommunicationService:
         self._pruned_manager = pruned_manager
         self._target_store = target_store
         self._runtime_dir = runtime_dir
+        self._output_adapter_factory = output_adapter_factory
+        self._on_subagent_created = on_subagent_created
 
     def _resolve_source(self, context: AgentContext) -> AgentAddress:
         """Resolve effective source address from context, fallback to constructor default."""
@@ -582,8 +590,21 @@ class AgentCommunicationService:
             context_manager=subagent_ctx,
             tool_manager=subagent_tm,
             skill_manager=subagent_sm,
-            output_adapter=NullOutputAdapter(),
+            output_adapter=(self._output_adapter_factory or NullOutputAdapter)(),
         )
+
+        # ── Record parent-child relationship ──
+        if self._on_subagent_created is not None:
+            child_sid = self._session_strategy.format(
+                conversation_id=conversation_id,
+                agent_name=name,
+                invocation_id=invocation_id,
+            )
+            parent_sid = self._session_strategy.format(
+                conversation_id=conversation_id,
+                agent_name=parent_name,
+            )
+            await self._on_subagent_created(child_sid, parent_sid)
 
         # ── Mark as dynamic (eligible for idle cleanup) ──
         self._pool._mark_dynamic(name)
