@@ -33,6 +33,7 @@ dependencies = [
   "ddgs>=9.0.0",
   "markdownify>=0.13.0",
   "hatchling>=1.30.1",
+  "typer>=0.9.0",
 ]
 
 [project.optional-dependencies]
@@ -44,9 +45,8 @@ dev = [
   "mypy>=1.0.0",
 ]
 llm = ["litellm>=1.82.6", "openai>=2.20.0,<3"]
-session = ["sqlalchemy[asyncio]>=2.0.0"]
 sandbox = ["docker>=6.0.0", "e2b-code-interpreter>=0.1.0"]
-gateway = ["qq-botpy>=1.2.0", "python-dotenv>=1.0.0", "aiohttp>=3.8.0"]
+gateway = ["qq-botpy>=1.2.0", "python-dotenv>=1.0.0", "aiohttp>=3.8.0", "questionary>=2.0.0"]
 skills = [
   "pypdf>=4.0.0",
   "python-docx>=1.1.0",
@@ -68,7 +68,7 @@ ast = [
   "tree-sitter-python>=0.23",
   "tree-sitter-java>=0.23",
 ]
-all = ["ModexAgent[llm,session,sandbox,gateway,skills,terminal,ast]"]
+all = ["ModexAgent[llm,sandbox,gateway,skills,terminal,ast]"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["framework"]
