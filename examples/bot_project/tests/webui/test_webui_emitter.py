@@ -25,12 +25,11 @@ async def test_emit_content_delta() -> None:
     await emitter.emit_delta("hello")
     q = input_adapter._delta_queues.get("web:abc.main")
     assert q is not None
-    raw = q.get_nowait()
-    data = json.loads(raw)
-    assert data["event"] == "model_content_delta"
-    assert data["text"] == "hello"
-    assert data["conversation_id"] == "web:abc"
-    assert data["agent_name"] == "main"
+    envelope = q.get_nowait()
+    assert envelope.event_type == "model_content_delta"
+    assert envelope.payload == {"text": "hello", "turn_id": "turn_1"}
+    assert envelope.session_id == "web:abc.main"
+    assert envelope.agent_name == "main"
 
 
 @pytest.mark.asyncio
@@ -42,9 +41,8 @@ async def test_emit_complete_sends_turn_end() -> None:
     await emitter.emit_complete(AgentResult(content="done"))
     q = input_adapter._delta_queues.get("web:abc.main")
     assert q is not None
-    raw = q.get_nowait()
-    data = json.loads(raw)
-    assert data["event"] == "turn_end"
+    envelope = q.get_nowait()
+    assert envelope.event_type == "turn_end"
 
 
 @pytest.mark.asyncio
@@ -70,7 +68,7 @@ async def test_emit_complete_saves_to_transcript() -> None:
         await emitter.emit_complete(AgentResult(content="Hello World"))
 
         # Verify transcript save — blocks preserved in order
-        events = list(store.load("conv1", "main"))
+        events = list(store.load("conv1.main"))
         assert len(events) == 1
         saved = events[0]
         assert saved.event == WebUIEventType.ASSISTANT_TURN.value
@@ -100,13 +98,71 @@ async def test_streaming_does_not_save_deltas() -> None:
         await emitter.emit_delta(" world")
 
         # No events saved yet — only at turn end
-        events = list(store.load("conv1", "main"))
+        events = list(store.load("conv1.main"))
         assert len(events) == 0
 
         # WS delta IS queued
         q = input_adapter._delta_queues.get("conv1.main")
         assert q is not None
         assert q.qsize() == 2
+
+
+@pytest.mark.asyncio
+async def test_subagent_emitter_preserves_full_session_id() -> None:
+    """Regression: a subagent session id carries an invocation_id segment.
+
+    The emitter must keep the FULL session id (with invocation_id) in every
+    event it emits AND persist the transcript keyed by that full id — so two
+    reviewer invocations do not collapse into one transcript.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        input_adapter = WebSocketInputAdapter()
+        output_adapter = WebSocketOutputAdapter(input_adapter)
+        store = JSONLTranscriptStore(Path(tmp))
+        full_sid = "conv1.reviewer.aa11bb22"
+        emitter = WebBotEmitter(
+            output_adapter, full_sid,
+            config=EmitterConfig(),
+            transcript_store=store,
+        )
+        input_adapter.register_connection(full_sid, None)
+
+        emitter._blocks.append({"kind": "text", "text": "review done"})
+        await emitter.emit_complete(AgentResult(content="review done"))
+
+        # WebSocket delta events carry the FULL session id + correct agent.
+        q = input_adapter._delta_queues.get(full_sid)
+        assert q is not None
+        envelope = q.get_nowait()
+        assert envelope.event_type == "turn_end"
+        assert envelope.session_id == full_sid
+        assert envelope.agent_name == "reviewer"
+
+        # Transcript persisted under the FULL session id (not truncated).
+        assert list(store.load(full_sid))
+        assert not list(store.load("conv1.reviewer"))
+
+
+@pytest.mark.asyncio
+async def test_two_subagent_emitters_persist_to_separate_transcripts() -> None:
+    """Two reviewer invocations with different invocation_ids stay separate."""
+    with tempfile.TemporaryDirectory() as tmp:
+        input_adapter = WebSocketInputAdapter()
+        output_adapter = WebSocketOutputAdapter(input_adapter)
+        store = JSONLTranscriptStore(Path(tmp))
+
+        for sid in ("conv1.reviewer.aa11", "conv1.reviewer.bb22"):
+            em = WebBotEmitter(
+                output_adapter, sid,
+                config=EmitterConfig(),
+                transcript_store=store,
+            )
+            em._blocks.append({"kind": "text", "text": sid})
+            await em.emit_complete(AgentResult(content=sid))
+
+        assert len(list(store.load("conv1.reviewer.aa11"))) == 1
+        assert len(list(store.load("conv1.reviewer.bb22"))) == 1
+        assert store.list_sessions() == {"conv1.reviewer.aa11", "conv1.reviewer.bb22"}
 
 
 # ── CompositeEmitter tests ────────────────────────────────────────────────

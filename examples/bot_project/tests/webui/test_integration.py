@@ -22,24 +22,24 @@ def test_full_conversation_roundtrip() -> None:
     """Write a complete conversation flow and read it back."""
     with tempfile.TemporaryDirectory() as tmp:
         store = JSONLTranscriptStore(Path(tmp))
-        conv_id = "web:test-roundtrip"
+        session_id = "web:test-roundtrip.main"
         agent = "main"
 
         # Simulate a full conversation turn
         events = [
-            UserMessageEvent(conversation_id=conv_id, agent_name=agent, content="hello"),
-            ModelReasoningDelta(conversation_id=conv_id, agent_name=agent, text="thinking...", turn_id="turn_1"),
-            ModelContentDelta(conversation_id=conv_id, agent_name=agent, text="Hi", turn_id="turn_1"),
-            ToolCallStartEvent(conversation_id=conv_id, agent_name=agent, tool="read", args={"path": "doc.md"}, turn_id="turn_1"),
-            ToolCallEndEvent(conversation_id=conv_id, agent_name=agent, tool="read", result_summary="content here", turn_id="turn_1"),
-            ModelContentDelta(conversation_id=conv_id, agent_name=agent, text=" there!", turn_id="turn_1"),
-            TurnEndEvent(conversation_id=conv_id, agent_name=agent, turn_id="turn_1", latency_ms=1500),
+            UserMessageEvent(session_id=session_id, agent_name=agent, content="hello"),
+            ModelReasoningDelta(session_id=session_id, agent_name=agent, text="thinking...", turn_id="turn_1"),
+            ModelContentDelta(session_id=session_id, agent_name=agent, text="Hi", turn_id="turn_1"),
+            ToolCallStartEvent(session_id=session_id, agent_name=agent, tool="read", args={"path": "doc.md"}, turn_id="turn_1"),
+            ToolCallEndEvent(session_id=session_id, agent_name=agent, tool="read", result_summary="content here", turn_id="turn_1"),
+            ModelContentDelta(session_id=session_id, agent_name=agent, text=" there!", turn_id="turn_1"),
+            TurnEndEvent(session_id=session_id, agent_name=agent, turn_id="turn_1", latency_ms=1500),
         ]
 
         for evt in events:
-            store.append(conv_id, agent, evt)
+            store.append(session_id, evt)
 
-        loaded = list(store.load(conv_id, agent))
+        loaded = list(store.load(session_id))
         assert len(loaded) == 7
 
         # Verify event type order
@@ -58,12 +58,12 @@ def test_full_conversation_roundtrip() -> None:
 
 def test_event_json_roundtrip() -> None:
     """Verify events survive to_dict → JSON → from_dict unchanged."""
-    original = UserMessageEvent(conversation_id="web:abc", agent_name="main", content="hello world")
+    original = UserMessageEvent(session_id="web:abc", agent_name="main", content="hello world")
     json_str = json.dumps(original.to_dict())
     data = json.loads(json_str)
     restored = UserMessageEvent.from_dict(data)
     assert restored.event == original.event
-    assert restored.conversation_id == original.conversation_id
+    assert restored.session_id == original.session_id
     assert restored.content == original.content  # type: ignore[attr-defined]
 
 
@@ -71,17 +71,20 @@ def test_multi_agent_threads() -> None:
     """Verify multiple agents within one conversation are tracked separately."""
     with tempfile.TemporaryDirectory() as tmp:
         store = JSONLTranscriptStore(Path(tmp))
-        conv_id = "web:multi-agent"
+        # Session ids are filesystem-safe by design (no ':' which is invalid
+        # on Windows filenames); use the canonical {conv}.{agent} form.
+        main_sid = "multiagent.main"
+        sub_sid = "multiagent.office-expert"
 
-        store.append(conv_id, "main", UserMessageEvent(conversation_id=conv_id, agent_name="main", content="hi"))
-        store.append(conv_id, "office-expert", UserMessageEvent(conversation_id=conv_id, agent_name="office-expert", content="analyzing..."))
+        store.append(main_sid, UserMessageEvent(session_id=main_sid, agent_name="main", content="hi"))
+        store.append(sub_sid, UserMessageEvent(session_id=sub_sid, agent_name="office-expert", content="analyzing..."))
 
-        agents = store.list_agents(conv_id)
-        assert agents == {"main", "office-expert"}
+        sessions = store.list_sessions_in_conversation("multiagent")
+        assert sessions == {main_sid, sub_sid}
 
-        main_events = list(store.load(conv_id, "main"))
+        main_events = list(store.load(main_sid))
         assert len(main_events) == 1
         assert main_events[0].event == WebUIEventType.USER_MESSAGE.value
 
-        sub_events = list(store.load(conv_id, "office-expert"))
+        sub_events = list(store.load(sub_sid))
         assert len(sub_events) == 1

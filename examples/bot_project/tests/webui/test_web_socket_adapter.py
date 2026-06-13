@@ -31,7 +31,9 @@ async def test_send_delta_routes_to_session() -> None:
     await output_adapter.send_delta("hello", "sess1")
     q = input_adapter._delta_queues.get("sess1")
     assert q is not None
-    assert q.get_nowait() == "hello"
+    envelope = q.get_nowait()
+    assert envelope.event_type == "content"
+    assert envelope.payload == {"text": "hello"}
 
 
 @pytest.mark.asyncio

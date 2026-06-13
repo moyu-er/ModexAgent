@@ -1,0 +1,219 @@
+"""Tests for WebUIService configuration wiring."""
+
+from __future__ import annotations
+
+import tempfile
+from pathlib import Path
+
+import pytest
+from aiohttp.test_utils import TestClient, TestServer
+from bot.adapters.web_socket import WebSocketInputAdapter
+from bot.service.web_ui_service import WebUIService
+from bot.service.workspace_store import WorkspaceScopedTranscriptStore
+from bot.webui.events import _unwrap_envelope
+from bot.webui.server import WebUIServer
+
+
+class TestWebUIService:
+    """Unit tests for WebUIService helpers."""
+
+    def test_build_agent_pool_map_reads_pool_yml_files(self) -> None:
+        """Pool configs live at config/pools/{pool}.yml.
+
+        Regression: _build_agent_pool_map looked for 'pool.yaml' inside a
+        subdirectory, producing an empty mapping. Empty mapping caused all
+        transcripts (including coding-pool sessions) to be written to the main
+        pool directory.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            project_dir = Path(tmp)
+            (project_dir / "config" / "pools").mkdir(parents=True)
+            (project_dir / "config" / "pools" / "coding.yml").write_text(
+                "agents:\n  - name: coding\n    role: main\n",
+                encoding="utf-8",
+            )
+            (project_dir / "config" / "pools" / "main.yml").write_text(
+                "agents:\n  - name: main\n    role: main\n",
+                encoding="utf-8",
+            )
+
+            class _FakeService:
+                _project_dir = project_dir
+
+            mapping = WebUIService._build_agent_pool_map(_FakeService())
+
+        assert mapping.get("main") == "main"
+        assert mapping.get("coding") == "coding"
+
+    def test_build_agent_pool_map_includes_resident_subagents(self) -> None:
+        """Agents listed in a pool config besides the main agent are mapped."""
+        with tempfile.TemporaryDirectory() as tmp:
+            project_dir = Path(tmp)
+            (project_dir / "config" / "pools").mkdir(parents=True)
+            (project_dir / "config" / "pools" / "coding.yml").write_text(
+                "agents:\n"
+                "  - name: coding\n    role: main\n"
+                "  - name: scout\n    role: subagent\n"
+                "  - name: reviewer\n    role: subagent\n",
+                encoding="utf-8",
+            )
+
+            class _FakeService:
+                _project_dir = project_dir
+
+            mapping = WebUIService._build_agent_pool_map(_FakeService())
+
+        assert mapping.get("coding") == "coding"
+        assert mapping.get("scout") == "coding"
+        assert mapping.get("reviewer") == "coding"
+
+
+@pytest.mark.asyncio
+async def test_coding_session_transcript_written_to_coding_pool_directory() -> None:
+    """End-to-end: a session created with pool=coding persists transcript under
+    the coding pool directory, not main.
+
+    Regression: when _build_agent_pool_map produced an empty mapping, the
+    transcript dispatcher fell back to the main pool for every agent, so a
+    coding session's transcript ended up at
+    .modex/sessions/<ws>/main/<uuid>.coding.jsonl instead of
+    .modex/sessions/<ws>/coding/<uuid>.coding.jsonl.
+    """
+    data_dir = Path(tempfile.mkdtemp())
+    input_adapter = WebSocketInputAdapter()
+
+    # Use the production mapping builder with the real project config.
+    class _MappingSource:
+        _project_dir = Path(__file__).resolve().parent.parent
+
+    mapping = WebUIService._build_agent_pool_map(_MappingSource())
+    assert mapping.get("coding") == "coding", (
+        "test setup: real project must map coding agent to coding pool"
+    )
+
+    store = WorkspaceScopedTranscriptStore(data_dir, lambda: "")
+    store.set_agent_pool_map(mapping)
+
+    server = WebUIServer(
+        input_adapter, store, static_dist=None, data_dir=data_dir
+    )
+    server.set_workspace_index(store)
+    server.set_pool_agent_names(["main", "coding"])
+    server.set_agent_pool_map(mapping)
+    server.set_agent_resolver(lambda pool_name: mapping.get(pool_name, pool_name))
+
+    client = TestClient(TestServer(server.app))
+    await client.start_server()
+    try:
+        # Create a coding-pool session via the API.
+        resp = await client.post("/api/sessions", json={"pool": "coding"})
+        assert resp.status == 200
+        data = await resp.json()
+        session_id: str = data["session_id"]
+        assert data["pool"] == "coding"
+        uuid_prefix = session_id.split(".")[0]
+
+        # Send a message so the transcript is materialized on disk.
+        ws = await client.ws_connect("/ws")
+        await ws.send_json({"action": "attach", "session_id": session_id})
+        attached = _unwrap_envelope(await ws.receive_json())
+        assert attached["event"] == "attached"
+
+        await ws.send_json({
+            "action": "send_message",
+            "session_id": session_id,
+            "content": "hello coding",
+        })
+        echoed = _unwrap_envelope(await ws.receive_json(timeout=2))
+        assert echoed["event"] == "user_message"
+
+        # The transcript MUST live under the coding pool directory.
+        expected_file = (
+            data_dir / "default" / "coding" / f"{uuid_prefix}.coding.jsonl"
+        )
+        assert expected_file.exists(), (
+            f"coding transcript not found at expected path {expected_file}"
+        )
+
+        # It MUST NOT have leaked into the main pool directory.
+        wrong_file = data_dir / "default" / "main" / f"{uuid_prefix}.coding.jsonl"
+        assert not wrong_file.exists(), (
+            f"coding transcript leaked into main pool directory {wrong_file}"
+        )
+
+        # Deleting the session must remove the transcript from the coding dir.
+        resp = await client.delete(f"/api/sessions/{session_id}")
+        assert resp.status == 200
+        assert not expected_file.exists()
+    finally:
+        await client.close()
+
+
+# ── Resolver wiring regression tests ─────────────────────────────────────────
+
+
+def test_resolver_fallback_default_is_importable_from_module() -> None:
+    """The resolver closure in WebUIService.start() references
+    ``_DEFAULT_AGENT_NAME`` as the fallback pool.  This name must be
+    importable from the module — otherwise live emitters silently crash
+    with NameError and streaming output stops."""
+    import bot.service.web_ui_service as wuis
+
+    # Direct access: if _DEFAULT_AGENT_NAME is not defined in the module,
+    # this raises AttributeError → RED.
+    assert "main" == wuis._DEFAULT_AGENT_NAME
+
+
+@pytest.mark.asyncio
+async def test_production_style_resolver_does_not_crash_emitter() -> None:
+    """Regression: the resolver wired in WebUIService.start() must not raise
+    a NameError (missing _DEFAULT_AGENT_NAME import) or any other exception.
+
+    The resolver is the module-level _session_meta_resolver in
+    register_websocket, set via set_session_meta_resolver(). It is called
+    lazily by every WebBotEmitter._send_event(). If it crashes, the emitter
+    silently stops — no streaming output reaches the frontend.
+    """
+    from bot.adapters.register_websocket import set_session_meta_resolver
+    from bot.webui.events import SessionMeta
+
+    # Mirror the production resolver shape (WebUIService._resolve_session_meta).
+    # This deliberately uses the same variable reference pattern as production
+    # to catch the missing _DEFAULT_AGENT_NAME import.
+    agent_pool_map: dict[str, str] = {"main": "main", "coding": "coding"}
+
+    def _resolve_session_meta(session_id: str) -> SessionMeta:
+        parts = session_id.split(".", 2)
+        agent = parts[1] if len(parts) >= 2 else "main"
+        pool = agent_pool_map.get(agent, "main")
+        return SessionMeta(pool=pool, parent_session_id=None)
+
+    set_session_meta_resolver(_resolve_session_meta)
+
+    # Create an emitter with the resolver wired through the normal factory
+    # closure path (register_websocket._resolve_meta_for → global resolver).
+    from bot.adapters.register_websocket import _resolve_meta_for
+    from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
+    from bot.webui.emitter import WebBotEmitter
+    from framework.core.emitter import EmitterConfig
+
+    input_adapter = WebSocketInputAdapter()
+    output_adapter = WebSocketOutputAdapter(input_adapter)
+    input_adapter.register_connection("conv.coding", None)
+
+    emitter = WebBotEmitter(
+        output_adapter=output_adapter,
+        session_id="conv.coding",
+        config=EmitterConfig(),
+        session_meta_resolver=_resolve_meta_for("conv.coding"),
+    )
+    # Fire a content delta — must not raise.
+    await emitter.emit_delta("hello world")
+
+    # The envelope must have reached the delta queue.
+    q = input_adapter._delta_queues.get("conv.coding")
+    assert q is not None
+    envelope = q.get_nowait()
+    assert envelope.event_type == "model_content_delta"
+    assert envelope.pool == "coding"  # resolved from the map
+    assert envelope.session_id == "conv.coding"
