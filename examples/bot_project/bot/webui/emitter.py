@@ -12,20 +12,22 @@ Turn complete:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
+from collections.abc import Callable
 from typing import Any, Generic, TypeVar
 
 from framework.agents.react.agent import ReActEvent
 from framework.core.emitter import AgentResult, ContentEmitter, EmitterConfig, StreamingAwareEmitter
-from framework.pipeline.adapters import OutputAdapter
 
+from ..adapters.web_socket import WebSocketOutputAdapter
 from .events import (
     AssistantTurnEvent,
+    DeltaEnvelope,
     ModelContentDelta,
     ModelReasoningDelta,
     ServerEvent,
+    SessionMeta,
     ToolCallEndEvent,
     ToolCallStartEvent,
     TurnEndEvent,
@@ -84,6 +86,11 @@ def _truncate_tool_args(args: dict[str, object]) -> dict[str, object]:
 # ── Emitter ────────────────────────────────────────────────────────────────
 
 
+def _empty_session_meta() -> SessionMeta:
+    """Default resolver: no business routing context known."""
+    return SessionMeta()
+
+
 class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
     """Streaming emitter for WebUI.
 
@@ -95,21 +102,29 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
 
     def __init__(
         self,
-        output_adapter: OutputAdapter,
+        output_adapter: WebSocketOutputAdapter,
         session_id: str,
         config: EmitterConfig | None = None,
         *,
         send_timeout: float | None = None,
         transcript_store: TranscriptStore | None = None,
+        session_meta_resolver: Callable[[], SessionMeta] | None = None,
     ) -> None:
         super().__init__(output_adapter, session_id, config, send_timeout=send_timeout)
-        # session_id format: {conv_id}.{agent_name}[.{invocation_id}]
+        self._output: WebSocketOutputAdapter = output_adapter
+        # session_id is the FULL receiver-owned identifier shared with the
+        # memory system: {conv}.{agent}[.{invocation_id}].  Keep it verbatim so
+        # every emitted event and the persisted transcript carry the complete
+        # id — two subagent invocations never collapse into one transcript.
+        self._session_id: str = session_id
         parts = session_id.split(".", 2)
-        self._conversation_id: str = parts[0]
         self._agent_name: str = parts[1] if len(parts) > 1 else "main"
-        self._invocation_id: str | None = parts[2] if len(parts) > 2 else None
         self._turn_counter: int = 1
         self._transcript_store: TranscriptStore | None = transcript_store
+        # Lazy resolver for business routing context (pool, parent_session_id).
+        # Read at send time so it reflects the latest pool map / parent
+        # registry (populated by WebUIService after pool init).
+        self._session_meta_resolver = session_meta_resolver or _empty_session_meta
 
         # Ordered blocks — built during streaming, persisted at turn end.
         self._blocks: list[dict[str, object]] = []
@@ -125,7 +140,7 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
             return
         self._blocks.append({"kind": "text", "text": delta})
         evt = ModelContentDelta(
-            conversation_id=self._conversation_id,
+            session_id=self._session_id,
             agent_name=self._agent_name,
             text=delta,
             turn_id=self._current_turn_id(),
@@ -145,21 +160,20 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
         # Save the complete turn to transcript (if store configured).
         if self._transcript_store is not None:
             turn_record = AssistantTurnEvent(
-                conversation_id=self._conversation_id,
+                session_id=self._session_id,
                 agent_name=self._agent_name,
                 blocks=_merge_blocks(self._blocks),
                 turn_id=self._current_turn_id(),
                 latency_ms=latency_ms,
             )
             self._transcript_store.append(
-                self._conversation_id,
-                self._agent_name,
+                self._session_id,
                 turn_record,
             )
 
         # Notify frontend that the turn is complete.
         turn_end = TurnEndEvent(
-            conversation_id=self._conversation_id,
+            session_id=self._session_id,
             agent_name=self._agent_name,
             turn_id=self._current_turn_id(),
             latency_ms=latency_ms,
@@ -187,7 +201,7 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
             text: str = data
             self._blocks.append({"kind": "reasoning", "text": text})
             evt = ModelReasoningDelta(
-                conversation_id=self._conversation_id,
+                session_id=self._session_id,
                 agent_name=self._agent_name,
                 text=text,
                 turn_id=self._current_turn_id(),
@@ -199,7 +213,7 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
             full_args: dict[str, object] = getattr(data, "arguments", {}) or {}
             self._blocks.append({"kind": "tool", "tool": tool_name, "args": full_args})
             evt = ToolCallStartEvent(
-                conversation_id=self._conversation_id,
+                session_id=self._session_id,
                 agent_name=self._agent_name,
                 tool=tool_name,
                 args=_truncate_tool_args(full_args),
@@ -230,7 +244,7 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
                     block["result"] = full_result
                     break
             evt = ToolCallEndEvent(
-                conversation_id=self._conversation_id,
+                session_id=self._session_id,
                 agent_name=self._agent_name,
                 tool=tool_name,
                 result_summary=result_summary,
@@ -250,9 +264,19 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
         return f"turn_{self._turn_counter}"
 
     async def _send_event(self, event: ServerEvent) -> None:
-        """Serialize *event* to JSON and send via the output adapter."""
-        json_str = json.dumps(event.to_dict())
-        await self.output_adapter.send_delta(json_str, self.session_id)
+        """Wrap *event* in a structured DeltaEnvelope and enqueue it."""
+        meta = self._session_meta_resolver()
+        envelope = DeltaEnvelope.from_event(
+            event,
+            metadata=self._metadata(),
+            pool=meta.pool,
+            parent_session_id=meta.parent_session_id,
+        )
+        await self._output.send_envelope(envelope)
+
+    def _metadata(self) -> dict[str, object]:
+        """Cross-cutting context attached to every emitted envelope."""
+        return {"turn_id": self._current_turn_id()}
 
 
 # ── Composite (fan-out) emitter ──────────────────────────────────────────────

@@ -1,16 +1,20 @@
 """Transcript store for WebUI conversations.
 
-Two implementations:
-- :class:`JSONLTranscriptStore` — filesystem-based, one JSONL file per agent.
-- :class:`SQLiteTranscriptStore` — single-file SQLite database.
+The store is keyed by the **full session id** — the same receiver-owned
+identifier the memory system uses (``{conversation_id}.{agent_name}`` for main
+agents, ``{conversation_id}.{agent_name}.{invocation_id}`` for subagents).
+Using the full session id as the persistence key means two subagent
+invocations of the same agent (e.g. two ``reviewer`` runs) never collapse into
+one transcript file.
+
+The conversation prefix (everything before the first ``.``) is the user-facing
+grouping: a UI conversation owns many sessions (the main agent + each
+subagent invocation).  ``load_conversation`` merges them by timestamp.
 """
 
 from __future__ import annotations
 
 import json
-import shutil
-import sqlite3
-import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Iterator
@@ -23,64 +27,101 @@ def _safe_name(name: str) -> str:
     return name.replace(":", "_").replace("/", "_")
 
 
+def _conversation_prefix(session_id: str) -> str:
+    """Return the conversation prefix (segment before the first ``.``).
+
+    ``"abc.main"`` → ``"abc"``; ``"abc.reviewer.z9"`` → ``"abc"``.
+    """
+    return session_id.split(".", 1)[0] if "." in session_id else session_id
+
+
 class TranscriptStore(ABC):
-    """Abstract transcript store for persisting and retrieving server events."""
+    """Abstract transcript store keyed by the full session id."""
 
     @abstractmethod
-    def append(self, conversation_id: str, agent_name: str, event: ServerEvent) -> None:
-        """Persist a single event for a conversation/agent pair."""
+    def append(self, session_id: str, event: ServerEvent) -> None:
+        """Persist a single event for *session_id* (full session identifier)."""
         ...
 
     @abstractmethod
-    def load(self, conversation_id: str, agent_name: str) -> Iterator[ServerEvent]:
-        """Yield all events for a conversation/agent pair, oldest first."""
+    def load(self, session_id: str) -> Iterator[ServerEvent]:
+        """Yield all events for *session_id* (full session identifier), oldest first."""
         ...
 
     @abstractmethod
-    def load_all(self, conversation_id: str) -> Iterator[ServerEvent]:
-        """Yield events from ALL agents for a conversation, merged by timestamp."""
+    def load_conversation(self, conversation_id: str) -> Iterator[ServerEvent]:
+        """Yield events from every session in *conversation_id*, merged by timestamp."""
         ...
 
     @abstractmethod
-    def list_conversations(self) -> set[str]:
-        """Return the set of known conversation IDs."""
+    def list_sessions(self) -> set[str]:
+        """Return the set of all full session ids that have at least one event."""
         ...
 
     @abstractmethod
-    def list_agents(self, conversation_id: str) -> set[str]:
-        """Return the set of agent names within a conversation."""
+    def list_sessions_in_conversation(self, conversation_id: str) -> set[str]:
+        """Return the set of full session ids owned by *conversation_id*."""
+        ...
+
+    @abstractmethod
+    def delete_session(self, session_id: str) -> None:
+        """Remove all records for one full *session_id*."""
         ...
 
     @abstractmethod
     def delete_conversation(self, conversation_id: str) -> None:
-        """Remove all records for a conversation."""
+        """Remove all records for every session in *conversation_id*."""
         ...
 
 
-class JSONLTranscriptStore(TranscriptStore):
-    """Stores events as JSONL files under ``base_dir/{safe_conv}/{safe_agent}.jsonl``.
+# ── JSONL implementation ───────────────────────────────────────────────────
 
-    Conversation IDs and agent names are sanitized (``:`` and ``/`` replaced with
-    ``_``) to produce safe filesystem paths.
+
+class JSONLTranscriptStore(TranscriptStore):
+    """Stores events as one JSONL file per full session id.
+
+    File layout: ``base_dir/{safe_session_id}.jsonl`` where *session_id* is the
+    full receiver-owned identifier (``{conv}.{agent}[.{invocation_id}]``).
     """
 
     def __init__(self, base_dir: Path) -> None:
         self._base_dir = base_dir
 
     # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _file_for(self, session_id: str) -> Path:
+        return self._base_dir / f"{_safe_name(session_id)}.jsonl"
+
+    def _iter_files(self) -> Iterator[Path]:
+        if not self._base_dir.is_dir():
+            return
+        for f in self._base_dir.iterdir():
+            if f.is_file() and f.suffix == ".jsonl":
+                yield f
+
+    def _session_id_of(self, path: Path) -> str:
+        """Reverse the safe-name mapping for a file stem.
+
+        ``_safe_name`` only rewrites ``:`` and ``/``; since session ids use
+        ``.`` as the only separator and never contain those chars after
+        sanitization, the stem is the session id.
+        """
+        return path.stem
+
+    # ------------------------------------------------------------------
     # TranscriptStore interface
     # ------------------------------------------------------------------
 
-    def append(self, conversation_id: str, agent_name: str, event: ServerEvent) -> None:
-        conv_dir = self._base_dir / _safe_name(conversation_id)
-        conv_dir.mkdir(parents=True, exist_ok=True)
-        file_path = conv_dir / f"{_safe_name(agent_name)}.jsonl"
+    def append(self, session_id: str, event: ServerEvent) -> None:
+        self._base_dir.mkdir(parents=True, exist_ok=True)
         line = json.dumps(event.to_dict(), ensure_ascii=False)
-        with file_path.open("a", encoding="utf-8") as f:
+        with self._file_for(session_id).open("a", encoding="utf-8") as f:
             f.write(line + "\n")
 
-    def load(self, conversation_id: str, agent_name: str) -> Iterator[ServerEvent]:
-        file_path = self._base_dir / _safe_name(conversation_id) / f"{_safe_name(agent_name)}.jsonl"
+    def load(self, session_id: str) -> Iterator[ServerEvent]:
+        file_path = self._file_for(session_id)
         if not file_path.is_file():
             return
         with file_path.open("r", encoding="utf-8") as f:
@@ -94,151 +135,33 @@ class JSONLTranscriptStore(TranscriptStore):
                     continue
                 yield ServerEvent.from_dict(data)
 
-    def load_all(self, conversation_id: str) -> Iterator[ServerEvent]:
-        """Yield events from ALL agents, merged by timestamp."""
+    def load_conversation(self, conversation_id: str) -> Iterator[ServerEvent]:
         all_events: list[tuple[float, ServerEvent]] = []
-        for agent_name in self.list_agents(conversation_id):
-            for event in self.load(conversation_id, agent_name):
+        for session_id in self.list_sessions_in_conversation(conversation_id):
+            for event in self.load(session_id):
                 all_events.append((event.timestamp, event))
         all_events.sort(key=lambda pair: pair[0])
         for _, event in all_events:
             yield event
 
-    def list_conversations(self) -> set[str]:
-        if not self._base_dir.is_dir():
-            return set()
-        return {
-            d.name for d in self._base_dir.iterdir()
-            if d.is_dir()
-        }
+    def list_sessions(self) -> set[str]:
+        seen: set[str] = set()
+        for f in self._iter_files():
+            seen.add(self._session_id_of(f))
+        return seen
 
-    def list_agents(self, conversation_id: str) -> set[str]:
-        conv_dir = self._base_dir / _safe_name(conversation_id)
-        if not conv_dir.is_dir():
-            return set()
-        return {
-            f.stem for f in conv_dir.iterdir()
-            if f.is_file() and f.suffix == ".jsonl"
-        }
+    def list_sessions_in_conversation(self, conversation_id: str) -> set[str]:
+        prefix = _safe_name(conversation_id) + "."
+        seen: set[str] = set()
+        for f in self._iter_files():
+            stem = self._session_id_of(f)
+            if _conversation_prefix(stem) == _safe_name(conversation_id) or stem.startswith(prefix):
+                seen.add(stem)
+        return seen
 
-    def delete_conversation(self, conversation_id: str) -> None:
-        conv_dir = self._base_dir / _safe_name(conversation_id)
-        if conv_dir.is_dir():
-            shutil.rmtree(conv_dir)
-
-
-# ── SQLite implementation ──────────────────────────────────────────────────
-
-_CREATE_TABLE_SQL: str = """\
-CREATE TABLE IF NOT EXISTS events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    conversation_id TEXT NOT NULL,
-    agent_name TEXT NOT NULL,
-    event_json TEXT NOT NULL,
-    created_at REAL NOT NULL
-);
-"""
-
-_CREATE_INDEX_SQL: str = """\
-CREATE INDEX IF NOT EXISTS idx_events_lookup
-    ON events(conversation_id, agent_name, id);
-"""
-
-_INSERT_SQL: str = (
-    "INSERT INTO events (conversation_id, agent_name, event_json, created_at) "
-    "VALUES (?, ?, ?, ?)"
-)
-
-_LOAD_SQL: str = (
-    "SELECT event_json FROM events "
-    "WHERE conversation_id = ? AND agent_name = ? "
-    "ORDER BY id ASC"
-)
-
-_LIST_CONV_SQL: str = "SELECT DISTINCT conversation_id FROM events"
-
-_LIST_AGENTS_SQL: str = (
-    "SELECT DISTINCT agent_name FROM events WHERE conversation_id = ?"
-)
-
-_DELETE_SQL: str = "DELETE FROM events WHERE conversation_id = ?"
-
-
-class SQLiteTranscriptStore(TranscriptStore):
-    """Stores events in a single-file SQLite database.
-
-    Usage::
-
-        store = SQLiteTranscriptStore(Path(\"data/webui/transcripts.db\"))
-        store.append(\"conv1\", \"main\", event)
-        for ev in store.load(\"conv1\", \"main\"):
-            print(ev.event)
-    """
-
-    def __init__(self, db_path: Path) -> None:
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._db_path: Path = db_path
-        self._conn: sqlite3.Connection = sqlite3.connect(str(db_path))
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA foreign_keys=ON")
-        self._conn.execute(_CREATE_TABLE_SQL)
-        self._conn.execute(_CREATE_INDEX_SQL)
-        self._conn.commit()
-
-    # ------------------------------------------------------------------
-    # TranscriptStore interface
-    # ------------------------------------------------------------------
-
-    def append(self, conversation_id: str, agent_name: str, event: ServerEvent) -> None:
-        json_str = json.dumps(event.to_dict(), ensure_ascii=False)
-        self._conn.execute(
-            _INSERT_SQL,
-            (conversation_id, agent_name, json_str, time.time()),
-        )
-        self._conn.commit()
-
-    def load(self, conversation_id: str, agent_name: str) -> Iterator[ServerEvent]:
-        rows = self._conn.execute(_LOAD_SQL, (conversation_id, agent_name))
-        for (json_str,) in rows:
-            try:
-                data: dict[str, object] = json.loads(json_str)
-            except json.JSONDecodeError:
-                continue
-            yield ServerEvent.from_dict(data)
-
-    _LOAD_ALL_SQL: str = (
-        "SELECT event_json FROM events "
-        "WHERE conversation_id = ? "
-        "ORDER BY created_at ASC, id ASC"
-    )
-
-    def load_all(self, conversation_id: str) -> Iterator[ServerEvent]:
-        """Yield events from ALL agents, merged by timestamp."""
-        rows = self._conn.execute(self._LOAD_ALL_SQL, (conversation_id,))
-        all_events: list[tuple[float, ServerEvent]] = []
-        for (json_str,) in rows:
-            try:
-                data: dict[str, object] = json.loads(json_str)
-            except json.JSONDecodeError:
-                continue
-            event = ServerEvent.from_dict(data)
-            all_events.append((event.timestamp, event))
-        all_events.sort(key=lambda pair: pair[0])
-        for _, event in all_events:
-            yield event
-
-    def list_conversations(self) -> set[str]:
-        rows = self._conn.execute(_LIST_CONV_SQL)
-        return {row[0] for row in rows}
-
-    def list_agents(self, conversation_id: str) -> set[str]:
-        rows = self._conn.execute(_LIST_AGENTS_SQL, (conversation_id,))
-        return {row[0] for row in rows}
+    def delete_session(self, session_id: str) -> None:
+        self._file_for(session_id).unlink(missing_ok=True)
 
     def delete_conversation(self, conversation_id: str) -> None:
-        self._conn.execute(_DELETE_SQL, (conversation_id,))
-        self._conn.commit()
-
-    def close(self) -> None:
-        """Close the database connection (call on shutdown)."""
-        self._conn.close()
+        for session_id in self.list_sessions_in_conversation(conversation_id):
+            self.delete_session(session_id)
