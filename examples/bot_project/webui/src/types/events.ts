@@ -17,7 +17,7 @@ export type WebUIEventType =
 
 export interface ServerEvent {
   event: WebUIEventType;
-  conversation_id: string;
+  session_id: string;
   agent_name: string;
   timestamp?: number;
 }
@@ -68,17 +68,17 @@ export interface AssistantTurnEvent extends ServerEvent {
 
 export interface ConversationReadyEvent extends ServerEvent {
   event: "conversation_ready";
-  conversation_id: string;
+  session_id: string;
 }
 
 export interface AttachedEvent extends ServerEvent {
   event: "attached";
-  conversation_id: string;
+  session_id: string;
 }
 
 export interface ConversationDeletedEvent extends ServerEvent {
   event: "conversation_deleted";
-  conversation_id: string;
+  session_id: string;
 }
 
 export interface ErrorEvent extends ServerEvent {
@@ -99,16 +99,52 @@ export type ServerEventUnion =
   | ConversationDeletedEvent
   | ErrorEvent;
 
+// ── Structured transport envelope ─────────────────────────────────────────────
+
+export interface DeltaEnvelope {
+  session_id: string;
+  agent_name: string;
+  event_type: string;
+  pool: string;
+  parent_session_id: string | null;
+  metadata: Record<string, unknown>;
+  payload: Record<string, unknown>;
+  timestamp?: number;
+}
+
+/**
+ * Unwrap a structured DeltaEnvelope into a flat ServerEvent so the existing
+ * reducer and REST-path code remain unchanged.  Pool, parent_session_id, and
+ * metadata are preserved as ``_pool``, ``_parent_session_id``, ``_metadata``
+ * for the UIMessage builder to attach.
+ */
+export function unwrapEnvelope(env: DeltaEnvelope): ServerEventUnion {
+  const flat = {
+    event: env.event_type,
+    session_id: env.session_id,
+    agent_name: env.agent_name,
+    timestamp: env.timestamp,
+    ...env.payload,
+    // Tagged fields for UIMessage enrichment (tree, pool display, etc.)
+    _pool: env.pool,
+    _parent_session_id: env.parent_session_id,
+    _metadata: env.metadata,
+  } as unknown as ServerEventUnion;
+  return flat;
+}
+
 // ── REST API types ──────────────────────────────────────────────────────────
 
 export interface ConversationInfo {
-  conversation_id: string;
-  agents: string[];
+  session_id: string;
+  agent_name: string;
   pool: string;
+  parent_session_id: string | null;
+  created_at?: number;
 }
 
 export interface CreateConversationResponse {
-  conversation_id: string;
+  session_id: string;
   pool: string;
 }
 
@@ -145,6 +181,11 @@ export interface UIMessage {
   agent_name: string;
   blocks: TurnBlock[];
   isStreaming: boolean;
+  timestamp?: number;
+  /** Business routing context (attached for tree rendering / pool display). */
+  pool?: string;
+  parent_session_id?: string | null;
+  metadata?: Record<string, unknown>;
 }
 
 // ── Transcript → UI conversion ────────────────────────────────────────────
@@ -159,18 +200,58 @@ let _histId = 0;
  * TypeScript expects nested ToolTrace:
  *   {kind: "tool", tool: {tool: "read", args: {...}, result: "ok"}}
  */
-function normalizeBlock(block: Record<string, unknown>): TurnBlock {
-  if (block["kind"] === "tool" && typeof block["tool"] === "string") {
-    return {
-      kind: "tool",
-      tool: {
-        tool: block["tool"] as string,
-        args: (block["args"] as Record<string, unknown>) ?? {},
-        result: block["result"] as string | undefined,
-      },
-    };
+function normalizeBlock(block: TurnBlock): TurnBlock {
+  if (block.kind === "tool") {
+    // The JSON from Python may have `tool` as a string (flat format)
+    // rather than a nested ToolTrace object.  Bridge both shapes.
+    const raw = block as unknown as Record<string, unknown>;
+    if (typeof raw["tool"] === "string") {
+      return {
+        kind: "tool",
+        tool: {
+          tool: raw["tool"] as string,
+          args: (raw["args"] as Record<string, unknown>) ?? {},
+          result: raw["result"] as string | undefined,
+        },
+      };
+    }
   }
-  return block as unknown as TurnBlock;
+  return block;
+}
+
+/**
+ * Merge adjacent same-kind blocks in a TurnBlock array.
+ *
+ * Old transcript entries may contain many consecutive tiny text/reasoning
+ * blocks (one per streaming delta) that were saved before server-side
+ * ``_merge_blocks`` was introduced.  Without merging, each tiny block
+ * renders as its own narrow div, producing elongated message bubbles.
+ */
+function mergeBlocks(blocks: TurnBlock[]): TurnBlock[] {
+  if (blocks.length < 2) return blocks;
+  const first = blocks[0];
+  if (!first) return blocks;
+  const merged: TurnBlock[] = [first];
+  for (let i = 1; i < blocks.length; i++) {
+    const block = blocks[i];
+    if (!block) continue;
+    const prev = merged[merged.length - 1];
+    if (!prev) continue;
+    if (
+      (block.kind === "text" || block.kind === "reasoning") &&
+      block.kind === prev.kind
+    ) {
+      const blockText = (block as TextBlock | ReasoningBlockData).text;
+      const prevText = (prev as TextBlock | ReasoningBlockData).text;
+      merged[merged.length - 1] = {
+        kind: prev.kind,
+        text: prevText + blockText,
+      } as TurnBlock;
+    } else {
+      merged.push(block);
+    }
+  }
+  return merged;
 }
 
 /** Convert transcript events (from REST API) into UIMessage list. */
@@ -184,14 +265,16 @@ export function eventsToMessages(events: ServerEventUnion[]): UIMessage[] {
         agent_name: ev.agent_name,
         blocks: [{ kind: "text", text: ev.content }],
         isStreaming: false,
+        timestamp: ev.timestamp,
       });
     } else if (ev.event === "assistant_turn") {
       messages.push({
         id: `hist_${++_histId}`,
         role: "assistant",
         agent_name: ev.agent_name,
-        blocks: (ev.blocks ?? []).map(normalizeBlock),
+        blocks: mergeBlocks((ev.blocks ?? []).map(normalizeBlock)),
         isStreaming: false,
+        timestamp: ev.timestamp,
       });
     }
   }

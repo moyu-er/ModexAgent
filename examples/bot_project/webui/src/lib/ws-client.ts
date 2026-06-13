@@ -1,8 +1,18 @@
-import type { ServerEventUnion } from "../types/events";
+import type { DeltaEnvelope, ServerEventUnion } from "../types/events";
+import { unwrapEnvelope } from "../types/events";
 
 type EventHandler = (event: ServerEventUnion) => void;
 
 const WS_PATH = "/ws";
+
+/** Check whether incoming JSON looks like a structured envelope. */
+function isEnvelope(data: unknown): data is DeltaEnvelope {
+  if (typeof data !== "object" || data === null) return false;
+  const d = data as Record<string, unknown>;
+  return typeof d["event_type"] === "string" &&
+         typeof d["session_id"] === "string" &&
+         typeof d["payload"] === "object";
+}
 
 export class WebSocketClient {
   private ws: WebSocket | null = null;
@@ -41,8 +51,14 @@ export class WebSocketClient {
 
     this.ws.onmessage = (msg: MessageEvent<string>): void => {
       try {
-        const data = JSON.parse(msg.data) as ServerEventUnion;
-        this.onEvent(data);
+        const data: unknown = JSON.parse(msg.data);
+        // Structured envelope (new) — unwrap to flat event.
+        if (isEnvelope(data)) {
+          this.onEvent(unwrapEnvelope(data));
+        } else {
+          // Flat event (legacy path) — pass through.
+          this.onEvent(data as unknown as ServerEventUnion);
+        }
       } catch {
         // Ignore malformed messages
       }
@@ -67,23 +83,33 @@ export class WebSocketClient {
     return true;
   }
 
-  attach(conversationId: string): boolean {
-    return this.send("attach", { conversation_id: conversationId });
+  /**
+   * Attach to a session.
+   *
+   * Two forms:
+   *  - `attach(sessionId)`  → sends `{ session_id }` for an existing session.
+   *  - `attach(uuidPrefix, pool)` → sends `{ uuid_prefix, pool }` to let the
+   *    backend assemble the full session id.
+   */
+  attach(sessionIdOrUuid: string, pool?: string): boolean {
+    if (pool !== undefined) {
+      return this.send("attach", {
+        uuid_prefix: sessionIdOrUuid,
+        pool,
+      });
+    }
+    return this.send("attach", { session_id: sessionIdOrUuid });
   }
 
-  sendMessage(conversationId: string, content: string): boolean {
+  sendMessage(sessionId: string, content: string): boolean {
     return this.send("send_message", {
-      conversation_id: conversationId,
+      session_id: sessionId,
       content,
     });
   }
 
-  newConversation(): boolean {
-    return this.send("new_conversation", {});
-  }
-
-  deleteConversation(conversationId: string): boolean {
-    return this.send("delete_conversation", { conversation_id: conversationId });
+  deleteConversation(sessionId: string): boolean {
+    return this.send("delete_conversation", { session_id: sessionId });
   }
 }
 

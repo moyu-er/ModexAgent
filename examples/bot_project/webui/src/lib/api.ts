@@ -19,8 +19,19 @@ export async function fetchPools(): Promise<PoolInfo[]> {
 
 // ── Session / conversation ──────────────────────────────────────────────────
 
-export async function fetchSessions(): Promise<ConversationInfo[]> {
-  const resp = await fetch(`${API_BASE}/sessions`);
+export async function fetchSessions(
+  workspace?: string,
+  pool?: string,
+): Promise<ConversationInfo[]> {
+  const query = new URLSearchParams();
+  if (workspace) {
+    query.set("workspace", workspace);
+  }
+  if (pool) {
+    query.set("pool", pool);
+  }
+  const params = query.toString() ? `?${query.toString()}` : "";
+  const resp = await fetch(`${API_BASE}/sessions${params}`);
   return resp.json() as Promise<ConversationInfo[]>;
 }
 
@@ -37,9 +48,9 @@ export async function createConversation(
 }
 
 export async function deleteConversation(
-  conversationId: string,
+  sessionId: string,
 ): Promise<{ deleted: string }> {
-  const resp = await fetch(`${API_BASE}/sessions/${conversationId}`, {
+  const resp = await fetch(`${API_BASE}/sessions/${sessionId}`, {
     method: "DELETE",
   });
   return resp.json() as Promise<{ deleted: string }>;
@@ -47,18 +58,23 @@ export async function deleteConversation(
 
 // ── Messages ────────────────────────────────────────────────────────────────
 
-export async function fetchAllMessages(
-  conversationId: string,
+export async function fetchMessages(
+  sessionId: string,
 ): Promise<ServerEventUnion[]> {
-  const resp = await fetch(
-    `${API_BASE}/sessions/${conversationId}/messages?all=true`,
-  );
+  const resp = await fetch(`${API_BASE}/sessions/${sessionId}/messages`);
   return resp.json() as Promise<ServerEventUnion[]>;
+}
+
+export async function fetchAllMessages(
+  sessionId: string,
+): Promise<ServerEventUnion[]> {
+  return fetchMessages(sessionId);
 }
 
 export interface WorkspaceInfo {
   cwd: string;
   home: string;
+  is_home: boolean;
 }
 
 export async function fetchWorkspace(): Promise<WorkspaceInfo> {
@@ -66,13 +82,40 @@ export async function fetchWorkspace(): Promise<WorkspaceInfo> {
   return resp.json() as Promise<WorkspaceInfo>;
 }
 
-export async function fetchMessages(
-  conversationId: string,
-  agent?: string,
-): Promise<ServerEventUnion[]> {
-  const params = agent ? `?agent=${encodeURIComponent(agent)}` : "";
-  const resp = await fetch(
-    `${API_BASE}/sessions/${conversationId}/messages${params}`,
-  );
-  return resp.json() as Promise<ServerEventUnion[]>;
+export interface ChangeWorkspaceResult {
+  success: boolean;
+  cwd: string;
+  notice: string;
+}
+
+export async function changeWorkspace(
+  path: string,
+): Promise<ChangeWorkspaceResult> {
+  const resp = await fetch(`${API_BASE}/workspace/cd`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
+  return resp.json() as Promise<ChangeWorkspaceResult>;
+}
+
+export interface BrowseEntry {
+  name: string;
+  path: string;
+  is_dir: boolean;
+}
+
+export interface BrowseResult {
+  path: string;
+  parent: string;
+  entries: BrowseEntry[];
+  drives: BrowseEntry[];
+}
+
+export async function browseWorkspace(
+  path: string,
+): Promise<BrowseResult> {
+  const params = path ? `?path=${encodeURIComponent(path)}` : "";
+  const resp = await fetch(`${API_BASE}/workspace/browse${params}`);
+  return resp.json() as Promise<BrowseResult>;
 }
