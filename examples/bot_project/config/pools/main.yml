@@ -22,10 +22,11 @@ memory:
     keep_ratio_for_token: 0.3
   archive:
     enabled: true
+    scope: global               # single-user bot: shared scope for all sessions
     max_archive_count: 10       # trigger knowledge update when this many undigested
     max_archive_total: 20       # max dirs on disk (FIFO eviction)
     max_archive_inject: 3       # inject to system prompt
-  knowledge: {enabled: true, default_templates_dir: "templates/knowledge"}
+  knowledge: {enabled: true, default_templates_dir: "templates/knowledge", scope: global}
   dream_engine:
     enabled: true
     interval: 600

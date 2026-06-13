@@ -35,7 +35,7 @@ def create_qq_service(config_dir: Path):
 
 
 def create_webui_service(
-    config_dir: Path, *, port: int = 8080, static_dist: Path | None = None
+    config_dir: Path, *, port: int = 21800, static_dist: Path | None = None
 ):
     """Create a WebUI Bot service instance."""
     from bot.logging import setup_logging
