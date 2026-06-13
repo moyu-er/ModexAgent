@@ -193,9 +193,10 @@ class WorkspaceScopedTranscriptStore(TranscriptStore):
     # ------------------------------------------------------------------
 
     def append(self, session_id: str, event: ServerEvent) -> None:
-        ws_key, pool_key = self._owner(session_id)
-        # Make ownership sticky from the first write.
-        self._owners[session_id] = (ws_key, pool_key)
+        # Always resolve the ACTIVE workspace — never cache/sticky.
+        # IM messages (QQ, etc.) must follow cd workspace switches.
+        ws_key = workspace_sanitized(self._resolver())
+        pool_key = _pool_sanitized(self._pool_for_agent(_agent_of(session_id)))
         self._store_for(ws_key, pool_key).append(session_id, event)
 
     def load(self, session_id: str) -> Iterator[ServerEvent]:

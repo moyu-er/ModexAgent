@@ -19,8 +19,8 @@ from aiohttp.test_utils import TestClient, TestServer
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.pool_router import PoolSessionStore
 from bot.webui.server import WebUIServer, _make_session_id, _new_uuid_prefix, _workspace_sanitized
-from bot.service.workspace_store import WorkspaceScopedTranscriptStore
-from bot.webui.events import _unwrap_envelope
+from bot.service.workspace_store import WorkspaceScopedTranscriptStore, workspace_sanitized
+from bot.webui.events import UserMessageEvent, _unwrap_envelope
 from bot.webui.transcript_store import JSONLTranscriptStore
 
 
@@ -250,3 +250,147 @@ async def test_sessions_from_different_workspaces_are_isolated() -> None:
         )
     finally:
         await client.close()
+
+
+def test_append_follows_current_workspace_after_switch() -> None:
+    """New writes always go to the CURRENT workspace, not a sticky one.
+
+    Regression: IM (QQ) sessions were locked to the workspace where the
+    first message arrived.  After ``cd``, subsequent writes must go to
+    the new workspace so the frontend can discover them in the session list.
+    """
+    data_dir = Path(tempfile.mkdtemp())
+    _ws: list[str] = ["/home/bot_project"]
+
+    def _resolver() -> str:
+        return _ws[0]
+
+    store = WorkspaceScopedTranscriptStore(data_dir, _resolver)
+    store.set_agent_pool_map({"main": "main"})
+    sid = "conv-q1.main"
+
+    # 1. Write in workspace A (default)
+    store.append(sid, UserMessageEvent(
+        session_id=sid, agent_name="main", content="msg-in-home",
+    ))
+
+    # 2. Switch to workspace B (simulating cd E:\\download\\bot)
+    _ws[0] = "E:\\download\\bot"
+
+    # 3. Write another event for same session — must go to workspace B
+    store.append(sid, UserMessageEvent(
+        session_id=sid, agent_name="main", content="msg-after-cd",
+    ))
+
+    # 4. Verify the second write went to workspace B (CURRENT), not A (sticky)
+    ws_key_b = workspace_sanitized("E:\\download\\bot")
+    events_b = list(JSONLTranscriptStore(data_dir / ws_key_b / "main").load(sid))
+    assert len(events_b) >= 1, (
+        f"Expected events in workspace B ({ws_key_b}), but none found. "
+        "append() must use CURRENT workspace, not sticky."
+    )
+    assert any("msg-after-cd" in str(e.to_dict()) for e in events_b), (
+        "msg-after-cd must appear in workspace B"
+    )
+
+    # 5. Previous message still intact in workspace A
+    ws_key_a = workspace_sanitized("/home/bot_project")
+    events_a = list(JSONLTranscriptStore(data_dir / ws_key_a / "main").load(sid))
+    assert any("msg-in-home" in str(e.to_dict()) for e in events_a), (
+        "msg-in-home must still be in workspace A"
+    )
+
+
+def test_append_follows_repeated_workspace_switches() -> None:
+    """Repeated cd switches correctly route writes to the current workspace."""
+    data_dir = Path(tempfile.mkdtemp())
+    _ws: list[str] = ["/home"]
+
+    def _resolver() -> str:
+        return _ws[0]
+
+    store = WorkspaceScopedTranscriptStore(data_dir, _resolver)
+    store.set_agent_pool_map({"main": "main"})
+    sid = "conv-r1.main"
+
+    # W1 → A
+    store.append(sid, UserMessageEvent(
+        session_id=sid, agent_name="main", content="w1-in-A",
+    ))
+
+    # cd B, W2 → B
+    _ws[0] = "/workspace-b"
+    store.append(sid, UserMessageEvent(
+        session_id=sid, agent_name="main", content="w2-in-B",
+    ))
+
+    # cd C, W3 → C
+    _ws[0] = "/workspace-c"
+    store.append(sid, UserMessageEvent(
+        session_id=sid, agent_name="main", content="w3-in-C",
+    ))
+
+    # cd back to A, W4 → A
+    _ws[0] = "/home"
+    store.append(sid, UserMessageEvent(
+        session_id=sid, agent_name="main", content="w4-back-in-A",
+    ))
+
+    # Verify each workspace has correct events
+    for ws_path, expected_content in [
+        ("/home", "w1-in-A"),
+        ("/home", "w4-back-in-A"),
+        ("/workspace-b", "w2-in-B"),
+        ("/workspace-c", "w3-in-C"),
+    ]:
+        ws_key = workspace_sanitized(ws_path)
+        events = list(JSONLTranscriptStore(data_dir / ws_key / "main").load(sid))
+        assert any(expected_content in str(e.to_dict()) for e in events), (
+            f"Expected {expected_content!r} in workspace {ws_key}"
+        )
+
+
+def test_relation_store_follows_workspace_switch() -> None:
+    """SessionRelationStore writes _relations.json to the CURRENT workspace."""
+    from bot.service.session_relation_store import SessionRelationStore
+
+    data_dir = Path(tempfile.mkdtemp())
+    _ws: list[str] = ["/home"]
+
+    def _resolver() -> str:
+        return _ws[0]
+
+    rstore = SessionRelationStore(data_dir, workspace_resolver=_resolver)
+    rstore.set_agent_pool_map({"coding": "coding", "reviewer": "coding"})
+
+    parent = "conv.coding"
+    child = "conv.coding.reviewer.ee11"
+
+    # Write in workspace A
+    rstore.set_parent(child, parent)
+    assert rstore.get_parent(child) == parent
+
+    # Switch to workspace B, write another relation
+    _ws[0] = "/workspace-b"
+    child2 = "conv.coding.reviewer.ff22"
+    rstore.set_parent(child2, parent)
+    assert rstore.get_parent(child2) == parent
+
+    # Switch back to A
+    _ws[0] = "/home"
+    # The first relation should still be readable (all workspaces scanned)
+    assert rstore.get_parent(child) == parent
+    # And a new write goes to A
+    child3 = "conv.coding.reviewer.gg33"
+    rstore.set_parent(child3, parent)
+    assert rstore.get_parent(child3) == parent
+
+    # Verify _relations.json exists in BOTH workspaces
+    ws_key_a = workspace_sanitized("/home")
+    assert (data_dir / ws_key_a / "coding" / "_relations.json").exists(), (
+        "_relations.json missing in workspace A"
+    )
+    ws_key_b = workspace_sanitized("/workspace-b")
+    assert (data_dir / ws_key_b / "coding" / "_relations.json").exists(), (
+        "_relations.json missing in workspace B"
+    )
