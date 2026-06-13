@@ -1,38 +1,98 @@
-"""WebUIService — BotService wired for WebUI access with aiohttp server."""
+"""Multi-channel BotService — auto-detects and starts all configured IM adapters.
+
+Reads :mod:`bot.adapters.channels` registry, builds every enabled adapter,
+merges inputs via ``FanInInputAdapter``, and fans out agent output via
+``CompositeEmitter``.  WebUI (websocket) is always enabled and serves as
+the universal observer — all conversations from any channel are visible.
+"""
 
 from __future__ import annotations
 
-import asyncio
+import logging
 from pathlib import Path
-from typing import Callable
+from typing import Any
 
 from aiohttp import web
 
-from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
+from bot.adapters.fan_in import FanInInputAdapter
+from bot.adapters.register_websocket import get_ws_input  # noqa: F401 — ensure import
 from bot.service.core import BotService
-from bot.webui.emitter import CompositeEmitter, WebBotEmitter
+from bot.service.workspace_store import WorkspaceScopedTranscriptStore
+from bot.webui.emitter import CompositeEmitter
 from bot.webui.server import WebUIServer
-from bot.webui.transcript_store import JSONLTranscriptStore
 from framework.agents.react.agent import ReActEvent
-from framework.core.emitter import ContentEmitter, EmitterConfig
+from framework.core.emitter import ContentEmitter
 from framework.ioc.configs.app import AppConfig
+from framework.pipeline.adapters import InputAdapter, OutputAdapter
+
+logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────
 
-_DEFAULT_PORT: int = 8080
+_DEFAULT_PORT: int = 21800
 _DEFAULT_HOST: str = "0.0.0.0"
-_DEFAULT_MODE: str = "pool"
-_TRANSCRIPT_SUBDIR: str = "data/webui/transcripts"
+_DEFAULT_AGENT_NAME: str = "main"
+def _modex_dir(project_dir: Path) -> Path:
+    """Stable data root — always ``project_dir / MODEX_DATA_DIR``.
+
+    Uses the *project* (home) directory, NOT the current workspace,
+    so session records survive ``cd`` / ``exit`` unchanged.
+    """
+    import os
+
+    return project_dir / os.environ.get("MODEX_DATA_DIR", ".modex")
+
+
+def _sessions_dir(project_dir: Path) -> Path:
+    """Session-management directory — stable across workspace switches."""
+    return _modex_dir(project_dir) / "sessions"
 
 
 class WebUIService(BotService):
-    """BotService wired for WebUI access with aiohttp server."""
+    """Multi-channel bot service — auto-starts all enabled IM adapters.
+
+    Adapters are discovered from :data:`bot.adapters.channels.ADAPTERS`.
+    Each adapter provides input, output, and an emitter factory.  Inputs
+    are merged; outputs fan out via ``CompositeEmitter`` with per-channel
+    filtering so QQ only responds to QQ-originated conversations, etc.
+    """
+
+    @staticmethod
+    def _import_adapter_registration_modules(channels_module: Any) -> None:
+        """Import every ``bot.adapters.register_*`` module to fire @register decorators.
+
+        New IM adapters do not need to be listed here; dropping a
+        ``register_<name>.py`` file into ``bot/adapters/`` is enough.
+        """
+        import importlib.util
+        import sys
+
+        adapters_pkg = Path(channels_module.__file__).parent
+        for path in sorted(adapters_pkg.glob("register_*.py")):
+            module_name = f"bot.adapters.{path.stem}"
+            if module_name in sys.modules:
+                continue
+            try:
+                spec = importlib.util.spec_from_file_location(module_name, path)
+                if spec is None or spec.loader is None:
+                    logger.warning(
+                        "Cannot load adapter registration module %s", module_name
+                    )
+                    continue
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[module_name] = module
+                spec.loader.exec_module(module)
+            except Exception as exc:
+                logger.warning(
+                    "Adapter registration module %s import failed: %s",
+                    module_name,
+                    exc,
+                )
 
     def __init__(
         self,
         config_dir: Path,
         *,
-        mode: str = _DEFAULT_MODE,
         port: int = _DEFAULT_PORT,
         static_dist: Path | None = None,
     ) -> None:
@@ -40,67 +100,304 @@ class WebUIService(BotService):
 
         load_dotenv(config_dir.parent / ".env")
 
+        # ── 1. Config ──────────────────────────────────────────────────
+        project_dir = config_dir.parent
         app_cfg = AppConfig.from_yaml(config_dir / "bot_config.yml")
 
-        # WebSocket adapters (shared between emitter and server)
-        self._ws_input = WebSocketInputAdapter()
-        self._ws_output = WebSocketOutputAdapter(self._ws_input)
+        import yaml
 
-        # Project-level transcript storage (independent of workspace /cd /exit)
-        self._transcript_store = JSONLTranscriptStore(
-            config_dir.parent / _TRANSCRIPT_SUBDIR
+        from framework.ioc.configs.app import _resolve_env_in
+
+        raw_config: dict[str, Any] = _resolve_env_in(
+            yaml.safe_load(
+                (config_dir / "bot_config.yml").read_text(encoding="utf-8")
+            )
+            or {}
         )
 
-        def emitter_factory(session_id: str) -> CompositeEmitter[ReActEvent]:
-            web_emitter = WebBotEmitter(
-                output_adapter=self._ws_output,
-                session_id=session_id,
-                config=EmitterConfig(),
-                transcript_store=self._transcript_store,
+        # ── 2. Shared transcript store + workspace membership ──────────
+        # Transcripts live in ONE shared flat store; the framework (emitter,
+        # IM FanIn) writes through it transparently.  Workspace is a pure
+        # backend-service concern: every append attributes the session_id to
+        # the currently active workspace, so the WebUI can list sessions per
+        # workspace.  IM and WebUI share the same workspace.
+        # Use scripts/migrate_data.py to migrate from old layouts.
+        sessions_dir = _sessions_dir(project_dir)
+        transcript_store = WorkspaceScopedTranscriptStore(
+            sessions_dir,
+            self._resolve_workspace,
+        )
+        self._transcript_store = transcript_store
+
+        # ── 2.5 Session relation store ───────────────────────────────
+        # Co-located with transcripts, shares the SAME workspace resolver
+        # so workspace switching (cd) converges both stores together.
+        from bot.service.session_relation_store import SessionRelationStore
+
+        self._relation_store = SessionRelationStore(
+            sessions_dir,
+            workspace_resolver=self._resolve_workspace,  # ← SAME resolver!
+        )
+
+        # ── 3. Build adapters from registry ────────────────────────────
+        # Auto-import all register_*.py modules so @register decorators fire.
+        # Adding a new IM adapter only requires dropping a register_<name>.py
+        # file into bot/adapters/; no changes to this service are needed.
+        from bot.adapters import channels
+
+        self._import_adapter_registration_modules(channels)
+
+        ctx = channels.AdapterBuildContext(
+            config_dir=config_dir,
+            project_dir=project_dir,
+            raw_config=raw_config,
+            transcript_store=transcript_store,
+        )
+
+        self._channel_inputs: list[InputAdapter] = []
+        self._channel_outputs: list[OutputAdapter] = []
+        self._channel_outputs_by_name: dict[str, OutputAdapter] = {}
+        self._emitter_factories: list[Any] = []
+        """Per-channel emitter factories: ``Callable[[str], ContentEmitter]``."""
+
+        for spec in channels.ADAPTERS:
+            if not spec.enabled:
+                logger.info("Adapter '%s': disabled, skipping", spec.name)
+                continue
+
+            try:
+                result = spec.build(ctx)
+            except Exception as exc:
+                logger.warning(
+                    "Adapter '%s': build failed (%s: %s), skipping",
+                    spec.name,
+                    type(exc).__name__,
+                    exc,
+                )
+                continue
+
+            if result is None:
+                logger.info("Adapter '%s': build returned None, skipping", spec.name)
+                continue
+
+            inp, out, em_factory = result
+            self._channel_inputs.append(inp)
+            self._channel_outputs.append(out)
+            self._channel_outputs_by_name[spec.name] = out
+            self._emitter_factories.append(em_factory)
+            logger.info("Adapter '%s': registered ✓", spec.name)
+
+        if not self._channel_inputs:
+            raise RuntimeError(
+                "No adapters registered. At least the WebSocket adapter must be enabled."
             )
-            return CompositeEmitter(emitters=[web_emitter])
+
+        # ── 4. Fan-in input adapter ────────────────────────────────────
+        if len(self._channel_inputs) == 1:
+            merged_input: InputAdapter = self._channel_inputs[0]
+        else:
+            fan_in = FanInInputAdapter(
+                transcript_store=transcript_store,
+                default_agent_name="main",
+            )
+            for inp in self._channel_inputs:
+                fan_in.add_source(inp)
+            merged_input = fan_in
+        self._merged_input = merged_input
+
+        # ── 5. Unified emitter factory (CompositeEmitter fan-out) ─────
+        def emitter_factory(session_id: str) -> CompositeEmitter[ReActEvent]:
+            emitters: list[ContentEmitter[ReActEvent]] = [
+                ef(session_id) for ef in self._emitter_factories
+            ]
+            return CompositeEmitter(emitters=emitters)
+
+        # ── 6. Delegate to BotService ──────────────────────────────────
+        # merged_input is the single InputAdapter for PoolRouter.
+        # Control command output (cd/exit notices), pool switch replies,
+        # and pipeline command responses are routed back to the channel
+        # that originated the conversation via ChannelRouterOutputAdapter.
+        primary_output = channels.ChannelRouterOutputAdapter(
+            self._channel_outputs_by_name
+        )
+
+        # output_adapter_factory: returns WS output adapter so dynamic
+        # subagents stream to the browser instead of NullOutputAdapter.
+        from bot.adapters.register_websocket import get_ws_output
+
+        ws_output = get_ws_output()
+        output_adapter_factory = lambda: ws_output
+
+        # on_subagent_created: records parent→child relation AND pre-registers
+        # the delta queue so subagent streaming output reaches the browser.
+        # The watcher in _ws_attach picks up the queue within 1s and starts
+        # a _forward_deltas task for it.
+        from bot.adapters.register_websocket import get_ws_input
+
+        async def _on_subagent_created(child_id: str, parent_id: str) -> None:
+            self._relation_store.set_parent(child_id, parent_id)
+            ws_input = get_ws_input()
+            ws_input.ensure_queue(child_id)
 
         super().__init__(
             config_dir,
-            self._ws_input,
-            self._ws_output,
+            merged_input,
+            primary_output,
             emitter_factory,
             app_config=app_cfg,
+            # ── NEW ──────────────────────────────────────────────────
+            output_adapter_factory=output_adapter_factory,
+            on_subagent_created=_on_subagent_created,
         )
 
+        # ── 7. WebUI server ────────────────────────────────────────────
         if static_dist is None:
-            dist_path = Path(__file__).resolve().parent.parent / "web" / "dist"
-            print(f"[WebUI] static_dist auto-detect: {dist_path} exists={dist_path.exists()}")
+            dist_path = project_dir / "web" / "dist"
             if dist_path.exists():
                 static_dist = dist_path
 
+        from bot.adapters.register_websocket import get_ws_input as _ws_in
+
         self._port = port
         self._static_dist = static_dist
-        self._server = WebUIServer(self._ws_input, self._transcript_store, static_dist)
+        self._server = WebUIServer(
+            _ws_in(),
+            transcript_store,
+            static_dist,
+            data_dir=sessions_dir,
+        )
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    def _resolve_workspace(self) -> str:
+        """Return the currently active workspace path (shared by all channels).
+
+        Lazily read at message-write time so the resolver always reflects the
+        latest ``cd``/``exit``.  Returns "" before the workspace context exists.
+        """
+        ctx = self.workspace_context
+        return str(ctx.current) if ctx is not None else ""
 
     async def start(self) -> None:
-        """Start the aiohttp server, then start BotService (pools, router)."""
+        """Start aiohttp server, then BotService (pools, router).
+
+        All server callbacks are injected BEFORE the server starts accepting
+        connections so attach/send_message requests see a fully configured
+        callback list from the first request.
+        """
+        # ── Inject server callbacks BEFORE aiohttp starts ───────────
+        # Use main_agent_name from each pool's config — NOT the pool key.
+        # This ensures the frontend only sees main agent events, never
+        # subagent (reviewer, scout, query-12306, etc.) entries.
+        pool_agent_names: list[str] = [
+            pi.main_agent_name for pi in self._pools.values()
+        ]
+        self._server.set_pool_agent_names(pool_agent_names)
+        print(f"[WebUI] Pool agents: {pool_agent_names}")
+
+        if self.workspace_context is not None:
+            self._server.set_workspace_context(self.workspace_context)
+
+        # The shared transcript store physically partitions sessions by
+        # (workspace, pool) and serves as the WebUI's partition index.
+        self._server.set_workspace_index(self._transcript_store)
+
+        # Pool routing callback — must be set before server accepts
+        # connections so _ws_attach and _ws_send_message can route.
+        # Complete agent→pool map (main agents + subagent template types).
+        # Must include subagent types so _pool_of_agent("reviewer") resolves
+        # correctly when loading subagent transcripts and routing WS messages.
+        agent_pool_map = self._build_agent_pool_map()
+        self._transcript_store.set_agent_pool_map(agent_pool_map)
+
+        if self.pool_router is not None:
+            self._server.set_pool_switch_callback(self.pool_router.set_pool)
+            # PoolRouter session_store is the single source of truth for routing.
+            # Resolver returns None when PoolRouter has no entry (fresh boot) so
+            # _ws_attach / _ws_send_message can fall back to persisted metadata.
+            self._server.set_pool_resolver(
+                lambda conv_id: self.pool_router._session_store.get(conv_id, "") or None
+            )
+            # Map pool_name -> main_agent_name from pool configs.
+            # pool_name and main_agent_name may differ; the mapping is explicit.
+            _agent_map: dict[str, str] = {
+                name: pi.main_agent_name for name, pi in self._pools.items()
+            }
+            self._server.set_agent_resolver(
+                lambda pool_name: _agent_map.get(pool_name, pool_name)
+            )
+            self._server.set_agent_pool_map(agent_pool_map)
+            print(f"[WebUI] Pool routing callback injected (pools={pool_agent_names})")
+        else:
+            print("[WebUI] WARNING: pool_router is None — pool routing disabled!")
+            self._server.set_agent_pool_map(agent_pool_map)
+
+        # Inject the per-session business routing resolver (pool,
+        # parent_session_id) so emitters attach real context to every envelope.
+        # pool comes from the authoritative agent→pool map; parent_session_id
+        # is resolved from the relation store (persisted or derived fallback).
+        from bot.adapters.register_websocket import set_session_meta_resolver
+        from bot.webui.events import SessionMeta
+
+        # ── Inject resolver with real parent_session_id ──────────────
+        relation_store = self._relation_store
+        relation_store.set_agent_pool_map(agent_pool_map)
+
+        def _resolve_session_meta(session_id: str) -> SessionMeta:
+            parts = session_id.split(".", 2)
+            agent = parts[1] if len(parts) >= 2 else "main"
+            pool = agent_pool_map.get(agent, _DEFAULT_AGENT_NAME)
+            parent = relation_store.get_parent(session_id)  # persist or derive
+            return SessionMeta(pool=pool, parent_session_id=parent)
+
+        set_session_meta_resolver(_resolve_session_meta)
+
+        # Pass relation store to server for session list API enrichment
+        self._server.set_relation_store(relation_store)
+
+        # ── Start aiohttp server ────────────────────────────────────
         runner = web.AppRunner(self._server.app)
         await runner.setup()
         site = web.TCPSite(runner, _DEFAULT_HOST, self._port)
         await site.start()
-        print(f"[WebUI] Server started on http://{_DEFAULT_HOST}:{self._port}")
-
-        # Inject pool metadata BEFORE starting pool router so the API
-        # endpoints work even if pool startup encounters MCP errors.
-        pool_agent_names: list[str] = list(self._pools.keys())
-        self._server.set_pool_agent_names(pool_agent_names)
-        print(f"[WebUI] Pool agents: {pool_agent_names}")
-
-        # Inject workspace context BEFORE starting pool router (same reason).
-        if self.workspace_context is not None:
-            self._server.set_workspace_context(self.workspace_context)
+        print(f"[WebUI] Server started on http://{_DEFAULT_HOST}:{self._port}/webui/")
 
         await super().start()
 
-        # Inject pool routing callback after pool router is ready.
-        if self.pool_router is not None:
-            self._server.set_pool_switch_callback(self.pool_router.set_pool)
+    def _build_agent_pool_map(self) -> dict[str, str]:
+        """Complete agent -> pool mapping from pool configs + subagent templates.
+
+        Covers main agents, resident subagents (pool config), and
+        dynamic-subagent template types so the transcript dispatcher can route
+        every write by agent name alone.
+        """
+        from framework.multi_agent.template_registry import AgentTemplateRegistry
+
+        mapping: dict[str, str] = {}
+        # Read pool configs (config/pools/{pool}.yml).
+        pools_dir = self._project_dir / "config" / "pools"
+        if pools_dir.is_dir():
+            import yaml
+            for config_path in sorted(pools_dir.glob("*.yml")):
+                pool_name = config_path.stem
+                try:
+                    raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                for agent in (raw.get("agents") or []):
+                    mapping[agent["name"]] = pool_name
+
+        # Dynamic-subagent template types per pool.
+        try:
+            reg = AgentTemplateRegistry(self._project_dir)
+        except Exception:
+            return mapping
+        for pool_name in list(mapping.values()):
+            for tmpl in reg.list_templates(pool_name):
+                mapping.setdefault(tmpl.agent_type, pool_name)
+        return mapping
 
     async def stop(self) -> None:
         await super().stop()

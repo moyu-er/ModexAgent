@@ -9,7 +9,7 @@ import asyncio
 import contextlib
 import logging
 import traceback
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -22,7 +22,11 @@ if TYPE_CHECKING:
     from framework.hook.builtin.experience_review import ExperienceReviewHook
     from framework.memory.pruned.manager import PrunedManager
     from framework.runtime.codec import RuntimeStateCodecRegistry
-    from framework.runtime.store import JsonFileRuntimeCommandStore, JsonFileTurnStateStore, TurnStateStore
+    from framework.runtime.store import (
+        JsonFileRuntimeCommandStore,
+        JsonFileTurnStateStore,
+        TurnStateStore,
+    )
 
 from bot.plugins.integration import PluginIntegration
 from bot.utils.config_loader import ConfigLoader
@@ -32,8 +36,6 @@ from framework import (
 )
 from framework.approval.ui import IMUserInterface
 from framework.control.channel import InMemoryControlChannel
-from framework.control.event_bus import CallbackControlEventBus
-from framework.core.context import ContextManager
 from framework.core.emitter import ContentEmitter
 from framework.core.llm_struct import (
     LLMTimeoutPolicy,
@@ -48,10 +50,10 @@ from framework.hook.runner import HookRunner
 from framework.interceptor.builtin import (
     ToolResultLimitInterceptor,
 )
-from framework.interceptor.builtin.tool_approval import ArgumentMatcher
 from framework.interceptor.chain import InterceptorChain
 from framework.ioc.configs.agent import AgentConfig as IOCAgentConfig
 from framework.ioc.configs.app import AppConfig
+from framework.ioc.configs.memory import DreamEngineConfig
 from framework.ioc.configs.memory import MemoryConfig as IOCMemoryConfig
 from framework.ioc.factories.memory import create_memory
 from framework.memory.consolidation.dream_engine import DreamEngine
@@ -63,7 +65,6 @@ from framework.messaging.broker_bridge import (
 )
 from framework.messaging.broker_memory import InMemoryMessageBroker
 from framework.multi_agent import (
-    AgentPool,
     CommunicationTracker,
     SessionRetentionPolicy,
 )
@@ -141,13 +142,18 @@ class BotService(AgentBuilderMixin):
         emitter_factory: Callable[[str], ContentEmitter],
         *,
         app_config: AppConfig | None = None,
-    ):
+        # ── Injection points for pool creation ──
+        output_adapter_factory: Callable[[], OutputAdapter] | None = None,
+        on_subagent_created: Callable[[str, str], Awaitable[None]] | None = None,
+    ) -> None:
         self.config_dir = config_dir
         self.config_loader = ConfigLoader(config_dir)
         self.input_adapter = input_adapter
         self.output_adapter = output_adapter
         self.emitter_factory = emitter_factory
         self._app_config = app_config
+        self._output_adapter_factory = output_adapter_factory
+        self._on_subagent_created = on_subagent_created
 
         # Shared components
         self.broker_bridge: BrokerBridgeService | None = None
@@ -183,10 +189,6 @@ class BotService(AgentBuilderMixin):
         self.command_processor: SlashCommandProcessor | None = None
         self.interceptor_chain: InterceptorChain | None = None
         self._safety_policy_cache: RuntimeSafetyPolicy | None = None
-
-        # Observability
-        self._event_bus: CallbackControlEventBus | None = None
-        self._trace_writer: object | None = None
 
         # Approval
         self._approval_workspace: Path | None = None
@@ -309,6 +311,19 @@ class BotService(AgentBuilderMixin):
         assert self._app_config is not None, "AppConfig must be loaded before initialize"
         print(f"[OK] Config loaded ({len(self._app_config.agents)} agents via IOC)")
 
+        # 1.1 Warn if LLM credentials are missing — the service can still start,
+        # but chat will fail until the user runs ``modexbot config``.
+        # Delegates to LLMConfig.missing_required_fields() so the check lives
+        # in the config model, not duplicated here.
+        default_pool_cfg = self._app_config.pools.get(self._app_config.multi_agent.default_pool)
+        if default_pool_cfg is not None:
+            missing_llm = default_pool_cfg.llm.missing_required_fields()
+            if missing_llm:
+                print(
+                    f"[WARNING] LLM config incomplete: {', '.join(missing_llm)}. "
+                    "Run 'modexbot config' to set them. Chat will fail until configured."
+                )
+
         # 1.5 Create WorkspaceContext
         from framework.workspace.context import DefaultWorkspaceContext
 
@@ -345,9 +360,7 @@ class BotService(AgentBuilderMixin):
         self.control_channel = self._build_control_channel()
 
         # Plugins are OFF by default in pool mode.
-        from bot.plugins.integration import PluginIntegration as _PI
-
-        self.plugin_integration = _PI(config={"enabled": False})
+        self.plugin_integration = PluginIntegration(config={"enabled": False})
         await self._initialize_pool()
         self._print_pool_info()
 
@@ -383,17 +396,6 @@ class BotService(AgentBuilderMixin):
         # 4. Shared infra: Hooks & Interceptors
         shared_hooks = self._collect_run_hooks()
 
-        # 4b. Shared infra: Observability event bus + trace writer + progress report hook
-        from framework.control import CallbackControlEventBus, ControlEventType
-        from framework.hook.builtin import ProgressReportHook, TraceFileWriter
-
-        self._event_bus = CallbackControlEventBus()
-        trace_dir = self._project_dir / "logs"
-        trace_dir.mkdir(exist_ok=True)
-        self._trace_writer = TraceFileWriter(path=trace_dir / "trace.jsonl")
-        await self._event_bus.subscribe(ControlEventType.AGENT_PROGRESS, self._trace_writer.handle)
-        shared_hooks.append(ProgressReportHook(event_bus=self._event_bus))
-
         shared_hook_runner = self._build_hook_runner(shared_hooks)
         shared_interceptor_chain = self._build_interceptor_chain()
 
@@ -425,7 +427,6 @@ class BotService(AgentBuilderMixin):
                 data_dir=data_dir,
                 broker=self.broker,
                 inbox_server=self.inbox_server,
-                inbox_producer=self.inbox_producer,
                 inbox_consumer=self.inbox_consumer,
                 agent_bus=self.agent_bus,
                 output_adapter=self.output_adapter,
@@ -441,6 +442,9 @@ class BotService(AgentBuilderMixin):
                 command_processor=self.command_processor,
                 workspace_context=self.workspace_context,
                 emitter_factory=self.emitter_factory,
+                # ── Injection points ──
+                output_adapter_factory=self._output_adapter_factory,
+                on_subagent_created=self._on_subagent_created,
             )
             print(f"[OK] Pool '{pool_name}' created")
 
@@ -487,10 +491,7 @@ class BotService(AgentBuilderMixin):
         """
 
         def check() -> bool:
-            for pool_inst in self._pools.values():
-                if pool_inst.pool.has_active_sessions():
-                    return True
-            return False
+            return any(pool_inst.pool.has_active_sessions() for pool_inst in self._pools.values())
 
         return check
 
@@ -871,7 +872,6 @@ class BotService(AgentBuilderMixin):
             if self.workspace_context is not None
             else self._project_dir
         )
-        max_chars = 50_000
         overflow_store = LocalFileToolOverflowStore(workspace=overflow_dir, max_chunk_size=10_000)
         overflow_cleaner = OverflowCleaner(overflow_store)
         overflow_handler = ToolResultOverflowHandler(
@@ -1065,7 +1065,7 @@ class BotService(AgentBuilderMixin):
     def _build_dream_engine(
         self,
         memory_system: DefaultMemorySystem,
-        dream_cfg: Any,
+        dream_cfg: DreamEngineConfig,
     ) -> DreamEngine:
         return DreamEngine(
             history_manager=memory_system.archive_manager,
@@ -1159,9 +1159,6 @@ class BotService(AgentBuilderMixin):
         await self._close_all_terminals(suppress_errors=True)
         with contextlib.suppress(BaseException):
             await self.input_adapter.stop()
-        if self._trace_writer is not None:
-            with contextlib.suppress(BaseException):
-                self._trace_writer.close()
         if self.broker:
             with contextlib.suppress(BaseException):
                 await self.broker.stop()
