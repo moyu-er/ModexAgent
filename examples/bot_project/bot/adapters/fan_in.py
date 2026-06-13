@@ -163,9 +163,10 @@ class FanInInputAdapter(InputAdapter):
         """Persist *msg* as a ``UserMessageEvent`` to the transcript store.
 
         Extracts ``conversation_id`` from ``metadata`` (QQ adapter) or
-        falls back to ``session_id`` (generic adapters).
+        falls back to ``session_id`` (generic adapters), then derives the
+        full receiver-owned session id ``{conv}.{agent}``.
         """
-        from bot.webui.events import UserMessageEvent
+        from bot.webui.events import UserMessageEvent, _session_id
 
         content = (msg.content or "").strip()
         if not content:
@@ -177,19 +178,19 @@ class FanInInputAdapter(InputAdapter):
             else msg.session_id
         )
         agent_name: str = self._default_agent_name
+        session_id: str = _session_id(conv_id, agent_name)
 
         event = UserMessageEvent(
-            conversation_id=conv_id,
+            session_id=session_id,
             agent_name=agent_name,
             content=content,
         )
         try:
-            self._transcript_store.append(conv_id, agent_name, event)
+            self._transcript_store.append(session_id, event)
         except Exception:
             logger.warning(
                 "FanInInputAdapter: failed to record UserMessageEvent "
-                "for conv=%s agent=%s",
-                conv_id,
-                agent_name,
+                "for session=%s",
+                session_id,
                 exc_info=True,
             )

@@ -1,8 +1,10 @@
 """Adapter registry — multi-channel IM support.
 
 Each IM adapter declares itself here with a hardcoded ``enabled`` flag.
-To add a new IM (Slack, Discord, Telegram, etc.), add one ``AdapterSpec``
-to the ``ADAPTERS`` list — no other code changes needed.
+To add a new IM (Slack, Discord, Telegram, etc.), add a
+``register_<name>.py`` module under ``bot/adapters/`` and use the
+``@register`` decorator.  ``WebUIService`` auto-discovers all
+``register_*.py`` modules at startup, so no other code changes are needed.
 
 Channel tracking: ``set_conv_channel / get_conv_channel`` records which
 channel originated each conversation.  Emitters use this to avoid
@@ -19,9 +21,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
+from framework.adapters.platform import StreamingMode
+from framework.core.types import OutputMessage
+from framework.multi_agent.session_id import DefaultSessionIdStrategy
+from framework.pipeline.adapters import OutputAdapter
+
 if TYPE_CHECKING:
     from framework.core.emitter import ContentEmitter
-    from framework.pipeline.adapters import InputAdapter, OutputAdapter
+    from framework.pipeline.adapters import InputAdapter
 
 
 # ── Channel tracking (conversation_id → channel_name) ────────────────────
@@ -108,3 +115,66 @@ def register(name: str, *, enabled: bool = True):
         return fn
 
     return _decorator
+
+
+# ── Channel-aware output router ─────────────────────────────────────────
+
+
+def _session_to_conversation_id(session_id: str) -> str:
+    """Extract the conversation_id portion from a session identifier.
+
+    Handles both canonical ``{conv}.{agent}`` IDs and raw conversation IDs.
+    """
+    try:
+        parts = DefaultSessionIdStrategy().parse(session_id)
+    except Exception:
+        return session_id
+    if parts.agent_name is not None:
+        return parts.conversation_id
+    return session_id
+
+
+class ChannelRouterOutputAdapter(OutputAdapter):
+    """Routes output to the channel-specific adapter that owns the conversation.
+
+    In multi-channel services (QQ + WebUI), control notices, pool switch
+    notifications, and pipeline command responses must be delivered back to
+    the channel the user is talking on.  This adapter uses
+    :func:`get_conv_channel` to look up the originating channel and delegates
+    to the matching per-channel output adapter.
+    """
+
+    def __init__(self, adapters: dict[str, OutputAdapter]) -> None:
+        if not adapters:
+            raise ValueError("ChannelRouterOutputAdapter requires at least one adapter")
+        self._adapters = dict(adapters)
+        self._fallback = self._adapters.get(
+            "websocket", next(iter(self._adapters.values()))
+        )
+
+    @property
+    def name(self) -> str:
+        return "channel_router"
+
+    @property
+    def streaming_mode(self) -> StreamingMode:
+        return StreamingMode.PSEUDO
+
+    def _resolve(self, session_id: str) -> OutputAdapter:
+        conv_id = _session_to_conversation_id(session_id)
+        channel = get_conv_channel(conv_id)
+        adapter = self._adapters.get(channel)
+        if adapter is None:
+            adapter = self._fallback
+        return adapter
+
+    async def send(self, message: OutputMessage, session_id: str) -> None:
+        await self._resolve(session_id).send(message, session_id)
+
+    async def send_delta(
+        self, delta: str, session_id: str, metadata: dict | None = None
+    ) -> None:
+        await self._resolve(session_id).send_delta(delta, session_id, metadata)
+
+    async def flush_deltas(self, session_id: str) -> None:
+        await self._resolve(session_id).flush_deltas(session_id)
