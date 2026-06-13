@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>ModexAgent QQ Bot 示例 — 全栈 Agent 应用</strong>
+  <strong>ModexAgent Bot 示例 — 带 WebUI 的全栈 Agent 应用</strong>
 </p>
 
 <p align="center">
@@ -11,126 +11,173 @@
   <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-本项目是 ModexAgent 框架的**生产级示例**，展示如何构建一个支持 LLM 对话、工具调用、MCP 集成、四级记忆、多 Agent 协作和插件扩展的 QQ 机器人。
+本项目是 ModexAgent 框架的**生产级示例**，展示如何构建一个支持 LLM 对话、工具调用、MCP 集成、多级记忆、多 Agent 协作、自学习经验系统和浏览器 WebUI 的多通道 AI 助手。
 
-通过 **Pipeline** 和 **Pool** 双模式运行时，覆盖从单 Agent 长运行服务到多 Agent 常驻协作的全场景。
+采用 **Pool 模式** — 多 Agent 常驻池，通过 `MessageBroker` + `AgentMessageBus` 路由消息，Input/Output 适配器（QQ、WebSocket）与 Agent 逻辑完全解耦。
 
 > [!TIP]
-> QQ Bot 平台只是众多适配器之一。同样的架构可以接入 Discord、飞书、钉钉、Telegram、CLI 或任何实现了 `InputAdapter`/`OutputAdapter` 的平台。
+> QQ Bot 平台只是众多适配器之一。同样的架构可以接入 Discord、飞书、钉钉、Telegram、CLI 或任何实现了 `InputAdapter`/`OutputAdapter` 的平台。**仅使用 WebUI 无需 QQ 凭据。**
 
 ## 能力一览
 
 | 能力 | 说明 |
 |------|------|
 | **QQ 消息收发** | C2C 私聊 + 群聊，支持附件（图片/文件）自动下载 |
+| **WebUI** | 浏览器端聊天，实时流式渲染、多会话侧边栏、工作区浏览器、Pool 选择器 |
 | **LLM 对话** | 流式/非流式输出，支持 OpenAI 兼容接口的 100+ 模型 |
 | **ReAct 执行** | Thought → Action → Observation 图驱动循环 |
 | **工具调用** | 内置文件/Shell 工具 + MCP 动态工具 + 自定义工具 |
-| **四级记忆** | Short-term / Archive / Knowledge / UserRetentionBuffer |
-| **Dream 引擎** | 离线记忆整合，定期将历史归档压缩为长期知识 |
+| **多级记忆** | Session / Archive / Knowledge / UserRetentionBuffer / Pruned / Experience — 支持 UserScope / GlobalScope / SessionScope 可配置隔离范围 |
+| **自学习系统** | ExperienceReviewAgent 将对话沉淀为 EXPERIENCE.md 知识；Dream Engine 定期整合 Archive 为长期记忆 |
 | **上下文治理** | ToolChainRepair + Microcompact + TokenBudget 自动优化 |
 | **工具审批** | 可中断执行，支持分级策略（NORMAL / HARDLINE / PENDING） |
 | **多 Agent 协作** | 主 Agent + 多个常驻 Subagent，星型拓扑通信 |
 | **技能系统** | 从 Markdown 文件动态构建系统提示词 |
 | **插件系统** | 动态扩展工具、记忆提供者和技能来源 |
 | **Slash 指令** | `/approve`、`/deny`、`/continue` 及技能触发指令 |
-| **双模式运行** | Pipeline（单 Agent）/ Pool（多 Agent 常驻池） |
+| **Pool 运行时** | 多 Agent 常驻池，通过 `MessageBroker` + `AgentMessageBus` 路由消息 |
 | **自主部署** | Agent 通过 SSH 连接远程服务器，拉取代码并重启自身服务 |
 
 ## 架构概览
 
-### Pipeline 模式
-
-适合单 Agent 长运行服务。链路最短，延迟最低。
+### WebUI 路径（浏览器 → Agent）
 
 ```
-QQ 用户 / 群聊
-    │
+浏览器 (React)
+    │  WebSocket + REST
     ▼
-┌─────────────────┐
-│ QQInputAdapter  │  ← 接收消息 + 附件下载
-└────────┬────────┘
-         │
+┌──────────────────────────────────────────────────────┐
+│              WebUIServer (aiohttp)                    │
+│  /api/sessions, /api/pools, /api/workspace, /ws      │
+└────────┬─────────────────────────────────────────────┘
+         │  WebSocketInputAdapter
          ▼
-┌─────────────────────────────────────────────────┐
-│ AgentPipeline                                   │
-│  ┌─────────────┐  ┌─────────┐  ┌─────────────┐ │
-│  │ContextManager│→│ReActAgent│→│ ToolManager │ │
-│  │ (记忆/上下文) │  │(图引擎)  │  │(工具调度)   │ │
-│  └─────────────┘  └────┬────┘  └─────────────┘ │
-│                        │                       │
-│                 ┌──────┴──────┐                │
-│                 │QQBotEmitter │                │
-│                 │(缓冲/发送)  │                │
-│                 └──────┬──────┘                │
-│  Hooks / Interceptors / Control / Approval     │
-└────────────────────────┼───────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────┐
-│ SessionPrefixStripAdapter → QQOutputAdapter     │
-│ 发送回复到 QQ（支持 C2C / 群聊 + 文件上传）     │
-└─────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│              PoolRouter                               │
+│         会话 → Pool 分发                              │
+└────────┬─────────────────────────────────────────────┘
+         │
+    ┌────┴─────┬─────────┐
+    ▼          ▼         ▼
+┌────────┐ ┌────────┐ ┌────────┐
+│ main   │ │ coding │ │  ...   │  ← AgentPool 实例
+│  pool  │ │  pool  │ │  pool  │
+└────┬───┘ └────┬───┘ └────┬───┘
+     │          │          │
+     ▼          ▼          ▼
+  WebBotEmitter → WebSocket → 浏览器（流式增量渲染）
 ```
 
-### Pool 模式（默认）
+### Pool 模式（IM + WebUI，默认）
 
 适合多 Agent 常驻协作。Input/Output 与 Agent 逻辑完全解耦，通过 Broker 路由消息。
 
 ```
-QQ 用户 / 群聊
-    │
-    ▼
-┌─────────────────┐
-│ QQInputAdapter  │
-└────────┬────────┘
+QQ 用户 / 群聊                    浏览器 (WebUI)
+    │                                      │
+    ▼                                      ▼
+┌─────────────────┐              ┌──────────────────┐
+│ QQInputAdapter  │              │ WebSocketInput   │
+└────────┬────────┘              │    Adapter       │
+         │                       └────────┬─────────┘
+         │                                │
+         ▼                                ▼
+┌──────────────────────────────────────────────────────┐
+│              PoolRouter                              │
+│         会话 → Pool 分发                              │
+└────────┬─────────────────────────────────────────────┘
          │
          ▼
-┌─────────────────────────────────────────────────┐
-│ BrokerBridgeService                             │
-│ 原生适配器 ↔ MessageBroker 桥接                  │
-└────────┬────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│ MessageBroker                                        │
+│  ┌─────────┐  ┌─────────┐  ┌─────────────────────┐  │
+│  │AgentPool│  │Subagent │  │  BrokerOutput       │  │
+│  │(常驻Agent)│ │Manager  │  │     Adapter         │  │
+│  └─────────┘  └─────────┘  └─────────────────────┘  │
+│                                                      │
+│  ┌───────────────────────────────────────────────┐  │
+│  │ AgentMessageBus (InboxProducer/Consumer)      │  │
+│  └───────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────┘
          │
-         ▼
-┌─────────────────────────────────────────────────┐
-│ MessageBroker                                     │
-│  ┌─────────┐  ┌─────────┐  ┌─────────────────┐  │
-│  │AgentPool│  │Subagent │  │ BrokerOutput    │  │
-│  │(常驻Agent)│  │Manager  │  │   Adapter       │  │
-│  └─────────┘  └─────────┘  └─────────────────┘  │
-│                                                  │
-│  ┌───────────────────────────────────────────┐  │
-│  │ AgentMessageBus (InboxProducer/Consumer)  │  │
-│  └───────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────────────────────────┐
-│ BrokerBridgeService → QQOutputAdapter           │
-└─────────────────────────────────────────────────┘
+         ├──────────────────────────────┐
+         ▼                              ▼
+┌──────────────────┐          ┌──────────────────┐
+│ QQOutputAdapter  │          │ WebBotEmitter    │
+│ (QQ 回复)        │          │ (WebSocket 增量) │
+└──────────────────┘          └──────────────────┘
 ```
-
-### 模式对比
-
-| 维度 | Pipeline | Pool |
-|------|----------|------|
-| **适用场景** | 单 Bot 长运行 | 多 Agent 常驻协作 |
-| **核心组件** | `AgentPipeline` | `AgentPool` + `BrokerBridgeService` + `AgentMessageBus` |
-| **子 Agent 分发** | `SubagentManager(local)` 直接 `asyncio.create_task` | `SubagentManager(queued)` 通过 `AgentMessageBus` 排队 |
-| **消息路由** | Pipeline 内部直接处理 | 原生适配器 → Broker → Agent → Broker → 输出适配器 |
-| **状态隔离** | 单一 Pipeline 状态 | 每个常驻 Agent 独立状态（persistent/ephemeral/shared） |
-| **切换方式** | `python bot_service.py --mode pipeline` | `python bot_service.py --mode pool`（默认） |
 
 ## 快速开始
 
-### 1. 安装依赖
+### 前置条件
 
-在仓库根目录创建虚拟环境并安装全部 extras：
+只需要 **两个** 运行时 — 其余一切（包括 Python 3.12）均自动管理：
+
+| 运行时 | 用途 | 获取方式 |
+|--------|------|---------|
+| [**uv**](https://docs.astral.sh/uv/) | Python 包与版本管理器 | 下方安装脚本提供一键安装。手动：`curl -LsSf https://astral.sh/uv/install.sh \| sh` |
+| [**Node.js**](https://nodejs.org/) | WebUI 前端构建（仅后端可跳过） | 安装脚本提供自动安装（winget/brew/nvm）。手动：[nodejs.org](https://nodejs.org/) |
+
+> 无需系统 Python、pip 或 npm。`uv` 会自动下载管理 Python 3.12。`node` 自带 `npm`。
+
+### 方式 A：一键安装（推荐）
+
+运行本目录下对应平台的引导脚本：
+
+| 平台 | 脚本 | 运行方式 |
+|------|------|---------|
+| **Windows** | `install.bat` | 双击运行，或在命令提示符中执行 `install.bat` |
+| **Linux / macOS** | `install.sh` | `chmod +x install.sh && ./install.sh` |
+
+两个脚本执行相同的自动化步骤：
+
+| 步骤 | 说明 |
+|------|------|
+| 环境检查 | 检测 `uv` 和 `Node.js` — 缺失时通过 y/n 提示安装（Windows 用 winget，macOS/Linux 用 brew/nvm） |
+| `uv` 安装 | 通过[官方独立安装程序](https://docs.astral.sh/uv/)安装 |
+| 虚拟环境 | 用 `uv venv --python 3.12` 创建 `.venv`（Python 由 uv 自动下载） |
+| Python 依赖 | 安装完整框架（`..\..\.[all,dev]`）和 bot CLI（`.[webui,dev]`） |
+| 前端构建 | 执行 `npm install` 和 `npm run build` 编译 WebUI（如无 Node.js 则跳过） |
+| 环境变量文件 | 如 `.env` 不存在，自动从 `.env.example` 复制 |
+
+> [!NOTE]
+> 两个脚本都是**幂等的** — 重复运行会自动跳过已完成的步骤。它们缓存 `pyproject.toml` 的哈希值，仅在项目依赖变更时才重新安装 Python 包。缺失前置条件时会触发交互式 y/n 提示。
+
+脚本完成后：
+
+1. **编辑 `.env`** — 填写你的 `LLM_API_KEY` 和其他凭据（见下方[环境变量配置](#2-配置环境变量)）
+2. **启动 bot：**
+
+```bash
+# Windows（PowerShell / 命令提示符）
+.venv\Scripts\activate
+modexbot restart
+
+# Linux / macOS
+source .venv/bin/activate
+modexbot restart
+```
+
+3. 浏览器访问 `http://localhost:21800/webui/`
+
+> [!TIP]
+> 不激活 venv 直接运行：`.venv\Scripts\python.exe -m modexbot restart`（Windows）或 `.venv/bin/python -m modexbot restart`（Linux/macOS）
+
+常用命令：`modexbot stop` \| `modexbot logs -f` \| `modexbot install -f` \| `modexbot config`
+
+---
+
+### 方式 B：手动配置
+
+#### 1. 安装依赖
+
+先安装 `uv` 和 `Node.js`（如尚未安装），然后：
 
 ```bash
 cd /path/to/ModexAgent
 
-# 创建虚拟环境
+# 创建虚拟环境（uv 会自动下载 Python 3.12）
 uv venv --python 3.12
 
 # Windows PowerShell
@@ -144,9 +191,9 @@ uv pip install -e ".[all,dev]"
 ```
 
 > [!IMPORTANT]
-> `terminal` extra 是交互式 Shell 工具（bot 中的 `shell` 工具）必需的。Windows 上安装 `pywinpty`；Linux/macOS 上安装 `pexpect` 和 `libtmux`。
+> `terminal` extra 是交互式 Shell 工具必需的。Windows 上安装 `pywinpty`；Linux/macOS 上安装 `pexpect` 和 `libtmux`。
 
-### 2. 配置环境变量
+#### 2. 配置环境变量
 
 ```bash
 cd examples/bot_project
@@ -157,7 +204,7 @@ cp .env.example .env
 `.env` 关键字段：
 
 ```env
-# QQ Bot 凭证（从 https://q.qq.com/ 获取）
+# QQ Bot 凭证（从 https://q.qq.com/ 获取）—— 仅用 WebUI 可不填
 QQ_APP_ID=your_qq_app_id
 QQ_SECRET=your_qq_bot_secret
 
@@ -171,18 +218,14 @@ MCP_BEARER_TOKEN=your_modelscope_bearer_token
 MINIMAX_MCP_API_KEY=your_minimax_api_key
 ```
 
-### 3. 配置 Bot 设置
+> [!NOTE]
+> 如果只想使用 WebUI（不连 QQ），只需配置 `LLM_API_KEY`。QQ 凭据是可选的。
+
+#### 3. 配置 Bot 设置
 
 编辑 `config/bot_config.yml`（支持 `${ENV_VAR}` 环境变量插值）：
 
 ```yaml
-qq:
-  app_id: "${QQ_APP_ID}"
-  secret: "${QQ_SECRET}"
-  sandbox: false
-  allow_from:
-    - "*"
-
 llm:
   api_key: "${LLM_API_KEY}"
   base_url: "${LLM_BASE_URL}"
@@ -195,42 +238,74 @@ mcp:
   config_file: "mcp.json"
 ```
 
-`config/mcp.json` 需要按你的 MCP 服务器环境配置。
-
-### 4. 运行
+#### 4. 运行
 
 **一键启动（推荐）：**
 
 ```bash
-# 任意目录 — 后台运行，关闭终端不影响
-python examples/bot_project/scripts/botctl.py restart
+# 构建/安装 WebUI 前端，然后后台启动 bot
+modexbot install
+modexbot restart
 ```
 
-脚本会先停止已有 bot，再以脱离子进程启动新的，写入 PID 后立即返回。
+`install` 命令会构建 WebUI 前端（`npm run build`）。如果前端已经是最新版本则自动跳过——使用 `-f` 强制重建。`restart` 命令会停止已有 bot，以脱离子进程启动新的，写入 PID 后立即返回。
+
+启动后浏览器访问 `http://localhost:21800/webui/`。
 
 停止 bot：
 
 ```bash
-python examples/bot_project/scripts/botctl.py stop
-```
-
-使用 `--help` 查看所有选项：
-
-```bash
-python examples/bot_project/scripts/botctl.py --help
+modexbot stop
 ```
 
 **手动启动（调试用）：**
 
 ```bash
-# Pool 模式（默认，多 Agent 协作）
+# Pool 模式（多 Agent 协作 + WebUI）
 python bot_service.py
-
-# Pipeline 模式（单 Agent）
-python bot_service.py --mode pipeline
 ```
 
 ## 核心特性详解
+
+### WebUI
+
+内置 React 前端提供：
+
+- **实时流式渲染** — Agent 输出增量展示，带打字机动画效果
+- **多会话侧边栏** — 可切换不同会话，每个会话完全隔离
+- **工作区浏览器** — 在 UI 中浏览和切换项目目录
+- **Pool 选择器** — 选择用哪个 Agent Pool 处理新会话
+- **历史回放** — 过往会话从 transcript store 加载回显
+
+### 多级记忆系统
+
+```
+┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐
+│ Session   │  │  Archive  │  │ Knowledge │  │UserRetention│ │  Pruned   │  │Experience │
+│ 短期会话  │→ │ 历史归档  │→ │ SOUL.md   │  │  Buffer    │  │ 淘汰目录  │  │EXPERIENCE │
+│ (自动清理)│  │ (压缩存储) │  │ USER.md   │  │ (防过度压缩)│  │ (注入参考) │  │.md 文件   │
+└───────────┘  └───────────┘  └───────────┘  └───────────┘  └───────────┘  └───────────┘
+```
+
+- **Session**：当前会话近期对话历史，超限后自动清理
+- **Archive**：压缩后的历史归档，同一用户跨会话共享
+- **Knowledge**：长期知识文件（SOUL.md / USER.md / MEMORY.md）
+- **UserRetentionBuffer**：额外保留缓冲，防止治理压缩过度丢失关键上下文
+- **Pruned**：淘汰消息的目录索引，按会话存储用于注入
+- **Experience**：从历史对话中自学习提取的可复用参考知识（EXPERIENCE.md）
+- **Dream Engine**：离线定期将 Archive 整合为 Knowledge
+- **ExperienceReviewAgent**：分析对话并创建/更新 EXPERIENCE.md 文件
+- **可配置范围**：SessionScope / UserScope / GlobalScope — Archive 和 Knowledge 可按用户隔离或全局共享
+
+### 自学习系统（Experience）
+
+Bot 会从每次对话中学习：
+
+1. 对话结束后，`ExperienceReviewAgent` 分析交互内容
+2. 提取可复用的模式、解决方案和知识点
+3. 在 experience 目录创建或更新 `EXPERIENCE.md` 文件
+4. 后续对话中，相关经验自动注入系统提示词
+5. Experience 支持 scope 隔离 — UserScope 按用户隔离，GlobalScope 全局共享
 
 ### 工具审批
 
@@ -249,25 +324,6 @@ python bot_service.py --mode pipeline
 Agent 通过 SSH 连接远程服务器，执行 `git pull` 并重启自身服务 —— 展示了深度交互式终端能力：
 
 <img src="../../assets/self_deployment.png" alt="通过终端自主部署" width="800">
-
-### 四级记忆系统
-
-```
-┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-│ Short-term  │ → │   Archive   │ → │  Knowledge  │    │ UserRetention│
-│  短期会话   │    │  历史归档   │    │ 长期知识    │    │   Buffer    │
-│  按 Session │    │  按 User    │    │ SOUL.md     │    │  防止过度压缩│
-│  分组       │    │  分组       │    │ USER.md     │    │             │
-└─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
-       │
-       ▼  Governance: ToolChainRepair + Microcompact + TokenBudget
-```
-
-- **Short-term**：当前会话近期对话历史，超限后自动清理
-- **Archive**：压缩后的历史归档，由 Consolidator 处理
-- **Knowledge**：长期知识文件（SOUL.md / USER.md / MEMORY.md）
-- **UserRetentionBuffer**：额外保留缓冲，防止治理压缩过度丢失关键上下文
-- **Dream Engine**：离线定期将 Archive 整合为 Knowledge
 
 ### 技能系统
 
@@ -348,7 +404,42 @@ agents:
 
 ## 适配其他 IM 平台
 
-`BotService` 是通用基类，不绑定 QQ。只需提供对应的 `InputAdapter`、`OutputAdapter` 和 `Emitter` 工厂即可：
+`BotService` 是通用基类，不绑定 QQ。新增一个平台（Discord、飞书、钉钉、Telegram 等）是即插即用的：
+
+1. 创建 `bot/adapters/<platform>.py`，包含三个类：
+   - `<Platform>InputAdapter` —— 继承 `InputAdapter`，接收消息并 `yield InputMessage`。
+   - `<Platform>OutputAdapter` —— 继承 `OutputAdapter`，把回复发回该平台。
+   - `<Platform>Emitter` —— 继承 `StreamingAwareEmitter` 或 `ContentEmitter`，把 agent 事件转换为平台消息。
+
+2. 创建 `bot/adapters/register_<platform>.py`，用 `@register` 装饰构建函数：
+
+```python
+from bot.adapters.channels import AdapterBuildContext, register
+
+@register("discord", enabled=True)
+def build_discord(ctx: AdapterBuildContext):
+    from bot.adapters.discord import DiscordInputAdapter, DiscordOutputAdapter, DiscordEmitter
+
+    cfg = ctx.raw_config.get("discord", {})
+    if not cfg.get("enabled"):
+        return None  # 未配置时跳过
+
+    discord_input = DiscordInputAdapter(...)
+    discord_output = DiscordOutputAdapter(discord_input)
+
+    def emitter_factory(session_id: str):
+        return DiscordEmitter(
+            output_adapter=discord_output,
+            session_id=session_id,
+            config=...,
+        )
+
+    return discord_input, discord_output, emitter_factory
+```
+
+3. 重启服务。`WebUIService` 会自动发现并导入所有 `bot/adapters/register_*.py` 模块，因此**无需修改 `WebUIService`**。
+
+与 QQ、WebUI 一样，`ChannelRouterOutputAdapter` 会保证一个平台的 slash 命令回复不会串到另一个平台。
 
 ```python
 from framework import AgentPipeline
@@ -367,8 +458,6 @@ class DiscordOutputAdapter(OutputAdapter):
     async def send(self, message, session_id):
         # 发送 Discord 消息
         ...
-
-# 像 QQ 示例一样接入 BotService
 ```
 
 ## 配置参考

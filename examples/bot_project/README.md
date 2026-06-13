@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>ModexAgent QQ Bot Example — Full-Stack Agent Application</strong>
+  <strong>ModexAgent Bot Example — Full-Stack Agent Application with WebUI</strong>
 </p>
 
 <p align="center">
@@ -11,125 +11,168 @@
   <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-This is a **production-grade example** of the ModexAgent framework. It demonstrates how to build a QQ Bot with LLM dialogue, tool invocation, MCP integration, four-layer memory, multi-agent collaboration, and plugin extensions.
+This is a **production-grade example** of the ModexAgent framework. It demonstrates how to build a multi-channel AI assistant with LLM dialogue, tool invocation, MCP integration, multi-tier memory, multi-agent collaboration, self-learning experience system, and a browser-based WebUI.
 
-Through **Pipeline** and **Pool** dual runtime modes, this example covers the full spectrum from single-agent long-running services to multi-agent persistent collaboration.
+Uses **Pool mode** — multi-agent persistent pools with `MessageBroker` + `AgentMessageBus` routing. Input/Output adapters (QQ, WebSocket) are fully decoupled from agent logic.
 
-> [!TIP]> The QQ Bot platform is just one possible adapter. The same architecture works for Discord, Feishu, DingTalk, Telegram, CLI, or any platform with an `InputAdapter`/`OutputAdapter` implementation.
+> [!TIP]
+> QQ Bot is just one possible adapter. The same architecture works for Discord, Feishu, DingTalk, Telegram, CLI, or any platform with an `InputAdapter`/`OutputAdapter` implementation. **No QQ credentials are needed to use the WebUI.**
 
 ## Capabilities
 
 | Capability | Description |
 |------------|-------------|
 | **QQ Messaging** | C2C private chat + group chat, with automatic attachment download |
+| **WebUI** | Browser-based chat with real-time streaming, multi-conversation sidebar, workspace browser, pool selector |
 | **LLM Dialogue** | Streaming and non-streaming output, supporting 100+ models via OpenAI-compatible APIs |
 | **ReAct Execution** | Thought → Action → Observation via the graph-driven engine |
 | **Tool Invocation** | Built-in file/shell tools + MCP dynamic tools + custom tools |
-| **Four-Layer Memory** | Short-term / Archive / Knowledge / UserRetentionBuffer |
-| **Dream Engine** | Offline memory consolidation, periodically compressing archives into long-term knowledge |
+| **Multi-tier Memory** | Session / Archive / Knowledge / UserRetentionBuffer / Pruned / Experience — with configurable scopes (UserScope / GlobalScope / SessionScope) |
+| **Self-Learning** | ExperienceReviewAgent turns conversations into reusable EXPERIENCE.md knowledge; Dream Engine consolidates archives into long-term memory |
 | **Context Governance** | ToolChainRepair + Microcompact + TokenBudget auto-optimization |
 | **Tool Approval** | Interruptible execution with tiered policies (NORMAL / HARDLINE / PENDING) |
 | **Multi-Agent Collaboration** | Main agent + persistent subagents, star-topology communication |
 | **Skill System** | Dynamic system prompt construction from Markdown skill files |
 | **Plugin System** | Dynamically extend tools, memory providers, and skill sources |
 | **Slash Commands** | `/approve`, `/deny`, `/continue`, and skill-triggering commands |
-| **Dual Runtime Modes** | Pipeline (single-agent) / Pool (multi-agent persistent pool) |
+| **Pool Runtime** | Multi-agent persistent pools with `MessageBroker` + `AgentMessageBus` routing |
 | **Self-Deployment** | Agent connects via SSH to remote servers, pulls code, and restarts itself |
 
 ## Architecture
 
-### Pipeline Mode
-
-For single-agent long-running services. Shortest path, lowest latency.
+### WebUI Path (Browser → Agent)
 
 ```
-QQ User / Group Chat
-    │
+Browser (React)
+    │  WebSocket + REST
     ▼
-┌─────────────────┐
-│ QQInputAdapter  │  ← Receive messages + download attachments
-└────────┬────────┘
-         │
+┌──────────────────────────────────────────────────────┐
+│              WebUIServer (aiohttp)                    │
+│  /api/sessions, /api/pools, /api/workspace, /ws      │
+└────────┬─────────────────────────────────────────────┘
+         │  WebSocketInputAdapter
          ▼
-┌─────────────────────────────────────────────────┐
-│ AgentPipeline                                   │
-│  ┌─────────────┐  ┌─────────┐  ┌─────────────┐ │
-│  │ContextManager│→│ReActAgent│→│ ToolManager │ │
-│  │ (Memory/CTX) │  │(Graph)  │  │(Tool Exec)  │ │
-│  └─────────────┘  └────┬────┘  └─────────────┘ │
-│                        │                       │
-│                 ┌──────┴──────┐                │
-│                 │QQBotEmitter │                │
-│                 │(Buffer/Send)│                │
-│                 └──────┬──────┘                │
-│  Hooks / Interceptors / Control / Approval     │
-└────────────────────────┼───────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────┐
-│ SessionPrefixStripAdapter → QQOutputAdapter     │
-│ Send replies to QQ (C2C / group + file upload)  │
-└─────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│              PoolRouter                               │
+│         session → pool dispatch                       │
+└────────┬─────────────────────────────────────────────┘
+         │
+    ┌────┴─────┬─────────┐
+    ▼          ▼         ▼
+┌────────┐ ┌────────┐ ┌────────┐
+│ main   │ │ coding │ │  ...   │  ← AgentPool instances
+│  pool  │ │  pool  │ │  pool  │
+└────┬───┘ └────┬───┘ └────┬───┘
+     │          │          │
+     ▼          ▼          ▼
+  WebBotEmitter → WebSocket → Browser (streaming deltas)
 ```
 
-### Pool Mode (Default)
+### Pool Mode (IM + WebUI)
 
 For multi-agent persistent collaboration. I/O is fully decoupled from agent logic via the Broker.
 
 ```
-QQ User / Group Chat
-    │
-    ▼
-┌─────────────────┐
-│ QQInputAdapter  │
-└────────┬────────┘
+QQ User / Group Chat                Browser (WebUI)
+    │                                      │
+    ▼                                      ▼
+┌─────────────────┐              ┌──────────────────┐
+│ QQInputAdapter  │              │ WebSocketInput   │
+└────────┬────────┘              │    Adapter       │
+         │                       └────────┬─────────┘
+         │                                │
+         ▼                                ▼
+┌──────────────────────────────────────────────────────┐
+│              PoolRouter                              │
+│         session → pool dispatch                      │
+└────────┬─────────────────────────────────────────────┘
          │
          ▼
-┌─────────────────────────────────────────────────┐
-│ BrokerBridgeService                             │
-│ Native adapters ↔ MessageBroker bridge          │
-└────────┬────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│ MessageBroker                                        │
+│  ┌─────────┐  ┌─────────┐  ┌─────────────────────┐  │
+│  │AgentPool│  │Subagent │  │  BrokerOutput       │  │
+│  │(Persistent)│ │Manager  │  │     Adapter         │  │
+│  └─────────┘  └─────────┘  └─────────────────────┘  │
+│                                                      │
+│  ┌───────────────────────────────────────────────┐  │
+│  │ AgentMessageBus (InboxProducer/Consumer)      │  │
+│  └───────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────┘
          │
-         ▼
-┌─────────────────────────────────────────────────┐
-│ MessageBroker                                     │
-│  ┌─────────┐  ┌─────────┐  ┌─────────────────┐  │
-│  │AgentPool│  │Subagent │  │ BrokerOutput    │  │
-│  │(Persistent)│  │Manager  │  │   Adapter       │  │
-│  └─────────┘  └─────────┘  └─────────────────┘  │
-│                                                  │
-│  ┌───────────────────────────────────────────┐  │
-│  │ AgentMessageBus (InboxProducer/Consumer)  │  │
-│  └───────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────────────────────────┐
-│ BrokerBridgeService → QQOutputAdapter           │
-└─────────────────────────────────────────────────┘
+         ├──────────────────────────────┐
+         ▼                              ▼
+┌──────────────────┐          ┌──────────────────┐
+│ QQOutputAdapter  │          │ WebBotEmitter    │
+│ (QQ replies)     │          │ (WebSocket deltas)│
+└──────────────────┘          └──────────────────┘
 ```
-
-### Mode Comparison
-
-| Dimension | Pipeline | Pool |
-|-----------|----------|------|
-| **Use case** | Single-bot long-running | Multi-agent persistent collaboration |
-| **Core components** | `AgentPipeline` | `AgentPool` + `BrokerBridgeService` + `AgentMessageBus` |
-| **Subagent dispatch** | `SubagentManager(local)` direct `asyncio.create_task` | `SubagentManager(queued)` via `AgentMessageBus` |
-| **Message routing** | Internal pipeline handling | Native adapter → Broker → Agent → Broker → Output adapter |
-| **State isolation** | Single pipeline state | Per-agent independent state (persistent/ephemeral/shared) |
-| **Switch** | `python bot_service.py --mode pipeline` | `python bot_service.py --mode pool` (default) |
 
 ## Quick Start
 
-### 1. Install Dependencies
+### Prerequisites
 
-From the repository root, create a virtual environment and install all extras:
+Only **two** runtimes are needed — everything else (including Python 3.12) is managed automatically:
+
+| Runtime | Purpose | How to get it |
+|---------|---------|---------------|
+| [**uv**](https://docs.astral.sh/uv/) | Python package & version manager | The setup scripts below offer one-click install. Manual: `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
+| [**Node.js**](https://nodejs.org/) | WebUI frontend build (optional for backend-only) | The setup scripts offer auto-install (winget/brew/nvm). Manual: [nodejs.org](https://nodejs.org/) |
+
+> No system Python, pip, or npm required. `uv` downloads and manages its own Python 3.12. `node` includes `npm`.
+
+### Option A: One-Click Setup (Recommended)
+
+Run the platform-specific bootstrap script in this directory:
+
+| Platform | Script | How to run |
+|----------|--------|------------|
+| **Windows** | `install.bat` | Double-click, or run in **any terminal** (cmd, PowerShell, Windows Terminal) |
+| **Linux / macOS** | `install.sh` | `chmod +x install.sh && ./install.sh` (works in **any shell**: bash, zsh, fish, etc.) |
+
+Both scripts perform the same automated steps:
+
+| Step | What it does |
+|------|-------------|
+| Prerequisite checks | Detects `uv` and `Node.js` — offers to install missing ones with y/n prompts (winget on Windows, brew/nvm on macOS/Linux) |
+| `uv` installer | Installs via the [official standalone installer](https://docs.astral.sh/uv/) if missing |
+| Virtual environment | Creates `.venv` with `uv venv --python 3.12` (Python downloaded automatically by uv) |
+| Python dependencies | Installs the full framework (`..\..\.[all,dev]`) and bot CLI (`.[webui,dev]`) |
+| Frontend build | Runs `npm install` and `npm run build` to compile the WebUI (skipped if Node.js is unavailable) |
+| Environment file | Copies `.env.example` → `.env` if `.env` doesn't exist |
+| **PATH registration** | Prompts to add `.venv/bin` (or `.venv\Scripts`) to your **system-wide PATH**, so `modexbot` works from any terminal, any shell — no activation needed |
+
+> [!NOTE]
+> Both scripts are **idempotent** — re-running skips already-complete steps. They cache the `pyproject.toml` hash so Python dependencies are only reinstalled when project requirements change. Missing prerequisites trigger interactive y/n prompts.
+
+After the script completes and you restart your terminal:
+
+```bash
+# Works from ANY directory, ANY shell — no activation required
+modexbot restart
+```
+
+Then open `http://localhost:21800/webui/` in your browser.
+
+Common commands (all shell-agnostic after PATH setup): `modexbot stop` \| `modexbot logs -f` \| `modexbot install -f` \| `modexbot config`
+
+> [!TIP]
+> If you skipped the PATH step, activate the venv first:
+> - Windows: `.venv\Scripts\activate`
+> - Linux/macOS: `source .venv/bin/activate`
+
+---
+
+### Option B: Manual Setup
+
+#### 1. Install Dependencies
+
+Install `uv` and `Node.js` if you don't have them already, then:
 
 ```bash
 cd /path/to/ModexAgent
 
-# Create virtual environment
+# Create virtual environment (uv downloads Python 3.12 automatically)
 uv venv --python 3.12
 
 # Windows PowerShell
@@ -143,9 +186,9 @@ uv pip install -e ".[all,dev]"
 ```
 
 > [!IMPORTANT]
-> The `terminal` extra is required for the interactive shell tool (`shell` tool in the bot). On Windows it installs `pywinpty`; on Linux/macOS it installs `pexpect` and `libtmux`.
+> The `terminal` extra is required for the interactive shell tool. On Windows it installs `pywinpty`; on Linux/macOS it installs `pexpect` and `libtmux`.
 
-### 2. Configure Environment Variables
+#### 2. Configure Environment Variables
 
 ```bash
 cd examples/bot_project
@@ -156,7 +199,7 @@ cp .env.example .env
 Key fields in `.env`:
 
 ```env
-# QQ Bot credentials (from https://q.qq.com/)
+# QQ Bot credentials (from https://q.qq.com/) — OPTIONAL for WebUI-only use
 QQ_APP_ID=your_qq_app_id
 QQ_SECRET=your_qq_bot_secret
 
@@ -170,18 +213,14 @@ MCP_BEARER_TOKEN=your_modelscope_bearer_token
 MINIMAX_MCP_API_KEY=your_minimax_api_key
 ```
 
-### 3. Configure Bot Settings
+> [!NOTE]
+> If you only want to use the WebUI (no QQ Bot), you only need `LLM_API_KEY`. QQ credentials are optional.
+
+#### 3. Configure Bot Settings
 
 Edit `config/bot_config.yml` (supports `${ENV_VAR}` interpolation):
 
 ```yaml
-qq:
-  app_id: "${QQ_APP_ID}"
-  secret: "${QQ_SECRET}"
-  sandbox: false
-  allow_from:
-    - "*"
-
 llm:
   api_key: "${LLM_API_KEY}"
   base_url: "${LLM_BASE_URL}"
@@ -194,43 +233,75 @@ mcp:
   config_file: "mcp.json"
 ```
 
-`config/mcp.json` should be configured for your MCP servers.
-
-### 4. Run
+#### 4. Run
 
 **One-click start (recommended):**
 
 ```bash
-# Any directory — runs in background, survives terminal close
-python examples/bot_project/scripts/botctl.py restart
+# Install/rebuild WebUI frontend, then start the bot in background
+modexbot install
+modexbot restart
 ```
 
-The script stops any existing bot, then starts a new one as a detached process.
-It returns immediately — the bot keeps running in the background.
+The `install` command builds the WebUI frontend (`npm run build`). It skips the build if the frontend is already up-to-date — use `-f` to force rebuild. The `restart` command stops any existing bot, starts a new one as a detached process, and returns immediately.
+
+Then open `http://localhost:21800/webui/` in your browser.
 
 To stop:
 
 ```bash
-python examples/bot_project/scripts/botctl.py stop
-```
-
-Use `--help` to see all options:
-
-```bash
-python examples/bot_project/scripts/botctl.py --help
+modexbot stop
 ```
 
 **Manual start (for debugging):**
 
 ```bash
-# Pool mode (default, multi-agent collaboration)
+# Pool mode (multi-agent collaboration + WebUI)
 python bot_service.py
-
-# Pipeline mode (single agent)
-python bot_service.py --mode pipeline
 ```
 
 ## Core Feature Details
+
+### WebUI
+
+The built-in React frontend provides:
+
+- **Real-time streaming** — agent output renders incrementally with typing animation
+- **Multi-conversation sidebar** — switch between conversations; each is fully isolated
+- **Workspace browser** — browse and switch project directories via the UI
+- **Pool selector** — choose which agent pool handles each new conversation
+- **History replay** — past conversations load from the transcript store
+
+### Multi-tier Memory System
+
+```
+┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐
+│ Session   │  │  Archive  │  │ Knowledge │  │UserRetention│ │  Pruned   │  │Experience │
+│ Per-sess. │→ │ Per-user  │→ │ SOUL.md   │  │  Buffer    │  │Per-sess.  │  │EXPERIENCE │
+│ (auto-clean)│ │(compressed)│ │ USER.md   │  │ (prevents  │  │(catalog)  │  │.md files  │
+└───────────┘  └───────────┘  └───────────┘  │over-compact)│ └───────────┘  └───────────┘
+                                             └───────────┘
+```
+
+- **Session**: Recent conversation history for the current session, auto-cleanup on overflow
+- **Archive**: Compressed historical records processed by the Consolidator, shared across sessions for the same user
+- **Knowledge**: Long-term knowledge files (SOUL.md / USER.md / MEMORY.md)
+- **UserRetentionBuffer**: Extra retention buffer preventing over-aggressive governance compaction
+- **Pruned**: Catalog of pruned messages stored per-session for injection reference
+- **Experience**: Self-learned reusable reference knowledge from past conversations (EXPERIENCE.md)
+- **Dream Engine**: Offline periodic consolidation of archives into knowledge
+- **ExperienceReviewAgent**: Reviews conversations and creates/updates EXPERIENCE.md files
+- **Configurable Scopes**: SessionScope / UserScope / GlobalScope — archive and knowledge can be per-user or global
+
+### Self-Learning (Experience System)
+
+The bot learns from every conversation:
+
+1. After a conversation ends, `ExperienceReviewAgent` analyzes the interaction
+2. It extracts reusable patterns, solutions, and knowledge
+3. Creates or updates `EXPERIENCE.md` files in the experience directory
+4. On future conversations, relevant experiences are injected into the system prompt
+5. Experiences are scope-aware — per-user with UserScope, shared globally with GlobalScope
 
 ### Tool Approval
 
@@ -249,25 +320,6 @@ The main agent distributes tasks to subagents via `send_to_agent` (async inbox-b
 The agent connects to a remote server via SSH, runs `git pull`, and restarts its own service — demonstrating the depth of the interactive terminal:
 
 <img src="../../assets/self_deployment.png" alt="Self-deployment via terminal" width="800">
-
-### Four-Layer Memory System
-
-```
-┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-│ Short-term  │ → │   Archive   │ → │  Knowledge  │    │ UserRetention│
-│  Session    │    │   History   │    │  Long-term  │    │   Buffer    │
-│  Per-session│    │  Per-user   │    │ SOUL.md     │    │  Prevents   │
-│             │    │             │    │ USER.md     │    │  over-compaction│
-└─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
-       │
-       ▼  Governance: ToolChainRepair + Microcompact + TokenBudget
-```
-
-- **Short-term**: Recent conversation history for the current session, auto-cleanup on overflow
-- **Archive**: Compressed historical records processed by the Consolidator
-- **Knowledge**: Long-term knowledge files (SOUL.md / USER.md / MEMORY.md)
-- **UserRetentionBuffer**: Extra retention buffer preventing over-aggressive governance compaction
-- **Dream Engine**: Offline periodic consolidation of archives into knowledge
 
 ### Skill System
 
@@ -348,7 +400,42 @@ agents:
 
 ## Adapting to Other IM Platforms
 
-`BotService` is a generic base class, not bound to QQ. You only need to provide the corresponding `InputAdapter`, `OutputAdapter`, and `Emitter` factory:
+`BotService` is a generic base class, not bound to QQ. Adding a new platform (Discord, Feishu, DingTalk, Telegram, etc.) is plug-and-play:
+
+1. Create `bot/adapters/<platform>.py` with three classes:
+   - `<Platform>InputAdapter` — subclass of `InputAdapter`, receives messages and yields `InputMessage`.
+   - `<Platform>OutputAdapter` — subclass of `OutputAdapter`, sends replies back to the platform.
+   - `<Platform>Emitter` — subclass of `StreamingAwareEmitter` or `ContentEmitter`, converts agent events into platform messages.
+
+2. Create `bot/adapters/register_<platform>.py` and decorate a build function with `@register`:
+
+```python
+from bot.adapters.channels import AdapterBuildContext, register
+
+@register("discord", enabled=True)
+def build_discord(ctx: AdapterBuildContext):
+    from bot.adapters.discord import DiscordInputAdapter, DiscordOutputAdapter, DiscordEmitter
+
+    cfg = ctx.raw_config.get("discord", {})
+    if not cfg.get("enabled"):
+        return None  # Skip if not configured
+
+    discord_input = DiscordInputAdapter(...)
+    discord_output = DiscordOutputAdapter(discord_input)
+
+    def emitter_factory(session_id: str):
+        return DiscordEmitter(
+            output_adapter=discord_output,
+            session_id=session_id,
+            config=...,
+        )
+
+    return discord_input, discord_output, emitter_factory
+```
+
+3. Restart the service. `WebUIService` automatically discovers and imports every `bot/adapters/register_*.py` module, so **no changes to `WebUIService` are required**.
+
+The same `ChannelRouterOutputAdapter` used for QQ and WebUI guarantees that slash-command replies from one platform never leak to another.
 
 ```python
 from framework import AgentPipeline
@@ -367,8 +454,6 @@ class DiscordOutputAdapter(OutputAdapter):
     async def send(self, message, session_id):
         # Send Discord messages
         ...
-
-# Wire them into BotService just like the QQ example
 ```
 
 ## Configuration Reference
