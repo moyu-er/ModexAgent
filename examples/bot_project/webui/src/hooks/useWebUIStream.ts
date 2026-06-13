@@ -1,228 +1,72 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type {
-  ModelContentDelta,
-  ModelReasoningDelta,
-  ServerEventUnion,
-  ToolCallEndEvent,
-  ToolCallStartEvent,
-  TurnBlock,
-  UIMessage,
-} from "../types/events";
+import type { ServerEventUnion, UIMessage } from "../types/events";
 import { eventsToMessages } from "../types/events";
 import { WebSocketClient, buildWsUrl } from "../lib/ws-client";
-import { fetchAllMessages } from "../lib/api";
-
-let _nextId = 0;
-function nextId(): string {
-  _nextId += 1;
-  return `msg_${_nextId}`;
-}
+import { fetchMessages } from "../lib/api";
+import { applyServerEvent, nextId, type StreamState } from "./useWebUIStream.reducer";
 
 export interface UseWebUIStreamResult {
   messages: UIMessage[];
   isStreaming: boolean;
+  isPending: boolean;
   connect: () => void;
   disconnect: () => void;
   send: (content: string) => void;
 }
 
 export function useWebUIStream(
-  conversationId: string | null,
+  sessionId: string | null,
+  getPoolForUuid?: (uuid: string) => string | undefined,
+  onSessionReady?: (uuidPrefix: string, fullSessionId: string) => void,
 ): UseWebUIStreamResult {
-  const [messages, setMessages] = useState<UIMessage[]>([]);
-  const [isStreaming, setIsStreaming] = useState(false);
+  const [state, setState] = useState<StreamState>({
+    messages: [],
+    isStreaming: false,
+    sessionMessages: {},
+    sessionStreaming: {},
+  });
   const clientRef = useRef<WebSocketClient | null>(null);
   // Track optimistic message content so we can deduplicate the server echo.
   const optimisticContentRef = useRef<string | null>(null);
 
-  const handleEvent = useCallback((event: ServerEventUnion): void => {
-    switch (event.event) {
-      case "user_message": {
-        if (event.content === optimisticContentRef.current) {
-          optimisticContentRef.current = null;
-          break;
-        }
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: nextId(),
-            role: "user" as const,
-            agent_name: event.agent_name,
-            blocks: [{ kind: "text" as const, text: event.content }],
-            isStreaming: false,
-          },
-        ]);
-        break;
-      }
+  const agentName = sessionId ? sessionId.split(".")[1] || "main" : "main";
 
-      case "model_content_delta": {
-        const delta = event as ModelContentDelta;
-        setMessages((prev) => {
-          // Find the last streaming message for THIS agent (not just any agent).
-          const lastIdx = prev.findLastIndex(
-            (m) =>
-              m.role === "assistant" &&
-              m.agent_name === delta.agent_name &&
-              m.isStreaming,
-          );
-          if (lastIdx >= 0) {
-            const last = prev[lastIdx];
-            const blocks = [...last.blocks];
-            const lastBlock = blocks[blocks.length - 1];
-            if (lastBlock && lastBlock.kind === "text") {
-              blocks[blocks.length - 1] = {
-                ...lastBlock,
-                text: lastBlock.text + delta.text,
-              };
-            } else {
-              blocks.push({ kind: "text", text: delta.text });
-            }
-            return [...prev.slice(0, lastIdx), { ...last, blocks }];
-          }
-          return [
-            ...prev,
-            {
-              id: nextId(),
-              role: "assistant" as const,
-              agent_name: delta.agent_name,
-              blocks: [{ kind: "text" as const, text: delta.text }],
-              isStreaming: true,
-            },
-          ];
-        });
-        setIsStreaming(true);
-        break;
+  const handleEvent = useCallback(
+    (event: ServerEventUnion): void => {
+      if (
+        event.event === "attached" &&
+        sessionId &&
+        event.session_id !== sessionId &&
+        getPoolForUuid?.(sessionId) !== undefined
+      ) {
+        onSessionReady?.(sessionId, event.session_id);
+        return;
       }
+      setState((prev) =>
+        applyServerEvent(prev, event, sessionId, optimisticContentRef),
+      );
+    },
+    [sessionId, getPoolForUuid, onSessionReady],
+  );
 
-      case "model_reasoning_delta": {
-        const delta = event as ModelReasoningDelta;
-        setMessages((prev) => {
-          const lastIdx = prev.findLastIndex(
-            (m) =>
-              m.role === "assistant" &&
-              m.agent_name === delta.agent_name &&
-              m.isStreaming,
-          );
-          if (lastIdx >= 0) {
-            const last = prev[lastIdx];
-            const blocks = [...last.blocks];
-            const lastBlock = blocks[blocks.length - 1];
-            if (lastBlock && lastBlock.kind === "reasoning") {
-              blocks[blocks.length - 1] = {
-                ...lastBlock,
-                text: lastBlock.text + delta.text,
-              };
-            } else {
-              blocks.push({ kind: "reasoning", text: delta.text });
-            }
-            return [...prev.slice(0, lastIdx), { ...last, blocks }];
-          }
-          return [
-            ...prev,
-            {
-              id: nextId(),
-              role: "assistant" as const,
-              agent_name: delta.agent_name,
-              blocks: [{ kind: "reasoning" as const, text: delta.text }],
-              isStreaming: true,
-            },
-          ];
-        });
-        setIsStreaming(true);
-        break;
-      }
+  // Keep a mutable reference to the latest handler so the WebSocket client
+  // (created once on mount) always forwards events to the handler for the
+  // currently selected session.
+  const handleEventRef = useRef(handleEvent);
+  handleEventRef.current = handleEvent;
 
-      case "tool_call_start": {
-        const start = event as ToolCallStartEvent;
-        setMessages((prev) => {
-          const toolBlock: TurnBlock = {
-            kind: "tool",
-            tool: { tool: start.tool, args: start.args },
-          };
-          const lastIdx = prev.findLastIndex(
-            (m) =>
-              m.role === "assistant" &&
-              m.agent_name === start.agent_name &&
-              m.isStreaming,
-          );
-          if (lastIdx >= 0) {
-            const last = prev[lastIdx];
-            return [
-              ...prev.slice(0, lastIdx),
-              { ...last, blocks: [...last.blocks, toolBlock] },
-            ];
-          }
-          return [
-            ...prev,
-            {
-              id: nextId(),
-              role: "assistant" as const,
-              agent_name: start.agent_name,
-              blocks: [toolBlock],
-              isStreaming: true,
-            },
-          ];
-        });
-        break;
-      }
-
-      case "tool_call_end": {
-        const end = event as ToolCallEndEvent;
-        setMessages((prev) => {
-          const lastIdx = prev.findLastIndex(
-            (m) => m.role === "assistant" && m.agent_name === end.agent_name,
-          );
-          if (lastIdx < 0) return prev;
-          const last = prev[lastIdx];
-          const blocks = last.blocks.map((b) => {
-            if (
-              b.kind === "tool" &&
-              b.tool.tool === end.tool &&
-              b.tool.result === undefined
-            ) {
-              return {
-                ...b,
-                tool: { ...b.tool, result: end.result_summary },
-              };
-            }
-            return b;
-          });
-          return [...prev.slice(0, lastIdx), { ...last, blocks }];
-        });
-        break;
-      }
-
-      case "turn_end": {
-        setMessages((prev) => {
-          const lastIdx = prev.findLastIndex(
-            (m) => m.role === "assistant" && m.isStreaming,
-          );
-          if (lastIdx >= 0) {
-            const last = prev[lastIdx];
-            return [
-              ...prev.slice(0, lastIdx),
-              { ...last, isStreaming: false },
-            ];
-          }
-          return prev;
-        });
-        setIsStreaming(false);
-        break;
-      }
-
-      default:
-        break;
-    }
+  const wsHandleEvent = useCallback((event: ServerEventUnion): void => {
+    handleEventRef.current(event);
   }, []);
 
   const connect = useCallback((): void => {
     if (clientRef.current) {
       clientRef.current.disconnect();
     }
-    const client = new WebSocketClient(buildWsUrl(), handleEvent);
+    const client = new WebSocketClient(buildWsUrl(), wsHandleEvent);
     clientRef.current = client;
     client.connect();
-  }, [handleEvent]);
+  }, [wsHandleEvent]);
 
   const disconnect = useCallback((): void => {
     if (clientRef.current) {
@@ -238,50 +82,110 @@ export function useWebUIStream(
     };
   }, [disconnect]);
 
-  // Attach + load history when conversationId changes
+  // Attach + load history when sessionId changes
   useEffect(() => {
-    if (!conversationId) {
+    if (!sessionId) {
+      setState((prev) => ({
+        messages: [],
+        isStreaming: false,
+        sessionMessages: prev.sessionMessages,
+        sessionStreaming: prev.sessionStreaming,
+      }));
       return;
     }
-    // Load historical transcript from REST API (all agents merged).
+    const pool = getPoolForUuid?.(sessionId);
+    if (pool !== undefined) {
+      // Pending session: attach with uuid_prefix + pool, skip history load
+      setState((prev) => ({
+        messages: [],
+        isStreaming: false,
+        sessionMessages: prev.sessionMessages,
+        sessionStreaming: prev.sessionStreaming,
+      }));
+      if (clientRef.current?.connected) {
+        clientRef.current.attach(sessionId, pool);
+      }
+      return;
+    }
+    // Existing session: use buffered messages if available, otherwise fetch
     let cancelled = false;
-    fetchAllMessages(conversationId)
-      .then((events) => {
-        if (cancelled) return;
-        const history = eventsToMessages(events);
-        setMessages(history);
-        setIsStreaming(false);
-      })
-      .catch(() => {
-        // API may not be available — start fresh.
-      });
+    let hasBuffer = false;
+    setState((prev) => {
+      const buf = prev.sessionMessages[sessionId] || [];
+      hasBuffer = buf.length > 0;
+      if (hasBuffer) {
+        return {
+          messages: buf,
+          isStreaming: prev.sessionStreaming[sessionId] || false,
+          sessionMessages: prev.sessionMessages,
+          sessionStreaming: prev.sessionStreaming,
+        };
+      }
+      return {
+        messages: [],
+        isStreaming: false,
+        sessionMessages: prev.sessionMessages,
+        sessionStreaming: prev.sessionStreaming,
+      };
+    });
+
+    // Skip API fetch when we already have live buffered messages
+    if (!hasBuffer) {
+      fetchMessages(sessionId)
+        .then((events) => {
+          if (cancelled) return;
+          const history = eventsToMessages(events);
+          setState((prev) => ({
+            ...prev,
+            messages: prev.sessionMessages[sessionId]?.length
+              ? prev.messages  // keep buffered messages if new ones arrived
+              : history,
+            isStreaming: prev.sessionStreaming[sessionId] || false,
+          }));
+        })
+        .catch((err) => {
+          console.error("Failed to fetch messages for", sessionId, err);
+        });
+    }
 
     if (clientRef.current?.connected) {
-      clientRef.current.attach(conversationId);
+      clientRef.current.attach(sessionId);
     }
 
     return (): void => {
       cancelled = true;
     };
-  }, [conversationId]);
+  }, [sessionId, getPoolForUuid]);
+
+  const isPending = sessionId
+    ? getPoolForUuid?.(sessionId) !== undefined
+    : false;
 
   const send = useCallback(
     (content: string): void => {
-      if (!conversationId) {
-        console.warn("Cannot send message: no conversation selected");
+      if (!sessionId) {
+        console.warn("Cannot send message: no session selected");
+        return;
+      }
+      if (getPoolForUuid?.(sessionId) !== undefined) {
+        console.warn("Cannot send message: session not yet ready");
         return;
       }
       optimisticContentRef.current = content;
-      setMessages((prev) => [
+      setState((prev) => ({
         ...prev,
-        {
-          id: nextId(),
-          role: "user" as const,
-          agent_name: "main",
-          blocks: [{ kind: "text" as const, text: content }],
-          isStreaming: false,
-        },
-      ]);
+        messages: [
+          ...prev.messages,
+          {
+            id: nextId(),
+            role: "user" as const,
+            agent_name: agentName,
+            blocks: [{ kind: "text" as const, text: content }],
+            isStreaming: false,
+            timestamp: Date.now(),
+          },
+        ],
+      }));
 
       const client = clientRef.current;
       if (!client || !client.connected) {
@@ -289,16 +193,17 @@ export function useWebUIStream(
         return;
       }
       client.send("send_message", {
-        conversation_id: conversationId,
+        session_id: sessionId,
         content,
       });
     },
-    [conversationId],
+    [sessionId, agentName, getPoolForUuid],
   );
 
   return {
-    messages,
-    isStreaming,
+    messages: state.messages,
+    isStreaming: state.isStreaming,
+    isPending,
     connect,
     disconnect,
     send,
