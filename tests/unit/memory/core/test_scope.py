@@ -80,8 +80,13 @@ class TestChatScope:
 class TestGlobalScope:
     def test_always_global(self):
         scope = GlobalScope()
-        assert scope.get_scope_key(MemoryContext()) == "global"
-        assert scope.get_scope_key(MemoryContext(session_id="s1", user_id="u1")) == "global"
+        # Returns empty string for clean path (no subdirectory)
+        assert scope.get_scope_key(MemoryContext()) == ""
+        assert scope.get_scope_key(MemoryContext(session_id="s1", user_id="u1")) == ""
+
+    def test_global_scope_name_unchanged(self):
+        scope = GlobalScope()
+        assert scope.name == "global"
 
 
 class TestCompositeScope:

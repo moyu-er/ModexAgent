@@ -156,7 +156,8 @@ class TestQQBotServiceIntegration:
             from qq_adapters import QQBotEmitter
 
             from framework.agents.react import ReActEvent
-            from framework.core.emitter import AgentResult, ToolCall
+            from framework.core.emitter import AgentResult
+            from framework.core.types import ToolCall
 
             # Create mock adapter
             mock_adapter = MagicMock()

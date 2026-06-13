@@ -9,7 +9,7 @@ from framework.interceptor.abc import (
     ToolCallContext,
     TurnContext,
 )
-from framework.core.emitter import ToolCall
+from framework.core.types import ToolCall
 from framework.runtime.enums import AgentKind, TurnPhase
 from framework.runtime.models import TurnIdentity, TurnStateBase
 

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
 from framework.control.exceptions import PolicyViolation
@@ -25,7 +23,7 @@ from framework.memory.history import ListMessageHistory
 # ---------------------------------------------------------------------------
 
 
-def _make_minimal_context() -> AgentContext[Any]:
+def _make_minimal_context() -> AgentContext:
     return AgentContext(
         system_prompt="test",
         history=ListMessageHistory(),
@@ -39,39 +37,39 @@ def _make_minimal_context() -> AgentContext[Any]:
 # ---------------------------------------------------------------------------
 
 
-class _StubFinallyTurnHook(FinallyTurnHook[Any]):
+class _StubFinallyTurnHook(FinallyTurnHook):
     """Concrete FinallyTurnHook that records calls."""
 
     def __init__(self) -> None:
-        self.calls: list[tuple[AgentContext[Any], AgentResult | None]] = []
+        self.calls: list[tuple[AgentContext, AgentResult | None]] = []
 
     @property
     def name(self) -> str:
         return "stub_finally_turn"
 
-    async def finally_turn(self, ctx: AgentContext[Any], result: AgentResult | None) -> None:
+    async def finally_turn(self, ctx: AgentContext, result: AgentResult | None) -> None:
         self.calls.append((ctx, result))
 
 
-class _FailingFinallyTurnHook(FinallyTurnHook[Any]):
+class _FailingFinallyTurnHook(FinallyTurnHook):
     """Hook that always raises."""
 
     @property
     def name(self) -> str:
         return "failing_finally_turn"
 
-    async def finally_turn(self, ctx: AgentContext[Any], result: AgentResult | None) -> None:
+    async def finally_turn(self, ctx: AgentContext, result: AgentResult | None) -> None:
         raise RuntimeError("boom")
 
 
-class _UnrelatedHook(FinallyTurnHook[Any]):
+class _UnrelatedHook(FinallyTurnHook):
     """A FinallyTurnHook that we won't register — used to verify isinstance filtering works."""
 
     @property
     def name(self) -> str:
         return "unrelated"
 
-    async def finally_turn(self, ctx: AgentContext[Any], result: AgentResult | None) -> None:
+    async def finally_turn(self, ctx: AgentContext, result: AgentResult | None) -> None:
         raise AssertionError("Should not be called")
 
 

@@ -25,7 +25,8 @@ from framework.core.agent import AgentContext
 from framework.core.graph.interrupt import GraphInterrupt
 
 from framework.core.tool_manager import InMemoryToolManager
-from framework.core.emitter import ToolCall, ToolResult
+from framework.core.types import ToolCall
+from framework.core.tool_manager import ToolResult
 from framework.core.types import LLMResponse
 from framework.core.constants import FinishReason
 from framework.memory.history import ListMessageHistory

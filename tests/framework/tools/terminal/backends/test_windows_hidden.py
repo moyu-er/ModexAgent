@@ -90,7 +90,7 @@ class TestWindowsHiddenPtyLifecycle:
 
     @pytest.mark.asyncio
     async def test_multiple_commands_stay_alive(self, backend: WindowsHiddenPtyBackend) -> None:
-        b = _backend
+        b = backend
         for i in range(3):
             await b.write(f"echo seq-{i}\n")
             output = ""
@@ -106,7 +106,7 @@ class TestWindowsHiddenPtyLifecycle:
 
     @pytest.mark.asyncio
     async def test_read_pending_populates_buffer(self, backend: WindowsHiddenPtyBackend) -> None:
-        b = _backend
+        b = backend
         await b.write("echo buf-test\n")
         for _ in range(40):
             read = await b.read_pending(timeout=0.3, max_size=4096)
@@ -119,7 +119,7 @@ class TestWindowsHiddenPtyLifecycle:
 
     @pytest.mark.asyncio
     async def test_current_segment_after_echo(self, backend: WindowsHiddenPtyBackend) -> None:
-        b = _backend
+        b = backend
         await b.write("echo seg-test\n")
         for _ in range(40):
             chunk = await b.read(timeout=0.3, max_size=4096)

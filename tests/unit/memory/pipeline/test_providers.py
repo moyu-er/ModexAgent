@@ -45,16 +45,16 @@ async def test_base_prompt_empty_string():
 async def test_runtime_contains_date_and_platform():
     provider = RuntimeProvider()
     result = await provider.get_or_refresh()
-    assert "Current Date:" in result
+    assert "Current Time:" in result
     assert "Platform:" in result
 
 
 @pytest.mark.asyncio
-async def test_runtime_version_changes_daily():
+async def test_runtime_version_changes_hourly():
     provider = RuntimeProvider()
     await provider.get_or_refresh()
     assert provider.last_version is not None
-    assert len(provider.last_version) == 10  # YYYY-MM-DD
+    assert len(provider.last_version) == 13  # YYYY-MM-DD-HH
 
 
 # -- SkillProvider --
