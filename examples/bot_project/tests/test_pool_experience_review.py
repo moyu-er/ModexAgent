@@ -30,11 +30,11 @@ class TestPoolExperienceReviewWiring:
         from bot.service.pool_builder import create_pool
 
         with (
-            patch("bot.service.pool_builder.create_llm_provider") as mock_llm,
-            patch("bot.service.pool_builder.create_memory") as mock_mem,
-            patch("bot.service.pool_builder._build_pool_tool_manager") as mock_tools,
-            patch("bot.service.pool_builder._build_pool_skill_manager") as mock_skills,
-            patch("bot.service.pool_builder.AgentPool") as mock_pool_cls,
+            patch("bot.service.pool_builder._build_llm_provider") as mock_llm,
+            patch("bot.service.pool_builder._build_memory") as mock_mem,
+            patch("bot.service.pool_builder._build_tools") as mock_tools,
+            patch("bot.service.pool_builder._build_skill_manager") as mock_skills,
+            patch("bot.service.pool_builder._build_agent_pool") as mock_build_pool,
         ):
             mock_llm.return_value = MagicMock(spec=LLMProvider)
 
@@ -54,9 +54,8 @@ class TestPoolExperienceReviewWiring:
             mock_main_instance.pipeline = mock_pipeline
             mock_pool = AsyncMock()
             mock_pool._agents = {"testagent": mock_main_instance}
-            # AsyncMock attributes are coroutines by default; set to plain list
             mock_pool.list_profiles = MagicMock(return_value=[])
-            mock_pool_cls.return_value = mock_pool
+            mock_build_pool.return_value = mock_pool
 
             # Build agent config mock with correct .name attribute
             agent_mock = MagicMock()
@@ -84,7 +83,6 @@ class TestPoolExperienceReviewWiring:
                     data_dir=tmp_path / "data",
                     broker=MagicMock(),
                     inbox_server=MagicMock(),
-                    inbox_producer=MagicMock(),
                     inbox_consumer=MagicMock(),
                     agent_bus=MagicMock(),
                     output_adapter=MagicMock(),
@@ -121,11 +119,11 @@ class TestPoolExperienceReviewWiring:
         from bot.service.pool_builder import create_pool
 
         with (
-            patch("bot.service.pool_builder.create_llm_provider") as mock_llm,
-            patch("bot.service.pool_builder.create_memory") as mock_mem,
-            patch("bot.service.pool_builder._build_pool_tool_manager") as mock_tools,
-            patch("bot.service.pool_builder._build_pool_skill_manager") as mock_skills,
-            patch("bot.service.pool_builder.AgentPool") as mock_pool_cls,
+            patch("bot.service.pool_builder._build_llm_provider") as mock_llm,
+            patch("bot.service.pool_builder._build_memory") as mock_mem,
+            patch("bot.service.pool_builder._build_tools") as mock_tools,
+            patch("bot.service.pool_builder._build_skill_manager") as mock_skills,
+            patch("bot.service.pool_builder._build_agent_pool") as mock_build_pool,
         ):
             mock_llm.return_value = MagicMock(spec=LLMProvider)
             mock_mem_sys = AsyncMock()
@@ -144,7 +142,7 @@ class TestPoolExperienceReviewWiring:
             mock_pool = AsyncMock()
             mock_pool._agents = {"testagent": mock_main_instance}
             mock_pool.list_profiles = MagicMock(return_value=[])
-            mock_pool_cls.return_value = mock_pool
+            mock_build_pool.return_value = mock_pool
 
             agent_mock = MagicMock()
             agent_mock.name = "testagent"
@@ -166,7 +164,6 @@ class TestPoolExperienceReviewWiring:
                     data_dir=tmp_path / "data",
                     broker=MagicMock(),
                     inbox_server=MagicMock(),
-                    inbox_producer=MagicMock(),
                     inbox_consumer=MagicMock(),
                     agent_bus=MagicMock(),
                     output_adapter=MagicMock(),
