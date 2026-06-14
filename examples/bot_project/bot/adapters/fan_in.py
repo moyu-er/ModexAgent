@@ -5,19 +5,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
-from typing import TYPE_CHECKING
 
 from framework.commands.processor import CommandProcessor
 from framework.control.channel import InMemoryControlChannel
 from framework.core.types import InputMessage
 from framework.pipeline.adapters import InputAdapter, OutputAdapter
 
-if TYPE_CHECKING:
-    from bot.webui.transcript_store import TranscriptStore
-
 logger = logging.getLogger(__name__)
-
-_DEFAULT_AGENT_NAME: str = "main"
 
 
 class FanInInputAdapter(InputAdapter):
@@ -31,26 +25,15 @@ class FanInInputAdapter(InputAdapter):
     propagates to all source adapters so interception works regardless
     of which source the server calls it on.
 
-    When a ``transcript_store`` is provided, every ``InputMessage`` from
-    a non-WebSocket source (QQ, Discord, Slack, etc.) is recorded as a
-    ``UserMessageEvent`` so that the WebUI conversation history includes
-    user questions — not just assistant responses.  WebSocket messages
-    are excluded because ``WebUIServer._ws_send_message`` already writes
-    ``UserMessageEvent`` directly.
+    User-message persistence is handled by the input pipeline
+    (``PersistUserMessageStage``), not by this adapter.
     """
 
-    def __init__(
-        self,
-        *,
-        transcript_store: TranscriptStore | None = None,
-        default_agent_name: str = _DEFAULT_AGENT_NAME,
-    ) -> None:
+    def __init__(self) -> None:
         super().__init__()
         self._merged_queue: asyncio.Queue[InputMessage] = asyncio.Queue()
         self._sources: list[InputAdapter] = []
         self._pump_tasks: list[asyncio.Task[None]] = []
-        self._transcript_store: TranscriptStore | None = transcript_store
-        self._default_agent_name: str = default_agent_name
 
     # ------------------------------------------------------------------
     # Source management
@@ -143,54 +126,11 @@ class FanInInputAdapter(InputAdapter):
     # ------------------------------------------------------------------
 
     async def _pump_source(self, src: InputAdapter) -> None:
-        """Background task: forward all messages from *src* to the merged queue.
-
-        If ``transcript_store`` is configured and the source is NOT the
-        WebSocket adapter, each ``InputMessage`` is also persisted as a
-        ``UserMessageEvent`` so the WebUI history includes user questions.
-        """
+        """Background task: forward all messages from *src* to the merged queue."""
         try:
             async for msg in src.receive():
-                if self._transcript_store is not None and src.name != "websocket":
-                    self._record_user_message(msg)
                 await self._merged_queue.put(msg)
         except asyncio.CancelledError:
             pass
         except Exception:
             logger.exception("FanInInputAdapter: pump for %s crashed", src.name)
-
-    def _record_user_message(self, msg: InputMessage) -> None:
-        """Persist *msg* as a ``UserMessageEvent`` to the transcript store.
-
-        Extracts ``conversation_id`` from ``metadata`` (QQ adapter) or
-        falls back to ``session_id`` (generic adapters), then derives the
-        full receiver-owned session id ``{conv}.{agent}``.
-        """
-        from bot.webui.events import UserMessageEvent, _session_id
-
-        content = (msg.content or "").strip()
-        if not content:
-            return
-
-        conv_id: str = (
-            msg.metadata.get("conversation_id", msg.session_id)
-            if msg.metadata
-            else msg.session_id
-        )
-        agent_name: str = self._default_agent_name
-        session_id: str = _session_id(conv_id, agent_name)
-
-        event = UserMessageEvent(
-            session_id=session_id,
-            agent_name=agent_name,
-            content=content,
-        )
-        try:
-            self._transcript_store.append(session_id, event)
-        except Exception:
-            logger.warning(
-                "FanInInputAdapter: failed to record UserMessageEvent "
-                "for session=%s",
-                session_id,
-                exc_info=True,
-            )

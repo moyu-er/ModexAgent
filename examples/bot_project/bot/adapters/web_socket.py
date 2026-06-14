@@ -50,6 +50,14 @@ class WebSocketInputAdapter(InputAdapter):
     async def stop(self) -> None:
         pass
 
+    def configure_input_pipeline(
+        self,
+        pipeline,
+        ctx,
+        output,
+    ) -> None:
+        """WebSocket pipeline is held by the server — no-op here."""
+
     async def receive(self) -> AsyncIterator[InputMessage]:
         while True:
             msg = await self._message_queue.get()
@@ -81,6 +89,15 @@ class WebSocketInputAdapter(InputAdapter):
     def enqueue_user_message(self, session_id: str, content: str) -> None:
         """Enqueue a user message to be consumed by receive()."""
         msg = InputMessage(content=content, session_id=session_id, channel=WEBSOCKET_CHANNEL)
+        self._message_queue.put_nowait(msg)
+
+    def put_input_message(self, msg: InputMessage) -> None:
+        """Push a fully-built InputMessage onto the receive queue.
+
+        Used by S8 EnqueueStage via ctx.enqueue_message so the stage never
+        touches a WS-specific method — it just delivers the message and the
+        adapter owns its own queue.
+        """
         self._message_queue.put_nowait(msg)
 
 

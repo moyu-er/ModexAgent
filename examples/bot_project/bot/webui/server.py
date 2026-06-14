@@ -72,8 +72,7 @@ _WEBUI_STATIC_PREFIX: str = "/webui/"
 _DEFAULT_STATIC_DIST: Path = Path(__file__).resolve().parent.parent / "web" / "dist"
 
 
-# Re-export for backward-compat with tests (canonical impl in workspace_store.py)
-from bot.service.workspace_store import workspace_sanitized as _workspace_sanitized  # noqa: F401
+# Re-export for backward-compat with tests
 from bot.webui.events import _session_id as _make_session_id  # noqa: F401
 
 
@@ -174,6 +173,9 @@ class WebUIServer:
         self._agent_resolver: Callable[[str], str] | None = None
         self._agent_pool_map: dict[str, str] = {}
         self._relation_store: SessionRelationStore | None = None
+        self._recent_workspaces = None  # set by WebUIService
+        self._input_pipeline = None  # injected by WebUIService
+        self._input_ctx = None
 
         self.app = web.Application()
         self._setup_routes()
@@ -238,6 +240,19 @@ class WebUIServer:
         """Inject the session relation store for API enrichment."""
         self._relation_store = store
 
+    def set_recent_workspaces(self, recent) -> None:
+        """Inject the RecentWorkspaces store for the recent-workspaces API."""
+        self._recent_workspaces = recent
+        recent.load()
+
+    def set_input_pipeline(self, pipeline) -> None:
+        """Inject the WebUI user-input pipeline."""
+        self._input_pipeline = pipeline
+
+    def set_input_context(self, ctx) -> None:
+        """Inject the shared input-pipeline context."""
+        self._input_ctx = ctx
+
     # ------------------------------------------------------------------
     # Route registration
     # ------------------------------------------------------------------
@@ -248,6 +263,7 @@ class WebUIServer:
         self.app.router.add_get("/api/workspace", self._handle_workspace)
         self.app.router.add_get("/api/workspace/browse", self._handle_workspace_browse)
         self.app.router.add_post("/api/workspace/cd", self._handle_workspace_cd)
+        self.app.router.add_get("/api/workspace/recent", self._handle_workspace_recent)
         self.app.router.add_get(_API_SESSIONS_PATH, self._handle_sessions)
         self.app.router.add_post(_API_SESSIONS_PATH, self._handle_create_session)
         self.app.router.add_get(
@@ -362,10 +378,20 @@ class WebUIServer:
         if not target:
             target = str(self._workspace_ctx.home)
         result = await self._workspace_ctx.cd(target)
+        if result.success and self._recent_workspaces is not None:
+            self._recent_workspaces.add(str(result.current_path))
         return web.json_response({
             "success": result.success,
             "cwd": str(result.current_path),
             "notice": result.notice,
+        })
+
+    async def _handle_workspace_recent(self, request: web.Request) -> web.Response:
+        """GET /api/workspace/recent -- return recently visited workspace paths."""
+        if self._recent_workspaces is None:
+            return web.json_response({"recent": []})
+        return web.json_response({
+            "recent": self._recent_workspaces.list_recent(),
         })
 
     async def _handle_create_session(self, request: web.Request) -> web.Response:
@@ -408,11 +434,14 @@ class WebUIServer:
         seen: set[str] = set()
 
         # Determine which pools to query.
+        # Pool discovery comes from the CONFIGURED pool map, not from
+        # scanning the workspace directory.  Pools are defined at startup
+        # and don't change across workspace switches — only the sessions
+        # within each pool differ.  _workspace_index routes reads/writes
+        # to the correct workspace directory via its rebased _base.
         pool_filter: str | None = request.query.get("pool")
         if pool_filter:
             pools = [pool_filter]
-        elif self._workspace_index is not None:
-            pools = self._workspace_index.pools_in(current_ws)
         else:
             pools = sorted(set(self._agent_pool_map.values())) if self._agent_pool_map else [_DEFAULT_AGENT_NAME]
 
@@ -728,56 +757,54 @@ class WebUIServer:
             return
         uuid_prefix, explicit_agent = parsed
 
-        # Tag this session as WebUI-originated for channel filtering BEFORE
-        # any control command interception or output.
-        set_conv_channel(uuid_prefix, "websocket")
+        # Pool resolution is OWNED by S5 (ResolvePoolStage) — it also persists
+        # the UI choice into PoolSessionStore so PoolRouter routes correctly.
+        # The entry only hands the UI-selected pool (derived from the
+        # session_id's agent segment) as explicit_pool; no inline resolution,
+        # no _pool_switch_callback call here. (attach still uses the callback.)
+        explicit_pool = self._agent_pool_map.get(explicit_agent) if explicit_agent else None
 
-        # Intercept control slash commands (/cd, /exit, /stop, etc.) before
-        # enqueuing, so they render in the session the user is viewing.
-        intercepted = await self._input._try_intercept_control(content, session_id)
-        if intercepted:
-            return
+        # Run the WebUI sub-pipeline (S4..S8).
+        from framework.input_pipeline.envelope import UserInputEnvelope
 
-        # ── Pool routing ──────────────────────────────────────────
-        if explicit_agent and self._agent_pool_map:
-            pool_name = self._agent_pool_map.get(explicit_agent)
-            if pool_name and self._pool_switch_callback is not None:
-                self._pool_switch_callback(uuid_prefix, pool_name)
-        else:
-            current_pool = (
-                self._pool_resolver(uuid_prefix) if self._pool_resolver is not None else None
-            )
-            pool_name = current_pool or _DEFAULT_AGENT_NAME
-            if self._pool_switch_callback is not None:
-                self._pool_switch_callback(uuid_prefix, pool_name)
-
-        # Map pool_name -> main agent name (from pool config).
-        agent_name = (
-            self._agent_resolver(pool_name)
-            if self._agent_resolver is not None
-            else pool_name
-        )
-
-        full_sid = _session_id(uuid_prefix, agent_name)
-        event = UserMessageEvent(
-            session_id=full_sid,
-            agent_name=agent_name,
+        envelope = UserInputEnvelope(
+            conversation_id=uuid_prefix,
             content=content,
+            channel="websocket",
+            explicit_pool=explicit_pool,
         )
-        # Persist the user message keyed by the FULL session id.  When the
-        # store is a WorkspaceScopedTranscriptStore it attributes the session
-        # to the active workspace on append.
-        self._store.append(full_sid, event)
+        result = await self._input_pipeline.handle(envelope, self._input_ctx)
 
-        # Echo the user message back to the WS client so the frontend
-        # can display it immediately.
-        await ws.send_json(
-            DeltaEnvelope.from_event(event, pool=pool_name).to_dict()
-        )
+        if result.should_continue():
+            # Echo the user message back to the WS client (WebUI-specific).
+            final = result.envelope()
+            full_sid = final.metadata["full_session_id"]
+            agent_name = final.metadata["resolved_agent"]
+            pool_name = final.metadata["resolved_pool"]
+            from bot.webui.events import UserMessageEvent
 
-        # Enqueue with just uuid_prefix -- PoolRouter adds agent_name
-        # via DefaultSessionIdStrategy, matching our delta queue key.
-        self._input.enqueue_user_message(uuid_prefix, content)
+            event = UserMessageEvent(
+                session_id=full_sid, agent_name=agent_name, content=content
+            )
+            await ws.send_json(
+                DeltaEnvelope.from_event(event, pool=pool_name).to_dict()
+            )
+        else:
+            # Terminate: pipeline consumed the message (e.g. /cd /pwd /exit
+            # in WebUI chat which has no S2/S3, or unknown /skill).
+            # Surface the reason to the client as an error envelope.
+            response = getattr(result, "response", None)
+            message = ""
+            if isinstance(response, dict):
+                message = str(response.get("message", ""))
+            pool = explicit_pool or _DEFAULT_AGENT_NAME
+            await ws.send_json(DeltaEnvelope(
+                session_id=session_id,
+                agent_name=explicit_agent or _DEFAULT_AGENT_NAME,
+                event_type=WebUIEventType.ERROR.value,
+                pool=pool,
+                payload={"message": message or f"unsupported command in WebUI chat"},
+            ).to_dict())
 
     async def _ws_delete_conversation(
         self,
