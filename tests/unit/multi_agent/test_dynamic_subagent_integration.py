@@ -676,57 +676,57 @@ class TestAgentMessageXmlWrapping:
 class TestSessionRoutingSameAgentDifferentInvocation:
     """Same agent name + different invocation_ids → different sessions.
 
-    Session isolation is driven by invocation_id via DefaultSessionIdStrategy.
-    Same invocation_id = same session (memory inheritance).
-    Different invocation_id = different session (fresh context).
+    Session isolation is driven by invocation_id via SessionIdFactory.
+    Same external_id = same session (memory inheritance).
+    Different external_id = different session (fresh context).
     """
 
     def test_same_agent_different_invocation_produces_different_sessions(self):
-        from framework.multi_agent.session_id import DefaultSessionIdStrategy
+        from framework.core.session_id import SessionIdFactory
 
-        strategy = DefaultSessionIdStrategy()
+        factory = SessionIdFactory()
 
-        sid_a = strategy.format(
-            conversation_id="conv-1", agent_name="query-12306", invocation_id="abc123",
+        sid_a = factory.create(
+            agent_name="query-12306", external_id="abc123",
         )
-        sid_b = strategy.format(
-            conversation_id="conv-1", agent_name="query-12306", invocation_id="def456",
+        sid_b = factory.create(
+            agent_name="query-12306", external_id="def456",
         )
 
         # Different invocation_ids must produce different session IDs
-        assert sid_a != sid_b
-        assert sid_a == "conv-1.query-12306.abc123"
-        assert sid_b == "conv-1.query-12306.def456"
+        assert str(sid_a) != str(sid_b)
+        assert sid_a.agent_name == "query-12306"
+        assert sid_b.agent_name == "query-12306"
 
     def test_same_invocation_produces_same_session(self):
-        from framework.multi_agent.session_id import DefaultSessionIdStrategy
+        from framework.core.session_id import SessionIdFactory
 
-        strategy = DefaultSessionIdStrategy()
+        factory = SessionIdFactory()
 
-        sid_1 = strategy.format(
-            conversation_id="conv-1", agent_name="query-12306", invocation_id="abc123",
+        sid_1 = factory.create(
+            agent_name="query-12306", external_id="abc123",
         )
-        sid_2 = strategy.format(
-            conversation_id="conv-1", agent_name="query-12306", invocation_id="abc123",
+        sid_2 = factory.create(
+            agent_name="query-12306", external_id="abc123",
         )
 
-        # Same invocation_id → same session (memory inheritance / continuation)
-        assert sid_1 == sid_2
+        # Same external_id → same snowflake → same session (memory inheritance)
+        assert str(sid_1) == str(sid_2)
 
     def test_different_agent_same_invocation_different_sessions(self):
-        from framework.multi_agent.session_id import DefaultSessionIdStrategy
+        from framework.core.session_id import SessionIdFactory
 
-        strategy = DefaultSessionIdStrategy()
+        factory = SessionIdFactory()
 
-        sid_a = strategy.format(
-            conversation_id="conv-1", agent_name="query-12306", invocation_id="abc123",
+        sid_a = factory.create(
+            agent_name="query-12306", external_id="abc123",
         )
-        sid_b = strategy.format(
-            conversation_id="conv-1", agent_name="office-expert", invocation_id="abc123",
+        sid_b = factory.create(
+            agent_name="office-expert", external_id="abc123",
         )
 
-        # Different agent names → different sessions even with same invocation_id
-        assert sid_a != sid_b
+        # Different agent names → different sessions even with same external_id
+        assert str(sid_a) != str(sid_b)
 
     async def test_second_empty_invocation_id_does_not_recreate_agent(self):
         """Second invocation_id="" on same template must NOT call
@@ -882,31 +882,33 @@ class TestOutputMdInjection:
         """OUTPUT.md path must contain session-id components and end with OUTPUT.md."""
         from pathlib import Path as _Path
 
-        from framework.multi_agent.session_id import DefaultSessionIdStrategy
+        from framework.core.session_id import SessionIdFactory
 
-        strategy = DefaultSessionIdStrategy()
-        session_id = strategy.format(
-            conversation_id="conv-1", agent_name="reviewer", invocation_id="abc123",
+        factory = SessionIdFactory()
+        session = factory.create(
+            agent_name="reviewer", external_id="abc123",
         )
+        session_id = str(session)
         runtime_dir = _Path(tempfile.gettempdir()) / "runtime_state" / "coding"
         output_path = runtime_dir / "output" / session_id / "OUTPUT.md"
 
         # Must be absolute (runtime_dir is absolute → output_path is absolute)
         assert output_path.is_absolute(), "OUTPUT.md path must be absolute"
         assert str(output_path).endswith("OUTPUT.md")
-        assert "conv-1.reviewer.abc123" in str(output_path)
+        assert ".reviewer" in str(output_path)
         assert "output" in str(output_path)
 
     def test_scoped_write_dir_covers_output_md(self):
         """READ_ONLY scoped_write_dir must be the parent of OUTPUT.md's directory."""
         from pathlib import Path as _Path
 
-        from framework.multi_agent.session_id import DefaultSessionIdStrategy
+        from framework.core.session_id import SessionIdFactory
 
-        strategy = DefaultSessionIdStrategy()
-        session_id = strategy.format(
-            conversation_id="conv-1", agent_name="scout", invocation_id="xyz789",
+        factory = SessionIdFactory()
+        session = factory.create(
+            agent_name="scout", external_id="xyz789",
         )
+        session_id = str(session)
         runtime_dir = _Path(tempfile.gettempdir()) / "runtime_state" / "coding"
         scoped_write_dir = runtime_dir / "output"
         output_path = runtime_dir / "output" / session_id / "OUTPUT.md"

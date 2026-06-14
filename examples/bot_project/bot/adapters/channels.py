@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Callable
 
 from framework.adapters.platform import StreamingMode
 from framework.core.types import OutputMessage
-from framework.multi_agent.session_id import DefaultSessionIdStrategy
+from framework.core.session_id import SessionId
 from framework.pipeline.adapters import OutputAdapter
 
 if TYPE_CHECKING:
@@ -123,15 +123,13 @@ def register(name: str, *, enabled: bool = True):
 def _session_to_conversation_id(session_id: str) -> str:
     """Extract the conversation_id portion from a session identifier.
 
-    Handles both canonical ``{conv}.{agent}`` IDs and raw conversation IDs.
+    Handles both canonical ``{snowflake}.{agent}`` IDs and raw conversation IDs.
     """
     try:
-        parts = DefaultSessionIdStrategy().parse(session_id)
+        session = SessionId.from_str(session_id)
     except Exception:
         return session_id
-    if parts.agent_name is not None:
-        return parts.conversation_id
-    return session_id
+    return session.snowflake
 
 
 class ChannelRouterOutputAdapter(OutputAdapter):

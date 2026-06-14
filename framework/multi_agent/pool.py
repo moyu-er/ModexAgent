@@ -28,7 +28,7 @@ from .factory import AgentFactory
 from .inbox.consumer import InboxConsumer
 from .inbox.types import InboxMessage
 from .registry import AgentProfile, AgentRegistry
-from .session_id import DefaultSessionIdStrategy
+from framework.core.session_id import SessionId, SessionIdFactory
 from .state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -61,7 +61,7 @@ class AgentPool(AgentRegistry):
         enable_inbox_polling: bool = True,
         inbox_poll_interval: float = 10.0,
         default_context_manager_factory: Callable[[str], ContextManager] | None = None,
-        session_strategy: DefaultSessionIdStrategy | None = None,
+        session_factory: SessionIdFactory | None = None,
         safety: RuntimeSafetyPolicy | None = None,
         retention: SessionRetentionPolicy | None = None,
         comm_tracker: CommunicationTracker | None = None,
@@ -78,7 +78,7 @@ class AgentPool(AgentRegistry):
         self._inbox_consumer = inbox_consumer
         self._enable_inbox_polling = enable_inbox_polling
         self._inbox_poll_interval = inbox_poll_interval
-        self._session_strategy = session_strategy or DefaultSessionIdStrategy()
+        self._session_factory = session_factory or SessionIdFactory()
         self._safety = safety or RuntimeSafetyPolicy()
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._session_agents: dict[str, str] = {}
@@ -579,9 +579,9 @@ class AgentPool(AgentRegistry):
         conversation_id = envelope.conversation_id or envelope.payload.get(
             "conversation_id", "default"
         )
-        session_id = envelope.agent_session_id or self._session_strategy.format(
-            conversation_id=conversation_id, agent_name=descriptor.address.name
-        )
+        session_id = envelope.agent_session_id or str(self._session_factory.create(
+            agent_name=descriptor.address.name, external_id=conversation_id
+        ))
         metadata = {
             "conversation_id": conversation_id,
             "agent_session_id": session_id,
@@ -641,9 +641,9 @@ class AgentPool(AgentRegistry):
         conversation_id = envelope.conversation_id or envelope.payload.get(
             "conversation_id", "default"
         )
-        session_id = envelope.agent_session_id or self._session_strategy.format(
-            conversation_id=conversation_id, agent_name=instance.descriptor.address.name
-        )
+        session_id = envelope.agent_session_id or str(self._session_factory.create(
+            agent_name=instance.descriptor.address.name, external_id=conversation_id
+        ))
         content = envelope.payload.get("content", "")
         source_name = envelope.source.name if envelope.source else None
         target_name = envelope.target.name if envelope.target else None
@@ -707,9 +707,9 @@ class AgentPool(AgentRegistry):
             or msg.payload.get("conversation_id")
             or msg.payload.get("session_id", "default")
         )
-        session_id = msg.payload.get("agent_session_id") or self._session_strategy.format(
-            conversation_id=conversation_id, agent_name=descriptor.address.name
-        )
+        session_id = msg.payload.get("agent_session_id") or str(self._session_factory.create(
+            agent_name=descriptor.address.name, external_id=conversation_id
+        ))
         content = msg.payload.get("content", "")
         # Preserve original metadata (user_id, chat_id, etc.) from the adapter layer
         metadata = dict(msg.payload.get("metadata") or {})
@@ -1009,8 +1009,8 @@ class AgentPool(AgentRegistry):
                         logger.debug("Failed to list inbox sessions", exc_info=True)
 
                 for session_id in sessions_to_check:
-                    parts = self._session_strategy.parse(session_id)
-                    if not parts.agent_name or parts.agent_name not in self._agents:
+                    session = SessionId.from_str(session_id)
+                    if not session.agent_name or session.agent_name not in self._agents:
                         continue
                     # Per-session check: skip if session is actively being processed
                     # (lock held), regardless of the agent-level state. This allows

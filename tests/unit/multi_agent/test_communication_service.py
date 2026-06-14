@@ -15,7 +15,6 @@ from framework.multi_agent.comm_tracker import CommDirection, CommStatus, Commun
 from framework.multi_agent.descriptor import AgentDescriptor
 from framework.multi_agent.registry import AgentProfile
 from framework.multi_agent.communication import AgentCommunicationService
-from framework.multi_agent.session_id import DefaultSessionIdStrategy
 
 
 class _FakeRegistry:

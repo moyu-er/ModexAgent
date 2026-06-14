@@ -7,6 +7,7 @@ import pytest
 from framework.control.channel import InMemoryControlChannel
 from framework.control.types import ControlCommand, ControlCommandType, ControlScope
 from framework.control.exceptions import AgentCancelled
+from framework.core.session_id import SessionId
 from framework.hook.builtin.control_drain import (
     ControlDrainInterceptor,
     LlmCancelInterceptor,
@@ -219,22 +220,25 @@ class TestLlmCancelInterceptor:
 
 
 class TestCanonicalSessionId:
-    """Verify DefaultSessionIdStrategy.normalize() unifies adapter and agent IDs."""
+    """Verify SessionId.from_str() recovers agent_name from display strings."""
 
-    def test_raw_user_id_gets_agent_suffix(self):
-        from framework.multi_agent.session_id import DefaultSessionIdStrategy
-        result = DefaultSessionIdStrategy().normalize("30932BC02F825E64D069B1E67347C8FF")
-        assert result == "30932BC02F825E64D069B1E67347C8FF.main"
+    def test_raw_user_id_defaults_agent_name(self):
+        session = SessionId.from_str("30932BC02F825E64D069B1E67347C8FF")
+        assert session.session_id == "30932BC02F825E64D069B1E67347C8FF"
+        assert session.agent_name == "unknown"
 
-    def test_already_canonical_is_idempotent(self):
-        from framework.multi_agent.session_id import DefaultSessionIdStrategy
-        result = DefaultSessionIdStrategy().normalize("user.main")
-        assert result == "user.main"
+    def test_raw_user_id_with_default_agent_name(self):
+        session = SessionId.from_str(
+            "30932BC02F825E64D069B1E67347C8FF", default_agent_name="main"
+        )
+        assert session.session_id == "30932BC02F825E64D069B1E67347C8FF"
+        assert session.agent_name == "main"
 
-    def test_subagent_with_invocation_id_is_idempotent(self):
-        from framework.multi_agent.session_id import DefaultSessionIdStrategy
-        result = DefaultSessionIdStrategy().normalize("user.subagent.abc123")
-        assert result == "user.subagent.abc123"
+    def test_canonical_parses_agent_name(self):
+        session = SessionId.from_str("user.main")
+        assert session.session_id == "user.main"
+        assert session.agent_name == "main"
+        assert session.snowflake == "user"
 
 
 class TestEndToEndStopFlow:

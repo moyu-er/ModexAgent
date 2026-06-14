@@ -42,7 +42,7 @@ from framework.multi_agent.descriptor import AgentLLMConfig
 from framework.multi_agent.inbox.consumer import InboxConsumer
 from framework.multi_agent.inbox.producer import InboxProducer
 from framework.multi_agent.inbox.server import InboxServer
-from framework.multi_agent.session_id import DefaultSessionIdStrategy
+from framework.core.session_id import SessionIdFactory
 from framework.multi_agent.tools import (
     CommunicationTarget,
     CommunicationTargetStore,
@@ -120,10 +120,10 @@ async def create_pool(
         shared_interceptor_chain, turn_store, control_channel,
         runtime_data_dir, emitter_factory,
     )
-    session_strategy = DefaultSessionIdStrategy(main_agent_name=main_agent_name)
+    session_factory = SessionIdFactory()
     pool = _build_agent_pool(
         broker, factory, context_manager, agent_bus,
-        inbox_consumer, session_strategy, safety, retention, comm_tracker,
+        inbox_consumer, session_factory, safety, retention, comm_tracker,
         pool_name,
         session_registry=session_registry,
         session_store=session_store,
@@ -137,7 +137,7 @@ async def create_pool(
         parent_agent_name=main_agent_name,
     )
     main_service, main_store = _build_communication(
-        pool, main_agent_name, broker, agent_bus, session_strategy,
+        pool, main_agent_name, broker, agent_bus,
         comm_tracker, project_dir, pool_name, pool_cfg, memory_system,
         safety, inbox_consumer, notification_service, data_dir, runtime_data_dir,
         # ── Injection points ──
@@ -529,7 +529,7 @@ def _build_agent_pool(
     context_manager,
     agent_bus,
     inbox_consumer,
-    session_strategy,
+    session_factory,
     safety,
     retention,
     comm_tracker,
@@ -547,7 +547,7 @@ def _build_agent_pool(
         enable_inbox_polling=True,
         inbox_poll_interval=10.0,
         default_context_manager_factory=None,
-        session_strategy=session_strategy,
+        session_factory=session_factory,
         safety=safety,
         retention=retention,
         comm_tracker=comm_tracker,
@@ -594,7 +594,6 @@ def _build_communication(
     main_agent_name: str,
     broker,
     agent_bus,
-    session_strategy,
     comm_tracker,
     project_dir: Path,
     pool_name: str,
