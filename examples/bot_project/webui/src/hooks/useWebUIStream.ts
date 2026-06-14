@@ -3,7 +3,7 @@ import type { ServerEventUnion, UIMessage } from "../types/events";
 import { eventsToMessages } from "../types/events";
 import { WebSocketClient, buildWsUrl } from "../lib/ws-client";
 import { fetchMessages } from "../lib/api";
-import { applyServerEvent, nextId, type StreamState } from "./useWebUIStream.reducer";
+import { applyServerEvent, type StreamState } from "./useWebUIStream.reducer";
 
 export interface UseWebUIStreamResult {
   messages: UIMessage[];
@@ -26,8 +26,10 @@ export function useWebUIStream(
     sessionStreaming: {},
   });
   const clientRef = useRef<WebSocketClient | null>(null);
-  // Track optimistic message content so we can deduplicate the server echo.
-  const optimisticContentRef = useRef<string | null>(null);
+  /** ID of the most recent optimistically-added user message.  The server
+   * echoes it back via ``_request_id`` in the envelope metadata so the
+   * reducer can deduplicate the echo regardless of content. */
+  const pendingRequestRef = useRef<string | null>(null);
 
   const agentName = sessionId ? sessionId.split(".")[1] || "main" : "main";
 
@@ -43,7 +45,7 @@ export function useWebUIStream(
         return;
       }
       setState((prev) =>
-        applyServerEvent(prev, event, sessionId, optimisticContentRef),
+        applyServerEvent(prev, event, sessionId, pendingRequestRef),
       );
     },
     [sessionId, getPoolForUuid, onSessionReady],
@@ -180,13 +182,14 @@ export function useWebUIStream(
         console.warn("Cannot send message: session not yet ready");
         return;
       }
-      optimisticContentRef.current = content;
+      const requestId = crypto.randomUUID();
+      pendingRequestRef.current = requestId;
       setState((prev) => ({
         ...prev,
         messages: [
           ...prev.messages,
           {
-            id: nextId(),
+            id: requestId,
             role: "user" as const,
             agent_name: agentName,
             blocks: [{ kind: "text" as const, text: content }],
@@ -204,6 +207,7 @@ export function useWebUIStream(
       client.send("send_message", {
         session_id: sessionId,
         content,
+        _request_id: requestId,
       });
     },
     [sessionId, agentName, getPoolForUuid],

@@ -24,7 +24,7 @@ export interface StreamState {
   sessionStreaming: Record<string, boolean>;
 }
 
-interface OptimisticRef {
+interface PendingRequestRef {
   current: string | null;
 }
 
@@ -71,13 +71,25 @@ function _upsertStreamingBlock(
 function _applyEventToMessages(
   messages: UIMessage[],
   event: ServerEventUnion,
-  optimisticContentRef: OptimisticRef,
+  pendingRequestRef: PendingRequestRef,
 ): { messages: UIMessage[]; isStreaming: boolean } {
   switch (event.event) {
     case "user_message": {
-      if (event.content === optimisticContentRef.current) {
-        optimisticContentRef.current = null;
-        return { messages, isStreaming: false };
+      // Deduplicate the server echo: match by _request_id carried in the
+      // envelope's metadata (set by the frontend on send, echoed by server).
+      const raw = event as unknown as Record<string, unknown>;
+      const meta = raw["_metadata"] as Record<string, unknown> | undefined;
+      const echoId: string | undefined = meta?.["_request_id"] as string | undefined;
+      if (echoId && echoId === pendingRequestRef.current) {
+        pendingRequestRef.current = null;
+        return {
+          messages: messages.map((m) =>
+            m.id === echoId
+              ? { ...m, timestamp: event.timestamp, metadata: raw["_metadata"] as Record<string, unknown> | undefined }
+              : m,
+          ),
+          isStreaming: false,
+        };
       }
       return {
         messages: [...messages, {
@@ -179,7 +191,7 @@ export function applyServerEvent(
   state: StreamState,
   event: ServerEventUnion,
   currentSessionId: string | null,
-  optimisticContentRef: OptimisticRef,
+  pendingRequestRef: PendingRequestRef,
 ): StreamState {
   const raw = event as unknown as Record<string, unknown>;
   const sid: string = (raw.session_id as string) || (raw.conversation_id as string) || "";
@@ -187,7 +199,7 @@ export function applyServerEvent(
   if (sid && sid !== currentSessionId) {
     // Buffer event for a non-selected session (subagent, etc.)
     const prevMessages = state.sessionMessages[sid] || [];
-    const result = _applyEventToMessages(prevMessages, event, optimisticContentRef);
+    const result = _applyEventToMessages(prevMessages, event, pendingRequestRef);
     return {
       ...state,
       sessionMessages: { ...state.sessionMessages, [sid]: result.messages },
@@ -198,7 +210,7 @@ export function applyServerEvent(
   // Event for the currently selected session — apply directly.
   // Mirror the streaming flag into the per-session map so the send/pause
   // toggle reflects the true state of whichever session the user switches to.
-  const result = _applyEventToMessages(state.messages, event, optimisticContentRef);
+  const result = _applyEventToMessages(state.messages, event, pendingRequestRef);
   return {
     ...state,
     messages: result.messages,

@@ -752,6 +752,7 @@ class WebUIServer:
     ) -> None:
         session_id = str(data.get("session_id", ""))
         content = str(data.get("content", ""))
+        request_id = str(data.get("_request_id", ""))
         parsed = _parse_session_id(session_id)
         if parsed is None or not content:
             return
@@ -776,7 +777,8 @@ class WebUIServer:
         result = await self._input_pipeline.handle(envelope, self._input_ctx)
 
         if result.should_continue():
-            # Echo the user message back to the WS client (WebUI-specific).
+            # Echo the user message back to the WS client so the frontend
+            # can reconcile its optimistic message.
             final = result.envelope()
             full_sid = final.metadata["full_session_id"]
             agent_name = final.metadata["resolved_agent"]
@@ -786,8 +788,11 @@ class WebUIServer:
             event = UserMessageEvent(
                 session_id=full_sid, agent_name=agent_name, content=content
             )
+            meta: dict[str, object] = {}
+            if request_id:
+                meta["_request_id"] = request_id
             await ws.send_json(
-                DeltaEnvelope.from_event(event, pool=pool_name).to_dict()
+                DeltaEnvelope.from_event(event, meta, pool=pool_name).to_dict()
             )
         else:
             # Terminate: pipeline consumed the message (e.g. /cd /pwd /exit
