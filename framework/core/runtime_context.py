@@ -17,6 +17,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from framework.core.session_id import SessionId
 from framework.memory.core.scope import MemoryContext, MemoryScope, SessionScope
 
 if TYPE_CHECKING:
@@ -196,26 +197,26 @@ class RuntimeContextManager:
 
     async def get_context(
         self,
-        session_id: str,
+        session: SessionId,
         metadata: dict[str, Any] | None = None,
     ) -> RuntimeContext:
-        """Return the RuntimeContext for *session_id* (creating if needed)."""
-        scope_key = self._resolve_scope_key(session_id, metadata)
+        """Return the RuntimeContext for *session* (creating if needed)."""
+        scope_key = self._resolve_scope_key(session, metadata)
         return await self._store.get_or_create(scope_key)
 
     async def clear_context(
         self,
-        session_id: str,
+        session: SessionId,
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        """Clear the RuntimeContext for *session_id*."""
-        scope_key = self._resolve_scope_key(session_id, metadata)
+        """Clear the RuntimeContext for *session*."""
+        scope_key = self._resolve_scope_key(session, metadata)
         await self._store.clear(scope_key)
 
-    def _resolve_scope_key(self, session_id: str, metadata: dict[str, Any] | None) -> str:
+    def _resolve_scope_key(self, session: SessionId, metadata: dict[str, Any] | None) -> str:
         meta = metadata or {}
         mem_ctx = MemoryContext(
-            session_id=session_id,
+            session_id=session,
             user_id=meta.get("user_id"),
             tenant_id=meta.get("tenant_id"),
             agent_id=meta.get("agent_id"),
