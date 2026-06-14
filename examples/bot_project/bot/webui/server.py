@@ -440,7 +440,7 @@ class WebUIServer:
         uuid_prefix = self._resolve_conv_prefix(session_id)
         set_conv_channel(uuid_prefix, "websocket")
         if self._pool_switch_callback is not None:
-            self._pool_switch_callback(uuid_prefix, effective_pool)
+            self._pool_switch_callback(session_id, effective_pool)
         return web.json_response({"session_id": session_id, "pool": effective_pool})
 
     async def _handle_sessions(self, request: web.Request) -> web.Response:
@@ -632,7 +632,15 @@ class WebUIServer:
                     ).to_dict())
                 )
                 return
-            session_id = f"{uuid_prefix_raw}.{agent_name}"
+            if self._session_factory is not None:
+                session = self._session_factory.create(
+                    agent_name=agent_name, external_id=uuid_prefix_raw
+                )
+                session_id = str(session)
+                if self._session_store is not None:
+                    asyncio.create_task(self._session_store.save(session))
+            else:
+                session_id = f"{uuid_prefix_raw}.{agent_name}"
             uuid_prefix = uuid_prefix_raw
             explicit_agent = agent_name
 
@@ -669,21 +677,27 @@ class WebUIServer:
         if explicit_agent and self._agent_pool_map:
             pool_name = self._agent_pool_map.get(explicit_agent)
             if pool_name and self._pool_switch_callback is not None:
-                self._pool_switch_callback(uuid_prefix, pool_name)
+                self._pool_switch_callback(session_id, pool_name)
         else:
             resolved_pool = (
                 self._pool_resolver(uuid_prefix) if self._pool_resolver is not None else None
             )
             pool_name = resolved_pool or _DEFAULT_AGENT_NAME
             if self._pool_switch_callback is not None:
-                self._pool_switch_callback(uuid_prefix, pool_name)
+                self._pool_switch_callback(session_id, pool_name)
 
         # Proactively register ALL pool agent sessions so deltas from any
         # pool's agent are forwarded to this WebSocket client.
         for agent_name in self._pool_agent_names:
             if agent_name == _DEFAULT_AGENT_NAME:
                 continue  # already registered above
-            pool_sid = f"{uuid_prefix}.{agent_name}"
+            if self._session_factory is not None:
+                pool_session = self._session_factory.create(
+                    agent_name=agent_name, external_id=uuid_prefix_raw
+                )
+                pool_sid = str(pool_session)
+            else:
+                pool_sid = f"{uuid_prefix}.{agent_name}"
             if self._input.get_delta_queue(pool_sid) is None:
                 self._input.register_connection(pool_sid, ws)
                 state.attached_sessions.append(pool_sid)

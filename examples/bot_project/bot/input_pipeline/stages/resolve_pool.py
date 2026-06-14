@@ -36,12 +36,19 @@ def resolve_session_routing(
 
     Shared by S5 and S3 (S3 needs full_session_id to target CANCEL_TURN before
     S5 runs in pipeline order). Pure function over ctx — no side effects.
+
+    Pool lookup first uses the raw *conversation_id* (backward-compatible key).
+    After creating the ``SessionId`` object, the pool mapping is re-keyed by
+    the full ``str(session)`` so PoolRouter and S5 stay consistent.
     """
     pool = envelope.explicit_pool or ctx.pool_session_store.get(
         envelope.conversation_id, ctx.default_pool
     )
     agent = ctx.agent_for_pool(pool)
-    return pool, agent, f"{envelope.conversation_id}.{agent}"
+    session = ctx.session_factory.create(
+        agent_name=agent, external_id=envelope.conversation_id
+    )
+    return pool, agent, str(session)
 
 
 class ResolvePoolStage(InputStage):
@@ -52,7 +59,7 @@ class ResolvePoolStage(InputStage):
         # Persist an explicit UI pool choice so PoolRouter routes correctly.
         # Idempotent; no-op for IM (explicit_pool is None — reads existing).
         if envelope.explicit_pool:
-            ctx.pool_session_store.set(envelope.conversation_id, pool)
+            ctx.pool_session_store.set(full_sid, pool)
         envelope.metadata[RoutingMeta.RESOLVED_POOL] = pool
         envelope.metadata[RoutingMeta.RESOLVED_AGENT] = agent
         envelope.metadata[RoutingMeta.FULL_SESSION_ID] = full_sid

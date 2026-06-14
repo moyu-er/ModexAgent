@@ -94,10 +94,10 @@ async def test_pool_switch_full_flow_routes_to_coding() -> None:
         assert attached["event"] == "attached"
         session_id = attached["session_id"]
 
-        # Callback must have been called during attach
+        # Callback must have been called during attach (with full session_id)
         assert len(calls) >= 1, "pool_switch_callback must be called during attach"
-        assert calls[-1] == (conv_id, "coding"), (
-            f"attach must call set_pool({conv_id!r}, 'coding'), got {calls[-1]}"
+        assert calls[-1] == (session_id, "coding"), (
+            f"attach must call set_pool({session_id!r}, 'coding'), got {calls[-1]}"
         )
 
         # ── Step 3: Send message ──
@@ -116,8 +116,8 @@ async def test_pool_switch_full_flow_routes_to_coding() -> None:
 
         # S5 persists explicit_pool directly into pool_session_store;
         # the callback is no longer called by send_message.
-        assert real_store.get(conv_id, "main") == "coding", (
-            f"S5 must persist pool=coding for conv {conv_id}"
+        assert real_store.get(session_id, "main") == "coding", (
+            f"S5 must persist pool=coding for session {session_id}"
         )
 
         # ── Step 4: Verify PoolSessionStore (simulates PoolRouter.run()) ──
