@@ -66,16 +66,9 @@ async def drain_control_channel(
     if command_types is None:
         command_types = {ControlCommandType.CANCEL_TURN}
 
-    # Use canonical session_id (with agent_name) so that the scope matches
-    # regardless of whether the caller passes a raw conversation_id (adapter)
-    # or a qualified session_id (pool agent ctx.session_id).
-    try:
-        from framework.multi_agent.session_id import DefaultSessionIdStrategy
-
-        canonical_sid = DefaultSessionIdStrategy().normalize(str(ctx.session))
-    except Exception:
-        canonical_sid = str(ctx.session)
-
+    # ctx.session always has {snowflake}.{agent_name} format, so str() is
+    # already canonical — no normalization needed.
+    canonical_sid = str(ctx.session)
     scope = ControlScope(session_id=canonical_sid)
     cmds = await channel.drain(scope, limit=0, command_types=command_types)
 

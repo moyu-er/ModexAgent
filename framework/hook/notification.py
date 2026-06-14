@@ -6,7 +6,6 @@ import logging
 from typing import TYPE_CHECKING
 
 from framework.multi_agent.comm_kind import AgentCommKind
-from framework.multi_agent.session_id import DefaultSessionIdStrategy
 
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
@@ -28,11 +27,11 @@ class AgentNotificationService:
         self,
         output_adapter: OutputAdapter,
         agent_bus: AgentMessageBus,
-        session_strategy: DefaultSessionIdStrategy | None = None,
+        parent_agent_name: str = "main",
     ) -> None:
         self._output_adapter = output_adapter
         self._agent_bus = agent_bus
-        self._session_strategy = session_strategy or DefaultSessionIdStrategy()
+        self._parent_agent_name = parent_agent_name
 
     async def notify(
         self,
@@ -53,14 +52,16 @@ class AgentNotificationService:
         )
 
     async def _notify_parent(self, ctx: AgentContext, xml: str) -> None:
-        parent_name = self._session_strategy.main_agent_name or "main"
+        parent_name = self._parent_agent_name
 
-        session_id = str(ctx.session)
-        parts = self._session_strategy.parse(session_id)
-        inbox_key = self._session_strategy.format(
-            conversation_id=parts.conversation_id,
-            agent_name=parent_name,
-        )
+        parent_session_id = ctx.session.parent_session_id
+        if parent_session_id is None:
+            logger.warning(
+                "AgentNotificationService: no parent_session_id for session %s",
+                str(ctx.session),
+            )
+            return
+        inbox_key = parent_session_id
 
         from framework.multi_agent.address import AgentAddress
         from framework.multi_agent.envelope import AgentMessageEnvelope
@@ -70,7 +71,7 @@ class AgentNotificationService:
             source=AgentAddress(name=ctx.session.agent_name),
             target=AgentAddress(name=parent_name),
             message_type="agent_result",
-            conversation_id=parts.conversation_id,
+            conversation_id=str(ctx.session),
             agent_session_id=inbox_key,
         )
         await self._agent_bus.send(inbox_key, envelope)
