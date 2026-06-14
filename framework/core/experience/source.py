@@ -23,6 +23,20 @@ def sanitize_name(name: str) -> str:
     return safe.strip("-") or "untitled"
 
 
+def coerce_tags(raw: object) -> list[str]:
+    """Coerce raw frontmatter ``tags`` to ``list[str]``.
+
+    YAML parses unquoted numerics (e.g. ``tags: [12306]``) as ``int`` and
+    explicit nulls as ``None``.  The ``ExperienceSummary.tags`` contract is
+    ``list[str]``; without coercion, ``",".join(exp.tags)`` in the prompt
+    builder raises ``TypeError`` and silently drops *all* experiences from
+    the system prompt.
+    """
+    if not isinstance(raw, (list, tuple)):
+        return []
+    return [str(tag) for tag in raw if tag is not None]
+
+
 class FileExperienceSource:
     """Load experiences from filesystem directories.
 
@@ -88,7 +102,7 @@ class FileExperienceSource:
                         ExperienceSummary(
                             name=name,
                             description=str(frontmatter.get("description", "")),
-                            tags=list(frontmatter.get("tags", [])),
+                            tags=coerce_tags(frontmatter.get("tags", [])),
                             scenario=str(frontmatter.get("scenario", "")),
                             directory=str(exp_dir.resolve()),
                         )
@@ -126,7 +140,7 @@ class FileExperienceSource:
                     return Experience(
                         name=name,
                         description=str(frontmatter.get("description", "")),
-                        tags=list(frontmatter.get("tags", [])),
+                        tags=coerce_tags(frontmatter.get("tags", [])),
                         scenario=str(frontmatter.get("scenario", "")),
                         trigger=str(frontmatter.get("trigger", "")),
                         version=int(frontmatter.get("version", 1)),

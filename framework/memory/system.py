@@ -332,7 +332,9 @@ class MemorySystemContextManager(ContextManager):
                     context=ctx,
                 )
             except Exception:
-                logger.debug("Failed to build experience prompt", exc_info=True)
+                # Elevated from debug: a single malformed experience used to
+                # silently drop ALL experiences from the system prompt.
+                logger.warning("Failed to build experience prompt", exc_info=True)
             else:
                 if experience_prompt:
                     providers.append(ExperienceProvider(experience_prompt))
