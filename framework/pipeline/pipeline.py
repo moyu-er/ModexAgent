@@ -374,7 +374,7 @@ class AgentPipeline:
                 else getattr(self.agent, "name", "main")
             )
             route_result = self.router.route(input_msg, default_agent_name=default_agent_name)
-            session_id = route_result.agent_session_id
+            session_id = str(route_result.session)
         else:
             route_result = None
             session_id = str(input_msg.session)

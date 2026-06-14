@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 from framework.core.context import ContextManager, InMemoryContextManager
 from framework.core.runtime_context import RuntimeContextManager
+from framework.core.session_registry import SessionRegistry
 from framework.core.tool_manager import InMemoryToolManager
 
 try:
@@ -79,6 +80,7 @@ class DefaultAgentFactory(AgentFactory):
         default_turn_store: Any | None = None,
         control_channel: InMemoryControlChannel | None = None,
         trace_store: Any | None = None,
+        session_registry: SessionRegistry | None = None,
     ) -> None:
         self._default_llm_provider = default_llm_provider
         self._default_tool_manager = default_tool_manager
@@ -93,6 +95,7 @@ class DefaultAgentFactory(AgentFactory):
         self._default_turn_store = default_turn_store
         self._control_channel = control_channel
         self._trace_store = trace_store
+        self._session_registry = session_registry
         self._inbox_producer = InboxProducer(inbox_server) if inbox_server else None
         self._inbox_consumer = InboxConsumer(inbox_server) if inbox_server else None
         # Shared runtime-context manager across all agents created by this factory.
@@ -270,7 +273,7 @@ class DefaultAgentFactory(AgentFactory):
             runtime_context_manager=self._runtime_context_manager,
             safety=descriptor.safety_policy,
             agent_descriptor=descriptor,
-            router=DefaultMeshRouter(),
+            router=DefaultMeshRouter(session_registry=self._session_registry),
             control_channel=self._control_channel,
         )
 

@@ -120,14 +120,14 @@ async def assemble_context(
             payload={"content": multimodal_content},
             source=AgentAddress(kind="user", name=input_msg.sender_id or "unknown"),
             target=AgentAddress(
-                kind="agent", name=route_result.agent_name if route_result else "main"
+                kind="agent", name=route_result.session.agent_name if route_result else "main"
             ),
             message_type=(
                 route_result.envelope_metadata.get("message_type", "agent_message")
                 if route_result
                 else "agent_message"
             ),
-            conversation_id=route_result.conversation_id if route_result else session_id,
+            conversation_id=route_result.session.snowflake if route_result else session_id,
             agent_session_id=session_id,
             metadata=input_metadata,
         )

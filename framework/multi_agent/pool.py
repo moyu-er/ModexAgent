@@ -11,8 +11,10 @@ from typing import Any
 from framework.core.context import ContextManager
 from framework.core.graph.interrupt import GraphInterrupt
 from framework.core.llm_struct import RuntimeSafetyPolicy
-from framework.core.tool_manager import InMemoryToolManager
 from framework.core.session_id import SessionId
+from framework.core.session_registry import SessionRegistry
+from framework.core.session_store import SessionStore
+from framework.core.tool_manager import InMemoryToolManager
 from framework.core.types import InputMessage
 from framework.messaging.broker import BrokerMessage, MessageBroker
 from framework.runtime.dispatch import DispatchDeadline, current_dispatch_deadline
@@ -33,16 +35,6 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_INBOX_POLL_INTERVAL: float = 10.0
 MAX_ENVELOPE_HOPS: int = 5
-
-
-@dataclass
-class SessionMeta:
-    """Per-session metadata for lifecycle tracking."""
-
-    agent_name: str
-    created_at: float
-    last_active: float
-    is_dynamic: bool = False
 
 
 @dataclass
@@ -73,6 +65,8 @@ class AgentPool(AgentRegistry):
         safety: RuntimeSafetyPolicy | None = None,
         retention: SessionRetentionPolicy | None = None,
         comm_tracker: CommunicationTracker | None = None,
+        session_registry: SessionRegistry | None = None,
+        session_store: SessionStore | None = None,
     ) -> None:
         self._agents: dict[str, AgentInstance] = {}
         self._status: dict[str, AgentState] = {}
@@ -87,7 +81,11 @@ class AgentPool(AgentRegistry):
         self._session_strategy = session_strategy or DefaultSessionIdStrategy()
         self._safety = safety or RuntimeSafetyPolicy()
         self._session_locks: dict[str, asyncio.Lock] = {}
-        self._session_meta: dict[str, SessionMeta] = {}
+        self._session_agents: dict[str, str] = {}
+        self._session_times: dict[str, tuple[float, float]] = {}
+        self._dynamic_sessions: set[str] = set()
+        self._session_registry = session_registry
+        self._session_store = session_store
         self._retention = retention or SessionRetentionPolicy()
         self._comm_tracker = comm_tracker
         self._cleanup_task: asyncio.Task[None] | None = None
@@ -607,7 +605,7 @@ class AgentPool(AgentRegistry):
         if instance.pipeline is not None:
             lock = self.get_lock(session_id)
             async with lock:
-                if session_id not in self._session_meta:
+                if session_id not in self._session_agents:
                     self._track_session(
                         session_id,
                         descriptor.address.name,
@@ -683,7 +681,7 @@ class AgentPool(AgentRegistry):
         if instance.pipeline is not None:
             lock = self.get_lock(session_id)
             async with lock:
-                if session_id not in self._session_meta:
+                if session_id not in self._session_agents:
                     self._track_session(
                         session_id,
                         instance.descriptor.address.name,
@@ -745,7 +743,7 @@ class AgentPool(AgentRegistry):
         """Return the per-session lock for pool-managed lifecycle and eviction.
 
         This is the **authoritative** concurrency guard for pool sessions.
-        Session metadata (_session_meta), eviction decisions, and dispatch
+        Session tracking data, eviction decisions, and dispatch
         calls all acquire this lock to serialize access to a given session.
 
         AgentPipeline retains its own internal lock for direct (non-pool)
@@ -755,20 +753,46 @@ class AgentPool(AgentRegistry):
         return self._session_locks.setdefault(session_id, asyncio.Lock())
 
     def _track_session(self, session_id: str, agent_name: str, is_dynamic: bool = False) -> None:
-        """Register new session metadata. Call inside lock-protected section."""
+        """Register new session metadata and persist via registry.
+
+        Call inside lock-protected section. Registry registration is fire-and-forget
+        via ``_schedule_registry_register`` to avoid blocking the caller.
+        """
+        now = time.monotonic()
         self._session_locks.setdefault(session_id, asyncio.Lock())
-        self._session_meta[session_id] = SessionMeta(
-            agent_name=agent_name,
-            created_at=time.monotonic(),
-            last_active=time.monotonic(),
-            is_dynamic=is_dynamic,
-        )
+        self._session_agents[session_id] = agent_name
+        self._session_times[session_id] = (now, now)
+        if is_dynamic:
+            self._dynamic_sessions.add(session_id)
+        if self._session_registry is not None:
+            session = SessionId.from_str(session_id, default_agent_name=agent_name)
+            self._schedule_registry_register(session)
 
     def _touch_session(self, session_id: str) -> None:
         """Refresh activity timestamp. Call inside lock-protected section."""
-        meta = self._session_meta.get(session_id)
-        if meta:
-            meta.last_active = time.monotonic()
+        times = self._session_times.get(session_id)
+        if times is not None:
+            self._session_times[session_id] = (times[0], time.monotonic())
+
+    def _schedule_registry_register(self, session: SessionId) -> None:
+        """Fire-and-forget registry registration with error logging."""
+
+        async def _register() -> None:
+            try:
+                if self._session_registry is not None:
+                    await self._session_registry.register(session)
+            except Exception:
+                logger.exception(
+                    "Failed to register session %s in registry", str(session)
+                )
+
+        asyncio.create_task(_register())
+
+    def _evict_session_tracking(self, session_id: str) -> None:
+        """Remove all local tracking entries for a session."""
+        self._session_agents.pop(session_id, None)
+        self._session_times.pop(session_id, None)
+        self._dynamic_sessions.discard(session_id)
 
     async def _try_evict_if_stale(self, session_id: str) -> None:
         """Evict a session if stale (TTL) OR if count exceeds per-subagent cap.
@@ -783,35 +807,41 @@ class AgentPool(AgentRegistry):
         """
         lock = self._session_locks.get(session_id)
         if lock is None:
-            self._session_meta.pop(session_id, None)
+            self._evict_session_tracking(session_id)
             return
         try:
             await asyncio.wait_for(lock.acquire(), timeout=3.0)
         except (TimeoutError, asyncio.CancelledError):
             return
         try:
-            meta = self._session_meta.get(session_id)
-            if meta is None:
+            if session_id not in self._session_agents:
                 self._session_locks.pop(session_id, None)
                 return
-            if not meta.is_dynamic:
+            if session_id not in self._dynamic_sessions:
                 return
+
+            agent_name = self._session_agents[session_id]
+            times = self._session_times.get(session_id)
+            if times is None:
+                return
+            _created_at, last_active = times
 
             should_evict = False
 
             # Policy 1: TTL staleness
-            if time.monotonic() - meta.last_active >= self._retention.ttl_seconds:
+            if time.monotonic() - last_active >= self._retention.ttl_seconds:
                 should_evict = True
 
             # Policy 2: per-subagent count cap (LRU by created_at)
             if not should_evict:
-                same_agent = [
-                    (sid, m)
-                    for sid, m in self._session_meta.items()
-                    if m.agent_name == meta.agent_name and m.is_dynamic
+                same_agent: list[tuple[str, tuple[float, float]]] = [
+                    (sid, t)
+                    for sid, t in self._session_times.items()
+                    if self._session_agents.get(sid) == agent_name
+                    and sid in self._dynamic_sessions
                 ]
                 if len(same_agent) > self._retention.max_sessions_per_subagent:
-                    same_agent.sort(key=lambda x: x[1].created_at)
+                    same_agent.sort(key=lambda x: x[1][0])
                     oldest_sid = same_agent[0][0]
                     if oldest_sid == session_id:
                         should_evict = True
@@ -819,11 +849,11 @@ class AgentPool(AgentRegistry):
             if not should_evict:
                 return
 
-            instance = self._agents.get(meta.agent_name)
+            instance = self._agents.get(agent_name)
             if instance and instance.context_manager:
                 await instance.context_manager.clear(session_id)
             self._session_locks.pop(session_id, None)
-            self._session_meta.pop(session_id, None)
+            self._evict_session_tracking(session_id)
         finally:
             lock.release()
 
@@ -832,11 +862,11 @@ class AgentPool(AgentRegistry):
         while True:
             await asyncio.sleep(self._retention.cleanup_interval_seconds)
             # Per-agent session cap enforcement (LRU eviction)
-            agents_seen: set[str] = {m.agent_name for m in self._session_meta.values()}
+            agents_seen: set[str] = set(self._session_agents.values())
             for agent_name in agents_seen:
                 await self._enforce_session_cap(agent_name)
             # TTL eviction
-            for sid in list(self._session_meta.keys()):
+            for sid in list(self._session_agents.keys()):
                 await self._try_evict_if_stale(sid)
 
     async def _enforce_session_cap(self, agent_name: str) -> None:
@@ -849,33 +879,36 @@ class AgentPool(AgentRegistry):
         cap = self._retention.max_sessions_per_subagent
         dynamic_sessions = sorted(
             (
-                (sid, meta)
-                for sid, meta in self._session_meta.items()
-                if meta.agent_name == agent_name and meta.is_dynamic
+                (sid, times)
+                for sid, times in self._session_times.items()
+                if self._session_agents.get(sid) == agent_name
+                and sid in self._dynamic_sessions
             ),
-            key=lambda x: x[1].last_active,
+            key=lambda x: x[1][1],
         )
         excess = len(dynamic_sessions) - cap
         if excess <= 0:
             return
-        for sid, _meta in dynamic_sessions[:excess]:
+        for sid, _times in dynamic_sessions[:excess]:
             await self._evict_dynamic_session(sid)
 
     async def _evict_dynamic_session(self, session_id: str) -> None:
         """Evict a dynamic session selected by policy."""
         lock = self._session_locks.get(session_id)
         if lock is None:
-            self._session_meta.pop(session_id, None)
+            self._evict_session_tracking(session_id)
             return
         try:
             await asyncio.wait_for(lock.acquire(), timeout=3.0)
         except (TimeoutError, asyncio.CancelledError):
             return
         try:
-            meta = self._session_meta.get(session_id)
-            if meta is None or not meta.is_dynamic:
+            if session_id not in self._dynamic_sessions:
                 return
-            instance = self._agents.get(meta.agent_name)
+            agent_name = self._session_agents.get(session_id)
+            if agent_name is None:
+                return
+            instance = self._agents.get(agent_name)
             if instance and instance.context_manager:
                 await instance.context_manager.clear(session_id)
             # ── Fork context cleanup — delete persisted fork XML on session eviction ──
@@ -885,7 +918,7 @@ class AgentPool(AgentRegistry):
                 cleanup_fork_context(session_id)
             except Exception:
                 pass
-            self._session_meta.pop(session_id, None)
+            self._evict_session_tracking(session_id)
             self._session_locks.pop(session_id, None)
         finally:
             lock.release()
