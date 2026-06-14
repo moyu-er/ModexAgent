@@ -186,3 +186,59 @@ describe("applyServerEvent session isolation", () => {
     expect(state.isStreaming).toBe(false);
   });
 });
+
+describe("applyServerEvent streaming stability", () => {
+  it("keeps streaming true across tool_call_end (turn not finished)", () => {
+    const ref = { current: null as string | null };
+    let state = applyServerEvent(
+      emptyState(),
+      {
+        event: "tool_call_start",
+        session_id: "conv.main",
+        agent_name: "main",
+        tool: "read",
+        args: { path: "x" },
+        turn_id: "turn_1",
+      },
+      "conv.main",
+      ref,
+    );
+    expect(state.isStreaming).toBe(true);
+
+    state = applyServerEvent(
+      state,
+      {
+        event: "tool_call_end",
+        session_id: "conv.main",
+        agent_name: "main",
+        tool: "read",
+        result_summary: "ok",
+        turn_id: "turn_1",
+      },
+      "conv.main",
+      ref,
+    );
+    // Tool finished but the turn continues — must stay busy so the
+    // send/pause toggle doesn't flicker mid-turn.
+    expect(state.isStreaming).toBe(true);
+  });
+
+  it("mirrors the selected session's streaming flag into sessionStreaming", () => {
+    const ref = { current: null as string | null };
+    const state = applyServerEvent(
+      emptyState(),
+      {
+        event: "model_content_delta",
+        session_id: "conv.main",
+        agent_name: "main",
+        text: "hi",
+        turn_id: "turn_1",
+      },
+      "conv.main",
+      ref,
+    );
+    // After streaming on the selected session, switching away and back must
+    // remember it is still busy — the per-session map holds that truth.
+    expect(state.sessionStreaming["conv.main"]).toBe(true);
+  });
+});

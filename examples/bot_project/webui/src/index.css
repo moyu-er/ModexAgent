@@ -4,6 +4,59 @@
 
 @layer base {
   body {
-    @apply bg-gray-950 text-gray-100 antialiased;
+    @apply bg-ink-950 text-gray-100 antialiased;
+    font-family: theme("fontFamily.sans");
+  }
+}
+
+/* Soft scrollbars matching the warm dark surfaces. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #40404C transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #40404C;
+  border-radius: 8px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #4E4E5A;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@layer components {
+  /* Floating composer — a raised flat surface with a soft shadow and a gentle
+     brand halo on focus. */
+  .composer {
+    @apply flex items-end gap-3 rounded-2xl border border-white/10 bg-ink-750 px-4 py-3;
+    box-shadow:
+      0 16px 48px -14px rgba(0, 0, 0, 0.55),
+      0 2px 10px -6px rgba(0, 0, 0, 0.45);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .composer:focus-within {
+    @apply border-brand-500/50;
+    box-shadow:
+      0 16px 48px -14px rgba(0, 0, 0, 0.55),
+      0 0 0 3px rgba(139, 143, 247, 0.16);
+  }
+
+  /* Round icon button inside the composer. */
+  .send-btn {
+    @apply flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors;
+  }
+  .send-btn--active {
+    @apply bg-brand-500 text-white hover:bg-brand-400;
+  }
+  .send-btn--busy {
+    @apply bg-ink-700 text-gray-400 hover:bg-ink-600;
+  }
+  .send-btn--disabled {
+    @apply bg-ink-700 text-gray-600 cursor-not-allowed;
   }
 }

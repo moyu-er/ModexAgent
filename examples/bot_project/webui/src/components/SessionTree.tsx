@@ -39,11 +39,9 @@ const SessionNode: FC<{
           <div className="flex shrink-0">
             {Array.from({ length: depth }).map((_, level) => (
               <div key={level} className="relative" style={{ width: "20px" }}>
-                {/* Vertical guide line through this depth level */}
-                <div className="absolute inset-y-0 left-1.5 border-l border-gray-500/60" />
-                {/* Deepest level: horizontal connector arm linking guide to node */}
+                <div className="absolute inset-y-0 left-1.5 border-l border-white/8" />
                 {level === depth - 1 && (
-                  <div className="absolute top-1/2 left-1.5 right-0 border-t border-gray-500/60" />
+                  <div className="absolute left-1.5 right-0 top-1/2 border-t border-white/8" />
                 )}
               </div>
             ))}
@@ -55,10 +53,10 @@ const SessionNode: FC<{
 
         {/* Node content row */}
         <div
-          className={`flex-1 flex items-center min-w-0 my-0.5 border-l-[3px] rounded-r-md ${
+          className={`my-0.5 flex min-w-0 flex-1 items-center rounded-r-md border-l-[3px] ${
             isSelected
-              ? "bg-blue-500/10 border-blue-400"
-              : "border-transparent hover:bg-gray-800/60"
+              ? "border-brand-500 bg-brand-500/20 shadow-[inset_0_0_0_1px_rgba(139,143,247,0.18)]"
+              : "border-transparent hover:bg-ink-800"
           }`}
         >
           {/* Expand arrow — only if has children */}
@@ -67,19 +65,21 @@ const SessionNode: FC<{
               type="button"
               data-testid="expand-arrow"
               onClick={(): void => setExpanded(!expanded)}
-              className="w-5 h-5 flex items-center justify-center text-gray-500 hover:text-gray-200 transition-colors shrink-0 text-sm"
+              className="mr-2 shrink-0 text-[10px] leading-none text-gray-500 transition-colors hover:text-gray-200"
             >
               {expanded ? "▼" : "▶"}
             </button>
           ) : (
-            <span className="w-5 shrink-0" />
+            <span className="mr-2 w-4 shrink-0" />
           )}
 
           {/* Session name */}
           <button
             type="button"
             onClick={(): void => onSelect(node.session_id)}
-            className="flex-1 text-left py-1.5 text-sm text-gray-400 hover:text-gray-200 transition-colors truncate font-mono"
+            className={`flex-1 truncate py-2 text-left font-mono text-sm transition-colors ${
+              isSelected ? "text-brand-100" : "text-gray-400 hover:text-gray-200"
+            }`}
           >
             {node.displayName}
           </button>
@@ -93,7 +93,7 @@ const SessionNode: FC<{
                 onDelete(node.session_id);
               }}
               title="Delete conversation"
-              className="px-2 py-1.5 text-gray-600 hover:text-red-400 hover:bg-red-400/10 rounded transition-colors text-sm shrink-0"
+              className="shrink-0 rounded px-2 py-2 text-sm text-gray-600 transition-colors hover:bg-red-400/10 hover:text-red-400"
             >
               {"✕"}
             </button>

@@ -1,4 +1,5 @@
 import type {
+  ErrorEvent,
   ModelContentDelta,
   ModelReasoningDelta,
   ServerEventUnion,
@@ -130,7 +131,9 @@ function _applyEventToMessages(
           return b;
         }),
       };
-      return { messages: msgs, isStreaming: false };
+      // A tool call completing does NOT end the turn — the model may reason
+      // about the result and keep emitting. Keep streaming until ``turn_end``.
+      return { messages: msgs, isStreaming: true };
     }
     case "turn_end": {
       const msgs = [...messages];
@@ -141,6 +144,23 @@ function _applyEventToMessages(
         msgs[lastIdx] = { ...msgs[lastIdx]!, isStreaming: false };
       }
       return { messages: msgs, isStreaming: false };
+    }
+    case "error": {
+      // Surface backend errors (e.g. unsupported command, pool switch denied)
+      // as a system notice in the chat — not persisted, visible to the user.
+      const err = event as ErrorEvent;
+      const text = err.message || "An error occurred";
+      return {
+        messages: [...messages, {
+          id: nextId(),
+          role: "system" as const,
+          agent_name: err.agent_name || "",
+          blocks: [{ kind: "text" as const, text: `⚠ ${text}` }],
+          isStreaming: false,
+          timestamp: Date.now(),
+        }],
+        isStreaming: false,
+      };
     }
     default:
       return { messages, isStreaming: false };
@@ -175,11 +195,16 @@ export function applyServerEvent(
     };
   }
 
-  // Event for the currently selected session — apply directly
+  // Event for the currently selected session — apply directly.
+  // Mirror the streaming flag into the per-session map so the send/pause
+  // toggle reflects the true state of whichever session the user switches to.
   const result = _applyEventToMessages(state.messages, event, optimisticContentRef);
   return {
     ...state,
     messages: result.messages,
     isStreaming: result.isStreaming,
+    sessionStreaming: currentSessionId
+      ? { ...state.sessionStreaming, [currentSessionId]: result.isStreaming }
+      : state.sessionStreaming,
   };
 }

@@ -2,6 +2,7 @@ import type { DeltaEnvelope, ServerEventUnion } from "../types/events";
 import { unwrapEnvelope } from "../types/events";
 
 type EventHandler = (event: ServerEventUnion) => void;
+type CloseHandler = () => void;
 
 const WS_PATH = "/ws";
 
@@ -18,11 +19,13 @@ export class WebSocketClient {
   private ws: WebSocket | null = null;
   private readonly url: string;
   private readonly onEvent: EventHandler;
+  private readonly onClose?: CloseHandler;
   private _connected: boolean = false;
 
-  constructor(url: string, onEvent: EventHandler) {
+  constructor(url: string, onEvent: EventHandler, onClose?: CloseHandler) {
     this.url = url;
     this.onEvent = onEvent;
+    this.onClose = onClose;
   }
 
   get connected(): boolean {
@@ -43,6 +46,7 @@ export class WebSocketClient {
     this.ws.onclose = (): void => {
       this._connected = false;
       this.ws = null;
+      this.onClose?.();
     };
 
     this.ws.onerror = (): void => {

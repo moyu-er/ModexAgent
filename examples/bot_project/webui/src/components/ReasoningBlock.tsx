@@ -20,16 +20,16 @@ export const ReasoningBlock: FC<ReasoningBlockProps> = ({ reasoning }) => {
       <button
         type="button"
         onClick={toggle}
-        className="flex items-center gap-1 text-xs font-medium text-gray-400 hover:text-gray-300 transition-colors"
+        className="flex items-center gap-1 text-xs font-medium text-gray-400 transition-colors hover:text-gray-200"
       >
-        <span className="inline-block transition-transform duration-150 text-[10px]">
+        <span className="inline-block text-[10px] transition-transform duration-150">
           {expanded ? "▼" : "▸"}
         </span>
         Thinking
       </button>
       {expanded && (
-        <div className="mt-1 p-3 rounded bg-gray-800 border-l-2 border-gray-600">
-          <pre className="text-xs text-gray-400 font-mono whitespace-pre-wrap break-words">
+        <div className="mt-1.5 rounded border-l-2 border-brand-500/50 bg-ink-800 p-3">
+          <pre className="whitespace-pre-wrap break-words font-mono text-xs text-gray-400">
             {reasoning}
           </pre>
         </div>

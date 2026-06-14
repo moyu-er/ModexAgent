@@ -4,18 +4,18 @@ __pycache__/
 *$py.class
 *.so
 .Python
-build/
+/build/
 develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
+/dist/
+/downloads/
+/eggs/
+/.eggs/
+/lib/
+/lib64/
+/parts/
+/sdist/
+/var/
+/wheels/
 *.egg-info/
 *.egg
 
@@ -45,7 +45,6 @@ Thumbs.db
 
 # OMC state
 .omc/
-examples/*/.omc/
 references
 .*
 !.gitignore
@@ -54,10 +53,8 @@ references
 uv.lock
 trace
 
-node_modules
-package.json
-package-lock.json
-*.tsbuildinfo
+/trace
+/output
 
 openspec
 design_doc/

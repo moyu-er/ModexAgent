@@ -2,15 +2,15 @@ import { useState, useCallback, useEffect, useMemo, useRef, type FC } from "reac
 import { Sidebar } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
 import { useWebUIStream } from "./hooks/useWebUIStream";
-import { fetchSessions, fetchPools, fetchWorkspace, deleteConversation, changeWorkspace } from "./lib/api";
+import { fetchSessions, fetchPools, fetchWorkspace, deleteConversation, changeWorkspace, fetchRecentWorkspaces } from "./lib/api";
 import type { ConversationInfo } from "./types/events";
-import type { PoolInfo } from "./lib/api";
+import type { PoolInfo, RecentWorkspaceEntry } from "./lib/api";
 
 const SIDEBAR_STORAGE_KEY = "modexbot_sidebar_width";
 const ACTIVE_POOL_STORAGE_KEY = "modexbot_active_pool";
 const DEFAULT_SIDEBAR_WIDTH = 260;
 const MIN_SIDEBAR_WIDTH = 180;
-const MAX_SIDEBAR_WIDTH = 480;
+const MAX_SIDEBAR_WIDTH = 720;
 
 function loadActivePool(): string {
   try {
@@ -126,6 +126,7 @@ const App: FC = () => {
   const [activePool, setActivePool] = useState<string>(() => loadActivePool());
   const [workspace, setWorkspace] = useState<string>("");
   const [isHome, setIsHome] = useState<boolean>(true);
+  const [recentWorkspaces, setRecentWorkspaces] = useState<RecentWorkspaceEntry[]>([]);
   const [sidebarWidth, setSidebarWidth] = useState<number>(loadSidebarWidth);
 
   // uuidPrefix → pool, for client-side empty session generation
@@ -244,6 +245,9 @@ const App: FC = () => {
         setIsHome(info.is_home);
       })
       .catch(() => {});
+    fetchRecentWorkspaces()
+      .then(setRecentWorkspaces)
+      .catch(() => {});
   }, [selectedId]);
 
   // Connect WebSocket on mount
@@ -324,7 +328,9 @@ const App: FC = () => {
       fetchWorkspace()
         .then((info) => setIsHome(info.is_home))
         .catch(() => {});
-      // Refresh session list for the new workspace
+      fetchRecentWorkspaces()
+        .then(setRecentWorkspaces)
+        .catch(() => {});
       fetchSessions(cwd, activePool)
         .then(setSessions)
         .catch(() => {});
@@ -371,7 +377,7 @@ const App: FC = () => {
   );
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-gray-950">
+    <div className="flex h-screen w-screen overflow-hidden bg-ink-950">
       {/* Sidebar with dynamic width */}
       <div
         style={{ width: sidebarWidth }}
@@ -384,6 +390,7 @@ const App: FC = () => {
           workspace={workspace}
           isHome={isHome}
           activePool={activePool}
+          recentWorkspaces={recentWorkspaces}
           onSelect={handleSelect}
           onNew={handleNew}
           onDelete={handleDelete}
@@ -393,15 +400,20 @@ const App: FC = () => {
         />
       </div>
 
-      {/* Resize handle */}
+      {/* Resize handle — invisible 8px hit area with a 1px visible bar */}
       <div
         onMouseDown={onResizeMouseDown}
-        className={`w-1 flex-shrink-0 cursor-col-resize transition-colors ${
-          resizing.current
-            ? "bg-blue-500"
-            : "bg-gray-800 hover:bg-blue-500/50"
-        }`}
-      />
+        className="group relative w-2 flex-shrink-0 cursor-col-resize select-none"
+        title="Drag to resize sidebar"
+      >
+        <div
+          className={`absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors ${
+            resizing.current
+              ? "bg-brand-500"
+              : "bg-white/[0.06] group-hover:bg-brand-500/50"
+          }`}
+        />
+      </div>
 
       <main className="flex-1 flex flex-col min-w-0">
         <ChatView

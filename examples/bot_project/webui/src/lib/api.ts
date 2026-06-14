@@ -119,3 +119,16 @@ export async function browseWorkspace(
   const resp = await fetch(`${API_BASE}/workspace/browse${params}`);
   return resp.json() as Promise<BrowseResult>;
 }
+
+// ── Recent workspaces ──────────────────────────────────────────────────────
+
+export interface RecentWorkspaceEntry {
+  path: string;
+  last_used: number;
+}
+
+export async function fetchRecentWorkspaces(): Promise<RecentWorkspaceEntry[]> {
+  const resp = await fetch(`${API_BASE}/workspace/recent`);
+  const data = await resp.json();
+  return (data.recent || []) as RecentWorkspaceEntry[];
+}

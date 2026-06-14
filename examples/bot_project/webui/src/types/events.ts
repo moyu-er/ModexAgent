@@ -177,7 +177,7 @@ export type TurnBlock = TextBlock | ToolBlockData | ReasoningBlockData;
 
 export interface UIMessage {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   agent_name: string;
   blocks: TurnBlock[];
   isStreaming: boolean;

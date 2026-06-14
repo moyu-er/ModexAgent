@@ -19,33 +19,33 @@ export const ToolTraceCard: FC<ToolTraceCardProps> = ({ tool }) => {
       <button
         type="button"
         onClick={toggle}
-        className="flex items-center gap-1 text-xs font-medium text-gray-400 hover:text-gray-300 transition-colors w-full text-left"
+        className="flex w-full items-center gap-1 text-left text-xs font-medium text-gray-400 transition-colors hover:text-gray-200"
       >
-        <span className="inline-block transition-transform duration-150 text-[10px]">
+        <span className="inline-block text-[10px] transition-transform duration-150">
           {expanded ? "▼" : "▸"}
         </span>
         <span className="mr-1 text-[11px]">🔧</span>
         <span className="font-mono">{tool.tool}</span>
         {tool.result !== undefined && (
-          <span className="ml-auto text-[10px] text-green-500">done</span>
+          <span className="ml-auto text-[10px] text-emerald-400">done</span>
         )}
       </button>
       {expanded && (
-        <div className="mt-1 ml-5 p-2 rounded bg-gray-800 border border-gray-700">
-          <div className="mb-1">
-            <span className="text-[10px] font-semibold text-gray-500 uppercase">
+        <div className="mt-1.5 ml-5 rounded border border-white/10 bg-ink-800 p-3">
+          <div className="mb-2">
+            <span className="text-[10px] font-semibold uppercase text-gray-500">
               Args
             </span>
-            <pre className="text-xs text-gray-400 font-mono whitespace-pre-wrap break-words mt-0.5">
+            <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-xs text-gray-400">
               {argsStr}
             </pre>
           </div>
           {tool.result !== undefined && (
             <div>
-              <span className="text-[10px] font-semibold text-gray-500 uppercase">
+              <span className="text-[10px] font-semibold uppercase text-gray-500">
                 Result
               </span>
-              <pre className="text-xs text-gray-300 font-mono whitespace-pre-wrap break-words mt-0.5">
+              <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-xs text-gray-300">
                 {tool.result}
               </pre>
             </div>

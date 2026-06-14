@@ -95,7 +95,7 @@ Primary end-to-end reference implementation for the ModexAgent framework. Demons
 
 | Directory | Purpose |
 |-----------|---------|
-| `bot/` | Core business logic — service, adapters, tools, webui (see `bot/AGENTS.md`) |
+| `bot/` | Core business logic — service, adapters, tools, webui, input_pipeline (see `bot/AGENTS.md`, `bot/input_pipeline/AGENTS.md`) |
 | `config/` | Configuration files (see `config/AGENTS.md`) |
 | `webui/` | React frontend source (see `webui/AGENTS.md`) |
 | `modexbot/` | CLI entry point for start/stop/restart (see `modexbot/AGENTS.md`) |

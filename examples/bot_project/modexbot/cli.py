@@ -28,7 +28,8 @@ from modexbot.config_env import check_env_llm_config
 app = typer.Typer(
     name="modexbot",
     help="ModexAgent bot — multi-channel agent runtime.\n\n"
-    "Commands: start, stop, restart, install, config, logs. Use <command> --help for details.",
+    "Commands: start, stop, restart, install, config, logs. Use <command> --help for details.\n\n"
+    "Run 'modexbot install' to rebuild the WebUI after editing frontend sources.",
     no_args_is_help=True,
 )
 
@@ -489,7 +490,11 @@ def start(
         False, "--no-webui", help="Backend only, no WebUI frontend"
     ),
 ) -> None:
-    """Start the bot as a detached background process."""
+    """Start the bot as a detached background process.
+
+    Does not rebuild the WebUI frontend. Run ``modexbot install`` after
+    editing frontend source files so the dist is up-to-date.
+    """
     config = _resolve_config(config)
     if not config.is_dir():
         typer.echo(f"ERROR: config directory not found: {config}")
@@ -537,7 +542,11 @@ def restart(
         False, "--no-webui", help="Backend only, no WebUI frontend"
     ),
 ) -> None:
-    """Restart the bot: stop the old instance, then start a fresh one."""
+    """Restart the bot: stop the old instance, then start a fresh one.
+
+    Does not rebuild the WebUI frontend. Run ``modexbot install`` after
+    editing frontend source files so the dist is up-to-date.
+    """
     config = _resolve_config(config)
     if not config.is_dir():
         typer.echo(f"ERROR: config directory not found: {config}")

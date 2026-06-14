@@ -17,6 +17,7 @@ Core business logic for the ModexAgent bot — service lifecycle, I/O adapters, 
 | Directory | Purpose |
 |-----------|---------|
 | `adapters/` | Input/output adapters for QQ, WebSocket (see `adapters/AGENTS.md`) |
+| `input_pipeline/` | Converged user-input stage pipeline (see `input_pipeline/AGENTS.md`) |
 | `service/` | Service lifecycle and pool orchestration (see `service/AGENTS.md`) |
 | `webui/` | WebUI backend — server, events, transcript store (see `webui/AGENTS.md`) |
 | `tools/` | Custom bot-specific tools |

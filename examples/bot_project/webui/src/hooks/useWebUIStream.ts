@@ -63,7 +63,16 @@ export function useWebUIStream(
     if (clientRef.current) {
       clientRef.current.disconnect();
     }
-    const client = new WebSocketClient(buildWsUrl(), wsHandleEvent);
+    const client = new WebSocketClient(buildWsUrl(), wsHandleEvent, () => {
+      // Connection lost — the live stream is gone, so clear every streaming
+      // flag. Otherwise the UI would be stuck showing the pause/busy state
+      // forever (no turn_end will ever arrive over a dead socket).
+      setState((prev) => ({
+        ...prev,
+        isStreaming: false,
+        sessionStreaming: {},
+      }));
+    });
     clientRef.current = client;
     client.connect();
   }, [wsHandleEvent]);
