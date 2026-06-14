@@ -94,10 +94,10 @@ async def test_pool_switch_full_flow_routes_to_coding() -> None:
         assert attached["event"] == "attached"
         session_id = attached["session_id"]
 
-        # Callback must have been called during attach (with full session_id)
+        # Callback must have been called during attach (with snowflake, pool_name)
         assert len(calls) >= 1, "pool_switch_callback must be called during attach"
-        assert calls[-1] == (session_id, "coding"), (
-            f"attach must call set_pool({session_id!r}, 'coding'), got {calls[-1]}"
+        assert calls[-1] == (conv_id, "coding"), (
+            f"attach must call set_pool({conv_id!r}, 'coding'), got {calls[-1]}"
         )
 
         # ── Step 3: Send message ──
@@ -116,14 +116,16 @@ async def test_pool_switch_full_flow_routes_to_coding() -> None:
 
         # S5 persists explicit_pool directly into pool_session_store;
         # the callback is no longer called by send_message.
-        assert real_store.get(session_id, "main") == "coding", (
-            f"S5 must persist pool=coding for session {session_id}"
+        # The store is keyed by the agent-independent snowflake (conv_id).
+        assert real_store.get(conv_id, "main") == "coding", (
+            f"S5 must persist pool=coding for conversation {conv_id}"
         )
 
         # ── Step 4: Verify PoolSessionStore (simulates PoolRouter.run()) ──
         msg = inp._message_queue.get_nowait()
         sid = str(msg.session)
-        target_pool = real_store.get(sid, "main")
+        # PoolSessionStore keys by snowflake (agent-independent), not full session_id
+        target_pool = real_store.get(msg.session.snowflake, "main")
         assert target_pool == "coding", (
             f"PoolRouter must route session {sid!r} to 'coding', "
             f"but PoolSessionStore returned {target_pool!r}"
@@ -484,9 +486,8 @@ async def test_different_conversations_route_to_different_pools() -> None:
         messages: list[tuple[str, str]] = []
         while not inp._message_queue.empty():
             msg = inp._message_queue.get_nowait()
-            sid = str(msg.session)
-            pool = real_store.get(sid, "main")
-            messages.append((sid, pool))
+            pool = real_store.get(msg.session.snowflake, "main")
+            messages.append((msg.session.snowflake, pool))
 
         coding_routes = [(s, p) for s, p in messages if s == coding_conv]
         main_routes = [(s, p) for s, p in messages if s == main_conv]

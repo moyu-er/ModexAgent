@@ -174,8 +174,8 @@ async def test_im_conversation_stored_in_current_workspace() -> None:
         event = UserMessageEvent(
             session_id=im_sid,
             agent_name="main",
-            content="QQ message from user",
-        )
+            content="QQ message from user"
+)
         server._store.append(im_sid, event)
 
         # GET /api/sessions must include it
@@ -215,8 +215,8 @@ async def test_sessions_from_different_workspaces_are_isolated() -> None:
         conv_a = sid_a.split(".")[0]
 
         event_a = UserMessageEvent(
-            session_id=sid_a, agent_name="main", content="ws-a msg",
-        )
+            session_id=sid_a, agent_name="main", content="ws-a msg"
+)
         server._store.append(sid_a, event_a)
 
         # Switch to workspace-b: recreate store with new data dir
@@ -229,8 +229,8 @@ async def test_sessions_from_different_workspaces_are_isolated() -> None:
         conv_b = sid_b.split(".")[0]
 
         event_b = UserMessageEvent(
-            session_id=sid_b, agent_name="main", content="ws-b msg",
-        )
+            session_id=sid_b, agent_name="main", content="ws-b msg"
+)
         server._store.append(sid_b, event_b)
 
         # In workspace-b, only conv_b is visible
@@ -274,16 +274,16 @@ def test_append_follows_current_workspace_after_switch() -> None:
 
     # 1. Write in workspace A (default)
     store.append(sid, UserMessageEvent(
-        session_id=sid, agent_name="main", content="msg-in-home",
-    ))
+        session_id=sid, agent_name="main", content="msg-in-home"
+))
 
     # 2. Switch to workspace B (simulating cd E:\\download\\bot)
     _ws[0] = "E:\\download\\bot"
 
     # 3. Write another event for same session — must go to workspace B
     store.append(sid, UserMessageEvent(
-        session_id=sid, agent_name="main", content="msg-after-cd",
-    ))
+        session_id=sid, agent_name="main", content="msg-after-cd"
+))
 
     # 4. Verify the second write went to workspace B (CURRENT), not A (sticky)
     events_b = list(JSONLTranscriptStore(data_dir / "main").load(sid))
@@ -316,26 +316,26 @@ def test_append_follows_repeated_workspace_switches() -> None:
 
     # W1 → A
     store.append(sid, UserMessageEvent(
-        session_id=sid, agent_name="main", content="w1-in-A",
-    ))
+        session_id=sid, agent_name="main", content="w1-in-A"
+))
 
     # cd B, W2 → B
     _ws[0] = "/workspace-b"
     store.append(sid, UserMessageEvent(
-        session_id=sid, agent_name="main", content="w2-in-B",
-    ))
+        session_id=sid, agent_name="main", content="w2-in-B"
+))
 
     # cd C, W3 → C
     _ws[0] = "/workspace-c"
     store.append(sid, UserMessageEvent(
-        session_id=sid, agent_name="main", content="w3-in-C",
-    ))
+        session_id=sid, agent_name="main", content="w3-in-C"
+))
 
     # cd back to A, W4 → A
     _ws[0] = "/home"
     store.append(sid, UserMessageEvent(
-        session_id=sid, agent_name="main", content="w4-back-in-A",
-    ))
+        session_id=sid, agent_name="main", content="w4-back-in-A"
+))
 
     # Verify each workspace has correct events
     # data_dir is already workspace-specific; use pool dirs directly
@@ -365,9 +365,7 @@ def test_relation_store_follows_workspace_switch() -> None:
         return _ws[0]
 
     store = WorkspacePoolSessionStore(
-        data_dir,
-        workspace_resolver=_resolver,
-        pool_resolver=lambda s: "coding",
+        data_dir
     )
 
     parent = "conv.coding"
@@ -376,8 +374,8 @@ def test_relation_store_follows_workspace_switch() -> None:
     # Write in workspace A
     child_session = SessionId(
         session_id=child, agent_name="reviewer",
-        parent_session_id=parent,
-    )
+        parent_session_id=parent
+)
     asyncio.run(store.save(child_session))
     retrieved = asyncio.run(store.get(child))
     assert retrieved is not None
@@ -388,8 +386,8 @@ def test_relation_store_follows_workspace_switch() -> None:
     child2 = "conv.coding.reviewer.ff22"
     child2_session = SessionId(
         session_id=child2, agent_name="reviewer",
-        parent_session_id=parent,
-    )
+        parent_session_id=parent
+)
     asyncio.run(store.save(child2_session))
     retrieved2 = asyncio.run(store.get(child2))
     assert retrieved2 is not None
@@ -405,8 +403,8 @@ def test_relation_store_follows_workspace_switch() -> None:
     child3 = "conv.coding.reviewer.gg33"
     child3_session = SessionId(
         session_id=child3, agent_name="reviewer",
-        parent_session_id=parent,
-    )
+        parent_session_id=parent
+)
     asyncio.run(store.save(child3_session))
     retrieved3 = asyncio.run(store.get(child3))
     assert retrieved3 is not None
@@ -444,8 +442,8 @@ def test_transcript_store_rebase_on_workspace_restore() -> None:
 
         # ── Write through store BEFORE rebase (pre-fix behavior) ──
         store.append(sid, UserMessageEvent(
-            session_id=sid, agent_name="main", content="before-rebase",
-        ))
+            session_id=sid, agent_name="main", content="before-rebase"
+))
         # BUG: write goes to stale _base (home), NOT the restored workspace
         home_events = list(JSONLTranscriptStore(sessions_dir_home / "main").load(sid))
         assert len(home_events) == 1 and "before-rebase" in str(home_events[0].to_dict()), (
@@ -461,8 +459,8 @@ def test_transcript_store_rebase_on_workspace_restore() -> None:
 
         # ── Write AFTER rebase ──
         store.append(sid, UserMessageEvent(
-            session_id=sid, agent_name="main", content="after-rebase",
-        ))
+            session_id=sid, agent_name="main", content="after-rebase"
+))
         # Verify write goes to the restored workspace
         restored_events2 = list(JSONLTranscriptStore(sessions_dir_restored / "main").load(sid))
         assert len(restored_events2) == 1 and "after-rebase" in str(restored_events2[0].to_dict()), (

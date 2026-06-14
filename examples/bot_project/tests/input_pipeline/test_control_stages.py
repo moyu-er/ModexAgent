@@ -7,7 +7,12 @@ import pytest
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.environment_control import EnvironmentControlStage
 from bot.input_pipeline.stages.session_control import SessionControlStage
+from framework.core.session_id import SessionIdFactory, encode_snowflake
 from framework.input_pipeline.envelope import UserInputEnvelope
+
+
+def _sid(agent: str, conv: str) -> str:
+    return SessionIdFactory().create(agent_name=agent, external_id=conv).session_id
 
 
 def _ctx(
@@ -39,7 +44,7 @@ async def test_pool_command_terminates_and_records_pool() -> None:
     result = await stage.process(env, ctx)
 
     assert result.should_continue() is False
-    ctx.pool_session_store.set.assert_called_once_with("u1", "coding")
+    ctx.pool_session_store.set.assert_called_once_with(encode_snowflake("u1"), "coding")
 
 
 @pytest.mark.asyncio
@@ -52,7 +57,7 @@ async def test_environment_command_delegates_to_adapter_and_terminates() -> None
 
     assert result.should_continue() is False
     ctx.command_adapter._try_intercept_control.assert_awaited_once_with(
-        "/cd /tmp", "u1"
+        "/cd /tmp", _sid("main", "u1")
     )
 
 
@@ -89,7 +94,7 @@ async def test_stop_command_handled_by_session_stage() -> None:
 
     assert result.should_continue() is False
     ctx.command_adapter._try_intercept_control.assert_awaited_once_with(
-        "/stop", "u1.coding"
+        "/stop", _sid("coding", "u1")
     )
 
 
@@ -112,4 +117,4 @@ async def test_environment_stage_delegates_pwd_to_adapter() -> None:
     env = UserInputEnvelope(conversation_id="u1", content="/pwd", channel="qq")
     result = await EnvironmentControlStage(known_pools={"main", "coding"}).process(env, ctx)
     assert not result.should_continue(), "/pwd must terminate when handled"
-    ctx.command_adapter._try_intercept_control.assert_awaited_once_with("/pwd", "u1")
+    ctx.command_adapter._try_intercept_control.assert_awaited_once_with("/pwd", _sid("main", "u1"))

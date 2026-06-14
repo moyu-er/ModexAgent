@@ -6,6 +6,7 @@ import pytest
 
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.enqueue import EnqueueStage
+from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from framework.core.types import InputMessage
 from framework.input_pipeline.envelope import UserInputEnvelope
 
@@ -26,7 +27,8 @@ def _ctx(enqueued: list[InputMessage]) -> BotInputContext:
 async def test_enqueue_uses_raw_content_when_no_skill_xml() -> None:
     enqueued: list[InputMessage] = []
     env = UserInputEnvelope(conversation_id="u1", content="hi", channel="qq")
-    env.metadata["full_session_id"] = "u1.main"
+    env.metadata[RoutingMeta.RESOLVED_AGENT] = "main"
+    env.metadata[RoutingMeta.FULL_SESSION_ID] = "u1.main"
     await EnqueueStage().process(env, _ctx(enqueued))
     assert len(enqueued) == 1
     assert enqueued[0].content == "hi"
@@ -39,7 +41,8 @@ async def test_enqueue_uses_skill_xml_when_present() -> None:
     env = UserInputEnvelope(
         conversation_id="u1", content="/office-expert make ppt", channel="qq"
     )
-    env.metadata["full_session_id"] = "u1.main"
+    env.metadata[RoutingMeta.RESOLVED_AGENT] = "main"
+    env.metadata[RoutingMeta.FULL_SESSION_ID] = "u1.main"
     env.metadata["skill_xml"] = "<skill>...</skill>"
     await EnqueueStage().process(env, _ctx(enqueued))
     assert enqueued[0].content == "<skill>...</skill>"
@@ -51,7 +54,8 @@ async def test_enqueue_carries_attachments() -> None:
 
     enqueued: list[InputMessage] = []
     env = UserInputEnvelope(conversation_id="u1", content="hi", channel="qq")
-    env.metadata["full_session_id"] = "u1.main"
+    env.metadata[RoutingMeta.RESOLVED_AGENT] = "main"
+    env.metadata[RoutingMeta.FULL_SESSION_ID] = "u1.main"
     env.attachments = [AttachmentRef(local_path="/tmp/a.png")]
     await EnqueueStage().process(env, _ctx(enqueued))
     assert enqueued[0].attachments == ["/tmp/a.png"]
@@ -63,7 +67,8 @@ async def test_enqueue_passes_source_and_chat_id() -> None:
     # msg.chat_id (broker header). EnqueueStage MUST carry them through.
     enqueued: list[InputMessage] = []
     env = UserInputEnvelope(conversation_id="u1", content="hi", channel="qq")
-    env.metadata["full_session_id"] = "u1.main"
+    env.metadata[RoutingMeta.RESOLVED_AGENT] = "main"
+    env.metadata[RoutingMeta.FULL_SESSION_ID] = "u1.main"
     env.metadata["chat_id"] = "group123"
     await EnqueueStage().process(env, _ctx(enqueued))
     assert enqueued[0].source == "qq"          # == envelope.channel (semantically same)

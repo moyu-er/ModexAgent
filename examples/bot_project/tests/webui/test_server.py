@@ -13,7 +13,7 @@ from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapte
 from bot.webui.emitter import WebBotEmitter
 from bot.webui.server import (
     WebUIServer,
-    _new_uuid_prefix,
+    _new_uuid_prefix
 )
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import _unwrap_envelope
@@ -95,8 +95,8 @@ async def test_api_messages_loads_transcript() -> None:
         from bot.webui.events import UserMessageEvent
         server._store.append(
             "abc123.main",
-            UserMessageEvent(session_id="abc123.main", agent_name="main", content="hello"),
-        )
+            UserMessageEvent(session_id="abc123.main", agent_name="main", content="hello")
+)
         client = TestClient(TestServer(server.app))
         await client.start_server()
         try:
@@ -247,13 +247,13 @@ async def test_delete_session_removes_transcript_from_any_pool_directory() -> No
                 UserMessageEvent(
                     session_id=session_id,
                     agent_name="coding",
-                    content="ghost message",
-                ).to_dict(),
-                ensure_ascii=False,
-            )
+                    content="ghost message"
+).to_dict(),
+                ensure_ascii=False
+)
             + "\n",
-            encoding="utf-8",
-        )
+            encoding="utf-8"
+)
 
         resp = await client.delete(f"/api/sessions/{session_id}")
         assert resp.status == 200
@@ -340,7 +340,7 @@ async def test_ws_attach_restores_pool_routing() -> None:
         attached = _unwrap_envelope(await ws.receive_json())
         assert attached["event"] == "attached"
 
-        # Callback should have been invoked with conv_id and pool_name
+        # Callback should have been invoked with the snowflake (agent-independent id) and pool_name
         callback.assert_called_once_with("web:test-attach", "coding")
     finally:
         await client.close()
@@ -477,9 +477,9 @@ async def test_sessions_persist_across_pool_switch_and_qq_conversation() -> None
             UserMessageEvent(
                 session_id=qq_sid,
                 agent_name="main",
-                content="hello from QQ",
-            ),
-        )
+                content="hello from QQ"
+)
+)
 
         resp = await client.get("/api/sessions")
         sessions = await resp.json()
@@ -592,17 +592,15 @@ async def test_sessions_list_includes_subagent_with_parent_relation() -> None:
     parent_sid = "abc.coding"
     child_sid = "abc.coding.reviewer.ee11"
     session_store = WorkspacePoolSessionStore(
-        data_dir,
-        workspace_resolver=lambda: "",
-        pool_resolver=lambda s: "coding",
+        data_dir
     )
     parent_session = SessionId(
-        session_id=parent_sid, agent_name="coding",
-    )
+        session_id=parent_sid, agent_name="coding"
+)
     child_session = SessionId(
         session_id=child_sid, agent_name="reviewer",
-        parent_session_id=parent_sid,
-    )
+        parent_session_id=parent_sid
+)
     await session_store.save(parent_session)
     await session_store.save(child_session)
     server.set_session_store(session_store)
@@ -715,8 +713,8 @@ async def test_subagent_streaming_delta_arrives_at_ws_client() -> None:
             config=EmitterConfig(),
             session_meta_resolver=lambda: SessionMeta(
                 pool="coding", parent_session_id=parent_sid
-            ),
-        )
+            )
+)
 
         # Emit a delta — this should enqueue into the delta queue
         await emitter.emit_delta("subagent streaming test")
@@ -769,8 +767,8 @@ async def test_ws_full_stream_isolation_across_sessions() -> None:
         emitter_a = WebBotEmitter(
             output_adapter,
             "web:conv-a.main",
-            config=EmitterConfig(),
-        )
+            config=EmitterConfig()
+)
         await emitter_a.emit_delta("hello from A")
 
         received = _unwrap_envelope(await ws.receive_json(timeout=2))
@@ -796,8 +794,8 @@ async def test_ws_full_stream_isolation_across_sessions() -> None:
         emitter_b = WebBotEmitter(
             output_adapter,
             "web:conv-b.main",
-            config=EmitterConfig(),
-        )
+            config=EmitterConfig()
+)
         await emitter_b.emit_delta("hello from B")
 
         received = _unwrap_envelope(await ws.receive_json(timeout=2))
@@ -835,8 +833,8 @@ async def test_ws_turn_end_streaming_stop_is_isolated() -> None:
         emitter_a = WebBotEmitter(
             output_adapter,
             "web:conv-a.main",
-            config=EmitterConfig(),
-        )
+            config=EmitterConfig()
+)
         await emitter_a.emit_delta("streaming in A...")
         delta = _unwrap_envelope(await ws.receive_json(timeout=2))
         assert delta["event"] == "model_content_delta"

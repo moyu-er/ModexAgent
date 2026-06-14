@@ -24,10 +24,15 @@ from bot.input_pipeline.assembly import build_im_pipeline
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.skill_parse import ParsedSkill, SkillRegistry
 from bot.webui.transcript_store import JSONLTranscriptStore
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionId, SessionIdFactory
 from framework.core.types import InputMessage
 from framework.input_pipeline.envelope import AttachmentRef, UserInputEnvelope
 from framework.pipeline.adapters import InputAdapter
+
+
+def _sid(agent: str, conv: str) -> str:
+    """Factory-derived full session id for an agent + conversation_id."""
+    return SessionIdFactory().create(agent_name=agent, external_id=conv).session_id
 
 # ── Stub adapters / registries for testing ────────────────────────────────────
 
@@ -197,11 +202,11 @@ async def test_im_pipeline_persists_qq_message() -> None:
     await pipe.handle(env, ctx)
 
     # Persisted
-    events = list(store.load("qq_user_123.main"))
+    events = list(store.load(_sid("main", "qq_user_123")))
     assert len(events) == 1
     assert events[0].event == "user_message"
     assert events[0].content == "help me write a Python script"
-    assert events[0].session_id == "qq_user_123.main"
+    assert events[0].session_id == _sid("main", "qq_user_123")
     assert events[0].agent_name == "main"
 
     # Enqueued
@@ -227,7 +232,7 @@ async def test_im_pipeline_persists_discord_message() -> None:
     )
     await pipe.handle(env, ctx)
 
-    events = list(store.load("discord_session_1.main"))
+    events = list(store.load(_sid("main", "discord_session_1")))
     assert len(events) == 1
     assert events[0].content == "deploy to production"
 
@@ -254,7 +259,7 @@ async def test_im_pipeline_persists_message_with_attachments() -> None:
     )
     await pipe.handle(env, ctx)
 
-    events = list(store.load("tg_chat_456.main"))
+    events = list(store.load(_sid("main", "tg_chat_456")))
     assert len(events) == 1
     assert events[0].content == "analyze this image"
 
@@ -274,7 +279,7 @@ async def test_im_pipeline_persists_multiple_sequential() -> None:
         env = UserInputEnvelope(conversation_id="user_1", content=text, channel="qq")
         await pipe.handle(env, ctx)
 
-    events = list(store.load("user_1.main"))
+    events = list(store.load(_sid("main", "user_1")))
     assert len(events) == 3
     assert events[0].content == "first question"
     assert events[1].content == "second question"
@@ -293,9 +298,11 @@ async def test_im_pipeline_skips_control_commands() -> None:
     cmd_adapter = MagicMock()
     cmd_adapter._try_intercept_control = AsyncMock(return_value=True)
     enqueued: list[InputMessage] = []
+    pool_store = MagicMock()
+    pool_store.get.return_value = "main"
     ctx = BotInputContext(
         default_pool="main",
-        pool_session_store=MagicMock(),
+        pool_session_store=pool_store,
         agent_pool_map={"main": "main"},
         agent_resolver=lambda p: p,
         transcript_store=store,
@@ -308,5 +315,5 @@ async def test_im_pipeline_skips_control_commands() -> None:
     await pipe.handle(env, ctx)
 
     # Not persisted and not enqueued
-    assert list(store.load("u1.main")) == []
+    assert list(store.load(_sid("main", "u1"))) == []
     assert enqueued == []

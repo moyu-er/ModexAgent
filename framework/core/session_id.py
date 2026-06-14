@@ -91,6 +91,7 @@ class SessionId(BaseModel):
         """True when this session has a recorded parent."""
         return self.parent_session_id is not None
 
+    # deprecated, don't use touch()
     def touch(self) -> SessionId:
         """Return a copy with ``updated_at`` refreshed to now."""
         return self.model_copy(update={"updated_at": now_ms()})
@@ -123,7 +124,9 @@ class SessionId(BaseModel):
                     UserWarning,
                     stacklevel=2,
                 )
-        return cls(session_id=value, agent_name=agent_name)
+        now = now_ms()
+        return cls(session_id=value, agent_name=agent_name,
+                   created_at=now, updated_at=now)
 
 
 class SessionIdFactory:

@@ -44,12 +44,21 @@ def _modex_dir(project_dir: Path) -> Path:
 
 
 def _sessions_dir(workspace_data_dir: Path) -> Path:
-    """Session-management directory under the given workspace data dir.
+    """Transcript directory under the given workspace data dir.
 
     After ``cd``, this is rebuilt to point at the new workspace's
-    ``.modex/sessions/`` so each workspace maintains its own sessions.
+    ``.modex/sessions/`` so each workspace maintains its own transcripts.
     """
     return workspace_data_dir / "sessions"
+
+
+def _session_index_dir(workspace_data_dir: Path) -> Path:
+    """SessionId metadata index — flat directory, separate from transcripts.
+
+    Each session has one ``{safe_id}.json`` file.  Workspace switching
+    rebases the store root to the new workspace's index directory.
+    """
+    return workspace_data_dir / "session_index"
 
 
 class WebUIService(BotService):
@@ -132,17 +141,13 @@ class WebUIService(BotService):
         self._transcript_store = transcript_store
 
         # ── 2.5 Session store + registry ───────────────────────────────
-        # WorkspacePoolSessionStore partitions sessions into
-        # {workspace}/{pool}/ subdirectories under sessions_dir.
-        # InMemorySessionRegistry provides a write-through runtime cache.
+        # Flat index under .modex/session_index/ — separate from
+        # .modex/sessions/ (transcripts).  One JSON file per SessionId.
         from bot.service.session_store import WorkspacePoolSessionStore
         from framework.core.session_registry import InMemorySessionRegistry
 
-        self._session_store = WorkspacePoolSessionStore(
-            sessions_dir,
-            workspace_resolver=self._resolve_workspace,
-            pool_resolver=lambda session: self._pool_for_agent(session.agent_name),
-        )
+        index_dir = _session_index_dir(_modex_dir(project_dir))
+        self._session_store = WorkspacePoolSessionStore(index_dir)
         self._session_registry = InMemorySessionRegistry(store=self._session_store)
         # Sync cache for parent lookups at emit time (hot path).
         self._parent_ids: dict[str, str] = {}
@@ -316,23 +321,32 @@ class WebUIService(BotService):
         return self._agent_pool_map.get(agent_name, _DEFAULT_AGENT_NAME)
 
     def update_session_stores(self, new_data_dir: Path) -> None:
-        """Update transcript and session stores to point at *new_data_dir*.
+        """Rebase transcript and session-index stores to *new_data_dir*.
 
-        Called from ``BotService._on_ws_stop_and_rebuild`` after a workspace
-        switch so sessions follow the new ``.modex/sessions/`` directory.
+        Called after a workspace switch.  Transcripts go to
+        ``.modex/sessions/``; SessionId metadata goes to
+        ``.modex/session_index/`` (separate flat tree).  The runtime
+        registry cache is cleared and reloaded from the new index.
         """
         new_sessions_dir = _sessions_dir(new_data_dir)
         new_sessions_dir.mkdir(parents=True, exist_ok=True)
+        new_index_dir = _session_index_dir(new_data_dir)
+        new_index_dir.mkdir(parents=True, exist_ok=True)
 
-        # Rebase transcript store: this clears pool stores, ownership cache,
-        # and scan state so the next read/write targets the new workspace.
+        # Rebase transcript store.
         self._transcript_store.rebase(new_sessions_dir)
 
-        # Rebase session store: update root directory so future saves target
-        # the new workspace.
-        self._session_store._root = new_sessions_dir
-        # Clear sync parent cache for the new workspace.
+        # Rebase session index and reload registry cache.
+        self._session_store._root = new_index_dir
         self._parent_ids.clear()
+
+        # Reload runtime cache from the new workspace's index (fire-and-forget).
+        async def _reload() -> None:
+            try:
+                await self._session_registry.load_all()
+            except Exception:
+                logger.exception("Failed to reload session registry after workspace switch")
+        asyncio.create_task(_reload())
 
         # Update server's data_dir if already set.
         if self._server is not None:

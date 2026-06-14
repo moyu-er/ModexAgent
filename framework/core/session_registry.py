@@ -46,14 +46,36 @@ class InMemorySessionRegistry(SessionRegistry):
         if self._store is None:
             return
         async with self._lock:
+            self._cache.clear()
             for session in await self._store.list_sessions():
                 self._cache[str(session)] = session
 
     async def register(self, session: SessionId) -> None:
         async with self._lock:
-            self._cache[str(session)] = session
-        if self._store is not None:
-            await self._store.save(session)
+            existing = self._cache.get(str(session))
+            if existing is not None:
+                # Merge: keep existing richer fields; only update fields
+                # the incoming session explicitly provides (non-None / non-empty).
+                update: dict[str, object] = {}
+                if session.parent_session_id is not None:
+                    update["parent_session_id"] = session.parent_session_id
+                if session.created_at is not None and existing.created_at is None:
+                    update["created_at"] = session.created_at
+                if session.updated_at is not None:
+                    update["updated_at"] = session.updated_at
+                if session.metadata:
+                    merged_meta = dict(existing.metadata)
+                    merged_meta.update(session.metadata)
+                    update["metadata"] = merged_meta
+                if update:
+                    merged = existing.model_copy(update=update)
+                    self._cache[str(session)] = merged
+                    if self._store is not None:
+                        await self._store.save(merged)
+            else:
+                self._cache[str(session)] = session
+                if self._store is not None:
+                    await self._store.save(session)
 
     async def get(self, session_id: str) -> SessionId | None:
         async with self._lock:
@@ -63,4 +85,7 @@ class InMemorySessionRegistry(SessionRegistry):
         async with self._lock:
             session = self._cache.get(session_id)
             if session is not None:
-                self._cache[session_id] = session.touch()
+                updated = session.touch()
+                self._cache[session_id] = updated
+                if self._store is not None:
+                    await self._store.save(updated)

@@ -78,15 +78,13 @@ def test_relation_store_rebase_switches_write_target() -> None:
         base_b = Path(tmp) / "ws-b" / "sessions"
 
         store = WorkspacePoolSessionStore(
-            base_a,
-            workspace_resolver=lambda: "",
-            pool_resolver=lambda s: "main",
+            base_a
         )
 
         child_a = SessionId(
             session_id="conv.main.child", agent_name="child",
-            parent_session_id="conv.main",
-        )
+            parent_session_id="conv.main"
+)
         asyncio.run(store.save(child_a))
         retrieved = asyncio.run(store.get("conv.main.child"))
         assert retrieved is not None
@@ -100,8 +98,8 @@ def test_relation_store_rebase_switches_write_target() -> None:
 
         child_b = SessionId(
             session_id="conv-b.main.child", agent_name="child",
-            parent_session_id="conv-b.main",
-        )
+            parent_session_id="conv-b.main"
+)
         asyncio.run(store.save(child_b))
         assert (base_b / "" / "main" / "conv-b.main.child.json").exists()
         retrieved_b = asyncio.run(store.get("conv-b.main.child"))
@@ -123,25 +121,23 @@ def test_web_ui_service_update_session_stores_rebases_stores() -> None:
         service._transcript_store = WorkspaceScopedTranscriptStore(home_sessions, lambda: "")
         service._transcript_store.set_agent_pool_map({"main": "main"})
         service._session_store = WorkspacePoolSessionStore(
-            home_sessions,
-            workspace_resolver=lambda: "",
-            pool_resolver=lambda s: "main",
+            home_sessions
         )
         service._parent_ids = {}
         service._server = None
 
         sid = "conv.main"
         service._transcript_store.append(
-            sid, UserMessageEvent(session_id=sid, agent_name="main", content="home"),
-        )
+            sid, UserMessageEvent(session_id=sid, agent_name="main", content="home")
+)
         assert (home_sessions / "main" / f"{sid}.jsonl").exists()
 
         WebUIService.update_session_stores(service, other_sessions.parent)
 
         # After rebase, writes go to the other workspace.
         service._transcript_store.append(
-            sid, UserMessageEvent(session_id=sid, agent_name="main", content="other"),
-        )
+            sid, UserMessageEvent(session_id=sid, agent_name="main", content="other")
+)
         assert (other_sessions / "main" / f"{sid}.jsonl").exists()
         events = list(JSONLTranscriptStore(other_sessions / "main").load(sid))
         assert len(events) == 1
@@ -150,7 +146,7 @@ def test_web_ui_service_update_session_stores_rebases_stores() -> None:
         # Session store also follows the rebase.
         child = SessionId(
             session_id="conv.main.child", agent_name="child",
-            parent_session_id="conv.main",
-        )
+            parent_session_id="conv.main"
+)
         asyncio.run(service._session_store.save(child))
         assert (other_sessions / "" / "main" / "conv.main.child.json").exists()

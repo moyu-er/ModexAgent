@@ -11,8 +11,14 @@ from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.skill_parse import ParsedSkill, SkillRegistry
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import UserMessageEvent
+from framework.core.session_id import SessionIdFactory, encode_snowflake
 from framework.core.types import InputMessage
 from framework.input_pipeline.envelope import UserInputEnvelope
+
+
+def _sid(agent: str, conv: str) -> str:
+    """Factory-derived full session id for an agent + conversation_id."""
+    return SessionIdFactory().create(agent_name=agent, external_id=conv).session_id
 
 
 class _NoSkill(SkillRegistry):
@@ -67,7 +73,7 @@ async def test_im_normal_message_persisted_and_enqueued() -> None:
         )
         env = UserInputEnvelope(conversation_id="u1", content="hello", channel="qq")
         await pipe.handle(env, ctx)
-        events = list(store.load("u1.main"))
+        events = list(store.load(_sid("main", "u1")))
         assert len(events) == 1 and events[0].content == "hello"
         assert len(enqueued) == 1 and enqueued[0].content == "hello"
 
@@ -89,7 +95,7 @@ async def test_webui_explicit_coding_pool_persisted_to_coding() -> None:
             explicit_pool="coding",
         )
         await pipe.handle(env, ctx)
-        events = list(store.load("uuid1.coding"))
+        events = list(store.load(_sid("coding", "uuid1")))
         assert len(events) == 1 and events[0].content == "hi"
 
 
@@ -106,7 +112,7 @@ async def test_im_stop_command_not_persisted() -> None:
         pipe = build_im_pipeline(skill_registry=_NoSkill(), known_pools={"main"})
         env = UserInputEnvelope(conversation_id="u1", content="/stop", channel="qq")
         await pipe.handle(env, ctx)
-        assert list(store.load("u1.main")) == []
+        assert list(store.load(_sid("main", "u1"))) == []
         assert enqueued == [], "/stop must not be enqueued"
 
 
@@ -127,7 +133,7 @@ async def test_im_cd_command_not_persisted() -> None:
         env = UserInputEnvelope(conversation_id="u1", content="/cd /tmp", channel="qq")
         result = await pipe.handle(env, ctx)
         assert not result.should_continue(), "/cd must terminate"
-        assert list(store.load("u1.main")) == []
+        assert list(store.load(_sid("main", "u1"))) == []
         assert enqueued == [], "/cd must not be enqueued"
 
 
@@ -146,8 +152,8 @@ async def test_im_pool_command_switches_pool_and_terminates() -> None:
         env = UserInputEnvelope(conversation_id="u1", content="/coding", channel="qq")
         result = await pipe.handle(env, ctx)
         assert not result.should_continue(), "/coding must terminate"
-        ctx.pool_session_store.set.assert_called_once_with("u1", "coding")
-        assert list(store.load("u1.main")) == []
+        ctx.pool_session_store.set.assert_called_once_with(encode_snowflake("u1"), "coding")
+        assert list(store.load(_sid("main", "u1"))) == []
         assert enqueued == [], "/coding must not be enqueued"
 
 
@@ -165,7 +171,7 @@ async def test_im_exit_command_not_persisted() -> None:
         env = UserInputEnvelope(conversation_id="u1", content="/exit", channel="qq")
         result = await pipe.handle(env, ctx)
         assert not result.should_continue(), "/exit must terminate"
-        assert list(store.load("u1.main")) == []
+        assert list(store.load(_sid("main", "u1"))) == []
         assert enqueued == [], "/exit must not be enqueued"
 
 
@@ -188,7 +194,7 @@ async def test_im_valid_skill_persisted_raw_llm_gets_xml() -> None:
         )
         await pipe.handle(env, ctx)
         # Transcript must have raw content (for replay/display)
-        events = list(store.load("u1.main"))
+        events = list(store.load(_sid("main", "u1")))
         assert len(events) == 1
         assert events[0].content == "/office-expert make ppt"
         # LLM must receive XML form, not raw text
@@ -214,7 +220,7 @@ async def test_im_invalid_skill_terminates_not_persisted() -> None:
         assert not result.should_continue(), "invalid skill must terminate"
         response = getattr(result, "response", {})
         assert isinstance(response, dict) and "message" in response
-        assert list(store.load("u1.main")) == []
+        assert list(store.load(_sid("main", "u1"))) == []
         assert enqueued == [], "invalid skill must not be enqueued"
 
 
@@ -239,7 +245,7 @@ async def test_webui_invalid_skill_terminates_not_persisted() -> None:
         assert not result.should_continue(), "invalid skill must terminate"
         response = getattr(result, "response", {})
         assert isinstance(response, dict) and "message" in response
-        assert list(store.load("uuid1.main")) == []
+        assert list(store.load(_sid("main", "uuid1"))) == []
         assert enqueued == [], "invalid skill must not be enqueued"
 
 
@@ -293,8 +299,8 @@ async def test_multi_channel_pool_isolation() -> None:
         result_im = await pipe_im.handle(env_im, ctx_im)
         assert not result_im.should_continue()
 
-        # PoolSessionStore.set called with IM conversation_id
-        pool_store.set.assert_called_with("u1", "coding")
+        # PoolSessionStore.set called with IM conversation snowflake
+        pool_store.set.assert_called_with(encode_snowflake("u1"), "coding")
 
         # WebUI sends normal message with explicit_pool="main"
         env_ws = UserInputEnvelope(
@@ -306,14 +312,14 @@ async def test_multi_channel_pool_isolation() -> None:
         result_ws = await pipe_ws.handle(env_ws, ctx_ws)
         assert result_ws.should_continue()
 
-        # WebUI message is persisted to "uuid1.main", not affected by IM pool switch
-        events_ws = list(store.load("uuid1.main"))
+        # WebUI message is persisted to its own session, not affected by IM pool switch
+        events_ws = list(store.load(_sid("main", "uuid1")))
         assert len(events_ws) == 1
         assert events_ws[0].content == "hello from webui"
 
         # IM pool switch did not enqueue or persist any message
         assert enqueued_im == []
-        assert list(store.load("u1.main")) == []
+        assert list(store.load(_sid("main", "u1"))) == []
 
 
 @pytest.mark.asyncio
@@ -338,7 +344,7 @@ async def test_webui_slash_cd_produces_error_not_enqueued() -> None:
         # Terminate carries response so _ws_send_message can build ERROR envelope
         response = getattr(result, "response", None)
         assert response is not None, "Terminate must carry a response for ERROR envelope"
-        assert list(store.load("uuid1.main")) == []
+        assert list(store.load(_sid("main", "uuid1"))) == []
         assert enqueued == [], "/cd must not be enqueued in WebUI"
 
 
@@ -359,8 +365,8 @@ async def test_im_pwd_command_handled_and_not_persisted() -> None:
         env = UserInputEnvelope(conversation_id="u1", content="/pwd", channel="qq")
         result = await pipe.handle(env, ctx)
         assert not result.should_continue(), "/pwd must terminate"
-        cmd_adapter._try_intercept_control.assert_awaited_once_with("/pwd", "u1")
-        assert list(store.load("u1.main")) == []
+        cmd_adapter._try_intercept_control.assert_awaited_once_with("/pwd", _sid("main", "u1"))
+        assert list(store.load(_sid("main", "u1"))) == []
         assert enqueued == [], "/pwd must not be enqueued"
 
 
@@ -432,7 +438,7 @@ async def test_skill_resolved_from_correct_pool() -> None:
         assert "not recognized" in str(resp.get("message", ""))
         assert enqueued == []
         # u2.main must be empty — the unrecognized skill was terminated before S7
-        assert list(store.load("u2.main")) == []
+        assert list(store.load(_sid("main", "u2"))) == []
 
 
 @pytest.mark.asyncio
@@ -477,4 +483,4 @@ async def test_skill_pool_isolation_webui() -> None:
         assert not result2.should_continue(), (
             "/brainstorming must NOT be found in coding pool"
         )
-        assert list(store.load("uuid2.coding")) == []
+        assert list(store.load(_sid("coding", "uuid2"))) == []

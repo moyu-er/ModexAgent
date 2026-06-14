@@ -1,10 +1,14 @@
-"""Session storage partitioned by workspace and pool."""
+"""Flat SessionId index store — one JSON file per session, no layering.
+
+The store is workspace/pool agnostic.  Workspace switching is handled
+externally by rebasing ``_root``.  Discovery uses a single-level glob on
+``<root>/{safe_id}.json``.
+"""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Callable
 
 from framework.core.session_id import SessionId
 from framework.core.session_store import LocalFileSessionStore
@@ -18,40 +22,25 @@ def _safe_name(name: str) -> str:
 
 
 class WorkspacePoolSessionStore(LocalFileSessionStore):
-    """Session store partitioned into ``<workspace>/<pool>/`` subdirectories.
+    """Flat SessionId index — ``<root>/{safe_id}.json``.
 
-    The workspace and pool are resolved at write time via callables,
-    so a session's location reflects the current workspace context.
+    Workspace isolation is managed externally: the consumer rebases
+    ``_root`` when the workspace changes.  No path-level layering is
+    needed because ``session_id`` is globally unique.
     """
 
-    def __init__(
-        self,
-        base_dir: Path,
-        workspace_resolver: Callable[[], str],
-        pool_resolver: Callable[[SessionId], str],
-    ) -> None:
+    def __init__(self, base_dir: Path) -> None:
         super().__init__(base_dir)
-        self._workspace_resolver = workspace_resolver
-        self._pool_resolver = pool_resolver
 
     # ------------------------------------------------------------------
     # helpers
     # ------------------------------------------------------------------
 
     def _path_for(self, session_id: str) -> Path:
-        """Resolve path for *session_id* by scanning subdirectories.
-
-        Returns the first matching file, or a fallback path under the
-        root if not found (used by delete).
-        """
-        safe = _safe_name(session_id)
-        filename = f"{safe}.json"
-        for json_file in self._root.glob(f"**/{filename}"):
-            return json_file
-        return self._root / filename
+        return self._root / f"{_safe_name(session_id)}.json"
 
     def _scan_json_files(self) -> list[Path]:
-        return sorted(self._root.glob("**/*.json"))
+        return sorted(self._root.glob("*.json"))
 
     def _read_session(self, path: Path) -> SessionId:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -62,37 +51,20 @@ class WorkspacePoolSessionStore(LocalFileSessionStore):
     # ------------------------------------------------------------------
 
     async def save(self, session: SessionId) -> None:
-        workspace = self._workspace_resolver()
-        pool = self._pool_resolver(session)
-        target_dir = self._root / workspace / pool
-        target_dir.mkdir(parents=True, exist_ok=True)
-        path = target_dir / f"{_safe_name(str(session))}.json"
+        path = self._path_for(str(session))
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(session.model_dump_json(), encoding="utf-8")
 
     async def get(self, session_id: str) -> SessionId | None:
-        safe = _safe_name(session_id)
-        filename = f"{safe}.json"
-        for json_file in self._root.glob(f"**/{filename}"):
-            return self._read_session(json_file)
-        return None
+        path = self._path_for(session_id)
+        if not path.exists():
+            return None
+        return self._read_session(path)
 
     async def delete(self, session_id: str) -> None:
-        safe = _safe_name(session_id)
-        filename = f"{safe}.json"
-        for json_file in self._root.glob(f"**/{filename}"):
-            json_file.unlink()
-            # Optionally clean up empty parent directories
-            try:
-                parent = json_file.parent
-                while parent != self._root:
-                    if not any(parent.iterdir()):
-                        parent.rmdir()
-                        parent = parent.parent
-                    else:
-                        break
-            except OSError:
-                pass
-            return
+        path = self._path_for(session_id)
+        if path.exists():
+            path.unlink()
 
     async def list_sessions(self) -> list[SessionId]:
         results: list[SessionId] = []

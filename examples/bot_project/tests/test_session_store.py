@@ -19,9 +19,7 @@ async def test_path_partitioned_by_workspace_and_pool(
     tmp_path: Path, factory: SessionIdFactory
 ):
     store = WorkspacePoolSessionStore(
-        base_dir=tmp_path,
-        workspace_resolver=lambda: "ws1",
-        pool_resolver=lambda session: "coding",
+        base_dir=tmp_path
     )
     session = factory.create(agent_name="main")
     await store.save(session)
