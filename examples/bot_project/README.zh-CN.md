@@ -34,7 +34,8 @@
 | **多 Agent 协作** | 主 Agent + 多个常驻 Subagent，星型拓扑通信 |
 | **技能系统** | 从 Markdown 文件动态构建系统提示词 |
 | **插件系统** | 动态扩展工具、记忆提供者和技能来源 |
-| **Slash 指令** | `/approve`、`/deny`、`/continue` 及技能触发指令 |
+| **Slash 指令** | `/approve`、`/deny`、`/continue`、`/cd`、`/pool名称`、`/stop` 及技能触发指令 |
+| **Input Pipeline** | 7 阶段统一消息处理流水线——IM 与 WebUI 共用，保证控制指令、技能解析、持久化、入队行为一致 |
 | **Pool 运行时** | 多 Agent 常驻池，通过 `MessageBroker` + `AgentMessageBus` 路由消息 |
 | **自主部署** | Agent 通过 SSH 连接远程服务器，拉取代码并重启自身服务 |
 
@@ -50,7 +51,14 @@
 │              WebUIServer (aiohttp)                    │
 │  /api/sessions, /api/pools, /api/workspace, /ws      │
 └────────┬─────────────────────────────────────────────┘
-         │  WebSocketInputAdapter
+         │  产生 seed UserInputEnvelope
+         ▼
+┌──────────────────────────────────────────────────────┐
+│              Input Pipeline（7 阶段）                  │
+│  S4 SetChannel → S5 ResolvePool → S6 SkillParse      │
+│  → S7 PersistUserMessage → S8 Enqueue                │
+└────────┬─────────────────────────────────────────────┘
+         │  已解析 session + InputMessage
          ▼
 ┌──────────────────────────────────────────────────────┐
 │              PoolRouter                               │
@@ -82,6 +90,13 @@ QQ 用户 / 群聊                    浏览器 (WebUI)
          │                       └────────┬─────────┘
          │                                │
          ▼                                ▼
+┌──────────────────────────────────────────────────────┐
+│              Input Pipeline（7 阶段收敛）              │
+│  IM: S4→S2→S3→S5→S6→S7→S8                          │
+│  WebUI: S4→S5→S6→S7→S8                              │
+└────────┬─────────────────────────────────────────────┘
+         │
+         ▼
 ┌──────────────────────────────────────────────────────┐
 │              PoolRouter                              │
 │         会话 → Pool 分发                              │
@@ -277,6 +292,20 @@ python bot_service.py
 - **Pool 选择器** — 选择用哪个 Agent Pool 处理新会话
 - **历史回放** — 过往会话从 transcript store 加载回显
 
+### Input Pipeline（统一消息处理流水线）
+
+所有用户消息——来自 IM（QQ）和 WebUI——在到达 Agent 之前经过共享的 7 阶段流水线处理。这保证了跨通道的控制指令、技能解析、Pool 路由、持久化和入队行为完全一致：
+
+| 阶段 | 名称 | IM | WebUI | 功能 |
+|------|------|:--:|:-----:|------|
+| S2 | EnvironmentControl | ✅ | — | `/cd`、`/pool`、`/exit`、`/pwd` |
+| S3 | SessionControl | ✅ | — | `/stop` 取消当前轮次 |
+| S4 | SetChannel | ✅ | ✅ | 标记会话来源通道 |
+| S5 | ResolvePool | ✅ | ✅ | 解析 Pool + Agent，持久化 session→pool |
+| S6 | SkillParse | ✅ | ✅ | 校验 `/skillName`，转换为 XML |
+| S7 | PersistUserMessage | ✅ | ✅ | 写入 transcript store（唯一持久化路径） |
+| S8 | Enqueue | ✅ | ✅ | 构建 InputMessage，入队到 Agent |
+
 ### 多级记忆系统
 
 ```
@@ -341,11 +370,16 @@ skills/
 
 ### Slash 指令
 
+指令由 Input Pipeline 处理（S2/S3 处理控制指令，S6 处理技能指令），之后才到达 Agent：
+
 | 指令 | 说明 |
 |------|------|
 | `/approve` | 批准待审批的工具调用 |
 | `/deny` | 拒绝待审批的工具调用 |
 | `/continue` | 继续对话，不将指令本身加入上下文 |
+| `/cd <路径>` | 切换工作目录（仅 IM） |
+| `/pool名称` | 切换到指定 Agent Pool（仅 IM） |
+| `/stop` | 取消当前运行中的轮次（仅 IM） |
 | `/weather 上海明天天气` | 技能指令，自动注入对应 SKILL.md |
 
 ### 治理系统
@@ -407,9 +441,10 @@ agents:
 `BotService` 是通用基类，不绑定 QQ。新增一个平台（Discord、飞书、钉钉、Telegram 等）是即插即用的：
 
 1. 创建 `bot/adapters/<platform>.py`，包含三个类：
-   - `<Platform>InputAdapter` —— 继承 `InputAdapter`，接收消息并 `yield InputMessage`。
+   - `<Platform>InputAdapter` —— 继承 `InputAdapter`，接收消息并产生 seed `UserInputEnvelope` 供 Input Pipeline 处理。
    - `<Platform>OutputAdapter` —— 继承 `OutputAdapter`，把回复发回该平台。
    - `<Platform>Emitter` —— 继承 `StreamingAwareEmitter` 或 `ContentEmitter`，把 agent 事件转换为平台消息。
+   - 仅当 pipeline 由外部持有时才重写 `configure_input_pipeline()`（参见 `WebSocketInputAdapter`）；否则继承 ABC 默认实现即可。
 
 2. 创建 `bot/adapters/register_<platform>.py`，用 `@register` 装饰构建函数：
 

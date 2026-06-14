@@ -12,6 +12,7 @@ Core multi-agent framework package (336+ Python files). All abstractions, implem
 | `agents/` | `ReActAgent` (graph-based 4-node), `SummarizerAgent`, `ExperienceReviewAgent` (see `agents/AGENTS.md`) |
 | `approval/` | Tiered tool approval — tiers, decisions, response parsing (see `approval/AGENTS.md`) |
 | `pipeline/` | `AgentPipeline` orchestration, I/O adapters, approval renderer, slash commands (see `pipeline/AGENTS.md`) |
+| `input_pipeline/` | Extensible user-input stage pipeline — `UserInputEnvelope`, `InputStage` ABC, `Continue`/`Terminate`, `UserInputPipeline` (see `input_pipeline/AGENTS.md`) |
 
 | `control/` | Runtime control plane — `InMemoryControlChannel`, `CallbackControlEventBus`, `ControlCommand`, `ControlScope`, termination exceptions (see `control/AGENTS.md`) |
 | `hook/` | Lifecycle hooks — `HookRunner`, `HookPoint`, 6 builtin hooks (see `hook/AGENTS.md`) |

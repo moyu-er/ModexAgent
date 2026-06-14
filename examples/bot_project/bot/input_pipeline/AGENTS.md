@@ -78,7 +78,7 @@ Both pipelines. Resolves pool, agent, and full session ID for the conversation:
 
 - If `explicit_pool` is set (WebUI pool selector), persists it to `PoolSessionStore` so `PoolRouter` routes correctly.
 - If `explicit_pool` is None (IM), reads the stored pool from `PoolSessionStore` (falls back to `default_pool`).
-- Stores `resolved_pool`, `resolved_agent`, and `full_session_id` in `envelope.metadata`.
+- Stores `resolved_pool`, `resolved_agent`, and `full_session_id` in `envelope.metadata` using `RoutingMeta` enum keys (`RESOLVED_POOL`, `RESOLVED_AGENT`, `FULL_SESSION_ID`).
 
 This makes S5 the single owner of pool resolution + persistence. Neither the WebUI server nor the QQ adapter resolves pools inline.
 
@@ -92,7 +92,7 @@ Both pipelines. Detects `/skillName` commands and validates against a pluggable 
 - Registered skills: stores `skill_xml` (LLM-ready XML form) and `skill_name` in `envelope.metadata`. The raw text stays in `envelope.content` for persistence.
 - Unknown skills: terminates with a user-facing "Skill not found" notice. The message is NOT persisted.
 
-**Extension point:** `SkillRegistry` is an ABC with `exists(name)` and `parse(name, content)`. Provide a concrete implementation to wire real skill catalogs. The default is an empty registry (no skills recognized).
+**Extension point:** `SkillRegistry` is an ABC whose single `resolve(pool, name, content) -> ParsedSkill | None` method validates and converts a skill command. The concrete `PoolSkillManagerRegistry` wraps per-pool `SkillManager` instances — it calls `build_skill_command_xml()` (shared with `SkillCommandHandler`) to produce LLM-ready XML. The default is an empty registry (no skills recognized).
 
 ### S7 — PersistUserMessageStage
 
@@ -100,7 +100,7 @@ Both pipelines. Detects `/skillName` commands and validates against a pluggable 
 
 Both pipelines. Writes a `UserMessageEvent` to the workspace-scoped transcript store, keyed by `full_session_id`.
 
-- Skips known control prefixes (`/cd`, `/pool`, `/exit`, `/stop`) — they should have been terminated by S2/S3 and never reach S7, but this is defense-in-depth.
+- Defense-in-depth: guards against control commands that leaked past S2/S3 using `content.startswith("/") and RoutingMeta.SKILL_XML not in envelope.metadata`. Valid skill commands (which have `SKILL_XML` set by S6) are correctly persisted; plain `/` commands without skill resolution are dropped.
 - This is the **single** persistence path for user messages. No adapter or server writes `UserMessageEvent` directly.
 
 ### S8 — EnqueueStage

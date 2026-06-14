@@ -50,7 +50,14 @@ Browser (React)
 │              WebUIServer (aiohttp)                    │
 │  /api/sessions, /api/pools, /api/workspace, /ws      │
 └────────┬─────────────────────────────────────────────┘
-         │  WebSocketInputAdapter
+         │  seed UserInputEnvelope
+         ▼
+┌──────────────────────────────────────────────────────┐
+│              Input Pipeline (7-stage)                 │
+│  S4 SetChannel → S5 ResolvePool → S6 SkillParse      │
+│  → S7 PersistUserMessage → S8 Enqueue                │
+└────────┬─────────────────────────────────────────────┘
+         │  resolved session + InputMessage
          ▼
 ┌──────────────────────────────────────────────────────┐
 │              PoolRouter                               │
@@ -82,6 +89,13 @@ QQ User / Group Chat                Browser (WebUI)
          │                       └────────┬─────────┘
          │                                │
          ▼                                ▼
+┌──────────────────────────────────────────────────────┐
+│              Input Pipeline (7-stage convergence)     │
+│  IM: S4→S2→S3→S5→S6→S7→S8                          │
+│  WebUI: S4→S5→S6→S7→S8                              │
+└────────┬─────────────────────────────────────────────┘
+         │
+         ▼
 ┌──────────────────────────────────────────────────────┐
 │              PoolRouter                              │
 │         session → pool dispatch                      │
@@ -272,6 +286,20 @@ The built-in React frontend provides:
 - **Pool selector** — choose which agent pool handles each new conversation
 - **History replay** — past conversations load from the transcript store
 
+### Input Pipeline (Converged Message Processing)
+
+All user messages — from IM (QQ) and WebUI — flow through a shared 7-stage pipeline before reaching the agent. This convergence guarantees consistent handling of control commands, skill parsing, pool resolution, persistence, and enqueuing across every channel:
+
+| Stage | Name | IM | WebUI | Purpose |
+|-------|------|:--:|:-----:|---------|
+| S2 | EnvironmentControl | ✅ | — | `/cd`, `/pool`, `/exit`, `/pwd` |
+| S3 | SessionControl | ✅ | — | `/stop` turn cancellation |
+| S4 | SetChannel | ✅ | ✅ | Tag conversation with originating channel |
+| S5 | ResolvePool | ✅ | ✅ | Resolve pool + agent, persist session→pool |
+| S6 | SkillParse | ✅ | ✅ | Validate `/skillName`, convert to XML |
+| S7 | PersistUserMessage | ✅ | ✅ | Write to transcript store (single persistence path) |
+| S8 | Enqueue | ✅ | ✅ | Build InputMessage, enqueue to agent |
+
 ### Multi-tier Memory System
 
 ```
@@ -337,11 +365,16 @@ skills/
 
 ### Slash Commands
 
+Commands are processed by the input pipeline (S2/S3 for control, S6 for skills) before reaching the agent:
+
 | Command | Description |
 |---------|-------------|
 | `/approve` | Approve pending tool invocation |
 | `/deny` | Deny pending tool invocation |
 | `/continue` | Continue dialogue without injecting the command into context |
+| `/cd <path>` | Change workspace directory (IM only) |
+| `/pool_name` | Switch to a different agent pool (IM only) |
+| `/stop` | Cancel the running turn (IM only) |
 | `/weather Shanghai tomorrow` | Skill command — auto-injects the matching SKILL.md |
 
 ### Governance
@@ -403,9 +436,10 @@ agents:
 `BotService` is a generic base class, not bound to QQ. Adding a new platform (Discord, Feishu, DingTalk, Telegram, etc.) is plug-and-play:
 
 1. Create `bot/adapters/<platform>.py` with three classes:
-   - `<Platform>InputAdapter` — subclass of `InputAdapter`, receives messages and yields `InputMessage`.
+   - `<Platform>InputAdapter` — subclass of `InputAdapter`, receives messages and produces seed `UserInputEnvelope` for the input pipeline.
    - `<Platform>OutputAdapter` — subclass of `OutputAdapter`, sends replies back to the platform.
    - `<Platform>Emitter` — subclass of `StreamingAwareEmitter` or `ContentEmitter`, converts agent events into platform messages.
+   - Override `configure_input_pipeline()` only if the pipeline is held externally (see `WebSocketInputAdapter`); otherwise inherit the ABC default.
 
 2. Create `bot/adapters/register_<platform>.py` and decorate a build function with `@register`:
 

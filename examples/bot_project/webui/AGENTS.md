@@ -36,11 +36,12 @@ React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connect
 | `components/MessageBubble.tsx` | Individual message rendering (text, reasoning, tool calls) |
 | `components/ReasoningBlock.tsx` | Collapsible reasoning/thinking block |
 | `components/ToolTraceCard.tsx` | Tool call result card |
-| `components/Sidebar.tsx` | Conversation list, pool selector dropdown, workspace indicator |
+| `components/Sidebar.tsx` | Conversation list, pool selector dropdown, workspace indicator, recent workspaces |
+| `components/SessionTree.tsx` | Hierarchical session tree with parent–child relationship display |
 | `components/WorkspaceBrowser.tsx` | Modal directory browser for workspace switching |
-| `hooks/useWebUIStream.ts` | WebSocket hook — manages connection, streaming events, message history |
-| `hooks/useWebUIStream.reducer.ts` | Pure reducer for applying server events with conversation-scoped filtering |
-| `hooks/useWebUIStream.reducer.test.ts` | Reducer unit tests (session isolation) |
+| `hooks/useWebUIStream.ts` | WebSocket hook — manages connection, `request_id`-based optimistic message dedup, streaming events, message history |
+| `hooks/useWebUIStream.reducer.ts` | Pure reducer — session-scoped event filtering, `error` event → system notice, `user_message` echo dedup via `_request_id` metadata |
+| `hooks/useWebUIStream.reducer.test.ts` | Reducer unit tests (session isolation, error handling, request_id matching) |
 | `lib/api.ts` | REST API client (fetchSessions, fetchPools, createConversation, etc.) |
 | `lib/ws-client.ts` | WebSocket client with action/attach protocol |
 | `types/events.ts` | TypeScript event type definitions matching backend events.py |
@@ -62,8 +63,10 @@ React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connect
 - `npm test` runs Vitest — currently covers `useWebUIStream.reducer.ts`.
 - The frontend has **no direct pool switching** for existing conversations — it's purely a display filter in the sidebar dropdown.
 - Workspace switching is done via `WorkspaceBrowser` → `POST /api/workspace/cd`.
-- `useWebUIStream.ts` is the core hook — it handles WebSocket lifecycle, optimistic messages, and streaming state.
-- **Session isolation**: `useWebUIStream.reducer.ts` filters every incoming event by `conversation_id`. Events for a non-selected conversation are ignored, preventing another conversation's streaming output from leaking into the current view.
+- `useWebUIStream.ts` is the core hook — it handles WebSocket lifecycle, optimistic messages (`request_id`-based dedup), and streaming state.
+- **Message dedup**: The hook generates a `crypto.randomUUID()` as `request_id`, adds it to the WS payload and an optimistic message. When the server echoes the `user_message` event with matching `_metadata._request_id`, the reducer updates timestamps instead of adding a duplicate.
+- **Error display**: Backend errors (unsupported commands, rejected operations) arrive as `error` events. The reducer surfaces them as system-role messages with `⚠` prefix — visible in-chat, not persisted.
+- **Session isolation**: `useWebUIStream.reducer.ts` filters every incoming event by `conversation_id`. Events for a non-selected conversation are buffered in `sessionMessages`, preventing streaming output from leaking between conversations.
 
 ### Common Patterns
 - Events from backend are typed in `types/events.ts` — must match `bot/webui/events.py`.

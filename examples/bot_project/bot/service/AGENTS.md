@@ -10,12 +10,12 @@ Bot service lifecycle, pool orchestration, and workspace management. This is the
 | File | Description |
 |------|-------------|
 | `__init__.py` | Package marker |
-| `core.py` | `BotService` — initialization, workspace context, pool creation, workspace switch callbacks, lifecycle management |
+| `core.py` | `BotService` — initialization, workspace context, pool creation, pipeline assembly (calls `configure_input_pipeline` on adapters), lifecycle management |
 | `builders.py` | Tool registration, MCP tool loading, subagent memory/skill construction, terminal tool setup |
 | `pool_builder.py` | `create_pool()` — assembles an `AgentPool` with main agent + subagent descriptors from config |
 | `pool_instance.py` | `PoolInstance` dataclass — holds pool config, `AgentPool` reference, main agent name |
-| `pool_router.py` | `PoolRouter` — routes incoming messages to the correct pool; `PoolSessionStore` persists session→pool mapping |
-| `web_ui_service.py` | `WebUIService` — assembles and starts the WebUI HTTP + WebSocket server |
+| `pool_router.py` | `PoolRouter` — session→pool dispatch; `PoolSessionStore` persists session→pool mapping. Now delegates message processing to input pipeline (adapter produces seed envelope → pipeline stages → enqueue callback enters broker queue) |
+| `web_ui_service.py` | `WebUIService` — assembles and starts the WebUI HTTP + WS server; creates `PoolSkillManagerRegistry` and `BotInputContext`; wires pipeline into adapters |
 | `qq_service.py` | QQ platform service — wires QQ adapters to the bot |
 
 ## Workspace Switching Flow
@@ -33,9 +33,9 @@ Defined in `core.py`:
 Defined in `pool_router.py`:
 
 1. `PoolRouter.run()` receives messages from `InputAdapter`.
-2. Checks for `/pool_name` command → updates `PoolSessionStore` if match.
-3. Otherwise looks up session's current pool from store (default: configured default pool).
-4. Routes message to pool's main agent via `BrokerMessage`.
+2. Looks up session's current pool from `PoolSessionStore` (default: configured default pool).
+3. Routes message to pool's main agent via `BrokerMessage`.
+4. **Pool-switch commands** (`/pool_name`) are handled upstream by the input pipeline (S2), not by `PoolRouter` directly. The pipeline reads/writes `PoolSessionStore` and terminates early with a user-facing notice before reaching `PoolRouter`.
 
 ## For AI Agents
 
@@ -43,7 +43,8 @@ Defined in `pool_router.py`:
 - `core.py` is the single most important file — read it first to understand the entire initialization chain.
 - The callback pattern in workspace switching means new subsystems only need `register_callback()`.
 - Pool creation order matters: shared infra (broker, inbox, retention) is built first, then pools individually.
-- `pool_router.py` handles both IM `/pool_name` commands and WebUI `set_pool()` external calls.
+- `pool_router.py` no longer handles `/pool_name` inline — pool commands flow through the input pipeline (S2 for IM, prohibited in WebUI).
+- `web_ui_service.py` wires the entire input pipeline per adapter (IM vs WebUI entry points) and creates the `SkillRegistry` concrete implementation.
 
 ### Common Patterns
 - IOC pattern: `AppConfig` is the single source of truth; all config flows from it.

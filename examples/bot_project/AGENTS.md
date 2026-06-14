@@ -8,29 +8,36 @@ Primary end-to-end reference implementation for the ModexAgent framework. Demons
 ## Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Input Adapters                           │
-│  QQ adapter  │  WebSocket adapter (WebUI)  │  CLI (modexbot)   │
-└──────┬───────┴────────────┬────────────────┴────────┬──────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                        Input Adapters                            │
+│  QQ adapter  │  WebSocket adapter (WebUI)  │  CLI (modexbot)    │
+└──────┬───────┴────────────┬─────────────────┴────────┬───────────┘
        │                    │                          │
        └────────┬───────────┘                          │
                 ▼                                      │
-         ┌──────────────┐                              │
-         │  PoolRouter   │  ← session→pool dispatch    │
-         │  (pool_router)│     /pool_name switching     │
-         └──────┬───────┘                              │
-                │                                      │
-    ┌───────────┼───────────┐                           │
-    ▼           ▼           ▼                           │
+     ┌─────────────────────┐                           │
+     │   Input Pipeline     │  ← 7-stage convergence   │
+     │  (S2–S8, per-channel)│     S4 runs first for IM │
+     │  control + skill     │     channel-aware routing│
+     │  persistence + queue │                           │
+     └────────┬────────────┘                           │
+              ▼                                       │
+       ┌──────────────┐                              │
+       │  PoolRouter   │  ← session→pool dispatch    │
+       │  (pool_router)│     /pool_name switching     │
+       └──────┬───────┘                              │
+              │                                      │
+  ┌───────────┼───────────┐                           │
+  ▼           ▼           ▼                           │
 ┌────────┐ ┌────────┐ ┌────────┐                       │
 │ main   │ │ coding │ │  ...   │  ← AgentPool instances│
 │  pool  │ │  pool  │ │  pool  │    (each has main +   │
 └────────┘ └────────┘ └────────┘     subagents)        │
                                                        │
-         ┌──────────────────┐                          │
-         │ WorkspaceContext │  ← cd/exit workspace     │
-         │ (shared, global) │     switching with       │
-         └──────────────────┘     active-agent guard   │
+       ┌──────────────────┐                          │
+       │ WorkspaceContext │  ← cd/exit workspace     │
+       │ (shared, global) │     switching with       │
+       └──────────────────┘     active-agent guard   │
 ```
 
 ### Workspace / Pool / Session Hierarchy
@@ -49,20 +56,41 @@ Primary end-to-end reference implementation for the ModexAgent framework. Demons
 3. **After switch**: `os.chdir()` updates cwd; `cwd.json` persists for restart recovery.
 4. **Data source switch**: Memory stores rebuild to new `data_dir`. Conversation metadata (`conversations.json`) is global and filtered by workspace.
 
+### Input Pipeline Convergence
+
+All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_pipeline/`) before reaching `PoolRouter`. The pipeline provides:
+
+- **Unified stage processing**: 7 stages (S2–S8) shared across channels with per-channel entry points
+- **IM pipeline** (S4→S2→S3→S5→S6→S7→S8): Full path with control commands
+- **WebUI pipeline** (S4→S5→S6→S7→S8): No S2/S3 (UI handles workspace/pool/session controls)
+- **Single persistence path**: `PersistUserMessageStage` (S7) is the only place user messages are written to transcript store
+- **Skill resolution**: `SkillParseStage` (S6) validates `/skillName` commands via pluggable `SkillRegistry` ABC
+
 ### WebUI vs IM Differences
 
 | Aspect | WebUI | IM (QQ etc.) |
 |--------|-------|-------------|
-| Pool switching | UI selector → `PoolRouter.set_pool()` | `/pool_name` slash command |
-| Workspace switching | File browser modal → `POST /api/workspace/cd` | `/cd target` command |
+| Pool switching | UI selector → `PoolRouter.set_pool()` | `/pool_name` slash command (S2) |
+| Workspace switching | File browser modal → `POST /api/workspace/cd` | `/cd target` command (S2) |
+| Turn cancellation | UI pause button | `/stop` command (S3) |
 | Conversation listing | `GET /api/sessions?workspace=...` | N/A (single conversation) |
 | Streaming isolation | Per-conversation filtering in `useWebUIStream.reducer.ts` + backend session cleanup | N/A (single conversation) |
+| Message dedup | `request_id`-based optimistic matching | N/A (no optimistic UI) |
 
 ## Key Files
 
 | File | Description |
 | --- | --- |
-| `bot/service/core.py` | `BotService` — initialization, workspace context, pool creation, lifecycle |
+| `bot/input_pipeline/context.py` | `BotInputContext` — concrete context with pool store, transcript store, enqueue callback |
+| `bot/input_pipeline/assembly.py` | `build_im_pipeline()` / `build_webui_pipeline()` — stage ordering per channel |
+| `bot/input_pipeline/stages/resolve_pool.py` | S5 — pool/agent resolution + `RoutingMeta` StrEnum for envelope metadata keys |
+| `bot/input_pipeline/stages/skill_parse.py` | S6 — skill validation via `SkillRegistry` ABC + `PoolSkillManagerRegistry` concrete impl |
+| `bot/input_pipeline/stages/persist_user_message.py` | S7 — single persistence path for user messages |
+| `bot/input_pipeline/stages/enqueue.py` | S8 — builds `InputMessage` and enqueues |
+| `bot/input_pipeline/stages/environment_control.py` | S2 — IM-only `/cd`, `/pool`, `/exit`, `/pwd` interception |
+| `bot/input_pipeline/stages/session_control.py` | S3 — IM-only `/stop` turn cancellation |
+| `bot/input_pipeline/stages/set_channel.py` | S4 — conversation channel tagging (runs first in IM pipeline) |
+| `bot/service/core.py` | `BotService` — initialization, workspace context, pool creation, pipeline wiring |
 | `bot/service/builders.py` | Tool registration, MCP tools, subagent memory/skill construction, terminal setup |
 | `bot/service/pool_builder.py` | Pool mode assembly — creates `AgentPool`, subagent descriptors |
 | `bot/service/pool_router.py` | `PoolRouter` — session→pool dispatch, `PoolSessionStore` persistence |
@@ -102,7 +130,7 @@ Primary end-to-end reference implementation for the ModexAgent framework. Demons
 | `agents/` | Agent system prompt templates (see `agents/AGENTS.md`) |
 | `skills/` | Agent skill definitions (self-documented via SKILL.md files) |
 | `templates/` | Template files for knowledge, soul, user memory (see `templates/AGENTS.md`) |
-| `tests/` | Test suites (see `tests/AGENTS.md`) |
+| `tests/` | Test suites including `input_pipeline/` (see `tests/AGENTS.md`) |
 | `plugins/` | Bot plugins (see `plugins/AGENTS.md`) |
 
 ## Testing
@@ -112,6 +140,6 @@ python -m pytest examples/bot_project/tests -q
 cd examples/bot_project/webui && npm test -- --run
 ```
 
-Backend tests cover WebUI endpoints, streaming isolation, pool routing, and transcript store. Frontend tests cover the `useWebUIStream` reducer for per-conversation event filtering.
+Backend tests cover WebUI endpoints, streaming isolation, pool routing, input pipeline stages, and transcript store. Frontend tests cover the `useWebUIStream` reducer for per-conversation event filtering and `request_id`-based message dedup.
 
 <!-- MANUAL -->

@@ -34,6 +34,7 @@ Test suites for the bot_project. Unit and integration tests covering service lif
 | Directory | Purpose |
 |-----------|---------|
 | `webui/` | WebUI-specific tests (see `webui/AGENTS.md`) |
+| `input_pipeline/` | Input pipeline stage tests — assembly, context, control stages, enqueue, persist, resolve, skill parse, integration (see `input_pipeline/__init__.py`) |
 
 ## For AI Agents
 

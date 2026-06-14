@@ -28,7 +28,8 @@ Core business logic for the ModexAgent bot — service lifecycle, I/O adapters, 
 ## For AI Agents
 
 ### Working In This Directory
-- `service/core.py` is the main orchestration hub — it wires together workspace, pool, broker, adapters, and callbacks.
+- `service/core.py` is the main orchestration hub — it wires together workspace, pool, broker, adapters, input pipeline, and callbacks.
+- `input_pipeline/` is the converged message processing layer — all user messages pass through it before reaching `PoolRouter`.
 - Changes to initialization flow should preserve the workspace callback registration order (stop_and_rebuild before terminal_reset).
 - `web/dist/` is rebuilt by `cd webui && npm run build` — never edit files there directly.
 
