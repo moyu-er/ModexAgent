@@ -230,8 +230,12 @@ class TestCommunicationService:
         assert bus.sent == []
         assert len(bus.sent_silent) == 1
         session_id, envelope = bus.sent_silent[0]
-        assert session_id == "conv-1.office-expert.task-42"
-        assert envelope.agent_session_id == "conv-1.office-expert.task-42"
+        from framework.core.session_id import SessionIdFactory
+        factory = SessionIdFactory()
+        expected_sid = factory.create(agent_name="office-expert", parent_session_id=ctx.session, external_id="task-42")
+        expected_session_id = str(expected_sid)
+        assert session_id == expected_session_id
+        assert envelope.agent_session_id == expected_session_id
         assert envelope.invocation_id == "task-42"
 
     @pytest.mark.asyncio
@@ -251,17 +255,18 @@ class TestCommunicationService:
     @pytest.mark.asyncio
     async def test_subagent_reply_to_normal_acknowledges_parent_pending_send(self) -> None:
         tracker = CommunicationTracker()
+        # In the new model, trace correlation uses the subagent's snowflake
         tracker.record_send(
             agent_name="main",
             target_agent="office-expert",
-            invocation_id="task-42",
+            invocation_id="conv-1",
             session_id="conv-1.office-expert.task-42",
             content_summary="please do work",
         )
         tracker.record_receive(
             agent_name="office-expert",
             source_agent="main",
-            invocation_id="task-42",
+            invocation_id="conv-1",
             content_summary="please do work",
         )
         svc = self._make_service(

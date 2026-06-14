@@ -13,7 +13,12 @@ if TYPE_CHECKING:
 
 @dataclass
 class AgentMessageEnvelope:
-    """强制携带多 Agent 路由信息的通用消息信封。"""
+    """强制携带多 Agent 路由信息的通用消息信封。
+
+    Routing is driven by ``agent_session_id`` (the full ``SessionId`` string).
+    ``invocation_id`` carries the source subagent's snowflake for trace
+    correlation only — it does NOT participate in routing decisions.
+    """
 
     payload: dict[str, Any]
     source: AgentAddress
@@ -23,6 +28,7 @@ class AgentMessageEnvelope:
     conversation_id: str = ""
     agent_session_id: str = ""
     invocation_id: str | None = None
+    """Source subagent's snowflake, for trace correlation only."""
     message_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     in_reply_to: str | None = None
     correlation_id: str | None = None

@@ -152,7 +152,7 @@ class TestDynamicCreationAgentAddressBug:
             # This must NOT raise TypeError about comm_kind
             result = await service._create_dynamic_subagent(
                 template=template,
-                conversation_id="conv-1",
+                parent_session_id="conv-1.main",
                 invocation_id="abc12345",
                 content="Do something",
             )
@@ -430,7 +430,7 @@ class TestSubagentIsolation:
 
             result = await service._create_dynamic_subagent(
                 template=template,
-                conversation_id="conv-1",
+                parent_session_id="conv-1.main",
                 invocation_id="test0001",
                 content="Do something",
             )
@@ -473,7 +473,7 @@ class TestSubagentIsolation:
 
             result = await service._create_dynamic_subagent(
                 template=template,
-                conversation_id="conv-1",
+                parent_session_id="conv-1.main",
                 invocation_id="test0002",
                 content="Do something",
             )
@@ -538,7 +538,7 @@ class TestSubagentMemoryCorrectness:
 
             result = await service._create_dynamic_subagent(
                 template=template,
-                conversation_id="conv-1",
+                parent_session_id="conv-1.main",
                 invocation_id="test0001",
                 content="Do something",
             )
@@ -604,7 +604,7 @@ class TestAgentMessageXmlWrapping:
 
             result = await service._create_dynamic_subagent(
                 template=template,
-                conversation_id="conv-1",
+                parent_session_id="conv-1.main",
                 invocation_id="test0001",
                 content="Hello from main",
             )
@@ -1173,11 +1173,11 @@ class TestSubagentToolInstanceIsolation:
 
             # Create two subagents
             result_a = await service._create_dynamic_subagent(
-                template=template, conversation_id="conv-1",
+                template=template, parent_session_id="conv-1.main",
                 invocation_id="inv-a", content="task A",
             )
             result_b = await service._create_dynamic_subagent(
-                template=template, conversation_id="conv-1",
+                template=template, parent_session_id="conv-1.main",
                 invocation_id="inv-b", content="task B",
             )
 
@@ -1226,11 +1226,11 @@ class TestSubagentToolInstanceIsolation:
             )
 
             result_a = await service._create_dynamic_subagent(
-                template=template, conversation_id="conv-1",
+                template=template, parent_session_id="conv-1.main",
                 invocation_id="inv-a", content="task A",
             )
             result_b = await service._create_dynamic_subagent(
-                template=template, conversation_id="conv-1",
+                template=template, parent_session_id="conv-1.main",
                 invocation_id="inv-b", content="task B",
             )
 
@@ -1277,11 +1277,11 @@ class TestSubagentToolInstanceIsolation:
             )
 
             await service._create_dynamic_subagent(
-                template=template, conversation_id="conv-1",
+                template=template, parent_session_id="conv-1.main",
                 invocation_id="inv-1", content="task 1",
             )
             await service._create_dynamic_subagent(
-                template=template, conversation_id="conv-1",
+                template=template, parent_session_id="conv-1.main",
                 invocation_id="inv-2", content="task 2",
             )
 
