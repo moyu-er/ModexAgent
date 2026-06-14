@@ -154,7 +154,7 @@ async def create_pool(
     main_service._target_store = main_store
     logger.info("Pool '%s': communication tool registered", pool_name)
 
-    exp_review_hook, exp_curator = _build_experience_layer(
+    exp_review_hook, exp_curator, exp_dir_ref = _build_experience_layer(
         main_cfg, provider, data_dir, pool_name
     )
     _wire_main_pipeline(
@@ -194,6 +194,7 @@ async def create_pool(
         communication_service=main_service,
         experience_curator=exp_curator,
         experience_curator_task=None,
+        experience_dir_ref=exp_dir_ref,
     )
 
 
@@ -662,11 +663,18 @@ def _build_experience_layer(
     provider,
     data_dir: Path,
     pool_name: str,
-) -> tuple[Any | None, Any | None]:
-    """Convention: if experience.enabled in agent config, wire review hook + curator."""
+) -> tuple[Any | None, Any | None, list[Path] | None]:
+    """Convention: if experience.enabled in agent config, wire review hook + curator.
+
+    Returns ``(review_hook, curator, dir_ref)`` where *dir_ref* is a mutable
+    single-element list holding the current experience directory.  All three
+    returned objects use ``lambda: dir_ref[0]`` internally so they resolve the
+    path dynamically — updating ``dir_ref[0]`` on workspace switch is all that
+    is needed.
+    """
     exp_cfg = getattr(main_cfg, "experience", None)
     if exp_cfg is None or not getattr(exp_cfg, "enabled", False):
-        return None, None
+        return None, None, None
 
     from framework.agents.experience.review_agent import ExperienceReviewAgent
     from framework.core.experience.curator import ExperienceCurator
@@ -675,7 +683,9 @@ def _build_experience_layer(
 
     exp_dir = data_dir / "experiences" / pool_name / main_cfg.name
     exp_dir.mkdir(parents=True, exist_ok=True)
-    exp_meta = PerFileExperienceMetaStore(exp_dir)
+    # Mutable reference so workspace switch can update all three objects at once.
+    _dir_ref: list[Path] = [exp_dir]
+    exp_meta = PerFileExperienceMetaStore(lambda: _dir_ref[0])
 
     review_agent = ExperienceReviewAgent(
         provider=provider,
@@ -683,7 +693,7 @@ def _build_experience_layer(
     )
     review_hook = ExperienceReviewHook(
         review_agent=review_agent,
-        experience_dir=exp_dir,
+        experience_dir=lambda: _dir_ref[0],
         meta_store=exp_meta,
         min_messages=getattr(exp_cfg, "min_messages", 6),
         exp_cooldown_turns=getattr(exp_cfg, "exp_cooldown_turns", 3),
@@ -691,12 +701,12 @@ def _build_experience_layer(
     logger.info("Pool '%s': ExperienceReviewHook created", pool_name)
 
     curator = ExperienceCurator(
-        experience_dir=exp_dir,
+        experience_dir=lambda: _dir_ref[0],
         meta_store=exp_meta,
         max_experiences=getattr(exp_cfg, "max_experiences", 20),
     )
     logger.info("Pool '%s': ExperienceCurator created", pool_name)
-    return review_hook, curator
+    return review_hook, curator, _dir_ref
 
 
 # ── Pipeline wiring ──────────────────────────────────────────────────────

@@ -109,6 +109,15 @@ def _update_pruned_manager(
         policy._pruned_manager = pruned_manager
 
 
+def _find_main_agent_name(pool_inst: Any) -> str:
+    """Extract main agent name from a PoolInstance's config."""
+    agents = getattr(pool_inst.config, "agents", []) or []
+    for a in agents:
+        if getattr(a, "role", None) == "main":
+            return a.name
+    return "main"
+
+
 class _WorkspaceCallbackAdapter(WorkspaceSwitchCallback):
     """Adapter that wraps an async method as a WorkspaceSwitchCallback.
 
@@ -692,13 +701,18 @@ class BotService(AgentBuilderMixin):
         return new_memory, new_turn_store, new_cmd_store
 
     async def _rebuild_experience(self, new_data_dir: Path) -> None:
-        """Rebuild the injection-side experience manager on workspace switch.
+        """Rebuild experience paths on workspace switch.
 
-        Each pool's context_manager gets its own ExperienceManager pointing
-        at the new data directory.
+        Two subsystems to update:
+
+        1. Injection-side ExperienceManager on each pool's context_manager
+           (feeds EXPERIENCE.md content into the system prompt).
+        2. Review hook + curator on each PoolInstance (the hook runs
+           after-turn reviews; the curator evicts excess experiences).
+           Both use ``lambda: dir_ref[0]`` internally, so updating
+           ``dir_ref[0]`` is sufficient.
         """
-        if self._experience_manager is None:
-            return
+        # ── 1. Rebuild injection-side ExperienceManager ──
         from framework.core.experience.manager import ExperienceManager
         from framework.core.experience.source import FileExperienceSource
 
@@ -710,17 +724,38 @@ class BotService(AgentBuilderMixin):
             return ExperienceManager(source=FileExperienceSource(directories=[exp_dir]))
 
         for pool_inst in self._pools.values():
-            main_agent_name = "main"
-            agents = getattr(pool_inst.config, "agents", []) or []
-            for a in agents:
-                if getattr(a, "role", None) == "main":
-                    main_agent_name = a.name
-                    break
+            if pool_inst.context_manager._experience_manager is None:
+                continue
+            main_agent_name = _find_main_agent_name(pool_inst)
             mgr = _new_manager(pool_inst.name, main_agent_name)
-            if hasattr(pool_inst.context_manager, "_experience_manager"):
-                pool_inst.context_manager._experience_manager = mgr
+            pool_inst.context_manager._experience_manager = mgr
+            logger.info(
+                "Pool '%s': injection ExperienceManager rebuilt → %s",
+                pool_inst.name,
+                BotService._ws_experience(
+                    new_data_dir, pool_name=pool_inst.name, agent_name=main_agent_name
+                ),
+            )
 
         print(f"[OK] Experience injection rebuilt for workspace: {new_data_dir}")
+
+        # ── 2. Update review hook + curator dir refs ──
+        for pool_inst in self._pools.values():
+            if pool_inst.experience_dir_ref is None:
+                continue
+            main_agent_name = _find_main_agent_name(pool_inst)
+            new_exp_dir = BotService._ws_experience(
+                new_data_dir, pool_name=pool_inst.name, agent_name=main_agent_name
+            )
+            new_exp_dir.mkdir(parents=True, exist_ok=True)
+            pool_inst.experience_dir_ref[0] = new_exp_dir
+            logger.info(
+                "Pool '%s': experience dir ref updated → %s",
+                pool_inst.name, new_exp_dir,
+            )
+
+        if any(p.experience_dir_ref is not None for p in self._pools.values()):
+            print(f"[OK] Experience hook/curator paths updated for workspace: {new_data_dir}")
 
     async def _rebuild_shared_infrastructure(self, new_data_dir: Path) -> None:
         """更新共享基础设施：inbox + approval + overflow + dream。"""
