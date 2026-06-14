@@ -58,8 +58,6 @@ from ..multi_agent import (
     AgentDescriptor,
     AgentMessageRouter,
 )
-from ..multi_agent.comm_kind import AgentCommKind
-from ..multi_agent.session_id import DefaultSessionIdStrategy
 from ..runtime.dream_locks import _dream_locks
 from ..runtime.enums import SnapshotReason, TurnCustomKey, TurnPhase
 from ..runtime.models import StateQueryScope, TurnSnapshot
@@ -371,13 +369,14 @@ class AgentPipeline:
             default_agent_name = (
                 self.agent_descriptor.address.name
                 if self.agent_descriptor is not None
-                else getattr(self.agent, "name", "main")
+                else self.agent.name
             )
             route_result = self.router.route(input_msg, default_agent_name=default_agent_name)
-            session_id = str(route_result.session)
+            session = route_result.session
         else:
             route_result = None
-            session_id = str(input_msg.session)
+            session = input_msg.session
+        session_id = str(session)
         logger.info(f"Processing message: session_id={session_id}")
 
         prelock_dispatch_policy = None
@@ -392,7 +391,7 @@ class AgentPipeline:
                     CommandContext(
                         session_id=session_id,
                         input_msg=input_msg,
-                        agent_name=getattr(self.agent, "name", "agent"),
+                        agent_name=self.agent.name,
                         skill_manager=self.skill_manager,
                         turn_store=self.turn_store,
                         pending_approval=prelock_pending,
@@ -491,7 +490,7 @@ class AgentPipeline:
                 logger.warning(
                     "Session lock wait: session=%s wait=%.0fms", session_id, lock_wait_ms
                 )
-            return await self._process_message_locked(input_msg, session_id, route_result)
+            return await self._process_message_locked(input_msg, session_id, route_result, session=session)
 
     async def _preprocess_input(
         self,
@@ -571,7 +570,7 @@ class AgentPipeline:
 
     def _build_runtime_and_context(
         self,
-        session_id: str,
+        session: SessionId,
         context_state: ContextState,
         ctx_mgr: ContextManager,
         *,
@@ -580,38 +579,31 @@ class AgentPipeline:
         """Build AgentContext and emitter for the turn."""
 
         # Ensure per-session injection queue exists
-        self._injection_queues.setdefault(session_id, asyncio.Queue(maxsize=50))
+        self._injection_queues.setdefault(str(session), asyncio.Queue(maxsize=50))
 
         # ---- typed TurnIdentity (new) ----
         from uuid import uuid4
 
         from framework.runtime.models import TurnIdentity
 
-        strategy = DefaultSessionIdStrategy()
-        parts = strategy.parse(session_id)
+        agent_id = (
+            self.agent_descriptor.address.name
+            if self.agent_descriptor is not None
+            else self.agent.name
+        )
         turn_identity = TurnIdentity(
-            agent_id=getattr(self.agent, "name", "agent"),
-            session=SessionId.from_str(session_id),
+            agent_id=agent_id,
+            session=session,
             turn_id=uuid4().hex,
-            conversation_id=parts.conversation_id,
+            conversation_id=session.metadata.get("conversation_id"),
         )
 
-        agent_descriptor_comm_kind = (
-            self.agent_descriptor.comm_kind
-            if self.agent_descriptor
-            else AgentCommKind.NORMAL
-        )
-        invocation_id = (
-            parts.invocation_id or (input_metadata or {}).get("invocation_id")
-            if (self.agent_descriptor and self.agent_descriptor.comm_kind == AgentCommKind.SUBAGENT)
-            else None
-        )
         agent_context = AgentContext(
             system_prompt=context_state.system_prompt,
             history=context_state.history,
             tool_manager=self.tool_manager,
-            session=SessionId.from_str(session_id),
-            comm_kind=agent_descriptor_comm_kind,
+            session=session,
+            comm_kind=self.agent_descriptor.comm_kind if self.agent_descriptor else None,
             max_iterations=self.max_iterations,
         )
         agent_context.system_prompt_pipeline = context_state.system_prompt_pipeline
@@ -620,7 +612,7 @@ class AgentPipeline:
         # ---- governance (pending injection, etc.) — unconditional ----
         base_services = self.runtime_services
         base_gov = base_services.governance if base_services is not None else None
-        governance = ctx_mgr.wrap_governance(base_gov or self.governance, session_id)
+        governance = ctx_mgr.wrap_governance(base_gov or self.governance, str(session))
 
         # ---- typed AgentRuntime with ReActTurnState (new) ----
         if self.turn_store is not None:
@@ -653,7 +645,7 @@ class AgentPipeline:
                     if base_services is not None and base_services.command_store is not None
                     else self.command_store
                 ),
-                pending_input_queue=self._injection_queues.get(session_id),
+                pending_input_queue=self._injection_queues.get(str(session)),
                 safety=base_services.safety if base_services is not None else self.safety,
                 runtime_context_manager=(
                     base_services.runtime_context_manager
@@ -688,11 +680,11 @@ class AgentPipeline:
 
         # Emitter selection
         if self.emitter_factory:
-            emitter = self.emitter_factory(session_id)
+            emitter = self.emitter_factory(str(session))
         else:
             emitter = StreamingAwareEmitter(
                 output_adapter=self.output_adapter,
-                session_id=session_id,
+                session_id=str(session),
                 send_timeout=self.safety.turn.output_send_timeout_seconds,
             )
 
@@ -714,14 +706,9 @@ class AgentPipeline:
         """
         # 设置当前 conversation_id 上下文变量（供 subagent 通信工具使用）
         from ..multi_agent.context import current_conversation_id
-        from ..multi_agent.session_id import DefaultSessionIdStrategy
 
-        raw_id = input_metadata.get("conversation_id") or session_id
-        parts = DefaultSessionIdStrategy().parse(raw_id)
-        conversation_id = parts.conversation_id
-        agent_name = parts.agent_name or (
-            self.agent_descriptor.address.name if self.agent_descriptor else "main"
-        )
+        conversation_id = agent_context.session.metadata.get("conversation_id") or str(agent_context.session)
+        agent_name = agent_context.session.agent_name
         conv_token = current_conversation_id.set(conversation_id)
         result: AgentResult | None = None
         turn = self.safety.turn
@@ -870,7 +857,7 @@ class AgentPipeline:
     async def _load_pending_approval_snapshot(self, session_id: str) -> TurnSnapshot | None:
         if self.turn_store is None:
             return None
-        agent_id = getattr(self.agent, "name", None)
+        agent_id = self.agent.name
         snapshots = await self.turn_store.list_active_turns(
             StateQueryScope(
                 agent_id=agent_id,
@@ -918,7 +905,7 @@ class AgentPipeline:
         command_context = CommandContext(
             session_id=session_id,
             input_msg=input_msg,
-            agent_name=getattr(self.agent, "name", "agent"),
+            agent_name=self.agent.name,
             skill_manager=self.skill_manager,
             turn_store=self.turn_store,
             pending_approval=pending_snapshot,
@@ -960,7 +947,8 @@ class AgentPipeline:
         return None
 
     async def _process_message_locked(
-        self, input_msg: InputMessage, session_id: str, route_result: Any | None = None
+        self, input_msg: InputMessage, session_id: str, route_result: Any | None = None,
+        *, session: SessionId,
     ) -> AgentResult | None:
         """Process one message while holding the session lock."""
         if self.on_session_start is not None:
@@ -1034,7 +1022,7 @@ class AgentPipeline:
             append_user_message=turn_request.append_user_message,
         )
         agent_context, emitter = self._build_runtime_and_context(
-            session_id,
+            session,
             context_state,
             ctx_mgr,
             input_metadata=input_metadata,

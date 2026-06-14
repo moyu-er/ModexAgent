@@ -14,7 +14,6 @@ from bot.adapters.qq import (
 from bot.service.core import BotService
 from bot.utils.config_loader import ConfigLoader
 from framework.ioc.configs.app import AppConfig
-from framework.pipeline.adapters import SessionPrefixStripAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +46,7 @@ class QQBotService(BotService):
             media_dir=qq_cfg.get("media_dir"),
         )
         qq_output_adapter = QQOutputAdapter(input_adapter)
-        output_adapter = SessionPrefixStripAdapter(qq_output_adapter)
+        output_adapter = qq_output_adapter
 
         def emitter_factory(session_id: str) -> QQBotEmitter:
             return QQBotEmitter(

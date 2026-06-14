@@ -41,8 +41,6 @@ def build_qq(ctx: AdapterBuildContext):
         QQInputAdapter,
         QQOutputAdapter,
     )
-    from framework.pipeline.adapters import SessionPrefixStripAdapter
-
     qq_cfg: dict = ctx.raw_config.get("qq", {})
 
     qq_input = QQInputAdapter(
@@ -53,10 +51,8 @@ def build_qq(ctx: AdapterBuildContext):
         media_dir=qq_cfg.get("media_dir"),
     )
     qq_output_raw = QQOutputAdapter(qq_input)
-    qq_output = SessionPrefixStripAdapter(qq_output_raw)
+    qq_output = qq_output_raw
 
-    # Wrap the raw output adapter so we can pass it into the emitter.
-    # QQBotEmitter needs the raw adapter (it writes via SessionPrefixStripAdapter).
     _raw_output = qq_output_raw
     _stripped_output = qq_output
 

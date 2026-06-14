@@ -125,7 +125,7 @@ class TestPipelineEmitterSelection:
             metadata={"source_agent": "office-expert"},
         )
 
-        await pipeline._process_message_locked(msg, "conv_001:main")
+        await pipeline._process_message_locked(msg, "conv_001:main", session=msg.session)
 
         assert agent.received_emitter is factory_emitter
 
@@ -135,7 +135,7 @@ class TestPipelineEmitterSelection:
         pipeline, agent = self._make_pipeline(emitter_factory=lambda sid: factory_emitter)
         msg = InputMessage(content="hello", session=SessionId.from_str("conv_001:main", default_agent_name="main"))
 
-        await pipeline._process_message_locked(msg, "conv_001:main")
+        await pipeline._process_message_locked(msg, "conv_001:main", session=msg.session)
 
         assert agent.received_emitter is factory_emitter
 
@@ -148,7 +148,7 @@ class TestPipelineEmitterSelection:
             metadata={"source_agent": "main"},
         )
 
-        await pipeline._process_message_locked(msg, "conv_001:main:office-expert")
+        await pipeline._process_message_locked(msg, "conv_001:main:office-expert", session=msg.session)
 
         assert isinstance(agent.received_emitter, StreamingAwareEmitter)
 
@@ -157,6 +157,6 @@ class TestPipelineEmitterSelection:
         pipeline, agent = self._make_pipeline(emitter_factory=None)
         msg = InputMessage(content="hello", session=SessionId.from_str("conv_001:main:office-expert", default_agent_name="main"))
 
-        await pipeline._process_message_locked(msg, "conv_001:main:office-expert")
+        await pipeline._process_message_locked(msg, "conv_001:main:office-expert", session=msg.session)
 
         assert isinstance(agent.received_emitter, StreamingAwareEmitter)

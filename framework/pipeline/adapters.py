@@ -141,18 +141,12 @@ class InputAdapter(ABC):
         if parse_result.invocation is None:
             return False
 
-        # Normalise to canonical session_id (conversation_id:agent_name)
-        # so the ControlScope matches what the consumer (agent) uses.
-        from framework.multi_agent.session_id import DefaultSessionIdStrategy
-
-        canonical_sid = DefaultSessionIdStrategy().normalize(session_id)
-
         from framework.commands.constants import BuiltinCommand, CommandDispatchPolicy
         from framework.commands.models import CommandContext
 
         ctx = CommandContext(
-            session_id=canonical_sid,
-            input_msg=InputMessage(content=text, session=SessionId.from_str(canonical_sid, default_agent_name="main")),
+            session_id=session_id,
+            input_msg=InputMessage(content=text, session=SessionId.from_str(session_id, default_agent_name="main")),
             agent_name="main",
         )
 
@@ -183,7 +177,7 @@ class InputAdapter(ABC):
         from framework.control.types import ControlCommandType, ControlScope
 
         existing = await channel.peek(
-            ControlScope(session_id=canonical_sid),
+            ControlScope(session_id=session_id),
             command_types={ControlCommandType.CANCEL_TURN},
         )
         if existing:
@@ -333,43 +327,6 @@ class NullOutputAdapter(OutputAdapter):
     def streaming_mode(self) -> StreamingMode:
         return StreamingMode.NONE
 
-
-class SessionPrefixStripAdapter(OutputAdapter):
-    """剥离 session_id 中内部 agent 名称前缀/后缀的通用适配器。
-
-    AgentPool 内部使用 {conversation_id}:{agent_name} 作为 session_id，
-    但外部 I/O 平台（QQ、微信、Discord 等）通常只需要 conversation_id。
-    """
-
-    def __init__(self, inner: OutputAdapter, separator: str = ":", keep: str = "first") -> None:
-        self._inner = inner
-        self._separator = separator
-        self._keep = keep  # "first" 或 "last"
-
-    @property
-    def name(self) -> str:
-        return f"session_prefix_strip:{self._inner.name}"
-
-    @property
-    def streaming_mode(self) -> StreamingMode:
-        return self._inner.streaming_mode
-
-    def _map_session_id(self, session_id: str) -> str:
-        if self._separator not in session_id:
-            return session_id
-        parts = session_id.split(self._separator)
-        return parts[0] if self._keep == "first" else self._separator.join(parts[:-1])
-
-    async def send(self, message: OutputMessage, session_id: str) -> None:
-        await self._inner.send(message, self._map_session_id(session_id))
-
-    async def send_delta(
-        self, delta: str, session_id: str, metadata: dict[str, Any] | None = None
-    ) -> None:
-        await self._inner.send_delta(delta, self._map_session_id(session_id), metadata)
-
-    async def flush_deltas(self, session_id: str) -> None:
-        await self._inner.flush_deltas(self._map_session_id(session_id))
 
 
 class CLIOutputAdapter(OutputAdapter):
