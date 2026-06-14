@@ -452,7 +452,6 @@ class BotService(AgentBuilderMixin):
         session_store = PoolSessionStore(data_dir=data_dir)
         self.pool_router = PoolRouter(
             input_adapter=self.input_adapter,
-            output_adapter=self.output_adapter,
             broker=self.broker,
             pools=self._pools,
             session_store=session_store,
@@ -506,6 +505,7 @@ class BotService(AgentBuilderMixin):
         await self._rebuild_pool_memory(new_dir)
         self._update_communication_paths(new_dir)
         await self._rebuild_shared_infrastructure(new_dir)
+        self._rebuild_session_stores(new_dir)
 
     async def _on_ws_terminal_reset(self, _old_dir: Path, _new_dir: Path) -> None:
         """② Close all terminal sessions."""
@@ -761,6 +761,33 @@ class BotService(AgentBuilderMixin):
         for a in self._app_config.agents:
             if a.role == "subagent":
                 return a
+
+    def _rebuild_session_stores(self, new_data_dir: Path) -> None:
+        """Rebuild session stores (transcript, relation, pool routing) for workspace switch.
+
+        Called from ``_on_ws_stop_and_rebuild``.  Each workspace maintains its
+        own ``.modex/sessions/`` and ``.modex/pool_sessions/`` directories.
+
+        Subclasses (e.g. WebUIService) override ``update_session_stores`` to
+        rebuild their specific session-related components.
+        """
+        # 1. PoolSessionStore — rebuild to new workspace
+        new_session_store = PoolSessionStore(data_dir=new_data_dir)
+        if self.pool_router is not None:
+            self.pool_router._session_store = new_session_store
+
+        # 2. Transcript + relation stores — delegate to subclass
+        self.update_session_stores(new_data_dir)
+
+        print(f"[OK] Session stores rebuilt for workspace: {new_data_dir}")
+
+    def update_session_stores(self, new_data_dir: Path) -> None:
+        """Rebuild subclass-specific session stores (no-op base, overridden by WebUIService).
+
+        Args:
+            new_data_dir: The new workspace data directory (``{workspace}/.modex/``).
+        """
+        pass
         return None
 
     def _find_additional_subagent_cfgs(self) -> list[IOCAgentConfig]:

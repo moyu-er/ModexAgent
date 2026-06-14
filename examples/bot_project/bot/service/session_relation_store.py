@@ -3,7 +3,11 @@
 Relations are stored per-pool in ``_relations.json``, co-located with
 transcript JSONL files::
 
-    .modex/sessions/<ws>/<pool>/_relations.json
+    .modex/sessions/<pool>/_relations.json
+
+The ``base_dir`` already encodes the workspace (typically
+``{workspace}/.modex/sessions/``), so there is no separate workspace path
+layer in the directory layout.
 
 The store is created by WebUIService and used by:
 1. ``AgentCommunicationService._create_dynamic_subagent`` — writes parent relation at dispatch time
@@ -14,10 +18,13 @@ The store is created by WebUIService and used by:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from collections.abc import Callable
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_POOL: str = "main"
 _RELATIONS_FILENAME: str = "_relations.json"
@@ -67,7 +74,9 @@ def _read_json(path: Path) -> dict[str, dict[str, object]]:
 class SessionRelationStore:
     """Persistent parent-child session relationship store.
 
-    Relations are stored per-pool in ``<base_dir>/<ws>/<pool>/_relations.json``.
+    Relations are stored per-pool in ``<base_dir>/<pool>/_relations.json``.
+    The ``base_dir`` encodes the workspace so no additional path layer is needed.
+
     The store holds an in-memory cache for fast reads; writes go through
     atomic file replacement.
     """
@@ -95,6 +104,19 @@ class SessionRelationStore:
     def set_agent_pool_map(self, mapping: dict[str, str]) -> None:
         """Set agent_name → pool_name mapping (all agents: main + subagents)."""
         self._agent_pool_map = dict(mapping)
+
+    def rebase(self, new_base_dir: Path) -> None:
+        """Atomically switch backing directory and invalidate cached state.
+
+        Called during workspace switches (``cd``) so relations are read from
+        and written to the new ``{workspace}/.modex/sessions/`` directory.
+        """
+        logger.info("SessionRelationStore rebase: %s -> %s", self._base, new_base_dir)
+        self._base = new_base_dir
+        self._loaded = False
+        self._parents.clear()
+        self._children.clear()
+        self._created_at.clear()
 
     # ------------------------------------------------------------------
     # Public API
@@ -262,7 +284,7 @@ class SessionRelationStore:
     def _ensure_loaded(self) -> None:
         """Load all _relations.json files from disk (once).
 
-        Scans every ``<base>/<ws>/<pool>/_relations.json`` and merges into
+        Scans every ``<base>/<pool>/_relations.json`` and merges into
         the in-memory cache.
         """
         if self._loaded:
@@ -270,24 +292,21 @@ class SessionRelationStore:
         self._loaded = True
         if not self._base.is_dir():
             return
-        for ws_dir in sorted(self._base.iterdir()):
-            if not ws_dir.is_dir():
+        for pool_dir in sorted(self._base.iterdir()):
+            if not pool_dir.is_dir():
                 continue
-            for pool_dir in sorted(ws_dir.iterdir()):
-                if not pool_dir.is_dir():
-                    continue
-                rel_path = pool_dir / _RELATIONS_FILENAME
-                data = _read_json(rel_path)
-                for child_sid, entry in data.items():
-                    parent = entry.get("parent_session_id")
-                    created = entry.get("created_at")
-                    if isinstance(parent, str) and isinstance(created, (int, float)):
-                        self._parents[child_sid] = parent
-                        self._created_at[child_sid] = int(created)
-                        if parent not in self._children:
-                            self._children[parent] = []
-                        if child_sid not in self._children[parent]:
-                            self._children[parent].append(child_sid)
+            rel_path = pool_dir / _RELATIONS_FILENAME
+            data = _read_json(rel_path)
+            for child_sid, entry in data.items():
+                parent = entry.get("parent_session_id")
+                created = entry.get("created_at")
+                if isinstance(parent, str) and isinstance(created, (int, float)):
+                    self._parents[child_sid] = parent
+                    self._created_at[child_sid] = int(created)
+                    if parent not in self._children:
+                        self._children[parent] = []
+                    if child_sid not in self._children[parent]:
+                        self._children[parent].append(child_sid)
         # Sort all children by created_at
         for parent in self._children:
             self._children[parent].sort(
@@ -295,18 +314,14 @@ class SessionRelationStore:
             )
 
     def _relations_path_for(self, session_id: str) -> Path | None:
-        """Return the path to ``_relations.json`` for the pool owning *session_id*."""
+        """Return the path to ``_relations.json`` for the pool owning *session_id*.
+
+        Path: ``<base>/<pool>/_relations.json``.  The base directory already
+        encodes the workspace.
+        """
         agent = _agent_of(session_id)
         pool = self._resolve_pool(agent) or _DEFAULT_POOL
-        ws_raw = self._resolver()
-        if not ws_raw:
-            return None
-        # Try to find existing ws/pool directory; if not found, construct path
-        # matching the workspace_store convention (sanitized workspace name)
-        from bot.service.workspace_store import workspace_sanitized
-
-        ws_key = workspace_sanitized(ws_raw)
-        return self._base / ws_key / pool / _RELATIONS_FILENAME
+        return self._base / pool / _RELATIONS_FILENAME
 
     def _persist_relations_for(self, child_session_id: str) -> None:
         """Write the in-memory state to the ``_relations.json`` for the child's pool."""

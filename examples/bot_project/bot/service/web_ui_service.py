@@ -33,19 +33,23 @@ _DEFAULT_PORT: int = 21800
 _DEFAULT_HOST: str = "0.0.0.0"
 _DEFAULT_AGENT_NAME: str = "main"
 def _modex_dir(project_dir: Path) -> Path:
-    """Stable data root — always ``project_dir / MODEX_DATA_DIR``.
+    """Data root — ``project_dir / MODEX_DATA_DIR``.
 
-    Uses the *project* (home) directory, NOT the current workspace,
-    so session records survive ``cd`` / ``exit`` unchanged.
+    Used for the home (project) workspace only.  After ``cd``, session
+    stores are rebuilt to point at ``{new_workspace}/.modex/``.
     """
     import os
 
     return project_dir / os.environ.get("MODEX_DATA_DIR", ".modex")
 
 
-def _sessions_dir(project_dir: Path) -> Path:
-    """Session-management directory — stable across workspace switches."""
-    return _modex_dir(project_dir) / "sessions"
+def _sessions_dir(workspace_data_dir: Path) -> Path:
+    """Session-management directory under the given workspace data dir.
+
+    After ``cd``, this is rebuilt to point at the new workspace's
+    ``.modex/sessions/`` so each workspace maintains its own sessions.
+    """
+    return workspace_data_dir / "sessions"
 
 
 class WebUIService(BotService):
@@ -116,13 +120,11 @@ class WebUIService(BotService):
         )
 
         # ── 2. Shared transcript store + workspace membership ──────────
-        # Transcripts live in ONE shared flat store; the framework (emitter,
-        # IM FanIn) writes through it transparently.  Workspace is a pure
-        # backend-service concern: every append attributes the session_id to
-        # the currently active workspace, so the WebUI can list sessions per
-        # workspace.  IM and WebUI share the same workspace.
-        # Use scripts/migrate_data.py to migrate from old layouts.
-        sessions_dir = _sessions_dir(project_dir)
+        # Sessions live per-workspace under {workspace}/.modex/sessions/.
+        # At startup use the home (project) workspace; after cd the stores
+        # are rebuilt via _update_session_stores() called from the workspace
+        # switch callback in core.py.
+        sessions_dir = _sessions_dir(_modex_dir(project_dir))
         transcript_store = WorkspaceScopedTranscriptStore(
             sessions_dir,
             self._resolve_workspace,
@@ -138,6 +140,14 @@ class WebUIService(BotService):
             sessions_dir,
             workspace_resolver=self._resolve_workspace,  # ← SAME resolver!
         )
+
+        # ── 2.6 Recent workspaces store ────────────────────────────
+        # Lives in the project home .modex/ (not per-workspace) because
+        # it tracks which workspaces the user has visited, not data owned
+        # by any single workspace.
+        from bot.service.recent_workspaces import RecentWorkspaces
+
+        self._recent_workspaces = RecentWorkspaces(_modex_dir(project_dir))
 
         # ── 3. Build adapters from registry ────────────────────────────
         # Auto-import all register_*.py modules so @register decorators fire.
@@ -185,7 +195,7 @@ class WebUIService(BotService):
             self._channel_outputs.append(out)
             self._channel_outputs_by_name[spec.name] = out
             self._emitter_factories.append(em_factory)
-            logger.info("Adapter '%s': registered ✓", spec.name)
+            logger.info("Adapter '%s': registered [OK]", spec.name)
 
         if not self._channel_inputs:
             raise RuntimeError(
@@ -196,10 +206,7 @@ class WebUIService(BotService):
         if len(self._channel_inputs) == 1:
             merged_input: InputAdapter = self._channel_inputs[0]
         else:
-            fan_in = FanInInputAdapter(
-                transcript_store=transcript_store,
-                default_agent_name="main",
-            )
+            fan_in = FanInInputAdapter()
             for inp in self._channel_inputs:
                 fan_in.add_source(inp)
             merged_input = fan_in
@@ -252,7 +259,7 @@ class WebUIService(BotService):
 
         # ── 7. WebUI server ────────────────────────────────────────────
         if static_dist is None:
-            dist_path = project_dir / "web" / "dist"
+            dist_path = project_dir / "bot" / "web" / "dist"
             if dist_path.exists():
                 static_dist = dist_path
 
@@ -280,6 +287,28 @@ class WebUIService(BotService):
         ctx = self.workspace_context
         return str(ctx.current) if ctx is not None else ""
 
+    def update_session_stores(self, new_data_dir: Path) -> None:
+        """Update transcript and relation stores to point at *new_data_dir*.
+
+        Called from ``BotService._on_ws_stop_and_rebuild`` after a workspace
+        switch so sessions follow the new ``.modex/sessions/`` directory.
+        """
+        new_sessions_dir = _sessions_dir(new_data_dir)
+        new_sessions_dir.mkdir(parents=True, exist_ok=True)
+
+        # Rebase transcript store: this clears pool stores, ownership cache,
+        # and scan state so the next read/write targets the new workspace.
+        self._transcript_store.rebase(new_sessions_dir)
+
+        # Rebase relation store: clears in-memory cache so parent/child lookups
+        # read from the new workspace directory.
+        if self._relation_store is not None:
+            self._relation_store.rebase(new_sessions_dir)
+
+        # Update server's data_dir if already set.
+        if self._server is not None:
+            self._server._data_dir = new_sessions_dir
+
     async def start(self) -> None:
         """Start aiohttp server, then BotService (pools, router).
 
@@ -287,6 +316,16 @@ class WebUIService(BotService):
         connections so attach/send_message requests see a fully configured
         callback list from the first request.
         """
+        # ── Rebase stores to current workspace (covers initial restore) ─
+        # WorkspaceScopedTranscriptStore is created in __init__ with _base
+        # pointing at the project home.  If initialize() restored a different
+        # workspace from disk, the callback that would normally rebase the
+        # store was registered AFTER restore, so _base never moved.  We fix
+        # that here — idempotent rebase before the first read or write.
+        if self.workspace_context is not None:
+            ws_data_dir = self.workspace_context.data_dir
+            self.update_session_stores(ws_data_dir)
+
         # ── Inject server callbacks BEFORE aiohttp starts ───────────
         # Use main_agent_name from each pool's config — NOT the pool key.
         # This ensures the frontend only sees main agent events, never
@@ -312,6 +351,15 @@ class WebUIService(BotService):
         agent_pool_map = self._build_agent_pool_map()
         self._transcript_store.set_agent_pool_map(agent_pool_map)
 
+        # Map pool_name -> main_agent_name from pool configs.
+        # pool_name and main_agent_name may differ; the mapping is explicit.
+        _agent_map: dict[str, str] = {
+            name: pi.main_agent_name for name, pi in self._pools.items()
+        }
+
+        def _agent_resolver(pool_name: str) -> str:
+            return _agent_map.get(pool_name, pool_name)
+
         if self.pool_router is not None:
             self._server.set_pool_switch_callback(self.pool_router.set_pool)
             # PoolRouter session_store is the single source of truth for routing.
@@ -320,11 +368,6 @@ class WebUIService(BotService):
             self._server.set_pool_resolver(
                 lambda conv_id: self.pool_router._session_store.get(conv_id, "") or None
             )
-            # Map pool_name -> main_agent_name from pool configs.
-            # pool_name and main_agent_name may differ; the mapping is explicit.
-            _agent_map: dict[str, str] = {
-                name: pi.main_agent_name for name, pi in self._pools.items()
-            }
             self._server.set_agent_resolver(
                 lambda pool_name: _agent_map.get(pool_name, pool_name)
             )
@@ -356,6 +399,61 @@ class WebUIService(BotService):
 
         # Pass relation store to server for session list API enrichment
         self._server.set_relation_store(relation_store)
+
+        # Inject recent workspaces store for the recent-workspaces API
+        self._server.set_recent_workspaces(self._recent_workspaces)
+
+        # ── Input pipeline convergence ─────────────────────────────
+        from bot.input_pipeline.assembly import build_im_pipeline, build_webui_pipeline
+        from bot.input_pipeline.context import BotInputContext
+        from bot.input_pipeline.stages.skill_parse import PoolSkillManagerRegistry
+
+        # Per-pool skill registry backed by each pool's real SkillManager.
+        # Skills live under skills/{pool}/{agent}/.  One shared registry serves
+        # both pipelines; the XML form is produced by the framework helper.
+        known_pools = set(self._pools.keys())
+        skill_registry = PoolSkillManagerRegistry(self._pools)
+
+        def _build_input_context(inp) -> BotInputContext:
+            # Both channels share the same routing/persistence wiring; only the
+            # physical queue (enqueue_message) and the control adapter differ.
+            return BotInputContext(
+                default_pool=self._app_config.multi_agent.default_pool,
+                pool_session_store=self.pool_router._session_store,
+                agent_pool_map=agent_pool_map,
+                agent_resolver=_agent_resolver,
+                transcript_store=self._transcript_store,
+                enqueue_message=inp.put_input_message,
+                command_adapter=inp,
+            )
+
+        webui_pipeline = build_webui_pipeline(
+            skill_registry=skill_registry, known_pools=known_pools
+        )
+        self._server.set_input_pipeline(webui_pipeline)
+
+        # Find the WebSocket input adapter
+        ws_input = None
+        for inp in self._channel_inputs:
+            if inp.name == "websocket":
+                ws_input = inp
+                break
+        if ws_input is None:
+            from bot.adapters.register_websocket import get_ws_input
+            ws_input = get_ws_input()
+        self._server.set_input_context(_build_input_context(ws_input))
+
+        # ── IM pipeline (QQ, etc.) ─────────────────────────────────
+        im_pipeline = build_im_pipeline(
+            skill_registry=skill_registry,
+            known_pools=known_pools,
+        )
+        for inp in self._channel_inputs:
+            if inp.name == "websocket":
+                continue  # WebSocket is configured via server.set_input_context above
+            im_ctx = _build_input_context(inp)
+            raw_out = self._channel_outputs_by_name.get(inp.name)
+            inp.configure_input_pipeline(im_pipeline, im_ctx, raw_out)
 
         # ── Start aiohttp server ────────────────────────────────────
         runner = web.AppRunner(self._server.app)
