@@ -13,7 +13,7 @@ from framework.multi_agent.descriptor import (
 )
 from framework.multi_agent.envelope import AgentMessageEnvelope
 from framework.multi_agent.factory import AgentFactory, DefaultAgentFactory
-from framework.multi_agent.pool import AgentPool, SessionMeta, SessionRetentionPolicy
+from framework.multi_agent.pool import AgentPool, SessionRetentionPolicy
 from framework.multi_agent.pool_reuse import SubagentPool
 from framework.multi_agent.registry import AgentRegistry
 from framework.multi_agent.router import AgentMessageRouter, DefaultMeshRouter, RouteResult
@@ -49,7 +49,6 @@ __all__ = [
     "HookRunner",
     "SubagentAgentValidator",
     "RouteResult",
-    "SessionMeta",
     "SessionRetentionPolicy",
     "SendToAgentTool",
     "SubagentPool",

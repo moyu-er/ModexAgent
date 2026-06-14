@@ -130,7 +130,7 @@ async def create_pool(
     notification_service = AgentNotificationService(
         output_adapter=output_adapter,
         agent_bus=agent_bus,
-        session_strategy=session_strategy,
+        parent_agent_name=main_agent_name,
     )
     main_service, main_store = _build_communication(
         pool, main_agent_name, broker, agent_bus, session_strategy,
