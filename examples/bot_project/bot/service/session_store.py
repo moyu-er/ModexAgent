@@ -1,14 +1,16 @@
-"""Flat SessionId index store — one JSON file per session, no layering.
+"""SessionId index partitioned by pool — ``<root>/<pool>/{safe_id}.json``.
 
-The store is workspace/pool agnostic.  Workspace switching is handled
-externally by rebasing ``_root``.  Discovery uses a single-level glob on
-``<root>/{safe_id}.json``.
+Workspace isolation is handled externally by rebasing ``_root`` when the
+workspace changes.  Pool is resolved at write time via a callable so each
+session lands in the correct pool directory, consistent with
+``memory/<pool>/`` and ``sessions/<pool>/``.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from collections.abc import Callable
 
 from framework.core.session_id import SessionId
 from framework.core.session_store import LocalFileSessionStore
@@ -22,49 +24,55 @@ def _safe_name(name: str) -> str:
 
 
 class WorkspacePoolSessionStore(LocalFileSessionStore):
-    """Flat SessionId index — ``<root>/{safe_id}.json``.
+    """Session index with pool subdirectory layering.
 
-    Workspace isolation is managed externally: the consumer rebases
-    ``_root`` when the workspace changes.  No path-level layering is
-    needed because ``session_id`` is globally unique.
+    *save* writes to ``<root>/<pool>/<safe_id>.json``.
+    *get* scans subdirectories via glob (backward-compatible with a flat root).
     """
 
-    def __init__(self, base_dir: Path) -> None:
+    def __init__(self, base_dir: Path, pool_resolver: Callable[[SessionId], str]) -> None:
         super().__init__(base_dir)
+        self._pool_resolver = pool_resolver
 
     # ------------------------------------------------------------------
     # helpers
     # ------------------------------------------------------------------
 
-    def _path_for(self, session_id: str) -> Path:
-        return self._root / f"{_safe_name(session_id)}.json"
-
     def _scan_json_files(self) -> list[Path]:
-        return sorted(self._root.glob("*.json"))
+        return sorted(self._root.glob("**/*.json"))
 
     def _read_session(self, path: Path) -> SessionId:
         data = json.loads(path.read_text(encoding="utf-8"))
         return SessionId(**data)
+
+    def _path_for(self, session_id: str) -> Path:
+        """Find existing record in any pool subdirectory; fallback to root."""
+        safe = _safe_name(session_id)
+        filename = f"{safe}.json"
+        for json_file in self._root.glob(f"**/{filename}"):
+            return json_file
+        return self._root / filename
 
     # ------------------------------------------------------------------
     # SessionStore interface
     # ------------------------------------------------------------------
 
     async def save(self, session: SessionId) -> None:
-        path = self._path_for(str(session))
-        path.parent.mkdir(parents=True, exist_ok=True)
+        pool = self._pool_resolver(session)
+        target_dir = self._root / pool
+        target_dir.mkdir(parents=True, exist_ok=True)
+        path = target_dir / f"{_safe_name(str(session))}.json"
         path.write_text(session.model_dump_json(), encoding="utf-8")
 
     async def get(self, session_id: str) -> SessionId | None:
-        path = self._path_for(session_id)
-        if not path.exists():
-            return None
-        return self._read_session(path)
+        for json_file in self._root.glob(f"**/{_safe_name(session_id)}.json"):
+            return self._read_session(json_file)
+        return None
 
     async def delete(self, session_id: str) -> None:
-        path = self._path_for(session_id)
-        if path.exists():
-            path.unlink()
+        for json_file in self._root.glob(f"**/{_safe_name(session_id)}.json"):
+            json_file.unlink()
+            return
 
     async def list_sessions(self) -> list[SessionId]:
         results: list[SessionId] = []

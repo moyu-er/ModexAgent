@@ -20,11 +20,18 @@ class EnqueueStage(InputStage):
     ) -> StageResult:
         llm_content = envelope.metadata.get(RoutingMeta.SKILL_XML) or envelope.content
         attachments = [a.local_path for a in envelope.attachments if a.local_path]
-        session = ctx.session_factory.create(
-            agent_name="main",
-            external_id=envelope.conversation_id,
-            metadata={"channel": envelope.channel},
-        )
+        # Reuse the session resolved by S5 (already encoded once) instead of
+        # re-creating it, so the enqueued session id matches the pool/transcript
+        # keys. For the WebUI this honors the pre-resolved session from attach.
+        if envelope.pre_resolved_session is not None:
+            session = envelope.pre_resolved_session
+        else:
+            agent = envelope.metadata[RoutingMeta.RESOLVED_AGENT]
+            session = ctx.session_factory.create(
+                agent_name=agent,
+                external_id=envelope.conversation_id,
+                metadata={"channel": envelope.channel},
+            )
         msg = InputMessage(
             content=llm_content,
             session=session,

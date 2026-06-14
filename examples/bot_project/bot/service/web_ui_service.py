@@ -8,6 +8,7 @@ the universal observer — all conversations from any channel are visible.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any
@@ -147,7 +148,10 @@ class WebUIService(BotService):
         from framework.core.session_registry import InMemorySessionRegistry
 
         index_dir = _session_index_dir(_modex_dir(project_dir))
-        self._session_store = WorkspacePoolSessionStore(index_dir)
+        self._session_store = WorkspacePoolSessionStore(
+            index_dir,
+            pool_resolver=lambda session: self._pool_for_agent(session.agent_name),
+        )
         self._session_registry = InMemorySessionRegistry(store=self._session_store)
         # Sync cache for parent lookups at emit time (hot path).
         self._parent_ids: dict[str, str] = {}
@@ -346,7 +350,11 @@ class WebUIService(BotService):
                 await self._session_registry.load_all()
             except Exception:
                 logger.exception("Failed to reload session registry after workspace switch")
-        asyncio.create_task(_reload())
+        try:
+            asyncio.create_task(_reload())
+        except RuntimeError:
+            # No event loop running (e.g. tests); skip async reload.
+            pass
 
         # Update server's data_dir if already set.
         if self._server is not None:

@@ -78,7 +78,8 @@ def test_relation_store_rebase_switches_write_target() -> None:
         base_b = Path(tmp) / "ws-b" / "sessions"
 
         store = WorkspacePoolSessionStore(
-            base_a
+            base_a,
+            pool_resolver=lambda s: "main",
         )
 
         child_a = SessionId(
@@ -101,7 +102,7 @@ def test_relation_store_rebase_switches_write_target() -> None:
             parent_session_id="conv-b.main"
 )
         asyncio.run(store.save(child_b))
-        assert (base_b / "" / "main" / "conv-b.main.child.json").exists()
+        assert (base_b / "conv-b.main.child.json").exists()
         retrieved_b = asyncio.run(store.get("conv-b.main.child"))
         assert retrieved_b is not None
         assert retrieved_b.parent_session_id == "conv-b.main"
@@ -121,7 +122,8 @@ def test_web_ui_service_update_session_stores_rebases_stores() -> None:
         service._transcript_store = WorkspaceScopedTranscriptStore(home_sessions, lambda: "")
         service._transcript_store.set_agent_pool_map({"main": "main"})
         service._session_store = WorkspacePoolSessionStore(
-            home_sessions
+            home_sessions,
+            pool_resolver=lambda s: "main",
         )
         service._parent_ids = {}
         service._server = None

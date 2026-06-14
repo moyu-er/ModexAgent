@@ -365,7 +365,8 @@ def test_relation_store_follows_workspace_switch() -> None:
         return _ws[0]
 
     store = WorkspacePoolSessionStore(
-        data_dir
+        data_dir,
+        pool_resolver=lambda s: "coding",
     )
 
     parent = "conv.coding"
@@ -410,8 +411,8 @@ def test_relation_store_follows_workspace_switch() -> None:
     assert retrieved3 is not None
     assert retrieved3.parent_session_id == parent
 
-    # Verify session JSON files exist under workspace A's pool dir
-    assert list((data_dir / "home" / "coding").glob("*.json")), (
+    # Verify session JSON files exist in the flat store root
+    assert list(data_dir.glob("*.json")), (
         "session JSON files missing in workspace A"
     )
 

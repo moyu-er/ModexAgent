@@ -79,7 +79,11 @@ class PoolRouter:
 
     async def run(self) -> None:
         async for msg in self._input_adapter.receive():
-            target = self._session_store.get(str(msg.session), self._default_pool)
+            sid = str(msg.session)
+            # Pool store keys by the agent-independent snowflake (the segment
+            # before the first '.') so routing is stable across pool switches.
+            snowflake = sid.split(".", 1)[0] if "." in sid else sid
+            target = self._session_store.get(snowflake, self._default_pool)
             pool = self._pools.get(target)
             if pool is None:
                 pool = self._pools[self._default_pool]
@@ -89,8 +93,11 @@ class PoolRouter:
         """Set pool routing for a session without sending a notification.
 
         Used by WebUI to switch pools via UI selector (not slash commands).
+        Accepts the full session id (as WebUI attaches); keys the store by the
+        agent-independent snowflake so routing is stable across pool switches.
         """
-        self._session_store.set(session_id, pool_name)
+        snowflake = session_id.split(".", 1)[0] if "." in session_id else session_id
+        self._session_store.set(snowflake, pool_name)
         logger.info("Session %s pool set to '%s' (external)", session_id, pool_name)
 
     async def _route_to_pool(self, msg: InputMessage, pool: Any) -> None:

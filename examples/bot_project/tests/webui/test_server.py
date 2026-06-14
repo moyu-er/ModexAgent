@@ -592,7 +592,8 @@ async def test_sessions_list_includes_subagent_with_parent_relation() -> None:
     parent_sid = "abc.coding"
     child_sid = "abc.coding.reviewer.ee11"
     session_store = WorkspacePoolSessionStore(
-        data_dir
+        data_dir,
+        pool_resolver=lambda s: "coding",
     )
     parent_session = SessionId(
         session_id=parent_sid, agent_name="coding"

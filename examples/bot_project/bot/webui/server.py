@@ -185,7 +185,7 @@ class WebUIServer:
         self._pool_agent_names = list(names)
 
     def set_pool_switch_callback(self, callback: Callable[[str, str], None]) -> None:
-        """Set callback for setting pool routing: callback(conv_id, pool_name)."""
+        """Set callback for setting pool routing: callback(snowflake, pool_name)."""
         self._pool_switch_callback = callback
 
     def set_pool_resolver(self, callback: Callable[[str], str | None]) -> None:
@@ -432,15 +432,17 @@ class WebUIServer:
         if self._session_factory is not None:
             session = self._session_factory.create(agent_name)
             session_id = str(session)
+            snowflake = session.snowflake
             if self._session_store is not None:
                 await self._session_store.save(session)
         else:
             uuid_prefix = _new_uuid_prefix()
             session_id = f"{uuid_prefix}.{agent_name}"
+            snowflake = uuid_prefix
         uuid_prefix = self._resolve_conv_prefix(session_id)
         set_conv_channel(uuid_prefix, "websocket")
         if self._pool_switch_callback is not None:
-            self._pool_switch_callback(session_id, effective_pool)
+            self._pool_switch_callback(snowflake, effective_pool)
         return web.json_response({"session_id": session_id, "pool": effective_pool})
 
     async def _handle_sessions(self, request: web.Request) -> web.Response:
@@ -637,10 +639,12 @@ class WebUIServer:
                     agent_name=agent_name, external_id=uuid_prefix_raw
                 )
                 session_id = str(session)
+                snowflake = session.snowflake
                 if self._session_store is not None:
                     asyncio.create_task(self._session_store.save(session))
             else:
                 session_id = f"{uuid_prefix_raw}.{agent_name}"
+                snowflake = uuid_prefix_raw
             uuid_prefix = uuid_prefix_raw
             explicit_agent = agent_name
 
@@ -665,6 +669,7 @@ class WebUIServer:
                 )
                 return
             uuid_prefix = self._resolve_conv_prefix(session_id)
+            snowflake = uuid_prefix
             explicit_agent = self._resolve_agent(session_id)
 
         # Unregister any previous sessions and cancel their forward tasks.
@@ -677,14 +682,14 @@ class WebUIServer:
         if explicit_agent and self._agent_pool_map:
             pool_name = self._agent_pool_map.get(explicit_agent)
             if pool_name and self._pool_switch_callback is not None:
-                self._pool_switch_callback(session_id, pool_name)
+                self._pool_switch_callback(snowflake, pool_name)
         else:
             resolved_pool = (
                 self._pool_resolver(uuid_prefix) if self._pool_resolver is not None else None
             )
             pool_name = resolved_pool or _DEFAULT_AGENT_NAME
             if self._pool_switch_callback is not None:
-                self._pool_switch_callback(session_id, pool_name)
+                self._pool_switch_callback(snowflake, pool_name)
 
         # Proactively register ALL pool agent sessions so deltas from any
         # pool's agent are forwarded to this WebSocket client.
@@ -774,6 +779,11 @@ class WebUIServer:
         # no _pool_switch_callback call here. (attach still uses the callback.)
         explicit_pool = self._agent_pool_map.get(explicit_agent) if explicit_agent else None
 
+        # The session was already established upstream (attach / create_session).
+        # Pass it through so the pipeline reuses str(session) verbatim instead of
+        # re-encoding the snowflake (which would break transcript/pool keying).
+        pre_resolved = await self._resolve_session(session_id)
+
         # Run the WebUI sub-pipeline (S4..S8).
         from framework.input_pipeline.envelope import UserInputEnvelope
 
@@ -782,6 +792,7 @@ class WebUIServer:
             content=content,
             channel="websocket",
             explicit_pool=explicit_pool,
+            pre_resolved_session=pre_resolved,
         )
         result = await self._input_pipeline.handle(envelope, self._input_ctx)
 
