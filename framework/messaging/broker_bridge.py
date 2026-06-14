@@ -9,6 +9,7 @@ from typing import Any
 from ..adapters.platform import StreamingMode
 from ..core.constants import DefaultValues
 from ..core.types import InputMessage, OutputMessage
+from framework.core.session_id import SessionId
 from ..pipeline.adapters import InputAdapter, OutputAdapter
 from .broker import Address, BrokerMessage, MessageBroker
 
@@ -106,7 +107,7 @@ def _broker_msg_to_input_message(msg: BrokerMessage) -> InputMessage:
 
     return InputMessage(
         content=payload.get("content", ""),
-        session_id=session_id,
+        session=SessionId.from_str(session_id, default_agent_name="main"),
         source=str(sender),
         sender_id=sender.name
         if sender.kind == "user"
@@ -333,18 +334,18 @@ class BrokerBridgeService:
                     broker_msg = BrokerMessage(
                         payload={
                             "content": msg.content,
-                            "session_id": msg.session_id,
+                            "session_id": str(msg.session),
                             "metadata": msg.metadata,
                             "sender_id": msg.sender_id,
                             "chat_id": msg.chat_id,
-                            "conversation_id": msg.session_id,
+                            "conversation_id": str(msg.session),
                         },
                         sender=Address(kind="channel", name=msg.source or "unknown"),
                         recipient=addr,
                         headers={
                             "channel": msg.channel,
                             "chat_id": msg.chat_id,
-                            "conversation_id": msg.session_id,
+                            "conversation_id": str(msg.session),
                         },
                     )
                     await self.broker.send_to(addr, broker_msg)

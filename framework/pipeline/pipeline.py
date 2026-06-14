@@ -252,14 +252,14 @@ class AgentPipeline:
                         await self.output_adapter.send(
                             OutputMessage(
                                 content="⏹ Agent has stopped.",
-                                session_id=input_msg.session_id,
+                                session_id=str(input_msg.session),
                             ),
-                            input_msg.session_id,
+                            str(input_msg.session),
                         )
                     except Exception:
                         logger.debug(
                             "Failed to send post-stop notification session=%s",
-                            input_msg.session_id,
+                            str(input_msg.session),
                             exc_info=True,
                         )
                     pass
@@ -272,7 +272,7 @@ class AgentPipeline:
                                 content=f"Error: {str(e)}",
                                 message_type="error",
                             ),
-                            input_msg.session_id,
+                            str(input_msg.session),
                         )
                     except Exception as send_err:
                         logger.error(f"Failed to send error message: {send_err}")
@@ -377,7 +377,7 @@ class AgentPipeline:
             session_id = route_result.agent_session_id
         else:
             route_result = None
-            session_id = input_msg.session_id
+            session_id = str(input_msg.session)
         logger.info(f"Processing message: session_id={session_id}")
 
         prelock_dispatch_policy = None

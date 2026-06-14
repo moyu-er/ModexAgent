@@ -17,6 +17,7 @@ from framework.commands.models import (
 )
 from framework.core.agent import Agent, AgentContext
 from framework.core.emitter import AgentResult, ContentEmitter
+from framework.core.session_id import SessionId
 from framework.core.types import InputMessage, MessageRole
 from framework.memory.history import ListMessageHistory
 from framework.pipeline.adapters import InputAdapter, NullOutputAdapter, OutputAdapter
@@ -79,7 +80,7 @@ async def test_assemble_context_can_skip_user_append_for_continue() -> None:
     ctx_mgr = FakeContextManager()
     state = await assemble_context(
         "s1",
-        InputMessage(content="/continue", session_id="s1"),
+        InputMessage(content="/continue", session=SessionId.from_str("s1", default_agent_name="main")),
         {},
         None,
         [],
@@ -98,7 +99,7 @@ async def test_assemble_context_appends_transformed_skill_content() -> None:
     ctx_mgr = FakeContextManager()
     state = await assemble_context(
         "s1",
-        InputMessage(content="/weather tomorrow", session_id="s1"),
+        InputMessage(content="/weather tomorrow", session=SessionId.from_str("s1", default_agent_name="main")),
         {},
         "<command_context>skill</command_context>",
         [],
@@ -119,7 +120,7 @@ async def test_assemble_context_propagates_xml_format_from_input_msg() -> None:
     from framework.memory.core.message import ContentFormat
 
     ctx_mgr = FakeContextManager()
-    input_msg = InputMessage(content="/weather", session_id="s1")
+    input_msg = InputMessage(content="/weather", session=SessionId.from_str("s1", default_agent_name="main"))
     input_msg.content_format = ContentFormat.XML
     input_msg.truncatable_paths = ["command_context", "user_input"]
 
@@ -198,7 +199,7 @@ class TestInputAdapter(InputAdapter):
 
     async def receive(self) -> AsyncIterator[InputMessage]:  # type: ignore[override]
         if False:
-            yield InputMessage(content="", session_id="unused")
+            yield InputMessage(content="", session=SessionId.from_str("unused", default_agent_name="main"))
 
 
 class CapturingOutputAdapter(OutputAdapter):
@@ -242,7 +243,7 @@ async def test_pipeline_continue_runs_agent_without_appending_command() -> None:
         output_adapter=NullOutputAdapter(),
         command_processor=processor,
     )
-    await pipeline.process_message(InputMessage(content="/continue", session_id="s1"))
+    await pipeline.process_message(InputMessage(content="/continue", session=SessionId.from_str("s1", default_agent_name="main")))
     assert agent.runs == 1
     assert all(msg.get("content") != "/continue" for msg in agent.last_messages)
 
@@ -273,7 +274,7 @@ async def test_pipeline_continue_during_pending_approval_returns_notice() -> Non
         command_processor=processor,
     )
     result = await pipeline.process_message(
-        InputMessage(content="/continue", session_id="s1")
+        InputMessage(content="/continue", session=SessionId.from_str("s1", default_agent_name="main"))
     )
     assert result is None
     assert agent.runs == 0
@@ -318,7 +319,7 @@ async def test_pipeline_drops_slash_command_when_busy_in_queue_mode() -> None:
 
     try:
         result = await pipeline.process_message(
-            InputMessage(content="/continue", session_id="s1")
+            InputMessage(content="/continue", session=SessionId.from_str("s1", default_agent_name="main"))
         )
         assert result is None
         assert agent.runs == 0
@@ -356,7 +357,7 @@ async def test_pipeline_skill_uses_transformed_user_content() -> None:
         output_adapter=NullOutputAdapter(),
         command_processor=processor,
     )
-    await pipeline.process_message(InputMessage(content="/weather", session_id="s1"))
+    await pipeline.process_message(InputMessage(content="/weather", session=SessionId.from_str("s1", default_agent_name="main")))
     assert agent.runs == 1
     assert any(
         msg.get("content") == "<command_context>skill</command_context>"
@@ -397,7 +398,7 @@ async def test_pipeline_skill_propagates_xml_format_to_agent_messages() -> None:
         output_adapter=NullOutputAdapter(),
         command_processor=processor,
     )
-    await pipeline.process_message(InputMessage(content="/weather tomorrow", session_id="s1"))
+    await pipeline.process_message(InputMessage(content="/weather tomorrow", session=SessionId.from_str("s1", default_agent_name="main")))
     assert agent.runs == 1
     skill_msgs = [m for m in agent.last_messages if m.get("content") == xml_content]
     assert len(skill_msgs) == 1
@@ -423,7 +424,7 @@ def test_command_processor_exposes_dispatch_policy_before_lock() -> None:
         parse_result.invocation,
         CommandContext(
             session_id="s1",
-            input_msg=InputMessage(content="/approve", session_id="s1"),
+            input_msg=InputMessage(content="/approve", session=SessionId.from_str("s1", default_agent_name="main")),
             agent_name="main",
         ),
     )
@@ -434,7 +435,7 @@ def test_command_processor_exposes_dispatch_policy_before_lock() -> None:
         parse_result.invocation,
         CommandContext(
             session_id="s1",
-            input_msg=InputMessage(content="/approve", session_id="s1"),
+            input_msg=InputMessage(content="/approve", session=SessionId.from_str("s1", default_agent_name="main")),
             agent_name="main",
             pending_approval=TurnSnapshot(
                 identity=TurnIdentity(agent_id="a1", session=SessionId.from_str("s1"), turn_id="t1"),

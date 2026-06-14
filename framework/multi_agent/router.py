@@ -47,7 +47,7 @@ class DefaultMeshRouter(AgentMessageRouter):
     ) -> RouteResult:
         metadata = input_msg.metadata or {}
         strategy = DefaultSessionIdStrategy()
-        conversation_id = str(metadata.get("conversation_id") or input_msg.session_id)
+        conversation_id = str(metadata.get("conversation_id") or str(input_msg.session))
         agent_session_id = metadata.get("agent_session_id")
         agent_name = default_agent_name
 

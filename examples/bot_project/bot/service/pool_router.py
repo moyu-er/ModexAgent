@@ -79,7 +79,7 @@ class PoolRouter:
 
     async def run(self) -> None:
         async for msg in self._input_adapter.receive():
-            target = self._session_store.get(msg.session_id, self._default_pool)
+            target = self._session_store.get(str(msg.session), self._default_pool)
             pool = self._pools.get(target)
             if pool is None:
                 pool = self._pools[self._default_pool]
@@ -94,13 +94,14 @@ class PoolRouter:
         logger.info("Session %s pool set to '%s' (external)", session_id, pool_name)
 
     async def _route_to_pool(self, msg: InputMessage, pool: Any) -> None:
-        conv_id = msg.session_id.split(".", 1)[0] if "." in msg.session_id else msg.session_id
+        sid = str(msg.session)
+        conv_id = sid.split(".", 1)[0] if "." in sid else sid
         metadata = dict(msg.metadata) if msg.metadata else {}
         metadata.setdefault("conversation_id", conv_id)
         broker_msg = BrokerMessage(
             payload={
                 "content": msg.content,
-                "session_id": msg.session_id,
+                "session_id": sid,
                 "metadata": metadata,
                 "sender_id": msg.sender_id,
                 "chat_id": msg.chat_id,

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
+from framework.core.session_id import SessionId
 from framework.core.types import InputMessage
 from framework.input_pipeline.envelope import UserInputEnvelope
 from framework.input_pipeline.stage import Continue, InputStage, StageResult
@@ -22,7 +23,7 @@ class EnqueueStage(InputStage):
         attachments = [a.local_path for a in envelope.attachments if a.local_path]
         msg = InputMessage(
             content=llm_content,
-            session_id=envelope.conversation_id,
+            session=SessionId.from_str(envelope.conversation_id, default_agent_name="main"),
             channel=envelope.channel,
             source=envelope.channel,  # PoolRouter uses msg.source for AgentAddress name
             chat_id=envelope.metadata.get("chat_id", ""),  # broker header; never drop to default

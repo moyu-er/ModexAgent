@@ -12,6 +12,7 @@ from framework.core.context import ContextManager
 from framework.core.graph.interrupt import GraphInterrupt
 from framework.core.llm_struct import RuntimeSafetyPolicy
 from framework.core.tool_manager import InMemoryToolManager
+from framework.core.session_id import SessionId
 from framework.core.types import InputMessage
 from framework.messaging.broker import BrokerMessage, MessageBroker
 from framework.runtime.dispatch import DispatchDeadline, current_dispatch_deadline
@@ -615,7 +616,7 @@ class AgentPool(AgentRegistry):
                 else:
                     self._touch_session(session_id)
                 await instance.pipeline.process_message(
-                    InputMessage(content=task_prompt, session_id=session_id, metadata=metadata)
+                    InputMessage(content=task_prompt, session=SessionId.from_str(session_id, default_agent_name="main"), metadata=metadata)
                 )
             await self._enforce_session_cap(descriptor.address.name)
 
@@ -691,7 +692,7 @@ class AgentPool(AgentRegistry):
                 else:
                     self._touch_session(session_id)
                 await instance.pipeline.process_message(
-                    InputMessage(content=content, session_id=session_id, metadata=metadata)
+                    InputMessage(content=content, session=SessionId.from_str(session_id, default_agent_name="main"), metadata=metadata)
                 )
             if envelope.invocation_id:
                 await self._enforce_session_cap(instance.descriptor.address.name)
@@ -720,7 +721,7 @@ class AgentPool(AgentRegistry):
             lock = self.get_lock(session_id)
             async with lock:
                 await instance.pipeline.process_message(
-                    InputMessage(content=content, session_id=session_id, metadata=metadata)
+                    InputMessage(content=content, session=SessionId.from_str(session_id, default_agent_name="main"), metadata=metadata)
                 )
 
     def get(self, name: str) -> AgentInstance | None:

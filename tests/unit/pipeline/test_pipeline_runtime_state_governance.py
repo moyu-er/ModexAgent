@@ -162,7 +162,7 @@ async def test_source_agent_message_during_pending_approval_is_buffered_not_writ
     await pipeline._process_message_locked(
         InputMessage(
             content="subagent update",
-            session_id="s1",
+            session=SessionId.from_str("s1", default_agent_name="main"),
             metadata={"source_agent": "subagent"},
         ),
         "s1",
@@ -181,7 +181,7 @@ async def test_unrelated_input_during_pending_approval_is_not_written_as_user_tu
     pipeline = _pipeline(turn_store=turn_store, context_manager=context_manager)
 
     await pipeline._process_message_locked(
-        InputMessage(content="not an approval command", session_id="s1"),
+        InputMessage(content="not an approval command", session=SessionId.from_str("s1", default_agent_name="main")),
         "s1",
     )
 
@@ -208,7 +208,7 @@ async def test_resume_that_suspends_again_keeps_new_snapshot() -> None:
     )
 
     await pipeline._process_message_locked(
-        InputMessage(content="/approve", session_id="s1"),
+        InputMessage(content="/approve", session=SessionId.from_str("s1", default_agent_name="main")),
         "s1",
     )
 
@@ -234,14 +234,14 @@ async def test_sequential_approval_groups_in_same_session_do_not_interfere() -> 
 
     await turn_store.save_turn(first_snapshot)
     await pipeline._process_message_locked(
-        InputMessage(content="/approve", session_id="s1"),
+        InputMessage(content="/approve", session=SessionId.from_str("s1", default_agent_name="main")),
         "s1",
     )
     assert await turn_store.load_turn(first_snapshot.identity) is None
 
     await turn_store.save_turn(second_snapshot)
     await pipeline._process_message_locked(
-        InputMessage(content="/approve", session_id="s1"),
+        InputMessage(content="/approve", session=SessionId.from_str("s1", default_agent_name="main")),
         "s1",
     )
 

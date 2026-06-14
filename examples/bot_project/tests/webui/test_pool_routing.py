@@ -123,9 +123,10 @@ async def test_pool_switch_full_flow_routes_to_coding() -> None:
 
         # ── Step 4: Verify PoolSessionStore (simulates PoolRouter.run()) ──
         msg = inp._message_queue.get_nowait()
-        target_pool = real_store.get(msg.session_id, "main")
+        sid = str(msg.session)
+        target_pool = real_store.get(sid, "main")
         assert target_pool == "coding", (
-            f"PoolRouter must route session {msg.session_id!r} to 'coding', "
+            f"PoolRouter must route session {sid!r} to 'coding', "
             f"but PoolSessionStore returned {target_pool!r}"
         )
     finally:
@@ -178,7 +179,7 @@ async def test_no_callback_defaults_to_main() -> None:
         # But the PoolSessionStore from disk was NEVER notified → returns default 'main'
         msg = inp._message_queue.get_nowait()
         store = PoolSessionStore(data_dir=data_dir)
-        target = store.get(msg.session_id, "main")
+        target = store.get(str(msg.session), "main")
         assert target == "main", (
             f"WITHOUT callback, PoolRouter defaults to 'main', "
             f"but PoolSessionStore returned {target!r} — callback must be set"
@@ -484,8 +485,9 @@ async def test_different_conversations_route_to_different_pools() -> None:
         messages: list[tuple[str, str]] = []
         while not inp._message_queue.empty():
             msg = inp._message_queue.get_nowait()
-            pool = real_store.get(msg.session_id, "main")
-            messages.append((msg.session_id, pool))
+            sid = str(msg.session)
+            pool = real_store.get(sid, "main")
+            messages.append((sid, pool))
 
         coding_routes = [(s, p) for s, p in messages if s == coding_conv]
         main_routes = [(s, p) for s, p in messages if s == main_conv]

@@ -545,7 +545,7 @@ memory:
             await asyncio.sleep(0.1)
 
             # 注入一条消息
-            await input_adapter.inject(InputMessage(content="ping", session_id="s1"))
+            await input_adapter.inject(InputMessage(content="ping", session=SessionId.from_str("s1", default_agent_name="main")))
 
             # 等待消息流转
             for _ in range(50):

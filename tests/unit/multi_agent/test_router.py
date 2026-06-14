@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from framework.core.session_id import SessionId
 from framework.core.types import InputMessage
 from framework.multi_agent.router import DefaultMeshRouter
 
@@ -8,7 +9,7 @@ class TestDefaultMeshRouter:
     def test_defaults_external_conversation_to_main_agent_session(self) -> None:
         router = DefaultMeshRouter()
 
-        result = router.route(InputMessage(content="hello", session_id="chat-1"))
+        result = router.route(InputMessage(content="hello", session=SessionId.from_str("chat-1", default_agent_name="main")))
 
         assert result.conversation_id == "chat-1"
         assert result.agent_session_id == "chat-1.main"
@@ -18,7 +19,7 @@ class TestDefaultMeshRouter:
         router = DefaultMeshRouter()
 
         result = router.route(
-            InputMessage(content="hello", session_id="chat-1"),
+            InputMessage(content="hello", session=SessionId.from_str("chat-1", default_agent_name="main")),
             default_agent_name="office-expert",
         )
 
@@ -32,7 +33,7 @@ class TestDefaultMeshRouter:
         result = router.route(
             InputMessage(
                 content="task",
-                session_id="chat-1",
+                session=SessionId.from_str("chat-1", default_agent_name="main"),
                 metadata={"agent_session_id": "chat-1.office-expert.task-42"},
             )
         )
@@ -47,7 +48,7 @@ class TestDefaultMeshRouter:
         result = router.route(
             InputMessage(
                 content="task",
-                session_id="transport-session",
+                session=SessionId.from_str("transport-session", default_agent_name="main"),
                 metadata={"agent_session_id": "chat-1.office-expert.task-42"},
             )
         )

@@ -29,6 +29,7 @@ _BOT_PROJECT = Path(__file__).parent.parent.parent.parent / "examples" / "bot_pr
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
+from framework.core.session_id import SessionId
 from framework.core.types import InputMessage, OutputMessage
 from framework.messaging.broker_memory import InMemoryMessageBroker
 from framework.messaging.broker import BrokerMessage
@@ -80,7 +81,7 @@ class _FakePool:
 
 
 def _msg(content: str, session_id: str = "sess-1") -> InputMessage:
-    return InputMessage(content=content, session_id=session_id, channel="qq")
+    return InputMessage(content=content, session=SessionId.from_str(session_id, default_agent_name="main"), channel="qq")
 
 
 # ── Flow 1: Normal message -> correct pool ──

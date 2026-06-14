@@ -21,6 +21,7 @@ _BOT_PROJECT = Path(__file__).parent.parent.parent.parent / "examples" / "bot_pr
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
+from framework.core.session_id import SessionId
 from framework.core.types import InputMessage, OutputMessage
 from framework.ioc.configs.pool import PoolConfig
 from framework.ioc.configs.llm import LLMConfig
@@ -228,7 +229,7 @@ class TestPoolRouterRouting:
     async def test_routing_falls_back_to_default_for_unknown_pool(self, router, pools):
         """When session's pool name is unknown, falls back to default pool."""
         router._session_store.set("sess-3", "nonexistent")
-        msg = InputMessage(content="hello", session_id="sess-3", channel="test")
+        msg = InputMessage(content="hello", session=SessionId.from_str("sess-3", default_agent_name="main"), channel="test")
         await router._route_to_pool(msg, pools["main"])
 
 

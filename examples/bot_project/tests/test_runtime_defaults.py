@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from bot.service.core import BotService
 
+from framework.core.session_id import SessionId
 from framework.core.types import InputMessage
 from framework.interceptor.builtin import (
     ToolResultLimitInterceptor,
@@ -30,7 +31,7 @@ class _InputAdapter(InputAdapter):
 
     async def receive(self) -> AsyncIterator[InputMessage]:
         if False:
-            yield InputMessage(content="", session_id="s1")
+            yield InputMessage(content="", session=SessionId.from_str("s1", default_agent_name="main"))
 
 
 def test_default_interceptor_chain_keeps_only_effective_defaults() -> None:

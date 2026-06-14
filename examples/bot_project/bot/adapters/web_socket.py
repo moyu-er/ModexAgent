@@ -8,6 +8,7 @@ from typing import Any
 
 from bot.webui.events import DeltaEnvelope
 from framework.adapters.platform import StreamingMode
+from framework.core.session_id import SessionId
 from framework.core.types import InputMessage, OutputMessage
 from framework.pipeline.adapters import InputAdapter, OutputAdapter
 
@@ -88,7 +89,7 @@ class WebSocketInputAdapter(InputAdapter):
 
     def enqueue_user_message(self, session_id: str, content: str) -> None:
         """Enqueue a user message to be consumed by receive()."""
-        msg = InputMessage(content=content, session_id=session_id, channel=WEBSOCKET_CHANNEL)
+        msg = InputMessage(content=content, session=SessionId.from_str(session_id, default_agent_name="main"), channel=WEBSOCKET_CHANNEL)
         self._message_queue.put_nowait(msg)
 
     def put_input_message(self, msg: InputMessage) -> None:

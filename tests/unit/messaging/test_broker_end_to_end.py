@@ -8,6 +8,7 @@ import asyncio
 
 import pytest
 
+from framework.core.session_id import SessionId
 from framework.core.types import InputMessage, OutputMessage
 from framework.messaging.broker import Address, BrokerMessage
 from framework.messaging.broker_bridge import (
@@ -329,7 +330,7 @@ async def test_bridge_service_input_exception_isolation(broker):
 
     healthy = _MockInputAdapter()
     await healthy.start()
-    healthy.inject(InputMessage(content="ok", session_id="s1"))
+    healthy.inject(InputMessage(content="ok", session=SessionId.from_str("s1", default_agent_name="main")))
 
     service = BrokerBridgeService(
         broker=broker,

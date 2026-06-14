@@ -26,6 +26,7 @@ from bot.service.pool_router import PoolRouter, PoolSessionStore
 from framework.commands.handlers import build_default_builtin_handlers
 from framework.commands.processor import SlashCommandProcessor
 from framework.control.channel import InMemoryControlChannel
+from framework.core.session_id import SessionId
 from framework.core.types import InputMessage, OutputMessage
 from framework.pipeline.adapters import InputAdapter, OutputAdapter
 from framework.workspace.handlers import (
@@ -93,7 +94,7 @@ class _DummyInputAdapter(InputAdapter):
         self._queue.put_nowait(
             InputMessage(
                 content=content,
-                session_id=session_id,
+                session=SessionId.from_str(session_id, default_agent_name="main"),
                 source=self._channel_name,
                 channel=self._channel_name,
                 metadata={"conversation_id": session_id},
