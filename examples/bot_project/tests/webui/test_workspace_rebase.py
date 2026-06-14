@@ -102,7 +102,7 @@ def test_relation_store_rebase_switches_write_target() -> None:
             parent_session_id="conv-b.main"
 )
         asyncio.run(store.save(child_b))
-        assert (base_b / "conv-b.main.child.json").exists()
+        assert (base_b / "main" / "conv-b.main.child.json").exists()
         retrieved_b = asyncio.run(store.get("conv-b.main.child"))
         assert retrieved_b is not None
         assert retrieved_b.parent_session_id == "conv-b.main"
@@ -151,4 +151,5 @@ def test_web_ui_service_update_session_stores_rebases_stores() -> None:
             parent_session_id="conv.main"
 )
         asyncio.run(service._session_store.save(child))
-        assert (other_sessions / "" / "main" / "conv.main.child.json").exists()
+        session_index_dir = other_sessions.parent / "session_index"
+        assert (session_index_dir / "main" / "conv.main.child.json").exists()

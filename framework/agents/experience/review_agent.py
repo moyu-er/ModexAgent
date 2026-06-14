@@ -197,7 +197,7 @@ class ExperienceReviewAgent(ScopedFileAgent):
         state = ReActTurnState(
             identity=TurnIdentity(
                 agent_id="experience-review",
-                session_id=session_id,
+                session=SessionId(session_id=session_id, agent_name=agent_name),
                 turn_id="default",
             ),
             agent_kind=AgentKind.REACT,

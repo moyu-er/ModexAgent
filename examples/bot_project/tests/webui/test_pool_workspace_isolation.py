@@ -411,9 +411,9 @@ def test_relation_store_follows_workspace_switch() -> None:
     assert retrieved3 is not None
     assert retrieved3.parent_session_id == parent
 
-    # Verify session JSON files exist in the flat store root
-    assert list(data_dir.glob("*.json")), (
-        "session JSON files missing in workspace A"
+    # Verify session JSON files exist under the pool directory
+    assert list((data_dir / "coding").glob("*.json")), (
+        "session JSON files missing under coding pool"
     )
 
 
