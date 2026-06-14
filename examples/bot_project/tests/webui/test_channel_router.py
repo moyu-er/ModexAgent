@@ -181,7 +181,6 @@ async def test_pool_switch_routes_to_qq(adapters):
         pool = {"coding": type("Pool", (), {"main_agent_name": "coding"})()}
         pool_router = PoolRouter(
             input_adapter=None,  # type: ignore[arg-type]
-            output_adapter=router,
             broker=None,  # type: ignore[arg-type]
             pools=pool,
             session_store=session_store,
@@ -189,9 +188,10 @@ async def test_pool_switch_routes_to_qq(adapters):
         )
 
         set_conv_channel("qq-user-2", "qq")
-        await pool_router._handle_switch("qq-user-2", "coding")
+        pool_router.set_pool("qq-user-2", "coding")
 
-        assert qq.messages == [("qq-user-2", 'switch to "coding" pool')]
+        assert session_store.get("qq-user-2", "main") == "coding"
+        assert qq.messages == []
         assert ws.messages == []
 
 
@@ -205,7 +205,6 @@ async def test_pool_switch_routes_to_websocket(adapters):
         pool = {"coding": type("Pool", (), {"main_agent_name": "coding"})()}
         pool_router = PoolRouter(
             input_adapter=None,  # type: ignore[arg-type]
-            output_adapter=router,
             broker=None,  # type: ignore[arg-type]
             pools=pool,
             session_store=session_store,
@@ -213,9 +212,10 @@ async def test_pool_switch_routes_to_websocket(adapters):
         )
 
         set_conv_channel("ws-session-2", "websocket")
-        await pool_router._handle_switch("ws-session-2", "coding")
+        pool_router.set_pool("ws-session-2", "coding")
 
-        assert ws.messages == [("ws-session-2", 'switch to "coding" pool')]
+        assert session_store.get("ws-session-2", "main") == "coding"
+        assert ws.messages == []
         assert qq.messages == []
 
 

@@ -15,7 +15,6 @@ from bot.webui.server import (
     WebUIServer,
     _make_session_id,
     _new_uuid_prefix,
-    _workspace_sanitized,
 )
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import _unwrap_envelope
@@ -61,6 +60,8 @@ async def test_ws_send_message_echoes_user_message() -> None:
         store = WorkspaceScopedTranscriptStore(Path(tmp), lambda: "")
         server = WebUIServer(input_adapter, store, static_dist=None)
         server.set_workspace_index(store)
+        from tests.webui._pipeline_fixture import attach_default_pipeline
+        attach_default_pipeline(server, store, input_adapter)
         client = TestClient(TestServer(server.app))
         await client.start_server()
         try:
@@ -240,7 +241,7 @@ async def test_delete_session_removes_transcript_from_any_pool_directory() -> No
         # Simulate a corrupted transcript: coding agent file stored under main.
         uuid_prefix = "corrupted123"
         session_id = f"{uuid_prefix}.coding"
-        wrong_file = data_dir / "default" / "main" / f"{uuid_prefix}.coding.jsonl"
+        wrong_file = data_dir / "main" / f"{uuid_prefix}.coding.jsonl"
         wrong_file.parent.mkdir(parents=True, exist_ok=True)
         wrong_file.write_text(
             json.dumps(
@@ -262,7 +263,7 @@ async def test_delete_session_removes_transcript_from_any_pool_directory() -> No
         )
 
         # It must also not remain in the expected directory.
-        expected_file = data_dir / "default" / "coding" / f"{uuid_prefix}.coding.jsonl"
+        expected_file = data_dir / "coding" / f"{uuid_prefix}.coding.jsonl"
         assert not expected_file.exists()
     finally:
         await client.close()
@@ -281,6 +282,13 @@ async def test_ws_send_message_uses_stored_pool() -> None:
 
     # Wire resolver so the send path derives agent_name from pool_name.
     server.set_pool_resolver(lambda cid: "coding")
+
+    from tests.webui._pipeline_fixture import attach_default_pipeline
+    from unittest.mock import MagicMock
+    pool_store = MagicMock()
+    pool_store.get = lambda key, default=None: "coding"
+    pool_store.set = MagicMock()
+    attach_default_pipeline(server, store, input_adapter, pool_session_store=pool_store)
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
@@ -355,6 +363,8 @@ async def test_pool_mapping_persistence_across_restart() -> None:
     server1.set_workspace_index(store)
     server1.set_agent_pool_map({"main": "main", "coding": "coding"})
     server1.set_pool_agent_names(["main", "coding"])
+    from tests.webui._pipeline_fixture import attach_default_pipeline
+    attach_default_pipeline(server1, store, input_adapter)
     client1 = TestClient(TestServer(server1.app))
     await client1.start_server()
     try:
@@ -375,11 +385,11 @@ async def test_pool_mapping_persistence_across_restart() -> None:
         await client1.close()
 
     # Verify transcript file exists under the coding pool directory.
-    transcript_file = data_dir / _workspace_sanitized("") / "coding" / f"{conv_id}.coding.jsonl"
+    transcript_file = data_dir / "coding" / f"{conv_id}.coding.jsonl"
     assert transcript_file.exists()
 
     # No sessions.json in the new design.
-    meta_file = data_dir / _workspace_sanitized("") / "sessions.json"
+    meta_file = data_dir / "sessions.json"
     assert not meta_file.exists()
 
     # Second server instance — fresh store scanning the same disk layout.
@@ -426,6 +436,9 @@ async def test_sessions_persist_across_pool_switch_and_qq_conversation() -> None
     server.set_workspace_index(store)
     server.set_pool_agent_names(["main", "coding"])
     server.set_agent_pool_map({"main": "main", "coding": "coding"})
+
+    from tests.webui._pipeline_fixture import attach_default_pipeline
+    attach_default_pipeline(server, store, input_adapter)
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
@@ -833,5 +846,90 @@ async def test_ws_turn_end_streaming_stop_is_isolated() -> None:
         end = _unwrap_envelope(await ws.receive_json(timeout=2))
         assert end["event"] == "turn_end"
         assert end["session_id"] == "web:conv-a.main"
+    finally:
+        await client.close()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Workspace API tests
+# ═══════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_workspace_cd_switches_current_workspace() -> None:
+    """POST /api/workspace/cd must change WorkspaceContext.current and the
+    server's active store so that subsequent GET /api/sessions returns
+    sessions from the NEW workspace, not the old one.
+    """
+    from framework.workspace.context import DefaultWorkspaceContext
+
+    home = Path(tempfile.mkdtemp())
+    ws_a = Path(tempfile.mkdtemp())
+    ws_b = Path(tempfile.mkdtemp())
+
+    # ── Workspace context ──────────────────────────────────────────
+    ws_ctx = DefaultWorkspaceContext(home=home, active_checker=lambda: False)
+
+    # ── Server ─────────────────────────────────────────────────────
+    inp = WebSocketInputAdapter()
+    store = WorkspaceScopedTranscriptStore(
+        ws_ctx.data_dir / "sessions", lambda: str(ws_ctx.current)
+    )
+    store.set_agent_pool_map({"main": "main"})
+    server = WebUIServer(inp, store, static_dist=None, data_dir=ws_ctx.data_dir)
+    server.set_workspace_index(store)
+    server.set_workspace_context(ws_ctx)
+    server.set_agent_pool_map({"main": "main"})
+    server.set_pool_agent_names(["main"])
+
+    # ── Register a workspace-switch callback that rebases the store ─
+    # This mirrors what BotService._on_ws_stop_and_rebuild does in production,
+    # minus the heavy pool-memory/infrastructure rebuild.
+    async def _on_switch(_old_dir: Path, new_dir: Path) -> None:
+        sessions_dir = new_dir / "sessions"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        store.rebase(sessions_dir)
+
+    class _Adapter:
+        def __init__(self, fn): self._fn = fn
+        async def on_workspace_switch(self, old, new): await self._fn(old, new)
+    ws_ctx.register_callback(_Adapter(_on_switch))
+
+    client = TestClient(TestServer(server.app))
+    await client.start_server()
+    try:
+        # ── Add a session in workspace A ───────────────────────────
+        from bot.webui.events import UserMessageEvent
+
+        sid_a = f"{_new_uuid_prefix()}.main"
+
+        # Switch to workspace A
+        resp = await client.post("/api/workspace/cd", json={"path": str(ws_a)})
+        cd_a = await resp.json()
+        assert cd_a["success"], f"cd to ws-a failed: {cd_a}"
+
+        server._active_store("main").append(
+            sid_a, UserMessageEvent(session_id=sid_a, agent_name="main", content="ws-a")
+        )
+
+        # Verify session is visible in workspace A
+        resp = await client.get("/api/sessions")
+        sessions = await resp.json()
+        assert any(s["session_id"] == sid_a for s in sessions), (
+            f"session {sid_a} must be visible in ws-a"
+        )
+
+        # ── Switch to workspace B ──────────────────────────────────
+        resp = await client.post("/api/workspace/cd", json={"path": str(ws_b)})
+        cd_b = await resp.json()
+        assert cd_b["success"], f"cd to ws-b failed: {cd_b}"
+
+        # Verify workspace A's session is NOT visible in B
+        resp = await client.get("/api/sessions")
+        sessions_b = await resp.json()
+        sids_b = {s["session_id"] for s in sessions_b}
+        assert sid_a not in sids_b, (
+            f"workspace A session {sid_a} leaked into workspace B"
+        )
     finally:
         await client.close()

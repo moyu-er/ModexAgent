@@ -102,6 +102,9 @@ async def test_coding_session_transcript_written_to_coding_pool_directory() -> N
     server.set_agent_pool_map(mapping)
     server.set_agent_resolver(lambda pool_name: mapping.get(pool_name, pool_name))
 
+    from tests.webui._pipeline_fixture import attach_default_pipeline
+    attach_default_pipeline(server, store, input_adapter, agent_pool_map=mapping)
+
     client = TestClient(TestServer(server.app))
     await client.start_server()
     try:
@@ -129,14 +132,14 @@ async def test_coding_session_transcript_written_to_coding_pool_directory() -> N
 
         # The transcript MUST live under the coding pool directory.
         expected_file = (
-            data_dir / "default" / "coding" / f"{uuid_prefix}.coding.jsonl"
+            data_dir / "coding" / f"{uuid_prefix}.coding.jsonl"
         )
         assert expected_file.exists(), (
             f"coding transcript not found at expected path {expected_file}"
         )
 
         # It MUST NOT have leaked into the main pool directory.
-        wrong_file = data_dir / "default" / "main" / f"{uuid_prefix}.coding.jsonl"
+        wrong_file = data_dir / "main" / f"{uuid_prefix}.coding.jsonl"
         assert not wrong_file.exists(), (
             f"coding transcript leaked into main pool directory {wrong_file}"
         )

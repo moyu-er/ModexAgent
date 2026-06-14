@@ -21,7 +21,6 @@ from bot.webui.server import (
     WebUIServer,
     _make_session_id,
     _new_uuid_prefix,
-    _workspace_sanitized,
 )
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import _unwrap_envelope
@@ -78,6 +77,13 @@ async def test_pool_switch_full_flow_routes_to_coding() -> None:
     callback, real_store, calls = _make_real_callback(data_dir)
     server.set_pool_switch_callback(callback)
 
+    # Inject the input pipeline with the real PoolSessionStore so S5
+    # persists the UI pool choice into the same store.
+    from tests.webui._pipeline_fixture import attach_default_pipeline
+    # _make_server uses a holder pattern to get the workspace; unwrap
+    store = server._store
+    attach_default_pipeline(server, store, inp, pool_session_store=real_store)
+
     client = TestClient(TestServer(server.app))
     await client.start_server()
     try:
@@ -109,8 +115,11 @@ async def test_pool_switch_full_flow_routes_to_coding() -> None:
             f"Echoed agent_name must be 'coding', got {echoed['agent_name']!r}"
         )
 
-        # Callback must have been called again during send_message
-        assert len(calls) >= 2, "pool_switch_callback must be called during send_message"
+        # S5 persists explicit_pool directly into pool_session_store;
+        # the callback is no longer called by send_message.
+        assert real_store.get(conv_id, "main") == "coding", (
+            f"S5 must persist pool=coding for conv {conv_id}"
+        )
 
         # ── Step 4: Verify PoolSessionStore (simulates PoolRouter.run()) ──
         msg = inp._message_queue.get_nowait()
@@ -129,7 +138,7 @@ async def test_pool_switch_full_flow_routes_to_coding() -> None:
 @pytest.mark.asyncio
 async def test_no_callback_defaults_to_main() -> None:
     """Regression test: if pool_switch_callback is never set (old bug),
-    PoolRouter.defaults to 'main' regardless of what _conv_meta says.
+    PoolRouter defaults to 'main' regardless of what _conv_meta says.
 
     This proves the callback is ESSENTIAL — without it, pool='coding'
     is stored in memory but PoolRouter never learns about it.
@@ -139,6 +148,11 @@ async def test_no_callback_defaults_to_main() -> None:
 
     # Deliberately DO NOT set pool_switch_callback (simulates the old bug)
     # server.set_pool_switch_callback(...)  ← MISSING
+
+    # Inject pipeline (uses a MagicMock pool_session_store)
+    from tests.webui._pipeline_fixture import attach_default_pipeline
+    store = server._store
+    attach_default_pipeline(server, store, inp)
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
@@ -158,10 +172,10 @@ async def test_no_callback_defaults_to_main() -> None:
         })
         echoed = _unwrap_envelope(await ws.receive_json(timeout=2))
 
-        # Echo shows 'coding' (from session_id agent part)
+        # Echo shows 'coding' (explicit_pool resolved from agent_pool_map)
         assert echoed["agent_name"] == "coding"
 
-        # But PoolSessionStore was NEVER notified → returns default 'main'
+        # But the PoolSessionStore from disk was NEVER notified → returns default 'main'
         msg = inp._message_queue.get_nowait()
         store = PoolSessionStore(data_dir=data_dir)
         target = store.get(msg.session_id, "main")
@@ -364,6 +378,8 @@ async def test_pool_mapping_survives_server_recreation() -> None:
     server1.set_workspace_index(store1)
     server1.set_agent_pool_map({"main": "main", "coding": "coding"})
     server1.set_pool_agent_names(["main", "coding"])
+    from tests.webui._pipeline_fixture import attach_default_pipeline
+    attach_default_pipeline(server1, store1, inp1)
     client1 = TestClient(TestServer(server1.app))
     await client1.start_server()
     try:
@@ -384,11 +400,11 @@ async def test_pool_mapping_survives_server_recreation() -> None:
         await client1.close()
 
     # Verify transcript file exists under the coding pool directory.
-    transcript_file = data_dir / _workspace_sanitized("") / "coding" / f"{conv_id}.coding.jsonl"
+    transcript_file = data_dir / "coding" / f"{conv_id}.coding.jsonl"
     assert transcript_file.exists()
 
     # No sessions.json in the new design.
-    meta_file = data_dir / _workspace_sanitized("") / "sessions.json"
+    meta_file = data_dir / "sessions.json"
     assert not meta_file.exists()
 
     # Second server instance: must load session from disk.
@@ -425,6 +441,9 @@ async def test_different_conversations_route_to_different_pools() -> None:
 
     callback, real_store, calls = _make_real_callback(data_dir)
     server.set_pool_switch_callback(callback)
+
+    from tests.webui._pipeline_fixture import attach_default_pipeline
+    attach_default_pipeline(server, server._store, inp, pool_session_store=real_store)
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
@@ -486,17 +505,9 @@ async def test_different_conversations_route_to_different_pools() -> None:
 
 @pytest.mark.asyncio
 async def test_control_interception_in_full_server_flow() -> None:
-    """When user sends /cd in WebUI, the server intercepts it
-    before enqueuing — the message never reaches PoolRouter."""
-    from framework.commands.handlers import build_default_builtin_handlers
-    from framework.commands.processor import SlashCommandProcessor
-    from framework.control.channel import InMemoryControlChannel
-    from framework.workspace.handlers import (
-        CdCommandHandler,
-        ExitCommandHandler,
-        PwdCommandHandler,
-    )
-
+    """When user sends /cd in WebUI, the pipeline terminates it at S6
+    (SkillParseStage) and the server sends an error envelope — the
+    message never reaches PoolRouter."""
     data_dir = Path(tempfile.mkdtemp())
     inp = WebSocketInputAdapter()
     holder: list = []
@@ -509,35 +520,9 @@ async def test_control_interception_in_full_server_flow() -> None:
     server.set_workspace_index(store)
     server.set_pool_agent_names(["main", "coding"])
 
-    # Build and configure control filter (as _initialize_pool does)
-    workspace_ctx = MagicMock()
-    workspace_ctx.current = Path("/fake/cwd")
-    workspace_ctx.home = Path("/fake/home")
-    workspace_ctx.data_dir = data_dir
-
-    async def mock_cd(target: str):
-        return MagicMock(success=True, notice=f"cd: changed to {target}")
-
-    async def mock_exit():
-        return MagicMock(success=True, notice="exited")
-
-    workspace_ctx.cd = mock_cd
-    workspace_ctx.exit = mock_exit
-
-    handlers = list(build_default_builtin_handlers())
-    handlers.append(CdCommandHandler(workspace_ctx))
-    handlers.append(ExitCommandHandler(workspace_ctx))
-    handlers.append(PwdCommandHandler(workspace_ctx))
-
-    channel = InMemoryControlChannel()
-    proc = SlashCommandProcessor(handlers=handlers)
-
-    # Configure on the raw WebSocket adapter (as FanIn propagation would do)
-    inp.configure_control_filter(
-        control_channel=channel,
-        command_processor=proc,
-        output_adapter=None,
-    )
+    # Inject the input pipeline
+    from tests.webui._pipeline_fixture import attach_default_pipeline
+    attach_default_pipeline(server, store, inp)
 
     callback, real_store, calls = _make_real_callback(data_dir)
     server.set_pool_switch_callback(callback)
@@ -555,22 +540,23 @@ async def test_control_interception_in_full_server_flow() -> None:
         _unwrap_envelope(await ws.receive_json())
 
         # ── Send /cd command ──
+        q_before = inp._message_queue.qsize()
         await ws.send_json({
             "action": "send_message",
             "session_id": f"{conv_id}.main",
             "content": "/cd /tmp",
         })
 
-        # /cd should be intercepted — no user_message echo, no enqueue
-        queue_before = inp._message_queue.qsize()
-
-        # Give it a moment to process
-        await asyncio.sleep(0.1)
-
-        queue_after = inp._message_queue.qsize()
-        assert queue_after == queue_before, (
-            f"/cd must be intercepted and NOT enqueued. "
-            f"Queue before={queue_before}, after={queue_after}"
+        # /cd reaches S6 (unknown skill) — terminated, NOT enqueued.
+        # Client receives an error envelope.
+        await asyncio.sleep(0.15)
+        assert inp._message_queue.qsize() == q_before, (
+            f"/cd must NOT be enqueued. "
+            f"Queue before={q_before}, after={inp._message_queue.qsize()}"
+        )
+        err = _unwrap_envelope(await ws.receive_json(timeout=2))
+        assert err["event"] == "error", (
+            f"Expected error envelope for /cd, got {err.get('event')}"
         )
 
         # ── Send normal message — must be enqueued ──
@@ -584,9 +570,9 @@ async def test_control_interception_in_full_server_flow() -> None:
         assert echoed["content"] == "normal message"
 
         queue_after_normal = inp._message_queue.qsize()
-        assert queue_after_normal > queue_before, (
+        assert queue_after_normal > q_before, (
             f"Normal message must be enqueued. "
-            f"Queue before={queue_before}, after={queue_after_normal}"
+            f"Queue before={q_before}, after={queue_after_normal}"
         )
 
     finally:
@@ -678,18 +664,8 @@ async def test_initialize_pool_wires_control_filter_to_websocket() -> None:
 
 @pytest.mark.asyncio
 async def test_server_intercepts_cd_before_enqueue() -> None:
-    """_ws_send_message calls _try_intercept_control BEFORE enqueue.
-
-    /cd must NOT appear in the message queue when interception works.
-    """
-    from framework.commands.handlers import build_default_builtin_handlers
-    from framework.commands.processor import SlashCommandProcessor
-    from framework.control.channel import InMemoryControlChannel
-    from framework.workspace.handlers import (
-        CdCommandHandler,
-        ExitCommandHandler,
-        PwdCommandHandler,
-    )
+    """WebUI chat /cd reaches S6 (SkillParseStage) which terminates it
+    as unknown skill — not enqueued, error envelope sent to client."""
 
     data_dir = Path(tempfile.mkdtemp())
     inp = WebSocketInputAdapter()
@@ -703,31 +679,9 @@ async def test_server_intercepts_cd_before_enqueue() -> None:
     server.set_workspace_index(store)
     server.set_pool_agent_names(["main"])
 
-    # Configure adapter as _initialize_pool does
-    workspace_ctx = MagicMock()
-    workspace_ctx.current = Path("/fake/cwd")
-    workspace_ctx.home = Path("/fake/home")
-    workspace_ctx.data_dir = data_dir
-
-    async def mock_cd(target: str):
-        return MagicMock(success=True, notice=f"changed to {target}")
-
-    async def mock_exit():
-        return MagicMock(success=True, notice="exited")
-
-    workspace_ctx.cd = mock_cd
-    workspace_ctx.exit = mock_exit
-
-    handlers = list(build_default_builtin_handlers())
-    handlers.append(CdCommandHandler(workspace_ctx))
-    handlers.append(ExitCommandHandler(workspace_ctx))
-    handlers.append(PwdCommandHandler(workspace_ctx))
-
-    inp.configure_control_filter(
-        control_channel=InMemoryControlChannel(),
-        command_processor=SlashCommandProcessor(handlers=handlers),
-        output_adapter=None,
-    )
+    # Inject the input pipeline (no-op skill registry — /cd terminates at S6)
+    from tests.webui._pipeline_fixture import attach_default_pipeline
+    attach_default_pipeline(server, store, inp)
 
     callback, _, _ = _make_real_callback(data_dir)
     server.set_pool_switch_callback(callback)
@@ -744,7 +698,7 @@ async def test_server_intercepts_cd_before_enqueue() -> None:
 
         q_before = inp._message_queue.qsize()
 
-        # /cd must be intercepted — NOT enqueued
+        # /cd must be terminated by S6 — NOT enqueued
         await ws.send_json({
             "action": "send_message",
             "session_id": f"{conv_id}.main",
@@ -752,11 +706,13 @@ async def test_server_intercepts_cd_before_enqueue() -> None:
         })
         await asyncio.sleep(0.15)
 
-        q_after = inp._message_queue.qsize()
-        assert q_after == q_before, (
-            f"/cd must be intercepted BEFORE enqueue. "
-            f"Queue grew from {q_before} to {q_after}"
+        assert inp._message_queue.qsize() == q_before, (
+            f"/cd must be terminated BEFORE enqueue. "
+            f"Queue grew from {q_before} to {inp._message_queue.qsize()}"
         )
+        # WebUI chat no longer handles /cd (UI does); client gets an error envelope.
+        err = _unwrap_envelope(await ws.receive_json(timeout=2))
+        assert err["event"] == "error"
 
         # Normal text must be enqueued
         await ws.send_json({
@@ -786,6 +742,9 @@ async def test_conversations_survive_pool_switching() -> None:
     server, inp = _make_server(data_dir)
     callback, real_store, calls = _make_real_callback(data_dir)
     server.set_pool_switch_callback(callback)
+
+    from tests.webui._pipeline_fixture import attach_default_pipeline
+    attach_default_pipeline(server, server._store, inp, pool_session_store=real_store)
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
@@ -858,6 +817,9 @@ async def test_conversation_visible_after_first_message() -> None:
     server, inp = _make_server(data_dir)
     callback, real_store, calls = _make_real_callback(data_dir)
     server.set_pool_switch_callback(callback)
+
+    from tests.webui._pipeline_fixture import attach_default_pipeline
+    attach_default_pipeline(server, server._store, inp, pool_session_store=real_store)
 
     client = TestClient(TestServer(server.app))
     await client.start_server()

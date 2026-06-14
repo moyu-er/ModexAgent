@@ -149,36 +149,25 @@ async def test_pool_filter_hides_and_shows_sessions() -> None:
 async def test_workspace_switch_hides_and_shows_sessions() -> None:
     """End-to-end: switching workspace changes the visible session list.
 
-    Flow:
-      1. Create and chat in workspace A (default pool).
-      2. Switch server workspace to B.
-      3. GET /api/sessions → session from A is hidden.
-      4. Create and chat in workspace B.
-      5. GET /api/sessions → only session from B is visible.
-      6. Switch workspace back to A.
-      7. GET /api/sessions → session from A visible, session from B hidden.
+    In the new model each workspace has its own data dir, so sessions are
+    physically separate.
     """
-    data_dir = Path(tempfile.mkdtemp())
-    ws_a = str(data_dir / "workspace-a")
-    ws_b = str(data_dir / "workspace-b")
-    Path(ws_a).mkdir(exist_ok=True)
-    Path(ws_b).mkdir(exist_ok=True)
+    data_dir_a = Path(tempfile.mkdtemp())
+    data_dir_b = Path(tempfile.mkdtemp())
 
-    # Workspace context mock that the server will read.
     ws_ctx = MagicMock()
-    ws_ctx.current = Path(ws_a)
-    ws_ctx.home = data_dir
+    ws_ctx.current = Path("/ws-a")
+    ws_ctx.home = Path("/ws-a")
 
     def _resolver() -> str:
         return str(ws_ctx.current)
 
-    server, _ = _make_server(data_dir, workspace_resolver=_resolver)
+    server, _ = _make_server(data_dir_a, workspace_resolver=_resolver)
     server.set_workspace_context(ws_ctx)
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
     try:
-        # Step 1: session in workspace A.
         resp = await client.post("/api/sessions", json={"pool": "main"})
         assert resp.status == 200
         session_a = await resp.json()
@@ -186,17 +175,19 @@ async def test_workspace_switch_hides_and_shows_sessions() -> None:
         conv_a = sid_a.split(".")[0]
         await _simulate_qa_turn(server._store, conv_a, "main", "hi A", "hello A")
 
-        # Step 2: switch to workspace B.
-        ws_ctx.current = Path(ws_b)
+        # Switch to workspace B: recreate store with new data dir
+        mapping = _real_agent_pool_map()
+        server._store = WorkspaceScopedTranscriptStore(data_dir_b, _resolver)
+        server._store.set_agent_pool_map(mapping)
+        if server._workspace_index is not None:
+            server.set_workspace_index(server._store)
 
-        # Step 3: workspace A session must be hidden.
         resp = await client.get("/api/sessions")
         assert resp.status == 200
         sessions = await resp.json()
         sids = {s["session_id"] for s in sessions}
         assert sid_a not in sids, "workspace A session must be hidden in workspace B"
 
-        # Step 4: create session in workspace B.
         resp = await client.post("/api/sessions", json={"pool": "main"})
         assert resp.status == 200
         session_b = await resp.json()
@@ -204,7 +195,6 @@ async def test_workspace_switch_hides_and_shows_sessions() -> None:
         conv_b = sid_b.split(".")[0]
         await _simulate_qa_turn(server._store, conv_b, "main", "hi B", "hello B")
 
-        # Step 5: only workspace B session visible.
         resp = await client.get("/api/sessions")
         assert resp.status == 200
         sessions = await resp.json()
@@ -212,10 +202,12 @@ async def test_workspace_switch_hides_and_shows_sessions() -> None:
         assert sid_b in sids, "workspace B session must be visible"
         assert sid_a not in sids, "workspace A session must still be hidden"
 
-        # Step 6: switch back to workspace A.
-        ws_ctx.current = Path(ws_a)
+        # Switch back to workspace A
+        server._store = WorkspaceScopedTranscriptStore(data_dir_a, _resolver)
+        server._store.set_agent_pool_map(mapping)
+        if server._workspace_index is not None:
+            server.set_workspace_index(server._store)
 
-        # Step 7: workspace A visible, B hidden.
         resp = await client.get("/api/sessions")
         assert resp.status == 200
         sessions = await resp.json()
@@ -228,35 +220,24 @@ async def test_workspace_switch_hides_and_shows_sessions() -> None:
 
 @pytest.mark.asyncio
 async def test_pool_and_workspace_filter_combined() -> None:
-    """End-to-end: pool filter works independently within each workspace.
-
-    Flow:
-      1. In workspace A: create coding session.
-      2. Switch to workspace B: create main session.
-      3. GET /api/sessions?pool=coding in workspace B → empty.
-      4. Switch back to workspace A.
-      5. GET /api/sessions?pool=coding in workspace A → coding session visible.
-    """
-    data_dir = Path(tempfile.mkdtemp())
-    ws_a = str(data_dir / "workspace-a")
-    ws_b = str(data_dir / "workspace-b")
-    Path(ws_a).mkdir(exist_ok=True)
-    Path(ws_b).mkdir(exist_ok=True)
+    """End-to-end: pool filter works independently within each workspace."""
+    data_dir_a = Path(tempfile.mkdtemp())
+    data_dir_b = Path(tempfile.mkdtemp())
 
     ws_ctx = MagicMock()
-    ws_ctx.current = Path(ws_a)
-    ws_ctx.home = data_dir
+    ws_ctx.current = Path("/ws-a")
+    ws_ctx.home = Path("/ws-a")
 
     def _resolver() -> str:
         return str(ws_ctx.current)
 
-    server, _ = _make_server(data_dir, workspace_resolver=_resolver)
+    mapping = _real_agent_pool_map()
+    server, _ = _make_server(data_dir_a, workspace_resolver=_resolver)
     server.set_workspace_context(ws_ctx)
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
     try:
-        # Step 1: coding session in workspace A.
         resp = await client.post("/api/sessions", json={"pool": "coding"})
         assert resp.status == 200
         coding_a = await resp.json()
@@ -264,8 +245,12 @@ async def test_pool_and_workspace_filter_combined() -> None:
         conv_a = sid_a.split(".")[0]
         await _simulate_qa_turn(server._store, conv_a, "coding", "hi", "hello")
 
-        # Step 2: main session in workspace B.
-        ws_ctx.current = Path(ws_b)
+        # Switch to workspace B
+        server._store = WorkspaceScopedTranscriptStore(data_dir_b, _resolver)
+        server._store.set_agent_pool_map(mapping)
+        if server._workspace_index is not None:
+            server.set_workspace_index(server._store)
+
         resp = await client.post("/api/sessions", json={"pool": "main"})
         assert resp.status == 200
         main_b = await resp.json()
@@ -273,18 +258,19 @@ async def test_pool_and_workspace_filter_combined() -> None:
         conv_b = sid_b.split(".")[0]
         await _simulate_qa_turn(server._store, conv_b, "main", "hi", "hello")
 
-        # Step 3: coding filter in workspace B → nothing.
         resp = await client.get("/api/sessions?pool=coding")
         assert resp.status == 200
         sessions = await resp.json()
         sids = {s["session_id"] for s in sessions}
         assert sid_a not in sids
-        assert sid_b not in sids  # main session, not coding
+        assert sid_b not in sids
 
-        # Step 4: back to workspace A.
-        ws_ctx.current = Path(ws_a)
+        # Switch back to workspace A
+        server._store = WorkspaceScopedTranscriptStore(data_dir_a, _resolver)
+        server._store.set_agent_pool_map(mapping)
+        if server._workspace_index is not None:
+            server.set_workspace_index(server._store)
 
-        # Step 5: coding filter in workspace A → coding session visible.
         resp = await client.get("/api/sessions?pool=coding")
         assert resp.status == 200
         sessions = await resp.json()

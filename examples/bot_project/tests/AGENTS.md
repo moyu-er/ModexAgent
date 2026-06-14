@@ -22,6 +22,12 @@ Test suites for the bot_project. Unit and integration tests covering service lif
 | `test_runtime_defaults.py` | Default runtime configuration values |
 | `test_slash_commands.py` | Slash command parsing and dispatch |
 | `test_terminal_integration.py` | Terminal tool integration tests |
+| `test_config_env.py` | .env read/write/check helpers and LLM env-var validation |
+| `test_interactive_config.py` | Interactive config wizard (`run_config_wizard`) behavior |
+| `test_mcp_resilience.py` | MCP registration failure does not block pool/tool-manager build |
+| `test_recent_workspaces.py` | `RecentWorkspaces` load/add/list recent workspace paths |
+| `test_session_relation_store.py` | `SessionRelationStore` parent–child session relationship persistence |
+| `test_web_ui_service.py` | `WebUIService` config wiring with aiohttp test server |
 
 ## Subdirectories
 
@@ -40,4 +46,4 @@ Test suites for the bot_project. Unit and integration tests covering service lif
 ### Common Patterns
 - Service tests construct `BotService` with mock adapters and verify initialization order.
 - Adapter tests use `InputAdapter`/`OutputAdapter` mocks.
-- Pool routing tests verify `PoolSessionStore` persistence and `PoolRouter._extract_pool_command()`.
+- Pool routing tests verify `PoolSessionStore` persistence and `PoolRouter` dispatch.

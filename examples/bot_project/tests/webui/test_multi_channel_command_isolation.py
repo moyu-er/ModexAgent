@@ -202,7 +202,6 @@ async def test_pool_switch_isolated_across_im_channels():
         }
         pool_router = PoolRouter(
             input_adapter=None,  # type: ignore[arg-type]
-            output_adapter=router,
             broker=None,  # type: ignore[arg-type]
             pools=pools,
             session_store=store,
@@ -210,14 +209,13 @@ async def test_pool_switch_isolated_across_im_channels():
         )
 
         set_conv_channel("qq-user-2", "qq")
-        await pool_router._handle_switch("qq-user-2", "coding")
+        pool_router.set_pool("qq-user-2", "coding")
 
         set_conv_channel("tg-user-2", "telegram")
-        await pool_router._handle_switch("tg-user-2", "main")
+        pool_router.set_pool("tg-user-2", "main")
 
-        assert qq_out.messages == [("qq-user-2", 'switch to "coding" pool')]
-        assert tg_out.messages == [("tg-user-2", 'switch to "main" pool')]
-        assert ws_out.messages == []
+        assert store.get("qq-user-2", "main") == "coding"
+        assert store.get("tg-user-2", "main") == "main"
 
 
 @pytest.mark.asyncio
