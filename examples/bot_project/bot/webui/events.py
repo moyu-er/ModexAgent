@@ -55,15 +55,6 @@ def _unwrap_envelope(data: dict[str, object]) -> dict[str, object]:
     return flat
 
 
-def _session_id(conv_id: str, agent_name: str) -> str:
-    """Build a full session identifier: ``"abc123" + "main" -> "abc123.main"``."""
-    return f"{conv_id}.{agent_name}"
-
-
-def _conv_prefix(session_id: str) -> str:
-    """Extract the UI conversation prefix: ``"abc123.main" -> "abc123"``."""
-    return session_id.rsplit(".", 1)[0]
-
 
 # ── WebSocket client message dataclasses ───────────────────────────────────
 
@@ -211,7 +202,7 @@ class ServerEvent:
             # Old format: conversation_id was just the conv prefix.
             # Upgrade to full session_id.
             if isinstance(cid, str) and isinstance(agent, str) and "." not in cid:
-                kwargs["session_id"] = _session_id(cid, agent)
+                kwargs["session_id"] = f"{cid}.{agent}"
             else:
                 kwargs["session_id"] = cid
 

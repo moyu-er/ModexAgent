@@ -131,15 +131,21 @@ class WebUIService(BotService):
         )
         self._transcript_store = transcript_store
 
-        # ── 2.5 Session relation store ───────────────────────────────
-        # Co-located with transcripts, shares the SAME workspace resolver
-        # so workspace switching (cd) converges both stores together.
-        from bot.service.session_relation_store import SessionRelationStore
+        # ── 2.5 Session store + registry ───────────────────────────────
+        # WorkspacePoolSessionStore partitions sessions into
+        # {workspace}/{pool}/ subdirectories under sessions_dir.
+        # InMemorySessionRegistry provides a write-through runtime cache.
+        from bot.service.session_store import WorkspacePoolSessionStore
+        from framework.core.session_registry import InMemorySessionRegistry
 
-        self._relation_store = SessionRelationStore(
+        self._session_store = WorkspacePoolSessionStore(
             sessions_dir,
-            workspace_resolver=self._resolve_workspace,  # ← SAME resolver!
+            workspace_resolver=self._resolve_workspace,
+            pool_resolver=lambda session: self._pool_for_agent(session.agent_name),
         )
+        self._session_registry = InMemorySessionRegistry(store=self._session_store)
+        # Sync cache for parent lookups at emit time (hot path).
+        self._parent_ids: dict[str, str] = {}
 
         # ── 2.6 Recent workspaces store ────────────────────────────
         # Lives in the project home .modex/ (not per-workspace) because
@@ -242,7 +248,21 @@ class WebUIService(BotService):
         from bot.adapters.register_websocket import get_ws_input
 
         async def _on_subagent_created(child_id: str, parent_id: str) -> None:
-            self._relation_store.set_parent(child_id, parent_id)
+            # Parse agent_name from child_id: {snowflake}.{agent}[.{invocation_id}]
+            parts = child_id.split(".", 2)
+            agent_name = parts[1] if len(parts) >= 2 else "main"
+            from framework.core.session_id import SessionId, now_ms
+
+            child_session = SessionId(
+                session_id=child_id,
+                agent_name=agent_name,
+                parent_session_id=parent_id,
+                created_at=now_ms(),
+                updated_at=now_ms(),
+            )
+            await self._session_registry.register(child_session)
+            # Sync cache for hot-path parent lookups at emit time.
+            self._parent_ids[child_id] = parent_id
             ws_input = get_ws_input()
             ws_input.ensure_queue(child_id)
 
@@ -287,8 +307,16 @@ class WebUIService(BotService):
         ctx = self.workspace_context
         return str(ctx.current) if ctx is not None else ""
 
+    def _pool_for_agent(self, agent_name: str) -> str:
+        """Return the pool name for *agent_name*, defaulting to ``main``."""
+        return self._agent_pool_map.get(agent_name, _DEFAULT_AGENT_NAME)
+
+    def _pool_for_agent(self, agent_name: str) -> str:
+        """Return the pool name for *agent_name*, defaulting to ``main``."""
+        return self._agent_pool_map.get(agent_name, _DEFAULT_AGENT_NAME)
+
     def update_session_stores(self, new_data_dir: Path) -> None:
-        """Update transcript and relation stores to point at *new_data_dir*.
+        """Update transcript and session stores to point at *new_data_dir*.
 
         Called from ``BotService._on_ws_stop_and_rebuild`` after a workspace
         switch so sessions follow the new ``.modex/sessions/`` directory.
@@ -300,10 +328,11 @@ class WebUIService(BotService):
         # and scan state so the next read/write targets the new workspace.
         self._transcript_store.rebase(new_sessions_dir)
 
-        # Rebase relation store: clears in-memory cache so parent/child lookups
-        # read from the new workspace directory.
-        if self._relation_store is not None:
-            self._relation_store.rebase(new_sessions_dir)
+        # Rebase session store: update root directory so future saves target
+        # the new workspace.
+        self._session_store._root = new_sessions_dir
+        # Clear sync parent cache for the new workspace.
+        self._parent_ids.clear()
 
         # Update server's data_dir if already set.
         if self._server is not None:
@@ -349,6 +378,8 @@ class WebUIService(BotService):
         # Must include subagent types so _pool_of_agent("reviewer") resolves
         # correctly when loading subagent transcripts and routing WS messages.
         agent_pool_map = self._build_agent_pool_map()
+        self._agent_pool_map = agent_pool_map
+        self._agent_pool_map = agent_pool_map
         self._transcript_store.set_agent_pool_map(agent_pool_map)
 
         # Map pool_name -> main_agent_name from pool configs.
@@ -385,20 +416,19 @@ class WebUIService(BotService):
         from bot.webui.events import SessionMeta
 
         # ── Inject resolver with real parent_session_id ──────────────
-        relation_store = self._relation_store
-        relation_store.set_agent_pool_map(agent_pool_map)
+        parent_ids = self._parent_ids
 
         def _resolve_session_meta(session_id: str) -> SessionMeta:
             parts = session_id.split(".", 2)
             agent = parts[1] if len(parts) >= 2 else "main"
             pool = agent_pool_map.get(agent, _DEFAULT_AGENT_NAME)
-            parent = relation_store.get_parent(session_id)  # persist or derive
+            parent = parent_ids.get(session_id)
             return SessionMeta(pool=pool, parent_session_id=parent)
 
         set_session_meta_resolver(_resolve_session_meta)
 
-        # Pass relation store to server for session list API enrichment
-        self._server.set_relation_store(relation_store)
+        # Pass session store to server for session list API enrichment
+        self._server.set_session_store(self._session_store)
 
         # Inject recent workspaces store for the recent-workspaces API
         self._server.set_recent_workspaces(self._recent_workspaces)
@@ -416,6 +446,12 @@ class WebUIService(BotService):
         skill_registry = PoolSkillManagerRegistry(self._pools)
 
         session_factory = SessionIdFactory()
+        self._session_factory = session_factory
+
+        self._server.set_session_factory(self._session_factory)
+        self._session_factory = session_factory
+
+        self._server.set_session_factory(self._session_factory)
 
         def _build_input_context(inp) -> BotInputContext:
             # Both channels share the same routing/persistence wiring; only the

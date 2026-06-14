@@ -31,9 +31,9 @@ from bot.webui.events import (
     UserMessageEvent,
     WebSocketAction,
     WebUIEventType,
-    _session_id,
 )
-from bot.service.session_relation_store import SessionRelationStore
+from framework.core.session_id import SessionId, SessionIdFactory
+from framework.core.session_store import SessionStore
 from bot.webui.transcript_store import TranscriptStore
 
 logger = logging.getLogger(__name__)
@@ -70,38 +70,6 @@ _API_POOLS_PATH: str = "/api/pools"
 _WS_PATH: str = "/ws"
 _WEBUI_STATIC_PREFIX: str = "/webui/"
 _DEFAULT_STATIC_DIST: Path = Path(__file__).resolve().parent.parent / "web" / "dist"
-
-
-# Re-export for backward-compat with tests
-from bot.webui.events import _session_id as _make_session_id  # noqa: F401
-
-
-def _parse_session_id(session_id: str) -> tuple[str, str] | None:
-    """Parse ``{uuid_prefix}.{agent_name}`` into its two parts.
-
-    Note: for subagent ids (``{conv}.{agent}.{invocation_id}``) this returns
-    ``(conv.agent, invocation_id)`` — use :func:`_parse_session_parts` when you
-    need the canonical three-way split.
-    """
-    parts = session_id.rsplit(".", 1)
-    if len(parts) != 2:
-        return None
-    return parts[0], parts[1]
-
-
-def _parse_session_parts(session_id: str) -> tuple[str, str, str | None] | None:
-    """Parse a full session id into ``(conversation, agent, invocation_id)``.
-
-    Canonical receiver-owned format: ``{conv}.{agent}[.{invocation_id}]``.
-    Returns ``None`` for ids that do not contain an agent segment.
-    """
-    parts = session_id.split(".", 2)
-    if len(parts) < 2:
-        return None
-    conv = parts[0]
-    agent = parts[1]
-    invocation_id = parts[2] if len(parts) == 3 and parts[2] else None
-    return conv, agent, invocation_id
 
 
 def _new_uuid_prefix() -> str:
@@ -161,6 +129,11 @@ class WebUIServer:
 
         self._delta_tasks: dict[str, asyncio.Task[None]] = {}
 
+        # Session store (WorkspacePoolSessionStore) -- injected by WebUIService.
+        self._session_store: SessionStore | None = None
+        # SessionIdFactory -- injected by WebUIService for creating new sessions.
+        self._session_factory: SessionIdFactory | None = None
+
         # Workspace context -- injected by WebUIService for the workspace API.
         self._workspace_ctx = None
         # Workspace+pool partition index -- injected by WebUIService.  When None,
@@ -172,7 +145,6 @@ class WebUIServer:
         self._pool_resolver: Callable[[str], str | None] | None = None
         self._agent_resolver: Callable[[str], str] | None = None
         self._agent_pool_map: dict[str, str] = {}
-        self._relation_store: SessionRelationStore | None = None
         self._recent_workspaces = None  # set by WebUIService
         self._input_pipeline = None  # injected by WebUIService
         self._input_ctx = None
@@ -236,9 +208,13 @@ class WebUIServer:
         """Inject the session→workspace membership index."""
         self._workspace_index = index
 
-    def set_relation_store(self, store: SessionRelationStore) -> None:
-        """Inject the session relation store for API enrichment."""
-        self._relation_store = store
+    def set_session_store(self, store: SessionStore) -> None:
+        """Inject the session store for SessionId-based operations."""
+        self._session_store = store
+
+    def set_session_factory(self, factory: SessionIdFactory) -> None:
+        """Inject the SessionIdFactory for creating new sessions."""
+        self._session_factory = factory
 
     def set_recent_workspaces(self, recent) -> None:
         """Inject the RecentWorkspaces store for the recent-workspaces API."""
@@ -252,6 +228,44 @@ class WebUIServer:
     def set_input_context(self, ctx) -> None:
         """Inject the shared input-pipeline context."""
         self._input_ctx = ctx
+
+    # ------------------------------------------------------------------
+    # SessionId resolution helpers
+    # ------------------------------------------------------------------
+
+    async def _resolve_session(self, session_id: str) -> SessionId:
+        """Resolve a SessionId from *session_id*.
+
+        Prefers the session store; falls back to ``SessionId.from_str()``
+        when no store is injected (e.g. basic tests).
+        """
+        if self._session_store is not None:
+            session = await self._session_store.get(session_id)
+            if session is not None:
+                return session
+        return SessionId.from_str(session_id)
+
+    def _resolve_agent(self, session_id: str) -> str:
+        """Return the parent/owner agent name for *session_id*.
+
+        Extracts the second ``.``-separated segment.  For subagent ids
+        ``{conv}.{agent}.{invocation_id}`` this is the parent agent
+        (not the subagent type).  Uses the session store when available.
+        """
+        parts = session_id.split(".", 2)
+        if len(parts) >= 2:
+            return parts[1]
+        return _DEFAULT_AGENT_NAME
+
+    def _resolve_conv_prefix(self, session_id: str) -> str:
+        """Return the conversation prefix (the snowflake) for *session_id*.
+
+        Uses ``SessionId.snowflake`` when the session store is available;
+        falls back to splitting on the first ``.``.
+        """
+        if "." in session_id:
+            return session_id.split(".", 1)[0]
+        return session_id
 
     # ------------------------------------------------------------------
     # Route registration
@@ -415,8 +429,15 @@ class WebUIServer:
             if self._agent_resolver is not None
             else effective_pool
         )
-        uuid_prefix = _new_uuid_prefix()
-        session_id = _make_session_id(uuid_prefix, agent_name)
+        if self._session_factory is not None:
+            session = self._session_factory.create(agent_name)
+            session_id = str(session)
+            if self._session_store is not None:
+                await self._session_store.save(session)
+        else:
+            uuid_prefix = _new_uuid_prefix()
+            session_id = f"{uuid_prefix}.{agent_name}"
+        uuid_prefix = self._resolve_conv_prefix(session_id)
         set_conv_channel(uuid_prefix, "websocket")
         if self._pool_switch_callback is not None:
             self._pool_switch_callback(uuid_prefix, effective_pool)
@@ -429,96 +450,64 @@ class WebUIServer:
         Main-agent and subagent sessions are both listed; subagent sessions
         with a recorded parent relationship carry ``parent_session_id``.
         """
-        current_ws = self._current_workspace()
-        session_list: list[dict[str, object]] = []
-        seen: set[str] = set()
-
-        # Determine which pools to query.
-        # Pool discovery comes from the CONFIGURED pool map, not from
-        # scanning the workspace directory.  Pools are defined at startup
-        # and don't change across workspace switches — only the sessions
-        # within each pool differ.  _workspace_index routes reads/writes
-        # to the correct workspace directory via its rebased _base.
         pool_filter: str | None = request.query.get("pool")
-        if pool_filter:
-            pools = [pool_filter]
-        else:
-            pools = sorted(set(self._agent_pool_map.values())) if self._agent_pool_map else [_DEFAULT_AGENT_NAME]
+        session_list: list[dict[str, object]] = []
 
-        for pool in pools:
-            store = self._active_store(pool)
-            for session_id in sorted(store.list_sessions()):
-                parts = _parse_session_parts(session_id)
-                if parts is None:
+        if self._session_store is not None:
+            # New path: use the SessionStore (SessionId objects).
+            for session in await self._session_store.list_sessions():
+                pool = self._pool_of_agent(session.agent_name)
+                if pool_filter and pool != pool_filter:
                     continue
-                _, agent_name, invocation_id = parts
-                # Include main-agent sessions and subagent sessions that
-                # have a recorded parent relationship.
-                if invocation_id is not None:
-                    if self._relation_store is None:
+                entry: dict[str, object] = {
+                    "session_id": str(session),
+                    "agent_name": session.agent_name,
+                    "pool": pool,
+                    "parent_session_id": session.parent_session_id,
+                    "created_at": session.created_at,
+                    "updated_at": session.updated_at,
+                    "metadata": session.metadata,
+                }
+                session_list.append(entry)
+        else:
+            # Fallback: transcript-store-based path (no session store injected).
+            seen: set[str] = set()
+            pools = sorted(set(self._agent_pool_map.values())) if self._agent_pool_map else [_DEFAULT_AGENT_NAME]
+            if pool_filter:
+                pools = [pool_filter]
+
+            for pool in pools:
+                store = self._active_store(pool)
+                for session_id in sorted(store.list_sessions()):
+                    sid_obj = SessionId.from_str(session_id)
+                    agent_name = sid_obj.agent_name
+                    if sid_obj.is_subagent:
                         continue
-                    parent = self._relation_store.get_parent(session_id)
-                    if parent is None:
-                        continue
-                else:
                     if agent_name not in self._pool_agent_names:
                         continue
-                    parent = None
-                if session_id in seen:
-                    continue
-                seen.add(session_id)
-                session_list.append({
-                    "session_id": session_id,
-                    "agent_name": agent_name,
-                    "pool": pool,
-                    "parent_session_id": parent,
-                })
+                    if session_id in seen:
+                        continue
+                    seen.add(session_id)
+                    session_list.append({
+                        "session_id": session_id,
+                        "agent_name": agent_name,
+                        "pool": pool,
+                        "parent_session_id": None,
+                    })
 
-        # Also include subagent sessions from the relation store that may
-        # not yet have a transcript file (first turn still in progress).
-        if self._relation_store is not None:
-            for child_sid, parent_sid in self._relation_store.list_all().items():
-                if child_sid in seen:
-                    continue
-                parts = _parse_session_parts(child_sid)
-                if parts is None:
-                    continue
-                conv, agent_name, invocation_id = parts
-                child_pool = self._pool_of_agent(agent_name)
-                if pool_filter and child_pool != pool_filter:
-                    continue
-                seen.add(child_sid)
-                session_list.append({
-                    "session_id": child_sid,
-                    "agent_name": agent_name,
-                    "pool": child_pool,
-                    "parent_session_id": parent_sid,
-                })
+            # Enrich with timestamps.
+            for s in session_list:
+                sid = str(s.get("session_id", ""))
+                updated = self._active_store(str(s.get("pool", _DEFAULT_AGENT_NAME))).last_updated(sid)
+                s["updated_at"] = updated
 
-        # Enrich main-agent sessions with parent_session_id from relation store.
-        result: list[dict[str, object]] = []
-        for s in session_list:
-            sid = str(s.get("session_id", ""))
-            # Already set for subagent sessions above; fill in for main sessions.
-            if s.get("parent_session_id") is None and self._relation_store is not None:
-                s["parent_session_id"] = self._relation_store.get_parent(sid)
-            # Attach last-update time.  For sessions with a transcript file, use
-            # the file mtime; for relation-store-only subagents, fall back to
-            # the recorded creation time so they still sort sensibly.
-            updated = self._active_store(str(s.get("pool", _DEFAULT_AGENT_NAME))).last_updated(sid)
-            if updated is None and self._relation_store is not None:
-                updated = self._relation_store.created_at(sid)
-            s["updated_at"] = updated
-            result.append(s)
-        return web.json_response(result)
+        session_list.sort(key=lambda s: s.get("updated_at") or 0, reverse=True)
+        return web.json_response(session_list)
 
     async def _handle_get_messages(self, request: web.Request) -> web.Response:
         """GET /api/sessions/{session_id}/messages -- load transcript events."""
         session_id: str = request.match_info["session_id"]
-        parts = _parse_session_parts(session_id)
-        if parts is None:
-            return web.json_response([])
-        _, agent_name, _ = parts
+        agent_name = self._resolve_agent(session_id)
         pool = self._pool_of_agent(agent_name)
         events = [e.to_dict() for e in self._active_store(pool).load(session_id)]
         return web.json_response(events)
@@ -533,12 +522,13 @@ class WebUIServer:
         transcripts that earlier bugs may have written to the wrong pool dir.
         """
         session_id: str = request.match_info["session_id"]
-        parts = _parse_session_parts(session_id)
-        if parts is None:
-            return web.json_response({"deleted": session_id})
-        _, agent_name, _ = parts
+        agent_name = self._resolve_agent(session_id)
         pool = self._pool_of_agent(agent_name)
         self._active_store(pool).delete_session(session_id)
+
+        # Delete from session store if available.
+        if self._session_store is not None:
+            await self._session_store.delete(session_id)
 
         # Robustness: sweep every pool dir to remove transcripts mis-routed by
         # earlier bugs (when an empty agent-pool map wrote everything to main).
@@ -642,7 +632,7 @@ class WebUIServer:
                     ).to_dict())
                 )
                 return
-            session_id = _make_session_id(uuid_prefix_raw, agent_name)
+            session_id = f"{uuid_prefix_raw}.{agent_name}"
             uuid_prefix = uuid_prefix_raw
             explicit_agent = agent_name
 
@@ -656,8 +646,7 @@ class WebUIServer:
             except Exception:
                 pass
         else:
-            parsed = _parse_session_id(session_id)
-            if parsed is None:
+            if not session_id or "." not in session_id:
                 asyncio.create_task(
                     ws.send_json(DeltaEnvelope(
                         session_id=session_id or "",
@@ -667,7 +656,8 @@ class WebUIServer:
                     ).to_dict())
                 )
                 return
-            uuid_prefix, explicit_agent = parsed
+            uuid_prefix = self._resolve_conv_prefix(session_id)
+            explicit_agent = self._resolve_agent(session_id)
 
         # Unregister any previous sessions and cancel their forward tasks.
         await state.cleanup(self._input)
@@ -693,7 +683,7 @@ class WebUIServer:
         for agent_name in self._pool_agent_names:
             if agent_name == _DEFAULT_AGENT_NAME:
                 continue  # already registered above
-            pool_sid = _make_session_id(uuid_prefix, agent_name)
+            pool_sid = f"{uuid_prefix}.{agent_name}"
             if self._input.get_delta_queue(pool_sid) is None:
                 self._input.register_connection(pool_sid, ws)
                 state.attached_sessions.append(pool_sid)
@@ -705,10 +695,8 @@ class WebUIServer:
         # These are full session ids (``{conv}.{agent}.{invocation_id}``); each
         # invocation is a distinct session.
         for sub_sid in sorted(self._store.list_sessions_in_conversation(uuid_prefix)):
-            parts = _parse_session_parts(sub_sid)
-            if parts is None:
-                continue
-            if parts[1] in self._pool_agent_names and parts[2] is None:
+            sub_obj = SessionId.from_str(sub_sid)
+            if sub_obj.agent_name in self._pool_agent_names and not sub_obj.is_subagent:
                 continue  # main-agent session already handled above
             if self._input.get_delta_queue(sub_sid) is None:
                 self._input.register_connection(sub_sid, ws)
@@ -719,9 +707,10 @@ class WebUIServer:
 
         # Also register subagent sessions from relation store — these may have
         # been dispatched but not yet written to transcript.
-        if self._relation_store is not None:
+        if self._session_store is not None:
             for parent_sid in list(state.attached_sessions):
-                for child_sid in self._relation_store.get_children(parent_sid):
+                for child_session in await self._session_store.get_children(parent_sid):
+                    child_sid = str(child_session)
                     if self._input.get_delta_queue(child_sid) is None:
                         self._input.register_connection(child_sid, ws)
                         state.attached_sessions.append(child_sid)
@@ -740,8 +729,7 @@ class WebUIServer:
             asyncio.create_task(self._forward_deltas(session_id, ws))
         )
 
-        parts = _parse_session_parts(session_id)
-        att_agent = parts[1] if parts else _DEFAULT_AGENT_NAME
+        att_agent = self._resolve_agent(session_id)
         asyncio.create_task(
             ws.send_json(DeltaEnvelope(
                 session_id=session_id,
@@ -760,10 +748,10 @@ class WebUIServer:
         session_id = str(data.get("session_id", ""))
         content = str(data.get("content", ""))
         request_id = str(data.get("_request_id", ""))
-        parsed = _parse_session_id(session_id)
-        if parsed is None or not content:
+        if "." not in session_id or not content:
             return
-        uuid_prefix, explicit_agent = parsed
+        uuid_prefix = self._resolve_conv_prefix(session_id)
+        explicit_agent = self._resolve_agent(session_id)
 
         # Pool resolution is OWNED by S5 (ResolvePoolStage) — it also persists
         # the UI choice into PoolSessionStore so PoolRouter routes correctly.
@@ -824,10 +812,10 @@ class WebUIServer:
         data: dict[str, object],
     ) -> None:
         session_id = str(data.get("session_id", ""))
-        parsed = _parse_session_id(session_id)
-        if parsed is None:
+        if "." not in session_id:
             return
-        uuid_prefix, agent_name = parsed
+        uuid_prefix = self._resolve_conv_prefix(session_id)
+        agent_name = self._resolve_agent(session_id)
         pool = self._pool_of_agent(agent_name)
         self._active_store(pool).delete_conversation(uuid_prefix)
         asyncio.create_task(

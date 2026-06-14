@@ -13,7 +13,6 @@ from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapte
 from bot.webui.emitter import WebBotEmitter
 from bot.webui.server import (
     WebUIServer,
-    _make_session_id,
     _new_uuid_prefix,
 )
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
@@ -574,8 +573,9 @@ async def test_ws_attach_switches_all_sessions() -> None:
 @pytest.mark.asyncio
 async def test_sessions_list_includes_subagent_with_parent_relation() -> None:
     """GET /api/sessions includes subagent sessions that have parent relationships."""
-    from bot.service.session_relation_store import SessionRelationStore
+    from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
+    from framework.core.session_id import SessionId
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -588,12 +588,24 @@ async def test_sessions_list_includes_subagent_with_parent_relation() -> None:
     server.set_agent_pool_map({"coding": "coding", "main": "main"})
     server.set_pool_agent_names(["main", "coding"])
 
-    # Create relation store and record parent→child
-    relation_store = SessionRelationStore(data_dir)
+    # Create session store and record parent→child via SessionId
     parent_sid = "abc.coding"
     child_sid = "abc.coding.reviewer.ee11"
-    relation_store.set_parent(child_sid, parent_sid)
-    server.set_relation_store(relation_store)
+    session_store = WorkspacePoolSessionStore(
+        data_dir,
+        workspace_resolver=lambda: "",
+        pool_resolver=lambda s: "coding",
+    )
+    parent_session = SessionId(
+        session_id=parent_sid, agent_name="coding",
+    )
+    child_session = SessionId(
+        session_id=child_sid, agent_name="reviewer",
+        parent_session_id=parent_sid,
+    )
+    await session_store.save(parent_session)
+    await session_store.save(child_session)
+    server.set_session_store(session_store)
 
     # Add transcript data for both parent and child
     store.append(parent_sid,
@@ -626,7 +638,6 @@ async def test_sessions_list_includes_subagent_with_parent_relation() -> None:
 @pytest.mark.asyncio
 async def test_api_messages_loads_subagent_transcript() -> None:
     """GET /api/sessions/{subagent_id}/messages loads subagent transcript events."""
-    from bot.service.session_relation_store import SessionRelationStore
     from bot.webui.events import UserMessageEvent
 
     data_dir = Path(tempfile.mkdtemp())

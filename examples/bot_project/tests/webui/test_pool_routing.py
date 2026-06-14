@@ -19,7 +19,6 @@ from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.pool_router import PoolSessionStore
 from bot.webui.server import (
     WebUIServer,
-    _make_session_id,
     _new_uuid_prefix,
 )
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore

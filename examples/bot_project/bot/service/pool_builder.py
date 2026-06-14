@@ -90,6 +90,8 @@ async def create_pool(
     # ── Injection points for bot-layer customization ──
     output_adapter_factory: Callable[[], OutputAdapter] | None = None,
     on_subagent_created: Callable[[str, str], Awaitable[None]] | None = None,
+    session_registry: Any = None,
+    session_store: Any = None,
 ) -> PoolInstance:
     """Build one PoolInstance from PoolConfig.
 
@@ -123,6 +125,8 @@ async def create_pool(
         broker, factory, context_manager, agent_bus,
         inbox_consumer, session_strategy, safety, retention, comm_tracker,
         pool_name,
+        session_registry=session_registry,
+        session_store=session_store,
     )
 
     await _register_main_agent(pool, main_cfg, pool_cfg, system_prompt, safety, pool_name)
@@ -139,6 +143,7 @@ async def create_pool(
         # ── Injection points ──
         output_adapter_factory=output_adapter_factory,
         on_subagent_created=on_subagent_created,
+        session_registry=session_registry,
     )
     tool_manager.register(
         SendToAgentTool(
@@ -529,6 +534,9 @@ def _build_agent_pool(
     retention,
     comm_tracker,
     pool_name: str,
+    *,
+    session_registry: Any = None,
+    session_store: Any = None,
 ) -> AgentPool:
     pool = AgentPool(
         broker=broker,
@@ -543,6 +551,8 @@ def _build_agent_pool(
         safety=safety,
         retention=retention,
         comm_tracker=comm_tracker,
+        session_registry=session_registry,
+        session_store=session_store,
     )
     logger.info("Pool '%s': AgentPool created", pool_name)
     return pool
@@ -598,6 +608,7 @@ def _build_communication(
     # ── Injection points for bot-layer customization ──
     output_adapter_factory: Callable[[], OutputAdapter] | None = None,
     on_subagent_created: Callable[[str, str], Awaitable[None]] | None = None,
+    session_registry: Any = None,
 ):
     from framework.multi_agent.template_registry import AgentTemplateRegistry
 
@@ -611,7 +622,6 @@ def _build_communication(
         broker=broker,
         registry=pool,
         agent_bus=agent_bus,
-        session_strategy=session_strategy,
         comm_tracker=comm_tracker,
         template_registry=template_registry,
         pool=pool,
@@ -630,6 +640,7 @@ def _build_communication(
         # ── Injection points ──
         output_adapter_factory=output_adapter_factory,
         on_subagent_created=on_subagent_created,
+        session_registry=session_registry,
     )
 
     # Communication target store — populate from registered agents + templates

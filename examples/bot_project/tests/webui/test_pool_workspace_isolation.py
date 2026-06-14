@@ -18,7 +18,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.pool_router import PoolSessionStore
-from bot.webui.server import WebUIServer, _make_session_id, _new_uuid_prefix
+from bot.webui.server import WebUIServer, _new_uuid_prefix
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import UserMessageEvent, _unwrap_envelope
 from bot.webui.transcript_store import JSONLTranscriptStore
@@ -352,43 +352,69 @@ def test_append_follows_repeated_workspace_switches() -> None:
 
 
 def test_relation_store_follows_workspace_switch() -> None:
-    """SessionRelationStore writes _relations.json to the CURRENT workspace."""
-    from bot.service.session_relation_store import SessionRelationStore
+    """WorkspacePoolSessionStore writes sessions to the CURRENT workspace."""
+    import asyncio
+
+    from bot.service.session_store import WorkspacePoolSessionStore
+    from framework.core.session_id import SessionId
 
     data_dir = Path(tempfile.mkdtemp())
-    _ws: list[str] = ["/home"]
+    _ws: list[str] = ["home"]
 
     def _resolver() -> str:
         return _ws[0]
 
-    rstore = SessionRelationStore(data_dir, workspace_resolver=_resolver)
-    rstore.set_agent_pool_map({"coding": "coding", "reviewer": "coding"})
+    store = WorkspacePoolSessionStore(
+        data_dir,
+        workspace_resolver=_resolver,
+        pool_resolver=lambda s: "coding",
+    )
 
     parent = "conv.coding"
     child = "conv.coding.reviewer.ee11"
 
     # Write in workspace A
-    rstore.set_parent(child, parent)
-    assert rstore.get_parent(child) == parent
+    child_session = SessionId(
+        session_id=child, agent_name="reviewer",
+        parent_session_id=parent,
+    )
+    asyncio.run(store.save(child_session))
+    retrieved = asyncio.run(store.get(child))
+    assert retrieved is not None
+    assert retrieved.parent_session_id == parent
 
     # Switch to workspace B, write another relation
-    _ws[0] = "/workspace-b"
+    _ws[0] = "workspace-b"
     child2 = "conv.coding.reviewer.ff22"
-    rstore.set_parent(child2, parent)
-    assert rstore.get_parent(child2) == parent
+    child2_session = SessionId(
+        session_id=child2, agent_name="reviewer",
+        parent_session_id=parent,
+    )
+    asyncio.run(store.save(child2_session))
+    retrieved2 = asyncio.run(store.get(child2))
+    assert retrieved2 is not None
+    assert retrieved2.parent_session_id == parent
 
     # Switch back to A
-    _ws[0] = "/home"
-    # The first relation should still be readable (all workspaces scanned)
-    assert rstore.get_parent(child) == parent
+    _ws[0] = "home"
+    # The first session should still be found (all workspaces scanned via glob)
+    retrieved_a = asyncio.run(store.get(child))
+    assert retrieved_a is not None
+    assert retrieved_a.parent_session_id == parent
     # And a new write goes to A
     child3 = "conv.coding.reviewer.gg33"
-    rstore.set_parent(child3, parent)
-    assert rstore.get_parent(child3) == parent
+    child3_session = SessionId(
+        session_id=child3, agent_name="reviewer",
+        parent_session_id=parent,
+    )
+    asyncio.run(store.save(child3_session))
+    retrieved3 = asyncio.run(store.get(child3))
+    assert retrieved3 is not None
+    assert retrieved3.parent_session_id == parent
 
-    # Verify _relations.json exists (data_dir is workspace-specific, pool dirs under it)
-    assert (data_dir / "coding" / "_relations.json").exists(), (
-        "_relations.json missing in workspace"
+    # Verify session JSON files exist under workspace A's pool dir
+    assert list((data_dir / "home" / "coding").glob("*.json")), (
+        "session JSON files missing in workspace A"
     )
 
 

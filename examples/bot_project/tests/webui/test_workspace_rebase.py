@@ -1,20 +1,22 @@
-"""Tests for workspace store rebase behavior.
+"""Tests for workspace store rebase behaviour.
 
-These tests verify that transcript and relation stores can atomically switch
+These tests verify that transcript and session stores can atomically switch
 their backing directory (used during ``cd`` workspace switches) without leaking
 cached state from the previous workspace.
 """
 
 from __future__ import annotations
 
+import asyncio
 import tempfile
 from pathlib import Path
 
-from bot.service.session_relation_store import SessionRelationStore
+from bot.service.session_store import WorkspacePoolSessionStore
 from bot.service.web_ui_service import WebUIService
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import UserMessageEvent
 from bot.webui.transcript_store import JSONLTranscriptStore
+from framework.core.session_id import SessionId
 
 
 def test_transcript_store_rebase_switches_write_target() -> None:
@@ -70,30 +72,45 @@ def test_transcript_store_rebase_resets_session_list() -> None:
 
 
 def test_relation_store_rebase_switches_write_target() -> None:
-    """After rebase, set_parent() writes to the new directory."""
+    """After workspace switch, save() writes to the new directory."""
     with tempfile.TemporaryDirectory() as tmp:
         base_a = Path(tmp) / "ws-a" / "sessions"
         base_b = Path(tmp) / "ws-b" / "sessions"
 
-        rstore = SessionRelationStore(base_a)
-        rstore.set_agent_pool_map({"main": "main"})
+        store = WorkspacePoolSessionStore(
+            base_a,
+            workspace_resolver=lambda: "",
+            pool_resolver=lambda s: "main",
+        )
 
-        rstore.set_parent("conv.main.child", "conv.main")
-        assert (base_a / "main" / "_relations.json").exists()
-        assert rstore.get_parent("conv.main.child") == "conv.main"
+        child_a = SessionId(
+            session_id="conv.main.child", agent_name="child",
+            parent_session_id="conv.main",
+        )
+        asyncio.run(store.save(child_a))
+        retrieved = asyncio.run(store.get("conv.main.child"))
+        assert retrieved is not None
+        assert retrieved.parent_session_id == "conv.main"
 
-        rstore.rebase(base_b)
+        # Switch workspace: update root directory.
+        store._root = base_b
 
-        # Reading before any write in B should not find the old relation.
-        assert rstore.get_parent("conv.main.child") is None
+        # Reading before any write in B should not find the old session.
+        assert asyncio.run(store.get("conv.main.child")) is None
 
-        rstore.set_parent("conv-b.main.child", "conv-b.main")
-        assert (base_b / "main" / "_relations.json").exists()
-        assert rstore.get_parent("conv-b.main.child") == "conv-b.main"
+        child_b = SessionId(
+            session_id="conv-b.main.child", agent_name="child",
+            parent_session_id="conv-b.main",
+        )
+        asyncio.run(store.save(child_b))
+        assert (base_b / "" / "main" / "conv-b.main.child.json").exists()
+        retrieved_b = asyncio.run(store.get("conv-b.main.child"))
+        assert retrieved_b is not None
+        assert retrieved_b.parent_session_id == "conv-b.main"
 
 
 def test_web_ui_service_update_session_stores_rebases_stores() -> None:
-    """update_session_stores() must switch both transcript and relation stores."""
+    """update_session_stores() must switch both transcript and session stores."""
     with tempfile.TemporaryDirectory() as tmp:
         project_dir = Path(tmp)
         home_sessions = project_dir / ".modex" / "sessions"
@@ -105,7 +122,12 @@ def test_web_ui_service_update_session_stores_rebases_stores() -> None:
         service = object.__new__(WebUIService)
         service._transcript_store = WorkspaceScopedTranscriptStore(home_sessions, lambda: "")
         service._transcript_store.set_agent_pool_map({"main": "main"})
-        service._relation_store = SessionRelationStore(home_sessions)
+        service._session_store = WorkspacePoolSessionStore(
+            home_sessions,
+            workspace_resolver=lambda: "",
+            pool_resolver=lambda s: "main",
+        )
+        service._parent_ids = {}
         service._server = None
 
         sid = "conv.main"
@@ -125,6 +147,10 @@ def test_web_ui_service_update_session_stores_rebases_stores() -> None:
         assert len(events) == 1
         assert events[0].content == "other"
 
-        # Relation store also follows the rebase.
-        service._relation_store.set_parent("conv.main.child", "conv.main")
-        assert (other_sessions / "main" / "_relations.json").exists()
+        # Session store also follows the rebase.
+        child = SessionId(
+            session_id="conv.main.child", agent_name="child",
+            parent_session_id="conv.main",
+        )
+        asyncio.run(service._session_store.save(child))
+        assert (other_sessions / "" / "main" / "conv.main.child.json").exists()
