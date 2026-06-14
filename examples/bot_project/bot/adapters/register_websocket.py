@@ -15,6 +15,7 @@ from bot.webui.emitter import WebBotEmitter
 from bot.webui.events import SessionMeta
 from bot.webui.transcript_store import TranscriptStore
 from framework.core.emitter import EmitterConfig
+from framework.core.session_id import SessionIdFactory
 
 
 def _default_meta_resolver(session_id: str) -> SessionMeta:
@@ -59,7 +60,7 @@ def build_websocket(ctx: AdapterBuildContext):
     """Build WebSocket channel adapters + emitter."""
     global _ws_input, _ws_output
 
-    _ws_input = WebSocketInputAdapter()
+    _ws_input = WebSocketInputAdapter(session_factory=SessionIdFactory())
     _ws_output = WebSocketOutputAdapter(_ws_input)
 
     store = ctx.transcript_store

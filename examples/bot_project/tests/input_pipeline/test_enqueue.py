@@ -30,7 +30,7 @@ async def test_enqueue_uses_raw_content_when_no_skill_xml() -> None:
     await EnqueueStage().process(env, _ctx(enqueued))
     assert len(enqueued) == 1
     assert enqueued[0].content == "hi"
-    assert str(enqueued[0].session) == "u1"
+    assert enqueued[0].session.agent_name == "main"
 
 
 @pytest.mark.asyncio

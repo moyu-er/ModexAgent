@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 from bot.service.pool_router import PoolSessionStore
 from bot.webui.transcript_store import TranscriptStore
+from framework.core.session_id import SessionIdFactory
 from framework.core.types import InputMessage
 from framework.input_pipeline.context import InputContext
 from framework.pipeline.adapters import InputAdapter
@@ -19,6 +20,8 @@ class BotInputContext(InputContext):
     command_adapter: an InputAdapter whose framework-provided
         _try_intercept_control is reused by the control stages — we only
         relocate the call site into a stage, no framework edits.
+    session_factory: SessionIdFactory for creating SessionId from external
+        conversation ids. Defaults to a fresh factory if not provided.
     """
 
     def __init__(
@@ -31,6 +34,7 @@ class BotInputContext(InputContext):
         transcript_store: TranscriptStore,
         enqueue_message: Callable[[InputMessage], None],
         command_adapter: InputAdapter,
+        session_factory: SessionIdFactory | None = None,
     ) -> None:
         self._default_pool = default_pool
         self._pool_session_store = pool_session_store
@@ -39,6 +43,7 @@ class BotInputContext(InputContext):
         self._transcript_store = transcript_store
         self._enqueue_message = enqueue_message
         self._command_adapter = command_adapter
+        self._session_factory = session_factory or SessionIdFactory()
 
     @property
     def default_pool(self) -> str:
@@ -65,3 +70,7 @@ class BotInputContext(InputContext):
     @property
     def command_adapter(self) -> InputAdapter:
         return self._command_adapter
+
+    @property
+    def session_factory(self) -> SessionIdFactory:
+        return self._session_factory

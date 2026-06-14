@@ -44,7 +44,7 @@ async def test_enqueue_user_message_and_receive() -> None:
     gen = adapter.receive()
     msg = await gen.__anext__()
     assert msg.content == "hello world"
-    assert str(msg.session) == "sess1"
+    assert msg.session.agent_name == "main"
     assert msg.channel == "websocket"
 
 

@@ -407,12 +407,15 @@ class WebUIService(BotService):
         from bot.input_pipeline.assembly import build_im_pipeline, build_webui_pipeline
         from bot.input_pipeline.context import BotInputContext
         from bot.input_pipeline.stages.skill_parse import PoolSkillManagerRegistry
+        from framework.core.session_id import SessionIdFactory
 
         # Per-pool skill registry backed by each pool's real SkillManager.
         # Skills live under skills/{pool}/{agent}/.  One shared registry serves
         # both pipelines; the XML form is produced by the framework helper.
         known_pools = set(self._pools.keys())
         skill_registry = PoolSkillManagerRegistry(self._pools)
+
+        session_factory = SessionIdFactory()
 
         def _build_input_context(inp) -> BotInputContext:
             # Both channels share the same routing/persistence wiring; only the
@@ -425,6 +428,7 @@ class WebUIService(BotService):
                 transcript_store=self._transcript_store,
                 enqueue_message=inp.put_input_message,
                 command_adapter=inp,
+                session_factory=session_factory,
             )
 
         webui_pipeline = build_webui_pipeline(

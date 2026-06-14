@@ -8,7 +8,7 @@ from typing import Any
 
 from bot.webui.events import DeltaEnvelope
 from framework.adapters.platform import StreamingMode
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionIdFactory
 from framework.core.types import InputMessage, OutputMessage
 from framework.pipeline.adapters import InputAdapter, OutputAdapter
 
@@ -35,8 +35,9 @@ class WebSocketInputAdapter(InputAdapter):
     Lifetime is managed by the WebUI server, so start()/stop() are no-ops.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, session_factory: SessionIdFactory | None = None) -> None:
         super().__init__()
+        self._session_factory = session_factory or SessionIdFactory()
         self._message_queue: asyncio.Queue[InputMessage] = asyncio.Queue()
         self._connections: dict[str, object] = {}
         self._delta_queues: dict[str, asyncio.Queue[DeltaEnvelope]] = {}
@@ -89,7 +90,12 @@ class WebSocketInputAdapter(InputAdapter):
 
     def enqueue_user_message(self, session_id: str, content: str) -> None:
         """Enqueue a user message to be consumed by receive()."""
-        msg = InputMessage(content=content, session=SessionId.from_str(session_id, default_agent_name="main"), channel=WEBSOCKET_CHANNEL)
+        session = self._session_factory.create(
+            agent_name="main",
+            external_id=session_id,
+            metadata={"channel": WEBSOCKET_CHANNEL},
+        )
+        msg = InputMessage(content=content, session=session, channel=WEBSOCKET_CHANNEL)
         self._message_queue.put_nowait(msg)
 
     def put_input_message(self, msg: InputMessage) -> None:
