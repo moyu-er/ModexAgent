@@ -36,11 +36,7 @@ _STOP_REASON_TURN_CANCELLED = "turn_cancelled"
 
 
 def _get_agent_name(ctx: AgentContext) -> str:
-    if ctx.session_meta is not None:
-        return ctx.session_meta.agent_name
-    if ctx.identity is not None:
-        return ctx.identity.agent_id
-    return "<unknown>"
+    return ctx.session.agent_name if ctx.session else "<unknown>"
 
 
 def _get_iteration(ctx: AgentContext) -> int:
@@ -150,7 +146,7 @@ class ProgressReportHook(
 
     async def _emit(self, ctx: AgentContext, payload: dict[str, Any]) -> None:
         payload["agent_name"] = _get_agent_name(ctx)
-        payload["session_id"] = ctx.session_id
+        payload["session_id"] = str(ctx.session)
         payload["iteration"] = _get_iteration(ctx)
         payload["max_iterations"] = _get_max_iterations(ctx)
         try:
@@ -158,7 +154,7 @@ class ProgressReportHook(
                 ControlEvent(
                     event_id=uuid.uuid4().hex,
                     type=ControlEventType.AGENT_PROGRESS,
-                    scope=ControlScope(session_id=ctx.session_id),
+                    scope=ControlScope(session_id=str(ctx.session)),
                     payload=payload,
                 )
             )

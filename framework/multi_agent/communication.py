@@ -231,9 +231,8 @@ class AgentCommunicationService:
 
     def _resolve_source(self, context: AgentContext) -> AgentAddress:
         """Resolve effective source address from context, fallback to constructor default."""
-        meta = context.session_meta
-        if meta is not None and meta.agent_name:
-            return AgentAddress(name=meta.agent_name)
+        if context.session.agent_name:
+            return AgentAddress(name=context.session.agent_name)
         return self._source
 
     def _resolve_target(
@@ -870,18 +869,8 @@ class AgentCommunicationService:
     ) -> AgentSendResult | None:
         """Core routing logic shared by sync and async sends."""
         # 1. Validate context
-        session_meta = context.session_meta
-        if session_meta is None:
-            return AgentSendResult(
-                target_agent=target_agent,
-                target_kind=AgentCommKind.NORMAL,
-                session_id="",
-                invocation_id=None,
-                created_new_task=False,
-                error="No agent session metadata available",
-            )
-
-        conversation_id = session_meta.conversation_id
+        parts = self._session_strategy.parse(str(context.session))
+        conversation_id = parts.conversation_id
         effective_source = self._resolve_source(context)
 
         # 2. Look up target
@@ -933,7 +922,7 @@ class AgentCommunicationService:
             and (invocation_id is None or invocation_id.strip() == "")
         ):
             # Subagent-to-subagent still forbidden
-            if session_meta.comm_kind == AgentCommKind.SUBAGENT:
+            if context.comm_kind == AgentCommKind.SUBAGENT:
                 return AgentSendResult(
                     target_agent=target_agent,
                     target_kind=target_kind,
@@ -1011,7 +1000,7 @@ class AgentCommunicationService:
 
         # 3. Validate invocation_id
         if (
-            session_meta.comm_kind == AgentCommKind.SUBAGENT
+            context.comm_kind == AgentCommKind.SUBAGENT
             and target_kind == AgentCommKind.SUBAGENT
         ):
             return AgentSendResult(
@@ -1045,8 +1034,8 @@ class AgentCommunicationService:
         # 5. Build envelope (XML-wrapped per spec Section 4.1)
         # For subagent replying to normal parent: preserve caller's invocation_id on envelope
         envelope_invocation_id = normalized_invocation_id
-        if target_kind == AgentCommKind.NORMAL and session_meta.comm_kind == AgentCommKind.SUBAGENT:
-            envelope_invocation_id = session_meta.invocation_id
+        if target_kind == AgentCommKind.NORMAL and context.comm_kind == AgentCommKind.SUBAGENT:
+            envelope_invocation_id = parts.invocation_id
 
         from framework.multi_agent.message_xml import build_agent_message
 
@@ -1070,7 +1059,7 @@ class AgentCommunicationService:
         if self._comm_tracker is not None and envelope.invocation_id is not None:
             if (
                 target_kind == AgentCommKind.NORMAL
-                and session_meta.comm_kind == AgentCommKind.SUBAGENT
+                and context.comm_kind == AgentCommKind.SUBAGENT
             ):
                 self._comm_tracker.acknowledge(
                     invocation_id=envelope.invocation_id,

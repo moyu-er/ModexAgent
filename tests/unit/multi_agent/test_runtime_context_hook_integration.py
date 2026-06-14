@@ -15,6 +15,7 @@ from framework.core.agent import AgentContext
 from framework.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from framework.runtime.models import TurnIdentity, TurnStateBase
 from framework.runtime.services import AgentRuntime, AgentRuntimeServices
+from framework.core.session_id import SessionId
 from framework.core.emitter import AgentResult, ContentEmitter
 from framework.hook import Hook, HookErrorPolicy, HookSpec, HookRunner
 from framework.hook.abc import AfterToolExecutionHook, AfterTurnHook, BeforeTurnHook
@@ -24,7 +25,7 @@ from framework.core.runtime_context import RuntimeContextManager
 
 def _make_runtime(hook_runner=None, runtime_mgr=None):
     """Build a minimal AgentRuntime with typed state for test contexts."""
-    identity = TurnIdentity(agent_id="test", session_id="test", turn_id="t1")
+    identity = TurnIdentity(agent_id="test", session=SessionId.from_str("test"), turn_id="t1")
     state = TurnStateBase(
         identity=identity, agent_kind=AgentKind.REACT, phase=TurnPhase.RUNNING,
     )
@@ -178,7 +179,7 @@ class TestHookCollaboration:
             system_prompt="",
             history=ListMessageHistory([]),
             tool_manager=InMemoryToolManager(),
-            session_id="conv_001:main:doc-expert",
+            session=SessionId.from_str("test.agent"),
             runtime=runtime,
             identity=identity,
         )
@@ -206,7 +207,7 @@ class TestHookCollaboration:
             system_prompt="",
             history=ListMessageHistory([]),
             tool_manager=InMemoryToolManager(),
-            session_id="conv_001:main:doc-expert",
+            session=SessionId.from_str("test.agent"),
             runtime=runtime,
             identity=identity,
         )
@@ -231,7 +232,7 @@ class TestHookCollaboration:
             system_prompt="",
             history=ListMessageHistory([]),
             tool_manager=InMemoryToolManager(),
-            session_id="test_session",
+            session=SessionId.from_str("test.agent"),
 
             runtime=runtime,
             identity=identity,
@@ -296,7 +297,7 @@ class TestHookCollaboration:
             system_prompt="",
             history=ListMessageHistory([]),
             tool_manager=InMemoryToolManager(),
-            session_id="conv_001:main:doc-expert",
+            session=SessionId.from_str("test.agent"),
 
             runtime=runtime,
             identity=identity,

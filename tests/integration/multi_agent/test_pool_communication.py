@@ -11,7 +11,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from framework.core.agent import AgentContext, AgentSessionMeta
+from framework.core.agent import AgentContext
+from framework.core.session_id import SessionId
 from framework.core.emitter import AgentResult
 from framework.core.tool_manager import InMemoryToolManager
 from framework.core.types import InputMessage
@@ -35,16 +36,15 @@ def _make_context(
     comm_kind: AgentCommKind = AgentCommKind.NORMAL,
     invocation_id: str | None = None,
 ) -> AgentContext:
+    session_str = f"{conversation_id}.{agent_name}"
+    if invocation_id:
+        session_str = f"{session_str}.{invocation_id}"
     return AgentContext(
         system_prompt="test",
         history=ListMessageHistory([]),
         tool_manager=InMemoryToolManager(),
-        session_meta=AgentSessionMeta(
-            conversation_id=conversation_id,
-            agent_name=agent_name,
-            comm_kind=comm_kind,
-            invocation_id=invocation_id,
-        ),
+        session=SessionId.from_str(session_str),
+        comm_kind=comm_kind,
     )
 
 

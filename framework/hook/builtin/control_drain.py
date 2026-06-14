@@ -72,9 +72,9 @@ async def drain_control_channel(
     try:
         from framework.multi_agent.session_id import DefaultSessionIdStrategy
 
-        canonical_sid = DefaultSessionIdStrategy().normalize(ctx.session_id)
+        canonical_sid = DefaultSessionIdStrategy().normalize(str(ctx.session))
     except Exception:
-        canonical_sid = ctx.session_id
+        canonical_sid = str(ctx.session)
 
     scope = ControlScope(session_id=canonical_sid)
     cmds = await channel.drain(scope, limit=0, command_types=command_types)
@@ -101,7 +101,7 @@ async def drain_control_channel(
         if cmd.type == ControlCommandType.CANCEL_TURN:
             logger.info(
                 "Control: executing CANCEL_TURN session=%s turn_uuid=%s",
-                ctx.session_id,
+                str(ctx.session),
                 turn_uuid,
             )
             from framework.control.exceptions import AgentCancelled

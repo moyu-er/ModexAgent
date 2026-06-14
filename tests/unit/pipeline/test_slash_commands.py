@@ -412,6 +412,7 @@ def test_command_processor_exposes_dispatch_policy_before_lock() -> None:
     from framework.commands.processor import SlashCommandProcessor
     from framework.runtime.enums import AgentKind, SnapshotReason, TurnPhase
     from framework.runtime.models import ResumePoint, TurnIdentity, TurnSnapshot
+    from framework.core.session_id import SessionId
 
     processor = SlashCommandProcessor.default()
     parse_result = processor.parse("/approve")
@@ -436,7 +437,7 @@ def test_command_processor_exposes_dispatch_policy_before_lock() -> None:
             input_msg=InputMessage(content="/approve", session_id="s1"),
             agent_name="main",
             pending_approval=TurnSnapshot(
-                identity=TurnIdentity(agent_id="a1", session_id="s1", turn_id="t1"),
+                identity=TurnIdentity(agent_id="a1", session=SessionId.from_str("s1"), turn_id="t1"),
                 agent_kind=AgentKind.REACT,
                 phase=TurnPhase.SUSPENDED,
                 reason=SnapshotReason.TOOL_APPROVAL_REQUIRED,

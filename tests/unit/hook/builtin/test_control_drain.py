@@ -15,8 +15,9 @@ from framework.hook.builtin.control_drain import (
 
 
 class _FakeContext:
-    def __init__(self, session_id="test-session:main", turn_uuid=None):
-        self.session_id = session_id
+    def __init__(self, session_id="test-session.main", turn_uuid=None):
+        from framework.core.session_id import SessionId
+        self.session = SessionId.from_str(session_id)
         self.current_turn_uuid = turn_uuid
 
 

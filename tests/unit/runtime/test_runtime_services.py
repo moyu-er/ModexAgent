@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from framework.runtime.enums import AgentKind, TurnPhase
 from framework.runtime.models import TurnIdentity, TurnStateBase
+from framework.core.session_id import SessionId
 from framework.runtime.services import AgentRuntime, AgentRuntimeServices, require_runtime_state
 from framework.runtime.store import NoOpRuntimeCommandStore, NoOpTurnStateStore
 
@@ -13,7 +14,7 @@ def test_runtime_services_are_not_part_of_turn_state() -> None:
         command_store=NoOpRuntimeCommandStore(),
     )
     state = TurnStateBase(
-        identity=TurnIdentity(agent_id="bot", session_id="s1", turn_id="t1"),
+        identity=TurnIdentity(agent_id="bot", session=SessionId.from_str("s1"), turn_id="t1"),
         agent_kind=AgentKind.REACT,
         phase=TurnPhase.CREATED,
     )
@@ -25,7 +26,7 @@ def test_runtime_services_are_not_part_of_turn_state() -> None:
 
 def test_require_runtime_state_returns_expected_type() -> None:
     state = TurnStateBase(
-        identity=TurnIdentity(agent_id="bot", session_id="s1", turn_id="t1"),
+        identity=TurnIdentity(agent_id="bot", session=SessionId.from_str("s1"), turn_id="t1"),
         agent_kind=AgentKind.REACT,
         phase=TurnPhase.CREATED,
     )

@@ -9,6 +9,7 @@ from framework.core.types import LLMResponse
 from framework.runtime.enums import AgentKind, TurnPhase
 from framework.runtime.models import TurnIdentity, TurnStateBase
 from framework.runtime.services import AgentRuntime, AgentRuntimeServices
+from framework.core.session_id import SessionId
 
 
 class _FakeHistory:
@@ -43,7 +44,7 @@ class _FakeContext:
         self.max_tokens = None
         self.session_id = "test-session"
         state = TurnStateBase(
-            identity=TurnIdentity(agent_id="test", session_id="s1", turn_id="t1"),
+            identity=TurnIdentity(agent_id="test", session=SessionId.from_str("s1"), turn_id="t1"),
             agent_kind=AgentKind.REACT, phase=TurnPhase.RUNNING,
         )
         services = AgentRuntimeServices(

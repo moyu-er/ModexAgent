@@ -6,6 +6,7 @@ import pytest
 
 from framework.core.agent import AgentContext, current_agent_context
 from framework.core.emitter import AgentResult
+from framework.core.session_id import SessionId
 from framework.memory.history import ListMessageHistory
 
 
@@ -38,6 +39,7 @@ def agent_context():
         system_prompt="test",
         history=ListMessageHistory(),
         tool_manager=FakeToolManager(),
+        session=SessionId.from_str("test.agent"),
     )
 
 
@@ -87,6 +89,7 @@ class TestCurrentAgentContextContextVar:
             system_prompt="test2",
             history=ListMessageHistory(),
             tool_manager=FakeToolManager(),
+            session=SessionId.from_str("test.agent"),
         )
         token1 = current_agent_context.set(agent_context)
         try:

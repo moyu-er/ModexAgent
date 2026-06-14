@@ -47,11 +47,7 @@ class RunLoggingHook(AfterLLMResponseHook, BeforeToolExecutionHook, AfterToolExe
 
     @staticmethod
     def _get_agent_name(ctx: AgentContext) -> str:
-        if ctx.session_meta is not None:
-            return ctx.session_meta.agent_name
-        if ctx.identity is not None:
-            return ctx.identity.agent_id
-        return "<unknown>"
+        return ctx.session.agent_name if ctx.session else "<unknown>"
 
     @staticmethod
     def _get_iteration(ctx: AgentContext) -> int:
@@ -66,7 +62,7 @@ class RunLoggingHook(AfterLLMResponseHook, BeforeToolExecutionHook, AfterToolExe
         self._logger.log(
             self._level,
             "[LLM] session_id=%s agent=%s iter=%s finish_reason=%s tools=%s usage=%s\ncontent=%s",
-            ctx.session_id,
+            str(ctx.session),
             agent,
             iteration,
             response.finish_reason,
@@ -88,7 +84,7 @@ class RunLoggingHook(AfterLLMResponseHook, BeforeToolExecutionHook, AfterToolExe
             self._logger.log(
                 self._level,
                 "[TOOL_CALL] session_id=%s agent=%s iter=%s tool=%s call_id=%s\narguments=%s",
-                ctx.session_id,
+                str(ctx.session),
                 agent,
                 iteration,
                 tool_call.tool_name,
@@ -111,7 +107,7 @@ class RunLoggingHook(AfterLLMResponseHook, BeforeToolExecutionHook, AfterToolExe
             self._logger.log(
                 self._level,
                 "[TOOL_RESULT] session_id=%s agent=%s iter=%s tool=%s call_id=%s success=%s\nresult=%s",
-                ctx.session_id,
+                str(ctx.session),
                 agent,
                 iteration,
                 result.tool_name,

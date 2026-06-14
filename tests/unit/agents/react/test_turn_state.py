@@ -5,11 +5,12 @@ from framework.agents.react.constants import ReActNode
 from framework.agents.react.state import ReActSnapshotPolicy, ReActTurnState
 from framework.runtime.enums import AgentKind, OperationKind, OperationStatus, SnapshotReason, ToolBatchStatus, TurnPhase
 from framework.runtime.models import ToolArguments, ToolCallState, TurnIdentity
+from framework.core.session_id import SessionId
 
 
 def test_react_turn_state_creates_operation_for_tool_batch() -> None:
     state = ReActTurnState(
-        identity=TurnIdentity(agent_id="bot", session_id="s1", turn_id="t1"),
+        identity=TurnIdentity(agent_id="bot", session=SessionId.from_str("s1"), turn_id="t1"),
         agent_kind=AgentKind.REACT,
         phase=TurnPhase.RUNNING,
     )
@@ -33,7 +34,7 @@ def test_react_turn_state_creates_operation_for_tool_batch() -> None:
 
 def test_react_snapshot_policy_captures_minimal_resume_point() -> None:
     state = ReActTurnState(
-        identity=TurnIdentity(agent_id="bot", session_id="s1", turn_id="t1"),
+        identity=TurnIdentity(agent_id="bot", session=SessionId.from_str("s1"), turn_id="t1"),
         agent_kind=AgentKind.REACT,
         phase=TurnPhase.SUSPENDED,
         current_node=ReActNode.TOOL,
@@ -52,7 +53,7 @@ def test_react_snapshot_policy_captures_minimal_resume_point() -> None:
 
 def test_react_operation_update_marks_batch_completed() -> None:
     state = ReActTurnState(
-        identity=TurnIdentity(agent_id="bot", session_id="s1", turn_id="t1"),
+        identity=TurnIdentity(agent_id="bot", session=SessionId.from_str("s1"), turn_id="t1"),
         agent_kind=AgentKind.REACT,
         phase=TurnPhase.RUNNING,
     )
@@ -64,7 +65,7 @@ def test_react_operation_update_marks_batch_completed() -> None:
 
 def test_react_turn_state_initializes_default_react_fields() -> None:
     state = ReActTurnState(
-        identity=TurnIdentity(agent_id="bot", session_id="s1", turn_id="t1"),
+        identity=TurnIdentity(agent_id="bot", session=SessionId.from_str("s1"), turn_id="t1"),
         agent_kind=AgentKind.REACT,
         phase=TurnPhase.CREATED,
     )
@@ -80,7 +81,7 @@ def test_react_turn_state_extends_turn_state_base() -> None:
     from framework.runtime.models import TurnStateBase
 
     state = ReActTurnState(
-        identity=TurnIdentity(agent_id="bot", session_id="s1", turn_id="t1"),
+        identity=TurnIdentity(agent_id="bot", session=SessionId.from_str("s1"), turn_id="t1"),
         agent_kind=AgentKind.REACT,
         phase=TurnPhase.RUNNING,
     )

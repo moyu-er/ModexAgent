@@ -8,6 +8,7 @@ from framework.agents.summarizer.abc import _get_registry
 from framework.agents.summarizer.scoped_file_agent import ScopedFileAgent
 from framework.core.experience.meta import ExperienceMetaStore
 from framework.core.provider import LLMProvider
+from framework.core.session_id import SessionId
 from framework.memory.tools.experience import (
     ExperienceDeleteTool,
     ExperienceEditTool,
@@ -211,7 +212,7 @@ class ExperienceReviewAgent(ScopedFileAgent):
             system_prompt=system_prompt,
             history=history,
             tool_manager=tool_manager,
-            session_id=session_id,
+            session=SessionId.from_str(session_id),
             max_iterations=max_iterations,
             temperature=temperature,
             runtime=runtime,

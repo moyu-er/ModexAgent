@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from framework.core.agent import AgentContext
 from framework.core.context import InMemoryContextManager
 from framework.memory.history import ListMessageHistory
+from framework.core.session_id import SessionId
 
 
 class TestContextManagerConstruction:
@@ -41,9 +42,9 @@ class TestAgentContextConstruction:
             system_prompt="test",
             history=ListMessageHistory([]),
             tool_manager=MagicMock(),
-            session_id="s1",
+            session=SessionId.from_str("s1"),
         )
-        assert ctx.session_id == "s1"
+        assert str(ctx.session) == "s1"
         assert ctx.system_prompt == "test"
         assert ctx.max_iterations == 10
         assert ctx.runtime is None
@@ -56,7 +57,7 @@ class TestAgentContextConstruction:
         from framework.runtime.services import AgentRuntime, AgentRuntimeServices
 
         mgr = RuntimeContextManager()
-        identity = TurnIdentity(agent_id="test", session_id="s1", turn_id="t1")
+        identity = TurnIdentity(agent_id="test", session=SessionId.from_str("s1"), turn_id="t1")
         state = TurnStateBase(
             identity=identity, agent_kind=AgentKind.REACT, phase=TurnPhase.CREATED
         )
@@ -65,7 +66,7 @@ class TestAgentContextConstruction:
             system_prompt="test",
             history=ListMessageHistory([]),
             tool_manager=MagicMock(),
-            session_id="s1",
+            session=SessionId.from_str("s1"),
             runtime=AgentRuntime(services=services, state=state),
             identity=identity,
         )
@@ -79,7 +80,7 @@ class TestAgentContextConstruction:
         from framework.runtime.services import AgentRuntime, AgentRuntimeServices
 
         safety = MagicMock()
-        identity = TurnIdentity(agent_id="test", session_id="s1", turn_id="t1")
+        identity = TurnIdentity(agent_id="test", session=SessionId.from_str("s1"), turn_id="t1")
         state = TurnStateBase(
             identity=identity, agent_kind=AgentKind.REACT, phase=TurnPhase.CREATED
         )
@@ -88,7 +89,7 @@ class TestAgentContextConstruction:
             system_prompt="test",
             history=ListMessageHistory([]),
             tool_manager=MagicMock(),
-            session_id="s1",
+            session=SessionId.from_str("s1"),
             runtime=AgentRuntime(services=services, state=state),
             identity=identity,
         )
@@ -104,13 +105,13 @@ class TestAgentContextIsolation:
             system_prompt="prompt1",
             history=ListMessageHistory([]),
             tool_manager=MagicMock(),
-            session_id="s1",
+            session=SessionId.from_str("s1"),
         )
         ctx2 = AgentContext(
             system_prompt="prompt2",
             history=ListMessageHistory([]),
             tool_manager=MagicMock(),
-            session_id="s2",
+            session=SessionId.from_str("s2"),
         )
-        assert ctx1.session_id != ctx2.session_id
+        assert str(ctx1.session) != str(ctx2.session)
         assert ctx1.system_prompt != ctx2.system_prompt

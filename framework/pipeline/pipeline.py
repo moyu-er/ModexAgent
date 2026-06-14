@@ -41,8 +41,9 @@ from ..approval.response import parse_input_command
 from ..approval.types import ApprovalAction
 from ..approval.ui import ApprovalUserInterface
 from ..control.exceptions import AgentControlError
-from ..core.agent import Agent, AgentContext, AgentSessionMeta
+from ..core.agent import Agent, AgentContext
 from ..core.context import ContextManager
+from ..core.session_id import SessionId
 from ..core.emitter import AgentResult, StreamingAwareEmitter
 from ..core.graph.interrupt import GraphInterrupt
 from ..core.runtime_context import RuntimeContextManager
@@ -590,31 +591,31 @@ class AgentPipeline:
         parts = strategy.parse(session_id)
         turn_identity = TurnIdentity(
             agent_id=getattr(self.agent, "name", "agent"),
-            session_id=session_id,
+            session=SessionId.from_str(session_id),
             turn_id=uuid4().hex,
             conversation_id=parts.conversation_id,
         )
 
+        agent_descriptor_comm_kind = (
+            self.agent_descriptor.comm_kind
+            if self.agent_descriptor
+            else AgentCommKind.NORMAL
+        )
+        invocation_id = (
+            parts.invocation_id or (input_metadata or {}).get("invocation_id")
+            if (self.agent_descriptor and self.agent_descriptor.comm_kind == AgentCommKind.SUBAGENT)
+            else None
+        )
         agent_context = AgentContext(
             system_prompt=context_state.system_prompt,
             history=context_state.history,
             tool_manager=self.tool_manager,
-            session_id=session_id,
+            session=SessionId.from_str(session_id),
+            comm_kind=agent_descriptor_comm_kind,
             max_iterations=self.max_iterations,
         )
         agent_context.system_prompt_pipeline = context_state.system_prompt_pipeline
         agent_context.identity = turn_identity
-        # Parse session_id to extract clean conversation_id and invocation id.
-        agent_context.session_meta = AgentSessionMeta(
-            conversation_id=parts.conversation_id,
-            agent_name=parts.agent_name or getattr(self.agent, "name", "main"),
-            comm_kind=self.agent_descriptor.comm_kind
-            if self.agent_descriptor
-            else AgentCommKind.NORMAL,
-            invocation_id=parts.invocation_id or (input_metadata or {}).get("invocation_id")
-            if (self.agent_descriptor and self.agent_descriptor.comm_kind == AgentCommKind.SUBAGENT)
-            else None,
-        )
 
         # ---- governance (pending injection, etc.) — unconditional ----
         base_services = self.runtime_services

@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from framework.core.agent import AgentContext, current_agent_context
+from framework.core.session_id import SessionId
 from framework.multi_agent.address import AgentAddress
 from framework.multi_agent.comm_kind import AgentCommKind
 from framework.multi_agent.tools import (
@@ -36,6 +37,7 @@ def _context() -> AgentContext:
         system_prompt="",
         history=object(),  # type: ignore[arg-type]
         tool_manager=object(),  # type: ignore[arg-type]
+        session=SessionId.from_str("test.agent"),
     )
 
 

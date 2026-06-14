@@ -3,6 +3,7 @@
 import pytest
 
 from framework.core.agent import AgentContext
+from framework.core.session_id import SessionId
 from framework.core.tool_manager import InMemoryToolManager
 from framework.memory.history import ListMessageHistory
 
@@ -14,6 +15,7 @@ class TestAgentContextToMessages:
             system_prompt="You are a bot",
             history=ListMessageHistory(),
             tool_manager=InMemoryToolManager(),
+            session=SessionId.from_str("test.agent"),
         )
         msgs = await ctx.to_messages()
         assert len(msgs) == 0  # system prompt no longer included
@@ -29,6 +31,7 @@ class TestAgentContextToMessages:
                 {"role": "assistant", "content": "hello"},
             ]),
             tool_manager=InMemoryToolManager(),
+            session=SessionId.from_str("test.agent"),
         )
         msgs = await ctx.to_messages()
         roles = [m["role"] for m in msgs]
@@ -48,6 +51,7 @@ class TestAgentContextToMessages:
                 {"role": "user", "content": "hi"},
             ]),
             tool_manager=InMemoryToolManager(),
+            session=SessionId.from_str("test.agent"),
         )
         msgs = await ctx.to_messages()
         assert len(msgs) == 1
@@ -63,6 +67,7 @@ class TestAgentContextToMessages:
                 {"role": "tool", "content": "result", "tool_call_id": "1"},
             ]),
             tool_manager=InMemoryToolManager(),
+            session=SessionId.from_str("test.agent"),
         )
         msgs = await ctx.to_messages()
         roles = [m["role"] for m in msgs]

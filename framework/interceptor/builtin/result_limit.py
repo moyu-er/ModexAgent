@@ -120,7 +120,7 @@ class ToolResultLimitInterceptor(ToolCallInterceptor):
 
     @staticmethod
     def _default_session_id(ctx: AgentContext) -> str:
-        return ctx.session_id or "default"
+        return str(ctx.session) or "default"
 
     @staticmethod
     async def _gather_kept_call_ids(ctx: AgentContext) -> set[str]:

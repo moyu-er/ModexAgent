@@ -5,10 +5,11 @@ from __future__ import annotations
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, TypeAlias, Any
 from uuid import uuid4
 
 from framework.approval.constants import ApprovalDecision, ApprovalStatus, ApprovalTier
+from framework.core.session_id import SessionId
 
 from .enums import (
     AgentKind,
@@ -53,7 +54,7 @@ class TurnIdentity:
     """Stable identity for every turn."""
 
     agent_id: str
-    session_id: str
+    session: SessionId
     turn_id: str
     conversation_id: str | None = None
 

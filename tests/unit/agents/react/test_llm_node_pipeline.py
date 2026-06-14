@@ -7,6 +7,7 @@ import pytest
 
 from framework.agents.react.nodes.llm import LLMNode
 from framework.core.agent import AgentContext
+from framework.core.session_id import SessionId
 from framework.memory.history import ListMessageHistory
 
 
@@ -27,7 +28,7 @@ async def test_build_messages_uses_pipeline_when_available():
         system_prompt="static prompt",
         history=ListMessageHistory(),
         tool_manager=MagicMock(),
-        session_id="test",
+        session=SessionId.from_str("test.agent"),
     )
     ctx.system_prompt_pipeline = pipeline  # type: ignore[assignment]
 
@@ -46,7 +47,7 @@ async def test_build_messages_falls_back_to_static_prompt():
         system_prompt="static prompt",
         history=ListMessageHistory(),
         tool_manager=MagicMock(),
-        session_id="test",
+        session=SessionId.from_str("test.agent"),
     )
     ctx.system_prompt_pipeline = None
 
@@ -66,7 +67,7 @@ async def test_build_messages_skips_empty_pipeline():
         system_prompt="static prompt",
         history=ListMessageHistory(),
         tool_manager=MagicMock(),
-        session_id="test",
+        session=SessionId.from_str("test.agent"),
     )
     ctx.system_prompt_pipeline = pipeline  # type: ignore[assignment]
 

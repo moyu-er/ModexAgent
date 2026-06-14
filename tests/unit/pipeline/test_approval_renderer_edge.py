@@ -22,10 +22,11 @@ from framework.runtime.models import (
     TurnIdentity,
     TurnSnapshot,
 )
+from framework.core.session_id import SessionId
 
 
 def _pending_snapshot(session_id: str = "s1") -> TurnSnapshot:
-    identity = TurnIdentity(agent_id="agent", session_id=session_id, turn_id="t1")
+    identity = TurnIdentity(agent_id="agent", session=SessionId.from_str(session_id), turn_id="t1")
     request = ApprovalRequestState(
         request_id="r1",
         approval_id="ap1",

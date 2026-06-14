@@ -11,6 +11,7 @@ from framework.approval.constants import ApprovalDecision, ApprovalTier
 from framework.approval.response import parse_input_command
 from framework.approval.types import ApprovalAction
 from framework.core.types import InputMessage
+from framework.core.session_id import SessionId
 from framework.pipeline.approval_renderer import ApprovalRenderer
 from framework.runtime.enums import AgentKind, ApprovalSubjectType, SnapshotReason, TurnPhase
 from framework.runtime.models import (
@@ -22,7 +23,7 @@ from framework.runtime.models import (
 
 
 def _snapshot_with_requests(*, count: int = 1):
-    identity = TurnIdentity(agent_id="agent", session_id="s1", turn_id="t1")
+    identity = TurnIdentity(agent_id="agent", session=SessionId.from_str("s1"), turn_id="t1")
     requests = [
         ApprovalRequestState(
             request_id=f"r{i}",

@@ -39,7 +39,7 @@ class AgentNotificationService:
         ctx: AgentContext,
         xml_content: str,
     ) -> None:
-        if ctx.session_meta is not None and ctx.session_meta.comm_kind == AgentCommKind.SUBAGENT:
+        if ctx.comm_kind == AgentCommKind.SUBAGENT:
             await self._notify_parent(ctx, xml_content)
         else:
             await self._notify_user(ctx, xml_content)
@@ -49,16 +49,13 @@ class AgentNotificationService:
 
         await self._output_adapter.send(
             OutputMessage(content=xml),
-            ctx.session_id,
+            str(ctx.session),
         )
 
     async def _notify_parent(self, ctx: AgentContext, xml: str) -> None:
-        if ctx.session_meta is None:
-            return
-
         parent_name = self._session_strategy.main_agent_name or "main"
 
-        session_id = ctx.session_id or ""
+        session_id = str(ctx.session)
         parts = self._session_strategy.parse(session_id)
         inbox_key = self._session_strategy.format(
             conversation_id=parts.conversation_id,
@@ -70,7 +67,7 @@ class AgentNotificationService:
 
         envelope = AgentMessageEnvelope(
             payload={"content": xml, "message_type": "agent_result"},
-            source=AgentAddress(name=ctx.session_meta.agent_name),
+            source=AgentAddress(name=ctx.session.agent_name),
             target=AgentAddress(name=parent_name),
             message_type="agent_result",
             conversation_id=parts.conversation_id,
@@ -95,8 +92,8 @@ class MaxIterationNotifyHook:
         if getattr(result, "stop_reason", None) != "max_iterations":
             return
 
-        agent_name = ctx.session_meta.agent_name if ctx.session_meta else "unknown"
-        invocation_id = ctx.session_meta.invocation_id if ctx.session_meta else None
+        agent_name = ctx.session.agent_name if ctx.session else "unknown"
+        invocation_id = ctx.session.snowflake if ctx.session else None
 
         content = result.content or ""
         truncated = content[:2000]

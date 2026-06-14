@@ -13,6 +13,7 @@ from typing import Any, Literal
 
 from framework.agents.react.approval import ApprovalRuntime
 from framework.agents.react.state import ReActTurnState
+from framework.core.session_id import SessionId
 from framework.hook.runner import HookRunner
 from framework.interceptor.abc import Interceptor
 from framework.interceptor.chain import InterceptorChain
@@ -48,7 +49,7 @@ class RuntimeAssembler:
     async def assemble(config: RuntimeServicesConfig) -> AgentRuntime:
         if config.mode == "clean":
             state = ReActTurnState(
-                identity=TurnIdentity(agent_id="clean", session_id="clean", turn_id="clean"),
+                identity=TurnIdentity(agent_id="clean", session=SessionId.from_str("clean"), turn_id="clean"),
                 agent_kind=AgentKind.REACT,
                 phase=TurnPhase.CREATED,
             )
@@ -65,7 +66,7 @@ class RuntimeAssembler:
             )
 
         state = ReActTurnState(
-            identity=TurnIdentity(agent_id="react", session_id="assembled", turn_id="initial"),
+            identity=TurnIdentity(agent_id="react", session=SessionId.from_str("assembled"), turn_id="initial"),
             agent_kind=AgentKind.REACT,
             phase=TurnPhase.CREATED,
         )

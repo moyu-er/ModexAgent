@@ -7,6 +7,7 @@ from framework.memory.core.message import ChatMessage
 from framework.runtime.codec import RuntimeStateCodecRegistry
 from framework.runtime.enums import AgentKind, MessageDeltaSource, SnapshotReason, TurnPhase
 from framework.runtime.models import MessageDelta, ResumePoint, StateQueryScope, TurnIdentity, TurnSnapshot
+from framework.core.session_id import SessionId
 
 
 class _FakeCodec:
@@ -17,7 +18,7 @@ class _FakeCodec:
             "schema_version": snapshot.schema_version,
             "identity": {
                 "agent_id": snapshot.identity.agent_id,
-                "session_id": snapshot.identity.session_id,
+                "session": str(snapshot.identity.session),
                 "turn_id": snapshot.identity.turn_id,
             },
             "agent_kind": snapshot.agent_kind.value,
@@ -33,8 +34,13 @@ class _FakeCodec:
 
     def decode_turn(self, payload: dict) -> TurnSnapshot:
         idata = payload["identity"]
+        identity = TurnIdentity(
+            agent_id=idata["agent_id"],
+            session=SessionId.from_str(idata["session"]),
+            turn_id=idata["turn_id"],
+        )
         return TurnSnapshot(
-            identity=TurnIdentity(**idata),
+            identity=identity,
             agent_kind=AgentKind(payload["agent_kind"]),
             phase=TurnPhase(payload["phase"]),
             reason=SnapshotReason(payload["reason"]),
@@ -57,7 +63,7 @@ async def test_json_file_turn_store_save_load_delete(tmp_path, registry) -> None
     from framework.runtime.store import JsonFileTurnStateStore
 
     store = JsonFileTurnStateStore(tmp_path, registry)
-    identity = TurnIdentity(agent_id="bot", session_id="group_1", turn_id="t1")
+    identity = TurnIdentity(agent_id="bot", session=SessionId.from_str("group_1"), turn_id="t1")
     snapshot = TurnSnapshot(
         identity=identity,
         agent_kind=AgentKind.REACT,
@@ -92,8 +98,8 @@ async def test_json_file_turn_store_handles_path_sanitization(tmp_path, registry
 
     store = JsonFileTurnStateStore(tmp_path, registry)
 
-    first = TurnIdentity(agent_id="bot", session_id="a_b", turn_id="t1")
-    second = TurnIdentity(agent_id="bot", session_id="a:b", turn_id="t1")
+    first = TurnIdentity(agent_id="bot", session=SessionId.from_str("a_b"), turn_id="t1")
+    second = TurnIdentity(agent_id="bot", session=SessionId.from_str("a:b"), turn_id="t1")
 
     snapshot_a = TurnSnapshot(
         identity=first,

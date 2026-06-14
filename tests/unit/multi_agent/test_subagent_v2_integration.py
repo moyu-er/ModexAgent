@@ -17,7 +17,7 @@ from unittest.mock import patch
 import pytest
 
 from framework.agents.react.state import ReActTurnState
-from framework.core.agent import AgentContext, AgentSessionMeta
+from framework.core.agent import AgentContext
 from framework.core.constants import StopReason
 from framework.core.emitter import AgentResult
 from framework.core.tool_manager import InMemoryToolManager, ToolManagerConfig
@@ -31,6 +31,7 @@ from framework.multi_agent.inbox.server_local import LocalFileInboxServer
 from framework.runtime.enums import AgentKind, OperationKind, OperationStatus, TurnPhase
 from framework.runtime.models import TurnIdentity
 from framework.runtime.services import AgentRuntime, AgentRuntimeServices
+from framework.core.session_id import SessionId
 from framework.trace import JsonFileTraceStore, TraceCollectorHook
 
 
@@ -46,8 +47,16 @@ def _make_context(
     agent_name: str = "worker",
     invocation_id: str = "a1b2",
 ) -> AgentContext:
+    metadata: dict[str, str] = {}
+    if invocation_id:
+        metadata["invocation_id"] = invocation_id
+    session = SessionId(
+        session_id=session_id,
+        agent_name=agent_name,
+        metadata=metadata,
+    )
     state = ReActTurnState(
-        identity=TurnIdentity(agent_id=agent_name, session_id=session_id, turn_id="t1"),
+        identity=TurnIdentity(agent_id=agent_name, session=session, turn_id="t1"),
         agent_kind=AgentKind.REACT,
         phase=TurnPhase.CREATED,
     )
@@ -56,13 +65,8 @@ def _make_context(
         system_prompt="test",
         history=ListMessageHistory(),
         tool_manager=InMemoryToolManager(config=ToolManagerConfig()),
-        session_id=session_id,
-        session_meta=AgentSessionMeta(
-            conversation_id="conv123",
-            agent_name=agent_name,
-            comm_kind=AgentCommKind.SUBAGENT,
-            invocation_id=invocation_id,
-        ),
+        session=session,
+        comm_kind=AgentCommKind.SUBAGENT,
         runtime=runtime,
     )
 

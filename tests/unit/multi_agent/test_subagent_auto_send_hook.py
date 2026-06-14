@@ -13,7 +13,8 @@ import re
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from framework.core.agent import AgentContext, AgentSessionMeta
+from framework.core.agent import AgentContext
+from framework.core.session_id import SessionId
 from framework.core.constants import StopReason
 from framework.core.emitter import AgentResult
 from framework.core.tool_manager import InMemoryToolManager, ToolManagerConfig
@@ -38,17 +39,17 @@ def _make_context(
     agent_name: str = "worker",
     invocation_id: str = "a1b2c3d4",
 ) -> AgentContext:
+    session = SessionId(
+        session_id=session_id,
+        agent_name=agent_name,
+        metadata={"invocation_id": invocation_id} if invocation_id else {},
+    )
     return AgentContext(
         system_prompt="test",
         history=ListMessageHistory(),
         tool_manager=InMemoryToolManager(config=ToolManagerConfig()),
-        session_id=session_id,
-        session_meta=AgentSessionMeta(
-            conversation_id="conv123",
-            agent_name=agent_name,
-            comm_kind=AgentCommKind.SUBAGENT,
-            invocation_id=invocation_id,
-        ),
+        session=session,
+        comm_kind=AgentCommKind.SUBAGENT,
     )
 
 

@@ -33,8 +33,8 @@ class RuntimeContextHook(BeforeTurnHook, BeforeToolExecutionHook, AfterToolExecu
         rt_mgr = rt.services.runtime_context_manager
         if rt_mgr is not None and rt._runtime_context is None:
             session = SessionId.from_str(
-                ctx.session_id,
-                default_agent_name=ctx.session_meta.agent_name if ctx.session_meta else "main",
+                str(ctx.session),
+                default_agent_name=ctx.session.agent_name,
             )
             rt._runtime_context = await rt_mgr.get_context(session, None)
         rc = rt._runtime_context

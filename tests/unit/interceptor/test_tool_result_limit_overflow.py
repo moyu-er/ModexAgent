@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from framework.core.agent import AgentContext
+from framework.core.session_id import SessionId
 from framework.core.tool_manager import ToolResult
 from framework.core.types import ToolCall
 from framework.interceptor.abc import ToolCallContext
@@ -21,7 +22,7 @@ def _make_ctx(history_messages: list[dict[str, Any]] | None = None) -> AgentCont
         system_prompt="test",
         history=history,
         tool_manager=MagicMock(),
-        session_id="sess_1",
+        session=SessionId.from_str("test.agent"),
     )
 
 

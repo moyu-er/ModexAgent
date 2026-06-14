@@ -4,7 +4,8 @@ import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-from framework.core.agent import AgentContext, AgentSessionMeta
+from framework.core.agent import AgentContext
+from framework.core.session_id import SessionId
 from framework.multi_agent.comm_kind import AgentCommKind
 from framework.multi_agent.message_xml import build_agent_message, build_agent_result
 from framework.multi_agent.template import AgentTemplate
@@ -188,7 +189,7 @@ class TestInvocationIdNullCreatesNewSubagent:
 
             from framework.multi_agent.communication import AgentCommunicationService
             from framework.multi_agent.address import AgentAddress
-            from framework.core.agent import AgentContext, AgentSessionMeta
+            from framework.core.agent import AgentContext
 
             mock_pool = _make_mock_pool()
             mock_broker = AsyncMock()
@@ -210,11 +211,8 @@ class TestInvocationIdNullCreatesNewSubagent:
                 system_prompt="",
                 history=MagicMock(),
                 tool_manager=MagicMock(),
-                session_meta=AgentSessionMeta(
-                    conversation_id="conv-1",
-                    agent_name="main",
-                    comm_kind=AgentCommKind.NORMAL,
-                ),
+                session=SessionId.from_str("conv-1.main"),
+                comm_kind=AgentCommKind.NORMAL,
             )
 
             result = await service.send_async(
@@ -232,7 +230,7 @@ class TestInvocationIdNullCreatesNewSubagent:
         """send_to_agent(target='normal-agent', invocation_id=null) sends normally."""
         from framework.multi_agent.communication import AgentCommunicationService
         from framework.multi_agent.address import AgentAddress
-        from framework.core.agent import AgentContext, AgentSessionMeta
+        from framework.core.agent import AgentContext
 
         mock_broker = AsyncMock()
         mock_registry = MagicMock()
@@ -252,11 +250,8 @@ class TestInvocationIdNullCreatesNewSubagent:
             system_prompt="",
             history=MagicMock(),
             tool_manager=MagicMock(),
-            session_meta=AgentSessionMeta(
-                conversation_id="conv-1",
-                agent_name="main",
-                comm_kind=AgentCommKind.NORMAL,
-            ),
+            session=SessionId.from_str("conv-1.main"),
+            comm_kind=AgentCommKind.NORMAL,
         )
 
         result = await service.send_async(
@@ -272,7 +267,7 @@ class TestInvocationIdNullCreatesNewSubagent:
         """send_to_agent(target='helper', invocation_id='abc123') continues existing session."""
         from framework.multi_agent.communication import AgentCommunicationService
         from framework.multi_agent.address import AgentAddress
-        from framework.core.agent import AgentContext, AgentSessionMeta
+        from framework.core.agent import AgentContext
 
         mock_broker = AsyncMock()
         mock_registry = MagicMock()
@@ -292,11 +287,8 @@ class TestInvocationIdNullCreatesNewSubagent:
             system_prompt="",
             history=MagicMock(),
             tool_manager=MagicMock(),
-            session_meta=AgentSessionMeta(
-                conversation_id="conv-1",
-                agent_name="main",
-                comm_kind=AgentCommKind.NORMAL,
-            ),
+            session=SessionId.from_str("conv-1.main"),
+            comm_kind=AgentCommKind.NORMAL,
         )
 
         result = await service.send_async(
@@ -346,7 +338,7 @@ class TestSubagentIdentityResolution:
 
     async def test_subagent_send_has_correct_source(self):
         """When subagent sends via send_to_agent, envelope source must be subagent name."""
-        from framework.core.agent import AgentContext, current_agent_context, AgentSessionMeta
+        from framework.core.agent import AgentContext, current_agent_context
         from framework.multi_agent.communication import AgentCommunicationService
         from framework.multi_agent.address import AgentAddress
 
@@ -375,11 +367,8 @@ class TestSubagentIdentityResolution:
             system_prompt="",
             history=MagicMock(),
             tool_manager=MagicMock(),
-            session_meta=AgentSessionMeta(
-                conversation_id="conv-1",
-                agent_name="helper",
-                comm_kind=AgentCommKind.SUBAGENT,
-            ),
+            session=SessionId.from_str("conv-1.helper"),
+            comm_kind=AgentCommKind.SUBAGENT,
         )
         token = current_agent_context.set(ctx)
         try:
@@ -635,7 +624,7 @@ class TestAgentMessageXmlWrapping:
 
     async def test_agent_message_wraps_content_in_xml(self):
         """Normal agent_message must also be XML-wrapped."""
-        from framework.core.agent import AgentContext, AgentSessionMeta
+        from framework.core.agent import AgentContext
         from framework.multi_agent.address import AgentAddress
         from framework.multi_agent.communication import AgentCommunicationService
         from framework.multi_agent.descriptor import AgentDescriptor
@@ -663,11 +652,8 @@ class TestAgentMessageXmlWrapping:
             system_prompt="",
             history=MagicMock(),
             tool_manager=MagicMock(),
-            session_meta=AgentSessionMeta(
-                conversation_id="conv-1",
-                agent_name="main",
-                comm_kind=AgentCommKind.NORMAL,
-            ),
+            session=SessionId.from_str("conv-1.main"),
+            comm_kind=AgentCommKind.NORMAL,
         )
 
         result = await service.send_async(
@@ -745,7 +731,7 @@ class TestSessionRoutingSameAgentDifferentInvocation:
     async def test_second_empty_invocation_id_does_not_recreate_agent(self):
         """Second invocation_id="" on same template must NOT call
         _create_dynamic_subagent again — the agent is already registered."""
-        from framework.core.agent import AgentContext, AgentSessionMeta
+        from framework.core.agent import AgentContext
         from framework.multi_agent.address import AgentAddress
         from framework.multi_agent.communication import AgentCommunicationService
         from framework.multi_agent.descriptor import AgentDescriptor
@@ -782,10 +768,8 @@ class TestSessionRoutingSameAgentDifferentInvocation:
                 system_prompt="",
                 history=MagicMock(),
                 tool_manager=MagicMock(),
-                session_meta=AgentSessionMeta(
-                    conversation_id="conv-1", agent_name="main",
-                    comm_kind=AgentCommKind.NORMAL,
-                ),
+                session=SessionId.from_str("conv-1.main"),
+                comm_kind=AgentCommKind.NORMAL,
             )
 
             result1 = await service.send_async(
@@ -1025,10 +1009,8 @@ class TestOutputMdInjection:
             system_prompt="",
             history=MagicMock(),
             tool_manager=MagicMock(),
-            session_meta=AgentSessionMeta(
-                conversation_id="conv-1", agent_name="main",
-                comm_kind=AgentCommKind.NORMAL,
-            ),
+            session=SessionId.from_str("conv-1.main"),
+            comm_kind=AgentCommKind.NORMAL,
         )
         result = await service.send_async(
             target_agent="helper", content="do something",
@@ -1093,10 +1075,8 @@ class TestOutputMdInjection:
             system_prompt="",
             history=MagicMock(),
             tool_manager=MagicMock(),
-            session_meta=AgentSessionMeta(
-                conversation_id="conv-1", agent_name="main",
-                comm_kind=AgentCommKind.NORMAL,
-            ),
+            session=SessionId.from_str("conv-1.main"),
+            comm_kind=AgentCommKind.NORMAL,
         )
         await service.send_async(
             target_agent="helper", content="do something",

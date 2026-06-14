@@ -24,6 +24,7 @@ from framework.runtime.models import (
     TurnIdentity,
 )
 from framework.runtime.services import AgentRuntimeServices
+from framework.core.session_id import SessionId
 from framework.runtime.store import InMemoryTurnStateStore
 
 
@@ -96,7 +97,7 @@ def _pending_snapshot(
     request_id: str = "r1",
     tool_call_id: str = "c1",
 ) -> tuple[TurnIdentity, object]:
-    identity = TurnIdentity(agent_id="agent", session_id=session_id, turn_id=turn_id)
+    identity = TurnIdentity(agent_id="agent", session=SessionId.from_str(session_id), turn_id=turn_id)
     request = ApprovalRequestState(
         request_id=request_id,
         approval_id=approval_id,

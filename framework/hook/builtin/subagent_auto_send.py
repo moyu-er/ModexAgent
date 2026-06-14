@@ -61,7 +61,7 @@ class SubagentAutoSendHook(FinallyTurnHook):
         if self._agent_bus is None:
             return
 
-        session_id = ctx.session_id or ""
+        session_id = str(ctx.session)
 
         # 1. Derive artifact paths from session_id (deterministic)
         trace_dir = self._runtime_dir / "trace" / session_id
@@ -79,10 +79,8 @@ class SubagentAutoSendHook(FinallyTurnHook):
             error = result.error
             content = result.content or ""
 
-        # 4. Get invocation_id from session_meta
-        invocation_id = ""
-        if ctx.session_meta is not None:
-            invocation_id = ctx.session_meta.invocation_id or ""
+        # 4. Get invocation_id from session metadata
+        invocation_id = str(ctx.session.metadata.get("invocation_id", "")) if ctx.session else ""
 
         is_normal, hint = self._classify_stop(
             stop_reason, output_status, error, invocation_id,

@@ -18,6 +18,7 @@ from framework.utils.file_io import read_json_robust
 from .codec import RuntimeStateCodecRegistry
 from .enums import OperationStatus, TurnPhase
 from .models import ControlCommandState, StateQueryScope, TurnIdentity, TurnSnapshot
+from framework.core.session_id import SessionId
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +74,7 @@ class InMemoryTurnStateStore(TurnStateStore):
 
     @staticmethod
     def _key(identity: TurnIdentity) -> str:
-        return f"{identity.agent_id}/{identity.session_id}/{identity.turn_id}"
+        return f"{identity.agent_id}/{str(identity.session)}/{identity.turn_id}"
 
     async def save_turn(self, snapshot: TurnSnapshot) -> None:
         self._store[self._key(snapshot.identity)] = snapshot
@@ -95,7 +96,7 @@ class InMemoryTurnStateStore(TurnStateStore):
     def _match_scope(snapshot: TurnSnapshot, scope: StateQueryScope) -> bool:
         if scope.agent_id is not None and snapshot.identity.agent_id != scope.agent_id:
             return False
-        if scope.session_id is not None and snapshot.identity.session_id != scope.session_id:
+        if scope.session_id is not None and str(snapshot.identity.session) != scope.session_id:
             return False
         if scope.agent_kind is not None and snapshot.agent_kind != scope.agent_kind:
             return False
@@ -132,7 +133,7 @@ class JsonFileTurnStateStore(TurnStateStore):
         return (
             self._workspace
             / self._safe_segment(identity.agent_id)
-            / self._safe_segment(identity.session_id)
+            / self._safe_segment(str(identity.session))
         )
 
     def _path(self, identity: TurnIdentity) -> Path:
@@ -143,12 +144,12 @@ class JsonFileTurnStateStore(TurnStateStore):
     async def save_turn(self, snapshot: TurnSnapshot) -> None:
         if snapshot.phase in _ACTIVE_PHASES:
             existing = await self._find_active_turn(
-                snapshot.identity.agent_id, snapshot.identity.session_id
+                snapshot.identity.agent_id, str(snapshot.identity.session)
             )
             if existing is not None and existing.identity.turn_id != snapshot.identity.turn_id:
                 raise ActiveTurnConflictError(
                     f"Active turn already exists for agent={snapshot.identity.agent_id} "
-                    f"session={snapshot.identity.session_id}: "
+                    f"session={str(snapshot.identity.session)}: "
                     f"existing={existing.identity.turn_id}, new={snapshot.identity.turn_id}"
                 )
 
@@ -182,7 +183,7 @@ class JsonFileTurnStateStore(TurnStateStore):
 
         if agent_id is not None and session_id is not None:
             dir_path = self._dir(
-                TurnIdentity(agent_id=agent_id, session_id=session_id, turn_id="_")
+                TurnIdentity(agent_id=agent_id, session=SessionId.from_str(session_id), turn_id="_")
             )
             if dir_path.exists():
                 for f in dir_path.glob("*.json"):
@@ -232,7 +233,7 @@ class JsonFileTurnStateStore(TurnStateStore):
     def _match_scope(snapshot: TurnSnapshot, scope: StateQueryScope) -> bool:
         if scope.agent_id is not None and snapshot.identity.agent_id != scope.agent_id:
             return False
-        if scope.session_id is not None and snapshot.identity.session_id != scope.session_id:
+        if scope.session_id is not None and str(snapshot.identity.session) != scope.session_id:
             return False
         if scope.agent_kind is not None and snapshot.agent_kind != scope.agent_kind:
             return False
