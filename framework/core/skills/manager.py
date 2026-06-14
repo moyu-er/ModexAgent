@@ -70,9 +70,25 @@ class SkillManager:
         return await self._builder.build(skills, context)
 
     async def get_skill(self, name: str) -> Skill | None:
-        """Get a single skill by name, checking overrides first."""
+        """Get a single skill by name, checking overrides first.
+
+        When a cache is configured, run the same name-set freshness check
+        ``build_prompt``/``get_skills`` use (``DirectorySkillCache`` scans the
+        directories and clears the source cache when the skill name set
+        changes).  This makes on-disk add/remove of skill files visible to
+        ``get_skill`` without a restart, matching the behaviour the agent turn
+        already sees via its system-prompt build.
+
+        Content edits to an existing skill are NOT detected (the name set is
+        unchanged) — consistent with the rest of the skill system, which has
+        no mtime tracking.
+        """
         if name in self._overrides:
             return self._overrides[name]
+        if self._cache is not None:
+            await self._cache.get_skills(
+                self._source, self._builder, self._filter, self._overrides, None
+            )
         return await self._source.load_skill(name)
 
     async def list_resources(self, name: str) -> list:

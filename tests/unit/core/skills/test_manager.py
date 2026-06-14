@@ -164,3 +164,34 @@ class TestSkillManagerWithDirectoryCache:
         assert len(cache._dir_states) > 0
         sm.invalidate()
         assert cache._dir_states == {}
+
+    @pytest.mark.asyncio
+    async def test_get_skill_detects_newly_added_skill(self, tmp_dir):
+        """get_skill must see a skill file added after the first call,
+        reusing the same name-set freshness check build_prompt uses."""
+        self._add_skill(tmp_dir, "alpha")
+        source = FileSkillSource(directories=[tmp_dir], cache=True, layout="directory")
+        cache = DirectorySkillCache(directories=[tmp_dir], layout="directory")
+        sm = SkillManager(source=source, cache=cache)
+
+        assert await sm.get_skill("alpha") is not None
+        assert await sm.get_skill("beta") is None  # not yet added
+
+        self._add_skill(tmp_dir, "beta", "beta content")
+        beta = await sm.get_skill("beta")
+        assert beta is not None
+        assert beta.content == "beta content"
+
+    @pytest.mark.asyncio
+    async def test_get_skill_detects_removed_skill(self, tmp_dir):
+        """get_skill must return None after a skill file is deleted."""
+        d = self._add_skill(tmp_dir, "alpha")
+        source = FileSkillSource(directories=[tmp_dir], cache=True, layout="directory")
+        cache = DirectorySkillCache(directories=[tmp_dir], layout="directory")
+        sm = SkillManager(source=source, cache=cache)
+
+        assert await sm.get_skill("alpha") is not None
+
+        import shutil
+        shutil.rmtree(d)
+        assert await sm.get_skill("alpha") is None

@@ -1,0 +1,37 @@
+"""Generic user-input envelope shared by all channels before processing."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+
+@dataclass
+class AttachmentRef:
+    """Structured reference to a channel attachment (image/file/...)."""
+
+    url: str | None = None
+    filename: str | None = None
+    local_path: str | None = None
+    mime_type: str | None = None
+
+
+@dataclass
+class UserInputEnvelope:
+    """Normalized user input carried through the input pipeline.
+
+    conversation_id: session identifier. WebUI=uuid_prefix, IM=user_id.
+                     Pool isolation is keyed by this; channels do not cross.
+    content:         raw user content (original form, incl. /skillName ...).
+    channel:         channel name provided by the adapter (not hardcoded).
+    explicit_pool:   pool chosen by the UI (WebUI); None for IM.
+    metadata:        cross-stage scratch + raw channel metadata.
+    attachments:     structured attachments.
+    """
+
+    conversation_id: str
+    content: str
+    channel: str
+    explicit_pool: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    attachments: list[AttachmentRef] = field(default_factory=list)

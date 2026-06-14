@@ -50,6 +50,24 @@ def _render_skill_xml(skills: list[Skill]) -> str:
     return "\n".join(parts)
 
 
+def build_skill_command_xml(skill_name: str, skill_content: str, user_args: str) -> str:
+    """Render a ``/skillName args`` invocation as XML user-content.
+
+    Single source of truth for the command-invocation skill format.  Used by
+    both the framework command processor (``SkillCommandHandler``) and the
+    input-pipeline skill stage so the two paths produce identical output.
+
+    The skill body is inlined verbatim (escaped) under ``<skill>``; the user's
+    arguments follow under ``<user_input>``.
+    """
+    return (
+        f'<command_context type="skill" name="{xml_attr(skill_name)}">\n'
+        f"<skill>\n{xml_text(skill_content)}\n</skill>\n"
+        f"</command_context>\n\n"
+        f"<user_input>\n{xml_text(user_args)}\n</user_input>"
+    )
+
+
 class DefaultSkillBuilder(SkillPromptBuilder):
     """Emit skill metadata as compact XML — never inline full content."""
 
