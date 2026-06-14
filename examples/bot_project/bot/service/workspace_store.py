@@ -241,3 +241,8 @@ class WorkspaceScopedTranscriptStore(TranscriptStore):
         # Drop any cached owners belonging to this conversation.
         for sid in [s for s in self._owners if _conversation_prefix(s) == conversation_id]:
             self._owners.pop(sid, None)
+
+    def last_updated(self, session_id: str) -> int | None:
+        """Return the last update timestamp for *session_id* in milliseconds."""
+        pool_key = self._owner(session_id)
+        return self._store_for(pool_key).last_updated(session_id)

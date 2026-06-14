@@ -502,6 +502,13 @@ class WebUIServer:
             # Already set for subagent sessions above; fill in for main sessions.
             if s.get("parent_session_id") is None and self._relation_store is not None:
                 s["parent_session_id"] = self._relation_store.get_parent(sid)
+            # Attach last-update time.  For sessions with a transcript file, use
+            # the file mtime; for relation-store-only subagents, fall back to
+            # the recorded creation time so they still sort sensibly.
+            updated = self._active_store(str(s.get("pool", _DEFAULT_AGENT_NAME))).last_updated(sid)
+            if updated is None and self._relation_store is not None:
+                updated = self._relation_store.created_at(sid)
+            s["updated_at"] = updated
             result.append(s)
         return web.json_response(result)
 

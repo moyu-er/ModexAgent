@@ -211,6 +211,11 @@ class SessionRelationStore:
         self._ensure_loaded()
         return dict(self._parents)
 
+    def created_at(self, session_id: str) -> int | None:
+        """Return the recorded creation timestamp for *session_id*, or None."""
+        self._ensure_loaded()
+        return self._created_at.get(session_id)
+
     # ------------------------------------------------------------------
     # Derivation fallback
     # ------------------------------------------------------------------

@@ -279,3 +279,31 @@ async def test_pool_and_workspace_filter_combined() -> None:
         assert sid_b not in sids
     finally:
         await client.close()
+
+
+@pytest.mark.asyncio
+async def test_sessions_list_includes_updated_at() -> None:
+    """GET /api/sessions returns an updated_at timestamp for each session."""
+    data_dir = Path(tempfile.mkdtemp())
+    server, _ = _make_server(data_dir)
+
+    client = TestClient(TestServer(server.app))
+    await client.start_server()
+    try:
+        resp = await client.post("/api/sessions", json={"pool": "main"})
+        assert resp.status == 200
+        session = await resp.json()
+        sid: str = session["session_id"]
+        conv = sid.split(".")[0]
+        await _simulate_qa_turn(server._store, conv, "main", "hi", "hello")
+
+        resp = await client.get("/api/sessions")
+        assert resp.status == 200
+        sessions = await resp.json()
+        by_sid = {s["session_id"]: s for s in sessions}
+        assert sid in by_sid
+        updated_at = by_sid[sid].get("updated_at")
+        assert isinstance(updated_at, int), f"updated_at must be int ms, got {updated_at!r}"
+        assert updated_at > 0
+    finally:
+        await client.close()

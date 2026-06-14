@@ -6,6 +6,7 @@ export interface SessionNodeData {
   pool: string;
   parent_session_id: string | null;
   created_at?: number;
+  updated_at?: number;
 }
 
 export interface TreeNode extends SessionNodeData {

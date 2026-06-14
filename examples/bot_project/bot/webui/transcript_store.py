@@ -73,6 +73,15 @@ class TranscriptStore(ABC):
         """Remove all records for every session in *conversation_id*."""
         ...
 
+    def last_updated(self, session_id: str) -> int | None:
+        """Return the last update timestamp for *session_id* in milliseconds, or None.
+
+        The default implementation returns ``None``; concrete stores should
+        override this with an efficient lookup (e.g. file mtime or the newest
+        event timestamp).
+        """
+        return None
+
 
 # ── JSONL implementation ───────────────────────────────────────────────────
 
@@ -165,3 +174,10 @@ class JSONLTranscriptStore(TranscriptStore):
     def delete_conversation(self, conversation_id: str) -> None:
         for session_id in self.list_sessions_in_conversation(conversation_id):
             self.delete_session(session_id)
+
+    def last_updated(self, session_id: str) -> int | None:
+        """Return transcript file mtime in milliseconds, or None if no file."""
+        file_path = self._file_for(session_id)
+        if not file_path.is_file():
+            return None
+        return int(file_path.stat().st_mtime * 1000)

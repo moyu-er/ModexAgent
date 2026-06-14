@@ -84,6 +84,7 @@ interface TreeNode {
   pool: string;
   parent_session_id: string | null;
   created_at?: number;
+  updated_at?: number;
   children: TreeNode[];
 }
 
@@ -95,14 +96,17 @@ function buildTree(sessions: ConversationInfo[]): TreeNode[] {
     if (s.parent_session_id) {
       const siblings = childrenMap.get(s.parent_session_id) || [];
       siblings.push(s);
-      siblings.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+      siblings.sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
       childrenMap.set(s.parent_session_id, siblings);
     } else {
       roots.push(s);
     }
   }
-  // Sort roots by last update descending (most recent first)
-  roots.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+  // Sort roots by last update descending (most recent first).
+  // Pending sessions have no updated_at and naturally sink to the bottom;
+  // the frontend intentionally inserts pending sessions at the top when
+  // creating them, so they stay there until the first message arrives.
+  roots.sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
 
   function toTreeNode(s: ConversationInfo, parentId?: string): TreeNode {
     return {
@@ -282,9 +286,17 @@ const App: FC = () => {
       }
       pendingRef.current.set(uuidPrefix, pool);
       setSelectedId(uuidPrefix);
+      const now = Date.now();
       setSessions((prev) => [
         // New pending session at top, then all real sessions sorted by time
-        { session_id: uuidPrefix, agent_name: "…", pool, parent_session_id: null },
+        {
+          session_id: uuidPrefix,
+          agent_name: "…",
+          pool,
+          parent_session_id: null,
+          created_at: now,
+          updated_at: now,
+        },
         ...prev.filter((s) => s.agent_name !== "…"),
       ]);
     },

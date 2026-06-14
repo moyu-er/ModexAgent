@@ -38,10 +38,17 @@ function renderBlock(block: TurnBlock, index: number, isStreaming: boolean): JSX
 function formatTime(timestamp?: number): string | null {
   if (!timestamp) return null;
   const ms = timestamp < 1e12 ? timestamp * 1000 : timestamp;
-  return new Date(ms).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  const date = new Date(ms);
+  const now = new Date();
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  const timeStr = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  const isToday =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  if (isToday) return timeStr;
+  const dateStr = `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
+  return `${dateStr} ${timeStr}`;
 }
 
 export const MessageBubble: FC<MessageBubbleProps> = ({ message }) => {
