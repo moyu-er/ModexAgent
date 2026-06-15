@@ -19,20 +19,19 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Iterator
 
+from framework.core.session_id import snowflake_of
+from framework.core.session_store import safe_filename
+
 from bot.webui.events import ServerEvent
-
-
-def _safe_name(name: str) -> str:
-    """Replace path-unsafe characters with underscores."""
-    return name.replace(":", "_").replace("/", "_")
 
 
 def _conversation_prefix(session_id: str) -> str:
     """Return the conversation prefix (segment before the first ``.``).
 
     ``"abc.main"`` → ``"abc"``; ``"abc.reviewer.z9"`` → ``"abc"``.
+    Delegates to :func:`framework.core.session_id.snowflake_of`.
     """
-    return session_id.split(".", 1)[0] if "." in session_id else session_id
+    return snowflake_of(session_id)
 
 
 class TranscriptStore(ABC):
@@ -101,7 +100,7 @@ class JSONLTranscriptStore(TranscriptStore):
     # ------------------------------------------------------------------
 
     def _file_for(self, session_id: str) -> Path:
-        return self._base_dir / f"{_safe_name(session_id)}.jsonl"
+        return self._base_dir / f"{safe_filename(session_id)}.jsonl"
 
     def _iter_files(self) -> Iterator[Path]:
         if not self._base_dir.is_dir():
@@ -160,11 +159,11 @@ class JSONLTranscriptStore(TranscriptStore):
         return seen
 
     def list_sessions_in_conversation(self, conversation_id: str) -> set[str]:
-        prefix = _safe_name(conversation_id) + "."
+        prefix = safe_filename(conversation_id) + "."
         seen: set[str] = set()
         for f in self._iter_files():
             stem = self._session_id_of(f)
-            if _conversation_prefix(stem) == _safe_name(conversation_id) or stem.startswith(prefix):
+            if _conversation_prefix(stem) == safe_filename(conversation_id) or stem.startswith(prefix):
                 seen.add(stem)
         return seen
 

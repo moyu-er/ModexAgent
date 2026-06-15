@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Callable
 
 from framework.adapters.platform import StreamingMode
 from framework.core.types import OutputMessage
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 from framework.pipeline.adapters import OutputAdapter
 
 if TYPE_CHECKING:
@@ -126,7 +126,7 @@ def _session_to_conversation_id(session_id: str) -> str:
     Handles both canonical ``{snowflake}.{agent}`` IDs and raw conversation IDs.
     """
     try:
-        session = SessionId.from_str(session_id)
+        session = SessionInfo.from_str(session_id, default_agent_name="main")
     except Exception:
         return session_id
     return session.snowflake

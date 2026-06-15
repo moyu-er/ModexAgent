@@ -106,9 +106,17 @@ class SkillParseStage(InputStage):
         command_name = content[1:].split(None, 1)[0].lower()
 
         # Builtin commands (/cd /exit /pwd /approve /deny /continue)
-        # are not available through the input-pipeline chat box.
-        # In IM they are intercepted by S2/S3.  In WebUI they reach
-        # S6 and should be rejected with a clear notice.
+        # ─────────────────────────────────────────────────────────────
+        # WebUI: rejected here with "builtin_not_supported" — intentional.
+        #   The WebUI has no S2/S3 (control-command stages); /pwd /cd /exit
+        #   are unnecessary because the workspace panel and sidebar controls
+        #   provide the same functionality visually.  DO NOT add WebUI-side
+        #   interception (e.g. _try_intercept_control) in _ws_send_message.
+        #
+        # IM (QQ, etc.): intercepted by S2 (EnvironmentControlStage) via
+        #   ctx.command_adapter._try_intercept_control BEFORE reaching S6.
+        #   IM clients need these commands because they lack a graphical
+        #   workspace/switching interface.
         if command_name in _BUILTIN_VALUES:
             return Terminate(
                 reason="builtin_not_supported",

@@ -54,7 +54,7 @@ def _sessions_dir(workspace_data_dir: Path) -> Path:
 
 
 def _session_index_dir(workspace_data_dir: Path) -> Path:
-    """SessionId metadata index — flat directory, separate from transcripts.
+    """SessionInfo metadata index — flat directory, separate from transcripts.
 
     Each session has one ``{safe_id}.json`` file.  Workspace switching
     rebases the store root to the new workspace's index directory.
@@ -143,7 +143,7 @@ class WebUIService(BotService):
 
         # ── 2.5 Session store + registry ───────────────────────────────
         # Flat index under .modex/session_index/ — separate from
-        # .modex/sessions/ (transcripts).  One JSON file per SessionId.
+        # .modex/sessions/ (transcripts).  One JSON file per SessionInfo.
         from bot.service.session_store import WorkspacePoolSessionStore
         from framework.core.session_registry import InMemorySessionRegistry
 
@@ -258,16 +258,15 @@ class WebUIService(BotService):
 
         async def _on_subagent_created(child_id: str, parent_id: str) -> None:
             # Parse agent_name from child_id: {snowflake}.{agent}[.{invocation_id}]
-            parts = child_id.split(".", 2)
-            agent_name = parts[1] if len(parts) >= 2 else "main"
-            from framework.core.session_id import SessionId, now_ms
+            from framework.core.session_id import agent_of
 
-            child_session = SessionId(
-                session_id=child_id,
+            agent_name = agent_of(child_id, default="main")
+
+            child_session = self._session_factory.create(
                 agent_name=agent_name,
                 parent_session_id=parent_id,
-                created_at=now_ms(),
-                updated_at=now_ms(),
+                external_id=child_id,
+                encode_external_id=False,
             )
             await self._session_registry.register(child_session)
             # Sync cache for hot-path parent lookups at emit time.
@@ -284,6 +283,8 @@ class WebUIService(BotService):
             # ── NEW ──────────────────────────────────────────────────
             output_adapter_factory=output_adapter_factory,
             on_subagent_created=_on_subagent_created,
+            session_registry=self._session_registry,
+            session_store=self._session_store,
         )
 
         # ── 7. WebUI server ────────────────────────────────────────────
@@ -320,15 +321,11 @@ class WebUIService(BotService):
         """Return the pool name for *agent_name*, defaulting to ``main``."""
         return self._agent_pool_map.get(agent_name, _DEFAULT_AGENT_NAME)
 
-    def _pool_for_agent(self, agent_name: str) -> str:
-        """Return the pool name for *agent_name*, defaulting to ``main``."""
-        return self._agent_pool_map.get(agent_name, _DEFAULT_AGENT_NAME)
-
     def update_session_stores(self, new_data_dir: Path) -> None:
         """Rebase transcript and session-index stores to *new_data_dir*.
 
         Called after a workspace switch.  Transcripts go to
-        ``.modex/sessions/``; SessionId metadata goes to
+        ``.modex/sessions/``; SessionInfo metadata goes to
         ``.modex/session_index/`` (separate flat tree).  The runtime
         registry cache is cleared and reloaded from the new index.
         """
@@ -385,7 +382,7 @@ class WebUIService(BotService):
             pi.main_agent_name for pi in self._pools.values()
         ]
         self._server.set_pool_agent_names(pool_agent_names)
-        print(f"[WebUI] Pool agents: {pool_agent_names}")
+        logger.info("Pool agents: %s", pool_agent_names)
 
         if self.workspace_context is not None:
             self._server.set_workspace_context(self.workspace_context)
@@ -400,7 +397,6 @@ class WebUIService(BotService):
         # Must include subagent types so _pool_of_agent("reviewer") resolves
         # correctly when loading subagent transcripts and routing WS messages.
         agent_pool_map = self._build_agent_pool_map()
-        self._agent_pool_map = agent_pool_map
         self._agent_pool_map = agent_pool_map
         self._transcript_store.set_agent_pool_map(agent_pool_map)
 
@@ -425,9 +421,9 @@ class WebUIService(BotService):
                 lambda pool_name: _agent_map.get(pool_name, pool_name)
             )
             self._server.set_agent_pool_map(agent_pool_map)
-            print(f"[WebUI] Pool routing callback injected (pools={pool_agent_names})")
+            logger.info("Pool routing callback injected (pools=%s)", pool_agent_names)
         else:
-            print("[WebUI] WARNING: pool_router is None — pool routing disabled!")
+            logger.warning("pool_router is None — pool routing disabled")
             self._server.set_agent_pool_map(agent_pool_map)
 
         # Inject the per-session business routing resolver (pool,
@@ -441,8 +437,9 @@ class WebUIService(BotService):
         parent_ids = self._parent_ids
 
         def _resolve_session_meta(session_id: str) -> SessionMeta:
-            parts = session_id.split(".", 2)
-            agent = parts[1] if len(parts) >= 2 else "main"
+            from framework.core.session_id import agent_of
+
+            agent = agent_of(session_id, default="main")
             pool = agent_pool_map.get(agent, _DEFAULT_AGENT_NAME)
             parent = parent_ids.get(session_id)
             return SessionMeta(pool=pool, parent_session_id=parent)
@@ -467,12 +464,7 @@ class WebUIService(BotService):
         known_pools = set(self._pools.keys())
         skill_registry = PoolSkillManagerRegistry(self._pools)
 
-        session_factory = SessionIdFactory()
-        self._session_factory = session_factory
-
-        self._server.set_session_factory(self._session_factory)
-        self._session_factory = session_factory
-
+        self._session_factory = SessionIdFactory()
         self._server.set_session_factory(self._session_factory)
 
         def _build_input_context(inp) -> BotInputContext:
@@ -486,7 +478,7 @@ class WebUIService(BotService):
                 transcript_store=self._transcript_store,
                 enqueue_message=inp.put_input_message,
                 command_adapter=inp,
-                session_factory=session_factory,
+                session_factory=self._session_factory,
             )
 
         webui_pipeline = build_webui_pipeline(
@@ -522,7 +514,7 @@ class WebUIService(BotService):
         await runner.setup()
         site = web.TCPSite(runner, _DEFAULT_HOST, self._port)
         await site.start()
-        print(f"[WebUI] Server started on http://{_DEFAULT_HOST}:{self._port}/webui/")
+        logger.info("WebUI server started on http://%s:%d/webui/", _DEFAULT_HOST, self._port)
 
         await super().start()
 

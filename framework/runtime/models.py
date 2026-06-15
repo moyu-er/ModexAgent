@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, TypeAlias, Any
 from uuid import uuid4
 
 from framework.approval.constants import ApprovalDecision, ApprovalStatus, ApprovalTier
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 
 from .enums import (
     AgentKind,
@@ -54,7 +54,7 @@ class TurnIdentity:
     """Stable identity for every turn."""
 
     agent_id: str
-    session: SessionId
+    session: SessionInfo
     turn_id: str
     conversation_id: str | None = None
 

@@ -32,7 +32,7 @@ from bot.webui.events import (
     WebSocketAction,
     WebUIEventType,
 )
-from framework.core.session_id import SessionId, SessionIdFactory
+from framework.core.session_id import SessionInfo, SessionIdFactory, agent_of, snowflake_of
 from framework.core.session_store import SessionStore
 from bot.webui.transcript_store import TranscriptStore
 
@@ -164,7 +164,21 @@ class WebUIServer:
 
     def _pool_of_agent(self, agent_name: str) -> str:
         """Return the pool an agent belongs to (default main)."""
-        return self._agent_pool_map.get(agent_name, _DEFAULT_AGENT_NAME)
+        return self._pool_for_agent_name(agent_name) or _DEFAULT_AGENT_NAME
+
+    def _pool_for_agent_name(self, agent_name: str) -> str | None:
+        """Return the pool for *agent_name*, including dynamic subagent instances.
+
+        The agent→pool map contains main agents and template types.  Dynamic
+        subagent instances have names like ``reviewer-abc123``; they inherit
+        the pool of their template type.
+        """
+        if agent_name in self._agent_pool_map:
+            return self._agent_pool_map[agent_name]
+        for template_type, pool in self._agent_pool_map.items():
+            if agent_name.startswith(f"{template_type}-"):
+                return pool
+        return None
 
     def _active_store(self, pool: str) -> TranscriptStore:
         """Return the physical store for the current workspace + *pool*.
@@ -209,7 +223,7 @@ class WebUIServer:
         self._workspace_index = index
 
     def set_session_store(self, store: SessionStore) -> None:
-        """Inject the session store for SessionId-based operations."""
+        """Inject the session store for SessionInfo-based operations."""
         self._session_store = store
 
     def set_session_factory(self, factory: SessionIdFactory) -> None:
@@ -230,42 +244,73 @@ class WebUIServer:
         self._input_ctx = ctx
 
     # ------------------------------------------------------------------
-    # SessionId resolution helpers
+    # SessionInfo resolution helpers
     # ------------------------------------------------------------------
 
-    async def _resolve_session(self, session_id: str) -> SessionId:
-        """Resolve a SessionId from *session_id*.
+    async def _resolve_session(self, session_id: str) -> SessionInfo:
+        """Resolve a SessionInfo from *session_id*.
 
-        Prefers the session store; falls back to ``SessionId.from_str()``
+        Prefers the session store; falls back to ``SessionInfo.from_str()``
         when no store is injected (e.g. basic tests).
         """
         if self._session_store is not None:
             session = await self._session_store.get(session_id)
             if session is not None:
                 return session
-        return SessionId.from_str(session_id)
+        return SessionInfo.from_str(session_id)
 
-    def _resolve_agent(self, session_id: str) -> str:
-        """Return the parent/owner agent name for *session_id*.
+    async def _resolve_agent(self, session_id: str) -> str:
+        """Return the agent name bound to *session_id*.
 
-        Extracts the second ``.``-separated segment.  For subagent ids
-        ``{conv}.{agent}.{invocation_id}`` this is the parent agent
-        (not the subagent type).  Uses the session store when available.
+        Prefers the authoritative session store; falls back to
+        ``SessionInfo.from_str()`` when no store is injected.
         """
-        parts = session_id.split(".", 2)
-        if len(parts) >= 2:
-            return parts[1]
-        return _DEFAULT_AGENT_NAME
+        session = await self._resolve_session(session_id)
+        return session.agent_name
 
-    def _resolve_conv_prefix(self, session_id: str) -> str:
-        """Return the conversation prefix (the snowflake) for *session_id*.
+    def _derive_sessions_from_transcripts(self) -> list[SessionInfo]:
+        """Build SessionInfo records from transcript files when the session
+        index is missing or incomplete.
 
-        Uses ``SessionId.snowflake`` when the session store is available;
-        falls back to splitting on the first ``.``.
+        Legacy workspaces only have ``.modex/sessions/<pool>/*.jsonl`` files
+        and no ``.modex/session_index/``.  This fallback lets the frontend
+        list and attach to those sessions without a separate migration step.
         """
-        if "." in session_id:
-            return session_id.split(".", 1)[0]
-        return session_id
+        derived: list[SessionInfo] = []
+        for session_id in self._store.list_sessions():
+            snowflake = snowflake_of(session_id)
+            if snowflake == session_id:
+                # No separator → not a usable display id.
+                continue
+            agent_name = agent_of(session_id)
+            # Include any agent that maps to a known pool (main agents,
+            # resident subagents, and dynamic subagent template types).
+            pool = self._pool_for_agent_name(agent_name)
+            if pool is None:
+                continue
+            parent_session_id: str | None = None
+            # Subagent transcript (3 segments): parent is the main-agent
+            # session with the same conversation prefix, if one exists.
+            if session_id.count(".") == 2:
+                candidates = sorted(
+                    sid
+                    for sid in self._store.list_sessions_in_conversation(snowflake)
+                    if sid != session_id and sid.count(".") == 1
+                )
+                if candidates:
+                    parent_session_id = candidates[0]
+            updated_at = self._store.last_updated(session_id)
+            created_at = updated_at
+            derived.append(
+                SessionInfo(
+                    session_id=session_id,
+                    agent_name=agent_name,
+                    parent_session_id=parent_session_id,
+                    created_at=created_at,
+                    updated_at=updated_at,
+                )
+            )
+        return derived
 
     # ------------------------------------------------------------------
     # Route registration
@@ -433,37 +478,57 @@ class WebUIServer:
             session = self._session_factory.create(agent_name)
             session_id = str(session)
             snowflake = session.snowflake
+            created_at = session.created_at
+            updated_at = session.updated_at
             if self._session_store is not None:
                 await self._session_store.save(session)
         else:
             uuid_prefix = _new_uuid_prefix()
             session_id = f"{uuid_prefix}.{agent_name}"
             snowflake = uuid_prefix
-        uuid_prefix = self._resolve_conv_prefix(session_id)
-        set_conv_channel(uuid_prefix, "websocket")
+            created_at = None
+            updated_at = None
+        set_conv_channel(snowflake, "websocket")
         if self._pool_switch_callback is not None:
             self._pool_switch_callback(snowflake, effective_pool)
-        return web.json_response({"session_id": session_id, "pool": effective_pool})
+        return web.json_response({
+            "session_id": session_id,
+            "agent_name": agent_name,
+            "pool": effective_pool,
+            "parent_session_id": None,
+            "created_at": created_at,
+            "updated_at": updated_at,
+        })
 
     async def _handle_sessions(self, request: web.Request) -> web.Response:
         """GET /api/sessions -- list sessions visible in the current workspace.
 
         Query ``?pool=X`` to filter to a single pool (default: all pools).
-        Main-agent and subagent sessions are both listed; subagent sessions
-        with a recorded parent relationship carry ``parent_session_id``.
+        All sessions are listed; the frontend builds the tree from
+        ``parent_session_id`` — root nodes have ``parent_session_id: null``.
+
+        Falls back to deriving SessionInfo records from transcript files when
+        the session index is empty or incomplete, so legacy workspaces (which
+        only have ``.modex/sessions/``) still render existing conversations.
         """
         pool_filter: str | None = request.query.get("pool")
         session_list: list[dict[str, object]] = []
+        seen_session_ids: set[str] = set()
 
         if self._session_store is not None:
-            # New path: use the SessionStore (SessionId objects).
             for session in await self._session_store.list_sessions():
-                pool = self._pool_of_agent(session.agent_name)
+                agent_name = session.agent_name
+                # Show sessions for any agent that maps to a known pool
+                # (main agents, resident subagents, and dynamic subagent types).
+                pool = self._pool_for_agent_name(agent_name)
+                if pool is None:
+                    continue
                 if pool_filter and pool != pool_filter:
                     continue
+                seen_session_ids.add(str(session))
                 entry: dict[str, object] = {
                     "session_id": str(session),
-                    "agent_name": session.agent_name,
+                    "agent_name": agent_name,
                     "pool": pool,
                     "parent_session_id": session.parent_session_id,
                     "created_at": session.created_at,
@@ -471,37 +536,29 @@ class WebUIServer:
                     "metadata": session.metadata,
                 }
                 session_list.append(entry)
-        else:
-            # Fallback: transcript-store-based path (no session store injected).
-            seen: set[str] = set()
-            pools = sorted(set(self._agent_pool_map.values())) if self._agent_pool_map else [_DEFAULT_AGENT_NAME]
-            if pool_filter:
-                pools = [pool_filter]
 
-            for pool in pools:
-                store = self._active_store(pool)
-                for session_id in sorted(store.list_sessions()):
-                    sid_obj = SessionId.from_str(session_id)
-                    agent_name = sid_obj.agent_name
-                    if sid_obj.is_subagent:
-                        continue
-                    if agent_name not in self._pool_agent_names:
-                        continue
-                    if session_id in seen:
-                        continue
-                    seen.add(session_id)
-                    session_list.append({
-                        "session_id": session_id,
-                        "agent_name": agent_name,
-                        "pool": pool,
-                        "parent_session_id": None,
-                    })
-
-            # Enrich with timestamps.
-            for s in session_list:
-                sid = str(s.get("session_id", ""))
-                updated = self._active_store(str(s.get("pool", _DEFAULT_AGENT_NAME))).last_updated(sid)
-                s["updated_at"] = updated
+        # Fallback: derive any sessions that have transcripts but are not yet
+        # indexed.  This covers legacy data created before the SessionInfo index
+        # existed and lets the user interact with them immediately.
+        for session in self._derive_sessions_from_transcripts():
+            if str(session) in seen_session_ids:
+                continue
+            agent_name = session.agent_name
+            pool = self._pool_for_agent_name(agent_name)
+            if pool is None:
+                continue
+            if pool_filter and pool != pool_filter:
+                continue
+            seen_session_ids.add(str(session))
+            session_list.append({
+                "session_id": str(session),
+                "agent_name": agent_name,
+                "pool": pool,
+                "parent_session_id": session.parent_session_id,
+                "created_at": session.created_at,
+                "updated_at": session.updated_at,
+                "metadata": session.metadata,
+            })
 
         session_list.sort(key=lambda s: s.get("updated_at") or 0, reverse=True)
         return web.json_response(session_list)
@@ -509,7 +566,7 @@ class WebUIServer:
     async def _handle_get_messages(self, request: web.Request) -> web.Response:
         """GET /api/sessions/{session_id}/messages -- load transcript events."""
         session_id: str = request.match_info["session_id"]
-        agent_name = self._resolve_agent(session_id)
+        agent_name = await self._resolve_agent(session_id)
         pool = self._pool_of_agent(agent_name)
         events = [e.to_dict() for e in self._active_store(pool).load(session_id)]
         return web.json_response(events)
@@ -524,7 +581,7 @@ class WebUIServer:
         transcripts that earlier bugs may have written to the wrong pool dir.
         """
         session_id: str = request.match_info["session_id"]
-        agent_name = self._resolve_agent(session_id)
+        agent_name = await self._resolve_agent(session_id)
         pool = self._pool_of_agent(agent_name)
         self._active_store(pool).delete_session(session_id)
 
@@ -634,23 +691,18 @@ class WebUIServer:
                     ).to_dict())
                 )
                 return
-            if self._session_factory is not None:
-                session = self._session_factory.create(
-                    agent_name=agent_name, external_id=uuid_prefix_raw
-                )
-                session_id = str(session)
-                snowflake = session.snowflake
-                if self._session_store is not None:
-                    asyncio.create_task(self._session_store.save(session))
-            else:
-                session_id = f"{uuid_prefix_raw}.{agent_name}"
-                snowflake = uuid_prefix_raw
+            # Deferred creation: empty drafts are NOT persisted — the client's
+            # uuid_prefix is used verbatim as the snowflake so the session id
+            # (``{uuid_prefix}.{agent}``) stays stable through attach→send.
+            # Persistence happens on the first message (_ws_send_message).
+            session_id = f"{uuid_prefix_raw}.{agent_name}"
+            snowflake = uuid_prefix_raw
             uuid_prefix = uuid_prefix_raw
             explicit_agent = agent_name
 
             # Defensive: if a transcript already exists for this session_id
-            # (uuid collision or reattach of a persisted session), do not
-            # re-initialize pool routing — the session is already established.
+            # (reattach of a persisted session that already received a message),
+            # routing is already established — attach is idempotent.
             try:
                 store = self._active_store(pool_from_client)
                 if store is not None and any(True for _ in store.load(session_id)):
@@ -668,9 +720,10 @@ class WebUIServer:
                     ).to_dict())
                 )
                 return
-            uuid_prefix = self._resolve_conv_prefix(session_id)
-            snowflake = uuid_prefix
-            explicit_agent = self._resolve_agent(session_id)
+            resolved = await self._resolve_session(session_id)
+            snowflake = resolved.snowflake
+            uuid_prefix = snowflake
+            explicit_agent = resolved.agent_name
 
         # Unregister any previous sessions and cancel their forward tasks.
         await state.cleanup(self._input)
@@ -693,16 +746,13 @@ class WebUIServer:
 
         # Proactively register ALL pool agent sessions so deltas from any
         # pool's agent are forwarded to this WebSocket client.
+        # Use the already-resolved snowflake (encoded for new conversations,
+        # the persisted snowflake for existing sessions) so the derived ids
+        # match the transcript/delta-queue keys — do NOT re-encode.
         for agent_name in self._pool_agent_names:
             if agent_name == _DEFAULT_AGENT_NAME:
                 continue  # already registered above
-            if self._session_factory is not None:
-                pool_session = self._session_factory.create(
-                    agent_name=agent_name, external_id=uuid_prefix_raw
-                )
-                pool_sid = str(pool_session)
-            else:
-                pool_sid = f"{uuid_prefix}.{agent_name}"
+            pool_sid = f"{snowflake}.{agent_name}"
             if self._input.get_delta_queue(pool_sid) is None:
                 self._input.register_connection(pool_sid, ws)
                 state.attached_sessions.append(pool_sid)
@@ -712,9 +762,10 @@ class WebUIServer:
 
         # Also register subagent sessions found in transcript (for history).
         # These are full session ids (``{conv}.{agent}.{invocation_id}``); each
-        # invocation is a distinct session.
-        for sub_sid in sorted(self._store.list_sessions_in_conversation(uuid_prefix)):
-            sub_obj = SessionId.from_str(sub_sid)
+        # invocation is a distinct session.  ``snowflake`` is the stable
+        # conversation prefix used by the transcript store.
+        for sub_sid in sorted(self._store.list_sessions_in_conversation(snowflake)):
+            sub_obj = SessionInfo.from_str(sub_sid)
             if sub_obj.agent_name in self._pool_agent_names and not sub_obj.is_subagent:
                 continue  # main-agent session already handled above
             if self._input.get_delta_queue(sub_sid) is None:
@@ -748,7 +799,7 @@ class WebUIServer:
             asyncio.create_task(self._forward_deltas(session_id, ws))
         )
 
-        att_agent = self._resolve_agent(session_id)
+        att_agent = await self._resolve_agent(session_id)
         asyncio.create_task(
             ws.send_json(DeltaEnvelope(
                 session_id=session_id,
@@ -757,6 +808,32 @@ class WebUIServer:
                 pool=self._pool_of_agent(att_agent),
             ).to_dict())
         )
+
+    async def _materialize_deferred_session(self, session_id: str) -> None:
+        """Persist a deferred (uuid_prefix-prefixed) session on first message.
+
+        Attach creates a provisional id ``{uuid_prefix}.{agent}`` without
+        persisting; this materializes it just before the pipeline writes the
+        transcript, using ``encode_external_id=False`` so ``uuid_prefix`` is
+        the verbatim snowflake — same id, no re-encoding.  Already-persisted
+        sessions (reattach, existing conversations) are a no-op.
+        """
+        if self._session_store is None or self._session_factory is None:
+            return
+        if await self._session_store.get(session_id) is not None:
+            return  # already persisted
+        snowflake = snowflake_of(session_id)
+        agent = agent_of(session_id, default="unknown")
+        session = self._session_factory.create(
+            agent_name=agent,
+            external_id=snowflake,
+            encode_external_id=False,
+        )
+        if str(session) != session_id:
+            # Fallback: snowflake contained a separator or was empty; persist a
+            # from_str record so the session list still shows the conversation.
+            session = SessionInfo.from_str(session_id)
+        await self._session_store.save(session)
 
     async def _ws_send_message(
         self,
@@ -769,8 +846,22 @@ class WebUIServer:
         request_id = str(data.get("_request_id", ""))
         if "." not in session_id or not content:
             return
-        uuid_prefix = self._resolve_conv_prefix(session_id)
-        explicit_agent = self._resolve_agent(session_id)
+        # Materialize a deferred draft (created via uuid_prefix+pool attach)
+        # on its first message so the session enters the index before the
+        # pipeline writes the transcript. Empty drafts are never persisted.
+        await self._materialize_deferred_session(session_id)
+
+        # NOTE: DO NOT call _try_intercept_control here.
+        # Control slash commands (/pwd, /cd, /exit, /stop) are handled by
+        # the IM pipeline (S2 EnvironmentControlStage / S3 SessionControlStage).
+        # The WebUI does NOT need these — the workspace panel and sidebar
+        # controls already provide the same functionality visually.
+        # In WebUI, /pwd etc. correctly reach S6 (SkillParseStage) which
+        # rejects them with "builtin_not_supported". That is intentional.
+
+        resolved = await self._resolve_session(session_id)
+        uuid_prefix = resolved.snowflake
+        explicit_agent = resolved.agent_name
 
         # Pool resolution is OWNED by S5 (ResolvePoolStage) — it also persists
         # the UI choice into PoolSessionStore so PoolRouter routes correctly.
@@ -839,8 +930,9 @@ class WebUIServer:
         session_id = str(data.get("session_id", ""))
         if "." not in session_id:
             return
-        uuid_prefix = self._resolve_conv_prefix(session_id)
-        agent_name = self._resolve_agent(session_id)
+        resolved = await self._resolve_session(session_id)
+        uuid_prefix = resolved.snowflake
+        agent_name = resolved.agent_name
         pool = self._pool_of_agent(agent_name)
         self._active_store(pool).delete_conversation(uuid_prefix)
         asyncio.create_task(

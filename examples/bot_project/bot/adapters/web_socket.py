@@ -8,7 +8,7 @@ from typing import Any
 
 from bot.webui.events import DeltaEnvelope
 from framework.adapters.platform import StreamingMode
-from framework.core.session_id import SessionIdFactory
+from framework.core.session_id import SessionIdFactory, agent_of
 from framework.core.types import InputMessage, OutputMessage
 from framework.pipeline.adapters import InputAdapter, OutputAdapter
 
@@ -19,8 +19,7 @@ WEBSOCKET_CHANNEL: str = "websocket"
 
 def _agent_of(session_id: str) -> str:
     """Return the agent segment (2nd) of a full session id, default ``main``."""
-    parts = session_id.split(".", 2)
-    return parts[1] if len(parts) >= 2 else "main"
+    return agent_of(session_id, default="main")
 
 
 class WebSocketInputAdapter(InputAdapter):

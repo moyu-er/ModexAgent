@@ -9,7 +9,7 @@ Abstract base classes and shared types forming the framework's type-safe foundat
 
 | File | Description |
 |------|-------------|
-| `agent.py` | `Agent[E]` generic ABC, `AgentContext` dataclass, `AgentSessionMeta`, `current_agent_context` ContextVar |
+| `agent.py` | `Agent[E]` generic ABC, `AgentContext` dataclass, `SessionInfo`, `current_agent_context` ContextVar |
 | `emitter.py` | `ContentEmitter[E]` ABC, `AgentResult`, `StreamingAwareEmitter` |
 | `events.py` | `AgentEvent` base, `EmitterConfig` — event filtering/truncation |
 | `provider.py` | `LLMProvider` / `StreamingLLMProvider` ABCs |

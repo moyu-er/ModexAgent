@@ -28,7 +28,7 @@ class UserInputEnvelope:
     explicit_pool:   pool chosen by the UI (WebUI); None for IM.
     metadata:        cross-stage scratch + raw channel metadata.
     attachments:     structured attachments.
-    pre_resolved_session: a SessionId already established upstream
+    pre_resolved_session: a SessionInfo already established upstream
                      (e.g. WebUI created it during attach). When set, the
                      pipeline uses str(this) as the canonical key and does
                      NOT re-encode conversation_id — preventing double

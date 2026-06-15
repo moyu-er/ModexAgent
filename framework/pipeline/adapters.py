@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 from framework.adapters.platform import StreamingMode
 
 from ..core.types import InputMessage, OutputMessage
-from ..core.session_id import SessionId
+from ..core.session_id import SessionInfo
 from .filters import ContentFilter
 
 if TYPE_CHECKING:
@@ -146,7 +146,7 @@ class InputAdapter(ABC):
 
         ctx = CommandContext(
             session_id=session_id,
-            input_msg=InputMessage(content=text, session=SessionId.from_str(session_id, default_agent_name="main")),
+            input_msg=InputMessage(content=text, session=SessionInfo.from_str(session_id, default_agent_name="main")),
             agent_name="main",
         )
 

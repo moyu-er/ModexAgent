@@ -13,6 +13,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from framework.core.session_id import snowflake_of
+from framework.core.session_store import safe_filename
 from framework.core.types import InputMessage
 from framework.messaging.broker import BrokerMessage
 from framework.multi_agent.address import AgentAddress
@@ -32,8 +34,7 @@ class PoolSessionStore:
         self._dir.mkdir(parents=True, exist_ok=True)
 
     def _file(self, session_id: str) -> Path:
-        safe = session_id.replace("/", "_").replace("\\", "_").replace(":", "_")
-        return self._dir / f"{safe}.json"
+        return self._dir / f"{safe_filename(session_id)}.json"
 
     def get(self, session_id: str, default: str) -> str:
         fp = self._file(session_id)
@@ -79,10 +80,9 @@ class PoolRouter:
 
     async def run(self) -> None:
         async for msg in self._input_adapter.receive():
-            sid = str(msg.session)
-            # Pool store keys by the agent-independent snowflake (the segment
-            # before the first '.') so routing is stable across pool switches.
-            snowflake = sid.split(".", 1)[0] if "." in sid else sid
+            # Pool store keys by the agent-independent snowflake so routing is
+            # stable across pool switches.
+            snowflake = msg.session.snowflake
             target = self._session_store.get(snowflake, self._default_pool)
             pool = self._pools.get(target)
             if pool is None:
@@ -96,13 +96,13 @@ class PoolRouter:
         Accepts the full session id (as WebUI attaches); keys the store by the
         agent-independent snowflake so routing is stable across pool switches.
         """
-        snowflake = session_id.split(".", 1)[0] if "." in session_id else session_id
+        snowflake = snowflake_of(session_id)
         self._session_store.set(snowflake, pool_name)
         logger.info("Session %s pool set to '%s' (external)", session_id, pool_name)
 
     async def _route_to_pool(self, msg: InputMessage, pool: Any) -> None:
         sid = str(msg.session)
-        conv_id = sid.split(".", 1)[0] if "." in sid else sid
+        conv_id = msg.session.snowflake
         metadata = dict(msg.metadata) if msg.metadata else {}
         metadata.setdefault("conversation_id", conv_id)
         broker_msg = BrokerMessage(
@@ -113,6 +113,7 @@ class PoolRouter:
                 "sender_id": msg.sender_id,
                 "chat_id": msg.chat_id,
                 "conversation_id": conv_id,
+                "agent_session_id": sid,
             },
             sender=AgentAddress(kind="channel", name=msg.source or "unknown"),
             recipient=AgentAddress(kind="agent", name=pool.main_agent_name),
@@ -120,6 +121,7 @@ class PoolRouter:
                 "channel": msg.channel or "",
                 "chat_id": msg.chat_id or "",
                 "conversation_id": conv_id,
+                "agent_session_id": sid,
             },
         )
         await self._broker.send_to(pool.main_address, broker_msg)

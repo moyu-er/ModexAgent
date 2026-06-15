@@ -18,7 +18,7 @@ from framework.utils.file_io import read_json_robust
 from .codec import RuntimeStateCodecRegistry
 from .enums import OperationStatus, TurnPhase
 from .models import ControlCommandState, StateQueryScope, TurnIdentity, TurnSnapshot
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +183,7 @@ class JsonFileTurnStateStore(TurnStateStore):
 
         if agent_id is not None and session_id is not None:
             dir_path = self._dir(
-                TurnIdentity(agent_id=agent_id, session=SessionId.from_str(session_id), turn_id="_")
+                TurnIdentity(agent_id=agent_id, session=SessionInfo.from_str(session_id), turn_id="_")
             )
             if dir_path.exists():
                 for f in dir_path.glob("*.json"):

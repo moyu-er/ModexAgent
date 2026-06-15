@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from framework.core.session_id import SessionId
 from framework.core.tool_manager import ToolResult
 from framework.hook.abc import AfterToolExecutionHook, BeforeToolExecutionHook, BeforeTurnHook
 
@@ -32,11 +31,7 @@ class RuntimeContextHook(BeforeTurnHook, BeforeToolExecutionHook, AfterToolExecu
             return
         rt_mgr = rt.services.runtime_context_manager
         if rt_mgr is not None and rt._runtime_context is None:
-            session = SessionId.from_str(
-                str(ctx.session),
-                default_agent_name=ctx.session.agent_name,
-            )
-            rt._runtime_context = await rt_mgr.get_context(session, None)
+            rt._runtime_context = await rt_mgr.get_context(ctx.session, None)
         rc = rt._runtime_context
         if rc is not None:
             await rc.clear()

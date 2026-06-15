@@ -19,6 +19,7 @@ from typing import Any, Generic, TypeVar
 
 from framework.agents.react.agent import ReActEvent
 from framework.core.emitter import AgentResult, ContentEmitter, EmitterConfig, StreamingAwareEmitter
+from framework.core.session_id import agent_of
 
 from ..adapters.web_socket import WebSocketOutputAdapter
 from .events import (
@@ -117,8 +118,7 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
         # every emitted event and the persisted transcript carry the complete
         # id — two subagent invocations never collapse into one transcript.
         self._session_id: str = session_id
-        parts = session_id.split(".", 2)
-        self._agent_name: str = parts[1] if len(parts) > 1 else "main"
+        self._agent_name: str = agent_of(session_id, default="main")
         self._turn_counter: int = 1
         self._transcript_store: TranscriptStore | None = transcript_store
         # Lazy resolver for business routing context (pool, parent_session_id).

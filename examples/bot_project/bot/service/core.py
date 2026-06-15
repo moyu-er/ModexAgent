@@ -37,6 +37,8 @@ from framework import (
 from framework.approval.ui import IMUserInterface
 from framework.control.channel import InMemoryControlChannel
 from framework.core.emitter import ContentEmitter
+from framework.core.session_registry import SessionRegistry
+from framework.core.session_store import SessionStore
 from framework.core.llm_struct import (
     LLMTimeoutPolicy,
     RuntimeSafetyPolicy,
@@ -57,7 +59,6 @@ from framework.ioc.configs.memory import DreamEngineConfig
 from framework.ioc.configs.memory import MemoryConfig as IOCMemoryConfig
 from framework.ioc.factories.memory import create_memory
 from framework.memory.consolidation.dream_engine import DreamEngine
-from framework.memory.core.scope import MemoryContext
 from framework.memory.default_system import DefaultMemorySystem
 from framework.memory.system import MemorySystemContextManager
 from framework.messaging.broker_bridge import (
@@ -76,7 +77,7 @@ from framework.pipeline.adapters import InputAdapter, OutputAdapter
 from framework.tools.overflow.cleaner import OverflowCleaner
 
 from .builders import AgentBuilderMixin
-from .pool_builder import create_pool
+from .pool_builder import create_pool, ensure_long_term_defaults
 from .pool_instance import PoolInstance
 from .pool_router import PoolRouter, PoolSessionStore
 
@@ -88,7 +89,6 @@ logger = logging.getLogger(__name__)
 
 _SUBDIR_MEMORY = "memory"
 _SUBDIR_RUNTIME = "runtime_state"
-_SUBDIR_APPROVAL = "approval"
 _SUBDIR_INBOX = "inbox"
 
 
@@ -154,6 +154,8 @@ class BotService(AgentBuilderMixin):
         # ── Injection points for pool creation ──
         output_adapter_factory: Callable[[], OutputAdapter] | None = None,
         on_subagent_created: Callable[[str, str], Awaitable[None]] | None = None,
+        session_registry: SessionRegistry | None = None,
+        session_store: SessionStore | None = None,
     ) -> None:
         self.config_dir = config_dir
         self.config_loader = ConfigLoader(config_dir)
@@ -163,6 +165,12 @@ class BotService(AgentBuilderMixin):
         self._app_config = app_config
         self._output_adapter_factory = output_adapter_factory
         self._on_subagent_created = on_subagent_created
+
+        # SessionInfo registry/store — injected into every pool so subagent
+        # sessions are registered with their parent_session_id and resolvable
+        # at dispatch time (SubagentAutoSendHook needs parent to notify).
+        self._session_registry: SessionRegistry | None = session_registry
+        self._session_store: SessionStore | None = session_store
 
         # Shared components
         self.broker_bridge: BrokerBridgeService | None = None
@@ -200,7 +208,6 @@ class BotService(AgentBuilderMixin):
         self._safety_policy_cache: RuntimeSafetyPolicy | None = None
 
         # Approval
-        self._approval_workspace: Path | None = None
         self._im_ui: IMUserInterface | None = None
         self._turn_store: TurnStateStore | None = None
         self._command_store: object | None = None
@@ -268,10 +275,6 @@ class BotService(AgentBuilderMixin):
     @staticmethod
     def _ws_runtime(data_dir: Path) -> Path:
         return data_dir / _SUBDIR_RUNTIME
-
-    @staticmethod
-    def _ws_approval(data_dir: Path) -> Path:
-        return data_dir / _SUBDIR_APPROVAL
 
     @staticmethod
     def _ws_inbox(data_dir: Path) -> Path:
@@ -396,7 +399,6 @@ class BotService(AgentBuilderMixin):
         print(f"[OK] Inbox + AgentMessageBus initialized ({inbox_dir})")
 
         # 2. Shared infra: Approval
-        self._approval_workspace = self._ws_approval(self.workspace_context.data_dir)
         self._im_ui = IMUserInterface(
             output_adapter=self.output_adapter,
             channel=self.control_channel,
@@ -442,7 +444,6 @@ class BotService(AgentBuilderMixin):
                 safety=self.safety_policy,
                 retention=retention,
                 comm_tracker=self.communication_tracker,
-                approval_workspace=self._approval_workspace,
                 im_ui=self._im_ui,
                 shared_hooks=shared_hooks,
                 shared_hook_runner=shared_hook_runner,
@@ -454,6 +455,8 @@ class BotService(AgentBuilderMixin):
                 # ── Injection points ──
                 output_adapter_factory=self._output_adapter_factory,
                 on_subagent_created=self._on_subagent_created,
+                session_registry=self._session_registry,
+                session_store=self._session_store,
             )
             print(f"[OK] Pool '{pool_name}' created")
 
@@ -696,7 +699,6 @@ class BotService(AgentBuilderMixin):
         if pipeline is not None:
             pipeline.turn_store = new_turn_store
             pipeline.command_store = new_cmd_store
-            pipeline._approval_workspace = self._ws_approval(new_data_dir)
 
         return new_memory, new_turn_store, new_cmd_store
 
@@ -768,8 +770,6 @@ class BotService(AgentBuilderMixin):
             self.inbox_server._tracker, "_workspace"
         ):
             self.inbox_server._tracker._workspace = inbox_dir
-        # Approval
-        self._approval_workspace = self._ws_approval(new_data_dir)
         # Overflow store
         self._rebuild_overflow_store(new_data_dir)
         # Dream engine + task
@@ -1032,70 +1032,14 @@ class BotService(AgentBuilderMixin):
     ) -> None:
         """Initialize default long-term memory files if knowledge is enabled.
 
-        Supports both old ``long_term`` config (deprecated) and new ``knowledge``
-        config from IOC MemoryConfig.  YAML files that use the new ``knowledge``
-        block never populate ``long_term`` (model_post_init only migrates
-        long_term → knowledge, not the reverse), so the check must cover both.
-
-        Template paths in config are relative to the project directory.  We
-        resolve them to absolute paths before calling ``ensure_defaults`` so
-        the knowledge layer finds templates regardless of CWD (critical after
-        ``/cd`` which calls ``os.chdir`` to a different directory).
+        Delegates to the shared pool-builder helper so initial creation and
+        workspace-switch rebuilds use the same absolute-template logic.
         """
-        if main_memory_cfg is None:
-            return
-
-        # Check whether knowledge is enabled via either config format
-        knowledge_enabled = False
-        if main_memory_cfg.long_term is not None and main_memory_cfg.long_term.enabled:
-            knowledge_enabled = True
-        if main_memory_cfg.knowledge is not None and main_memory_cfg.knowledge.enabled:
-            knowledge_enabled = True
-        if not knowledge_enabled:
-            return
-
-        ms = memory_system
-        if ms is None:
-            return
-
-        lt_mgr = ms.knowledge_manager
-        if lt_mgr is None:
-            return
-
-        # Resolve default_templates_dir to an absolute path so the knowledge
-        # layer finds framework templates regardless of CWD.
-        raw_template_dir: str | None = None
-        if main_memory_cfg.knowledge is not None:
-            raw_template_dir = main_memory_cfg.knowledge.default_templates_dir
-        if not raw_template_dir and main_memory_cfg.long_term is not None:
-            raw_template_dir = main_memory_cfg.long_term.default_templates_dir
-        if raw_template_dir:
-            abs_template_dir = str((self._project_dir / raw_template_dir).resolve())
-            # KnowledgeMemoryConfig is frozen — replace the whole config object
-            from dataclasses import replace as _dc_replace
-
-            lt_mgr._config = _dc_replace(
-                lt_mgr._config,
-                default_templates_dir=abs_template_dir,
-            )
-
-        defaults: dict[str, str] = {
-            "soul": (
-                "## 沟通风格\n"
-                "- 使用中文回复，风格自然、简洁\n"
-                "- 优先给出直接答案，再补充解释\n"
-                "- 不确定的事情如实说明，不编造\n"
-            ),
-            "user": (
-                "## 用户画像\n- 首次使用，暂无特定偏好记录\n- 后续对话中会逐渐积累用户习惯和偏好\n"
-            ),
-            "memory": ("## 相关知识\n- 暂无特定领域知识记录\n- 长期对话中会自动整理和更新\n"),
-        }
-
-        ctx = MemoryContext(session_id="default", user_id="default")
-        await lt_mgr.ensure_defaults(ctx, defaults)
-
-        print("   [OK] Long-term memory defaults ensured")
+        await ensure_long_term_defaults(
+            self._project_dir,
+            main_memory_cfg,
+            memory_system,
+        )
 
     async def _init_pool_dream_engine(self) -> None:
         default_pool = self._pools.get(self._default_pool_name)

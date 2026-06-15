@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Generic
 
 from typing_extensions import TypeVar
 
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 from framework.memory.history import MessageHistory
 
 from .emitter import AgentResult, ContentEmitter
@@ -50,7 +50,7 @@ class AgentContext:
             ...
     """
     tool_manager: ToolManager
-    session: SessionId
+    session: SessionInfo
     comm_kind: AgentCommKind | None = None
     max_iterations: int = 10
     temperature: float | None = None

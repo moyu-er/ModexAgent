@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import Any
 
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 
 
 class MemoryAgentRole(StrEnum):
@@ -29,7 +29,7 @@ class MemoryLayerName(StrEnum):
 class MemoryContext:
     """统一上下文对象，包含所有可能用到的分组信息。"""
 
-    session_id: SessionId | None = None
+    session_id: SessionInfo | None = None
     user_id: str | None = None
     tenant_id: str | None = None
     agent_id: str | None = None
@@ -75,7 +75,10 @@ class MemoryContext:
         kwargs = {key: data.get(key) for key in allowed}
         raw_sid = kwargs.get("session_id")
         if type(raw_sid) is str:
-            kwargs["session_id"] = SessionId.from_str(raw_sid)
+            if raw_sid == "default":
+                kwargs["session_id"] = SessionInfo(session_id="default", agent_name="unknown")
+            else:
+                kwargs["session_id"] = SessionInfo.from_str(raw_sid)
         return cls(**kwargs)
 
 

@@ -30,6 +30,8 @@ from pathlib import Path
 
 import pathvalidate
 
+from framework.core.session_id import agent_of, snowflake_of
+
 from bot.webui.events import ServerEvent
 from bot.webui.transcript_store import JSONLTranscriptStore, TranscriptStore
 
@@ -52,13 +54,12 @@ def _agent_of(session_id: str) -> str:
     ``{conv}.{agent}[.{invocation_id}]`` → ``agent``.  Defaults to ``main``
     for malformed ids without an agent segment.
     """
-    parts = session_id.split(".", 2)
-    return parts[1] if len(parts) >= 2 else _DEFAULT_POOL
+    return agent_of(session_id, default=_DEFAULT_POOL)
 
 
 def _conversation_prefix(session_id: str) -> str:
     """Return the conversation prefix (segment before the first ``.``)."""
-    return session_id.split(".", 1)[0] if "." in session_id else session_id
+    return snowflake_of(session_id)
 
 
 class WorkspaceScopedTranscriptStore(TranscriptStore):

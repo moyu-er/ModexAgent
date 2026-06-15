@@ -12,7 +12,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
+
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -43,7 +43,7 @@ from ..approval.ui import ApprovalUserInterface
 from ..control.exceptions import AgentControlError
 from ..core.agent import Agent, AgentContext
 from ..core.context import ContextManager
-from ..core.session_id import SessionId
+from ..core.session_id import SessionInfo
 from ..core.emitter import AgentResult, StreamingAwareEmitter
 from ..core.graph.interrupt import GraphInterrupt
 from ..core.runtime_context import RuntimeContextManager
@@ -140,7 +140,6 @@ class AgentPipeline:
         interceptor_chain: InterceptorChain | None = None,
         control_channel: InMemoryControlChannel | None = None,
         busy_input_mode: BusyInputMode = BusyInputMode.QUEUE,
-        approval_workspace: str = ".modex_approval",
         user_interface: ApprovalUserInterface | None = None,
         turn_store: TurnStateStore | None = None,
         command_store: RuntimeCommandStore | None = None,
@@ -151,7 +150,6 @@ class AgentPipeline:
         Args:
             ...
             safety: P0-a 运行时安全策略（timeout、retry 等），None 则使用默认
-            approval_workspace: approval 状态持久化目录（默认 .modex_approval）
             user_interface: 审批通知 UI 接口（CLI/IM/Noop），None 则不通知
             turn_store: TurnStateStore — typed turn snapshot persistence
             command_store: RuntimeCommandStore — durable command queue
@@ -189,13 +187,11 @@ class AgentPipeline:
         self.interceptor_chain = interceptor_chain
         self.control_channel = control_channel
         self.busy_input_mode = busy_input_mode
-        self._approval_workspace = Path(approval_workspace)
         self.turn_store = turn_store
         self.command_store = command_store
         self.runtime_services = runtime_services
         self.command_processor = command_processor
         self._approval = ApprovalRenderer(
-            approval_workspace=self._approval_workspace,
             agent=agent,
             user_interface=user_interface,
             on_drain=self._process_message,
@@ -313,10 +309,10 @@ class AgentPipeline:
                 try:
                     count = await memory_system.get_unprocessed_history_count(ctx)
                 except Exception as scan_err:
-                    logger.debug("DreamEngine scan error for %s: %s", ctx.session_id, scan_err)
+                    logger.debug("DreamEngine scan error for %s: %s", str(ctx.session_id), scan_err)
                     continue
                 if count > 0:
-                    scope_key = f"{ctx.session_id or ''}:{ctx.user_id or ''}:{ctx.tenant_id or ''}"
+                    scope_key = f"{str(ctx.session_id) if ctx.session_id else ''}:{ctx.user_id or ''}:{ctx.tenant_id or ''}"
                     lock = _dream_locks.setdefault(scope_key, asyncio.Lock())
 
                     logger.info(
@@ -570,7 +566,7 @@ class AgentPipeline:
 
     def _build_runtime_and_context(
         self,
-        session: SessionId,
+        session: SessionInfo,
         context_state: ContextState,
         ctx_mgr: ContextManager,
         *,
@@ -948,7 +944,7 @@ class AgentPipeline:
 
     async def _process_message_locked(
         self, input_msg: InputMessage, session_id: str, route_result: Any | None = None,
-        *, session: SessionId,
+        *, session: SessionInfo,
     ) -> AgentResult | None:
         """Process one message while holding the session lock."""
         if self.on_session_start is not None:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import replace as _dc_replace
 from pathlib import Path
 from typing import Any
 
@@ -20,10 +21,13 @@ from framework.hook import HookErrorPolicy, HookRunner, HookSpec
 from framework.hook.builtin import InboxFlushHook
 from framework.hook.notification import AgentNotificationService, MaxIterationNotifyHook
 from framework.ioc.configs.agent import AgentConfig
+from framework.ioc.configs.memory import MemoryConfig
 from framework.ioc.configs.pool import PoolConfig
 from framework.ioc.factories.governance import create_governance
 from framework.ioc.factories.llm import create_llm_provider
 from framework.ioc.factories.memory import create_memory
+from framework.memory.core.scope import MemoryContext
+from framework.memory.default_system import DefaultMemorySystem
 from framework.memory.injection import FullInjectionPolicy
 from framework.memory.system import MemorySystemContextManager
 from framework.messaging.broker_bridge import BrokerBridgeService, OutputRoute
@@ -43,6 +47,8 @@ from framework.multi_agent.inbox.consumer import InboxConsumer
 from framework.multi_agent.inbox.producer import InboxProducer
 from framework.multi_agent.inbox.server import InboxServer
 from framework.core.session_id import SessionIdFactory
+from framework.core.session_registry import SessionRegistry
+from framework.core.session_store import SessionStore
 from framework.multi_agent.tools import (
     CommunicationTarget,
     CommunicationTargetStore,
@@ -78,7 +84,6 @@ async def create_pool(
     safety: RuntimeSafetyPolicy,
     retention: SessionRetentionPolicy,
     comm_tracker: CommunicationTracker,
-    approval_workspace: Path,
     im_ui: Any,
     shared_hooks: list,
     shared_hook_runner: HookRunner,
@@ -90,8 +95,8 @@ async def create_pool(
     # ── Injection points for bot-layer customization ──
     output_adapter_factory: Callable[[], OutputAdapter] | None = None,
     on_subagent_created: Callable[[str, str], Awaitable[None]] | None = None,
-    session_registry: Any = None,
-    session_store: Any = None,
+    session_registry: SessionRegistry | None = None,
+    session_store: SessionStore | None = None,
 ) -> PoolInstance:
     """Build one PoolInstance from PoolConfig.
 
@@ -104,6 +109,7 @@ async def create_pool(
     provider = _build_llm_provider(pool_cfg, pool_name)
     terminal_manager = _build_terminal_manager(pool_cfg, pool_name)
     memory_system = await _build_memory(pool_cfg, provider, data_dir, pool_name)
+    await ensure_long_term_defaults(project_dir, pool_cfg.memory, memory_system)
     context_manager = _build_context(memory_system, main_cfg, system_prompt, data_dir, pool_name)
     tool_manager, mcp_manager = await _build_tools(
         pool_cfg, main_cfg, terminal_manager, project_dir,
@@ -166,7 +172,7 @@ async def create_pool(
         pool, main_agent_name, inbox_consumer,
         notification_service, exp_review_hook,
         shared_interceptor_chain, turn_store,
-        approval_workspace, im_ui, pool_cfg,
+        im_ui, pool_cfg,
         command_processor, skill_manager,
         pool_name,
     )
@@ -289,6 +295,70 @@ async def _build_memory(
     await memory_system.initialize()
     logger.info("Pool '%s': MemorySystem (%s)", pool_name, memory_dir)
     return memory_system
+
+
+async def ensure_long_term_defaults(
+    project_dir: Path,
+    memory_cfg: MemoryConfig | None,
+    memory_system: DefaultMemorySystem,
+) -> None:
+    """Initialize default long-term memory files if knowledge is enabled.
+
+    Supports both old ``long_term`` config (deprecated) and new ``knowledge``
+    config. Template paths in config are relative to the project directory.
+    Resolves them to absolute paths before calling ``ensure_defaults`` so
+    the knowledge layer finds templates regardless of CWD (critical after
+    ``/cd`` which calls ``os.chdir`` to a different directory).
+    """
+    if memory_cfg is None:
+        return
+
+    knowledge_enabled = False
+    if memory_cfg.long_term is not None and memory_cfg.long_term.enabled:
+        knowledge_enabled = True
+    if memory_cfg.knowledge is not None and memory_cfg.knowledge.enabled:
+        knowledge_enabled = True
+    if not knowledge_enabled:
+        return
+
+    lt_mgr = memory_system.knowledge_manager
+    if lt_mgr is None:
+        return
+
+    raw_template_dir: str | None = None
+    if memory_cfg.knowledge is not None:
+        raw_template_dir = memory_cfg.knowledge.default_templates_dir
+    if not raw_template_dir and memory_cfg.long_term is not None:
+        raw_template_dir = memory_cfg.long_term.default_templates_dir
+    if raw_template_dir:
+        abs_template_dir = str((project_dir / raw_template_dir).resolve())
+        lt_mgr._config = _dc_replace(
+            lt_mgr._config,
+            default_templates_dir=abs_template_dir,
+        )
+
+    defaults: dict[str, str] = {
+        "soul": (
+            "## 沟通风格\n"
+            "- 使用中文回复，风格自然、简洁\n"
+            "- 优先给出直接答案，再补充解释\n"
+            "- 不确定的事情如实说明，不编造\n"
+        ),
+        "user": (
+            "## 用户画像\n"
+            "- 首次使用，暂无特定偏好记录\n"
+            "- 后续对话中会逐渐积累用户习惯和偏好\n"
+        ),
+        "memory": (
+            "## 相关知识\n"
+            "- 暂无特定领域知识记录\n"
+            "- 长期对话中会自动整理和更新\n"
+        ),
+    }
+
+    ctx = MemoryContext(session_id="default", user_id="default")
+    await lt_mgr.ensure_defaults(ctx, defaults)
+    print("   [OK] Long-term memory defaults ensured")
 
 
 # ── Context ──────────────────────────────────────────────────────────────
@@ -535,8 +605,8 @@ def _build_agent_pool(
     comm_tracker,
     pool_name: str,
     *,
-    session_registry: Any = None,
-    session_store: Any = None,
+    session_registry: SessionRegistry | None = None,
+    session_store: SessionStore | None = None,
 ) -> AgentPool:
     pool = AgentPool(
         broker=broker,
@@ -607,7 +677,7 @@ def _build_communication(
     # ── Injection points for bot-layer customization ──
     output_adapter_factory: Callable[[], OutputAdapter] | None = None,
     on_subagent_created: Callable[[str, str], Awaitable[None]] | None = None,
-    session_registry: Any = None,
+    session_registry: SessionRegistry | None = None,
 ):
     from framework.multi_agent.template_registry import AgentTemplateRegistry
 
@@ -730,7 +800,6 @@ def _wire_main_pipeline(
     exp_review_hook,
     shared_interceptor_chain,
     turn_store,
-    approval_workspace,
     im_ui,
     pool_cfg: PoolConfig,
     command_processor,
@@ -758,7 +827,6 @@ def _wire_main_pipeline(
     # Runtime wiring
     pipeline.interceptor_chain = shared_interceptor_chain
     pipeline.turn_store = turn_store
-    pipeline._approval_workspace = approval_workspace
     pipeline._user_interface = im_ui
     pipeline.governance = create_governance(pool_cfg.memory, pool_cfg.llm.max_tokens)
 

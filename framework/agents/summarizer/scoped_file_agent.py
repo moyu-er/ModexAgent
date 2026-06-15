@@ -17,7 +17,7 @@ from typing import Any
 from framework.agents.react.agent import ReActAgent
 from framework.agents.summarizer.emitter import SummarizerTrajectoryEmitter
 from framework.core.agent import AgentContext
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 from framework.core.tool_manager import InMemoryToolManager
 from framework.core.types import MessageRole
 from framework.memory.history import ListMessageHistory
@@ -106,7 +106,7 @@ class ScopedFileAgent:
             system_prompt=system_prompt,
             history=history,
             tool_manager=tool_manager,
-            session=SessionId.from_str(session_id),
+            session=SessionInfo(session_id=session_id, agent_name=agent_name),
             max_iterations=max_iterations,
             temperature=temperature,
         )

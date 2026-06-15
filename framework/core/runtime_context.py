@@ -17,7 +17,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 from framework.memory.core.scope import MemoryContext, MemoryScope, SessionScope
 
 if TYPE_CHECKING:
@@ -197,7 +197,7 @@ class RuntimeContextManager:
 
     async def get_context(
         self,
-        session: SessionId,
+        session: SessionInfo,
         metadata: dict[str, Any] | None = None,
     ) -> RuntimeContext:
         """Return the RuntimeContext for *session* (creating if needed)."""
@@ -206,14 +206,14 @@ class RuntimeContextManager:
 
     async def clear_context(
         self,
-        session: SessionId,
+        session: SessionInfo,
         metadata: dict[str, Any] | None = None,
     ) -> None:
         """Clear the RuntimeContext for *session*."""
         scope_key = self._resolve_scope_key(session, metadata)
         await self._store.clear(scope_key)
 
-    def _resolve_scope_key(self, session: SessionId, metadata: dict[str, Any] | None) -> str:
+    def _resolve_scope_key(self, session: SessionInfo, metadata: dict[str, Any] | None) -> str:
         meta = metadata or {}
         mem_ctx = MemoryContext(
             session_id=session,

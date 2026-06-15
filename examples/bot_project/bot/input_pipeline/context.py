@@ -20,7 +20,7 @@ class BotInputContext(InputContext):
     command_adapter: an InputAdapter whose framework-provided
         _try_intercept_control is reused by the control stages — we only
         relocate the call site into a stage, no framework edits.
-    session_factory: SessionIdFactory for creating SessionId from external
+    session_factory: SessionIdFactory for creating SessionInfo from external
         conversation ids. Defaults to a fresh factory if not provided.
     """
 

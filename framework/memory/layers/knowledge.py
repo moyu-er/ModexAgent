@@ -63,16 +63,31 @@ class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
 
             # Try to load from template
             content = ""
-            if self._config.default_templates_dir:
+            template_dir = self._config.default_templates_dir
+            if template_dir:
                 from pathlib import Path
 
-                template_path = Path(self._config.default_templates_dir) / file_name
+                template_path = Path(template_dir) / file_name
                 if template_path.exists():
                     content = template_path.read_text(encoding="utf-8")
+                else:
+                    logger.warning(
+                        "Knowledge template not found: %s (default_templates_dir=%s)",
+                        template_path,
+                        template_dir,
+                    )
 
             # Fallback to defaults dict
             if not content and key in defaults:
                 content = defaults[key]
+
+            if not content:
+                logger.warning(
+                    "Skipping empty default for knowledge file %s: "
+                    "no template and no fallback provided",
+                    file_name,
+                )
+                continue
 
             await storage.set(file_name, content)
 

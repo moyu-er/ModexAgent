@@ -1,6 +1,6 @@
-"""First-class SessionId object + factory.
+"""First-class SessionInfo object + factory.
 
-`SessionId` is the single identity object across the framework. Its fields are
+`SessionInfo` is the single identity object across the framework. Its fields are
 authoritative; the string is opaque and never parsed except via the
 last-resort `from_str` fallback.
 """
@@ -46,7 +46,7 @@ def encode_snowflake(raw: str) -> str:
     return "".join(reversed(out))
 
 
-class SessionId(BaseModel):
+class SessionInfo(BaseModel):
     """First-class session identifier.
 
     Required: ``session_id`` (complete display id ``snowflake.agentName``),
@@ -73,11 +73,11 @@ class SessionId(BaseModel):
         return hash(self.session_id)
 
     # NOTE: isinstance here is required for value-equality semantics — comparing
-    # a SessionId to a non-SessionId must return NotImplemented (not False) so
+    # a SessionInfo to a non-SessionInfo must return NotImplemented (not False) so
     # Python falls back to the other operand's __eq__. This is the standard
     # dataclass/pydantic equality idiom, not a runtime duck-typing check.
     def __eq__(self, other: object) -> bool:
-        if not isinstance(other, SessionId):
+        if not isinstance(other, SessionInfo):
             return NotImplemented
         return self.session_id == other.session_id
 
@@ -92,7 +92,7 @@ class SessionId(BaseModel):
         return self.parent_session_id is not None
 
     # deprecated, don't use touch()
-    def touch(self) -> SessionId:
+    def touch(self) -> SessionInfo:
         """Return a copy with ``updated_at`` refreshed to now."""
         return self.model_copy(update={"updated_at": now_ms()})
 
@@ -102,15 +102,15 @@ class SessionId(BaseModel):
         value: str,
         *,
         default_agent_name: str | None = None,
-    ) -> SessionId:
-        """Recover a SessionId from a display string (last-resort fallback).
+    ) -> SessionInfo:
+        """Recover a SessionInfo from a display string (last-resort fallback).
 
         Emits a UserWarning when the value has no separator or an empty
         agent_name suffix. Callers should query the registry first.
         """
         if "." not in value:
             warnings.warn(
-                f"SessionId {value!r} has no separator; treating as bare snowflake",
+                f"SessionInfo {value!r} has no separator; treating as bare snowflake",
                 UserWarning,
                 stacklevel=2,
             )
@@ -120,17 +120,35 @@ class SessionId(BaseModel):
             agent_name = suffix or default_agent_name or "unknown"
             if not suffix:
                 warnings.warn(
-                    f"SessionId {value!r} has empty agent_name suffix",
+                    f"SessionInfo {value!r} has empty agent_name suffix",
                     UserWarning,
                     stacklevel=2,
                 )
-        now = now_ms()
-        return cls(session_id=value, agent_name=agent_name,
-                   created_at=now, updated_at=now)
+        return cls(session_id=value, agent_name=agent_name)
+
+
+def snowflake_of(session_id: str) -> str:
+    """Extract the snowflake segment (before the first ``.``) from a display id.
+
+    Single source of truth for snowflake extraction from a string. Use this
+    instead of ad-hoc ``session_id.split('.', 1)[0]``.
+    """
+    return session_id.split(".", 1)[0] if "." in session_id else session_id
+
+
+def agent_of(session_id: str, *, default: str = "unknown") -> str:
+    """Extract the agent_name segment (2nd ``.``-separated component) of a display id.
+
+    For the canonical ``"{snowflake}.{agent_name}"`` format returns ``agent_name``;
+    for legacy ``"{conv}.{agent}.{invocation_id}"`` returns the agent (middle
+    segment); for a bare snowflake returns ``default``.
+    """
+    parts = session_id.split(".", 2)
+    return parts[1] if len(parts) >= 2 else default
 
 
 class SessionIdFactory:
-    """Generates new SessionId instances.
+    """Generates new SessionInfo instances.
 
     The snowflake is ``encode_snowflake(external_id or uuid4)``. ``external_id``
     is an IM-provided id or an existing invocation_id; it forms the snowflake
@@ -144,16 +162,24 @@ class SessionIdFactory:
         self,
         agent_name: str,
         *,
-        parent_session_id: SessionId | str | None = None,
+        parent_session_id: SessionInfo | str | None = None,
         external_id: str | None = None,
         metadata: dict[str, Any] | None = None,
-    ) -> SessionId:
+        encode_external_id: bool = True,
+    ) -> SessionInfo:
         raw = external_id if external_id is not None else self._generate_raw()
-        encoded = encode_snowflake(raw)
+        if encode_external_id:
+            encoded = encode_snowflake(raw)
+        elif "." in raw:
+            # Raw snowflakes must not contain the session separator; fall back
+            # to a deterministic safe encoding to keep parsing unambiguous.
+            encoded = encode_snowflake(raw)
+        else:
+            encoded = raw
         session_id = f"{encoded}.{agent_name}"
         now = now_ms()
         parent_str = str(parent_session_id) if parent_session_id else None
-        return SessionId(
+        return SessionInfo(
             session_id=session_id,
             agent_name=agent_name,
             parent_session_id=parent_str,

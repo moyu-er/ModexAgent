@@ -10,7 +10,7 @@ from __future__ import annotations
 from enum import StrEnum
 
 from bot.input_pipeline.context import BotInputContext
-from framework.core.session_id import SessionId, encode_snowflake
+from framework.core.session_id import SessionInfo, encode_snowflake, snowflake_of
 from framework.input_pipeline.envelope import UserInputEnvelope
 from framework.input_pipeline.stage import Continue, InputStage, StageResult
 
@@ -42,7 +42,7 @@ def conversation_snowflake(envelope: UserInputEnvelope, ctx: BotInputContext) ->
     - IM: ``encode_snowflake(conversation_id)`` via the factory encoding.
     """
     if envelope.pre_resolved_session is not None:
-        return str(envelope.pre_resolved_session).split(".", 1)[0]
+        return snowflake_of(str(envelope.pre_resolved_session))
     return encode_snowflake(envelope.conversation_id)
 
 
@@ -65,7 +65,7 @@ def resolve_session_routing(
         snowflake, ctx.default_pool
     )
     if envelope.pre_resolved_session is not None:
-        session: SessionId = envelope.pre_resolved_session
+        session: SessionInfo = envelope.pre_resolved_session
         agent = session.agent_name
     else:
         agent = ctx.agent_for_pool(pool)

@@ -1,4 +1,4 @@
-"""SessionRegistry — runtime cache for SessionId resolution.
+"""SessionRegistry — runtime cache for SessionInfo resolution.
 
 The store is authoritative; the registry is a performance cache that writes
 through on register and loads from the store at startup. All operations are
@@ -10,19 +10,19 @@ from __future__ import annotations
 import asyncio
 from abc import ABC, abstractmethod
 
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 from framework.core.session_store import SessionStore
 
 
 class SessionRegistry(ABC):
-    """Runtime cache for SessionId lookups."""
+    """Runtime cache for SessionInfo lookups."""
 
     @abstractmethod
-    async def register(self, session: SessionId) -> None:
+    async def register(self, session: SessionInfo) -> None:
         ...
 
     @abstractmethod
-    async def get(self, session_id: str) -> SessionId | None:
+    async def get(self, session_id: str) -> SessionInfo | None:
         ...
 
     @abstractmethod
@@ -39,7 +39,7 @@ class InMemorySessionRegistry(SessionRegistry):
 
     def __init__(self, store: SessionStore | None = None) -> None:
         self._store = store
-        self._cache: dict[str, SessionId] = {}
+        self._cache: dict[str, SessionInfo] = {}
         self._lock = asyncio.Lock()
 
     async def load_all(self) -> None:
@@ -50,7 +50,7 @@ class InMemorySessionRegistry(SessionRegistry):
             for session in await self._store.list_sessions():
                 self._cache[str(session)] = session
 
-    async def register(self, session: SessionId) -> None:
+    async def register(self, session: SessionInfo) -> None:
         async with self._lock:
             existing = self._cache.get(str(session))
             if existing is not None:
@@ -77,7 +77,7 @@ class InMemorySessionRegistry(SessionRegistry):
                 if self._store is not None:
                     await self._store.save(session)
 
-    async def get(self, session_id: str) -> SessionId | None:
+    async def get(self, session_id: str) -> SessionInfo | None:
         async with self._lock:
             return self._cache.get(session_id)
 

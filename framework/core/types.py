@@ -8,7 +8,7 @@ from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any
 
 from .constants import DefaultValues
-from .session_id import SessionId
+from .session_id import SessionInfo
 
 if TYPE_CHECKING:
     from .llm_struct import LLMErrorInfo
@@ -64,7 +64,7 @@ class InputMessage:
     """
 
     content: str  # 消息内容（唯一必填字段）
-    session: SessionId
+    session: SessionInfo
     channel: str = field(default=DefaultValues.CHANNEL)
     sender_id: str = field(default=DefaultValues.SENDER_ID)
     chat_id: str = field(default=DefaultValues.CHAT_ID)

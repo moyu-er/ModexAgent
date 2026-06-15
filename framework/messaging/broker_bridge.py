@@ -9,7 +9,7 @@ from typing import Any
 from ..adapters.platform import StreamingMode
 from ..core.constants import DefaultValues
 from ..core.types import InputMessage, OutputMessage
-from framework.core.session_id import SessionId, SessionIdFactory
+from framework.core.session_id import SessionInfo, SessionIdFactory
 from ..pipeline.adapters import InputAdapter, OutputAdapter
 from .broker import Address, BrokerMessage, MessageBroker
 
@@ -107,7 +107,7 @@ def _broker_msg_to_input_message(
         trunc_paths = ["content"]
 
     raw_session = payload.get("session_id", str(sender))
-    session: SessionId | None = None
+    session: SessionInfo | None = None
 
     # Orphan 隔离：来自 agent 的消息若缺失 conversation_id，隔离到 synthetic session
     if sender.kind == "agent":
@@ -123,10 +123,10 @@ def _broker_msg_to_input_message(
                     external_id=orphan_key,
                 )
             else:
-                session = SessionId.from_str(orphan_key, default_agent_name=default_agent_name)
+                session = SessionInfo.from_str(orphan_key, default_agent_name=default_agent_name)
 
     if session is None:
-        session = SessionId.from_str(raw_session, default_agent_name=default_agent_name)
+        session = SessionInfo.from_str(raw_session, default_agent_name=default_agent_name)
 
     return InputMessage(
         content=payload.get("content", ""),
@@ -358,17 +358,19 @@ class BrokerBridgeService:
                         payload={
                             "content": msg.content,
                             "session_id": str(msg.session),
+                            "agent_session_id": str(msg.session),
                             "metadata": msg.metadata,
                             "sender_id": msg.sender_id,
                             "chat_id": msg.chat_id,
-                            "conversation_id": str(msg.session),
+                            "conversation_id": msg.session.snowflake,
                         },
                         sender=Address(kind="channel", name=msg.source or "unknown"),
                         recipient=addr,
                         headers={
                             "channel": msg.channel,
                             "chat_id": msg.chat_id,
-                            "conversation_id": str(msg.session),
+                            "conversation_id": msg.session.snowflake,
+                            "agent_session_id": str(msg.session),
                         },
                     )
                     await self.broker.send_to(addr, broker_msg)

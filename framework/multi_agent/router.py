@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 from framework.core.types import InputMessage
 
 if TYPE_CHECKING:
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 class RouteResult:
     """Result of routing an input message to an agent-owned session."""
 
-    session: SessionId
+    session: SessionInfo
     prompt_modifier: str | None = None
     envelope_metadata: dict[str, Any] | None = None
     is_envelope: bool = False

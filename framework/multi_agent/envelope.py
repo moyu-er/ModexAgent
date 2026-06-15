@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 class AgentMessageEnvelope:
     """强制携带多 Agent 路由信息的通用消息信封。
 
-    Routing is driven by ``agent_session_id`` (the full ``SessionId`` string).
+    Routing is driven by ``agent_session_id`` (the full ``SessionInfo`` string).
     ``invocation_id`` carries the source subagent's snowflake for trace
     correlation only — it does NOT participate in routing decisions.
     """

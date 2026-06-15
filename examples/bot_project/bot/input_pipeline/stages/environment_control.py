@@ -1,4 +1,9 @@
-"""S2: handle /cd, /pool <name>, /exit before persistence."""
+"""S2: handle /cd, /pool <name>, /exit before persistence.
+
+IM-only stage — the WebUI pipeline (build_webui_pipeline) does NOT include
+S2/S3.  Control commands (/pwd, /cd, /exit) are routed through
+ctx.command_adapter._try_intercept_control(), which is configured via
+configure_control_filter() in BotService._initialize_pool()."""
 from __future__ import annotations
 import re
 from bot.input_pipeline.context import BotInputContext
