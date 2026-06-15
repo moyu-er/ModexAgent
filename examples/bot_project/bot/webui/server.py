@@ -34,6 +34,7 @@ from bot.webui.events import (
 )
 from framework.core.session_id import SessionInfo, SessionIdFactory, agent_of, session_id_prefix_of
 from framework.core.session_store import SessionStore
+from framework.utils.timezone import get_user_timezone
 from bot.webui.transcript_store import TranscriptStore
 
 logger = logging.getLogger(__name__)
@@ -364,7 +365,11 @@ class WebUIServer:
             cwd = str(self._workspace_ctx.current)
             home = str(self._workspace_ctx.home)
         is_home = cwd == home if cwd else True
-        return web.json_response({"cwd": cwd, "home": home, "is_home": is_home})
+        # Expose the configured timezone (IANA name or fixed offset) so the
+        # frontend can cache it and render readable times in the user's zone
+        # rather than the browser's local zone.
+        timezone = str(get_user_timezone())
+        return web.json_response({"cwd": cwd, "home": home, "is_home": is_home, "timezone": timezone})
 
     async def _handle_workspace_browse(self, request: web.Request) -> web.Response:
         """GET /api/workspace/browse?path=<dir> -- list directory contents."""

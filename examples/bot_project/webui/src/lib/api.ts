@@ -75,6 +75,8 @@ export interface WorkspaceInfo {
   cwd: string;
   home: string;
   is_home: boolean;
+  /** Configured timezone (IANA name or fixed offset) for readable-time rendering. */
+  timezone?: string;
 }
 
 export async function fetchWorkspace(): Promise<WorkspaceInfo> {

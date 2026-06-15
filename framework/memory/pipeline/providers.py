@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from framework.memory.pipeline.abc import SystemPromptProvider
+from framework.utils.timezone import get_user_timezone
 
 
 class BasePromptProvider(SystemPromptProvider):
@@ -33,10 +34,10 @@ class RuntimeProvider(SystemPromptProvider):
     """Runtime metadata — current date/hour and platform. Refreshes hourly."""
 
     async def _fetch_version(self) -> str:
-        return datetime.now().strftime("%Y-%m-%d-%H")
+        return datetime.now(get_user_timezone()).strftime("%Y-%m-%d-%H")
 
     async def _fetch_content(self) -> str:
-        current_time = datetime.now().strftime("%Y-%m-%d %Hh")
+        current_time = datetime.now(get_user_timezone()).strftime("%Y-%m-%d %Hh")
         platform_raw = sys.platform
         platform_name = {
             "win32": "Windows",

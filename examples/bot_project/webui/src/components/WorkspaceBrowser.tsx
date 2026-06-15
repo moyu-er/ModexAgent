@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, type FC } from "react";
+import { createPortal } from "react-dom";
 import { browseWorkspace, changeWorkspace, type BrowseEntry, type BrowseResult } from "../lib/api";
 
 export interface WorkspaceBrowserProps {
@@ -94,7 +95,10 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
 
   if (!open) return null;
 
-  return (
+  // Render via a portal at document.body so the modal escapes the Sidebar,
+  // whose CSS transform (mobile slide animation) would otherwise become the
+  // containing block for ``position: fixed`` and trap the dialog on the left.
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay-light dark:bg-overlay-dark">
       <div
         className="flex w-[520px] max-w-[90vw] max-h-[70vh] flex-col rounded-lg border border-card-border-light bg-content-bg-light shadow-lg dark:border-card-border-dark dark:bg-content-bg-dark"
@@ -229,6 +233,7 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };
