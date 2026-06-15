@@ -24,7 +24,7 @@ from bot.input_pipeline.assembly import build_im_pipeline
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.skill_parse import ParsedSkill, SkillRegistry
 from bot.webui.transcript_store import JSONLTranscriptStore
-from framework.core.session_id import SessionId, SessionIdFactory
+from framework.core.session_id import SessionInfo, SessionIdFactory
 from framework.core.types import InputMessage
 from framework.input_pipeline.envelope import AttachmentRef, UserInputEnvelope
 from framework.pipeline.adapters import InputAdapter
@@ -112,7 +112,7 @@ async def test_fan_in_forwards_messages_from_single_source() -> None:
 
     await fan_in.start()
     try:
-        qq.enqueue(InputMessage(content="hello", session=SessionId.from_str("u1", default_agent_name="main"), source="qq"))
+        qq.enqueue(InputMessage(content="hello", session=SessionInfo.from_str("u1", default_agent_name="main"), source="qq"))
 
         received: list[InputMessage] = []
         async for msg in fan_in.receive():
@@ -137,8 +137,8 @@ async def test_fan_in_forwards_from_multiple_sources() -> None:
 
     await fan_in.start()
     try:
-        qq.enqueue(InputMessage(content="QQ msg", session=SessionId.from_str("qq_1", default_agent_name="main"), source="qq"))
-        discord.enqueue(InputMessage(content="Discord msg", session=SessionId.from_str("dc_1", default_agent_name="main"), source="discord"))
+        qq.enqueue(InputMessage(content="QQ msg", session=SessionInfo.from_str("qq_1", default_agent_name="main"), source="qq"))
+        discord.enqueue(InputMessage(content="Discord msg", session=SessionInfo.from_str("dc_1", default_agent_name="main"), source="discord"))
 
         received: list[InputMessage] = []
         async for msg in fan_in.receive():
@@ -163,9 +163,9 @@ async def test_fan_in_forwards_sequential_messages() -> None:
 
     await fan_in.start()
     try:
-        qq.enqueue(InputMessage(content="first", session=SessionId.from_str("u1", default_agent_name="main"), source="qq"))
-        qq.enqueue(InputMessage(content="second", session=SessionId.from_str("u1", default_agent_name="main"), source="qq"))
-        qq.enqueue(InputMessage(content="third", session=SessionId.from_str("u1", default_agent_name="main"), source="qq"))
+        qq.enqueue(InputMessage(content="first", session=SessionInfo.from_str("u1", default_agent_name="main"), source="qq"))
+        qq.enqueue(InputMessage(content="second", session=SessionInfo.from_str("u1", default_agent_name="main"), source="qq"))
+        qq.enqueue(InputMessage(content="third", session=SessionInfo.from_str("u1", default_agent_name="main"), source="qq"))
 
         received: list[InputMessage] = []
         async for msg in fan_in.receive():

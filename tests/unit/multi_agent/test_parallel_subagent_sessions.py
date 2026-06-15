@@ -20,7 +20,7 @@ import asyncio
 import pytest
 
 from framework.core.agent import AgentContext
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 from framework.core.tool_manager import InMemoryToolManager
 from framework.memory.history import ListMessageHistory
 from framework.messaging.broker import BrokerMessage, MessageBroker
@@ -127,7 +127,7 @@ def _make_context(
         system_prompt="test",
         history=ListMessageHistory([]),
         tool_manager=InMemoryToolManager(),
-        session=SessionId(
+        session=SessionInfo(
             session_id=session_str,
             agent_name=agent_name,
             metadata=metadata,

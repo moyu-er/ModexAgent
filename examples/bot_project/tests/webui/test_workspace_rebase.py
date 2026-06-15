@@ -16,7 +16,7 @@ from bot.service.web_ui_service import WebUIService
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import UserMessageEvent
 from bot.webui.transcript_store import JSONLTranscriptStore
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 
 
 def test_transcript_store_rebase_switches_write_target() -> None:
@@ -82,7 +82,7 @@ def test_relation_store_rebase_switches_write_target() -> None:
             pool_resolver=lambda s: "main",
         )
 
-        child_a = SessionId(
+        child_a = SessionInfo(
             session_id="conv.main.child", agent_name="child",
             parent_session_id="conv.main"
 )
@@ -97,7 +97,7 @@ def test_relation_store_rebase_switches_write_target() -> None:
         # Reading before any write in B should not find the old session.
         assert asyncio.run(store.get("conv.main.child")) is None
 
-        child_b = SessionId(
+        child_b = SessionInfo(
             session_id="conv-b.main.child", agent_name="child",
             parent_session_id="conv-b.main"
 )
@@ -146,7 +146,7 @@ def test_web_ui_service_update_session_stores_rebases_stores() -> None:
         assert events[0].content == "other"
 
         # Session store also follows the rebase.
-        child = SessionId(
+        child = SessionInfo(
             session_id="conv.main.child", agent_name="child",
             parent_session_id="conv.main"
 )

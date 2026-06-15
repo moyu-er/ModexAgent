@@ -16,7 +16,7 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from bot.adapters.fan_in import FanInInputAdapter
 from bot.adapters.web_socket import WebSocketInputAdapter
-from bot.service.pool_router import PoolSessionStore
+from bot.service.pool_router import PoolRouter, PoolSessionStore
 from bot.webui.server import (
     WebUIServer,
     _new_uuid_prefix,
@@ -370,16 +370,28 @@ async def test_fan_in_propagates_to_all_sources() -> None:
 @pytest.mark.asyncio
 async def test_pool_mapping_survives_server_recreation() -> None:
     """Pool mapping saved to disk must survive server restart."""
+    from bot.service.session_store import WorkspacePoolSessionStore
+    from framework.core.session_id import SessionIdFactory
+
     data_dir = Path(tempfile.mkdtemp())
+    agent_pool_map = {"main": "main", "coding": "coding"}
+    factory = SessionIdFactory()
+
     # First server instance: create a session via API and send a message so
     # the transcript is persisted (empty sessions are not persisted).
     inp1 = WebSocketInputAdapter()
     store1 = WorkspaceScopedTranscriptStore(data_dir, lambda: "")
-    store1.set_agent_pool_map({"main": "main", "coding": "coding"})
+    store1.set_agent_pool_map(agent_pool_map)
     server1 = WebUIServer(inp1, store1, static_dist=None, data_dir=data_dir)
     server1.set_workspace_index(store1)
-    server1.set_agent_pool_map({"main": "main", "coding": "coding"})
+    server1.set_agent_pool_map(agent_pool_map)
     server1.set_pool_agent_names(["main", "coding"])
+    session_store1 = WorkspacePoolSessionStore(
+        base_dir=data_dir,
+        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+    )
+    server1.set_session_store(session_store1)
+    server1.set_session_factory(factory)
     from tests.webui._pipeline_fixture import attach_default_pipeline
     attach_default_pipeline(server1, store1, inp1)
     client1 = TestClient(TestServer(server1.app))
@@ -412,11 +424,16 @@ async def test_pool_mapping_survives_server_recreation() -> None:
     # Second server instance: must load session from disk.
     inp2 = WebSocketInputAdapter()
     store2 = WorkspaceScopedTranscriptStore(data_dir, lambda: "")
-    store2.set_agent_pool_map({"main": "main", "coding": "coding"})
+    store2.set_agent_pool_map(agent_pool_map)
     server2 = WebUIServer(inp2, store2, static_dist=None, data_dir=data_dir)
     server2.set_workspace_index(store2)
-    server2.set_agent_pool_map({"main": "main", "coding": "coding"})
+    server2.set_agent_pool_map(agent_pool_map)
     server2.set_pool_agent_names(["main", "coding"])
+    session_store2 = WorkspacePoolSessionStore(
+        base_dir=data_dir,
+        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+    )
+    server2.set_session_store(session_store2)
     client2 = TestClient(TestServer(server2.app))
     await client2.start_server()
     try:
@@ -740,10 +757,20 @@ async def test_conversations_survive_pool_switching() -> None:
 
     Regression test for: switching pool → sidebar empty → switching back → still empty.
     """
+    from bot.service.session_store import WorkspacePoolSessionStore
+    from framework.core.session_id import SessionInfo, now_ms
+
     data_dir = Path(tempfile.mkdtemp())
     server, inp = _make_server(data_dir)
     callback, real_store, calls = _make_real_callback(data_dir)
     server.set_pool_switch_callback(callback)
+
+    agent_pool_map = {"main": "main", "coding": "coding"}
+    session_store = WorkspacePoolSessionStore(
+        base_dir=data_dir,
+        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+    )
+    server.set_session_store(session_store)
 
     from tests.webui._pipeline_fixture import attach_default_pipeline
     attach_default_pipeline(server, server._store, inp, pool_session_store=real_store)
@@ -755,7 +782,12 @@ async def test_conversations_survive_pool_switching() -> None:
 
         # ── Create and message main-pool conversation ──
         resp = await client.post("/api/sessions", json={"pool": "main"})
-        main_conv = (await resp.json())["session_id"].split(".")[0]
+        main_sid = (await resp.json())["session_id"]
+        main_conv = main_sid.split(".")[0]
+        await session_store.save(SessionInfo(
+            session_id=main_sid, agent_name="main",
+            created_at=now_ms(), updated_at=now_ms(),
+        ))
         await ws.send_json({"action": "attach", "session_id": f"{main_conv}.main"})
         _unwrap_envelope(await ws.receive_json())
         await ws.send_json({
@@ -767,7 +799,12 @@ async def test_conversations_survive_pool_switching() -> None:
 
         # ── Create and message coding-pool conversation ──
         resp = await client.post("/api/sessions", json={"pool": "coding"})
-        coding_conv = (await resp.json())["session_id"].split(".")[0]
+        coding_sid = (await resp.json())["session_id"]
+        coding_conv = coding_sid.split(".")[0]
+        await session_store.save(SessionInfo(
+            session_id=coding_sid, agent_name="coding",
+            created_at=now_ms(), updated_at=now_ms(),
+        ))
         await ws.send_json({"action": "attach", "session_id": f"{coding_conv}.coding"})
         _unwrap_envelope(await ws.receive_json())
         await ws.send_json({
@@ -815,10 +852,20 @@ async def test_conversation_visible_after_first_message() -> None:
     """A conversation created via WS attach + send_message must appear in
     /api/sessions after the first message. Empty (no-message) sessions are
     client-side only and do NOT appear in the server session list."""
+    from bot.service.session_store import WorkspacePoolSessionStore
+    from framework.core.session_id import SessionInfo, now_ms
+
     data_dir = Path(tempfile.mkdtemp())
     server, inp = _make_server(data_dir)
     callback, real_store, calls = _make_real_callback(data_dir)
     server.set_pool_switch_callback(callback)
+
+    agent_pool_map = {"main": "main", "coding": "coding"}
+    session_store = WorkspacePoolSessionStore(
+        base_dir=data_dir,
+        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+    )
+    server.set_session_store(session_store)
 
     from tests.webui._pipeline_fixture import attach_default_pipeline
     attach_default_pipeline(server, server._store, inp, pool_session_store=real_store)
@@ -851,6 +898,14 @@ async def test_conversation_visible_after_first_message() -> None:
         await ws.send_json({"action": "send_message", "session_id": coding_sid, "content": "hello coding"})
         _unwrap_envelope(await ws.receive_json(timeout=2))
 
+        # Save coding session to the store after first message.
+        await session_store.save(SessionInfo(
+            session_id=coding_sid,
+            agent_name="coding",
+            created_at=now_ms(),
+            updated_at=now_ms(),
+        ))
+
         # After first message, coding appears
         resp = await client.get("/api/sessions")
         sessions = await resp.json()
@@ -861,6 +916,14 @@ async def test_conversation_visible_after_first_message() -> None:
         # Send first message in main
         await ws.send_json({"action": "send_message", "session_id": main_sid, "content": "hello main"})
         _unwrap_envelope(await ws.receive_json(timeout=2))
+
+        # Save main session to the store after first message.
+        await session_store.save(SessionInfo(
+            session_id=main_sid,
+            agent_name="main",
+            created_at=now_ms(),
+            updated_at=now_ms(),
+        ))
 
         # After first message, main also appears
         resp = await client.get("/api/sessions")
@@ -883,11 +946,22 @@ async def test_sessions_includes_external_adapter_conversations() -> None:
 
     This is the root cause of: "IM conversations can't be loaded".
     """
+    from bot.service.session_store import WorkspacePoolSessionStore
+    from bot.webui.events import UserMessageEvent
+    from framework.core.session_id import SessionInfo, now_ms
+
     data_dir = Path(tempfile.mkdtemp())
     server, inp = _make_server(data_dir)
 
+    # Inject session store for session listing.
+    agent_pool_map = {"main": "main", "coding": "coding"}
+    session_store = WorkspacePoolSessionStore(
+        base_dir=data_dir,
+        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+    )
+    server.set_session_store(session_store)
+
     # ── Simulate QQ adapter writing to the shared transcript store ──
-    from bot.webui.events import UserMessageEvent
 
     qq_conv_id = "qq_user_12345"
     qq_sid = f"{qq_conv_id}.main"
@@ -898,9 +972,13 @@ async def test_sessions_includes_external_adapter_conversations() -> None:
     )
     server._store.append(qq_sid, event)
 
-    # Before the fix: _conversations was seeded ONCE at __init__,
-    # before QQ wrote to the store.  QQ conversations were invisible.
-    # After the fix: _handle_sessions unions store.list_conversations().
+    # Save QQ session to the session store so it appears in listing.
+    await session_store.save(SessionInfo(
+        session_id=qq_sid,
+        agent_name="main",
+        created_at=now_ms(),
+        updated_at=now_ms(),
+    ))
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
@@ -929,3 +1007,69 @@ async def test_sessions_includes_external_adapter_conversations() -> None:
 
     finally:
         await client.close()
+
+
+# ── Test 14: PoolRouter forwards full session id so AgentPool reuses it ──
+
+
+@pytest.mark.asyncio
+async def test_pool_router_forwards_agent_session_id() -> None:
+    """PoolRouter must include ``agent_session_id`` in the BrokerMessage it sends
+    to the pool.  Without it, AgentPool's ``from_broker_message`` returns None,
+    falls back to ``_dispatch_raw_broker_message``, and re-encodes the
+    conversation_id — creating a brand-new session instead of routing to the
+    existing one.
+    """
+    from framework.core.session_id import SessionInfo
+    from framework.core.types import InputMessage
+    from framework.messaging.broker import BrokerMessage
+
+    data_dir = Path(tempfile.mkdtemp())
+    session_store = PoolSessionStore(data_dir)
+
+    # Mock broker that captures sent messages
+    sent_messages: list[tuple[Any, BrokerMessage]] = []
+
+    class _MockBroker:
+        async def send_to(self, address: Any, msg: BrokerMessage) -> None:
+            sent_messages.append((address, msg))
+
+    class _MockPool:
+        main_agent_name = "coding"
+        main_address = "pool:coding"
+
+    router = PoolRouter(
+        input_adapter=MagicMock(),
+        broker=_MockBroker(),
+        pools={"coding": _MockPool()},
+        session_store=session_store,
+        default_pool="main",
+    )
+
+    existing_sid = "legacy123.coding"
+    await router._route_to_pool(
+        InputMessage(
+            content="hello",
+            session=SessionInfo(
+                session_id=existing_sid,
+                agent_name="coding",
+            ),
+            source="websocket",
+            channel="websocket",
+        ),
+        _MockPool(),
+    )
+
+    assert len(sent_messages) == 1
+    address, broker_msg = sent_messages[0]
+    assert address == "pool:coding"
+    assert broker_msg.headers.get("agent_session_id") == existing_sid, (
+        f"PoolRouter must forward existing session id in headers; "
+        f"got {broker_msg.headers!r}"
+    )
+    assert broker_msg.payload.get("agent_session_id") == existing_sid, (
+        f"PoolRouter should also set agent_session_id in payload for robustness; "
+        f"got {broker_msg.payload!r}"
+    )
+    assert broker_msg.payload.get("session_id") == existing_sid
+    assert broker_msg.headers.get("conversation_id") == "legacy123"

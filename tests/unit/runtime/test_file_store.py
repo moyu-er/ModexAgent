@@ -7,7 +7,7 @@ from framework.memory.core.message import ChatMessage
 from framework.runtime.codec import RuntimeStateCodecRegistry
 from framework.runtime.enums import AgentKind, MessageDeltaSource, SnapshotReason, TurnPhase
 from framework.runtime.models import MessageDelta, ResumePoint, StateQueryScope, TurnIdentity, TurnSnapshot
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 
 
 class _FakeCodec:
@@ -36,7 +36,7 @@ class _FakeCodec:
         idata = payload["identity"]
         identity = TurnIdentity(
             agent_id=idata["agent_id"],
-            session=SessionId.from_str(idata["session"]),
+            session=SessionInfo.from_str(idata["session"]),
             turn_id=idata["turn_id"],
         )
         return TurnSnapshot(
@@ -63,7 +63,7 @@ async def test_json_file_turn_store_save_load_delete(tmp_path, registry) -> None
     from framework.runtime.store import JsonFileTurnStateStore
 
     store = JsonFileTurnStateStore(tmp_path, registry)
-    identity = TurnIdentity(agent_id="bot", session=SessionId.from_str("group_1"), turn_id="t1")
+    identity = TurnIdentity(agent_id="bot", session=SessionInfo.from_str("group_1"), turn_id="t1")
     snapshot = TurnSnapshot(
         identity=identity,
         agent_kind=AgentKind.REACT,
@@ -98,8 +98,8 @@ async def test_json_file_turn_store_handles_path_sanitization(tmp_path, registry
 
     store = JsonFileTurnStateStore(tmp_path, registry)
 
-    first = TurnIdentity(agent_id="bot", session=SessionId.from_str("a_b"), turn_id="t1")
-    second = TurnIdentity(agent_id="bot", session=SessionId.from_str("a:b"), turn_id="t1")
+    first = TurnIdentity(agent_id="bot", session=SessionInfo.from_str("a_b"), turn_id="t1")
+    second = TurnIdentity(agent_id="bot", session=SessionInfo.from_str("a:b"), turn_id="t1")
 
     snapshot_a = TurnSnapshot(
         identity=first,

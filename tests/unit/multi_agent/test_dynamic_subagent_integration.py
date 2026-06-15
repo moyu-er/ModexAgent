@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 from framework.core.agent import AgentContext
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 from framework.multi_agent.comm_kind import AgentCommKind
 from framework.multi_agent.message_xml import build_agent_message, build_agent_result
 from framework.multi_agent.template import AgentTemplate
@@ -211,7 +211,7 @@ class TestInvocationIdNullCreatesNewSubagent:
                 system_prompt="",
                 history=MagicMock(),
                 tool_manager=MagicMock(),
-                session=SessionId.from_str("conv-1.main"),
+                session=SessionInfo.from_str("conv-1.main"),
                 comm_kind=AgentCommKind.NORMAL,
             )
 
@@ -250,7 +250,7 @@ class TestInvocationIdNullCreatesNewSubagent:
             system_prompt="",
             history=MagicMock(),
             tool_manager=MagicMock(),
-            session=SessionId.from_str("conv-1.main"),
+            session=SessionInfo.from_str("conv-1.main"),
             comm_kind=AgentCommKind.NORMAL,
         )
 
@@ -287,7 +287,7 @@ class TestInvocationIdNullCreatesNewSubagent:
             system_prompt="",
             history=MagicMock(),
             tool_manager=MagicMock(),
-            session=SessionId.from_str("conv-1.main"),
+            session=SessionInfo.from_str("conv-1.main"),
             comm_kind=AgentCommKind.NORMAL,
         )
 
@@ -367,7 +367,7 @@ class TestSubagentIdentityResolution:
             system_prompt="",
             history=MagicMock(),
             tool_manager=MagicMock(),
-            session=SessionId.from_str("conv-1.helper"),
+            session=SessionInfo.from_str("conv-1.helper"),
             comm_kind=AgentCommKind.SUBAGENT,
         )
         token = current_agent_context.set(ctx)
@@ -652,7 +652,7 @@ class TestAgentMessageXmlWrapping:
             system_prompt="",
             history=MagicMock(),
             tool_manager=MagicMock(),
-            session=SessionId.from_str("conv-1.main"),
+            session=SessionInfo.from_str("conv-1.main"),
             comm_kind=AgentCommKind.NORMAL,
         )
 
@@ -768,7 +768,7 @@ class TestSessionRoutingSameAgentDifferentInvocation:
                 system_prompt="",
                 history=MagicMock(),
                 tool_manager=MagicMock(),
-                session=SessionId.from_str("conv-1.main"),
+                session=SessionInfo.from_str("conv-1.main"),
                 comm_kind=AgentCommKind.NORMAL,
             )
 
@@ -1011,7 +1011,7 @@ class TestOutputMdInjection:
             system_prompt="",
             history=MagicMock(),
             tool_manager=MagicMock(),
-            session=SessionId.from_str("conv-1.main"),
+            session=SessionInfo.from_str("conv-1.main"),
             comm_kind=AgentCommKind.NORMAL,
         )
         result = await service.send_async(
@@ -1077,7 +1077,7 @@ class TestOutputMdInjection:
             system_prompt="",
             history=MagicMock(),
             tool_manager=MagicMock(),
-            session=SessionId.from_str("conv-1.main"),
+            session=SessionInfo.from_str("conv-1.main"),
             comm_kind=AgentCommKind.NORMAL,
         )
         await service.send_async(

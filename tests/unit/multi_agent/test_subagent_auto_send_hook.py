@@ -14,7 +14,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from framework.core.agent import AgentContext
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 from framework.core.constants import StopReason
 from framework.core.emitter import AgentResult
 from framework.core.tool_manager import InMemoryToolManager, ToolManagerConfig
@@ -37,12 +37,13 @@ def _make_bus(tmpdir: Path) -> LocalAgentMessageBus:
 def _make_context(
     session_id: str,
     agent_name: str = "worker",
-    invocation_id: str = "a1b2c3d4",
+    parent_session_id: str = "conv123.main",
+    invocation_id: str | None = None,
 ) -> AgentContext:
-    session = SessionId(
+    session = SessionInfo(
         session_id=session_id,
         agent_name=agent_name,
-        metadata={"invocation_id": invocation_id} if invocation_id else {},
+        parent_session_id=parent_session_id,
     )
     return AgentContext(
         system_prompt="test",
@@ -83,7 +84,7 @@ class TestSubagentAutoSendHookFinallyTurn:
     async def test_completed_with_output_sends_xml(self, tmp_path: Path):
         """OUTPUT.md exists → XML with output_status=written, is_normal=true."""
         runtime_dir = tmp_path / "runtime"
-        session_id = "conv123.worker:a1b2c3d4"
+        session_id = "a1b2c3d4.worker"
 
         bus = _make_bus(tmp_path)
         hook = SubagentAutoSendHook(
@@ -110,7 +111,7 @@ class TestSubagentAutoSendHookFinallyTurn:
     async def test_error_crash_sends_hint(self, tmp_path: Path):
         """Error result → is_normal=false, crash hint."""
         runtime_dir = tmp_path / "runtime"
-        session_id = "conv123.worker:a1b2c3d4"
+        session_id = "a1b2c3d4.worker"
 
         bus = _make_bus(tmp_path)
         hook = SubagentAutoSendHook(
@@ -140,7 +141,7 @@ class TestSubagentAutoSendHookFinallyTurn:
     async def test_max_iterations_sends_hint(self, tmp_path: Path):
         """max_iterations → is_normal=false, step limit hint."""
         runtime_dir = tmp_path / "runtime"
-        session_id = "conv123.worker:a1b2c3d4"
+        session_id = "a1b2c3d4.worker"
 
         bus = _make_bus(tmp_path)
         hook = SubagentAutoSendHook(
@@ -183,7 +184,7 @@ class TestSubagentAutoSendHookFinallyTurn:
     async def test_no_result_sends_error_notification(self, tmp_path: Path):
         """result=None → crash notification (subagent crashed)."""
         runtime_dir = tmp_path / "runtime"
-        session_id = "conv123.worker:a1b2c3d4"
+        session_id = "a1b2c3d4.worker"
 
         bus = _make_bus(tmp_path)
         hook = SubagentAutoSendHook(
@@ -206,7 +207,7 @@ class TestSubagentAutoSendHookFinallyTurn:
     async def test_output_status_missing_when_no_file(self, tmp_path: Path):
         """No OUTPUT.md → output_status=missing, hint about re-running."""
         runtime_dir = tmp_path / "runtime"
-        session_id = "conv123.worker:a1b2c3d4"
+        session_id = "a1b2c3d4.worker"
 
         # Do NOT create OUTPUT.md — Path.exists() returns False naturally
         bus = _make_bus(tmp_path)
@@ -228,10 +229,10 @@ class TestSubagentAutoSendHookFinallyTurn:
         assert "OUTPUT.md was not written" in _extract_xml_field(xml, "hint")
         assert _extract_xml_field(xml, "is_normal") == "false"
 
-    async def test_invocation_id_from_session_meta(self, tmp_path: Path):
-        """invocation_id is extracted from session_meta and included in XML."""
+    async def test_invocation_id_from_session_snowflake(self, tmp_path: Path):
+        """invocation_id is the session snowflake (literal external_id) and included in XML."""
         runtime_dir = tmp_path / "runtime"
-        session_id = "conv123.worker:abc12345"
+        session_id = "abc12345.worker"
 
         bus = _make_bus(tmp_path)
         hook = SubagentAutoSendHook(
@@ -240,7 +241,7 @@ class TestSubagentAutoSendHookFinallyTurn:
             parent_name="main",
             runtime_dir=runtime_dir,
         )
-        ctx = _make_context(session_id, invocation_id="abc12345")
+        ctx = _make_context(session_id)
         result = AgentResult(content="Done.")
 
         await hook.finally_turn(ctx, result)
@@ -253,7 +254,7 @@ class TestSubagentAutoSendHookFinallyTurn:
     async def test_think_tags_stripped_from_summary(self, tmp_path: Path):
         """Think tags in content are stripped before truncation."""
         runtime_dir = tmp_path / "runtime"
-        session_id = "conv123.worker:a1b2c3d4"
+        session_id = "a1b2c3d4.worker"
 
         bus = _make_bus(tmp_path)
         hook = SubagentAutoSendHook(
@@ -279,7 +280,7 @@ class TestSubagentAutoSendHookFinallyTurn:
     async def test_non_default_parent_name(self, tmp_path: Path):
         """parent_name != 'main' → inbox_key routes to correct parent."""
         runtime_dir = tmp_path / "runtime"
-        session_id = "conv123.worker:a1b2c3d4"
+        session_id = "a1b2c3d4.worker"
 
         bus = _make_bus(tmp_path)
         hook = SubagentAutoSendHook(
@@ -288,7 +289,7 @@ class TestSubagentAutoSendHookFinallyTurn:
             parent_name="qq_bot",
             runtime_dir=runtime_dir,
         )
-        ctx = _make_context(session_id)
+        ctx = _make_context(session_id, parent_session_id="conv123.qq_bot")
         result = AgentResult(content="Done.")
 
         await hook.finally_turn(ctx, result)

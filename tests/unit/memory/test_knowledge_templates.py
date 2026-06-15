@@ -77,7 +77,7 @@ async def test_knowledge_manager_skips_existing_files(tmp_path: Path):
     (tmp_path / "SOUL.md").write_text("template soul", encoding="utf-8")
 
     storage = AsyncMock()
-    # SOUL.md exists with content; USER.md and MEMORY.md are missing
+    # SOUL.md exists with content; USER.md and MEMORY.md are missing/empty
     storage.get = AsyncMock(
         side_effect=lambda key: {
             "SOUL.md": "existing soul",
@@ -95,8 +95,8 @@ async def test_knowledge_manager_skips_existing_files(tmp_path: Path):
 
     calls = {c.args[0]: c.args[1] for c in storage.set.call_args_list}
     assert "SOUL.md" not in calls  # non-empty existing → skipped
-    assert "USER.md" in calls      # missing → loaded from template
-    assert "MEMORY.md" in calls    # empty string → treated as empty, loaded from template
+    assert "USER.md" not in calls  # missing template + no fallback → skipped
+    assert "MEMORY.md" not in calls  # empty existing + no fallback → skipped
 
 
 async def test_knowledge_manager_handles_missing_template(tmp_path: Path):
@@ -120,7 +120,7 @@ async def test_knowledge_manager_handles_missing_template(tmp_path: Path):
 
 
 async def test_knowledge_manager_works_without_templates():
-    """When default_templates_dir is None, ensure_defaults still works."""
+    """When default_templates_dir is None and no defaults, ensure_defaults skips empty files."""
     manager = _make_manager(templates_dir=None)
     ctx = MemoryContext(session_id="s1", user_id="u1")
 
@@ -128,7 +128,5 @@ async def test_knowledge_manager_works_without_templates():
 
     storage = await manager._storage_factory(ctx)
     calls = {c.args[0]: c.args[1] for c in storage.set.call_args_list}
-    # All files created with empty string
-    assert calls["SOUL.md"] == ""
-    assert calls["USER.md"] == ""
-    assert calls["MEMORY.md"] == ""
+    # No templates and no defaults → nothing is written
+    assert calls == {}

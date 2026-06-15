@@ -5,12 +5,10 @@ PoolRouter -> session routing -> pool -> BrokerBridgeService -> output adapter.
 
 Scenarios covered:
 1. Normal message -> correct pool
-2. Pool switch -> session update -> confirmation
-3. Special commands (/approve, /deny, /continue) -> pass through to pool
-4. Switch to current pool (redundant but works)
-5. BrokerBridgeService routes output to adapter
-6. Approval state survives pool switch (shared TurnStateStore)
-7. Session persistence across restarts
+2. Pool set_pool persistence
+3. Reply / Output data flow
+4. Approval state survives pool switch (shared TurnStateStore)
+5. Session persistence across restarts
 """
 from __future__ import annotations
 
@@ -29,7 +27,7 @@ _BOT_PROJECT = Path(__file__).parent.parent.parent.parent / "examples" / "bot_pr
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 from framework.core.types import InputMessage, OutputMessage
 from framework.messaging.broker_memory import InMemoryMessageBroker
 from framework.messaging.broker import BrokerMessage
@@ -81,7 +79,7 @@ class _FakePool:
 
 
 def _msg(content: str, session_id: str = "sess-1") -> InputMessage:
-    return InputMessage(content=content, session=SessionId.from_str(session_id, default_agent_name="main"), channel="qq")
+    return InputMessage(content=content, session=SessionInfo.from_str(session_id, default_agent_name="main"), channel="qq")
 
 
 # ── Flow 1: Normal message -> correct pool ──
@@ -91,7 +89,6 @@ class TestNormalMessageRouting:
     async def test_message_routed_to_default_pool(self, tmp_path):
         from bot.service.pool_router import PoolRouter, PoolSessionStore
 
-        output = _CaptureOutput()
         broker = InMemoryMessageBroker()
         await broker.start()
 
@@ -112,7 +109,6 @@ class TestNormalMessageRouting:
 
         router = PoolRouter(
             input_adapter=_CaptureInput([_msg("hello world")]),
-            output_adapter=output,
             broker=broker,
             pools=pools,
             session_store=PoolSessionStore(tmp_path),
@@ -132,10 +128,9 @@ class TestNormalMessageRouting:
         assert routed[0].payload["content"] == "hello world"
 
     @pytest.mark.asyncio
-    async def test_message_routed_to_switched_pool(self, tmp_path):
+    async def test_message_routed_to_stored_pool(self, tmp_path):
         from bot.service.pool_router import PoolRouter, PoolSessionStore
 
-        output = _CaptureOutput()
         broker = InMemoryMessageBroker()
         await broker.start()
 
@@ -154,20 +149,18 @@ class TestNormalMessageRouting:
 
         capture_task = asyncio.create_task(_capture())
 
+        store = PoolSessionStore(tmp_path)
+        store.set("sess-1", "coding")
         router = PoolRouter(
-            input_adapter=_CaptureInput([
-                _msg("/coding"),          # switch to coding
-                _msg("review this"),      # goes to coding
-            ]),
-            output_adapter=output,
+            input_adapter=_CaptureInput([_msg("review this")]),
             broker=broker,
             pools=pools,
-            session_store=PoolSessionStore(tmp_path),
+            session_store=store,
             default_pool="main",
         )
 
         router_task = asyncio.create_task(router.run())
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.3)
         router_task.cancel()
         await broker.stop()
         capture_task.cancel()
@@ -175,24 +168,17 @@ class TestNormalMessageRouting:
             await router_task
             await capture_task
 
-        # Switch confirmation
-        switch_texts = [m.content for m, _ in output.sent if "switch to" in m.content]
-        assert len(switch_texts) >= 1
-        assert "coding" in switch_texts[0]
-
-        # Normal message routed to coding pool
         assert len(routed) >= 1, f"Expected routed message to coding, got {len(routed)}"
         assert routed[0].payload["content"] == "review this"
 
 
-# ── Flow 2: Pool switch (including to current pool) ──
+# ── Flow 2: Pool switch persistence ──
 
 class TestPoolSwitchFlow:
     @pytest.mark.asyncio
     async def test_switch_updates_session_store(self, tmp_path):
         from bot.service.pool_router import PoolRouter, PoolSessionStore
 
-        output = _CaptureOutput()
         broker = InMemoryMessageBroker()
         await broker.start()
 
@@ -200,47 +186,21 @@ class TestPoolSwitchFlow:
         store = PoolSessionStore(tmp_path)
         router = PoolRouter(
             input_adapter=_CaptureInput([]),
-            output_adapter=output,
             broker=broker,
             pools=pools,
             session_store=store,
             default_pool="main",
         )
 
-        await router._handle_switch("sess-xyz", "coding")
+        router.set_pool("sess-xyz", "coding")
         assert store.get("sess-xyz", "main") == "coding"
-
-    @pytest.mark.asyncio
-    async def test_switch_to_current_pool_sends_confirmation(self, tmp_path):
-        """Switching to the pool you're already in still sends confirmation."""
-        from bot.service.pool_router import PoolRouter, PoolSessionStore
-
-        output = _CaptureOutput()
-        broker = InMemoryMessageBroker()
-        await broker.start()
-
-        pools = {"main": _FakePool("main", "main")}
-        store = PoolSessionStore(tmp_path)
-        router = PoolRouter(
-            input_adapter=_CaptureInput([]),
-            output_adapter=output,
-            broker=broker,
-            pools=pools,
-            session_store=store,
-            default_pool="main",
-        )
-
-        await router._handle_switch("sess-1", "main")
-        assert store.get("sess-1", "main") == "main"
-        assert len(output.sent) == 1
-        assert "main" in output.sent[0][0].content
+        await broker.stop()
 
     @pytest.mark.asyncio
     async def test_switch_then_back(self, tmp_path):
-        """Switch main -> coding -> main."""
+        """Switch main -> coding -> main via set_pool."""
         from bot.service.pool_router import PoolRouter, PoolSessionStore
 
-        output = _CaptureOutput()
         broker = InMemoryMessageBroker()
         await broker.start()
 
@@ -248,107 +208,20 @@ class TestPoolSwitchFlow:
         store = PoolSessionStore(tmp_path)
         router = PoolRouter(
             input_adapter=_CaptureInput([]),
-            output_adapter=output,
             broker=broker,
             pools=pools,
             session_store=store,
             default_pool="main",
         )
 
-        await router._handle_switch("sess-1", "coding")
+        router.set_pool("sess-1", "coding")
         assert store.get("sess-1", "main") == "coding"
-        await router._handle_switch("sess-1", "main")
+        router.set_pool("sess-1", "main")
         assert store.get("sess-1", "main") == "main"
-
-
-# ── Flow 3: Special commands pass-through ──
-
-class TestSpecialCommandsPassThrough:
-    """Built-in commands (/approve, /deny, /continue) are NOT pool names,
-    so they pass through PoolRouter to the pool's CommandProcessor."""
-
-    @pytest.mark.asyncio
-    async def test_all_builtins_pass_through(self, tmp_path):
-        from bot.service.pool_router import PoolRouter, PoolSessionStore
-
-        pools = {"main": _FakePool("main", "main"), "coding": _FakePool("coding", "coding")}
-        router = PoolRouter(
-            input_adapter=_CaptureInput([]),
-            output_adapter=_CaptureOutput(),
-            broker=None,
-            pools=pools,
-            session_store=PoolSessionStore(tmp_path),
-            default_pool="main",
-        )
-
-        # None of these are pool names -> all pass through
-        assert router._extract_pool_command("/approve") is None
-        assert router._extract_pool_command("/deny") is None
-        assert router._extract_pool_command("/continue") is None
-
-    @pytest.mark.asyncio
-    async def test_skill_commands_pass_through(self, tmp_path):
-        from bot.service.pool_router import PoolRouter, PoolSessionStore
-
-        pools = {"main": _FakePool("main", "main")}
-        router = PoolRouter(
-            input_adapter=_CaptureInput([]),
-            output_adapter=_CaptureOutput(),
-            broker=None,
-            pools=pools,
-            session_store=PoolSessionStore(tmp_path),
-            default_pool="main",
-        )
-
-        assert router._extract_pool_command("/weather 上海") is None
-        assert router._extract_pool_command("/github search") is None
-
-    @pytest.mark.asyncio
-    async def test_approve_routed_to_pool_after_switch(self, tmp_path):
-        """After /coding switch, /approve goes to coding pool, not main."""
-        from bot.service.pool_router import PoolRouter, PoolSessionStore
-
-        output = _CaptureOutput()
-        broker = InMemoryMessageBroker()
-        await broker.start()
-
-        pools = {"main": _FakePool("main", "main"), "coding": _FakePool("coding", "coding")}
-        coding_addr = pools["coding"].main_address
-        await broker.register_consumer(coding_addr)
-        routed: list[BrokerMessage] = []
-
-        async def _capture():
-            async for msg in broker.consume_stream(coding_addr):
-                routed.append(msg)
-
-        capture_task = asyncio.create_task(_capture())
-
-        router = PoolRouter(
-            input_adapter=_CaptureInput([
-                _msg("/coding"),      # switch
-                _msg("/approve"),     # goes to coding
-            ]),
-            output_adapter=output,
-            broker=broker,
-            pools=pools,
-            session_store=PoolSessionStore(tmp_path),
-            default_pool="main",
-        )
-
-        router_task = asyncio.create_task(router.run())
-        await asyncio.sleep(0.5)
-        router_task.cancel()
         await broker.stop()
-        capture_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await router_task
-            await capture_task
-
-        assert len(routed) >= 1
-        assert routed[0].payload["content"] == "/approve"
 
 
-# ── Flow 4: Reply / Output data flow ──
+# ── Flow 3: Reply / Output data flow ──
 
 class TestReplyOutputFlow:
     @pytest.mark.asyncio
@@ -423,7 +296,7 @@ class TestReplyOutputFlow:
         assert "coding result" in contents, f"coding result not in {contents}"
 
 
-# ── Flow 5: Approval cross-pool visibility ──
+# ── Flow 4: Approval cross-pool visibility ──
 
 class TestApprovalCrossPool:
     """Approval state is per-pool — each pool has its own TurnStateStore.
@@ -489,7 +362,7 @@ class TestApprovalCrossPool:
         pass
 
 
-# ── Flow 6: Session persistence ──
+# ── Flow 5: Session persistence ──
 
 class TestSessionPersistence:
     def test_session_mapping_persists_to_disk(self, tmp_path):

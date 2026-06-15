@@ -7,7 +7,7 @@ import pytest
 from framework.control.exceptions import PolicyViolation
 from framework.core.agent import AgentContext
 from framework.core.emitter import AgentResult
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 from framework.core.tool_manager import InMemoryToolManager, ToolManagerConfig
 from framework.hook import (
     FinallyTurnHook,
@@ -29,7 +29,7 @@ def _make_minimal_context() -> AgentContext:
         system_prompt="test",
         history=ListMessageHistory(),
         tool_manager=InMemoryToolManager(config=ToolManagerConfig()),
-        session=SessionId.from_str("test.agent"),
+        session=SessionInfo.from_str("test.agent"),
     )
 
 

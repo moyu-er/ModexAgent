@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import tempfile
 from pathlib import Path
@@ -132,6 +133,9 @@ async def test_no_static_fallback() -> None:
 @pytest.mark.asyncio
 async def test_sessions_list_includes_pool() -> None:
     """GET /api/sessions returns one entry per session with session_id and pool."""
+    from bot.service.session_store import WorkspacePoolSessionStore
+    from framework.core.session_id import SessionIdFactory
+
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
     store = WorkspaceScopedTranscriptStore(data_dir, lambda: "")
@@ -143,6 +147,14 @@ async def test_sessions_list_includes_pool() -> None:
     server.set_agent_pool_map({"coding": "coding", "main": "main"})
 
     server.set_pool_agent_names(["main", "coding"])
+    agent_pool_map = {"coding": "coding", "main": "main"}
+    factory = SessionIdFactory()
+    session_store = WorkspacePoolSessionStore(
+        base_dir=data_dir,
+        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+    )
+    server.set_session_store(session_store)
+    server.set_session_factory(factory)
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
@@ -161,6 +173,9 @@ async def test_sessions_list_includes_pool() -> None:
         attached2 = _unwrap_envelope(await ws.receive_json())
         assert attached2["event"] == "attached"
         s2_sid = attached2["session_id"]
+
+        # Let fire-and-forget session saves complete.
+        await asyncio.sleep(0.1)
 
         # Add transcript data to the server's workspace-scoped store.
         from bot.webui.events import UserMessageEvent
@@ -349,10 +364,15 @@ async def test_ws_attach_restores_pool_routing() -> None:
 @pytest.mark.asyncio
 async def test_pool_mapping_persistence_across_restart() -> None:
     """Pool mapping survives server restart via physical transcript layout."""
+    from bot.service.session_store import WorkspacePoolSessionStore
+    from framework.core.session_id import SessionInfo, now_ms
+
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
     store = WorkspaceScopedTranscriptStore(data_dir, lambda: "")
     store.set_agent_pool_map({"main": "main", "coding": "coding"})
+
+    agent_pool_map = {"main": "main", "coding": "coding"}
 
     # First server instance — create a session in the coding pool and send a
     # message so the transcript is persisted to disk (empty sessions are not).
@@ -360,8 +380,13 @@ async def test_pool_mapping_persistence_across_restart() -> None:
         input_adapter, store, static_dist=None, data_dir=data_dir
     )
     server1.set_workspace_index(store)
-    server1.set_agent_pool_map({"main": "main", "coding": "coding"})
+    server1.set_agent_pool_map(agent_pool_map)
     server1.set_pool_agent_names(["main", "coding"])
+    session_store1 = WorkspacePoolSessionStore(
+        base_dir=data_dir,
+        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+    )
+    server1.set_session_store(session_store1)
     from tests.webui._pipeline_fixture import attach_default_pipeline
     attach_default_pipeline(server1, store, input_adapter)
     client1 = TestClient(TestServer(server1.app))
@@ -373,6 +398,14 @@ async def test_pool_mapping_persistence_across_restart() -> None:
         attached = _unwrap_envelope(await ws.receive_json())
         assert attached["event"] == "attached"
         session_id = attached["session_id"]
+
+        # Save session to the session store so server2 can list it.
+        await session_store1.save(SessionInfo(
+            session_id=session_id,
+            agent_name="coding",
+            created_at=now_ms(),
+            updated_at=now_ms(),
+        ))
 
         await ws.send_json({
             "action": "send_message",
@@ -393,13 +426,18 @@ async def test_pool_mapping_persistence_across_restart() -> None:
 
     # Second server instance — fresh store scanning the same disk layout.
     store2 = WorkspaceScopedTranscriptStore(data_dir, lambda: "")
-    store2.set_agent_pool_map({"main": "main", "coding": "coding"})
+    store2.set_agent_pool_map(agent_pool_map)
     server2 = WebUIServer(
         input_adapter, store2, static_dist=None, data_dir=data_dir
     )
     server2.set_workspace_index(store2)
-    server2.set_agent_pool_map({"main": "main", "coding": "coding"})
+    server2.set_agent_pool_map(agent_pool_map)
     server2.set_pool_agent_names(["main", "coding"])
+    session_store2 = WorkspacePoolSessionStore(
+        base_dir=data_dir,
+        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+    )
+    server2.set_session_store(session_store2)
     client2 = TestClient(TestServer(server2.app))
     await client2.start_server()
     try:
@@ -423,7 +461,9 @@ async def test_sessions_persist_across_pool_switch_and_qq_conversation() -> None
     switching back to main the list is empty; switching back to coding is
     also empty. This test pins the backend contract.
     """
+    from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
+    from framework.core.session_id import SessionInfo, now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -435,6 +475,13 @@ async def test_sessions_persist_across_pool_switch_and_qq_conversation() -> None
     server.set_workspace_index(store)
     server.set_pool_agent_names(["main", "coding"])
     server.set_agent_pool_map({"main": "main", "coding": "coding"})
+
+    agent_pool_map = {"main": "main", "coding": "coding"}
+    session_store = WorkspacePoolSessionStore(
+        base_dir=data_dir,
+        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+    )
+    server.set_session_store(session_store)
 
     from tests.webui._pipeline_fixture import attach_default_pipeline
     attach_default_pipeline(server, store, input_adapter)
@@ -451,6 +498,14 @@ async def test_sessions_persist_across_pool_switch_and_qq_conversation() -> None
         )
         attached = _unwrap_envelope(await ws.receive_json())
         assert attached["event"] == "attached"
+
+        # Save coding session to the session store.
+        await session_store.save(SessionInfo(
+            session_id=coding_sid,
+            agent_name="coding",
+            created_at=now_ms(),
+            updated_at=now_ms(),
+        ))
 
         await ws.send_json(
             {
@@ -481,6 +536,14 @@ async def test_sessions_persist_across_pool_switch_and_qq_conversation() -> None
 )
 )
 
+        # Save QQ session to the session store.
+        await session_store.save(SessionInfo(
+            session_id=qq_sid,
+            agent_name="main",
+            created_at=now_ms(),
+            updated_at=now_ms(),
+        ))
+
         resp = await client.get("/api/sessions")
         sessions = await resp.json()
         by_sid = {str(s["session_id"]): s for s in sessions}
@@ -498,6 +561,13 @@ async def test_sessions_persist_across_pool_switch_and_qq_conversation() -> None
         )
         attached = _unwrap_envelope(await ws.receive_json())
         assert attached["event"] == "attached"
+        # Save main session to the session store.
+        await session_store.save(SessionInfo(
+            session_id=main_sid,
+            agent_name="main",
+            created_at=now_ms(),
+            updated_at=now_ms(),
+        ))
         await ws.send_json(
             {
                 "action": "send_message",
@@ -575,7 +645,7 @@ async def test_sessions_list_includes_subagent_with_parent_relation() -> None:
     """GET /api/sessions includes subagent sessions that have parent relationships."""
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
-    from framework.core.session_id import SessionId
+    from framework.core.session_id import SessionInfo
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -585,20 +655,20 @@ async def test_sessions_list_includes_subagent_with_parent_relation() -> None:
         input_adapter, store, static_dist=None, data_dir=data_dir
     )
     server.set_workspace_index(store)
-    server.set_agent_pool_map({"coding": "coding", "main": "main"})
-    server.set_pool_agent_names(["main", "coding"])
+    server.set_agent_pool_map({"coding": "coding", "main": "main", "reviewer": "coding"})
+    server.set_pool_agent_names(["main", "coding", "reviewer"])
 
-    # Create session store and record parent→child via SessionId
+    # Create session store and record parent→child via SessionInfo
     parent_sid = "abc.coding"
     child_sid = "abc.coding.reviewer.ee11"
     session_store = WorkspacePoolSessionStore(
         data_dir,
         pool_resolver=lambda s: "coding",
     )
-    parent_session = SessionId(
+    parent_session = SessionInfo(
         session_id=parent_sid, agent_name="coding"
 )
-    child_session = SessionId(
+    child_session = SessionInfo(
         session_id=child_sid, agent_name="reviewer",
         parent_session_id=parent_sid
 )
@@ -637,7 +707,9 @@ async def test_sessions_list_includes_subagent_with_parent_relation() -> None:
 @pytest.mark.asyncio
 async def test_api_messages_loads_subagent_transcript() -> None:
     """GET /api/sessions/{subagent_id}/messages loads subagent transcript events."""
+    from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
+    from framework.core.session_id import SessionInfo, now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -650,6 +722,13 @@ async def test_api_messages_loads_subagent_transcript() -> None:
     server.set_agent_pool_map({"coding": "coding", "reviewer": "coding"})
     server.set_pool_agent_names(["coding"])
 
+    # Session store so _resolve_agent finds correct agent_name for subagent.
+    session_store = WorkspacePoolSessionStore(
+        base_dir=data_dir,
+        pool_resolver=lambda s: "coding",
+    )
+    server.set_session_store(session_store)
+
     parent_sid = "abc.coding"
     child_sid = "abc.coding.reviewer.ee11"
 
@@ -658,6 +737,14 @@ async def test_api_messages_loads_subagent_transcript() -> None:
         UserMessageEvent(session_id=parent_sid, agent_name="coding", content="hi"))
     store.append(child_sid,
         UserMessageEvent(session_id=child_sid, agent_name="reviewer", content="review result"))
+
+    # Save subagent session to the store so _resolve_agent finds "reviewer".
+    await session_store.save(SessionInfo(
+        session_id=child_sid,
+        agent_name="reviewer",
+        created_at=now_ms(),
+        updated_at=now_ms(),
+    ))
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
@@ -861,6 +948,206 @@ async def test_ws_turn_end_streaming_stop_is_isolated() -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════
+# SessionInfo / legacy transcript fallback tests
+# ═══════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_ws_attach_existing_session_does_not_crash() -> None:
+    """Attaching to an already-created session_id must register the connection
+    and proactive pool sessions without referencing an undefined uuid_prefix_raw.
+
+    Regression: the new-conversation branch assigned ``uuid_prefix_raw``, but
+    the existing-session branch did not.  The proactive pool-agent loop then
+    referenced ``uuid_prefix_raw`` unconditionally and raised
+    ``UnboundLocalError``.
+    """
+    data_dir = Path(tempfile.mkdtemp())
+    input_adapter = WebSocketInputAdapter()
+    store = WorkspaceScopedTranscriptStore(data_dir, lambda: "")
+    server = WebUIServer(
+        input_adapter, store, static_dist=None, data_dir=data_dir
+    )
+    server.set_workspace_index(store)
+    server.set_pool_agent_names(["main", "coding"])
+
+    client = TestClient(TestServer(server.app))
+    await client.start_server()
+    try:
+        ws = await client.ws_connect("/ws")
+        await ws.send_json({"action": "attach", "session_id": "abc123.main"})
+        attached = _unwrap_envelope(await ws.receive_json())
+        assert attached["event"] == "attached"
+        assert attached["session_id"] == "abc123.main"
+
+        # Main session and proactive pool sessions must be registered.
+        assert "abc123.main" in input_adapter._connections
+        assert "abc123.coding" in input_adapter._connections
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_ws_attach_new_conversation_uses_stable_snowflake_for_pool_agents() -> None:
+    """When attaching with uuid_prefix + pool, proactive pool-agent session ids
+    must share the SAME encoded snowflake as the main session.
+
+    Regression: the loop re-encoded ``uuid_prefix_raw`` via the factory,
+    producing a different snowflake for pool-agent queues than the main
+    session's transcript/delta queue, so deltas were dropped.
+    """
+    from framework.core.session_id import SessionIdFactory
+
+    data_dir = Path(tempfile.mkdtemp())
+    input_adapter = WebSocketInputAdapter()
+    store = WorkspaceScopedTranscriptStore(data_dir, lambda: "")
+    server = WebUIServer(
+        input_adapter, store, static_dist=None, data_dir=data_dir
+    )
+    server.set_workspace_index(store)
+    server.set_pool_agent_names(["main", "coding"])
+    server.set_session_factory(SessionIdFactory())
+
+    client = TestClient(TestServer(server.app))
+    await client.start_server()
+    try:
+        ws = await client.ws_connect("/ws")
+        raw_prefix = _new_uuid_prefix()
+        await ws.send_json(
+            {"action": "attach", "uuid_prefix": raw_prefix, "pool": "coding"}
+        )
+        attached = _unwrap_envelope(await ws.receive_json())
+        assert attached["event"] == "attached"
+        main_sid: str = attached["session_id"]
+        snowflake = main_sid.split(".", 1)[0]
+
+        expected_coding_sid = f"{snowflake}.coding"
+        assert expected_coding_sid in input_adapter._delta_queues, (
+            f"Expected pool-agent queue {expected_coding_sid!r}, "
+            f"got queues: {list(input_adapter._delta_queues)}"
+        )
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_api_sessions_falls_back_to_transcripts_when_index_empty() -> None:
+    """GET /api/sessions derives sessions from transcript files when the
+    SessionInfo index has no record for them.
+
+    Regression: legacy workspaces only have ``.modex/sessions/<pool>/*.jsonl``
+    files and no ``.modex/session_index/``, so the session list was empty.
+    """
+    from bot.service.session_store import WorkspacePoolSessionStore
+    from bot.webui.events import UserMessageEvent
+    from framework.core.session_id import SessionIdFactory
+
+    data_dir = Path(tempfile.mkdtemp())
+    input_adapter = WebSocketInputAdapter()
+    store = WorkspaceScopedTranscriptStore(data_dir, lambda: "")
+    store.set_agent_pool_map({"coding": "coding", "main": "main"})
+    server = WebUIServer(
+        input_adapter, store, static_dist=None, data_dir=data_dir
+    )
+    server.set_workspace_index(store)
+    server.set_agent_pool_map({"coding": "coding", "main": "main"})
+    server.set_pool_agent_names(["main", "coding"])
+
+    # Empty session store — no SessionInfo index entries yet.
+    agent_pool_map = {"coding": "coding", "main": "main"}
+    session_store = WorkspacePoolSessionStore(
+        base_dir=data_dir,
+        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+    )
+    server.set_session_store(session_store)
+    server.set_session_factory(SessionIdFactory())
+
+    # Write a legacy transcript directly into the coding pool directory.
+    legacy_sid = "legacy123.coding"
+    store.append(
+        legacy_sid,
+        UserMessageEvent(
+            session_id=legacy_sid, agent_name="coding", content="hi"
+        ),
+    )
+
+    client = TestClient(TestServer(server.app))
+    await client.start_server()
+    try:
+        resp = await client.get("/api/sessions")
+        assert resp.status == 200
+        sessions = await resp.json()
+        by_sid = {s["session_id"]: s for s in sessions}
+        assert legacy_sid in by_sid, (
+            f"Legacy transcript session {legacy_sid!r} missing; "
+            f"sessions={sessions}"
+        )
+        assert by_sid[legacy_sid]["pool"] == "coding"
+        assert by_sid[legacy_sid]["parent_session_id"] is None
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_api_sessions_falls_back_preserves_index_entries() -> None:
+    """When a session exists in BOTH the SessionInfo index and transcripts,
+    the index entry wins (richer metadata), and the transcript is not duplicated.
+    """
+    from bot.service.session_store import WorkspacePoolSessionStore
+    from bot.webui.events import UserMessageEvent
+    from framework.core.session_id import SessionInfo, SessionIdFactory, now_ms
+
+    data_dir = Path(tempfile.mkdtemp())
+    input_adapter = WebSocketInputAdapter()
+    store = WorkspaceScopedTranscriptStore(data_dir, lambda: "")
+    store.set_agent_pool_map({"coding": "coding"})
+    server = WebUIServer(
+        input_adapter, store, static_dist=None, data_dir=data_dir
+    )
+    server.set_workspace_index(store)
+    server.set_agent_pool_map({"coding": "coding"})
+    server.set_pool_agent_names(["coding"])
+
+    agent_pool_map = {"coding": "coding"}
+    session_store = WorkspacePoolSessionStore(
+        base_dir=data_dir,
+        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+    )
+    server.set_session_store(session_store)
+    server.set_session_factory(SessionIdFactory())
+
+    indexed_sid = "idx456.coding"
+    await session_store.save(
+        SessionInfo(
+            session_id=indexed_sid,
+            agent_name="coding",
+            parent_session_id=None,
+            created_at=now_ms(),
+            updated_at=now_ms(),
+            metadata={"source": "index"},
+        )
+    )
+    store.append(
+        indexed_sid,
+        UserMessageEvent(
+            session_id=indexed_sid, agent_name="coding", content="hi"
+        ),
+    )
+
+    client = TestClient(TestServer(server.app))
+    await client.start_server()
+    try:
+        resp = await client.get("/api/sessions")
+        assert resp.status == 200
+        sessions = await resp.json()
+        assert len(sessions) == 1, f"Expected 1 session, got {sessions}"
+        assert sessions[0]["session_id"] == indexed_sid
+        assert sessions[0].get("metadata", {}).get("source") == "index"
+    finally:
+        await client.close()
+
+
+# ═══════════════════════════════════════════════════════════════════
 # Workspace API tests
 # ═══════════════════════════════════════════════════════════════════
 
@@ -871,6 +1158,8 @@ async def test_workspace_cd_switches_current_workspace() -> None:
     server's active store so that subsequent GET /api/sessions returns
     sessions from the NEW workspace, not the old one.
     """
+    from bot.service.session_store import WorkspacePoolSessionStore
+    from framework.core.session_id import SessionInfo, now_ms
     from framework.workspace.context import DefaultWorkspaceContext
 
     home = Path(tempfile.mkdtemp())
@@ -892,13 +1181,21 @@ async def test_workspace_cd_switches_current_workspace() -> None:
     server.set_agent_pool_map({"main": "main"})
     server.set_pool_agent_names(["main"])
 
-    # ── Register a workspace-switch callback that rebases the store ─
+    # Session store for session listing.
+    session_store = WorkspacePoolSessionStore(
+        base_dir=ws_ctx.data_dir / "sessions",
+        pool_resolver=lambda s: "main",
+    )
+    server.set_session_store(session_store)
+
+    # ── Register a workspace-switch callback that rebases both stores ─
     # This mirrors what BotService._on_ws_stop_and_rebuild does in production,
     # minus the heavy pool-memory/infrastructure rebuild.
     async def _on_switch(_old_dir: Path, new_dir: Path) -> None:
         sessions_dir = new_dir / "sessions"
         sessions_dir.mkdir(parents=True, exist_ok=True)
         store.rebase(sessions_dir)
+        session_store.rebase(sessions_dir)
 
     class _Adapter:
         def __init__(self, fn): self._fn = fn
@@ -922,6 +1219,14 @@ async def test_workspace_cd_switches_current_workspace() -> None:
             sid_a, UserMessageEvent(session_id=sid_a, agent_name="main", content="ws-a")
         )
 
+        # Save session to session store so it appears in listing.
+        await session_store.save(SessionInfo(
+            session_id=sid_a,
+            agent_name="main",
+            created_at=now_ms(),
+            updated_at=now_ms(),
+        ))
+
         # Verify session is visible in workspace A
         resp = await client.get("/api/sessions")
         sessions = await resp.json()
@@ -941,5 +1246,178 @@ async def test_workspace_cd_switches_current_workspace() -> None:
         assert sid_a not in sids_b, (
             f"workspace A session {sid_a} leaked into workspace B"
         )
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_api_sessions_includes_subagent_sessions() -> None:
+    """GET /api/sessions must return subagent sessions and expose their
+    parent_session_id so the frontend can render them under the parent.
+
+    Regression: the endpoint filtered to ``_pool_agent_names`` (main agents
+    only), so subagent sessions never appeared and the tree was flat.
+    """
+    from bot.service.session_store import WorkspacePoolSessionStore
+    from bot.webui.events import UserMessageEvent
+    from framework.core.session_id import SessionInfo, now_ms
+
+    data_dir = Path(tempfile.mkdtemp())
+    input_adapter = WebSocketInputAdapter()
+    store = WorkspaceScopedTranscriptStore(data_dir, lambda: "")
+    store.set_agent_pool_map({"coding": "coding", "reviewer": "coding"})
+    server = WebUIServer(
+        input_adapter, store, static_dist=None, data_dir=data_dir
+    )
+    server.set_workspace_index(store)
+    server.set_agent_pool_map({"coding": "coding", "reviewer": "coding"})
+    server.set_pool_agent_names(["coding"])
+
+    agent_pool_map = {"coding": "coding", "reviewer": "coding"}
+    session_store = WorkspacePoolSessionStore(
+        base_dir=data_dir,
+        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+    )
+    server.set_session_store(session_store)
+
+    parent_sid = "abc.coding"
+    child_sid = "abc.coding.reviewer.ee11"
+    await session_store.save(
+        SessionInfo(
+            session_id=parent_sid,
+            agent_name="coding",
+            created_at=now_ms(),
+            updated_at=now_ms(),
+        )
+    )
+    await session_store.save(
+        SessionInfo(
+            session_id=child_sid,
+            agent_name="reviewer",
+            parent_session_id=parent_sid,
+            created_at=now_ms(),
+            updated_at=now_ms(),
+        )
+    )
+    store.append(
+        child_sid,
+        UserMessageEvent(
+            session_id=child_sid, agent_name="reviewer", content="review done"
+        ),
+    )
+
+    client = TestClient(TestServer(server.app))
+    await client.start_server()
+    try:
+        resp = await client.get("/api/sessions")
+        assert resp.status == 200
+        sessions = await resp.json()
+        by_sid = {s["session_id"]: s for s in sessions}
+
+        assert parent_sid in by_sid, f"parent session missing: {sessions}"
+        assert child_sid in by_sid, (
+            f"subagent session missing; only main-agent sessions returned: {sessions}"
+        )
+        assert by_sid[child_sid]["parent_session_id"] == parent_sid
+        assert by_sid[child_sid]["pool"] == "coding"
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_api_sessions_includes_dynamic_subagent_instance() -> None:
+    """Dynamic subagent instances like ``reviewer-abc123`` inherit the pool
+    of their template type and must appear in the session list.
+    """
+    from bot.service.session_store import WorkspacePoolSessionStore
+    from framework.core.session_id import SessionInfo, now_ms
+
+    data_dir = Path(tempfile.mkdtemp())
+    input_adapter = WebSocketInputAdapter()
+    store = WorkspaceScopedTranscriptStore(data_dir, lambda: "")
+    store.set_agent_pool_map({"coding": "coding", "reviewer": "coding"})
+    server = WebUIServer(
+        input_adapter, store, static_dist=None, data_dir=data_dir
+    )
+    server.set_workspace_index(store)
+    server.set_agent_pool_map({"coding": "coding", "reviewer": "coding"})
+    server.set_pool_agent_names(["coding"])
+
+    agent_pool_map = {"coding": "coding", "reviewer": "coding"}
+    session_store = WorkspacePoolSessionStore(
+        base_dir=data_dir,
+        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+    )
+    server.set_session_store(session_store)
+
+    dynamic_sid = "abc.coding.reviewer-instance-7"
+    await session_store.save(
+        SessionInfo(
+            session_id=dynamic_sid,
+            agent_name="reviewer-instance-7",
+            parent_session_id="abc.coding",
+            created_at=now_ms(),
+            updated_at=now_ms(),
+        )
+    )
+
+    client = TestClient(TestServer(server.app))
+    await client.start_server()
+    try:
+        resp = await client.get("/api/sessions")
+        assert resp.status == 200
+        sessions = await resp.json()
+        sids = {s["session_id"] for s in sessions}
+        assert dynamic_sid in sids, (
+            f"Dynamic subagent instance not listed; sessions={sessions}"
+        )
+        by_sid = {s["session_id"]: s for s in sessions}
+        assert by_sid[dynamic_sid]["pool"] == "coding"
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_ws_attach_starts_forward_deltas_for_main_session() -> None:
+    """After attach, the main session MUST have an active _forward_deltas task
+    that drains the delta queue and pushes envelopes to the WebSocket client.
+
+    Regression test: _forward_deltas(session_id, ws) was dropped from _ws_attach
+    for the main session during the input-pipeline refactor.  Without it, agent
+    output is enqueued but never forwarded, so the frontend appears frozen.
+    """
+    ws_input = WebSocketInputAdapter()
+    output = WebSocketOutputAdapter(ws_input)
+    store = WorkspaceScopedTranscriptStore(Path(tempfile.mkdtemp()), lambda: "")
+    store.set_agent_pool_map({"main": "main"})
+    server = WebUIServer(ws_input, store, static_dist=None)
+    server.set_workspace_index(store)
+
+    client = TestClient(TestServer(server.app))
+    await client.start_server()
+    try:
+        ws = await client.ws_connect("/ws")
+        # Attach a main session (not pool agent, not subagent).
+        await ws.send_json({"action": "attach", "session_id": "web:main-sess.main"})
+        attached = _unwrap_envelope(await ws.receive_json())
+        assert attached["event"] == "attached"
+
+        # Create a WebBotEmitter for the main session and emit a delta.
+        from bot.webui.events import SessionMeta
+        emitter = WebBotEmitter(
+            output, "web:main-sess.main", config=EmitterConfig(),
+            session_meta_resolver=lambda: SessionMeta(pool="main", parent_session_id=None),
+        )
+        await emitter.emit_delta("streaming test for main session")
+
+        # The _forward_deltas task (started by _ws_attach) should drain the
+        # queue and send the delta to this WS client.
+        received_raw = await ws.receive_json(timeout=3)
+        received = _unwrap_envelope(received_raw)
+        assert received["event"] == "model_content_delta", (
+            f"Expected model_content_delta, got {received.get('event')}"
+        )
+        assert received["session_id"] == "web:main-sess.main"
+        assert received["text"] == "streaming test for main session"
     finally:
         await client.close()

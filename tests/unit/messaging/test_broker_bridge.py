@@ -1,7 +1,7 @@
 import asyncio
 import pytest
 
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 from framework.core.types import InputMessage, OutputMessage
 from framework.messaging.broker import Address, BrokerMessage
 from framework.messaging.broker_bridge import (
@@ -162,7 +162,7 @@ async def test_bridge_service_input_binding(broker):
     )
     await service.start()
 
-    mock_in.inject(InputMessage(content="from_qq", session=SessionId.from_str("s1", default_agent_name="main"), source="qq", sender_id="u1"))
+    mock_in.inject(InputMessage(content="from_qq", session=SessionInfo.from_str("s1", default_agent_name="main"), source="qq", sender_id="u1"))
 
     got = await asyncio.wait_for(broker.consume(bound_addr), timeout=0.5)
     assert got.payload["content"] == "from_qq"

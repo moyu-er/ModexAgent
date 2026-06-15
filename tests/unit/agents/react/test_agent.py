@@ -5,7 +5,7 @@ from framework.agents.react.agent import ReActAgent
 from framework.agents.react.graph import ReActGraph
 from framework.core.agent import AgentContext
 from framework.core.graph.engine import GraphEngine
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 from framework.core.tool_manager import InMemoryToolManager
 from framework.hook import HookRunner
 from framework.memory.history import ListMessageHistory
@@ -42,7 +42,7 @@ class TestReActAgent:
             system_prompt="Hi",
             history=ListMessageHistory(),
             tool_manager=InMemoryToolManager(),
-            session=SessionId.from_str("test.agent"),
+            session=SessionInfo.from_str("test.agent"),
         )
         emitter = _Emitter()
         try:
@@ -84,7 +84,7 @@ class TestReActAgentRuntime:
             system_prompt="test",
             history=ListMessageHistory(),
             tool_manager=InMemoryToolManager(),
-            session=SessionId.from_str("test.agent"),
+            session=SessionInfo.from_str("test.agent"),
         )
         emitter = _Emitter()
         try:
@@ -121,7 +121,7 @@ class TestReActAgentRuntime:
             system_prompt="test",
             history=ListMessageHistory(),
             tool_manager=InMemoryToolManager(),
-            session=SessionId.from_str("test.agent"),
+            session=SessionInfo.from_str("test.agent"),
         )
         emitter = _Emitter()
         try:

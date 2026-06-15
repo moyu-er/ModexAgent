@@ -7,7 +7,7 @@ import pytest
 from framework.control.channel import InMemoryControlChannel
 from framework.control.types import ControlCommand, ControlCommandType, ControlScope
 from framework.control.exceptions import AgentCancelled
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 from framework.hook.builtin.control_drain import (
     ControlDrainInterceptor,
     LlmCancelInterceptor,
@@ -17,8 +17,8 @@ from framework.hook.builtin.control_drain import (
 
 class _FakeContext:
     def __init__(self, session_id="test-session.main", turn_uuid=None):
-        from framework.core.session_id import SessionId
-        self.session = SessionId.from_str(session_id)
+        from framework.core.session_id import SessionInfo
+        self.session = SessionInfo.from_str(session_id)
         self.current_turn_uuid = turn_uuid
 
 
@@ -220,33 +220,33 @@ class TestLlmCancelInterceptor:
 
 
 class TestCanonicalSessionId:
-    """Verify SessionId.from_str() recovers agent_name from display strings."""
+    """Verify SessionInfo.from_str() recovers agent_name from display strings."""
 
     def test_raw_user_id_defaults_agent_name(self):
-        session = SessionId.from_str("30932BC02F825E64D069B1E67347C8FF")
+        session = SessionInfo.from_str("30932BC02F825E64D069B1E67347C8FF")
         assert session.session_id == "30932BC02F825E64D069B1E67347C8FF"
         assert session.agent_name == "unknown"
 
     def test_raw_user_id_with_default_agent_name(self):
-        session = SessionId.from_str(
+        session = SessionInfo.from_str(
             "30932BC02F825E64D069B1E67347C8FF", default_agent_name="main"
         )
         assert session.session_id == "30932BC02F825E64D069B1E67347C8FF"
         assert session.agent_name == "main"
 
     def test_canonical_parses_agent_name(self):
-        session = SessionId.from_str("user.main")
+        session = SessionInfo.from_str("user.main")
         assert session.session_id == "user.main"
         assert session.agent_name == "main"
         assert session.snowflake == "user"
 
 
 class TestEndToEndStopFlow:
-    """Full producer→channel→consumer /stop flow with SessionId objects."""
+    """Full producer→channel→consumer /stop flow with SessionInfo objects."""
 
     @pytest.mark.asyncio
     async def test_producer_adapter_id_consumer_agent_id_match(self):
-        """Producer and consumer use the same session_id — SessionId always
+        """Producer and consumer use the same session_id — SessionInfo always
         carries canonical form, so no normalize() step is needed."""
         channel = InMemoryControlChannel()
 
@@ -268,7 +268,7 @@ class TestEndToEndStopFlow:
 
     @pytest.mark.asyncio
     async def test_dedup_works_with_canonical_ids(self):
-        """Dedup via peek() uses SessionId canonical form."""
+        """Dedup via peek() uses SessionInfo canonical form."""
         channel = InMemoryControlChannel()
         raw_sid = "user123"
         canonical = f"{raw_sid}.main"

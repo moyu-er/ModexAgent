@@ -19,7 +19,7 @@ _BOT_PROJECT = Path(__file__).parent.parent.parent.parent / "examples" / "bot_pr
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 from framework.core.types import InputMessage, OutputMessage
 from framework.ioc.configs.app import AppConfig
 from framework.ioc.configs.llm import LLMConfig
@@ -39,7 +39,7 @@ class _StubInput(InputAdapter):
 
     async def receive(self) -> AsyncIterator[InputMessage]:
         if False:
-            yield InputMessage(content="", session=SessionId.from_str("", default_agent_name="main"))
+            yield InputMessage(content="", session=SessionInfo.from_str("", default_agent_name="main"))
 
     async def send_reply(self, msg: OutputMessage, session_id: str) -> None:
         pass

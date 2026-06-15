@@ -1,11 +1,7 @@
-"""Integration tests for PoolRouter, PoolSessionStore, and pool switching.
+"""Tests for PoolRouter and PoolSessionStore.
 
-Covers:
-- /pool_name switching (including switching to current pool)
-- Routing of normal messages to session's pool
-- Special commands (/approve, /deny, /continue) pass-through
-- Pool name validation
-- Session store persistence
+Pool switching is handled upstream by the input pipeline; PoolRouter only
+persists the chosen pool (``set_pool``) and routes incoming messages to it.
 """
 from __future__ import annotations
 
@@ -21,12 +17,13 @@ _BOT_PROJECT = Path(__file__).parent.parent.parent.parent / "examples" / "bot_pr
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
-from framework.core.session_id import SessionId
-from framework.core.types import InputMessage, OutputMessage
+from framework.core.session_id import SessionInfo
+from framework.core.types import InputMessage
+from framework.ioc.configs.app import _validate_pool_name
 from framework.ioc.configs.pool import PoolConfig
 from framework.ioc.configs.llm import LLMConfig
 from framework.ioc.configs.agent import AgentConfig
-from framework.pipeline.adapters import InputAdapter, OutputAdapter
+from framework.pipeline.adapters import InputAdapter
 from framework.messaging.broker_memory import InMemoryMessageBroker
 from framework.messaging.broker import BrokerMessage
 from framework.multi_agent.address import AgentAddress
@@ -36,6 +33,7 @@ from framework.multi_agent.address import AgentAddress
 
 class _StubInput(InputAdapter):
     name = "stub"
+
     def __init__(self, messages: list[InputMessage] | None = None):
         self._messages = messages or []
 
@@ -46,24 +44,6 @@ class _StubInput(InputAdapter):
         for msg in self._messages:
             yield msg
 
-    async def send_reply(self, msg: OutputMessage, session_id: str) -> None: pass
-
-
-class _StubOutput(OutputAdapter):
-    name = "stub"
-    def __init__(self):
-        self.sent: list[tuple[OutputMessage, str]] = []
-
-    async def start(self) -> None: pass
-    async def stop(self) -> None: pass
-
-    async def send(self, msg: OutputMessage, session_id: str) -> None:
-        self.sent.append((msg, session_id))
-
-    async def send_streaming(self, stream, session_id: str) -> None: pass
-
-
-# ── Helpers ──
 
 def _make_pool_config(name: str) -> PoolConfig:
     return PoolConfig(
@@ -74,6 +54,7 @@ def _make_pool_config(name: str) -> PoolConfig:
 
 class _FakePoolInstance:
     """Minimal stub that has main_agent_name and main_address."""
+
     def __init__(self, name: str):
         self.name = name
         self.main_agent_name = name
@@ -120,8 +101,8 @@ class TestPoolSessionStore:
 
 # ── PoolRouter Tests ──
 
-class TestPoolRouterExtractPoolCommand:
-    """Test _extract_pool_command regex and pool name matching."""
+class TestPoolRouterSetPool:
+    """Pool switching is persisted via ``set_pool``."""
 
     @pytest.fixture
     def pools(self):
@@ -135,61 +116,27 @@ class TestPoolRouterExtractPoolCommand:
         from bot.service.pool_router import PoolRouter, PoolSessionStore
         return PoolRouter(
             input_adapter=_StubInput(),
-            output_adapter=_StubOutput(),
             broker=object(),
             pools=pools,
             session_store=PoolSessionStore(tmp_path),
             default_pool="main",
         )
 
-    def test_exact_pool_name_match(self, router):
-        """Exact /pool_name matches a known pool."""
-        assert router._extract_pool_command("/main") == "main"
-        assert router._extract_pool_command("/coding") == "coding"
+    def test_set_pool_updates_store(self, router):
+        router.set_pool("sess-xyz", "coding")
+        assert router._session_store.get("sess-xyz", "main") == "coding"
 
-    def test_none_for_non_pool_name(self, router):
-        """Names not in pools return None."""
-        assert router._extract_pool_command("/unknown") is None
-
-    def test_none_for_command_with_args(self, router):
-        """Commands with arguments (like /skill args) are NOT pool switches."""
-        assert router._extract_pool_command("/weather 上海") is None
-        assert router._extract_pool_command("/approve yes") is None
-
-    def test_none_for_builtin_commands_when_no_pool(self, router):
-        """Built-in commands like /approve are NOT pool switches (no pool named approve)."""
-        assert router._extract_pool_command("/approve") is None
-        assert router._extract_pool_command("/deny") is None
-        assert router._extract_pool_command("/continue") is None
-
-    def test_none_for_empty_content(self, router):
-        assert router._extract_pool_command(None) is None
-        assert router._extract_pool_command("") is None
-
-    def test_none_for_normal_text(self, router):
-        assert router._extract_pool_command("hello world") is None
-        assert router._extract_pool_command("帮我写代码") is None
-
-    def test_none_for_text_with_slash_not_command(self, router):
-        """Text starting with / but containing spaces is not a pool command."""
-        assert router._extract_pool_command("/hello world foo") is None
-
-    def test_switch_to_current_pool_returns_pool_name(self, router):
-        """Switching to current pool still returns the pool name (valid command)."""
-        # Even if session is already in 'main', /main is still a valid pool command
-        assert router._extract_pool_command("/main") == "main"
+    def test_set_pool_uses_snowflake_key(self, router):
+        router.set_pool("snowflake.main", "coding")
+        assert router._session_store.get("snowflake", "main") == "coding"
 
 
 class TestPoolRouterRouting:
-    """Test complete routing flow: switch + route."""
+    """Test message routing through PoolRouter.run() and _route_to_pool()."""
 
     @pytest.fixture
     def broker(self):
         return InMemoryMessageBroker()
-
-    @pytest.fixture
-    def output(self):
-        return _StubOutput()
 
     @pytest.fixture
     def pools(self):
@@ -199,11 +146,10 @@ class TestPoolRouterRouting:
         }
 
     @pytest.fixture
-    def router(self, broker, output, pools, tmp_path):
+    def router(self, broker, pools, tmp_path):
         from bot.service.pool_router import PoolRouter, PoolSessionStore
         return PoolRouter(
             input_adapter=_StubInput(),
-            output_adapter=output,
             broker=broker,
             pools=pools,
             session_store=PoolSessionStore(tmp_path),
@@ -211,55 +157,85 @@ class TestPoolRouterRouting:
         )
 
     @pytest.mark.asyncio
-    async def test_handle_switch_sends_confirmation(self, router, output):
-        """Switching pool sends a confirmation message to the user."""
-        await router._handle_switch("sess-1", "coding")
-        assert len(output.sent) == 1
-        msg, sid = output.sent[0]
-        assert "coding" in msg.content
-        assert sid == "sess-1"
-
-    @pytest.mark.asyncio
-    async def test_handle_switch_updates_session_store(self, router):
-        """After switch, session store returns the new pool."""
-        await router._handle_switch("sess-2", "coding")
-        assert router._session_store.get("sess-2", "main") == "coding"
-
-    @pytest.mark.asyncio
-    async def test_routing_falls_back_to_default_for_unknown_pool(self, router, pools):
+    async def test_routing_falls_back_to_default_for_unknown_pool(self, router, pools, broker):
         """When session's pool name is unknown, falls back to default pool."""
+        await broker.start()
         router._session_store.set("sess-3", "nonexistent")
-        msg = InputMessage(content="hello", session=SessionId.from_str("sess-3", default_agent_name="main"), channel="test")
+        msg = InputMessage(
+            content="hello",
+            session=SessionInfo.from_str("sess-3", default_agent_name="main"),
+            channel="test",
+        )
         await router._route_to_pool(msg, pools["main"])
+        await broker.stop()
+
+    @pytest.mark.asyncio
+    async def test_run_routes_to_stored_pool(self, router, pools, broker, tmp_path):
+        """Messages are routed to the pool stored for their snowflake."""
+        from bot.service.pool_router import PoolSessionStore
+
+        store = PoolSessionStore(tmp_path)
+        store.set("sess-route", "coding")
+        router_with_store = type(router)(
+            input_adapter=_StubInput([
+                InputMessage(
+                    content="hello",
+                    session=SessionInfo.from_str("sess-route", default_agent_name="main"),
+                    channel="test",
+                ),
+            ]),
+            broker=broker,
+            pools=pools,
+            session_store=store,
+            default_pool="main",
+        )
+
+        await broker.start()
+        coding_addr = pools["coding"].main_address
+        await broker.register_consumer(coding_addr)
+        routed: list[BrokerMessage] = []
+
+        async def _capture():
+            async for msg in broker.consume_stream(coding_addr):
+                routed.append(msg)
+
+        import asyncio
+        capture_task = asyncio.create_task(_capture())
+        router_task = asyncio.create_task(router_with_store.run())
+        await asyncio.sleep(0.3)
+        router_task.cancel()
+        await broker.stop()
+        capture_task.cancel()
+        with __import__("contextlib").suppress(asyncio.CancelledError):
+            await router_task
+            await capture_task
+
+        assert len(routed) >= 1
+        assert routed[0].payload["content"] == "hello"
 
 
 # ── Reserved Pool Name Validation Tests ──
 
 class TestPoolNameValidation:
     def test_valid_pool_names(self):
-        from framework.ioc.configs.app import _validate_pool_name
         _validate_pool_name("main")
         _validate_pool_name("coding")
         _validate_pool_name("my-pool")
         _validate_pool_name("pool_123")
 
     def test_reserved_name_approve_rejected(self):
-        from framework.ioc.configs.app import _validate_pool_name
         with pytest.raises(ValueError, match="built-in command"):
             _validate_pool_name("approve")
 
     def test_reserved_name_deny_rejected(self):
-        from framework.ioc.configs.app import _validate_pool_name
         with pytest.raises(ValueError, match="built-in command"):
             _validate_pool_name("deny")
 
     def test_reserved_name_continue_rejected(self):
-        from framework.ioc.configs.app import _validate_pool_name
         with pytest.raises(ValueError, match="built-in command"):
             _validate_pool_name("continue")
 
     def test_invalid_format_rejected(self):
-        from framework.ioc.configs.app import _validate_pool_name
         with pytest.raises(ValueError, match="Invalid pool name"):
             _validate_pool_name("InvalidPool")  # uppercase
         with pytest.raises(ValueError, match="Invalid pool name"):

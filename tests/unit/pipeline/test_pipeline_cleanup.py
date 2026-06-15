@@ -43,9 +43,9 @@ class _MinimalInputAdapter:
     async def receive(self):
         if not self._sent:
             self._sent = True
-            from framework.core.session_id import SessionId
+            from framework.core.session_id import SessionInfo
             from framework.core.types import InputMessage
-            yield InputMessage(content="test", session=SessionId.from_str("s1", default_agent_name="main"))
+            yield InputMessage(content="test", session=SessionInfo.from_str("s1", default_agent_name="main"))
 
 
 class _MinimalOutputAdapter:

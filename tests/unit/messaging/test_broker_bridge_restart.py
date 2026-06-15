@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 from framework.core.types import InputMessage
 from framework.messaging.broker import Address
 from framework.messaging.broker_bridge import BrokerBridgeService
@@ -67,7 +67,7 @@ class FakeInputAdapter:
         async def _gen():
             while True:
                 await asyncio.sleep(999)
-                yield InputMessage(content="", session=SessionId.from_str("test", default_agent_name="main"), source="test")
+                yield InputMessage(content="", session=SessionInfo.from_str("test", default_agent_name="main"), source="test")
         return _gen()
 
 

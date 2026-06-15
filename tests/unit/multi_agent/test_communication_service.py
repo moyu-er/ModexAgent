@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from framework.core.agent import AgentContext
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 from framework.core.tool_manager import InMemoryToolManager
 from framework.memory.history import ListMessageHistory
 from framework.messaging.broker import BrokerMessage, MessageBroker
@@ -112,7 +112,7 @@ def _make_context(
         system_prompt="test",
         history=ListMessageHistory([]),
         tool_manager=InMemoryToolManager(),
-        session=SessionId(
+        session=SessionInfo(
             session_id=session_str,
             agent_name=agent_name,
             metadata=metadata,
@@ -231,7 +231,12 @@ class TestCommunicationService:
         session_id, envelope = bus.sent_silent[0]
         from framework.core.session_id import SessionIdFactory
         factory = SessionIdFactory()
-        expected_sid = factory.create(agent_name="office-expert", parent_session_id=ctx.session, external_id="task-42")
+        expected_sid = factory.create(
+            agent_name="office-expert",
+            parent_session_id=ctx.session,
+            external_id="task-42",
+            encode_external_id=False,
+        )
         expected_session_id = str(expected_sid)
         assert session_id == expected_session_id
         assert envelope.agent_session_id == expected_session_id

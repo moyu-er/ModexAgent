@@ -17,13 +17,13 @@ from framework.runtime.models import (
     TurnStateBase,
 )
 from framework.memory.core.message import ChatMessage
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 
 
 def test_turn_identity_is_explicit_and_stable() -> None:
     identity = TurnIdentity(
         agent_id="bot",
-        session=SessionId.from_str("session-1"),
+        session=SessionInfo.from_str("session-1"),
         turn_id="turn-1",
         conversation_id="conversation-1",
     )
@@ -35,7 +35,7 @@ def test_turn_identity_is_explicit_and_stable() -> None:
 
 
 def test_turn_state_starts_without_full_session_history() -> None:
-    identity = TurnIdentity(agent_id="bot", session=SessionId.from_str("s1"), turn_id="t1")
+    identity = TurnIdentity(agent_id="bot", session=SessionInfo.from_str("s1"), turn_id="t1")
     state = TurnStateBase(
         identity=identity,
         agent_kind=AgentKind.REACT,

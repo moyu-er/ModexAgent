@@ -12,12 +12,12 @@ from framework.interceptor.abc import (
 from framework.core.types import ToolCall
 from framework.runtime.enums import AgentKind, TurnPhase
 from framework.runtime.models import TurnIdentity, TurnStateBase
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 
 
 def _state() -> TurnStateBase:
     return TurnStateBase(
-        identity=TurnIdentity(agent_id="bot", session=SessionId.from_str("s1"), turn_id="t1"),
+        identity=TurnIdentity(agent_id="bot", session=SessionInfo.from_str("s1"), turn_id="t1"),
         agent_kind=AgentKind.REACT,
         phase=TurnPhase.RUNNING,
     )

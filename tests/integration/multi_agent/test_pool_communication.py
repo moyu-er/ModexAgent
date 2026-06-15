@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from framework.core.agent import AgentContext
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 from framework.core.emitter import AgentResult
 from framework.core.tool_manager import InMemoryToolManager
 from framework.core.types import InputMessage
@@ -43,7 +43,7 @@ def _make_context(
         system_prompt="test",
         history=ListMessageHistory([]),
         tool_manager=InMemoryToolManager(),
-        session=SessionId.from_str(session_str),
+        session=SessionInfo.from_str(session_str),
         comm_kind=comm_kind,
     )
 
@@ -96,7 +96,6 @@ def _make_fake_instance(name: str, comm_kind: AgentCommKind):
     instance.pipeline.hooks = []
     instance.pipeline.interceptor_chain = None
     instance.pipeline.turn_store = None
-    instance.pipeline._approval_workspace = None
     instance.pipeline._user_interface = None
     instance.pipeline.command_processor = None
     instance.pipeline.governance = None

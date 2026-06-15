@@ -582,11 +582,13 @@ class TestPoolInstanceCarriesDirRef:
             patch("bot.service.pool_builder._build_tools") as mock_tools,
             patch("bot.service.pool_builder._build_skill_manager") as mock_skills,
             patch("bot.service.pool_builder._build_agent_pool") as mock_build_pool,
+            patch("bot.service.pool_builder.ensure_long_term_defaults") as mock_defaults,
         ):
             mock_llm.return_value = MagicMock(spec=LLMProvider)
             mock_mem_sys = MagicMock()
             mock_mem_sys.pruned_manager = MagicMock()
             mock_mem.return_value = mock_mem_sys
+            mock_defaults.return_value = None
 
             mock_tool_mgr = MagicMock()
             mock_tool_mgr.list_tools.return_value = []
@@ -623,7 +625,6 @@ class TestPoolInstanceCarriesDirRef:
                     safety=MagicMock(),
                     retention=MagicMock(),
                     comm_tracker=MagicMock(),
-                    approval_workspace=tmp_path / "approval",
                     im_ui=MagicMock(),
                     shared_hooks=[],
                     shared_hook_runner=MagicMock(),

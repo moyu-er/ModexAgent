@@ -31,7 +31,7 @@ from framework.multi_agent.inbox.server_local import LocalFileInboxServer
 from framework.runtime.enums import AgentKind, OperationKind, OperationStatus, TurnPhase
 from framework.runtime.models import TurnIdentity
 from framework.runtime.services import AgentRuntime, AgentRuntimeServices
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 from framework.trace import JsonFileTraceStore, TraceCollectorHook
 
 
@@ -39,21 +39,18 @@ from framework.trace import JsonFileTraceStore, TraceCollectorHook
 # Helpers
 # ---------------------------------------------------------------------------
 
-SESSION_ID = "conv123.worker:a1b2"
+SESSION_ID = "a1b2.worker"
 
 
 def _make_context(
     session_id: str = SESSION_ID,
     agent_name: str = "worker",
-    invocation_id: str = "a1b2",
+    parent_session_id: str = "conv123.main",
 ) -> AgentContext:
-    metadata: dict[str, str] = {}
-    if invocation_id:
-        metadata["invocation_id"] = invocation_id
-    session = SessionId(
+    session = SessionInfo(
         session_id=session_id,
         agent_name=agent_name,
-        metadata=metadata,
+        parent_session_id=parent_session_id,
     )
     state = ReActTurnState(
         identity=TurnIdentity(agent_id=agent_name, session=session, turn_id="t1"),
@@ -147,10 +144,8 @@ class TestFullLifecycleNotification:
         assert turn_start.status == OperationStatus.COMPLETED
 
         # --- Verify bus ---
-        # The notification is sent to the parent's inbox.  For a path-safe
-        # session_id the strategy parses conversation_id = session_id and
-        # agent_name = None, so the inbox_key becomes "{session_id}:main".
-        parent_inbox = f"{session_id}.main"
+        # The notification is sent to the parent's inbox via parent_session_id.
+        parent_inbox = "conv123.main"
         envelopes = await bus.consume(parent_inbox, block=False)
         assert len(envelopes) == 1
 

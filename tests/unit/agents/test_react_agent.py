@@ -26,7 +26,7 @@ from framework.memory.history import ListMessageHistory
 from framework.runtime.enums import AgentKind, TurnPhase
 from framework.runtime.models import TurnIdentity
 from framework.runtime.services import AgentRuntime, AgentRuntimeServices
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 from framework.agents.react.state import ReActTurnState
 
 
@@ -88,7 +88,7 @@ class _BufferingEmitter(ContentEmitter[E]):
 
 def _make_runtime():
     state = ReActTurnState(
-        identity=TurnIdentity(agent_id="test", session=SessionId.from_str("s1"), turn_id="t1"),
+        identity=TurnIdentity(agent_id="test", session=SessionInfo.from_str("s1"), turn_id="t1"),
         agent_kind=AgentKind.REACT, phase=TurnPhase.CREATED,
     )
     return AgentRuntime(services=AgentRuntimeServices(), state=state)
@@ -165,7 +165,7 @@ class TestReActAgentUnifiedLoop:
             tool_manager=MagicMock(),
             max_iterations=3,
             identity=runtime.state.identity, runtime=runtime,
-            session=SessionId.from_str("test.agent"),
+            session=SessionInfo.from_str("test.agent"),
         )
 
     @pytest.fixture
@@ -509,7 +509,7 @@ class TestReActAgentRegression:
             tool_manager=MagicMock(),
             max_iterations=3,
             identity=runtime.state.identity, runtime=runtime,
-            session=SessionId.from_str("test.agent"),
+            session=SessionInfo.from_str("test.agent"),
         )
 
     @pytest.mark.asyncio
@@ -652,7 +652,7 @@ class TestReActAgentCheckpoint:
             tool_manager=MagicMock(),
             max_iterations=3,
             identity=runtime.state.identity, runtime=runtime,
-            session=SessionId.from_str("test.agent"),
+            session=SessionInfo.from_str("test.agent"),
         )
 
     @pytest.fixture

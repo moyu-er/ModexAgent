@@ -14,10 +14,12 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
 from bot.adapters.web_socket import WebSocketInputAdapter
+from bot.service.session_store import WorkspacePoolSessionStore
 from bot.service.web_ui_service import WebUIService
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import UserMessageEvent
 from bot.webui.server import WebUIServer
+from framework.core.session_id import SessionIdFactory, SessionInfo, now_ms
 
 
 def _real_agent_pool_map() -> dict[str, str]:
@@ -43,6 +45,13 @@ def _make_server(data_dir: Path) -> tuple[WebUIServer, WebSocketInputAdapter, ob
     server.set_pool_agent_names(["main", "coding"])
     server.set_agent_pool_map(mapping)
     server.set_agent_resolver(lambda pool_name: mapping.get(pool_name, pool_name))
+    # Inject session store + factory.
+    session_store = WorkspacePoolSessionStore(
+        base_dir=data_dir,
+        pool_resolver=lambda s: mapping.get(s.agent_name, "main"),
+    )
+    server.set_session_store(session_store)
+    server.set_session_factory(SessionIdFactory())
     return server, inp, ws_ctx
 
 
@@ -65,6 +74,14 @@ async def test_session_list_follows_workspace_rebase() -> None:
             UserMessageEvent(session_id=sid_home, agent_name="main", content="home"),
         )
 
+        # Save home session to the session store.
+        await server._session_store.save(SessionInfo(
+            session_id=sid_home,
+            agent_name="main",
+            created_at=now_ms(),
+            updated_at=now_ms(),
+        ))
+
         client = TestClient(TestServer(server.app))
         await client.start_server()
         try:
@@ -78,6 +95,8 @@ async def test_session_list_follows_workspace_rebase() -> None:
             store = server._store
             assert isinstance(store, WorkspaceScopedTranscriptStore)
             store.rebase(other_dir)
+            # Rebase session store to the new workspace directory.
+            server._session_store.rebase(other_dir)
             ws_ctx.current = Path("E:\\download\\bot")  # mimic user target
 
             # Seed other workspace with a different main session.
@@ -86,6 +105,14 @@ async def test_session_list_follows_workspace_rebase() -> None:
                 sid_other,
                 UserMessageEvent(session_id=sid_other, agent_name="main", content="other"),
             )
+
+            # Save other session to the session store.
+            await server._session_store.save(SessionInfo(
+                session_id=sid_other,
+                agent_name="main",
+                created_at=now_ms(),
+                updated_at=now_ms(),
+            ))
 
             resp = await client.get("/api/sessions?pool=main")
             assert resp.status == 200

@@ -15,14 +15,14 @@ from framework.commands.handlers import (
     UnknownCommandHandler,
 )
 from framework.commands.models import CommandContext, SlashCommandInvocation
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 from framework.core.types import InputMessage
 
 
 def _context(content: str = "/continue", *, pending: object | None = None) -> CommandContext:
     return CommandContext(
         session_id="s1",
-        input_msg=InputMessage(content=content, session=SessionId.from_str("s1", default_agent_name="main")),
+        input_msg=InputMessage(content=content, session=SessionInfo.from_str("s1", default_agent_name="main")),
         agent_name="main",
         pending_approval=pending,
     )

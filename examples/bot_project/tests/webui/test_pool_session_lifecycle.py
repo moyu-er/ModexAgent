@@ -8,6 +8,7 @@ directly to the shared store.
 
 from __future__ import annotations
 
+import asyncio
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -15,10 +16,12 @@ from unittest.mock import MagicMock
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from bot.adapters.web_socket import WebSocketInputAdapter
+from bot.service.session_store import WorkspacePoolSessionStore
 from bot.service.web_ui_service import WebUIService
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import AssistantTurnEvent, UserMessageEvent
 from bot.webui.server import WebUIServer
+from framework.core.session_id import SessionIdFactory
 
 
 def _real_project_dir() -> Path:
@@ -49,6 +52,13 @@ def _make_server(
     server.set_pool_agent_names(["main", "coding"])
     server.set_agent_pool_map(mapping)
     server.set_agent_resolver(lambda pool_name: mapping.get(pool_name, pool_name))
+    # Inject session store + factory so POST /api/sessions auto-saves.
+    session_store = WorkspacePoolSessionStore(
+        base_dir=data_dir,
+        pool_resolver=lambda s: mapping.get(s.agent_name, "main"),
+    )
+    server.set_session_store(session_store)
+    server.set_session_factory(SessionIdFactory())
     return server, inp
 
 
@@ -165,6 +175,9 @@ async def test_workspace_switch_hides_and_shows_sessions() -> None:
     server, _ = _make_server(data_dir_a, workspace_resolver=_resolver)
     server.set_workspace_context(ws_ctx)
 
+    # Save reference to workspace A session store for later restore.
+    session_store_a = server._session_store
+
     client = TestClient(TestServer(server.app))
     await client.start_server()
     try:
@@ -181,6 +194,14 @@ async def test_workspace_switch_hides_and_shows_sessions() -> None:
         server._store.set_agent_pool_map(mapping)
         if server._workspace_index is not None:
             server.set_workspace_index(server._store)
+
+        # Switch session store to workspace B.
+        session_store_b = WorkspacePoolSessionStore(
+            base_dir=data_dir_b,
+            pool_resolver=lambda s: mapping.get(s.agent_name, "main"),
+        )
+        server.set_session_store(session_store_b)
+        server.set_session_factory(SessionIdFactory())
 
         resp = await client.get("/api/sessions")
         assert resp.status == 200
@@ -207,6 +228,10 @@ async def test_workspace_switch_hides_and_shows_sessions() -> None:
         server._store.set_agent_pool_map(mapping)
         if server._workspace_index is not None:
             server.set_workspace_index(server._store)
+
+        # Switch session store back to workspace A.
+        server.set_session_store(session_store_a)
+        server.set_session_factory(SessionIdFactory())
 
         resp = await client.get("/api/sessions")
         assert resp.status == 200
@@ -235,6 +260,9 @@ async def test_pool_and_workspace_filter_combined() -> None:
     server, _ = _make_server(data_dir_a, workspace_resolver=_resolver)
     server.set_workspace_context(ws_ctx)
 
+    # Save reference to workspace A session store for later restore.
+    session_store_a = server._session_store
+
     client = TestClient(TestServer(server.app))
     await client.start_server()
     try:
@@ -250,6 +278,14 @@ async def test_pool_and_workspace_filter_combined() -> None:
         server._store.set_agent_pool_map(mapping)
         if server._workspace_index is not None:
             server.set_workspace_index(server._store)
+
+        # Switch session store to workspace B.
+        session_store_b = WorkspacePoolSessionStore(
+            base_dir=data_dir_b,
+            pool_resolver=lambda s: mapping.get(s.agent_name, "main"),
+        )
+        server.set_session_store(session_store_b)
+        server.set_session_factory(SessionIdFactory())
 
         resp = await client.post("/api/sessions", json={"pool": "main"})
         assert resp.status == 200
@@ -270,6 +306,10 @@ async def test_pool_and_workspace_filter_combined() -> None:
         server._store.set_agent_pool_map(mapping)
         if server._workspace_index is not None:
             server.set_workspace_index(server._store)
+
+        # Switch session store back to workspace A.
+        server.set_session_store(session_store_a)
+        server.set_session_factory(SessionIdFactory())
 
         resp = await client.get("/api/sessions?pool=coding")
         assert resp.status == 200

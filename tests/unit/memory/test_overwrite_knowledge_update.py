@@ -78,8 +78,8 @@ class TestOverwriteKnowledgeUpdate:
         assert update2.mode == "section_replace"
 
     @pytest.mark.asyncio
-    async def test_template_not_found_creates_empty_md(self, tmp_path):
-        """When template doesn't exist, ensure_defaults should create empty .md files."""
+    async def test_template_not_found_skips_empty_md(self, tmp_path):
+        """When template doesn't exist and no defaults, ensure_defaults skips empty files."""
         storage = MarkdownKnowledgeStorage(tmp_path, layer=MemoryLayerName.KNOWLEDGE)
         await storage.initialize()
 
@@ -98,9 +98,7 @@ class TestOverwriteKnowledgeUpdate:
         context = MemoryContext(session_id="test", user_id="user1")
         await manager.ensure_defaults(context)
 
-        # Should create empty .md files
-        assert (tmp_path / "SOUL.md").exists()
-        assert (tmp_path / "USER.md").exists()
-        assert (tmp_path / "MEMORY.md").exists()
-        assert (tmp_path / "SOUL.md").read_text(encoding="utf-8") == ""
-        assert (tmp_path / "USER.md").read_text(encoding="utf-8") == ""
+        # Empty defaults with missing templates are skipped, not written
+        assert not (tmp_path / "SOUL.md").exists()
+        assert not (tmp_path / "USER.md").exists()
+        assert not (tmp_path / "MEMORY.md").exists()

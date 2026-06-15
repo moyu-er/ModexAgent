@@ -35,12 +35,13 @@ class TestPoolExperienceReviewWiring:
             patch("bot.service.pool_builder._build_tools") as mock_tools,
             patch("bot.service.pool_builder._build_skill_manager") as mock_skills,
             patch("bot.service.pool_builder._build_agent_pool") as mock_build_pool,
+            patch("bot.service.pool_builder.ensure_long_term_defaults") as mock_defaults,
         ):
             mock_llm.return_value = MagicMock(spec=LLMProvider)
-
             mock_mem_sys = AsyncMock()
             mock_mem_sys.pruned_manager = MagicMock()
             mock_mem.return_value = mock_mem_sys
+            mock_defaults.return_value = None
 
             mock_tool_mgr = MagicMock()
             mock_tool_mgr.list_tools.return_value = []
@@ -89,7 +90,6 @@ class TestPoolExperienceReviewWiring:
                     safety=MagicMock(),
                     retention=MagicMock(),
                     comm_tracker=MagicMock(),
-                    approval_workspace=tmp_path / "approval",
                     im_ui=MagicMock(),
                     shared_hooks=[],
                     shared_hook_runner=MagicMock(),
@@ -124,11 +124,13 @@ class TestPoolExperienceReviewWiring:
             patch("bot.service.pool_builder._build_tools") as mock_tools,
             patch("bot.service.pool_builder._build_skill_manager") as mock_skills,
             patch("bot.service.pool_builder._build_agent_pool") as mock_build_pool,
+            patch("bot.service.pool_builder.ensure_long_term_defaults") as mock_defaults,
         ):
             mock_llm.return_value = MagicMock(spec=LLMProvider)
             mock_mem_sys = AsyncMock()
             mock_mem_sys.pruned_manager = MagicMock()
             mock_mem.return_value = mock_mem_sys
+            mock_defaults.return_value = None
 
             mock_tool_mgr = MagicMock()
             mock_tool_mgr.list_tools.return_value = []
@@ -170,7 +172,6 @@ class TestPoolExperienceReviewWiring:
                     safety=MagicMock(),
                     retention=MagicMock(),
                     comm_tracker=MagicMock(),
-                    approval_workspace=tmp_path / "approval",
                     im_ui=MagicMock(),
                     shared_hooks=[],
                     shared_hook_runner=MagicMock(),
@@ -222,12 +223,15 @@ class TestExperienceReviewHookExecution:
             invocation_id="test-inv",
         )
 
-        # trace now goes to experience_dir.parent / "review_traces" by default
-        trace_dir = exp_dir.parent / "review_traces"
-        trace_files = list(trace_dir.glob("review-*.jsonl"))
-        assert len(trace_files) == 1, (
-            f"Expected 1 trace file, got {len(trace_files)}. "
-            "SummarizerTrajectoryEmitter should produce JSONL trace."
+        # trace layout: experience_dir.parent / "review_traces" / {trace_key} / operations.jsonl
+        # (trace_key = invocation_id when provided; traces never pollute the experience dir)
+        trace_key = "test-inv"
+        trace_file = exp_dir.parent / "review_traces" / trace_key / "operations.jsonl"
+        review_traces = exp_dir.parent / "review_traces"
+        assert trace_file.exists(), (
+            f"Expected trace file at {trace_file}, not found. "
+            "SummarizerTrajectoryEmitter should produce JSONL trace. "
+            f"review_traces tree: {list(review_traces.rglob('*')) if review_traces.exists() else '<missing>'}"
         )
 
     @pytest.mark.asyncio

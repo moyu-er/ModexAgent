@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from framework.core.agent import AgentContext, current_agent_context
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 from framework.multi_agent.address import AgentAddress
 from framework.multi_agent.comm_kind import AgentCommKind
 from framework.multi_agent.tools import (
@@ -37,7 +37,7 @@ def _context() -> AgentContext:
         system_prompt="",
         history=object(),  # type: ignore[arg-type]
         tool_manager=object(),  # type: ignore[arg-type]
-        session=SessionId.from_str("test.agent"),
+        session=SessionInfo.from_str("test.agent"),
     )
 
 
@@ -461,3 +461,92 @@ class TestSendToAgentToolDynamicSchema:
         assert schema["function"]["name"] == "send_to_agent"
         assert "target_agent" in schema["function"]["parameters"]["properties"]
         assert "invocation_id" in schema["function"]["parameters"]["properties"]
+
+    def test_target_agent_has_enum_of_available_targets(self) -> None:
+        """Dynamic schema must constrain target_agent to the exact list of available agents."""
+        store = CommunicationTargetStore()
+        store.add(CommunicationTarget(name="scout", kind=AgentCommKind.SUBAGENT))
+        store.add(CommunicationTarget(name="worker", kind=AgentCommKind.SUBAGENT))
+        tool = SendToAgentTool(
+            store=store,
+            source=AgentAddress(name="main"),
+            broker=object(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            agent_bus=object(),  # type: ignore[arg-type]
+            service=_RecordingService(),  # type: ignore[arg-type]
+        )
+        schema = tool.get_dynamic_schema()
+        target_schema = schema["function"]["parameters"]["properties"]["target_agent"]
+        assert target_schema.get("enum") == ["scout", "worker"]
+
+    def test_target_agent_enum_updates_with_targets(self) -> None:
+        """Adding/removing targets updates the enum in the dynamic schema."""
+        store = CommunicationTargetStore()
+        tool = SendToAgentTool(
+            store=store,
+            source=AgentAddress(name="main"),
+            broker=object(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            agent_bus=object(),  # type: ignore[arg-type]
+            service=_RecordingService(),  # type: ignore[arg-type]
+        )
+        assert "enum" not in tool.get_dynamic_schema()["function"]["parameters"]["properties"]["target_agent"]
+
+        tool.add_target(CommunicationTarget(name="alpha", kind=AgentCommKind.SUBAGENT))
+        enum = tool.get_dynamic_schema()["function"]["parameters"]["properties"]["target_agent"].get("enum")
+        assert enum == ["alpha"]
+
+        tool.add_target(CommunicationTarget(name="beta", kind=AgentCommKind.SUBAGENT))
+        enum = tool.get_dynamic_schema()["function"]["parameters"]["properties"]["target_agent"].get("enum")
+        assert enum == ["alpha", "beta"]
+
+    def test_target_agent_description_emphasizes_exact_name(self) -> None:
+        """target_agent description must tell the LLM to use an exact listed name."""
+        store = _store_with_target()
+        tool = SendToAgentTool(
+            store=store,
+            source=AgentAddress(name="main"),
+            broker=object(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            agent_bus=object(),  # type: ignore[arg-type]
+            service=_RecordingService(),  # type: ignore[arg-type]
+        )
+        schema = tool.get_dynamic_schema()
+        desc = schema["function"]["parameters"]["properties"]["target_agent"]["description"]
+        assert "exact name" in desc.lower()
+        assert "available targets" in desc.lower()
+
+    def test_invocation_id_description_mentions_returned_id(self) -> None:
+        """invocation_id description must mention the returned id and continuation semantics."""
+        store = _store_with_target()
+        tool = SendToAgentTool(
+            store=store,
+            source=AgentAddress(name="main"),
+            broker=object(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            agent_bus=object(),  # type: ignore[arg-type]
+            service=_RecordingService(),  # type: ignore[arg-type]
+        )
+        schema = tool.get_dynamic_schema()
+        desc = schema["function"]["parameters"]["properties"]["invocation_id"]["description"]
+        assert "tool result" in desc.lower()
+        assert "invocation_id" in desc.lower()
+        assert "continue" in desc.lower()
+        assert "{invocation_id}.{target_agent}" in desc
+
+    def test_static_parameters_not_mutated_by_dynamic_schema(self) -> None:
+        """get_dynamic_schema() must not modify the shared parameter template."""
+        store = _store_with_target()
+        tool = SendToAgentTool(
+            store=store,
+            source=AgentAddress(name="main"),
+            broker=object(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            agent_bus=object(),  # type: ignore[arg-type]
+            service=_RecordingService(),  # type: ignore[arg-type]
+        )
+        before = tool.parameters["properties"]["target_agent"]
+        tool.get_dynamic_schema()
+        after = tool.parameters["properties"]["target_agent"]
+        assert before is after
+        assert "enum" not in before

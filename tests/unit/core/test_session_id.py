@@ -1,4 +1,4 @@
-"""Tests for SessionId pydantic model and SessionIdFactory."""
+"""Tests for SessionInfo pydantic model and SessionIdFactory."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import time
 import pytest
 
 from framework.core.session_id import (
-    SessionId,
+    SessionInfo,
     SessionIdFactory,
     encode_snowflake,
     now_ms,
@@ -29,20 +29,20 @@ def test_encode_snowflake_is_deterministic_and_short():
 
 
 def test_session_id_str_returns_display():
-    session = SessionId(session_id="abc.main", agent_name="main")
+    session = SessionInfo(session_id="abc.main", agent_name="main")
     assert str(session) == "abc.main"
 
 
 def test_session_id_hash_and_eq_by_string():
-    a = SessionId(session_id="abc.main", agent_name="main", metadata={"x": 1})
-    b = SessionId(session_id="abc.main", agent_name="main")
+    a = SessionInfo(session_id="abc.main", agent_name="main", metadata={"x": 1})
+    b = SessionInfo(session_id="abc.main", agent_name="main")
     assert a == b
     assert hash(a) == hash(b)
     assert {a, b} == {a}
 
 
 def test_session_id_touch_updates_only_updated_at():
-    base = SessionId(
+    base = SessionInfo(
         session_id="abc.main", agent_name="main", created_at=1000, updated_at=1000
     )
     touched = base.touch()
@@ -54,29 +54,29 @@ def test_session_id_is_frozen():
     """Frozen model: field mutation raises; safe as dict key after creation."""
     from pydantic import ValidationError
 
-    session = SessionId(session_id="abc.main", agent_name="main")
+    session = SessionInfo(session_id="abc.main", agent_name="main")
     with pytest.raises(ValidationError):
         session.session_id = "xyz.main"  # type: ignore[misc]
     # still usable as a dict key
     d = {session: 1}
-    assert d[SessionId(session_id="abc.main", agent_name="main")] == 1
+    assert d[SessionInfo(session_id="abc.main", agent_name="main")] == 1
 
 
 def test_from_str_with_separator():
-    session = SessionId.from_str("abc.reviewer", default_agent_name="main")
+    session = SessionInfo.from_str("abc.reviewer", default_agent_name="main")
     assert session.session_id == "abc.reviewer"
     assert session.agent_name == "reviewer"
 
 
 def test_from_str_without_separator_warns():
     with pytest.warns(UserWarning):
-        session = SessionId.from_str("abc", default_agent_name="main")
+        session = SessionInfo.from_str("abc", default_agent_name="main")
     assert session.agent_name == "main"
 
 
 def test_from_str_empty_suffix_warns():
     with pytest.warns(UserWarning):
-        SessionId.from_str("abc.", default_agent_name="main")
+        SessionInfo.from_str("abc.", default_agent_name="main")
 
 
 def test_factory_creates_main_session():
@@ -112,13 +112,13 @@ def test_factory_invocation_id_as_external_becomes_session():
 
 
 def test_session_id_snowflake_property():
-    session = SessionId(session_id="abc123.reviewer", agent_name="reviewer")
+    session = SessionInfo(session_id="abc123.reviewer", agent_name="reviewer")
     assert session.snowflake == "abc123"
 
 
 def test_session_id_is_subagent_property():
-    main = SessionId(session_id="abc.main", agent_name="main")
-    sub = SessionId(
+    main = SessionInfo(session_id="abc.main", agent_name="main")
+    sub = SessionInfo(
         session_id="xyz.reviewer", agent_name="reviewer", parent_session_id="abc.main"
     )
     assert main.is_subagent is False

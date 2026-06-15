@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from bot.service.session_store import WorkspacePoolSessionStore
-from framework.core.session_id import SessionId, SessionIdFactory
+from framework.core.session_id import SessionInfo, SessionIdFactory
 
 
 @pytest.fixture
@@ -15,7 +15,7 @@ def factory() -> SessionIdFactory:
     return SessionIdFactory()
 
 
-def _pool_of(s: SessionId) -> str:
+def _pool_of(s: SessionInfo) -> str:
     return "coding" if s.agent_name != "main" else "main"
 
 

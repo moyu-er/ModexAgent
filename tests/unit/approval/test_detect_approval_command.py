@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 
 from framework.agents.react.constants import ReActNode
 from framework.agents.react.state import ReActSnapshotPolicy, ReActTurnState
@@ -11,7 +10,7 @@ from framework.approval.constants import ApprovalDecision, ApprovalTier
 from framework.approval.response import parse_input_command
 from framework.approval.types import ApprovalAction
 from framework.core.types import InputMessage
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 from framework.pipeline.approval_renderer import ApprovalRenderer
 from framework.runtime.enums import AgentKind, ApprovalSubjectType, SnapshotReason, TurnPhase
 from framework.runtime.models import (
@@ -23,7 +22,7 @@ from framework.runtime.models import (
 
 
 def _snapshot_with_requests(*, count: int = 1):
-    identity = TurnIdentity(agent_id="agent", session=SessionId.from_str("s1"), turn_id="t1")
+    identity = TurnIdentity(agent_id="agent", session=SessionInfo.from_str("s1"), turn_id="t1")
     requests = [
         ApprovalRequestState(
             request_id=f"r{i}",
@@ -57,8 +56,8 @@ def test_approve_is_command_only_when_pending_snapshot_exists() -> None:
     assert parsed is not None
     assert parsed.approval_action == ApprovalAction.ALLOW
 
-    renderer = ApprovalRenderer(approval_workspace=Path("/tmp/ar"))
-    msg = InputMessage(content="/approve", session=SessionId.from_str("s1", default_agent_name="main"))
+    renderer = ApprovalRenderer()
+    msg = InputMessage(content="/approve", session=SessionInfo.from_str("s1", default_agent_name="main"))
     is_cmd, state = asyncio.run(
         renderer.detect(msg, "s1", {}, pending_snapshot=None, approval_action=parsed.approval_action)
     )
@@ -68,11 +67,11 @@ def test_approve_is_command_only_when_pending_snapshot_exists() -> None:
 
 def test_approve_detected_against_pending_snapshot() -> None:
     parsed = parse_input_command("/approve")
-    renderer = ApprovalRenderer(approval_workspace=Path("/tmp/ar"))
+    renderer = ApprovalRenderer()
     snapshot = _snapshot_with_requests()
     is_cmd, state = asyncio.run(
         renderer.detect(
-            InputMessage(content="/approve", session=SessionId.from_str("s1", default_agent_name="main")),
+            InputMessage(content="/approve", session=SessionInfo.from_str("s1", default_agent_name="main")),
             "s1",
             {},
             pending_snapshot=snapshot,
@@ -96,11 +95,11 @@ def test_approval_command_ignores_extra_args() -> None:
 
 
 def test_unrelated_input_denies_first_and_preempts_rest() -> None:
-    renderer = ApprovalRenderer(approval_workspace=Path("/tmp/ar"))
+    renderer = ApprovalRenderer()
     snapshot = _snapshot_with_requests(count=3)
     _, state = asyncio.run(
         renderer.detect(
-            InputMessage(content="random chatter", session=SessionId.from_str("s1", default_agent_name="main")),
+            InputMessage(content="random chatter", session=SessionInfo.from_str("s1", default_agent_name="main")),
             "s1",
             {},
             pending_snapshot=snapshot,

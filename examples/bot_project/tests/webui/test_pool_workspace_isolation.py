@@ -162,13 +162,23 @@ async def test_pool_survives_multiple_attach_cycles() -> None:
 @pytest.mark.asyncio
 async def test_im_conversation_stored_in_current_workspace() -> None:
     """IM messages written while on the default workspace are visible there."""
+    from bot.service.session_store import WorkspacePoolSessionStore
+    from bot.webui.events import UserMessageEvent
+    from framework.core.session_id import SessionInfo, now_ms
+
     data_dir = Path(tempfile.mkdtemp())
     server, inp = _make_server(data_dir)
+
+    agent_pool_map = {"main": "main", "coding": "coding"}
+    session_store = WorkspacePoolSessionStore(
+        base_dir=data_dir,
+        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+    )
+    server.set_session_store(session_store)
+
     client = TestClient(TestServer(server.app))
     await client.start_server()
     try:
-        from bot.webui.events import UserMessageEvent
-
         im_conv_id = "qq_user_999"
         im_sid = f"{im_conv_id}.main"
         event = UserMessageEvent(
@@ -177,6 +187,14 @@ async def test_im_conversation_stored_in_current_workspace() -> None:
             content="QQ message from user"
 )
         server._store.append(im_sid, event)
+
+        # Save IM session to the session store.
+        await session_store.save(SessionInfo(
+            session_id=im_sid,
+            agent_name="main",
+            created_at=now_ms(),
+            updated_at=now_ms(),
+        ))
 
         # GET /api/sessions must include it
         resp = await client.get("/api/sessions")
@@ -196,6 +214,10 @@ async def test_sessions_from_different_workspaces_are_isolated() -> None:
     In the new model each workspace has its own data dir (``.modex/sessions/``),
     so sessions are physically separate.
     """
+    from bot.service.session_store import WorkspacePoolSessionStore
+    from bot.webui.events import UserMessageEvent
+    from framework.core.session_id import SessionInfo, now_ms
+
     data_dir_a = Path(tempfile.mkdtemp())
     data_dir_b = Path(tempfile.mkdtemp())
 
@@ -206,11 +228,16 @@ async def test_sessions_from_different_workspaces_are_isolated() -> None:
     ws_ctx.home = Path("/ws-a")
     server.set_workspace_context(ws_ctx)
 
+    agent_pool_map = {"main": "main", "coding": "coding"}
+    session_store_a = WorkspacePoolSessionStore(
+        base_dir=data_dir_a,
+        pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+    )
+    server.set_session_store(session_store_a)
+
     client = TestClient(TestServer(server.app))
     await client.start_server()
     try:
-        from bot.webui.events import UserMessageEvent
-
         sid_a = f"{_new_uuid_prefix()}.main"
         conv_a = sid_a.split(".")[0]
 
@@ -219,11 +246,26 @@ async def test_sessions_from_different_workspaces_are_isolated() -> None:
 )
         server._store.append(sid_a, event_a)
 
+        # Save session_a to workspace A's session store.
+        await session_store_a.save(SessionInfo(
+            session_id=sid_a,
+            agent_name="main",
+            created_at=now_ms(),
+            updated_at=now_ms(),
+        ))
+
         # Switch to workspace-b: recreate store with new data dir
         server._store = WorkspaceScopedTranscriptStore(data_dir_b, lambda: str(ws_ctx.current))
-        server._store.set_agent_pool_map({"main": "main", "coding": "coding"})
+        server._store.set_agent_pool_map(agent_pool_map)
         if server._workspace_index is not None:
             server.set_workspace_index(server._store)
+
+        # Switch session store to workspace B.
+        session_store_b = WorkspacePoolSessionStore(
+            base_dir=data_dir_b,
+            pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+        )
+        server.set_session_store(session_store_b)
 
         sid_b = f"{_new_uuid_prefix()}.main"
         conv_b = sid_b.split(".")[0]
@@ -232,6 +274,14 @@ async def test_sessions_from_different_workspaces_are_isolated() -> None:
             session_id=sid_b, agent_name="main", content="ws-b msg"
 )
         server._store.append(sid_b, event_b)
+
+        # Save session_b to workspace B's session store.
+        await session_store_b.save(SessionInfo(
+            session_id=sid_b,
+            agent_name="main",
+            created_at=now_ms(),
+            updated_at=now_ms(),
+        ))
 
         # In workspace-b, only conv_b is visible
         resp = await client.get("/api/sessions")
@@ -242,9 +292,12 @@ async def test_sessions_from_different_workspaces_are_isolated() -> None:
 
         # Switch back to workspace-a
         server._store = WorkspaceScopedTranscriptStore(data_dir_a, lambda: str(ws_ctx.current))
-        server._store.set_agent_pool_map({"main": "main", "coding": "coding"})
+        server._store.set_agent_pool_map(agent_pool_map)
         if server._workspace_index is not None:
             server.set_workspace_index(server._store)
+
+        # Switch session store back to workspace A.
+        server.set_session_store(session_store_a)
 
         resp = await client.get("/api/sessions")
         sessions = await resp.json()
@@ -356,7 +409,7 @@ def test_relation_store_follows_workspace_switch() -> None:
     import asyncio
 
     from bot.service.session_store import WorkspacePoolSessionStore
-    from framework.core.session_id import SessionId
+    from framework.core.session_id import SessionInfo
 
     data_dir = Path(tempfile.mkdtemp())
     _ws: list[str] = ["home"]
@@ -373,7 +426,7 @@ def test_relation_store_follows_workspace_switch() -> None:
     child = "conv.coding.reviewer.ee11"
 
     # Write in workspace A
-    child_session = SessionId(
+    child_session = SessionInfo(
         session_id=child, agent_name="reviewer",
         parent_session_id=parent
 )
@@ -385,7 +438,7 @@ def test_relation_store_follows_workspace_switch() -> None:
     # Switch to workspace B, write another relation
     _ws[0] = "workspace-b"
     child2 = "conv.coding.reviewer.ff22"
-    child2_session = SessionId(
+    child2_session = SessionInfo(
         session_id=child2, agent_name="reviewer",
         parent_session_id=parent
 )
@@ -402,7 +455,7 @@ def test_relation_store_follows_workspace_switch() -> None:
     assert retrieved_a.parent_session_id == parent
     # And a new write goes to A
     child3 = "conv.coding.reviewer.gg33"
-    child3_session = SessionId(
+    child3_session = SessionInfo(
         session_id=child3, agent_name="reviewer",
         parent_session_id=parent
 )

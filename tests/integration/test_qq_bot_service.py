@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from framework.core.constants import StopReason
 from framework.core.emitter import AgentResult, ContentEmitter, EmitterConfig
 from framework.core.events import AgentEvent
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 
 E = TypeVar('E', bound=AgentEvent)
 
@@ -233,7 +233,7 @@ class TestQQBotServiceIntegration:
             system_prompt="Test",
             history=ListMessageHistory([{"role": "user", "content": "Hi"}]),
             tool_manager=MagicMock(),
-            session=SessionId.from_str("test.agent"),
+            session=SessionInfo.from_str("test.agent"),
         )
 
         # Test streaming mode (emitter wants streaming)
@@ -321,7 +321,7 @@ class TestQQBotServiceIntegration:
             system_prompt="Test",
             history=ListMessageHistory([{"role": "user", "content": "Hi"}]),
             tool_manager=MagicMock(),
-            session=SessionId.from_str("test.agent"),
+            session=SessionInfo.from_str("test.agent"),
         )
 
         # Run
@@ -545,7 +545,7 @@ memory:
             await asyncio.sleep(0.1)
 
             # 注入一条消息
-            await input_adapter.inject(InputMessage(content="ping", session=SessionId.from_str("s1", default_agent_name="main")))
+            await input_adapter.inject(InputMessage(content="ping", session=SessionInfo.from_str("s1", default_agent_name="main")))
 
             # 等待消息流转
             for _ in range(50):

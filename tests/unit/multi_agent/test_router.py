@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 from framework.core.types import InputMessage
 from framework.multi_agent.router import DefaultMeshRouter
 
@@ -12,7 +12,7 @@ class TestDefaultMeshRouter:
         result = router.route(
             InputMessage(
                 content="hello",
-                session=SessionId.from_str("chat-1", default_agent_name="main"),
+                session=SessionInfo.from_str("chat-1", default_agent_name="main"),
             )
         )
 
@@ -26,7 +26,7 @@ class TestDefaultMeshRouter:
         result = router.route(
             InputMessage(
                 content="hello",
-                session=SessionId.from_str("chat-1", default_agent_name="office-expert"),
+                session=SessionInfo.from_str("chat-1", default_agent_name="office-expert"),
             )
         )
 
@@ -40,7 +40,7 @@ class TestDefaultMeshRouter:
         result = router.route(
             InputMessage(
                 content="task",
-                session=SessionId.from_str("chat-1.main", default_agent_name="main"),
+                session=SessionInfo.from_str("chat-1.main", default_agent_name="main"),
                 metadata={"agent_session_id": "chat-1.office-expert.task-42"},
             )
         )
@@ -54,7 +54,7 @@ class TestDefaultMeshRouter:
         result = router.route(
             InputMessage(
                 content="task",
-                session=SessionId.from_str(
+                session=SessionInfo.from_str(
                     "transport-session", default_agent_name="main"
                 ),
                 metadata={"agent_session_id": "chat-1.office-expert.task-42"},
@@ -70,7 +70,7 @@ class TestDefaultMeshRouter:
         result = router.route(
             InputMessage(
                 content="task",
-                session=SessionId.from_str("chat-1.main", default_agent_name="main"),
+                session=SessionInfo.from_str("chat-1.main", default_agent_name="main"),
                 metadata={
                     "agent_session_id": "chat-1.office-expert.task-42",
                     "message_type": "subagent_result",
@@ -89,7 +89,7 @@ class TestDefaultMeshRouter:
         result = router.route(
             InputMessage(
                 content="hi",
-                session=SessionId.from_str("chat-1.main", default_agent_name="main"),
+                session=SessionInfo.from_str("chat-1.main", default_agent_name="main"),
                 metadata={"message_type": "agent_message"},
             )
         )

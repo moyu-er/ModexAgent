@@ -31,7 +31,9 @@ async def test_set_channel_uses_envelope_channel() -> None:
     channels._conversation_channels.clear()
     env = UserInputEnvelope(conversation_id="u1", content="hi", channel="qq")
     await SetChannelStage().process(env, _ctx())
-    assert channels.get_conv_channel("u1") == "qq"
+    # S4 now keys by the encoded snowflake (same as S5 and every downstream
+    # lookup) so control command responses route to the correct channel.
+    assert channels.get_conv_channel(encode_snowflake("u1")) == "qq"
 
 
 @pytest.mark.asyncio

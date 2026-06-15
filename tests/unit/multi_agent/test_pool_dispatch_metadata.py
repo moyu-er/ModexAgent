@@ -146,3 +146,146 @@ class TestDispatchMetadataPreservation:
             "conversation_id should always be set even with no input metadata"
         )
         assert captured[0].content == "bare message"
+
+
+class TestDispatchSessionInfoResolution:
+    """_dispatch_agent_message must preserve parent_session_id from registry/store.
+
+    Regression: the dispatch path rebuilt SessionInfo via SessionInfo.from_str(),
+    which cannot recover parent_session_id.  SubagentAutoSendHook then saw
+    parent_session_id=None and silently skipped notifying the parent.
+    """
+
+    @pytest.fixture
+    async def pool(self):
+        p = AgentPool(
+            broker=_FakeBroker(),
+            agent_factory=MagicMock(),
+            enable_inbox_polling=False,
+        )
+        yield p
+        await p.shutdown_all(timeout=0.1)
+
+    @pytest.mark.asyncio
+    async def test_dispatch_uses_registry_session_info_with_parent(self, pool):
+        """When registry has the child session with parent, dispatch keeps it."""
+        from framework.core.session_id import SessionInfo
+        from framework.core.session_registry import InMemorySessionRegistry
+        from framework.core.types import InputMessage
+        from framework.multi_agent.address import AgentAddress
+        from framework.multi_agent.envelope import AgentMessageEnvelope
+        from framework.multi_agent.descriptor import AgentDescriptor
+
+        parent_sid = "abc.coding"
+        child_sid = "abc.coding.reviewer.ee11"
+        registry = InMemorySessionRegistry()
+        await registry.register(
+            SessionInfo(
+                session_id=child_sid,
+                agent_name="reviewer",
+                parent_session_id=parent_sid,
+                created_at=1,
+                updated_at=1,
+            )
+        )
+        pool._session_registry = registry
+
+        captured: list[InputMessage] = []
+
+        class _FakePipeline:
+            async def process_message(self, msg: InputMessage):
+                captured.append(msg)
+
+        descriptor = AgentDescriptor(address=AgentAddress(kind="agent", name="reviewer"))
+        instance = AsyncMock()
+        instance.pipeline = _FakePipeline()
+        instance.descriptor = descriptor
+        pool._status["reviewer"] = AgentState.IDLE
+
+        envelope = AgentMessageEnvelope(
+            payload={"content": "subagent result"},
+            source=AgentAddress(kind="agent", name="reviewer"),
+            target=AgentAddress(kind="agent", name="coding"),
+            message_type="subagent_result",
+            conversation_id="abc",
+            agent_session_id=child_sid,
+            invocation_id="ee11",
+        )
+
+        await pool._dispatch_agent_message(instance, envelope)
+
+        assert len(captured) == 1
+        msg = captured[0]
+        assert str(msg.session) == child_sid
+        assert msg.session.parent_session_id == parent_sid, (
+            f"parent_session_id lost in dispatch: {msg.session.parent_session_id}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_dispatch_falls_back_to_from_str_when_no_registry(self, pool):
+        """When no registry/store is wired, dispatch falls back to from_str —
+        parent_session_id is lost (the regression we guard against by wiring
+        the registry in production)."""
+        from framework.core.types import InputMessage
+        from framework.multi_agent.address import AgentAddress
+        from framework.multi_agent.envelope import AgentMessageEnvelope
+        from framework.multi_agent.descriptor import AgentDescriptor
+
+        captured: list[InputMessage] = []
+
+        class _FakePipeline:
+            async def process_message(self, msg: InputMessage):
+                captured.append(msg)
+
+        descriptor = AgentDescriptor(address=AgentAddress(kind="agent", name="coding"))
+        instance = AsyncMock()
+        instance.pipeline = _FakePipeline()
+        instance.descriptor = descriptor
+        pool._status["coding"] = AgentState.IDLE
+
+        envelope = AgentMessageEnvelope(
+            payload={"content": "hello"},
+            source=AgentAddress(kind="agent", name="main"),
+            target=AgentAddress(kind="agent", name="coding"),
+            message_type="agent_message",
+            conversation_id="abc",
+            agent_session_id="abc.coding",
+        )
+
+        await pool._dispatch_agent_message(instance, envelope)
+
+        assert len(captured) == 1
+        assert str(captured[0].session) == "abc.coding"
+        # Without a registry, parent_session_id cannot be recovered — this is
+        # exactly why production must wire session_registry into the pool.
+        assert captured[0].session.parent_session_id is None
+        from framework.core.types import InputMessage
+        from framework.multi_agent.address import AgentAddress
+        from framework.multi_agent.envelope import AgentMessageEnvelope
+        from framework.multi_agent.descriptor import AgentDescriptor
+
+        captured: list[InputMessage] = []
+
+        class _FakePipeline:
+            async def process_message(self, msg: InputMessage):
+                captured.append(msg)
+
+        descriptor = AgentDescriptor(address=AgentAddress(kind="agent", name="coding"))
+        instance = AsyncMock()
+        instance.pipeline = _FakePipeline()
+        instance.descriptor = descriptor
+        pool._status["coding"] = AgentState.IDLE
+
+        envelope = AgentMessageEnvelope(
+            payload={"content": "hello"},
+            source=AgentAddress(kind="agent", name="main"),
+            target=AgentAddress(kind="agent", name="coding"),
+            message_type="agent_message",
+            conversation_id="abc",
+            agent_session_id="abc.coding",
+        )
+
+        await pool._dispatch_agent_message(instance, envelope)
+
+        assert len(captured) == 1
+        assert str(captured[0].session) == "abc.coding"

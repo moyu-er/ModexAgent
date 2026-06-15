@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 from framework.core.types import InputMessage
 from framework.messaging.broker import Address, BrokerMessage
 from framework.messaging.broker_bridge import BrokerBridgeService
@@ -80,7 +80,7 @@ class _FailingAdapter:
 
         async def _gen() -> AsyncIterator[InputMessage]:
             raise RuntimeError("adapter receive failure")
-            yield InputMessage(content="", session=SessionId.from_str("test", default_agent_name="main"), source="test")  # noqa: UNREACHABLE
+            yield InputMessage(content="", session=SessionInfo.from_str("test", default_agent_name="main"), source="test")  # noqa: UNREACHABLE
 
         return _gen()
 
@@ -116,7 +116,7 @@ class _RecoveringAdapter:
         async def _gen() -> AsyncIterator[InputMessage]:
             yield InputMessage(
                 content="recovered",
-                session=SessionId.from_str("test", default_agent_name="main"),
+                session=SessionInfo.from_str("test", default_agent_name="main"),
                 source="test",
             )
             await asyncio.sleep(999)
@@ -150,7 +150,7 @@ class _ExhaustingThenBlockingAdapter:
 
             async def _block() -> AsyncIterator[InputMessage]:
                 await asyncio.sleep(999)
-                yield InputMessage(content="", session=SessionId.from_str("test", default_agent_name="main"), source="test")
+                yield InputMessage(content="", session=SessionInfo.from_str("test", default_agent_name="main"), source="test")
 
             return _block()
 
@@ -159,7 +159,7 @@ class _ExhaustingThenBlockingAdapter:
                 self._yielded += 1
                 yield InputMessage(
                     content=f"msg-{self._yielded}",
-                    session=SessionId.from_str("test", default_agent_name="main"),
+                    session=SessionInfo.from_str("test", default_agent_name="main"),
                     source="test",
                 )
 
@@ -256,7 +256,7 @@ class TestBridgeInputRetryLoop:
             def receive(self) -> AsyncIterator[InputMessage]:
                 async def _gen() -> AsyncIterator[InputMessage]:
                     await asyncio.sleep(999)
-                    yield InputMessage(content="", session=SessionId.from_str("test", default_agent_name="main"), source="test")
+                    yield InputMessage(content="", session=SessionInfo.from_str("test", default_agent_name="main"), source="test")
 
                 return _gen()
 

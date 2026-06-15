@@ -7,7 +7,7 @@ import pytest
 
 from framework.commands.constants import CommandAction, CommandDispatchPolicy
 from framework.commands.models import CommandContext, SlashCommandInvocation
-from framework.core.session_id import SessionId
+from framework.core.session_id import SessionInfo
 from framework.workspace.handlers import CdCommandHandler, ExitCommandHandler, PwdCommandHandler
 from framework.workspace.models import CdResult
 
@@ -23,7 +23,7 @@ def _make_context() -> CommandContext:
 
     return CommandContext(
         session_id="test-session",
-        input_msg=InputMessage(content="/cd /tmp", session=SessionId.from_str("test-session", default_agent_name="main")),
+        input_msg=InputMessage(content="/cd /tmp", session=SessionInfo.from_str("test-session", default_agent_name="main")),
         agent_name="main",
     )
 
