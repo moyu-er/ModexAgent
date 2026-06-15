@@ -150,20 +150,20 @@ Both scripts perform the same automated steps:
 |------|-------------|
 | Prerequisite checks | Detects `uv` and `Node.js` — offers to install missing ones with y/n prompts (winget on Windows, brew/nvm on macOS/Linux) |
 | `uv` installer | Installs via the [official standalone installer](https://docs.astral.sh/uv/) if missing |
-| Virtual environment | Creates `.venv` with `uv venv --python 3.12` (Python downloaded automatically by uv) |
+| Virtual environment | Creates virtual environment at repo root (`../../.venv`) with `uv venv --python 3.12` (Python downloaded automatically by uv) |
 | Python dependencies | Installs the full framework (`..\..\.[all,dev]`) and bot CLI (`.[webui,dev]`) |
-| Frontend build | Runs `npm install` and `npm run build` to compile the WebUI (skipped if Node.js is unavailable) |
 | Environment file | Copies `.env.example` → `.env` if `.env` doesn't exist |
-| **PATH registration** | Prompts to add `.venv/bin` (or `.venv\Scripts`) to your **system-wide PATH**, so `modexbot` works from any terminal, any shell — no activation needed |
+| `modexbot install` | Runs config wizard (checks LLM_API_KEY etc.) + builds WebUI frontend via `npm run build` |
+| **PATH registration** | Prompts to add the venv `Scripts`/`bin` directory to your **system-wide PATH**, so `modexbot` works from any terminal — no activation needed |
 
 > [!NOTE]
-> Both scripts are **idempotent** — re-running skips already-complete steps. They cache the `pyproject.toml` hash so Python dependencies are only reinstalled when project requirements change. Missing prerequisites trigger interactive y/n prompts.
+> Both scripts are **idempotent** — re-running skips already-complete steps. They cache the `pyproject.toml` hash so Python dependencies are only reinstalled when project requirements change. Missing prerequisites trigger interactive y/n prompts. **You can run the scripts from any directory** — they locate the project via their own file path.
 
-After the script completes and you restart your terminal:
+After the script completes:
 
 ```bash
 # Works from ANY directory, ANY shell — no activation required
-modexbot restart
+modexbot start
 ```
 
 Then open `http://localhost:21800/webui/` in your browser.
@@ -171,9 +171,9 @@ Then open `http://localhost:21800/webui/` in your browser.
 Common commands (all shell-agnostic after PATH setup): `modexbot stop` \| `modexbot logs -f` \| `modexbot install -f` \| `modexbot config`
 
 > [!TIP]
-> If you skipped the PATH step, activate the venv first:
-> - Windows: `.venv\Scripts\activate`
-> - Linux/macOS: `source .venv/bin/activate`
+> If you skipped the PATH step, you can still run commands via the venv Python directly:
+> - Windows: `..\..\.venv\Scripts\python.exe -m modexbot start`
+> - Linux/macOS: `../../.venv/bin/python -m modexbot start`
 
 ---
 
@@ -186,17 +186,21 @@ Install `uv` and `Node.js` if you don't have them already, then:
 ```bash
 cd /path/to/ModexAgent
 
-# Create virtual environment (uv downloads Python 3.12 automatically)
+# Create virtual environment at repo root (uv downloads Python 3.12 automatically)
 uv venv --python 3.12
 
-# Windows PowerShell
-.venv\Scripts\Activate.ps1
+# Windows
+.venv\Scripts\activate
 
 # macOS / Linux
 source .venv/bin/activate
 
-# Install full dependencies (includes terminal, gateway, skills, MCP, etc.)
+# Install framework
 uv pip install -e ".[all,dev]"
+
+# Install bot project (registers the 'modexbot' CLI)
+cd examples\bot_project
+uv pip install -e ".[webui,dev]"
 ```
 
 > [!IMPORTANT]
@@ -252,12 +256,12 @@ mcp:
 **One-click start (recommended):**
 
 ```bash
-# Install/rebuild WebUI frontend, then start the bot in background
+# Build WebUI frontend + config wizard, then start the bot
 modexbot install
-modexbot restart
+modexbot start
 ```
 
-The `install` command builds the WebUI frontend (`npm run build`). It skips the build if the frontend is already up-to-date — use `-f` to force rebuild. The `restart` command stops any existing bot, starts a new one as a detached process, and returns immediately.
+The `install` command checks your `.env` LLM configuration (offering to run the config wizard if needed) and builds the WebUI frontend (`npm run build`). It skips the build if the frontend is already up-to-date — use `-f` to force rebuild. The `start` command launches the bot as a detached background process.
 
 Then open `http://localhost:21800/webui/` in your browser.
 

@@ -2,8 +2,9 @@
 setlocal enabledelayedexpansion
 pushd "%~dp0"
 
-set "VENV_PYTHON=.venv\Scripts\python.exe"
-set "VENV_MARKER=.venv\.modexbot-pyproject-mtime"
+set "ROOT_VENV=%~dp0..\..\.venv"
+set "VENV_PYTHON=%ROOT_VENV%\Scripts\python.exe"
+set "VENV_MARKER=%ROOT_VENV%\.modexbot-pyproject-mtime"
 set "TEMP_FILE=%TEMP%\_mx_setup_path.txt"
 set "VER_FILE=%TEMP%\_mx_ver.txt"
 
@@ -183,19 +184,36 @@ exit /b 1
 :: ==========================================================================
 :: 3. Virtual environment
 :: ==========================================================================
-if exist "%VENV_PYTHON%" goto :venv_done
+:: VENV_PYTHON now points to the root venv (ModexAgent\.venv).
+:: All venv operations must use the same path to stay in sync.
+if exist "%VENV_PYTHON%" (
+    echo   Virtual environment already exists, skipping creation.
+    goto :venv_skip_create
+)
 
-echo Creating virtual environment (Python 3.12)...
-uv venv --python 3.12
-if not errorlevel 1 goto :venv_done
+echo Creating virtual environment...
+:: Use miniforge Python if available (avoids corporate SSL issues with GitHub downloads)
+if exist "D:\programs\miniforge\python.exe" (
+    echo   Using system Python ...
+    "D:\programs\miniforge\python.exe" -m venv "%ROOT_VENV%"
+    if not errorlevel 1 goto :venv_skip_create
+)
 
-echo.
-echo [ERROR] uv venv failed. uv will download Python 3.12 automatically.
-echo   Check network connectivity and retry.
-popd
-exit /b 1
+:: Try uv with existing Python first
+uv venv "%ROOT_VENV%" 2>nul
+if not errorlevel 1 goto :venv_skip_create
 
-:venv_done
+:: Last resort: uv downloads Python (may fail on corporate SSL intercepted networks)
+uv venv --python 3.12 "%ROOT_VENV%"
+if errorlevel 1 (
+    echo.
+    echo [ERROR] Failed to create virtual environment.
+    echo   Check network connectivity and retry.
+    popd
+    exit /b 1
+)
+
+:venv_skip_create
 
 :: ==========================================================================
 :: 4. Python dependencies
@@ -231,42 +249,7 @@ for %%I in ("pyproject.toml") do echo %%~tI> "%VENV_MARKER%"
 :pip_done
 
 :: ==========================================================================
-:: 5. Frontend
-:: ==========================================================================
-if "!HAS_NODE!"=="0" goto :frontend_done
-
-if exist "bot\web\dist\index.html" goto :frontend_done
-
-if exist "webui\node_modules" goto :frontend_build
-echo Installing frontend dependencies ^(npm install^)...
-pushd webui
-call npm install
-if not errorlevel 1 (
-    popd
-    goto :frontend_build
-)
-echo [ERROR] npm install failed
-popd
-popd
-exit /b 1
-
-:frontend_build
-echo Building frontend ^(npm run build^)...
-pushd webui
-call npm run build
-if not errorlevel 1 (
-    popd
-    goto :frontend_done
-)
-echo [ERROR] npm run build failed
-popd
-popd
-exit /b 1
-
-:frontend_done
-
-:: ==========================================================================
-:: 6. Environment file
+:: 5. Environment file
 :: ==========================================================================
 if exist ".env" goto :env_done
 if not exist ".env.example" goto :env_done
@@ -283,9 +266,33 @@ echo.
 :env_done
 
 :: ==========================================================================
+:: 6. modexbot install (config wizard + frontend build)
+:: ==========================================================================
+if "!HAS_NODE!"=="1" (
+    echo.
+    echo Running modexbot install ^(config check + frontend build^)...
+    "%VENV_PYTHON%" -m modexbot install
+    if errorlevel 1 (
+        echo.
+        echo [WARNING] modexbot install encountered errors.
+        echo   You can retry after fixing the issues above:
+        echo     "%VENV_PYTHON%" -m modexbot install
+    )
+) else (
+    echo.
+    echo [INFO] Node.js not available - running config wizard only.
+    echo   Frontend build will be skipped ^(WebUI will NOT be available^).
+    echo.
+    "%VENV_PYTHON%" -m modexbot config
+    echo.
+    echo   After installing Node.js, rebuild the frontend with:
+    echo     "%VENV_PYTHON%" -m modexbot install -f
+)
+
+:: ==========================================================================
 :: 7. Register modexbot CLI globally (add .venv\Scripts to user PATH)
 :: ==========================================================================
-set "VENV_SCRIPTS=%~dp0.venv\Scripts"
+set "VENV_SCRIPTS=%~dp0..\..\.venv\Scripts"
 
 :: Check if already registered by looking for the full venv Scripts path in
 :: the current HKCU PATH. This works regardless of the parent directory name.
@@ -348,7 +355,7 @@ echo  =============================================
 echo.
 echo  What's been set up:
 echo    - uv package manager
-echo    - Python virtual environment ^(.venv^)
+echo    - Python virtual environment ^(%ROOT_VENV%^)
 echo    - Framework + bot dependencies
 if "!HAS_NODE!"=="1" (
     echo    - WebUI frontend ^(bot\web\dist^)
@@ -356,27 +363,22 @@ if "!HAS_NODE!"=="1" (
     echo    - WebUI frontend: SKIPPED ^(Node.js not available^)
 )
 echo.
-echo  Next steps:
-echo   1. Edit .env with your LLM_API_KEY and credentials
-echo   2. Start the bot:
+echo  Next step:
 echo.
-echo        .venv\Scripts\activate
-echo        modexbot restart
+echo        modexbot start
 echo.
-echo   3. Open WebUI: http://localhost:21800/webui/
+echo  The bot will be available at: http://localhost:21800/webui/
 if "!HAS_NODE!"=="0" (
-    echo      ^(WebUI will not work until Node.js is installed and frontend is built^)
-    echo      After installing Node.js, run: modexbot install
+    echo.
+    echo  ^(WebUI will not work until Node.js is installed and frontend is built^)
+    echo  After installing Node.js, run: modexbot install -f
 )
 echo.
-echo  Or without activation:
-echo    .venv\Scripts\python.exe -m modexbot restart
-echo.
 echo  Other commands:
-echo    modexbot stop          - Stop the bot
-echo    modexbot logs -f       - View live logs
-echo    modexbot install -f    - Rebuild frontend
-echo    modexbot config        - Interactive config wizard
+echo    modexbot stop         - Stop the bot
+echo    modexbot logs -f      - View live logs
+echo    modexbot install -f   - Rebuild frontend
+echo    modexbot config       - Interactive config wizard
 echo.
 
 popd

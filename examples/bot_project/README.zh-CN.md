@@ -151,35 +151,28 @@ QQ 用户 / 群聊                    浏览器 (WebUI)
 |------|------|
 | 环境检查 | 检测 `uv` 和 `Node.js` — 缺失时通过 y/n 提示安装（Windows 用 winget，macOS/Linux 用 brew/nvm） |
 | `uv` 安装 | 通过[官方独立安装程序](https://docs.astral.sh/uv/)安装 |
-| 虚拟环境 | 用 `uv venv --python 3.12` 创建 `.venv`（Python 由 uv 自动下载） |
+| 虚拟环境 | 在项目根目录创建虚拟环境（`../../.venv`），使用 `uv venv --python 3.12`（Python 由 uv 自动下载） |
 | Python 依赖 | 安装完整框架（`..\..\.[all,dev]`）和 bot CLI（`.[webui,dev]`） |
-| 前端构建 | 执行 `npm install` 和 `npm run build` 编译 WebUI（如无 Node.js 则跳过） |
 | 环境变量文件 | 如 `.env` 不存在，自动从 `.env.example` 复制 |
+| `modexbot install` | 运行配置向导（检查 LLM_API_KEY 等）+ 通过 `npm run build` 编译 WebUI 前端 |
+| **PATH 注册** | 提示将 venv 的 `Scripts`/`bin` 目录添加到**系统 PATH**，之后可在任意终端直接使用 `modexbot` — 无需激活 venv |
 
 > [!NOTE]
-> 两个脚本都是**幂等的** — 重复运行会自动跳过已完成的步骤。它们缓存 `pyproject.toml` 的哈希值，仅在项目依赖变更时才重新安装 Python 包。缺失前置条件时会触发交互式 y/n 提示。
+> 两个脚本都是**幂等的** — 重复运行会自动跳过已完成的步骤。它们缓存 `pyproject.toml` 的哈希值，仅在项目依赖变更时才重新安装 Python 包。缺失前置条件时会触发交互式 y/n 提示。**脚本可在任意目录运行** — 它们通过自身文件路径定位项目。
 
 脚本完成后：
 
-1. **编辑 `.env`** — 填写你的 `LLM_API_KEY` 和其他凭据（见下方[环境变量配置](#2-配置环境变量)）
-2. **启动 bot：**
-
 ```bash
-# Windows（PowerShell / 命令提示符）
-.venv\Scripts\activate
-modexbot restart
-
-# Linux / macOS
-source .venv/bin/activate
-modexbot restart
+# 可在任意目录、任意 Shell 中执行 — 无需激活 venv
+modexbot start
 ```
 
-3. 浏览器访问 `http://localhost:21800/webui/`
+常用命令：`modexbot stop` \| `modexbot logs -f` \| `modexbot install -f` \| `modexbot config`
 
 > [!TIP]
-> 不激活 venv 直接运行：`.venv\Scripts\python.exe -m modexbot restart`（Windows）或 `.venv/bin/python -m modexbot restart`（Linux/macOS）
-
-常用命令：`modexbot stop` \| `modexbot logs -f` \| `modexbot install -f` \| `modexbot config`
+> 如果跳过了 PATH 步骤，仍可通过 venv Python 直接运行：
+> - Windows: `..\..\.venv\Scripts\python.exe -m modexbot start`
+> - Linux/macOS: `../../.venv/bin/python -m modexbot start`
 
 ---
 
@@ -195,14 +188,18 @@ cd /path/to/ModexAgent
 # 创建虚拟环境（uv 会自动下载 Python 3.12）
 uv venv --python 3.12
 
-# Windows PowerShell
-.venv\Scripts\Activate.ps1
+# Windows
+.venv\Scripts\activate
 
 # macOS / Linux
 source .venv/bin/activate
 
-# 安装完整依赖（包含 terminal、gateway、skills、MCP 等）
+# 安装框架
 uv pip install -e ".[all,dev]"
+
+# 安装 bot 项目（注册 'modexbot' CLI）
+cd examples\bot_project
+uv pip install -e ".[webui,dev]"
 ```
 
 > [!IMPORTANT]
@@ -258,12 +255,12 @@ mcp:
 **一键启动（推荐）：**
 
 ```bash
-# 构建/安装 WebUI 前端，然后后台启动 bot
+# 构建 WebUI 前端 + 配置向导，然后启动 bot
 modexbot install
-modexbot restart
+modexbot start
 ```
 
-`install` 命令会构建 WebUI 前端（`npm run build`）。如果前端已经是最新版本则自动跳过——使用 `-f` 强制重建。`restart` 命令会停止已有 bot，以脱离子进程启动新的，写入 PID 后立即返回。
+`install` 命令会检查 `.env` 的 LLM 配置（必要时运行配置向导）并构建 WebUI 前端（`npm run build`）。如果前端已经是最新版本则自动跳过——使用 `-f` 强制重建。`start` 命令以后台脱离子进程启动 bot。
 
 启动后浏览器访问 `http://localhost:21800/webui/`。
 

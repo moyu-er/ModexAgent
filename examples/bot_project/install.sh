@@ -4,8 +4,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VENV_PYTHON=".venv/bin/python"
-VENV_MARKER=".venv/.modexbot-pyproject-mtime"
+ROOT_VENV="$SCRIPT_DIR/../../.venv"
+VENV_PYTHON="$ROOT_VENV/bin/python"
+VENV_MARKER="$ROOT_VENV/.modexbot-pyproject-mtime"
 
 echo ""
 echo " ============================================="
@@ -204,10 +205,10 @@ fi
 # 3. Virtual environment
 # ==========================================================================
 if [ -x "$VENV_PYTHON" ]; then
-    :  # already exists
+    echo "  Virtual environment already exists, skipping creation."
 else
     echo "Creating virtual environment (Python 3.12)..."
-    if ! uv venv --python 3.12; then
+    if ! uv venv --python 3.12 "$ROOT_VENV"; then
         echo ""
         echo "[ERROR] uv venv failed. uv will download Python 3.12 automatically."
         echo "  Check network connectivity and retry."
@@ -237,19 +238,7 @@ if [ "$NEEDS_PIP" -eq 1 ]; then
 fi
 
 # ==========================================================================
-# 5. Frontend
-# ==========================================================================
-if [ "$HAS_NODE" -eq 1 ] && [ ! -f "bot/web/dist/index.html" ]; then
-    if [ ! -d "webui/node_modules" ]; then
-        echo "Installing frontend dependencies (npm install)..."
-        (cd webui && npm install)
-    fi
-    echo "Building frontend (npm run build)..."
-    (cd webui && npm run build)
-fi
-
-# ==========================================================================
-# 6. Environment file
+# 5. Environment file
 # ==========================================================================
 if [ ! -f ".env" ] && [ -f ".env.example" ]; then
     echo ""
@@ -263,14 +252,37 @@ if [ ! -f ".env" ] && [ -f ".env.example" ]; then
 fi
 
 # ==========================================================================
+# 6. modexbot install (config wizard + frontend build)
+# ==========================================================================
+if [ "$HAS_NODE" -eq 1 ]; then
+    echo ""
+    echo "Running modexbot install (config check + frontend build)..."
+    "$VENV_PYTHON" -m modexbot install || {
+        echo ""
+        echo "[WARNING] modexbot install encountered errors."
+        echo "  You can retry after fixing the issues above:"
+        echo "    $VENV_PYTHON -m modexbot install"
+    }
+else
+    echo ""
+    echo "[INFO] Node.js not available - running config wizard only."
+    echo "  Frontend build will be skipped (WebUI will NOT be available)."
+    echo ""
+    "$VENV_PYTHON" -m modexbot config
+    echo ""
+    echo "  After installing Node.js, rebuild the frontend with:"
+    echo "    $VENV_PYTHON -m modexbot install -f"
+fi
+
+# ==========================================================================
 # 7. Register modexbot CLI globally
 # ==========================================================================
 echo ""
-echo "  [INFO] The 'modexbot' CLI is installed in .venv/bin/modexbot"
+echo "  [INFO] The 'modexbot' CLI is installed in $ROOT_VENV/bin/modexbot"
 echo "  Adding this directory to your PATH lets you run 'modexbot'"
 echo "  from any terminal without activating the venv."
 echo ""
-VENV_BIN="$SCRIPT_DIR/.venv/bin"
+VENV_BIN="$ROOT_VENV/bin"
 
 detect_shell_profile() {
     case "$(basename "${SHELL:-}")" in
@@ -339,7 +351,7 @@ echo " ============================================="
 echo ""
 echo " What's been set up:"
 echo "   - uv package manager"
-echo "   - Python virtual environment (.venv)"
+echo "   - Python virtual environment ($ROOT_VENV)"
 echo "   - Framework + bot dependencies"
 if [ "$HAS_NODE" -eq 1 ]; then
     echo "   - WebUI frontend (bot/web/dist)"
@@ -347,25 +359,20 @@ else
     echo "   - WebUI frontend: SKIPPED (Node.js not available)"
 fi
 echo ""
-echo " Next steps:"
-echo "  1. Edit .env with your LLM_API_KEY and credentials"
-echo "  2. Start the bot:"
+echo " Next step:"
 echo ""
-echo "       source .venv/bin/activate"
-echo "       modexbot restart"
+echo "       modexbot start"
 echo ""
-echo "  3. Open WebUI: http://localhost:21800/webui/"
+echo " The bot will be available at: http://localhost:21800/webui/"
 if [ "$HAS_NODE" -eq 0 ]; then
-    echo "     (WebUI will not work until Node.js is installed and frontend is built)"
-    echo "     After installing Node.js, run: modexbot install"
+    echo ""
+    echo " (WebUI will not work until Node.js is installed and frontend is built)"
+    echo " After installing Node.js, run: modexbot install -f"
 fi
 echo ""
-echo " Or without activation:"
-echo "   .venv/bin/python -m modexbot restart"
-echo ""
 echo " Other commands:"
-echo "   modexbot stop          - Stop the bot"
-echo "   modexbot logs -f       - View live logs"
-echo "   modexbot install -f    - Rebuild frontend"
-echo "   modexbot config        - Interactive config wizard"
+echo "   modexbot stop         - Stop the bot"
+echo "   modexbot logs -f      - View live logs"
+echo "   modexbot install -f   - Rebuild frontend"
+echo "   modexbot config       - Interactive config wizard"
 echo ""

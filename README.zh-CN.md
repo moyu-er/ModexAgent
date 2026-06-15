@@ -89,48 +89,65 @@ ModexAgent 是一个用于构建 AI Agent 应用的 Python 框架。它将模型
 
 ## 快速开始
 
-### 环境要求
+### 一键安装（推荐）
 
-- Python 3.12+
-- [uv](https://docs.astral.sh/uv/)（推荐）或 pip
+无需系统 Python、pip 或 npm —— 引导脚本自动处理一切：
 
-### 安装
+```bash
+git clone git@github.com:moyu-er/ModexAgent.git
+cd ModexAgent\examples\bot_project
+
+# Windows（双击或在任意终端中运行）
+install.bat
+
+# Linux / macOS
+chmod +x install.sh && ./install.sh
+```
+
+脚本会自动检测并安装缺失的运行时（Node.js、uv），创建 Python 虚拟环境，安装全部依赖，复制 `.env.example` → `.env`，运行配置向导，编译 WebUI 前端，并将 `modexbot` 注册到系统 PATH。重复运行安全——每一步都是幂等的。
+
+脚本完成后：
+
+```bash
+# 可在任意目录执行，无需激活 venv
+modexbot start
+```
+
+然后浏览器访问 `http://localhost:21800/webui/`。
+
+常用命令：`modexbot stop` | `modexbot logs -f` | `modexbot install -f` | `modexbot config`
+
+> [!TIP]
+> `examples/bot_project/` 是一个功能完整的 QQ Bot + WebUI 示例。详细能力、配置和多 Agent 设置见 [examples/bot_project/README.zh-CN.md](examples/bot_project/README.zh-CN.md)。
+
+### 手动配置
+
+如需逐步手动设置：
 
 ```bash
 git clone git@github.com:moyu-er/ModexAgent.git
 cd ModexAgent
 
-# 创建虚拟环境
+# 创建虚拟环境（uv 自动下载 Python 3.12）
 uv venv --python 3.12
 
-# Windows PowerShell
-.venv\Scripts\Activate.ps1
-
+# Windows
+.venv\Scripts\activate
 # macOS / Linux
 source .venv/bin/activate
 
-# 安装完整依赖
+# 安装框架
 uv pip install -e ".[all,dev]"
-```
 
-### 运行示例
+# 安装 bot 项目（注册 'modexbot' CLI）
+cd examples\bot_project
+uv pip install -e ".[webui,dev]"
 
-```bash
-cd examples/bot_project
+# 配置环境并构建前端
 cp .env.example .env
-# 编辑 .env 填写 QQ_APP_ID、LLM_API_KEY 等
-
-# 一键启动（Pool 模式 + WebUI，后台运行）
-python -m modexbot restart
-
-# 或直接前台运行调试
-python bot_service.py
+modexbot install    # 配置向导 + WebUI 前端构建
+modexbot start
 ```
-
-启动后浏览器访问 `http://localhost:21800/webui/`。
-
-> [!TIP]
-> `examples/bot_project/` 是一个功能完整的 QQ Bot + WebUI 示例。详细说明见 [examples/bot_project/README.zh-CN.md](examples/bot_project/README.zh-CN.md)。
 
 ## 项目结构
 

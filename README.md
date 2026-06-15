@@ -89,48 +89,65 @@ The framework core replaces traditional loops with a **graph-driven execution en
 
 ## Quick Start
 
-### Requirements
+### One-Click Setup (Recommended)
 
-- Python 3.12+
-- [uv](https://docs.astral.sh/uv/) (recommended) or pip
+No Python, pip, or npm required — the bootstrap script handles everything:
 
-### Install
+```bash
+git clone git@github.com:moyu-er/ModexAgent.git
+cd ModexAgent\examples\bot_project
+
+# Windows (double-click, or run in any terminal)
+install.bat
+
+# Linux / macOS
+chmod +x install.sh && ./install.sh
+```
+
+The script auto-detects and installs missing runtimes (Node.js, uv), creates the Python virtual environment, installs all dependencies, copies `.env.example` → `.env`, runs the config wizard, builds the WebUI frontend, and registers `modexbot` on your system PATH. Re-running is safe — every step is idempotent.
+
+After the script completes:
+
+```bash
+# Works from ANY directory, no activation needed
+modexbot start
+```
+
+Then open `http://localhost:21800/webui/`.
+
+Common commands: `modexbot stop` | `modexbot logs -f` | `modexbot install -f` | `modexbot config`
+
+> [!TIP]
+> `examples/bot_project/` is a fully functional QQ Bot + WebUI example. See [examples/bot_project/README.md](examples/bot_project/README.md) for detailed capabilities, configuration, and multi-agent setup.
+
+### Manual Setup
+
+If you prefer to set up step-by-step:
 
 ```bash
 git clone git@github.com:moyu-er/ModexAgent.git
 cd ModexAgent
 
-# Create virtual environment
+# Create virtual environment at repo root (uv downloads Python 3.12 automatically)
 uv venv --python 3.12
 
-# Windows PowerShell
-.venv\Scripts\Activate.ps1
-
+# Windows
+.venv\Scripts\activate
 # macOS / Linux
 source .venv/bin/activate
 
-# Install full dependencies
+# Install framework
 uv pip install -e ".[all,dev]"
-```
 
-### Run the Example
+# Install bot project (registers the 'modexbot' CLI)
+cd examples\bot_project
+uv pip install -e ".[webui,dev]"
 
-```bash
-cd examples/bot_project
+# Setup environment and build frontend
 cp .env.example .env
-# Edit .env with your QQ_APP_ID, LLM_API_KEY, etc.
-
-# One-click start (Pool mode + WebUI, runs in background)
-python -m modexbot restart
-
-# Or run in the foreground for debugging
-python bot_service.py
+modexbot install    # config wizard + WebUI frontend build
+modexbot start
 ```
-
-Then open the WebUI at `http://localhost:21800/webui/`.
-
-> [!TIP]
-> `examples/bot_project/` is a fully functional QQ Bot + WebUI example. See [examples/bot_project/README.md](examples/bot_project/README.md) for details.
 
 ## Project Structure
 
