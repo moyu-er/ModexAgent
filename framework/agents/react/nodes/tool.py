@@ -84,7 +84,7 @@ class ToolNode(Node):
         self._apply_decisions_to_batch(batch, decisions)
 
         if ApprovalDecision.PENDING in decisions:
-            return await self._suspend_for_approval(state, batch, tool_calls, decisions, ctx)
+            return await self._suspend_for_approval(batch, tool_calls, decisions, ctx)
 
         return await self._execute_batch(
             tool_calls,

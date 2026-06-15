@@ -22,7 +22,9 @@ logger = logging.getLogger(__name__)
 _UNRELATED_INPUT_PREVIEW_LIMIT = 50
 
 
-def _format_arguments(args: ToolArguments | Mapping[str, object]) -> str:
+def _format_arguments(args: ToolArguments | Mapping[str, object] | None) -> str:
+    if args is None:
+        return ""
     if isinstance(args, ToolArguments):
         values: Mapping[str, object] = args.values
     else:
