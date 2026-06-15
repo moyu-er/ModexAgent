@@ -3,6 +3,7 @@ import { Sidebar } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
 import { useWebUIStream } from "./hooks/useWebUIStream";
 import { fetchSessions, fetchPools, fetchWorkspace, deleteConversation, changeWorkspace, fetchRecentWorkspaces } from "./lib/api";
+import { setTimezone } from "./lib/timezone";
 import type { ConversationInfo } from "./types/events";
 import type { PoolInfo, RecentWorkspaceEntry } from "./lib/api";
 
@@ -166,8 +167,16 @@ const App: FC = () => {
     [],
   );
 
-  // Debounced refresh when a new (subagent) session starts streaming.
-  const onNewSessionActivity = useCallback((_sid: string): void => {
+  // A non-selected session (e.g. a subagent) just started a turn: bump its
+  // updated_at so the sidebar re-sorts it to the top of its group immediately,
+  // then debounce a refresh so any brand-new session also appears in the tree.
+  const onSessionActivity = useCallback((sid: string): void => {
+    const now = Date.now();
+    setSessions((prev) =>
+      prev.some((s) => s.session_id === sid)
+        ? prev.map((s) => (s.session_id === sid ? { ...s, updated_at: now } : s))
+        : prev,
+    );
     if (treeRefreshTimerRef.current) return;
     treeRefreshTimerRef.current = setTimeout(() => {
       treeRefreshTimerRef.current = null;
@@ -176,7 +185,7 @@ const App: FC = () => {
   }, []);
 
   const { messages, isStreaming, isPending, connect, disconnect, send } =
-    useWebUIStream(selectedId, getPoolForUuid, handleSessionReady, onNewSessionActivity);
+    useWebUIStream(selectedId, getPoolForUuid, handleSessionReady, onSessionActivity);
 
   const sessionTree = useMemo(() => buildTree(sessions), [sessions]);
 
@@ -260,6 +269,12 @@ const App: FC = () => {
       .then((info) => {
         setWorkspace(info.cwd);
         setIsHome(info.is_home);
+        // Cache the configured timezone for readable-time rendering. The
+        // shared module persists it to localStorage, so later reloads use it
+        // before the first fetch completes.
+        if (info.timezone) {
+          setTimezone(info.timezone);
+        }
       })
       .catch(() => {});
     fetchRecentWorkspaces()
@@ -456,6 +471,15 @@ const App: FC = () => {
       // "New Conversation" clicks create a fresh empty draft.
       if (selectedId) {
         draftIdsRef.current.delete(selectedId);
+        // Bump updated_at now so the sidebar (sorted by updated_at desc)
+        // immediately moves this conversation to the top, instead of waiting
+        // for the backend to refresh.
+        const now = Date.now();
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.session_id === selectedId ? { ...s, updated_at: now } : s,
+          ),
+        );
       }
       send(content);
     },
