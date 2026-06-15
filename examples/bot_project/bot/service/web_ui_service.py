@@ -257,17 +257,14 @@ class WebUIService(BotService):
         from bot.adapters.register_websocket import get_ws_input
 
         async def _on_subagent_created(child_id: str, parent_id: str) -> None:
-            # Parse agent_name from child_id: {snowflake}.{agent}[.{invocation_id}]
-            from framework.core.session_id import agent_of
+            # child_id is already a full session_id (e.g. "invocation.helper").
+            # Use from_str to recover it verbatim — factory.create or
+            # create_with_prefix would re-encode the prefix.
+            from framework.core.session_id import SessionInfo as _SI
 
-            agent_name = agent_of(child_id, default="main")
-
-            child_session = self._session_factory.create(
-                agent_name=agent_name,
-                parent_session_id=parent_id,
-                external_id=child_id,
-                encode_external_id=False,
-            )
+            child_session = _SI.from_str(child_id)
+            if parent_id:
+                child_session = child_session.model_copy(update={"parent_session_id": parent_id})
             await self._session_registry.register(child_session)
             # Sync cache for hot-path parent lookups at emit time.
             self._parent_ids[child_id] = parent_id

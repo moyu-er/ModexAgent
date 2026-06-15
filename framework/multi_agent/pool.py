@@ -803,10 +803,10 @@ class AgentPool(AgentRegistry):
         if is_dynamic:
             self._dynamic_sessions.add(session_id)
         if self._session_registry is not None:
-            session = self._session_factory.create(
-                agent_name=agent_name,
-                external_id=session_id,
-            )
+            # Use from_str to recover the SessionInfo without re-encoding.
+            # factory.create(external_id=session_id) would double-encode the
+            # already-encoded prefix and produce a different session_id.
+            session = SessionInfo.from_str(session_id, default_agent_name=agent_name)
             self._schedule_registry_register(session)
 
     def _touch_session(self, session_id: str) -> None:
@@ -1101,12 +1101,6 @@ class AgentPool(AgentRegistry):
                 logger.exception("Error in inbox polling loop")
                 await asyncio.sleep(self._inbox_poll_interval)
 
-    # ── Dynamic subagent tracking ──
-
-    def _mark_dynamic(self, agent_name: str) -> None:
-        """Track this agent as dynamically created."""
-        self._dynamic_agents.add(agent_name)
-
     def _restart_consumer_if_needed(self, agent_name: str) -> None:
         """Restart consumer task if agent is IDLE and has no consumer running."""
         if self._status.get(agent_name) != AgentState.IDLE:
@@ -1146,8 +1140,7 @@ class AgentPool(AgentRegistry):
             except Exception:
                 pass
         self._transition(agent_name, AgentState.SHUTDOWN, reason="shutdown")
-        self._dynamic_agents.discard(agent_name)
-        logger.info("Dynamic subagent %s shut down", agent_name)
+        logger.info("Agent %s shut down", agent_name)
 
     async def shutdown_all(self, timeout: float = 10.0) -> None:
         if self._inbox_poll_task is not None:

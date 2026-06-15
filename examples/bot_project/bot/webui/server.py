@@ -814,7 +814,7 @@ class WebUIServer:
 
         Attach creates a provisional id ``{uuid_prefix}.{agent}`` without
         persisting; this materializes it just before the pipeline writes the
-        transcript, using ``encode_external_id=False`` so ``uuid_prefix`` is
+        transcript, using ``create_with_prefix`` so ``uuid_prefix`` is
         the verbatim session_prefix — same id, no re-encoding.  Already-persisted
         sessions (reattach, existing conversations) are a no-op.
         """
@@ -824,10 +824,9 @@ class WebUIServer:
             return  # already persisted
         session_prefix = session_id_prefix_of(session_id)
         agent = agent_of(session_id, default="unknown")
-        session = self._session_factory.create(
+        session = self._session_factory.create_with_prefix(
             agent_name=agent,
-            external_id=session_prefix,
-            encode_external_id=False,
+            prefix=session_prefix,
         )
         if str(session) != session_id:
             # Fallback: session_prefix contained a separator or was empty; persist a

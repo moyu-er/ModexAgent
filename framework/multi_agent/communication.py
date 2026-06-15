@@ -306,11 +306,10 @@ class AgentCommunicationService:
                 if not trace_path.exists():
                     invocation_id = _uuid_mod.uuid4().hex[:_TASK_ID_BYTES]
 
-        target_sid = self._session_factory.create(
+        target_sid = self._session_factory.create_with_prefix(
             agent_name=target_agent,
+            prefix=invocation_id,
             parent_session_id=parent_session_id,
-            external_id=invocation_id,
-            encode_external_id=False,
         )
         session_id = str(target_sid)
 
@@ -591,11 +590,10 @@ class AgentCommunicationService:
         )
 
         # ── Build child session and record parent-child relationship ──
-        child_session = self._session_factory.create(
+        child_session = self._session_factory.create_with_prefix(
             agent_name=name,
+            prefix=invocation_id,
             parent_session_id=parent_session_id,
-            external_id=invocation_id,
-            encode_external_id=False,
         )
         session_id = str(child_session)
 
@@ -605,9 +603,6 @@ class AgentCommunicationService:
 
         if self._on_subagent_created is not None:
             await self._on_subagent_created(session_id, str(parent_session_id))
-
-        # ── Mark as dynamic (eligible for idle cleanup) ──
-        self._pool._mark_dynamic(name)
 
         # ── Wire hooks ──
         self._wire_subagent_hooks(name, parent_name=parent_name)
@@ -922,11 +917,10 @@ class AgentCommunicationService:
                 target_kind=AgentCommKind.SUBAGENT,
             )
 
-            target_session = self._session_factory.create(
+            target_session = self._session_factory.create_with_prefix(
                 agent_name=target_agent,
+                prefix=resolved_invocation_id,
                 parent_session_id=parent_sid,
-                external_id=resolved_invocation_id,
-                encode_external_id=False,
             )
             session_id = str(target_session)
             if self._session_registry is not None:
@@ -1012,11 +1006,10 @@ class AgentCommunicationService:
 
         # 4. Build session ID (receiver-owned)
         if target_kind == AgentCommKind.SUBAGENT and normalized_invocation_id is not None:
-            target_session = self._session_factory.create(
+            target_session = self._session_factory.create_with_prefix(
                 agent_name=target_agent,
+                prefix=normalized_invocation_id,
                 parent_session_id=parent_sid,
-                external_id=normalized_invocation_id,
-                encode_external_id=False,
             )
         else:
             target_session = self._session_factory.create(
