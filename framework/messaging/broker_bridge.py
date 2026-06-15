@@ -362,14 +362,14 @@ class BrokerBridgeService:
                             "metadata": msg.metadata,
                             "sender_id": msg.sender_id,
                             "chat_id": msg.chat_id,
-                            "conversation_id": msg.session.snowflake,
+                            "conversation_id": msg.session.session_id_prefix,
                         },
                         sender=Address(kind="channel", name=msg.source or "unknown"),
                         recipient=addr,
                         headers={
                             "channel": msg.channel,
                             "chat_id": msg.chat_id,
-                            "conversation_id": msg.session.snowflake,
+                            "conversation_id": msg.session.session_id_prefix,
                             "agent_session_id": str(msg.session),
                         },
                     )

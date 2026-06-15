@@ -26,7 +26,7 @@ def _ctx(enqueued: list[InputMessage]) -> BotInputContext:
 @pytest.mark.asyncio
 async def test_enqueue_uses_raw_content_when_no_skill_xml() -> None:
     enqueued: list[InputMessage] = []
-    env = UserInputEnvelope(conversation_id="u1", content="hi", channel="qq")
+    env = UserInputEnvelope(external_id="u1", content="hi", channel="qq")
     env.metadata[RoutingMeta.RESOLVED_AGENT] = "main"
     env.metadata[RoutingMeta.FULL_SESSION_ID] = "u1.main"
     await EnqueueStage().process(env, _ctx(enqueued))
@@ -39,7 +39,7 @@ async def test_enqueue_uses_raw_content_when_no_skill_xml() -> None:
 async def test_enqueue_uses_skill_xml_when_present() -> None:
     enqueued: list[InputMessage] = []
     env = UserInputEnvelope(
-        conversation_id="u1", content="/office-expert make ppt", channel="qq"
+        external_id="u1", content="/office-expert make ppt", channel="qq"
     )
     env.metadata[RoutingMeta.RESOLVED_AGENT] = "main"
     env.metadata[RoutingMeta.FULL_SESSION_ID] = "u1.main"
@@ -53,7 +53,7 @@ async def test_enqueue_carries_attachments() -> None:
     from framework.input_pipeline.envelope import AttachmentRef
 
     enqueued: list[InputMessage] = []
-    env = UserInputEnvelope(conversation_id="u1", content="hi", channel="qq")
+    env = UserInputEnvelope(external_id="u1", content="hi", channel="qq")
     env.metadata[RoutingMeta.RESOLVED_AGENT] = "main"
     env.metadata[RoutingMeta.FULL_SESSION_ID] = "u1.main"
     env.attachments = [AttachmentRef(local_path="/tmp/a.png")]
@@ -66,7 +66,7 @@ async def test_enqueue_passes_source_and_chat_id() -> None:
     # PoolRouter._route_to_pool reads msg.source (AgentAddress name) and
     # msg.chat_id (broker header). EnqueueStage MUST carry them through.
     enqueued: list[InputMessage] = []
-    env = UserInputEnvelope(conversation_id="u1", content="hi", channel="qq")
+    env = UserInputEnvelope(external_id="u1", content="hi", channel="qq")
     env.metadata[RoutingMeta.RESOLVED_AGENT] = "main"
     env.metadata[RoutingMeta.FULL_SESSION_ID] = "u1.main"
     env.metadata["chat_id"] = "group123"

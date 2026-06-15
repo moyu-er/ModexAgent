@@ -31,7 +31,7 @@ async def test_persist_writes_user_message_with_full_session_id() -> None:
         store = WorkspaceScopedTranscriptStore(Path(tmp), lambda: "")
         store.set_agent_pool_map({"coding": "coding"})
         env = UserInputEnvelope(
-            conversation_id="u1", content="hello", channel="qq"
+            external_id="u1", content="hello", channel="qq"
         )
         env.metadata["resolved_pool"] = "coding"
         env.metadata["resolved_agent"] = "coding"
@@ -49,7 +49,7 @@ async def test_persist_skips_known_control_commands() -> None:
         store = WorkspaceScopedTranscriptStore(Path(tmp), lambda: "")
         store.set_agent_pool_map({"main": "main"})
         for cmd in ("/cd /tmp", "/pool coding", "/exit", "/stop"):
-            env = UserInputEnvelope(conversation_id="u", content=cmd, channel="qq")
+            env = UserInputEnvelope(external_id="u", content=cmd, channel="qq")
             env.metadata["resolved_agent"] = "main"
             env.metadata["full_session_id"] = "u.main"
             await PersistUserMessageStage().process(env, _ctx(store))

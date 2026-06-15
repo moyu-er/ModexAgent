@@ -229,3 +229,50 @@ class TestInboxWakeupCrossPoolDefense:
 
         await pool._handle_inbox_wakeup(instance, "abc123.coding")
         assert polled_sessions == ["abc123.coding"]
+
+
+class TestTrackSessionNoDoubleEncode:
+    """_track_session must NOT re-encode an already-encoded session_id."""
+
+    async def test_track_session_registers_correct_session_id(self):
+        """Regression: _track_session called factory.create with
+        external_id=session_id (a full '{prefix}.{agent}' string), causing
+        encode_snowflake to double-encode the prefix and produce a different
+        session_id — so two session records appeared for one subagent."""
+        from framework.core.session_id import SessionIdFactory, encode_snowflake
+        from unittest.mock import MagicMock
+
+        factory = SessionIdFactory()
+        registry = MagicMock()
+
+        pool = AgentPool(
+            broker=_FakeBroker(),
+            agent_factory=MagicMock(),
+            session_factory=factory,
+            session_registry=registry,
+            enable_inbox_polling=False,
+        )
+
+        # The id that _create_dynamic_subagent already computed and put on the
+        # envelope.  We want this EXACT session to be tracked — not a re-encoded
+        # variant.
+        existing = factory.create_with_prefix(
+            agent_name="helper",
+            prefix="abc123",
+        )
+        session_id = str(existing)
+
+        pool._track_session(session_id, "helper", is_dynamic=True)
+
+        # The fire-and-forget registration will be scheduled; we need to let
+        # it run before checking.
+        import asyncio
+        await asyncio.sleep(0.05)
+
+        assert registry.register.call_count == 1
+        (registered_session,) = registry.register.call_args[0]
+        assert str(registered_session) == session_id, (
+            f"Expected {session_id!r}, got {str(registered_session)!r}"
+        )
+
+

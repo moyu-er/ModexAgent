@@ -25,13 +25,11 @@ def test_turn_identity_is_explicit_and_stable() -> None:
         agent_id="bot",
         session=SessionInfo.from_str("session-1"),
         turn_id="turn-1",
-        conversation_id="conversation-1",
     )
 
     assert identity.agent_id == "bot"
     assert str(identity.session) == "session-1"
     assert identity.turn_id == "turn-1"
-    assert identity.conversation_id == "conversation-1"
 
 
 def test_turn_state_starts_without_full_session_history() -> None:

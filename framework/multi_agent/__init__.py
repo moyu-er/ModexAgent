@@ -5,7 +5,6 @@ from framework.multi_agent.address import AgentAddress
 from framework.multi_agent.bus import AgentMessageBus, LocalAgentMessageBus
 from framework.multi_agent.comm_kind import AgentCommKind
 from framework.multi_agent.comm_tracker import CommunicationTracker
-from framework.multi_agent.context import current_conversation_id
 from framework.multi_agent.descriptor import (
     AgentDescriptor,
     AgentInstance,
@@ -42,7 +41,6 @@ __all__ = [
     "CommunicationTarget",
     "CommunicationTargetStore",
     "CommunicationTracker",
-    "current_conversation_id",
     "DefaultAgentFactory",
     "DefaultMeshRouter",
     "Hook",

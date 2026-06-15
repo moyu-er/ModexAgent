@@ -20,23 +20,24 @@ class AttachmentRef:
 class UserInputEnvelope:
     """Normalized user input carried through the input pipeline.
 
-    conversation_id: session identifier. WebUI=uuid_prefix, IM=user_id.
-                     Pool isolation is keyed by this; channels do not cross.
-                     ALWAYS the raw external_id fed to SessionIdFactory.
-    content:         raw user content (original form, incl. /skillName ...).
-    channel:         channel name provided by the adapter (not hardcoded).
-    explicit_pool:   pool chosen by the UI (WebUI); None for IM.
-    metadata:        cross-stage scratch + raw channel metadata.
-    attachments:     structured attachments.
+    external_id: raw external session identifier (the session id prefix seed).
+                 WebUI=uuid_prefix, IM=user_id. Fed verbatim to SessionIdFactory
+                 via ``encode_snowflake`` to form the session id prefix; pool
+                 isolation is keyed by that prefix, so channels do not cross.
+    content:     raw user content (original form, incl. /skillName ...).
+    channel:     channel name provided by the adapter (not hardcoded).
+    explicit_pool: pool chosen by the UI (WebUI); None for IM.
+    metadata:    cross-stage scratch + raw channel metadata.
+    attachments: structured attachments.
     pre_resolved_session: a SessionInfo already established upstream
-                     (e.g. WebUI created it during attach). When set, the
-                     pipeline uses str(this) as the canonical key and does
-                     NOT re-encode conversation_id — preventing double
-                     encoding. None for IM, where the pipeline resolves
-                     once via SessionIdFactory.create(external_id=...).
+                 (e.g. WebUI created it during attach). When set, the
+                 pipeline uses str(this) as the canonical key and does
+                 NOT re-encode external_id — preventing double
+                 encoding. None for IM, where the pipeline resolves
+                 once via SessionIdFactory.create(external_id=...).
     """
 
-    conversation_id: str
+    external_id: str
     content: str
     channel: str
     explicit_pool: str | None = None

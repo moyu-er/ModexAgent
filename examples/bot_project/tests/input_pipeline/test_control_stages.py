@@ -39,7 +39,7 @@ def _ctx(
 async def test_pool_command_terminates_and_records_pool() -> None:
     """S2: /pool shortcut (e.g. /coding) records pool and terminates."""
     ctx = _ctx()
-    env = UserInputEnvelope(conversation_id="u1", content="/coding", channel="qq")
+    env = UserInputEnvelope(external_id="u1", content="/coding", channel="qq")
     stage = EnvironmentControlStage(known_pools={"coding"})
     result = await stage.process(env, ctx)
 
@@ -51,7 +51,7 @@ async def test_pool_command_terminates_and_records_pool() -> None:
 async def test_environment_command_delegates_to_adapter_and_terminates() -> None:
     """S2: /cd etc delegates to adapter, terminates when handled."""
     ctx = _ctx(command_handled=True)
-    env = UserInputEnvelope(conversation_id="u1", content="/cd /tmp", channel="qq")
+    env = UserInputEnvelope(external_id="u1", content="/cd /tmp", channel="qq")
     stage = EnvironmentControlStage()
     result = await stage.process(env, ctx)
 
@@ -65,7 +65,7 @@ async def test_environment_command_delegates_to_adapter_and_terminates() -> None
 async def test_normal_message_passes_through() -> None:
     """S2: ordinary text passes through to next stage."""
     ctx = _ctx()
-    env = UserInputEnvelope(conversation_id="u1", content="hello", channel="qq")
+    env = UserInputEnvelope(external_id="u1", content="hello", channel="qq")
     stage = EnvironmentControlStage()
     result = await stage.process(env, ctx)
 
@@ -76,7 +76,7 @@ async def test_normal_message_passes_through() -> None:
 async def test_environment_stage_does_not_handle_stop() -> None:
     """S2: /stop passes through — S3 owns it."""
     ctx = _ctx(command_handled=True)
-    env = UserInputEnvelope(conversation_id="u1", content="/stop", channel="qq")
+    env = UserInputEnvelope(external_id="u1", content="/stop", channel="qq")
     stage = EnvironmentControlStage()
     result = await stage.process(env, ctx)
 
@@ -88,7 +88,7 @@ async def test_environment_stage_does_not_handle_stop() -> None:
 async def test_stop_command_handled_by_session_stage() -> None:
     """S3: /stop resolves full_session_id and delegates to adapter."""
     ctx = _ctx(store_get="coding", command_handled=True)
-    env = UserInputEnvelope(conversation_id="u1", content="/stop", channel="qq")
+    env = UserInputEnvelope(external_id="u1", content="/stop", channel="qq")
     stage = SessionControlStage()
     result = await stage.process(env, ctx)
 
@@ -102,7 +102,7 @@ async def test_stop_command_handled_by_session_stage() -> None:
 async def test_session_stage_passes_non_stop() -> None:
     """S3: non-/stop messages pass through."""
     ctx = _ctx(command_handled=True)
-    env = UserInputEnvelope(conversation_id="u1", content="hello", channel="qq")
+    env = UserInputEnvelope(external_id="u1", content="hello", channel="qq")
     stage = SessionControlStage()
     result = await stage.process(env, ctx)
 
@@ -114,7 +114,7 @@ async def test_session_stage_passes_non_stop() -> None:
 async def test_environment_stage_delegates_pwd_to_adapter() -> None:
     """S2 delegates /pwd to _try_intercept_control and terminates when handled."""
     ctx = _ctx(command_handled=True)
-    env = UserInputEnvelope(conversation_id="u1", content="/pwd", channel="qq")
+    env = UserInputEnvelope(external_id="u1", content="/pwd", channel="qq")
     result = await EnvironmentControlStage(known_pools={"main", "coding"}).process(env, ctx)
     assert not result.should_continue(), "/pwd must terminate when handled"
     ctx.command_adapter._try_intercept_control.assert_awaited_once_with("/pwd", _sid("main", "u1"))

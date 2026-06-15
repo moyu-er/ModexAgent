@@ -19,7 +19,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Iterator
 
-from framework.core.session_id import snowflake_of
+from framework.core.session_id import session_id_prefix_of
 from framework.core.session_store import safe_filename
 
 from bot.webui.events import ServerEvent
@@ -29,9 +29,9 @@ def _conversation_prefix(session_id: str) -> str:
     """Return the conversation prefix (segment before the first ``.``).
 
     ``"abc.main"`` → ``"abc"``; ``"abc.reviewer.z9"`` → ``"abc"``.
-    Delegates to :func:`framework.core.session_id.snowflake_of`.
+    Delegates to :func:`framework.core.session_id.session_id_prefix_of`.
     """
-    return snowflake_of(session_id)
+    return session_id_prefix_of(session_id)
 
 
 class TranscriptStore(ABC):

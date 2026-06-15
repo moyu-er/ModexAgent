@@ -301,7 +301,7 @@ class QQInputAdapter(InputAdapter):
             from framework.input_pipeline.envelope import UserInputEnvelope, AttachmentRef
 
             seed = UserInputEnvelope(
-                conversation_id=user_id,
+                external_id=user_id,
                 content=content,
                 channel=self.name,            # "qq"
                 explicit_pool=None,

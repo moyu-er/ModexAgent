@@ -87,7 +87,7 @@ class _Emitter(ContentEmitter):
 def _make_ctx(store, executed, default_deny_policy=ApprovalDenyPolicy.TOOL_RESULT_ONLY):
     manager = InMemoryToolManager()
     manager.register(_RecordTool(executed))
-    identity = TurnIdentity(agent_id="agent", session=SessionInfo.from_str("s1"), turn_id="t1", conversation_id="s1")
+    identity = TurnIdentity(agent_id="agent", session=SessionInfo.from_str("s1"), turn_id="t1")
     state = ReActTurnState(
         identity=identity,
         agent_kind=AgentKind.REACT,

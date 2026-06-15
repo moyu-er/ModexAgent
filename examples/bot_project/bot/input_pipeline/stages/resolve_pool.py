@@ -10,7 +10,7 @@ from __future__ import annotations
 from enum import StrEnum
 
 from bot.input_pipeline.context import BotInputContext
-from framework.core.session_id import SessionInfo, encode_snowflake, snowflake_of
+from framework.core.session_id import SessionInfo, encode_snowflake, session_id_prefix_of
 from framework.input_pipeline.envelope import UserInputEnvelope
 from framework.input_pipeline.stage import Continue, InputStage, StageResult
 
@@ -30,20 +30,20 @@ class RoutingMeta(StrEnum):
     SKILL_NAME = "skill_name"
 
 
-def conversation_snowflake(envelope: UserInputEnvelope, ctx: BotInputContext) -> str:
+def conversation_session_prefix(envelope: UserInputEnvelope, ctx: BotInputContext) -> str:
     """Agent-independent conversation identity used as the pool-store key.
 
     The pool must be resolved BEFORE the agent is known, so the pool store
-    cannot key on the full ``{snowflake}.{agent}`` session id. The snowflake
+    cannot key on the full ``{prefix}.{agent}`` session id. The prefix
     alone is stable across pool switches for one conversation.
 
-    - WebUI (``pre_resolved_session`` set): the snowflake is the segment
+    - WebUI (``pre_resolved_session`` set): the prefix is the segment
       before the first ``.`` of the established session id.
-    - IM: ``encode_snowflake(conversation_id)`` via the factory encoding.
+    - IM: ``encode_snowflake(external_id)`` via the factory encoding.
     """
     if envelope.pre_resolved_session is not None:
-        return snowflake_of(str(envelope.pre_resolved_session))
-    return encode_snowflake(envelope.conversation_id)
+        return session_id_prefix_of(str(envelope.pre_resolved_session))
+    return encode_snowflake(envelope.external_id)
 
 
 def resolve_session_routing(
@@ -54,15 +54,15 @@ def resolve_session_routing(
     Shared by S5 and S3 (S3 needs full_session_id to target CANCEL_TURN before
     S5 runs in pipeline order). Pure function over ctx — no side effects.
 
-    The pool store keys by the agent-independent snowflake (see
-    :func:`conversation_snowflake`); the transcript / delta-queue key is the
+    The pool store keys by the agent-independent prefix (see
+    :func:`conversation_session_prefix`); the transcript / delta-queue key is the
     full ``str(session)``. When the upstream channel already established a
     session (``envelope.pre_resolved_session``), it is reused verbatim — this
-    prevents the WebUI from double-encoding the snowflake.
+    prevents the WebUI from double-encoding the prefix.
     """
-    snowflake = conversation_snowflake(envelope, ctx)
+    session_prefix = conversation_session_prefix(envelope, ctx)
     pool = envelope.explicit_pool or ctx.pool_session_store.get(
-        snowflake, ctx.default_pool
+        session_prefix, ctx.default_pool
     )
     if envelope.pre_resolved_session is not None:
         session: SessionInfo = envelope.pre_resolved_session
@@ -70,7 +70,7 @@ def resolve_session_routing(
     else:
         agent = ctx.agent_for_pool(pool)
         session = ctx.session_factory.create(
-            agent_name=agent, external_id=envelope.conversation_id
+            agent_name=agent, external_id=envelope.external_id
         )
     return pool, agent, str(session)
 
@@ -81,9 +81,9 @@ class ResolvePoolStage(InputStage):
     ) -> StageResult:
         pool, agent, full_sid = resolve_session_routing(envelope, ctx)
         # Persist an explicit UI pool choice so PoolRouter routes correctly.
-        # Keyed by the agent-independent snowflake (same key PoolRouter reads).
+        # Keyed by the agent-independent prefix (same key PoolRouter reads).
         if envelope.explicit_pool:
-            ctx.pool_session_store.set(conversation_snowflake(envelope, ctx), pool)
+            ctx.pool_session_store.set(conversation_session_prefix(envelope, ctx), pool)
         envelope.metadata[RoutingMeta.RESOLVED_POOL] = pool
         envelope.metadata[RoutingMeta.RESOLVED_AGENT] = agent
         envelope.metadata[RoutingMeta.FULL_SESSION_ID] = full_sid

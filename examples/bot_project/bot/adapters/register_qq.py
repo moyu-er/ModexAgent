@@ -12,7 +12,7 @@ from pathlib import Path
 from bot.adapters.channels import AdapterBuildContext, get_conv_channel, register
 from framework.agents.react.agent import ReActEvent
 from framework.core.emitter import AgentResult
-from framework.core.session_id import snowflake_of
+from framework.core.session_id import session_id_prefix_of
 
 
 def _qq_enabled(ctx: AdapterBuildContext) -> bool:
@@ -71,7 +71,7 @@ def build_qq(ctx: AdapterBuildContext):
             def __init__(self, output_adapter, session_id, config):
                 super().__init__(output_adapter, session_id, config)
                 # session_id format: {conv_id}.{agent_name}
-                self._conv_id = snowflake_of(session_id)
+                self._conv_id = session_id_prefix_of(session_id)
 
             async def emit_delta(self, delta: str) -> None:
                 if get_conv_channel(self._conv_id) != "qq":

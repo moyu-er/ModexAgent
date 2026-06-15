@@ -30,7 +30,7 @@ from pathlib import Path
 
 import pathvalidate
 
-from framework.core.session_id import agent_of, snowflake_of
+from framework.core.session_id import agent_of, session_id_prefix_of
 
 from bot.webui.events import ServerEvent
 from bot.webui.transcript_store import JSONLTranscriptStore, TranscriptStore
@@ -59,7 +59,7 @@ def _agent_of(session_id: str) -> str:
 
 def _conversation_prefix(session_id: str) -> str:
     """Return the conversation prefix (segment before the first ``.``)."""
-    return snowflake_of(session_id)
+    return session_id_prefix_of(session_id)
 
 
 class WorkspaceScopedTranscriptStore(TranscriptStore):

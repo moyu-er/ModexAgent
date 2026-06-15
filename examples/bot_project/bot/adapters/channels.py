@@ -121,15 +121,15 @@ def register(name: str, *, enabled: bool = True):
 
 
 def _session_to_conversation_id(session_id: str) -> str:
-    """Extract the conversation_id portion from a session identifier.
+    """Extract the session id prefix from a session identifier.
 
-    Handles both canonical ``{snowflake}.{agent}`` IDs and raw conversation IDs.
+    Handles both canonical ``{prefix}.{agent}`` IDs and raw prefixes.
     """
     try:
         session = SessionInfo.from_str(session_id, default_agent_name="main")
     except Exception:
         return session_id
-    return session.snowflake
+    return session.session_id_prefix
 
 
 class ChannelRouterOutputAdapter(OutputAdapter):

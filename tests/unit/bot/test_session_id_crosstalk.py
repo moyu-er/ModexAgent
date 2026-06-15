@@ -20,7 +20,7 @@ def test_factory_double_encode_changes_snowflake():
 
     # Simulate POST /api/sessions: create session with random snowflake
     session = factory.create(agent_name="coding")
-    original_snowflake = session.snowflake
+    original_snowflake = session.session_id_prefix
     original_session_id = str(session)
 
     # Simulate _ws_send_message: the snowflake is extracted as conversation_id
@@ -56,4 +56,4 @@ def test_pre_resolved_session_preserves_identity():
     # from_str must round-trip correctly
     recovered = SessionInfo.from_str(original_id)
     assert str(recovered) == original_id
-    assert recovered.snowflake == original.snowflake
+    assert recovered.session_id_prefix == original.session_id_prefix

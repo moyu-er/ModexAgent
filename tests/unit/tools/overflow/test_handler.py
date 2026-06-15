@@ -113,4 +113,5 @@ class TestStoreOverflow:
         )
 
         assert "split into 5 chunk(s)" in xml
-        assert f'path="{ref.dir_path}/N.full.txt"' in xml
+        assert '$CHUNK.full.txt' in xml
+        assert str(ref.dir_path) in xml

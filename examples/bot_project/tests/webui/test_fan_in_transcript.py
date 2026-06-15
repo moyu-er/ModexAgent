@@ -195,7 +195,7 @@ async def test_im_pipeline_persists_qq_message() -> None:
     pipe = build_im_pipeline(skill_registry=_NoSkillRegistry(), known_pools={"main", "coding"})
 
     env = UserInputEnvelope(
-        conversation_id="qq_user_123",
+        external_id="qq_user_123",
         content="help me write a Python script",
         channel="qq",
     )
@@ -226,7 +226,7 @@ async def test_im_pipeline_persists_discord_message() -> None:
     pipe = build_im_pipeline(skill_registry=_NoSkillRegistry(), known_pools={"main"})
 
     env = UserInputEnvelope(
-        conversation_id="discord_session_1",
+        external_id="discord_session_1",
         content="deploy to production",
         channel="discord",
     )
@@ -252,7 +252,7 @@ async def test_im_pipeline_persists_message_with_attachments() -> None:
     pipe = build_im_pipeline(skill_registry=_NoSkillRegistry(), known_pools={"main"})
 
     env = UserInputEnvelope(
-        conversation_id="tg_chat_456",
+        external_id="tg_chat_456",
         content="analyze this image",
         channel="telegram",
         attachments=[AttachmentRef(local_path="/tmp/img.jpg")],
@@ -276,7 +276,7 @@ async def test_im_pipeline_persists_multiple_sequential() -> None:
     pipe = build_im_pipeline(skill_registry=_NoSkillRegistry(), known_pools={"main"})
 
     for text in ("first question", "second question", "third question"):
-        env = UserInputEnvelope(conversation_id="user_1", content=text, channel="qq")
+        env = UserInputEnvelope(external_id="user_1", content=text, channel="qq")
         await pipe.handle(env, ctx)
 
     events = list(store.load(_sid("main", "user_1")))
@@ -311,7 +311,7 @@ async def test_im_pipeline_skips_control_commands() -> None:
     )
     pipe = build_im_pipeline(skill_registry=_NoSkillRegistry(), known_pools={"main"})
 
-    env = UserInputEnvelope(conversation_id="u1", content="/stop", channel="qq")
+    env = UserInputEnvelope(external_id="u1", content="/stop", channel="qq")
     await pipe.handle(env, ctx)
 
     # Not persisted and not enqueued

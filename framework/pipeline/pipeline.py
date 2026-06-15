@@ -591,7 +591,6 @@ class AgentPipeline:
             agent_id=agent_id,
             session=session,
             turn_id=uuid4().hex,
-            conversation_id=session.metadata.get("conversation_id"),
         )
 
         agent_context = AgentContext(
@@ -700,12 +699,7 @@ class AgentPipeline:
         Returns:
             AgentResult on successful turn, None if GraphInterrupt for approval.
         """
-        # 设置当前 conversation_id 上下文变量（供 subagent 通信工具使用）
-        from ..multi_agent.context import current_conversation_id
-
-        conversation_id = agent_context.session.metadata.get("conversation_id") or str(agent_context.session)
         agent_name = agent_context.session.agent_name
-        conv_token = current_conversation_id.set(conversation_id)
         result: AgentResult | None = None
         turn = self.safety.turn
         turn_start = time.monotonic()
@@ -769,7 +763,6 @@ class AgentPipeline:
             raise
 
         finally:
-            current_conversation_id.reset(conv_token)
             # Clean up session task tracking
             self._session_tasks.pop(session_id, None)
             self._turn_uuids.pop(session_id, None)

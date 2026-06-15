@@ -34,7 +34,7 @@ def _ctx() -> BotInputContext:
 @pytest.mark.asyncio
 async def test_non_command_passes_through() -> None:
     stage = SkillParseStage(_FakeRegistry({"office-expert"}))
-    env = UserInputEnvelope(conversation_id="u1", content="hello", channel="qq")
+    env = UserInputEnvelope(external_id="u1", content="hello", channel="qq")
     result = await stage.process(env, _ctx())
     assert result.should_continue()
     assert "skill_xml" not in env.metadata
@@ -44,7 +44,7 @@ async def test_non_command_passes_through() -> None:
 async def test_valid_skill_sets_xml_and_keeps_raw_content() -> None:
     stage = SkillParseStage(_FakeRegistry({"office-expert"}))
     env = UserInputEnvelope(
-        conversation_id="u1", content="/office-expert make ppt", channel="qq"
+        external_id="u1", content="/office-expert make ppt", channel="qq"
     )
     result = await stage.process(env, _ctx())
     assert result.should_continue()
@@ -57,7 +57,7 @@ async def test_valid_skill_sets_xml_and_keeps_raw_content() -> None:
 async def test_unknown_skill_terminates_and_does_not_persist() -> None:
     stage = SkillParseStage(_FakeRegistry({"office-expert"}))
     env = UserInputEnvelope(
-        conversation_id="u1", content="/nosuch thing", channel="qq"
+        external_id="u1", content="/nosuch thing", channel="qq"
     )
     result = await stage.process(env, _ctx())
     assert not result.should_continue()

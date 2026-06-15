@@ -113,9 +113,10 @@ class TestQQOutputAdapter:
         assert adapter._qq_input._client.api.post_c2c_message.call_count == 1
         assert "session_2" in adapter._delta_buffers
 
-    def test_supports_streaming(self, adapter):
-        """Test that supports_streaming returns False."""
-        assert adapter.supports_streaming is False
+    def test_streaming_mode_is_pseudo(self, adapter):
+        """QQ output uses pseudo-streaming (buffered, not real-time)."""
+        from framework.pipeline.adapters import StreamingMode
+        assert adapter.streaming_mode == StreamingMode.PSEUDO
 
     @pytest.mark.asyncio
     async def test_send_with_content_cleaning(self, adapter):

@@ -94,7 +94,7 @@ class MaxIterationNotifyHook:
             return
 
         agent_name = ctx.session.agent_name if ctx.session else "unknown"
-        invocation_id = ctx.session.snowflake if ctx.session else None
+        invocation_id = ctx.session.session_id_prefix if ctx.session else None
 
         content = result.content or ""
         truncated = content[:2000]

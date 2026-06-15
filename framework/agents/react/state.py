@@ -417,7 +417,6 @@ class ReActRuntimeStateCodec(RuntimeStateCodec):
                 "agent_id": snapshot.identity.agent_id,
                 "session_id": str(snapshot.identity.session),
                 "turn_id": snapshot.identity.turn_id,
-                "conversation_id": snapshot.identity.conversation_id,
             },
             "agent_kind": snapshot.agent_kind.value,
             "phase": snapshot.phase.value,
@@ -439,7 +438,6 @@ class ReActRuntimeStateCodec(RuntimeStateCodec):
                 agent_id=str(identity_data["agent_id"]),
                 session=SessionInfo.from_str(str(identity_data["session_id"])),
                 turn_id=str(identity_data["turn_id"]),
-                conversation_id=identity_data.get("conversation_id"),  # type: ignore[arg-type]
             ),
             agent_kind=AgentKind(str(payload["agent_kind"])),
             phase=TurnPhase(str(payload["phase"])),

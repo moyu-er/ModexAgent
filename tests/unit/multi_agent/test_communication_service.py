@@ -231,11 +231,10 @@ class TestCommunicationService:
         session_id, envelope = bus.sent_silent[0]
         from framework.core.session_id import SessionIdFactory
         factory = SessionIdFactory()
-        expected_sid = factory.create(
+        expected_sid = factory.create_with_prefix(
             agent_name="office-expert",
+            prefix="task-42",
             parent_session_id=ctx.session,
-            external_id="task-42",
-            encode_external_id=False,
         )
         expected_session_id = str(expected_sid)
         assert session_id == expected_session_id

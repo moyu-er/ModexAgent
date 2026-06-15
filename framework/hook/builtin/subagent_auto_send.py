@@ -80,7 +80,7 @@ class SubagentAutoSendHook(FinallyTurnHook):
             content = result.content or ""
 
         # 4. Get invocation_id from session snowflake
-        invocation_id = ctx.session.snowflake
+        invocation_id = ctx.session.session_id_prefix
 
         is_normal, hint = self._classify_stop(
             stop_reason, output_status, error, invocation_id,
@@ -204,7 +204,7 @@ class SubagentAutoSendHook(FinallyTurnHook):
         from framework.multi_agent.envelope import AgentMessageEnvelope
 
         conversation_id = str(ctx.session)
-        invocation_id = ctx.session.snowflake
+        invocation_id = ctx.session.session_id_prefix
         parent_session_id = ctx.session.parent_session_id
         if parent_session_id is None:
             logger.warning(

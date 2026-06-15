@@ -56,7 +56,6 @@ class TurnIdentity:
     agent_id: str
     session: SessionInfo
     turn_id: str
-    conversation_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
