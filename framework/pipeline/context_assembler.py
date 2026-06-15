@@ -127,7 +127,7 @@ async def assemble_context(
                 if route_result
                 else "agent_message"
             ),
-            conversation_id=route_result.session.snowflake if route_result else session_id,
+            conversation_id=route_result.session.session_id_prefix if route_result else session_id,
             agent_session_id=session_id,
             metadata=input_metadata,
         )

@@ -95,7 +95,7 @@ def test_factory_subagent_links_parent():
     child = factory.create(agent_name="reviewer", parent_session_id=parent)
     assert child.parent_session_id == str(parent)
     # subagent snowflake differs from parent
-    assert child.snowflake != parent.snowflake
+    assert child.session_id_prefix != parent.session_id_prefix
 
 
 def test_factory_external_id_becomes_snowflake():
@@ -108,12 +108,12 @@ def test_factory_invocation_id_as_external_becomes_session():
     factory = SessionIdFactory()
     # A subagent whose invocation_id was "a1b2c3d4" now has that as its snowflake
     session = factory.create(agent_name="reviewer", external_id="a1b2c3d4")
-    assert session.snowflake == encode_snowflake("a1b2c3d4")
+    assert session.session_id_prefix == encode_snowflake("a1b2c3d4")
 
 
 def test_session_id_snowflake_property():
     session = SessionInfo(session_id="abc123.reviewer", agent_name="reviewer")
-    assert session.snowflake == "abc123"
+    assert session.session_id_prefix == "abc123"
 
 
 def test_session_id_is_subagent_property():

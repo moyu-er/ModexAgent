@@ -29,7 +29,7 @@ class EnqueueStage(InputStage):
             agent = envelope.metadata[RoutingMeta.RESOLVED_AGENT]
             session = ctx.session_factory.create(
                 agent_name=agent,
-                external_id=envelope.conversation_id,
+                external_id=envelope.external_id,
                 metadata={"channel": envelope.channel},
             )
         msg = InputMessage(

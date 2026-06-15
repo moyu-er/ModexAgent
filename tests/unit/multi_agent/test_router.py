@@ -18,7 +18,7 @@ class TestDefaultMeshRouter:
 
         assert str(result.session) == "chat-1"
         assert result.session.agent_name == "main"
-        assert result.session.snowflake == "chat-1"
+        assert result.session.session_id_prefix == "chat-1"
 
     def test_default_agent_name_used_when_session_has_no_agent(self) -> None:
         router = DefaultMeshRouter()

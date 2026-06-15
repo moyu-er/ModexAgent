@@ -13,7 +13,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from framework.core.session_id import snowflake_of
+from framework.core.session_id import session_id_prefix_of
 from framework.core.session_store import safe_filename
 from framework.core.types import InputMessage
 from framework.messaging.broker import BrokerMessage
@@ -80,10 +80,10 @@ class PoolRouter:
 
     async def run(self) -> None:
         async for msg in self._input_adapter.receive():
-            # Pool store keys by the agent-independent snowflake so routing is
+            # Pool store keys by the agent-independent prefix so routing is
             # stable across pool switches.
-            snowflake = msg.session.snowflake
-            target = self._session_store.get(snowflake, self._default_pool)
+            session_prefix = msg.session.session_id_prefix
+            target = self._session_store.get(session_prefix, self._default_pool)
             pool = self._pools.get(target)
             if pool is None:
                 pool = self._pools[self._default_pool]
@@ -94,15 +94,15 @@ class PoolRouter:
 
         Used by WebUI to switch pools via UI selector (not slash commands).
         Accepts the full session id (as WebUI attaches); keys the store by the
-        agent-independent snowflake so routing is stable across pool switches.
+        agent-independent prefix so routing is stable across pool switches.
         """
-        snowflake = snowflake_of(session_id)
-        self._session_store.set(snowflake, pool_name)
+        session_prefix = session_id_prefix_of(session_id)
+        self._session_store.set(session_prefix, pool_name)
         logger.info("Session %s pool set to '%s' (external)", session_id, pool_name)
 
     async def _route_to_pool(self, msg: InputMessage, pool: Any) -> None:
         sid = str(msg.session)
-        conv_id = msg.session.snowflake
+        conv_id = msg.session.session_id_prefix
         metadata = dict(msg.metadata) if msg.metadata else {}
         metadata.setdefault("conversation_id", conv_id)
         broker_msg = BrokerMessage(

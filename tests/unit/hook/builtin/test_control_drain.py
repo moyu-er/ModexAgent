@@ -238,7 +238,7 @@ class TestCanonicalSessionId:
         session = SessionInfo.from_str("user.main")
         assert session.session_id == "user.main"
         assert session.agent_name == "main"
-        assert session.snowflake == "user"
+        assert session.session_id_prefix == "user"
 
 
 class TestEndToEndStopFlow:

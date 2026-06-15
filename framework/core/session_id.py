@@ -27,8 +27,8 @@ def now_ms() -> int:
 
 
 def encode_snowflake(raw: str) -> str:
-    """Shorten an arbitrary raw id (IM id, invocation_id, conversation id) into
-    a compact, filesystem-safe base58 string.
+    """Shorten an arbitrary raw id (external id, invocation_id) into
+    a compact, filesystem-safe base58 string — the session id prefix.
 
     Deterministic: same input always yields the same output. Length is ~16 chars
     for a 12-byte digest, well within filesystem path limits.
@@ -49,7 +49,7 @@ def encode_snowflake(raw: str) -> str:
 class SessionInfo(BaseModel):
     """First-class session identifier.
 
-    Required: ``session_id`` (complete display id ``snowflake.agentName``),
+    Required: ``session_id`` (complete display id ``{prefix}.{agentName}``),
     ``agent_name``. All other fields default to ``None`` / empty.
 
     Frozen so it is hash-safe as a dict key / set member. ``__hash__`` derives
@@ -59,7 +59,7 @@ class SessionInfo(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    session_id: str = Field(..., description="Complete display id: snowflake.agentName")
+    session_id: str = Field(..., description="Complete display id: {session_id_prefix}.{agentName}")
     agent_name: str = Field(..., description="Bound agent name")
     parent_session_id: str | None = None
     created_at: int | None = Field(default=None, description="ms Unix epoch")
@@ -82,8 +82,8 @@ class SessionInfo(BaseModel):
         return self.session_id == other.session_id
 
     @property
-    def snowflake(self) -> str:
-        """The snowflake part (segment before the first '.')."""
+    def session_id_prefix(self) -> str:
+        """The segment before the first '.' — the agent-independent prefix."""
         return self.session_id.split(".", 1)[0] if "." in self.session_id else self.session_id
 
     @property
@@ -110,13 +110,13 @@ class SessionInfo(BaseModel):
         """
         if "." not in value:
             warnings.warn(
-                f"SessionInfo {value!r} has no separator; treating as bare snowflake",
+                f"SessionInfo {value!r} has no separator; treating as a bare prefix",
                 UserWarning,
                 stacklevel=2,
             )
             agent_name = default_agent_name or "unknown"
         else:
-            _snowflake, _, suffix = value.rpartition(".")
+            _prefix, _, suffix = value.rpartition(".")
             agent_name = suffix or default_agent_name or "unknown"
             if not suffix:
                 warnings.warn(
@@ -127,10 +127,10 @@ class SessionInfo(BaseModel):
         return cls(session_id=value, agent_name=agent_name)
 
 
-def snowflake_of(session_id: str) -> str:
-    """Extract the snowflake segment (before the first ``.``) from a display id.
+def session_id_prefix_of(session_id: str) -> str:
+    """Extract the prefix segment (before the first ``.``) from a display id.
 
-    Single source of truth for snowflake extraction from a string. Use this
+    Single source of truth for prefix extraction from a string. Use this
     instead of ad-hoc ``session_id.split('.', 1)[0]``.
     """
     return session_id.split(".", 1)[0] if "." in session_id else session_id
@@ -139,9 +139,9 @@ def snowflake_of(session_id: str) -> str:
 def agent_of(session_id: str, *, default: str = "unknown") -> str:
     """Extract the agent_name segment (2nd ``.``-separated component) of a display id.
 
-    For the canonical ``"{snowflake}.{agent_name}"`` format returns ``agent_name``;
+    For the canonical ``"{prefix}.{agent_name}"`` format returns ``agent_name``;
     for legacy ``"{conv}.{agent}.{invocation_id}"`` returns the agent (middle
-    segment); for a bare snowflake returns ``default``.
+    segment); for a bare prefix returns ``default``.
     """
     parts = session_id.split(".", 2)
     return parts[1] if len(parts) >= 2 else default
@@ -150,8 +150,8 @@ def agent_of(session_id: str, *, default: str = "unknown") -> str:
 class SessionIdFactory:
     """Generates new SessionInfo instances.
 
-    The snowflake is ``encode_snowflake(external_id or uuid4)``. ``external_id``
-    is an IM-provided id or an existing invocation_id; it forms the snowflake
+    The prefix is ``encode_snowflake(external_id or uuid4)``. ``external_id``
+    is an IM-provided id or an existing invocation_id; it forms the prefix
     part only, never the complete session id.
     """
 
@@ -171,7 +171,7 @@ class SessionIdFactory:
         if encode_external_id:
             encoded = encode_snowflake(raw)
         elif "." in raw:
-            # Raw snowflakes must not contain the session separator; fall back
+            # Raw prefixes must not contain the session separator; fall back
             # to a deterministic safe encoding to keep parsing unambiguous.
             encoded = encode_snowflake(raw)
         else:

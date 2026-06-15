@@ -1030,7 +1030,7 @@ class AgentCommunicationService:
         # For subagent replying to normal parent: preserve caller's snowflake on envelope
         envelope_invocation_id = normalized_invocation_id
         if target_kind == AgentCommKind.NORMAL and context.comm_kind == AgentCommKind.SUBAGENT:
-            envelope_invocation_id = parent_sid.snowflake
+            envelope_invocation_id = parent_sid.session_id_prefix
 
         from framework.multi_agent.message_xml import build_agent_message
 

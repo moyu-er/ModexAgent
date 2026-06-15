@@ -32,7 +32,7 @@ from bot.webui.events import (
     WebSocketAction,
     WebUIEventType,
 )
-from framework.core.session_id import SessionInfo, SessionIdFactory, agent_of, snowflake_of
+from framework.core.session_id import SessionInfo, SessionIdFactory, agent_of, session_id_prefix_of
 from framework.core.session_store import SessionStore
 from bot.webui.transcript_store import TranscriptStore
 
@@ -199,7 +199,7 @@ class WebUIServer:
         self._pool_agent_names = list(names)
 
     def set_pool_switch_callback(self, callback: Callable[[str, str], None]) -> None:
-        """Set callback for setting pool routing: callback(snowflake, pool_name)."""
+        """Set callback for setting pool routing: callback(session_prefix, pool_name)."""
         self._pool_switch_callback = callback
 
     def set_pool_resolver(self, callback: Callable[[str], str | None]) -> None:
@@ -278,8 +278,8 @@ class WebUIServer:
         """
         derived: list[SessionInfo] = []
         for session_id in self._store.list_sessions():
-            snowflake = snowflake_of(session_id)
-            if snowflake == session_id:
+            session_prefix = session_id_prefix_of(session_id)
+            if session_prefix == session_id:
                 # No separator → not a usable display id.
                 continue
             agent_name = agent_of(session_id)
@@ -294,7 +294,7 @@ class WebUIServer:
             if session_id.count(".") == 2:
                 candidates = sorted(
                     sid
-                    for sid in self._store.list_sessions_in_conversation(snowflake)
+                    for sid in self._store.list_sessions_in_conversation(session_prefix)
                     if sid != session_id and sid.count(".") == 1
                 )
                 if candidates:
@@ -477,7 +477,7 @@ class WebUIServer:
         if self._session_factory is not None:
             session = self._session_factory.create(agent_name)
             session_id = str(session)
-            snowflake = session.snowflake
+            session_prefix = session.session_id_prefix
             created_at = session.created_at
             updated_at = session.updated_at
             if self._session_store is not None:
@@ -485,12 +485,12 @@ class WebUIServer:
         else:
             uuid_prefix = _new_uuid_prefix()
             session_id = f"{uuid_prefix}.{agent_name}"
-            snowflake = uuid_prefix
+            session_prefix = uuid_prefix
             created_at = None
             updated_at = None
-        set_conv_channel(snowflake, "websocket")
+        set_conv_channel(session_prefix, "websocket")
         if self._pool_switch_callback is not None:
-            self._pool_switch_callback(snowflake, effective_pool)
+            self._pool_switch_callback(session_prefix, effective_pool)
         return web.json_response({
             "session_id": session_id,
             "agent_name": agent_name,
@@ -692,11 +692,11 @@ class WebUIServer:
                 )
                 return
             # Deferred creation: empty drafts are NOT persisted — the client's
-            # uuid_prefix is used verbatim as the snowflake so the session id
+            # uuid_prefix is used verbatim as the session_prefix so the session id
             # (``{uuid_prefix}.{agent}``) stays stable through attach→send.
             # Persistence happens on the first message (_ws_send_message).
             session_id = f"{uuid_prefix_raw}.{agent_name}"
-            snowflake = uuid_prefix_raw
+            session_prefix = uuid_prefix_raw
             uuid_prefix = uuid_prefix_raw
             explicit_agent = agent_name
 
@@ -721,8 +721,8 @@ class WebUIServer:
                 )
                 return
             resolved = await self._resolve_session(session_id)
-            snowflake = resolved.snowflake
-            uuid_prefix = snowflake
+            session_prefix = resolved.session_id_prefix
+            uuid_prefix = session_prefix
             explicit_agent = resolved.agent_name
 
         # Unregister any previous sessions and cancel their forward tasks.
@@ -735,24 +735,24 @@ class WebUIServer:
         if explicit_agent and self._agent_pool_map:
             pool_name = self._agent_pool_map.get(explicit_agent)
             if pool_name and self._pool_switch_callback is not None:
-                self._pool_switch_callback(snowflake, pool_name)
+                self._pool_switch_callback(session_prefix, pool_name)
         else:
             resolved_pool = (
                 self._pool_resolver(uuid_prefix) if self._pool_resolver is not None else None
             )
             pool_name = resolved_pool or _DEFAULT_AGENT_NAME
             if self._pool_switch_callback is not None:
-                self._pool_switch_callback(snowflake, pool_name)
+                self._pool_switch_callback(session_prefix, pool_name)
 
         # Proactively register ALL pool agent sessions so deltas from any
         # pool's agent are forwarded to this WebSocket client.
-        # Use the already-resolved snowflake (encoded for new conversations,
-        # the persisted snowflake for existing sessions) so the derived ids
+        # Use the already-resolved session_prefix (encoded for new conversations,
+        # the persisted session_prefix for existing sessions) so the derived ids
         # match the transcript/delta-queue keys — do NOT re-encode.
         for agent_name in self._pool_agent_names:
             if agent_name == _DEFAULT_AGENT_NAME:
                 continue  # already registered above
-            pool_sid = f"{snowflake}.{agent_name}"
+            pool_sid = f"{session_prefix}.{agent_name}"
             if self._input.get_delta_queue(pool_sid) is None:
                 self._input.register_connection(pool_sid, ws)
                 state.attached_sessions.append(pool_sid)
@@ -762,9 +762,9 @@ class WebUIServer:
 
         # Also register subagent sessions found in transcript (for history).
         # These are full session ids (``{conv}.{agent}.{invocation_id}``); each
-        # invocation is a distinct session.  ``snowflake`` is the stable
+        # invocation is a distinct session.  ``session_prefix`` is the stable
         # conversation prefix used by the transcript store.
-        for sub_sid in sorted(self._store.list_sessions_in_conversation(snowflake)):
+        for sub_sid in sorted(self._store.list_sessions_in_conversation(session_prefix)):
             sub_obj = SessionInfo.from_str(sub_sid)
             if sub_obj.agent_name in self._pool_agent_names and not sub_obj.is_subagent:
                 continue  # main-agent session already handled above
@@ -815,22 +815,22 @@ class WebUIServer:
         Attach creates a provisional id ``{uuid_prefix}.{agent}`` without
         persisting; this materializes it just before the pipeline writes the
         transcript, using ``encode_external_id=False`` so ``uuid_prefix`` is
-        the verbatim snowflake — same id, no re-encoding.  Already-persisted
+        the verbatim session_prefix — same id, no re-encoding.  Already-persisted
         sessions (reattach, existing conversations) are a no-op.
         """
         if self._session_store is None or self._session_factory is None:
             return
         if await self._session_store.get(session_id) is not None:
             return  # already persisted
-        snowflake = snowflake_of(session_id)
+        session_prefix = session_id_prefix_of(session_id)
         agent = agent_of(session_id, default="unknown")
         session = self._session_factory.create(
             agent_name=agent,
-            external_id=snowflake,
+            external_id=session_prefix,
             encode_external_id=False,
         )
         if str(session) != session_id:
-            # Fallback: snowflake contained a separator or was empty; persist a
+            # Fallback: session_prefix contained a separator or was empty; persist a
             # from_str record so the session list still shows the conversation.
             session = SessionInfo.from_str(session_id)
         await self._session_store.save(session)
@@ -860,7 +860,7 @@ class WebUIServer:
         # rejects them with "builtin_not_supported". That is intentional.
 
         resolved = await self._resolve_session(session_id)
-        uuid_prefix = resolved.snowflake
+        uuid_prefix = resolved.session_id_prefix
         explicit_agent = resolved.agent_name
 
         # Pool resolution is OWNED by S5 (ResolvePoolStage) — it also persists
@@ -872,14 +872,14 @@ class WebUIServer:
 
         # The session was already established upstream (attach / create_session).
         # Pass it through so the pipeline reuses str(session) verbatim instead of
-        # re-encoding the snowflake (which would break transcript/pool keying).
+        # re-encoding the session_prefix (which would break transcript/pool keying).
         pre_resolved = await self._resolve_session(session_id)
 
         # Run the WebUI sub-pipeline (S4..S8).
         from framework.input_pipeline.envelope import UserInputEnvelope
 
         envelope = UserInputEnvelope(
-            conversation_id=uuid_prefix,
+            external_id=uuid_prefix,
             content=content,
             channel="websocket",
             explicit_pool=explicit_pool,
@@ -931,7 +931,7 @@ class WebUIServer:
         if "." not in session_id:
             return
         resolved = await self._resolve_session(session_id)
-        uuid_prefix = resolved.snowflake
+        uuid_prefix = resolved.session_id_prefix
         agent_name = resolved.agent_name
         pool = self._pool_of_agent(agent_name)
         self._active_store(pool).delete_conversation(uuid_prefix)

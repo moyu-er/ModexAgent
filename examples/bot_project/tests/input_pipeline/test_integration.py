@@ -71,7 +71,7 @@ async def test_im_normal_message_persisted_and_enqueued() -> None:
         pipe = build_im_pipeline(
             skill_registry=_NoSkill(), known_pools={"main", "coding"}
         )
-        env = UserInputEnvelope(conversation_id="u1", content="hello", channel="qq")
+        env = UserInputEnvelope(external_id="u1", content="hello", channel="qq")
         await pipe.handle(env, ctx)
         events = list(store.load(_sid("main", "u1")))
         assert len(events) == 1 and events[0].content == "hello"
@@ -89,7 +89,7 @@ async def test_webui_explicit_coding_pool_persisted_to_coding() -> None:
             skill_registry=_NoSkill(), known_pools={"coding"}
         )
         env = UserInputEnvelope(
-            conversation_id="uuid1",
+            external_id="uuid1",
             content="hi",
             channel="websocket",
             explicit_pool="coding",
@@ -110,7 +110,7 @@ async def test_im_stop_command_not_persisted() -> None:
         enqueued: list[InputMessage] = []
         ctx = _make_ctx(store, enqueued, command_adapter=cmd_adapter)
         pipe = build_im_pipeline(skill_registry=_NoSkill(), known_pools={"main"})
-        env = UserInputEnvelope(conversation_id="u1", content="/stop", channel="qq")
+        env = UserInputEnvelope(external_id="u1", content="/stop", channel="qq")
         await pipe.handle(env, ctx)
         assert list(store.load(_sid("main", "u1"))) == []
         assert enqueued == [], "/stop must not be enqueued"
@@ -130,7 +130,7 @@ async def test_im_cd_command_not_persisted() -> None:
         enqueued: list[InputMessage] = []
         ctx = _make_ctx(store, enqueued, command_adapter=cmd_adapter)
         pipe = build_im_pipeline(skill_registry=_NoSkill(), known_pools={"main"})
-        env = UserInputEnvelope(conversation_id="u1", content="/cd /tmp", channel="qq")
+        env = UserInputEnvelope(external_id="u1", content="/cd /tmp", channel="qq")
         result = await pipe.handle(env, ctx)
         assert not result.should_continue(), "/cd must terminate"
         assert list(store.load(_sid("main", "u1"))) == []
@@ -149,7 +149,7 @@ async def test_im_pool_command_switches_pool_and_terminates() -> None:
         pipe = build_im_pipeline(
             skill_registry=_NoSkill(), known_pools={"main", "coding"}
         )
-        env = UserInputEnvelope(conversation_id="u1", content="/coding", channel="qq")
+        env = UserInputEnvelope(external_id="u1", content="/coding", channel="qq")
         result = await pipe.handle(env, ctx)
         assert not result.should_continue(), "/coding must terminate"
         ctx.pool_session_store.set.assert_called_once_with(encode_snowflake("u1"), "coding")
@@ -168,7 +168,7 @@ async def test_im_exit_command_not_persisted() -> None:
         enqueued: list[InputMessage] = []
         ctx = _make_ctx(store, enqueued, command_adapter=cmd_adapter)
         pipe = build_im_pipeline(skill_registry=_NoSkill(), known_pools={"main"})
-        env = UserInputEnvelope(conversation_id="u1", content="/exit", channel="qq")
+        env = UserInputEnvelope(external_id="u1", content="/exit", channel="qq")
         result = await pipe.handle(env, ctx)
         assert not result.should_continue(), "/exit must terminate"
         assert list(store.load(_sid("main", "u1"))) == []
@@ -188,7 +188,7 @@ async def test_im_valid_skill_persisted_raw_llm_gets_xml() -> None:
             known_pools={"main"},
         )
         env = UserInputEnvelope(
-            conversation_id="u1",
+            external_id="u1",
             content="/office-expert make ppt",
             channel="qq",
         )
@@ -214,7 +214,7 @@ async def test_im_invalid_skill_terminates_not_persisted() -> None:
             skill_registry=_NoSkill(), known_pools={"main"}
         )
         env = UserInputEnvelope(
-            conversation_id="u1", content="/nosuch thing", channel="qq"
+            external_id="u1", content="/nosuch thing", channel="qq"
         )
         result = await pipe.handle(env, ctx)
         assert not result.should_continue(), "invalid skill must terminate"
@@ -236,7 +236,7 @@ async def test_webui_invalid_skill_terminates_not_persisted() -> None:
             skill_registry=_NoSkill(), known_pools={"main"}
         )
         env = UserInputEnvelope(
-            conversation_id="uuid1",
+            external_id="uuid1",
             content="/nosuch thing",
             channel="websocket",
             explicit_pool="main",
@@ -295,7 +295,7 @@ async def test_multi_channel_pool_isolation() -> None:
         )
 
         # IM switches pool to "coding" via /coding command
-        env_im = UserInputEnvelope(conversation_id="u1", content="/coding", channel="qq")
+        env_im = UserInputEnvelope(external_id="u1", content="/coding", channel="qq")
         result_im = await pipe_im.handle(env_im, ctx_im)
         assert not result_im.should_continue()
 
@@ -304,7 +304,7 @@ async def test_multi_channel_pool_isolation() -> None:
 
         # WebUI sends normal message with explicit_pool="main"
         env_ws = UserInputEnvelope(
-            conversation_id="uuid1",
+            external_id="uuid1",
             content="hello from webui",
             channel="websocket",
             explicit_pool="main",
@@ -334,7 +334,7 @@ async def test_webui_slash_cd_produces_error_not_enqueued() -> None:
             skill_registry=_NoSkill(), known_pools={"main"}
         )
         env = UserInputEnvelope(
-            conversation_id="uuid1",
+            external_id="uuid1",
             content="/cd /tmp",
             channel="websocket",
             explicit_pool="main",
@@ -362,7 +362,7 @@ async def test_im_pwd_command_handled_and_not_persisted() -> None:
         enqueued: list[InputMessage] = []
         ctx = _make_ctx(store, enqueued, command_adapter=cmd_adapter)
         pipe = build_im_pipeline(skill_registry=_NoSkill(), known_pools={"main"})
-        env = UserInputEnvelope(conversation_id="u1", content="/pwd", channel="qq")
+        env = UserInputEnvelope(external_id="u1", content="/pwd", channel="qq")
         result = await pipe.handle(env, ctx)
         assert not result.should_continue(), "/pwd must terminate"
         cmd_adapter._try_intercept_control.assert_awaited_once_with("/pwd", _sid("main", "u1"))
@@ -412,7 +412,7 @@ async def test_skill_resolved_from_correct_pool() -> None:
 
         # ── /brainstorming in "main" pool ─────────────────────────
         env = UserInputEnvelope(
-            conversation_id="u1",
+            external_id="u1",
             content="/brainstorming new idea",
             channel="qq",
         )
@@ -426,7 +426,7 @@ async def test_skill_resolved_from_correct_pool() -> None:
         # ── /office-expert in "main" pool (NOT available) ────────
         enqueued.clear()
         env2 = UserInputEnvelope(
-            conversation_id="u2",
+            external_id="u2",
             content="/office-expert make ppt",
             channel="qq",
         )
@@ -461,7 +461,7 @@ async def test_skill_pool_isolation_webui() -> None:
 
         # WebUI with explicit_pool="coding" — /office-expert should work
         env = UserInputEnvelope(
-            conversation_id="uuid1",
+            external_id="uuid1",
             content="/office-expert make ppt",
             channel="websocket",
             explicit_pool="coding",
@@ -474,7 +474,7 @@ async def test_skill_pool_isolation_webui() -> None:
         # Same pool — /brainstorming should NOT work
         enqueued.clear()
         env2 = UserInputEnvelope(
-            conversation_id="uuid2",
+            external_id="uuid2",
             content="/brainstorming",
             channel="websocket",
             explicit_pool="coding",

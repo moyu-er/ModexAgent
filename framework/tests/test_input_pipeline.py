@@ -17,8 +17,8 @@ def test_attachment_ref_defaults() -> None:
 
 
 def test_envelope_required_fields() -> None:
-    env = UserInputEnvelope(conversation_id="c1", content="hi", channel="qq")
-    assert env.conversation_id == "c1"
+    env = UserInputEnvelope(external_id="c1", content="hi", channel="qq")
+    assert env.external_id == "c1"
     assert env.content == "hi"
     assert env.channel == "qq"
     assert env.explicit_pool is None
@@ -27,7 +27,7 @@ def test_envelope_required_fields() -> None:
 
 
 def test_continue_should_continue_true() -> None:
-    env = UserInputEnvelope(conversation_id="c", content="x", channel="qq")
+    env = UserInputEnvelope(external_id="c", content="x", channel="qq")
     result = Continue(value=env)
     assert result.should_continue() is True
     assert result.envelope() is env
@@ -77,7 +77,7 @@ class _StopStage(InputStage):
 async def test_pipeline_runs_stages_in_order() -> None:
     log: list[str] = []
     pipe = UserInputPipeline([_RecordStage("a", log), _RecordStage("b", log)])
-    env = UserInputEnvelope(conversation_id="c", content="x", channel="qq")
+    env = UserInputEnvelope(external_id="c", content="x", channel="qq")
     result = await pipe.handle(env, _StubContext())
     assert log == ["a", "b"]
     assert result.should_continue() is True
@@ -87,7 +87,7 @@ async def test_pipeline_runs_stages_in_order() -> None:
 async def test_pipeline_terminates_early() -> None:
     log: list[str] = []
     pipe = UserInputPipeline([_RecordStage("a", log), _StopStage(log), _RecordStage("c", log)])
-    env = UserInputEnvelope(conversation_id="c", content="x", channel="qq")
+    env = UserInputEnvelope(external_id="c", content="x", channel="qq")
     result = await pipe.handle(env, _StubContext())
     assert log == ["a", "stop"]
     assert result.should_continue() is False

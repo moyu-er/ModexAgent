@@ -125,7 +125,7 @@ async def test_pool_switch_full_flow_routes_to_coding() -> None:
         msg = inp._message_queue.get_nowait()
         sid = str(msg.session)
         # PoolSessionStore keys by snowflake (agent-independent), not full session_id
-        target_pool = real_store.get(msg.session.snowflake, "main")
+        target_pool = real_store.get(msg.session.session_id_prefix, "main")
         assert target_pool == "coding", (
             f"PoolRouter must route session {sid!r} to 'coding', "
             f"but PoolSessionStore returned {target_pool!r}"
@@ -503,8 +503,8 @@ async def test_different_conversations_route_to_different_pools() -> None:
         messages: list[tuple[str, str]] = []
         while not inp._message_queue.empty():
             msg = inp._message_queue.get_nowait()
-            pool = real_store.get(msg.session.snowflake, "main")
-            messages.append((msg.session.snowflake, pool))
+            pool = real_store.get(msg.session.session_id_prefix, "main")
+            messages.append((msg.session.session_id_prefix, pool))
 
         coding_routes = [(s, p) for s, p in messages if s == coding_conv]
         main_routes = [(s, p) for s, p in messages if s == main_conv]
