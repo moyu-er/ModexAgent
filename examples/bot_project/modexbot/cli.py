@@ -36,11 +36,38 @@ app = typer.Typer(
 _PKG_ROOT: Path = Path(__file__).resolve().parent.parent
 _ENV_PATH: Path = _PKG_ROOT / ".env"
 _REPO_ROOT: Path = _PKG_ROOT.parent.parent
-_VENV_PYTHON: Path = (
-    _PKG_ROOT / ".venv" / "Scripts" / "python.exe"
-    if sys.platform == "win32"
-    else _PKG_ROOT / ".venv" / "bin" / "python"
-)
+
+
+def _resolve_venv_python() -> Path:
+    """Find a usable venv Python that has modexbot installed.
+
+    Checks both ``bot_project/.venv`` and ``repo_root/.venv``.  The
+    install scripts (install.sh / install.bat) create the environment at
+    the repo root, so that is tried first.  A stale ``bot_project/.venv``
+    with missing dependencies will be skipped.
+
+    On failure the most likely candidate is still returned so error
+    messages show a meaningful path.
+    """
+    _ = sys.platform
+    bins: tuple[str, ...] = ("Scripts",) if _ == "win32" else ("bin",)
+    exe_name: str = "python.exe" if _ == "win32" else "python"
+    cli_name: str = "modexbot.exe" if _ == "win32" else "modexbot"
+
+    roots = (_REPO_ROOT, _PKG_ROOT)  # repo root first (install scripts default)
+
+    for root in roots:
+        bin_dir = root / ".venv" / bins[0]
+        python = bin_dir / exe_name
+        cli = bin_dir / cli_name
+        if python.is_file() and cli.is_file():
+            return python
+
+    # Neither is usable — return the repo root path as the most likely target.
+    return _REPO_ROOT / ".venv" / bins[0] / exe_name
+
+
+_VENV_PYTHON: Path = _resolve_venv_python()
 _PID_FILE: Path = _PKG_ROOT / ".modex" / "bot.pid"
 _LOG_FILE: Path = _PKG_ROOT / "logs" / "bot.log"
 _DEFAULT_PORT: int = 21800
