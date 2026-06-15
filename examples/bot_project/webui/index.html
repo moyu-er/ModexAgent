@@ -5,8 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ModexBot</title>
     <link rel="icon" type="image/jpeg" href="logo.jpg" />
+    <script>
+      // Apply the saved theme before React hydrates to avoid a flash.
+      (function () {
+        const saved = localStorage.getItem("modexbot_theme");
+        const theme = saved === "dark" ? "dark" : "light";
+        if (theme === "dark") {
+          document.documentElement.classList.add("dark");
+        } else {
+          document.documentElement.classList.remove("dark");
+        }
+      })();
+    </script>
   </head>
-  <body class="bg-gray-950 text-gray-100">
+  <body class="bg-page-bg-light text-text-primary-light dark:bg-page-bg-dark dark:text-text-primary-dark">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

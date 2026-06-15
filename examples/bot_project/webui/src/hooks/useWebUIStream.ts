@@ -18,6 +18,7 @@ export function useWebUIStream(
   sessionId: string | null,
   getPoolForUuid?: (uuid: string) => string | undefined,
   onSessionReady?: (uuidPrefix: string, fullSessionId: string) => void,
+  onNewSessionActivity?: (sessionId: string) => void,
 ): UseWebUIStreamResult {
   const [state, setState] = useState<StreamState>({
     messages: [],
@@ -30,6 +31,9 @@ export function useWebUIStream(
    * echoes it back via ``_request_id`` in the envelope metadata so the
    * reducer can deduplicate the echo regardless of content. */
   const pendingRequestRef = useRef<string | null>(null);
+  /** Track session ids we've already notified about to avoid duplicate
+   * re-fetches when the same subagent emits multiple streaming events. */
+  const seenSessionRef = useRef<Set<string>>(new Set());
 
   const agentName = sessionId ? sessionId.split(".")[1] || "main" : "main";
 
@@ -44,11 +48,23 @@ export function useWebUIStream(
         onSessionReady?.(sessionId, event.session_id);
         return;
       }
+      // Notify when a brand-new (subagent) session starts streaming so the
+      // sidebar tree can refresh to show it.
+      const evSid = (event as unknown as Record<string, unknown>).session_id as string | undefined;
+      if (
+        onNewSessionActivity &&
+        evSid &&
+        evSid !== sessionId &&
+        !seenSessionRef.current.has(evSid)
+      ) {
+        seenSessionRef.current.add(evSid);
+        onNewSessionActivity(evSid);
+      }
       setState((prev) =>
         applyServerEvent(prev, event, sessionId, pendingRequestRef),
       );
     },
-    [sessionId, getPoolForUuid, onSessionReady],
+    [sessionId, getPoolForUuid, onSessionReady, onNewSessionActivity],
   );
 
   // Keep a mutable reference to the latest handler so the WebSocket client

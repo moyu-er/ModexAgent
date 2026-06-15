@@ -9,7 +9,6 @@ export interface WorkspaceBrowserProps {
 
 function buildBreadcrumbs(p: string): { label: string; path: string }[] {
   if (!p) return [];
-  // Determine separator
   const isWin = /^[A-Za-z]:\\/.test(p);
   if (isWin) {
     const parts = p.split("\\").filter(Boolean);
@@ -23,7 +22,6 @@ function buildBreadcrumbs(p: string): { label: string; path: string }[] {
     }
     return crumbs;
   }
-  // Unix
   const parts = p.split("/").filter(Boolean);
   const crumbs: { label: string; path: string }[] = [];
   let base = "";
@@ -61,7 +59,6 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
     }
   }, []);
 
-  // Load on open
   useEffect(() => {
     if (open) {
       load("");
@@ -98,34 +95,34 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay-light dark:bg-overlay-dark">
       <div
-        className="bg-gray-900 border border-gray-700 rounded-lg shadow-2xl w-[520px] max-h-[70vh] flex flex-col"
+        className="flex w-[520px] max-w-[90vw] max-h-[70vh] flex-col rounded-lg border border-card-border-light bg-content-bg-light shadow-lg dark:border-card-border-dark dark:bg-content-bg-dark"
         onClick={(e): void => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between shrink-0">
-          <h3 className="text-sm font-semibold text-gray-200">
+        <div className="flex shrink-0 items-center justify-between border-b border-divider-light px-4 py-3 dark:border-divider-dark">
+          <h3 className="text-sm font-semibold text-text-primary-light dark:text-text-primary-dark">
             Choose Workspace
           </h3>
           <button
             type="button"
             onClick={onClose}
-            className="text-gray-500 hover:text-gray-300 text-lg leading-none px-1"
+            className="px-1 text-lg leading-none text-text-secondary-light transition-colors hover:text-text-primary-light dark:text-text-secondary-dark dark:hover:text-text-primary-dark"
           >
             ✕
           </button>
         </div>
 
         {/* Breadcrumbs */}
-        <div className="px-4 py-2 border-b border-gray-800 flex items-center gap-1 overflow-x-auto shrink-0">
+        <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-divider-light px-4 py-2 dark:border-divider-dark">
           {crumbs.map((crumb, i) => (
-            <span key={crumb.path} className="flex items-center gap-1 shrink-0">
-              {i > 0 && <span className="text-gray-600 text-xs">/</span>}
+            <span key={crumb.path} className="flex shrink-0 items-center gap-1">
+              {i > 0 && <span className="text-xs text-text-disabled-light dark:text-text-disabled-dark">/</span>}
               <button
                 type="button"
                 onClick={(): Promise<void> => load(crumb.path)}
-                className="text-xs text-blue-400 hover:text-blue-300 hover:underline font-mono"
+                className="font-mono text-xs text-text-link-light hover:underline dark:text-text-link-dark"
               >
                 {crumb.label}
               </button>
@@ -135,13 +132,13 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
 
         {/* Drive letters (Windows root) */}
         {drives.length > 0 && (
-          <div className="px-4 py-2 border-b border-gray-800 flex gap-2 flex-wrap shrink-0">
+          <div className="flex shrink-0 flex-wrap gap-2 border-b border-divider-light px-4 py-2 dark:border-divider-dark">
             {drives.map((d) => (
               <button
                 key={d.path}
                 type="button"
                 onClick={(): Promise<void> => load(d.path)}
-                className="px-2 py-1 text-xs bg-gray-800 text-gray-300 rounded hover:bg-gray-700 hover:text-gray-100 transition-colors font-mono"
+                className="rounded bg-btn-secondary-light px-2 py-1 font-mono text-xs text-btn-secondary-text-light transition-colors hover:bg-sidebar-hover-light dark:bg-btn-secondary-dark dark:text-btn-secondary-text-dark dark:hover:bg-sidebar-hover-dark"
               >
                 {d.name}
               </button>
@@ -150,17 +147,17 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
         )}
 
         {/* Directory listing */}
-        <div className="flex-1 overflow-y-auto px-2 py-2 min-h-[240px]">
+        <div className="min-h-[240px] flex-1 overflow-y-auto px-2 py-2">
           {loading && (
-            <p className="text-xs text-gray-500 px-2 py-4">Loading...</p>
+            <p className="px-2 py-4 text-xs text-text-secondary-light dark:text-text-secondary-dark">Loading...</p>
           )}
           {error && (
-            <p className="text-xs text-red-400 px-2 py-4">{error}</p>
+            <p className="px-2 py-4 text-xs text-error-light dark:text-error-dark">{error}</p>
           )}
           {!loading &&
             !error &&
             entries.length === 0 && (
-              <p className="text-xs text-gray-600 px-2 py-4">
+              <p className="px-2 py-4 text-xs text-text-disabled-light dark:text-text-disabled-dark">
                 Empty directory
               </p>
             )}
@@ -170,13 +167,13 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
               type="button"
               onClick={(): void => handleNavigate(entry)}
               disabled={!entry.is_dir}
-              className={`w-full text-left px-3 py-1.5 rounded text-xs flex items-center gap-2 transition-colors ${
+              className={`flex w-full items-center gap-2 rounded px-3 py-1.5 text-left text-xs transition-colors ${
                 entry.is_dir
-                  ? "hover:bg-gray-800 text-gray-300 cursor-pointer"
-                  : "text-gray-600 cursor-default"
+                  ? "cursor-pointer text-text-body-light hover:bg-sidebar-hover-light dark:text-text-body-dark dark:hover:bg-sidebar-hover-dark"
+                  : "cursor-default text-text-disabled-light dark:text-text-disabled-dark"
               }`}
             >
-              <span className="shrink-0 w-4 text-center">
+              <span className="w-4 shrink-0 text-center">
                 {entry.is_dir ? "📁" : "📄"}
               </span>
               <span className="truncate font-mono">{entry.name}</span>
@@ -185,15 +182,15 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="px-4 py-3 border-t border-gray-800 flex items-center justify-between shrink-0">
-          <p className="text-[10px] text-gray-500 font-mono truncate max-w-[300px]">
+        <div className="flex shrink-0 items-center justify-between border-t border-divider-light px-4 py-3 dark:border-divider-dark">
+          <p className="max-w-[300px] truncate font-mono text-[10px] text-text-secondary-light dark:text-text-secondary-dark">
             {current}
           </p>
-          <div className="flex gap-2 shrink-0">
+          <div className="flex shrink-0 gap-2">
             <button
               type="button"
               onClick={onClose}
-              className="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200 transition-colors"
+              className="px-3 py-1.5 text-xs text-text-secondary-light transition-colors hover:text-text-primary-light dark:text-text-secondary-dark dark:hover:text-text-primary-dark"
             >
               Cancel
             </button>
@@ -217,7 +214,7 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
                 }
               }}
               disabled={switching}
-              className="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-800 rounded transition-colors disabled:opacity-50"
+              className="rounded px-3 py-1.5 text-xs text-text-secondary-light transition-colors hover:bg-sidebar-hover-light hover:text-text-primary-light disabled:opacity-50 dark:text-text-secondary-dark dark:hover:bg-sidebar-hover-dark dark:hover:text-text-primary-dark"
             >
               Home
             </button>
@@ -225,7 +222,7 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
               type="button"
               onClick={handleSelect}
               disabled={switching || !current}
-              className="px-4 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-500 transition-colors disabled:opacity-50"
+              className="rounded bg-btn-primary-light px-4 py-1.5 text-xs text-btn-primary-text-light transition-colors hover:bg-send-btn-hover-light disabled:opacity-50 dark:bg-btn-primary-dark dark:text-btn-primary-text-dark dark:hover:bg-send-btn-hover-dark"
             >
               {switching ? "Switching..." : "Select"}
             </button>

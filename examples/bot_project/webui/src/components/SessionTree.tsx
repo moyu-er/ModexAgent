@@ -1,4 +1,4 @@
-import { useState, type FC } from "react";
+import { useEffect, useState, type FC } from "react";
 
 export interface SessionNodeData {
   session_id: string;
@@ -27,10 +27,17 @@ const SessionNode: FC<{
   onSelect: (sessionId: string) => void;
   onDelete: (sessionId: string) => void;
 }> = ({ node, depth, selected, onSelect, onDelete }) => {
-  const [expanded, setExpanded] = useState(false);
   const hasChildren = node.children.length > 0;
   const isSelected = node.session_id === selected;
   const isRoot = node.parent_session_id === null;
+  const [expanded, setExpanded] = useState(false);
+
+  // Auto-expand when children appear (subagent created during live session)
+  useEffect(() => {
+    if (hasChildren) {
+      setExpanded(true);
+    }
+  }, [hasChildren]);
 
   return (
     <div>
@@ -40,9 +47,9 @@ const SessionNode: FC<{
           <div className="flex shrink-0">
             {Array.from({ length: depth }).map((_, level) => (
               <div key={level} className="relative" style={{ width: "20px" }}>
-                <div className="absolute inset-y-0 left-1.5 border-l border-white/8" />
+                <div className="absolute inset-y-0 left-1.5 border-l border-divider-light/60 dark:border-divider-dark/60" />
                 {level === depth - 1 && (
-                  <div className="absolute left-1.5 right-0 top-1/2 border-t border-white/8" />
+                  <div className="absolute left-1.5 right-0 top-1/2 border-t border-divider-light/60 dark:border-divider-dark/60" />
                 )}
               </div>
             ))}
@@ -56,8 +63,8 @@ const SessionNode: FC<{
         <div
           className={`my-0.5 flex min-w-0 flex-1 items-center rounded-r-md border-l-[3px] ${
             isSelected
-              ? "border-brand-500 bg-brand-500/20 shadow-[inset_0_0_0_1px_rgba(139,143,247,0.18)]"
-              : "border-transparent hover:bg-ink-800"
+              ? "border-ai-brand-light dark:border-ai-brand-dark bg-sidebar-hover-light dark:bg-sidebar-hover-dark ring-1 ring-inset ring-ai-brand-light/20 dark:ring-ai-brand-dark/20"
+              : "border-transparent hover:bg-sidebar-hover-light dark:hover:bg-sidebar-hover-dark"
           }`}
         >
           {/* Expand arrow — only if has children */}
@@ -66,7 +73,7 @@ const SessionNode: FC<{
               type="button"
               data-testid="expand-arrow"
               onClick={(): void => setExpanded(!expanded)}
-              className="mr-2 shrink-0 text-[10px] leading-none text-gray-500 transition-colors hover:text-gray-200"
+              className="mr-2 shrink-0 text-[10px] leading-none text-text-secondary-light dark:text-text-secondary-dark transition-colors hover:text-text-primary-light dark:hover:text-text-primary-dark"
             >
               {expanded ? "▼" : "▶"}
             </button>
@@ -79,7 +86,9 @@ const SessionNode: FC<{
             type="button"
             onClick={(): void => onSelect(node.session_id)}
             className={`flex-1 truncate py-2 text-left font-mono text-sm transition-colors ${
-              isSelected ? "text-brand-100" : "text-gray-400 hover:text-gray-200"
+              isSelected
+                ? "text-ai-brand-light dark:text-ai-brand-dark"
+                : "text-text-secondary-light dark:text-text-secondary-dark hover:text-text-primary-light dark:hover:text-text-primary-dark"
             }`}
           >
             {node.displayName}
@@ -94,7 +103,7 @@ const SessionNode: FC<{
                 onDelete(node.session_id);
               }}
               title="Delete conversation"
-              className="shrink-0 rounded px-2 py-2 text-sm text-gray-600 transition-colors hover:bg-red-400/10 hover:text-red-400"
+              className="shrink-0 rounded px-2 py-2 text-sm text-text-disabled-light dark:text-text-disabled-dark transition-colors hover:text-error-light dark:hover:text-error-dark"
             >
               {"✕"}
             </button>

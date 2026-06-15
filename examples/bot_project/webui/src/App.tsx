@@ -6,11 +6,11 @@ import { fetchSessions, fetchPools, fetchWorkspace, deleteConversation, changeWo
 import type { ConversationInfo } from "./types/events";
 import type { PoolInfo, RecentWorkspaceEntry } from "./lib/api";
 
-const SIDEBAR_STORAGE_KEY = "modexbot_sidebar_width";
 const ACTIVE_POOL_STORAGE_KEY = "modexbot_active_pool";
+const SIDEBAR_WIDTH_KEY = "modexbot_sidebar_width";
 const DEFAULT_SIDEBAR_WIDTH = 260;
-const MIN_SIDEBAR_WIDTH = 180;
-const MAX_SIDEBAR_WIDTH = 720;
+const MIN_SIDEBAR_WIDTH = 200;
+const MAX_SIDEBAR_WIDTH = 480;
 
 function loadActivePool(): string {
   try {
@@ -34,7 +34,7 @@ function saveActivePool(pool: string): void {
 
 function loadSidebarWidth(): number {
   try {
-    const stored = localStorage.getItem(SIDEBAR_STORAGE_KEY);
+    const stored = localStorage.getItem(SIDEBAR_WIDTH_KEY);
     if (stored) {
       const parsed = parseInt(stored, 10);
       if (parsed >= MIN_SIDEBAR_WIDTH && parsed <= MAX_SIDEBAR_WIDTH) {
@@ -49,7 +49,7 @@ function loadSidebarWidth(): number {
 
 function saveSidebarWidth(width: number): void {
   try {
-    localStorage.setItem(SIDEBAR_STORAGE_KEY, String(width));
+    localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width));
   } catch {
     // localStorage unavailable
   }
@@ -59,12 +59,6 @@ function saveSidebarWidth(width: number): void {
 
 function computeDisplayName(sessionId: string, parentId?: string): string {
   if (parentId) {
-    // Strip the longest common prefix between parent and child session_ids,
-    // backing up to the last dot boundary.  This handles the case where the
-    // subagent has a different agent name than its parent:
-    //   parent:  "abc.coding"
-    //   child:   "abc.reviewer.ee11"
-    //   common:  "abc."     → display: "reviewer.ee11"
     let i = 0;
     while (i < sessionId.length && i < parentId.length && sessionId[i] === parentId[i]) {
       i++;
@@ -74,8 +68,7 @@ function computeDisplayName(sessionId: string, parentId?: string): string {
     }
     return sessionId.slice(i) || sessionId;
   }
-  // Root session: show conversation ID (first segment) — original behavior
-  return sessionId.split(".")[0] || sessionId;
+  return sessionId;
 }
 
 interface TreeNode {
@@ -102,10 +95,6 @@ function buildTree(sessions: ConversationInfo[]): TreeNode[] {
       roots.push(s);
     }
   }
-  // Sort roots by last update descending (most recent first).
-  // Pending sessions have no updated_at and naturally sink to the bottom;
-  // the frontend intentionally inserts pending sessions at the top when
-  // creating them, so they stay there until the first message arrives.
   roots.sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
 
   function toTreeNode(s: ConversationInfo, parentId?: string): TreeNode {
@@ -131,10 +120,20 @@ const App: FC = () => {
   const [workspace, setWorkspace] = useState<string>("");
   const [isHome, setIsHome] = useState<boolean>(true);
   const [recentWorkspaces, setRecentWorkspaces] = useState<RecentWorkspaceEntry[]>([]);
-  const [sidebarWidth, setSidebarWidth] = useState<number>(loadSidebarWidth);
+  const [sidebarMobileOpen, setSidebarMobileOpen] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => loadSidebarWidth());
 
-  // uuidPrefix → pool, for client-side empty session generation
+  // uuidPrefix → pool, for client-side empty session generation.
+  // Cleared once the backend echoes a real session id via the attached event.
   const pendingRef = useRef<Map<string, string>>(new Map());
+  // Empty drafts (both pre- and post-attach promotion): id → pool.
+  // Clicking "New Conversation" reuses the current draft instead of spawning
+  // another one.  Cleared when the user sends the first message.  Survives
+  // pool switches so switching back to a pool where a draft was left open
+  // still reuses it rather than creating a duplicate.
+  const draftIdsRef = useRef<Map<string, string>>(new Map());
+  const refreshSessionsRef = useRef<(() => void) | null>(null);
+  const treeRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const getPoolForUuid = useCallback((uuid: string): string | undefined => {
     return pendingRef.current.get(uuid);
@@ -142,7 +141,14 @@ const App: FC = () => {
 
   const handleSessionReady = useCallback(
     (uuidPrefix: string, fullSessionId: string): void => {
+      // Transfer the pool association from the bare prefix to the stable id.
+      const pool = pendingRef.current.get(uuidPrefix);
       pendingRef.current.delete(uuidPrefix);
+      // The backend responded with a stable session id; track it so
+      // subsequent "New" clicks reuse this still-empty draft rather than
+      // creating a fresh one.
+      draftIdsRef.current.delete(uuidPrefix);
+      draftIdsRef.current.set(fullSessionId, pool || "main");
       setSelectedId(fullSessionId);
       setSessions((prev) =>
         prev.map((s) =>
@@ -160,19 +166,26 @@ const App: FC = () => {
     [],
   );
 
-  const { messages, isStreaming, isPending, connect, disconnect, send } =
-    useWebUIStream(selectedId, getPoolForUuid, handleSessionReady);
+  // Debounced refresh when a new (subagent) session starts streaming.
+  const onNewSessionActivity = useCallback((_sid: string): void => {
+    if (treeRefreshTimerRef.current) return;
+    treeRefreshTimerRef.current = setTimeout(() => {
+      treeRefreshTimerRef.current = null;
+      refreshSessionsRef.current?.();
+    }, 600);
+  }, []);
 
-  // Build session tree from flat list (memoized — only recompute on sessions change)
+  const { messages, isStreaming, isPending, connect, disconnect, send } =
+    useWebUIStream(selectedId, getPoolForUuid, handleSessionReady, onNewSessionActivity);
+
   const sessionTree = useMemo(() => buildTree(sessions), [sessions]);
 
-  // Determine if selected session is a subagent (readOnly view)
   const isSelectedSubagent = useMemo(
     () => !!(selectedId && sessions.some((s) => s.session_id === selectedId && s.parent_session_id)),
     [selectedId, sessions],
   );
 
-  // Resize state — use refs for the drag to avoid re-registering listeners per pixel
+  // Sidebar resize state — refs keep the drag smooth without re-registering listeners.
   const resizing = useRef(false);
   const resizeStartX = useRef(0);
   const resizeStartWidth = useRef(0);
@@ -259,19 +272,42 @@ const App: FC = () => {
     connect();
     return (): void => {
       disconnect();
+      if (treeRefreshTimerRef.current) {
+        clearTimeout(treeRefreshTimerRef.current);
+        treeRefreshTimerRef.current = null;
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const refreshSessions = useCallback((): void => {
     fetchSessions(workspace || undefined, activePool)
-      .then(setSessions)
+      .then((loaded) => {
+        setSessions((prev) => {
+          // Keep any client-side drafts that the backend doesn't know about
+          // yet so they don't vanish from the sidebar on refresh.  Drafts are
+          // pool-scoped (cleared on pool/workspace switch), so this only
+          // applies to the active pool.
+          const draftEntries = prev.filter(
+            (s) => draftIdsRef.current.has(s.session_id),
+          );
+          const nonDraft = loaded.filter(
+            (s) => !draftIdsRef.current.has(s.session_id),
+          );
+          return [...draftEntries, ...nonDraft];
+        });
+      })
       .catch(() => {});
   }, [workspace, activePool]);
+
+  useEffect(() => {
+    refreshSessionsRef.current = refreshSessions;
+  }, [refreshSessions]);
 
   const handleSelect = useCallback(
     (sessionId: string): void => {
       setSelectedId(sessionId);
+      setSidebarMobileOpen(false);
       refreshSessions();
     },
     [refreshSessions],
@@ -279,16 +315,43 @@ const App: FC = () => {
 
   const handleNew = useCallback(
     (pool: string): void => {
-      const uuidPrefix = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
-      // Remove old pending entries, keep all real sessions
-      for (const [uuid, p] of pendingRef.current) {
-        if (p === pool) pendingRef.current.delete(uuid);
+      // Reuse the existing empty draft for this pool if one already exists
+      // (bare uuid prefix or promoted session id).  Repeated clicks on
+      // "New Conversation" must not spawn a stack of unsaved sessions.
+      for (const [draftId, draftPool] of draftIdsRef.current) {
+        if (draftPool === pool) {
+          setSelectedId(draftId);
+          setSessions((prev) => {
+            if (prev.some((s) => s.session_id === draftId)) {
+              return prev;
+            }
+            const now = Date.now();
+            return [
+              {
+                session_id: draftId,
+                agent_name: "…",
+                pool,
+                parent_session_id: null,
+                created_at: now,
+                updated_at: now,
+              },
+              ...prev,
+            ];
+          });
+          return;
+        }
       }
+
+      // No empty draft for this pool yet — create a client-side stub.
+      const uuidPrefix = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
       pendingRef.current.set(uuidPrefix, pool);
+      draftIdsRef.current.set(uuidPrefix, pool);
       setSelectedId(uuidPrefix);
       const now = Date.now();
+      // Discard any stale "…" placeholders from a prior session (belt-and-
+      // suspenders — draftIdsRef tracking should prevent duplicates, but
+      // cleanup ensures we never show two "…" entries).
       setSessions((prev) => [
-        // New pending session at top, then all real sessions sorted by time
         {
           session_id: uuidPrefix,
           agent_name: "…",
@@ -297,7 +360,9 @@ const App: FC = () => {
           created_at: now,
           updated_at: now,
         },
-        ...prev.filter((s) => s.agent_name !== "…"),
+        ...prev.filter(
+          (s) => s.agent_name !== "…" || draftIdsRef.current.has(s.session_id),
+        ),
       ]);
     },
     [],
@@ -305,7 +370,7 @@ const App: FC = () => {
 
   const handleDelete = useCallback(
     (sessionId: string): void => {
-      // Pending (empty) session: local delete only, no backend call
+      draftIdsRef.current.delete(sessionId);
       if (pendingRef.current.has(sessionId)) {
         pendingRef.current.delete(sessionId);
         setSessions((prev) =>
@@ -337,6 +402,7 @@ const App: FC = () => {
       setWorkspace(cwd);
       setSelectedId(null);
       pendingRef.current.clear();
+      draftIdsRef.current.clear();
       fetchWorkspace()
         .then((info) => setIsHome(info.is_home))
         .catch(() => {});
@@ -358,6 +424,7 @@ const App: FC = () => {
         setIsHome(true);
         setSelectedId(null);
         pendingRef.current.clear();
+        draftIdsRef.current.clear();
         fetchSessions(result.cwd, activePool)
           .then(setSessions)
           .catch(() => {});
@@ -373,7 +440,9 @@ const App: FC = () => {
     (pool: string): void => {
       setActivePool(pool);
       setSelectedId(null);
+      // Clear all draft/pending state — switching pools is a fresh context.
       pendingRef.current.clear();
+      draftIdsRef.current.clear();
       fetchSessions(workspace || undefined, pool)
         .then(setSessions)
         .catch(() => {});
@@ -383,59 +452,70 @@ const App: FC = () => {
 
   const handleSend = useCallback(
     (content: string): void => {
+      // The session is now real — clear draft tracking so subsequent
+      // "New Conversation" clicks create a fresh empty draft.
+      if (selectedId) {
+        draftIdsRef.current.delete(selectedId);
+      }
       send(content);
     },
-    [send],
+    [send, selectedId],
   );
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-ink-950">
-      {/* Sidebar with dynamic width */}
-      <div
-        style={{ width: sidebarWidth }}
-        className="flex-shrink-0 h-full"
-      >
-        <Sidebar
-          sessionTree={sessionTree}
-          pools={pools}
-          selected={selectedId}
-          workspace={workspace}
-          isHome={isHome}
-          activePool={activePool}
-          recentWorkspaces={recentWorkspaces}
-          onSelect={handleSelect}
-          onNew={handleNew}
-          onDelete={handleDelete}
-          onWorkspaceChanged={handleWorkspaceChanged}
-          onGoHome={handleGoHome}
-          onPoolChange={handlePoolChange}
-        />
-      </div>
+    <div className="flex h-screen w-screen overflow-hidden bg-page-bg-light dark:bg-page-bg-dark">
+      <Sidebar
+        style={{ ["--sidebar-width" as string]: `${sidebarWidth}px` }}
+        sessionTree={sessionTree}
+        pools={pools}
+        selected={selectedId}
+        workspace={workspace}
+        isHome={isHome}
+        activePool={activePool}
+        recentWorkspaces={recentWorkspaces}
+        mobileOpen={sidebarMobileOpen}
+        onCloseMobile={() => setSidebarMobileOpen(false)}
+        onSelect={handleSelect}
+        onNew={handleNew}
+        onDelete={handleDelete}
+        onWorkspaceChanged={handleWorkspaceChanged}
+        onGoHome={handleGoHome}
+        onPoolChange={handlePoolChange}
+      />
 
-      {/* Resize handle — invisible 8px hit area with a 1px visible bar */}
+      {/* Resize handle — desktop only */}
       <div
         onMouseDown={onResizeMouseDown}
-        className="group relative w-2 flex-shrink-0 cursor-col-resize select-none"
+        className="group relative hidden w-2 flex-shrink-0 cursor-col-resize select-none md:block"
         title="Drag to resize sidebar"
       >
         <div
           className={`absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors ${
             resizing.current
-              ? "bg-brand-500"
-              : "bg-white/[0.06] group-hover:bg-brand-500/50"
+              ? "bg-ai-brand-light dark:bg-ai-brand-dark"
+              : "bg-divider-light dark:bg-divider-dark group-hover:bg-ai-brand-light/50 dark:group-hover:bg-ai-brand-dark/50"
           }`}
         />
       </div>
 
-      <main className="flex-1 flex flex-col min-w-0">
+      <main className="flex flex-1 flex-col min-w-0">
         <ChatView
           messages={messages}
           isStreaming={isStreaming}
           isPending={isPending}
           onSend={handleSend}
           readOnly={isSelectedSubagent}
+          onOpenSidebar={() => setSidebarMobileOpen(true)}
         />
       </main>
+
+      {sidebarMobileOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-overlay-light dark:bg-overlay-dark md:hidden"
+          onClick={() => setSidebarMobileOpen(false)}
+          aria-hidden="true"
+        />
+      )}
     </div>
   );
 };

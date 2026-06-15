@@ -10,16 +10,16 @@ export interface ChatViewProps {
   /** Invoked when the user presses the pause control on a streaming session. */
   onPause?: () => void;
   readOnly?: boolean;
+  onOpenSidebar?: () => void;
 }
 
-// Input box is intentionally tall and generous; it grows with content up to
-// the cap, then scrolls internally.
-const MAX_INPUT_HEIGHT = 630;
-const MIN_INPUT_HEIGHT = 126;
+// Input box starts as a single comfortable line and grows with content.
+const MAX_INPUT_HEIGHT = 320;
+const MIN_INPUT_HEIGHT = 56;
 
-// Shared content width keeps the message column and composer aligned.
-// Responsive: fills available width, capped so very wide screens stay readable.
-const CONTENT_WIDTH = "mx-auto w-full max-w-[1440px]";
+// Chat column is capped at 1200px and centered; keep a reasonable floor
+// on desktop so the dialog doesn't collapse too narrowly.
+const CONTENT_WIDTH = "mx-auto w-full min-w-0 max-w-[1200px] md:min-w-[720px]";
 
 export const ChatView: FC<ChatViewProps> = ({
   messages,
@@ -28,6 +28,7 @@ export const ChatView: FC<ChatViewProps> = ({
   onSend,
   onPause,
   readOnly = false,
+  onOpenSidebar,
 }) => {
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -53,9 +54,6 @@ export const ChatView: FC<ChatViewProps> = ({
     autosize();
   }, [input]);
 
-  // The current session is "busy" while it is streaming output or initializing.
-  // This drives the send→pause toggle and is bound to the selected session's
-  // streaming state, so switching conversations re-evaluates it correctly.
   const isBusy = isStreaming || isPending;
   const canSend = !isBusy && input.trim().length > 0 && !readOnly;
 
@@ -88,13 +86,33 @@ export const ChatView: FC<ChatViewProps> = ({
   };
 
   return (
-    <div className="flex h-full flex-col bg-ink-850">
+    <div className="flex h-full flex-col bg-page-bg-light dark:bg-page-bg-dark">
+      {/* Header */}
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-divider-light dark:border-divider-dark px-4">
+        <div className="flex items-center gap-3">
+          {onOpenSidebar && (
+            <button
+              type="button"
+              onClick={onOpenSidebar}
+              className="rounded-md p-2 text-text-secondary-light dark:text-text-secondary-dark transition-colors hover:bg-sidebar-hover-light dark:hover:bg-sidebar-hover-dark hover:text-text-primary-light dark:hover:text-text-primary-dark md:hidden"
+              aria-label="Open sidebar"
+            >
+              <MenuIcon />
+            </button>
+          )}
+          <span className="text-sm font-semibold text-text-primary-light dark:text-text-primary-dark">
+            ModexBot
+          </span>
+        </div>
+        <div />
+      </header>
+
       {/* Message area */}
       <div className="flex-1 overflow-y-auto">
-        <div className={`${CONTENT_WIDTH} px-6 py-8`}>
+        <div className={`${CONTENT_WIDTH} px-3 py-6 md:px-5`}>
           {messages.length === 0 && (
             <div className="flex h-[55vh] items-center justify-center">
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-text-secondary-light dark:text-text-secondary-dark">
                 Select a conversation to start chatting
               </p>
             </div>
@@ -106,8 +124,8 @@ export const ChatView: FC<ChatViewProps> = ({
         </div>
       </div>
 
-      {/* Floating composer — lifted off the bottom edge with elevation */}
-      <div className="px-6 pb-10 pt-2">
+      {/* Floating composer */}
+      <div className="px-3 pb-6 pt-2 md:px-5">
         <div className={CONTENT_WIDTH}>
           {readOnly ? (
             <div className="composer">
@@ -115,7 +133,7 @@ export const ChatView: FC<ChatViewProps> = ({
                 type="text"
                 disabled
                 placeholder="Subagent session — read only"
-                className="flex-1 cursor-not-allowed bg-transparent py-1 text-sm text-gray-500 placeholder-gray-600 outline-none"
+                className="flex-1 cursor-not-allowed bg-transparent py-1 text-sm text-text-disabled-light dark:text-text-disabled-dark placeholder-input-placeholder-light dark:placeholder-input-placeholder-dark outline-none"
               />
               <button type="button" disabled title="Read only" className="send-btn send-btn--disabled">
                 <SendIcon />
@@ -137,7 +155,7 @@ export const ChatView: FC<ChatViewProps> = ({
                       : "Message…"
                 }
                 rows={1}
-                className={`max-h-[630px] min-h-[126px] flex-1 resize-none overflow-y-auto bg-transparent py-2 text-[15px] leading-6 text-gray-100 outline-none placeholder-gray-500`}
+                className="max-h-[320px] min-h-[56px] flex-1 resize-none overflow-y-auto bg-transparent py-3.5 text-[15px] leading-relaxed text-text-primary-light dark:text-text-primary-dark outline-none placeholder-input-placeholder-light dark:placeholder-input-placeholder-dark"
               />
               <button
                 type="button"
@@ -161,6 +179,14 @@ export const ChatView: FC<ChatViewProps> = ({
     </div>
   );
 };
+
+const MenuIcon: FC = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <line x1="4" y1="6" x2="20" y2="6" />
+    <line x1="4" y1="12" x2="20" y2="12" />
+    <line x1="4" y1="18" x2="20" y2="18" />
+  </svg>
+);
 
 const SendIcon = (): JSX.Element => (
   <svg
