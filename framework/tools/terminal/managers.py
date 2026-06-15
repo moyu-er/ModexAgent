@@ -91,8 +91,11 @@ class BaseTerminalManager(TerminalManagerBase):
             cwd=cwd,
         )
         self._sessions[session_name] = session
-        if self._default_name is None:
-            self._default_name = session_name
+        # A newly created tab becomes the default, matching TerminalManager
+        # and the TerminalTool 'open' contract ("create a new tab AND
+        # auto-select it"). Without this, opening a second tab leaves the
+        # default on the old tab and subsequent commands run there.
+        self._default_name = session_name
         return session
 
     def get(self, name: str) -> TerminalSession | None:

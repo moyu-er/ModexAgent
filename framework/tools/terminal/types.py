@@ -33,8 +33,23 @@ class ShellFamily(StrEnum):
         return self in (ShellFamily.BASH, ShellFamily.ZSH, ShellFamily.SH)
 
     def command_ending(self) -> str:
-        """Return the command terminator for this shell family."""
-        return "\n" if self.uses_readline() else "\r\n"
+        """Return the command terminator for this shell family.
+
+        For readline shells (bash/zsh/sh) we send ``\\r`` (carriage return),
+        the exact byte a physical Enter key produces. GNU readline binds
+        ``\\r`` (\\C-m) to ``accept-line`` on every platform.
+
+        A bare ``\\n`` (line feed) is NOT a reliable Enter: on Windows PTY
+        layers (winpty/ConPTY) the console input side translates a real
+        Enter into ``\\r`` and does not reliably turn an incoming ``\\n``
+        into a RETURN key event, so the command text can sit on the readline
+        input line without executing. Sending ``\\r`` fixes both
+        "command typed but not executed" and "output appears stuck until a
+        manual Enter" on Windows, while remaining correct on Linux/macOS.
+
+        Non-readline shells (cmd/powershell) keep ``\\r\\n``.
+        """
+        return "\r" if self.uses_readline() else "\r\n"
 
 
 @dataclass(frozen=True)
