@@ -48,12 +48,23 @@ def build_full_env(overrides: dict[str, str] | None = None) -> dict[str, str]:
     entries keep their position (priority); registry entries are appended
     only if absent.
 
+    Sets ``PAGER=cat`` (and related overrides) so output is never trapped
+    in interactive pagers like ``less`` or ``more``.  Agents cannot
+    interact with pagers; redirecting paged output to stdout avoids hangs.
+
     On non-Windows, returns dict(os.environ) unchanged.
 
     Args:
         overrides: Optional dict of extra env vars (highest priority).
     """
     env = dict(os.environ)
+
+    # Disable interactive pagers so agent commands never stall waiting for
+    # ``q`` / Space / Enter in less/more.  Most CLI tools respect PAGER;
+    # the supplemental vars catch tool-specific pager configs.
+    env.setdefault("PAGER", "cat")
+    env.setdefault("MANPAGER", "cat")
+    env.setdefault("GIT_PAGER", "cat")
 
     if sys.platform == "win32":
         current = env.get("PATH", "")

@@ -61,7 +61,7 @@ class SubagentAutoSendHook(FinallyTurnHook):
         if self._agent_bus is None:
             return
 
-        session_id = ctx.session_id or ""
+        session_id = str(ctx.session)
 
         # 1. Derive artifact paths from session_id (deterministic)
         trace_dir = self._runtime_dir / "trace" / session_id
@@ -79,10 +79,8 @@ class SubagentAutoSendHook(FinallyTurnHook):
             error = result.error
             content = result.content or ""
 
-        # 4. Get invocation_id from session_meta
-        invocation_id = ""
-        if ctx.session_meta is not None:
-            invocation_id = ctx.session_meta.invocation_id or ""
+        # 4. Get invocation_id from session snowflake
+        invocation_id = ctx.session.snowflake
 
         is_normal, hint = self._classify_stop(
             stop_reason, output_status, error, invocation_id,
@@ -204,24 +202,17 @@ class SubagentAutoSendHook(FinallyTurnHook):
         """Send XML notification to parent agent's inbox."""
         from framework.multi_agent.address import AgentAddress
         from framework.multi_agent.envelope import AgentMessageEnvelope
-        from framework.multi_agent.session_id import DefaultSessionIdStrategy
 
-        strategy = DefaultSessionIdStrategy(main_agent_name=self._parent_name)
-        try:
-            parts = strategy.parse(session_id)
-        except ValueError:
+        conversation_id = str(ctx.session)
+        invocation_id = ctx.session.snowflake
+        parent_session_id = ctx.session.parent_session_id
+        if parent_session_id is None:
             logger.warning(
-                "SubagentAutoSendHook: cannot parse session_id %s",
+                "SubagentAutoSendHook: no parent_session_id for session %s",
                 session_id,
             )
             return
-
-        conversation_id = parts.conversation_id
-        invocation_id = parts.invocation_id or ""
-        inbox_key = strategy.format(
-            conversation_id=conversation_id,
-            agent_name=self._parent_name,
-        )
+        inbox_key = parent_session_id
 
         # Strip think tags from the XML summary (defense in depth)
         from framework.hook.builtin.inbox_flush import InboxFlushHook

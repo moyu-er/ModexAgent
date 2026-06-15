@@ -1,0 +1,43 @@
+[project]
+name = "modex-bot-project"
+version = "0.1.0"
+description = "ModexAgent bot example with WebUI"
+requires-python = ">=3.12"
+dependencies = [
+    "typer>=0.20.0,<1.0.0",
+    "rich>=14.0.0,<15.0.0",
+    "questionary>=2.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+webui = [
+    "aiohttp>=3.9.0,<4.0.0",
+]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[project.scripts]
+modexbot = "modexbot.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["modexbot"]
+
+[tool.hatch.build]
+include = [
+    "bot/**/*.py",
+    "modexbot/**/*.py",
+    "bot/web/dist/**/*",
+]
+artifacts = [
+    "bot/web/dist/**/*",
+]
+
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

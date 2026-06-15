@@ -233,7 +233,7 @@ class DefaultWorkspaceContext(WorkspaceContext):
             with contextlib.suppress(OSError):
                 self._cwd_path.unlink(missing_ok=True)
         else:
-            # Parent (.modex/) is guaranteed to exist from Check 4 above
+            self._cwd_path.parent.mkdir(parents=True, exist_ok=True)
             self._cwd_path.write_text(
                 json.dumps({"path": str(target)}, ensure_ascii=False),
                 encoding="utf-8",

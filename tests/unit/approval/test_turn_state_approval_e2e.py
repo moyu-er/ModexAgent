@@ -12,6 +12,7 @@ from framework.approval.types import ApprovalAction
 from framework.core.agent import AgentContext
 from framework.core.emitter import AgentResult, ContentEmitter
 from framework.core.graph.interrupt import GraphInterrupt
+from framework.core.session_id import SessionInfo
 from framework.core.tool_manager import InMemoryToolManager, Tool
 from framework.core.types import LLMResponse, ToolCall
 from framework.memory.history import ListMessageHistory
@@ -78,7 +79,7 @@ def _context(store: InMemoryTurnStateStore, tool_calls: list[str], default_deny_
     manager.register(_RecordTool(tool_calls))
     identity = TurnIdentity(
         agent_id="agent",
-        session_id="s1",
+        session=SessionInfo.from_str("s1"),
         turn_id="t1",
         conversation_id="s1",
     )
@@ -91,7 +92,7 @@ def _context(store: InMemoryTurnStateStore, tool_calls: list[str], default_deny_
         system_prompt="",
         history=ListMessageHistory(),
         tool_manager=manager,
-        session_id="s1",
+        session=SessionInfo.from_str("test.agent"),
         max_iterations=5,
     )
     ctx.identity = identity

@@ -80,7 +80,7 @@ async def test_no_injection_when_knowledge_disabled():
 
 @pytest.mark.asyncio
 async def test_directory_section_cross_platform_path(tmp_path):
-    """If knowledge is injected, file paths should be absolute and resolved."""
+    """Knowledge injection emits a top-level directory path + relative filenames."""
     policy = FullInjectionPolicy()
     context = MemoryContext(session_id="s1", user_id="u1")
 
@@ -92,10 +92,20 @@ async def test_directory_section_cross_platform_path(tmp_path):
     result = await policy.assemble(context=context, memory_system=system)
 
     import re
-    match = re.search(r'file="([^"]+)"', result.system_prompt)
-    if match is not None:
-        injected_path = Path(match.group(1))
-        assert injected_path.is_absolute()
+    # The heading now contains "Directory: <absolute_path>"
+    dir_match = re.search(r'Directory:\s+(\S+)', result.system_prompt)
+    assert dir_match is not None, "Expected a 'Directory: <path>' line in heading"
+    dir_path = Path(dir_match.group(1))
+    assert dir_path.is_absolute()
+
+    # File attributes are now relative filenames (e.g. file="SOUL.md")
+    file_match = re.search(r'file="([^"]+)"', result.system_prompt)
+    if file_match is not None:
+        injected_path = Path(file_match.group(1))
+        assert not injected_path.is_absolute(), (
+            f"Expected relative filename, got absolute: {injected_path}"
+        )
+        assert injected_path.name in ("SOUL.md", "USER.md", "MEMORY.md")
 
 
 def test_scoped_storage_base_path(tmp_path):

@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from framework.memory.pipeline.pipeline import SystemPromptPipeline
 
 from .emitter import AgentResult
-from .message_utils import AGENT_COMMUNICATION_SYSTEM_NOTE, normalize_agent_messages_for_llm
+from .message_utils import normalize_agent_messages_for_llm
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +60,6 @@ class ContextState:
             system_content = self.system_prompt
 
         if system_content:
-            if has_agent_msgs and AGENT_COMMUNICATION_SYSTEM_NOTE not in system_content:
-                system_content += AGENT_COMMUNICATION_SYSTEM_NOTE
             messages.append({"role": "system", "content": system_content})
         messages.extend(history_list)
         return messages
@@ -211,8 +209,6 @@ class InMemoryContextManager(ContextManager):
             )
             if skill_prompt:
                 parts.append(skill_prompt)
-
-        parts.append(AGENT_COMMUNICATION_SYSTEM_NOTE)
 
         # 添加运行时信息
         if runtime_info:

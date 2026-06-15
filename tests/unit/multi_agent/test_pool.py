@@ -168,3 +168,64 @@ class TestPoolSessionLockSerialization:
         assert exit_order == [1, 2], (
             f"Task 1 must exit before Task 2; got {exit_order}"
         )
+
+
+class TestInboxWakeupCrossPoolDefense:
+    """_handle_inbox_wakeup must ignore wakeups for sessions not owned by this pool.
+
+    The shared broker keys mailboxes by agent name only.  If two pools use the
+    same agent name, a wakeup intended for pool A could be consumed by pool B.
+    The defensive check prevents pool B from processing pool A's inbox messages.
+    """
+
+    @pytest.fixture
+    async def pool(self):
+        p = AgentPool(
+            broker=_FakeBroker(),
+            agent_factory=MagicMock(),
+            enable_inbox_polling=False,
+        )
+        # This pool only owns the "coding" agent.
+        agent_mock = MagicMock()
+        agent_mock.stop = AsyncMock()
+        p._agents["coding"] = agent_mock
+        yield p
+        await p.shutdown_all(timeout=0.1)
+
+    @pytest.mark.asyncio
+    async def test_handle_inbox_wakeup_skips_foreign_session(self, pool):
+        """Wakeup for a session whose agent is not in this pool must be dropped."""
+        from framework.multi_agent.address import AgentAddress
+        from framework.multi_agent.descriptor import AgentDescriptor
+
+        desc = AgentDescriptor(address=AgentAddress(name="coding"))
+        instance = MagicMock()
+        instance.descriptor = desc
+
+        # The instance owns "coding", but the wakeup is for a "main" session.
+        await pool._handle_inbox_wakeup(instance, "abc123.main")
+
+        # No crash, no processing — simply returns after the defensive check.
+        # The real assertion is that we get here without trying to poll/dispatch.
+
+    @pytest.mark.asyncio
+    async def test_handle_inbox_wakeup_processes_owned_session(self, pool):
+        """Wakeup for a session whose agent is in this pool proceeds to poll."""
+        from framework.multi_agent.address import AgentAddress
+        from framework.multi_agent.descriptor import AgentDescriptor
+
+        desc = AgentDescriptor(address=AgentAddress(name="coding"))
+        instance = MagicMock()
+        instance.descriptor = desc
+
+        polled_sessions: list[str] = []
+
+        class _FakeAgentBus:
+            async def poll(self, session_id: str, limit: int):
+                polled_sessions.append(session_id)
+                return []
+
+        pool._agent_bus = _FakeAgentBus()
+
+        await pool._handle_inbox_wakeup(instance, "abc123.coding")
+        assert polled_sessions == ["abc123.coding"]

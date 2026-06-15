@@ -4,16 +4,16 @@ Persistent facts and context preserved across sessions. Maintained automatically
 
 ## User Information
 
-(Important facts about the user — name, role, preferences, habits)
+[[USER_INFORMATION: no recorded facts]]
 
 ## Preferences
 
-(User preferences learned over time)
+[[USER_PREFERENCES: no recorded preferences]]
 
 ## Project Context
 
-(Information about ongoing projects — conventions, architecture decisions, environment facts)
+[[PROJECT_CONTEXT: no recorded context]]
 
 ## Important Notes
 
-(Things to remember that don't fit elsewhere)
+[[IMPORTANT_NOTES: no recorded notes]]

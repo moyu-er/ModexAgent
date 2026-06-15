@@ -37,9 +37,9 @@ def test_truncatable_paths_xml():
     assert msg.truncatable_paths == ["content"]
 
 
-def test_created_at_default_none():
+def test_created_at_default_now():
     msg = ChatMessage(role="user", content="hello")
-    assert msg.created_at is None
+    assert msg.created_at is not None
 
 
 def test_created_at_set():
@@ -83,4 +83,4 @@ def test_to_dict_omits_defaults():
     d = msg.to_dict()
     assert "content_format" not in d
     assert "truncatable_paths" not in d
-    assert "created_at" not in d
+    assert "created_at" in d  # created_at has a default value

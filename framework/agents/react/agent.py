@@ -171,7 +171,7 @@ class ReActAgent(Agent[ReActEvent]):
 
             state = ReActTurnState(
                 identity=context.identity
-                or TurnIdentity(agent_id="react", session_id=context.session_id, turn_id="default"),
+                or TurnIdentity(agent_id="react", session=context.session, turn_id="default"),
                 agent_kind=AgentKind.REACT,
                 phase=TurnPhase.CREATED,
             )
@@ -323,7 +323,7 @@ class ReActAgent(Agent[ReActEvent]):
                 tool_call=tool_call,
                 tool_name=tool_call.tool_name,
                 arguments=tool_call.arguments or {},
-                session_id=context.session_id,
+                session_id=str(context.session),
             )
 
             async def _actual() -> ToolResult:
@@ -386,7 +386,7 @@ class ReActAgent(Agent[ReActEvent]):
         stream_ctx = LLMStreamContext(
             messages=messages,
             model=getattr(self.provider, "model", None),
-            session_id=context.session_id,
+            session_id=str(context.session),
         )
 
         accumulated_content = ""
@@ -432,7 +432,7 @@ class ReActAgent(Agent[ReActEvent]):
                 finish_reason = chunk.finish_reason or "cancelled"
                 logger.warning(
                     "LLM stream cancelled session=%s finish_reason=%s",
-                    context.session_id,
+                    str(context.session),
                     finish_reason,
                 )
                 break

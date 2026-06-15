@@ -5,6 +5,7 @@ import pytest
 from framework.commands.constants import CommandAction, CommandDispatchPolicy, CommandParseStatus
 from framework.commands.models import CommandContext
 from framework.commands.processor import SlashCommandProcessor
+from framework.core.session_id import SessionInfo
 from framework.core.skills.models import Skill
 from framework.core.types import InputMessage
 
@@ -32,7 +33,7 @@ class FakeSkillManager:
 def _context(content: str) -> CommandContext:
     return CommandContext(
         session_id="s1",
-        input_msg=InputMessage(content=content, session_id="s1"),
+        input_msg=InputMessage(content=content, session=SessionInfo.from_str("s1", default_agent_name="main")),
         agent_name="main",
         skill_manager=FakeSkillManager(),  # type: ignore[arg-type]
     )

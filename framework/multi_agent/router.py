@@ -2,19 +2,20 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from framework.core.session_id import SessionInfo
 from framework.core.types import InputMessage
-from framework.multi_agent.session_id import DefaultSessionIdStrategy
+
+if TYPE_CHECKING:
+    from framework.core.session_registry import SessionRegistry
 
 
 @dataclass
 class RouteResult:
     """Result of routing an input message to an agent-owned session."""
 
-    conversation_id: str
-    agent_session_id: str
-    agent_name: str
+    session: SessionInfo
     prompt_modifier: str | None = None
     envelope_metadata: dict[str, Any] | None = None
     is_envelope: bool = False
@@ -34,11 +35,18 @@ class AgentMessageRouter(ABC):
 
 
 class DefaultMeshRouter(AgentMessageRouter):
-    """Default router for receiver-owned agent sessions.
+    """Default router that trusts ``input_msg.session`` as the authoritative identity.
 
-    The router, not the pipeline, constructs fallback agent session IDs. The
-    pipeline then uses the returned session ID for locking and memory scope.
+    The pipeline uses ``route_result.session`` for locking and memory scope.
+    Metadata is inspected only for envelope classification and prompt modifiers;
+    the session identity is never parsed from metadata strings.
     """
+
+    def __init__(
+        self,
+        session_registry: SessionRegistry | None = None,
+    ) -> None:
+        self._session_registry = session_registry
 
     def route(
         self,
@@ -46,22 +54,7 @@ class DefaultMeshRouter(AgentMessageRouter):
         default_agent_name: str = "main",
     ) -> RouteResult:
         metadata = input_msg.metadata or {}
-        strategy = DefaultSessionIdStrategy()
-        conversation_id = str(metadata.get("conversation_id") or input_msg.session_id)
-        agent_session_id = metadata.get("agent_session_id")
-        agent_name = default_agent_name
-
-        if agent_session_id:
-            agent_session_id = str(agent_session_id)
-            parts = strategy.parse(agent_session_id)
-            if parts.agent_name is not None:
-                conversation_id = str(metadata.get("conversation_id") or parts.conversation_id)
-                agent_name = parts.agent_name
-        else:
-            agent_session_id = strategy.format(
-                conversation_id=conversation_id,
-                agent_name=default_agent_name,
-            )
+        session = input_msg.session
 
         prompt_modifier = None
         message_type = metadata.get("message_type", "agent_message")
@@ -71,9 +64,7 @@ class DefaultMeshRouter(AgentMessageRouter):
             prompt_modifier = f"[Subagent {metadata['source_agent']} result]\n\n"
 
         return RouteResult(
-            conversation_id=conversation_id,
-            agent_session_id=agent_session_id,
-            agent_name=agent_name,
+            session=session,
             prompt_modifier=prompt_modifier,
             envelope_metadata=dict(metadata),
             is_envelope=is_envelope,

@@ -103,15 +103,7 @@ class LocalAgentMessageBus(AgentMessageBus):
                     payload={"_inbox_wakeup": True, "session_id": session_id},
                     sender=Address(kind="system", name="local_agent_message_bus"),
                 )
-                from framework.multi_agent.session_id import DefaultSessionIdStrategy
-
-                try:
-                    parts = DefaultSessionIdStrategy().parse(session_id)
-                    target_name = parts.agent_name or (
-                        envelope.target.name if envelope.target else session_id
-                    )
-                except ValueError:
-                    target_name = envelope.target.name if envelope.target else str(session_id)
+                target_name = envelope.target.name if envelope.target else session_id
                 await self._broker.send_to(
                     AgentAddress(kind="agent", name=target_name),
                     wakeup,

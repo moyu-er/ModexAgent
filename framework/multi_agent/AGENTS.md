@@ -16,8 +16,7 @@ are no separate execution queues. Pool mode uses resident agents with
 | `pool.py` | Resident agent lifecycle, consumer loop, inbox wakeup polling, per-session locks, task-session eviction |
 | `communication.py` | `AgentCommunicationService`; central target validation, session id construction, envelope construction, sync/async delivery |
 | `tools.py` | `SendToAgentTool`, `CommunicationTargetStore`, `CommunicationTargetsProvider` |
-| `session_id.py` | `DefaultSessionIdStrategy`; `{conversation_id}:{agent_name}[:{invocation_id}]` |
-| `router.py` | `DefaultMeshRouter`; input message to full receiver-owned agent session |
+| `router.py` | `DefaultMeshRouter`; session identity resolved via `InputMessage.session` (no string parsing) |
 | `comm_tracker.py` | Sideband communication tracker for send/ack bracket matching |
 | `bus.py` | `AgentMessageBus`, `LocalAgentMessageBus`; inbox persistence and wakeup signaling |
 | `envelope.py` | `AgentMessageEnvelope` with source, target, conversation id, session id, invocation id |

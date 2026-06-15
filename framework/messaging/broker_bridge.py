@@ -9,6 +9,7 @@ from typing import Any
 from ..adapters.platform import StreamingMode
 from ..core.constants import DefaultValues
 from ..core.types import InputMessage, OutputMessage
+from framework.core.session_id import SessionInfo, SessionIdFactory
 from ..pipeline.adapters import InputAdapter, OutputAdapter
 from .broker import Address, BrokerMessage, MessageBroker
 
@@ -23,11 +24,16 @@ class BrokerInputAdapter(InputAdapter):
         broker: MessageBroker,
         address: Address,
         deduplicator: Any | None = None,
+        *,
+        session_factory: SessionIdFactory | None = None,
+        default_agent_name: str = "main",
     ) -> None:
         self.broker = broker
         self.address = address
         self._running = False
         self._deduplicator = deduplicator
+        self._session_factory = session_factory
+        self._default_agent_name = default_agent_name
 
     @property
     def name(self) -> str:
@@ -46,7 +52,11 @@ class BrokerInputAdapter(InputAdapter):
             async for broker_msg in self.broker.consume_stream(self.address):
                 if not self._running:
                     break
-                msg = _broker_msg_to_input_message(broker_msg)
+                msg = _broker_msg_to_input_message(
+                    broker_msg,
+                    session_factory=self._session_factory,
+                    default_agent_name=self._default_agent_name,
+                )
                 # 去重检查
                 message_id = broker_msg.headers.get("message_id") or broker_msg.payload.get(
                     "message_id"
@@ -62,7 +72,12 @@ class BrokerInputAdapter(InputAdapter):
         return _gen()
 
 
-def _broker_msg_to_input_message(msg: BrokerMessage) -> InputMessage:
+def _broker_msg_to_input_message(
+    msg: BrokerMessage,
+    *,
+    session_factory: SessionIdFactory | None = None,
+    default_agent_name: str = "main",
+) -> InputMessage:
     payload = msg.payload
     sender = msg.sender
     metadata = dict(payload.get("metadata", {}))
@@ -91,22 +106,31 @@ def _broker_msg_to_input_message(msg: BrokerMessage) -> InputMessage:
         content_fmt = ContentFormat.XML
         trunc_paths = ["content"]
 
-    session_id = payload.get("session_id", str(sender))
+    raw_session = payload.get("session_id", str(sender))
+    session: SessionInfo | None = None
 
     # Orphan 隔离：来自 agent 的消息若缺失 conversation_id，隔离到 synthetic session
     if sender.kind == "agent":
         cid = payload.get("conversation_id") or msg.headers.get("conversation_id")
         if not cid:
-            import logging
             import uuid
 
-            logger = logging.getLogger(__name__)
             logger.warning("Orphan agent message from %s, isolating to synthetic session", sender)
-            session_id = f"orphan:{sender.name}:{uuid.uuid4().hex[:8]}"
+            orphan_key = f"orphan:{sender.name}:{uuid.uuid4().hex[:8]}"
+            if session_factory is not None:
+                session = session_factory.create(
+                    agent_name=default_agent_name,
+                    external_id=orphan_key,
+                )
+            else:
+                session = SessionInfo.from_str(orphan_key, default_agent_name=default_agent_name)
+
+    if session is None:
+        session = SessionInfo.from_str(raw_session, default_agent_name=default_agent_name)
 
     return InputMessage(
         content=payload.get("content", ""),
-        session_id=session_id,
+        session=session,
         source=str(sender),
         sender_id=sender.name
         if sender.kind == "user"
@@ -333,18 +357,20 @@ class BrokerBridgeService:
                     broker_msg = BrokerMessage(
                         payload={
                             "content": msg.content,
-                            "session_id": msg.session_id,
+                            "session_id": str(msg.session),
+                            "agent_session_id": str(msg.session),
                             "metadata": msg.metadata,
                             "sender_id": msg.sender_id,
                             "chat_id": msg.chat_id,
-                            "conversation_id": msg.session_id,
+                            "conversation_id": msg.session.snowflake,
                         },
                         sender=Address(kind="channel", name=msg.source or "unknown"),
                         recipient=addr,
                         headers={
                             "channel": msg.channel,
                             "chat_id": msg.chat_id,
-                            "conversation_id": msg.session_id,
+                            "conversation_id": msg.session.snowflake,
+                            "agent_session_id": str(msg.session),
                         },
                     )
                     await self.broker.send_to(addr, broker_msg)

@@ -29,8 +29,7 @@
 #   delegate        | —          | fresh   | medium | 50    |
 #
 #   "—" = default (read_write). Only non-default presets shown.
-#   Main agent extra_tools: ast_grep_search, ast_grep_replace,
-#   lsp_diagnostics, lsp_navigation.
+#   Main agent extra_tools: ast_grep_search, ast_grep_replace.
 #   Bash: SubprocessTool (stateless) for subagents;
 #     CommandTool/TerminalTool (stateful) for main agent.
 
@@ -54,8 +53,8 @@ memory:
     max_tokens: 150000
     keep_ratio_for_messages: 0.3
     keep_ratio_for_token: 0.3
-  archive: {enabled: true}
-  knowledge: {enabled: true, default_templates_dir: "templates/knowledge"}
+  archive: {enabled: true, scope: global}
+  knowledge: {enabled: true, default_templates_dir: "templates/knowledge", scope: global}
   dream_engine: {enabled: true, interval: 600, max_consume_per_run: 3}
   governance:
     lossy_compaction:
@@ -71,4 +70,4 @@ agents:
     terminal_visibility: false
     experience:
       enabled: true
-    extra_tools: ["ast_grep_search", "ast_grep_replace", "lsp_diagnostics", "lsp_navigation"]
+    extra_tools: ["ast_grep_search", "ast_grep_replace"]

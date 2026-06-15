@@ -1,5 +1,6 @@
 """Tests for memory scope abstractions."""
 
+from framework.core.session_id import SessionInfo
 from framework.memory.core.scope import (
     AgentScope,
     ChannelScope,
@@ -15,16 +16,18 @@ from framework.memory.core.scope import (
 
 class TestMemoryContext:
     def test_with_defaults_returns_new_with_fills(self):
-        ctx = MemoryContext(session_id="s1")
+        sid = SessionInfo(session_id="s1", agent_name="unknown")
+        ctx = MemoryContext(session_id=sid)
         filled = ctx.with_defaults(user_id="u_default", tenant_id="t_default")
-        assert ctx.session_id == "s1"
+        assert str(ctx.session_id) == "s1"
         assert ctx.user_id is None  # original unchanged
-        assert filled.session_id == "s1"
+        assert filled.session_id is ctx.session_id
         assert filled.user_id == "u_default"
         assert filled.tenant_id == "t_default"
 
     def test_with_defaults_preserves_existing(self):
-        ctx = MemoryContext(session_id="s1", user_id="u1")
+        sid = SessionInfo(session_id="s1", agent_name="unknown")
+        ctx = MemoryContext(session_id=sid, user_id="u1")
         filled = ctx.with_defaults(user_id="u_default")
         assert filled.user_id == "u1"  # existing value preserved
 
@@ -32,7 +35,8 @@ class TestMemoryContext:
 class TestSessionScope:
     def test_get_scope_key(self):
         scope = SessionScope()
-        assert scope.get_scope_key(MemoryContext(session_id="sess_123")) == "sess_123"
+        sid = SessionInfo(session_id="sess_123", agent_name="unknown")
+        assert scope.get_scope_key(MemoryContext(session_id=sid)) == "sess_123"
 
     def test_default_when_missing(self):
         scope = SessionScope()
@@ -80,19 +84,26 @@ class TestChatScope:
 class TestGlobalScope:
     def test_always_global(self):
         scope = GlobalScope()
-        assert scope.get_scope_key(MemoryContext()) == "global"
-        assert scope.get_scope_key(MemoryContext(session_id="s1", user_id="u1")) == "global"
+        # Returns empty string for clean path (no subdirectory)
+        assert scope.get_scope_key(MemoryContext()) == ""
+        assert scope.get_scope_key(MemoryContext(session_id="s1", user_id="u1")) == ""
+
+    def test_global_scope_name_unchanged(self):
+        scope = GlobalScope()
+        assert scope.name == "global"
 
 
 class TestCompositeScope:
     def test_two_scopes(self):
         scope = CompositeScope(UserScope(), SessionScope())
-        ctx = MemoryContext(user_id="u1", session_id="s1")
+        sid = SessionInfo(session_id="s1", agent_name="unknown")
+        ctx = MemoryContext(user_id="u1", session_id=sid)
         assert scope.get_scope_key(ctx) == "u1:s1"
 
     def test_three_scopes(self):
         scope = CompositeScope(TenantScope(), UserScope(), SessionScope())
-        ctx = MemoryContext(tenant_id="t1", user_id="u1", session_id="s1")
+        sid = SessionInfo(session_id="s1", agent_name="unknown")
+        ctx = MemoryContext(tenant_id="t1", user_id="u1", session_id=sid)
         assert scope.get_scope_key(ctx) == "t1:u1:s1"
 
     def test_name(self):

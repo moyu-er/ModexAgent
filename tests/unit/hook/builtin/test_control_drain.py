@@ -7,6 +7,7 @@ import pytest
 from framework.control.channel import InMemoryControlChannel
 from framework.control.types import ControlCommand, ControlCommandType, ControlScope
 from framework.control.exceptions import AgentCancelled
+from framework.core.session_id import SessionInfo
 from framework.hook.builtin.control_drain import (
     ControlDrainInterceptor,
     LlmCancelInterceptor,
@@ -15,8 +16,9 @@ from framework.hook.builtin.control_drain import (
 
 
 class _FakeContext:
-    def __init__(self, session_id="test-session:main", turn_uuid=None):
-        self.session_id = session_id
+    def __init__(self, session_id="test-session.main", turn_uuid=None):
+        from framework.core.session_id import SessionInfo
+        self.session = SessionInfo.from_str(session_id)
         self.current_turn_uuid = turn_uuid
 
 
@@ -218,37 +220,38 @@ class TestLlmCancelInterceptor:
 
 
 class TestCanonicalSessionId:
-    """Verify DefaultSessionIdStrategy.normalize() unifies adapter and agent IDs."""
+    """Verify SessionInfo.from_str() recovers agent_name from display strings."""
 
-    def test_raw_user_id_gets_agent_suffix(self):
-        from framework.multi_agent.session_id import DefaultSessionIdStrategy
-        result = DefaultSessionIdStrategy().normalize("30932BC02F825E64D069B1E67347C8FF")
-        assert result == "30932BC02F825E64D069B1E67347C8FF:main"
+    def test_raw_user_id_defaults_agent_name(self):
+        session = SessionInfo.from_str("30932BC02F825E64D069B1E67347C8FF")
+        assert session.session_id == "30932BC02F825E64D069B1E67347C8FF"
+        assert session.agent_name == "unknown"
 
-    def test_already_canonical_is_idempotent(self):
-        from framework.multi_agent.session_id import DefaultSessionIdStrategy
-        result = DefaultSessionIdStrategy().normalize("user:main")
-        assert result == "user:main"
+    def test_raw_user_id_with_default_agent_name(self):
+        session = SessionInfo.from_str(
+            "30932BC02F825E64D069B1E67347C8FF", default_agent_name="main"
+        )
+        assert session.session_id == "30932BC02F825E64D069B1E67347C8FF"
+        assert session.agent_name == "main"
 
-    def test_subagent_with_invocation_id_is_idempotent(self):
-        from framework.multi_agent.session_id import DefaultSessionIdStrategy
-        result = DefaultSessionIdStrategy().normalize("user:subagent:abc123")
-        assert result == "user:subagent:abc123"
+    def test_canonical_parses_agent_name(self):
+        session = SessionInfo.from_str("user.main")
+        assert session.session_id == "user.main"
+        assert session.agent_name == "main"
+        assert session.snowflake == "user"
 
 
 class TestEndToEndStopFlow:
-    """Full producer→channel→consumer /stop flow with canonical session IDs."""
+    """Full producer→channel→consumer /stop flow with SessionInfo objects."""
 
     @pytest.mark.asyncio
     async def test_producer_adapter_id_consumer_agent_id_match(self):
-        """Producer pushes with raw user_id, consumer drains with user_id:main.
-        normalize() makes both sides use the same canonical scope."""
+        """Producer and consumer use the same session_id — SessionInfo always
+        carries canonical form, so no normalize() step is needed."""
         channel = InMemoryControlChannel()
 
-        # Producer side: QQ adapter receives message with raw user_id
         raw_sid = "30932BC02F825E64D069B1E67347C8FF"
-        from framework.multi_agent.session_id import DefaultSessionIdStrategy
-        canonical = DefaultSessionIdStrategy().normalize(raw_sid)
+        canonical = f"{raw_sid}.main"
 
         cmd = ControlCommand(
             command_id="e2e-1",
@@ -257,20 +260,18 @@ class TestEndToEndStopFlow:
         )
         await channel.send(cmd)
 
-        # Consumer side: pool agent has qualified session_id
-        agent_sid = f"{raw_sid}:main"
-        ctx = _FakeContext(session_id=agent_sid, turn_uuid="t1")
+        # Consumer side: same session_id in canonical form
+        ctx = _FakeContext(session_id=canonical, turn_uuid="t1")
 
         with pytest.raises(AgentCancelled):
             await drain_control_channel(channel, ctx, turn_uuid="t1")
 
     @pytest.mark.asyncio
     async def test_dedup_works_with_canonical_ids(self):
-        """Dedup via peek() also uses canonical scope."""
+        """Dedup via peek() uses SessionInfo canonical form."""
         channel = InMemoryControlChannel()
         raw_sid = "user123"
-        from framework.multi_agent.session_id import DefaultSessionIdStrategy
-        canonical = DefaultSessionIdStrategy().normalize(raw_sid)
+        canonical = f"{raw_sid}.main"
 
         cmd = ControlCommand(
             command_id="e2e-2",

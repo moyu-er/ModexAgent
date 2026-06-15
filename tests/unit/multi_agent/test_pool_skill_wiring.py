@@ -14,8 +14,10 @@ from framework.commands.handlers import SkillCommandHandler
 from framework.commands.models import CommandContext, SlashCommandInvocation
 from framework.core.skills import FileSkillSource, DefaultSkillBuilder, SkillManager
 from framework.core.skills.cache import DirectorySkillCache
+from framework.core.session_id import SessionInfo
 from framework.core.types import InputMessage
 from framework.multi_agent import DefaultAgentFactory, AgentPool
+from unittest.mock import MagicMock
 from framework.multi_agent.address import AgentAddress
 from framework.multi_agent.descriptor import AgentDescriptor
 from framework.messaging.broker_memory import InMemoryMessageBroker
@@ -53,7 +55,7 @@ async def test_factory_passes_skill_manager_to_pipeline() -> None:
         await broker.start()
         try:
             factory = DefaultAgentFactory(
-                default_llm_provider=None,  # not needed for this test
+                default_llm_provider=MagicMock(),
                 skill_manager=skill_mgr,
             )
 
@@ -84,7 +86,7 @@ async def test_factory_passes_skill_manager_to_pipeline() -> None:
             invocation = SlashCommandInvocation(command="test-skill", args="", raw="/test-skill")
             context = CommandContext(
                 session_id="s1",
-                input_msg=InputMessage(content="/test-skill", session_id="s1"),
+                input_msg=InputMessage(content="/test-skill", session=SessionInfo.from_str("s1", default_agent_name="main")),
                 agent_name="main",
                 skill_manager=pipeline.skill_manager,
             )
@@ -108,6 +110,7 @@ async def test_pool_skill_manager_end_to_end() -> None:
         await broker.start()
         try:
             factory = DefaultAgentFactory(
+                default_llm_provider=MagicMock(),
                 skill_manager=skill_mgr,
             )
 
@@ -143,7 +146,7 @@ async def test_pool_skill_manager_end_to_end() -> None:
 
             context = CommandContext(
                 session_id="s1",
-                input_msg=InputMessage(content="/test-skill", session_id="s1"),
+                input_msg=InputMessage(content="/test-skill", session=SessionInfo.from_str("s1", default_agent_name="main")),
                 agent_name="main",
                 skill_manager=pipeline.skill_manager,
             )

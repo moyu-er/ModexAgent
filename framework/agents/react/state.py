@@ -39,6 +39,7 @@ from framework.runtime.models import (
     TurnStateBase,
 )
 from framework.runtime.policy import SnapshotPolicy
+from framework.core.session_id import SessionInfo
 
 from .constants import ReActNode
 
@@ -414,7 +415,7 @@ class ReActRuntimeStateCodec(RuntimeStateCodec):
             "schema_version": snapshot.schema_version,
             "identity": {
                 "agent_id": snapshot.identity.agent_id,
-                "session_id": snapshot.identity.session_id,
+                "session_id": str(snapshot.identity.session),
                 "turn_id": snapshot.identity.turn_id,
                 "conversation_id": snapshot.identity.conversation_id,
             },
@@ -436,7 +437,7 @@ class ReActRuntimeStateCodec(RuntimeStateCodec):
         return TurnSnapshot(
             identity=TurnIdentity(
                 agent_id=str(identity_data["agent_id"]),
-                session_id=str(identity_data["session_id"]),
+                session=SessionInfo.from_str(str(identity_data["session_id"])),
                 turn_id=str(identity_data["turn_id"]),
                 conversation_id=identity_data.get("conversation_id"),  # type: ignore[arg-type]
             ),

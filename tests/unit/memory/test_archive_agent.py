@@ -378,7 +378,7 @@ class TestSummarizerTrajectoryEmitter:
         async def _run() -> None:
             await emitter.emit(ReActEvent.ITERATION_START, {"iteration": 1})
             await emitter.emit(ReActEvent.MODEL_OUTPUT, "hello")
-            from framework.core.emitter import ToolCall
+            from framework.core.types import ToolCall
             from framework.core.tool_manager import ToolResult
             await emitter.emit(ReActEvent.TOOL_CALL_START, ToolCall(tool_name="write", arguments={"path": "/tmp/f.txt"}))
             await emitter.emit(

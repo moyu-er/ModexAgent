@@ -23,7 +23,7 @@ allowing human users to observe or intervene in the same session.
 
 ```
 +-------------------+     +-------------------+     +-------------------+
-|  ShellTool        | --> |  TerminalSession  | --> |  TerminalBackend  |
+|  CommandTool      | --> |  TerminalSession  | --> |  TerminalBackend  |
 |  (agent-facing)   |     |  (session logic)  |     |  (OS process)     |
 +-------------------+     +-------------------+     +-------------------+
          |                         |                         |
@@ -33,21 +33,24 @@ allowing human users to observe or intervene in the same session.
    Returns output           Timeout/busy/ok           bash/cmd visible
 ```
 
-### Layer 1: ShellTool (`framework/tools/standard/shell_tool.py`)
+### Layer 1: CommandTool (`framework/tools/terminal/command_tool.py`)
 
-The **agent-facing** shell execution tool. It decides whether to use:
+The **agent-facing** shell execution tool for persistent terminal sessions.
+It delegates to `TerminalSession` and keeps state across calls.
 
-- `TerminalSessionExecutor` — stateful, persistent sessions (preferred)
-- `SubprocessExecutor` — stateless, fresh process per command (fallback)
-
-The agent uses `shell` for normal command execution. It does **not** need to
-open a terminal explicitly first — the first `shell.execute()` auto-creates a
-default session.
+When terminal backends are unavailable, the application falls back to
+`SubprocessTool` (`framework/tools/terminal/subprocess_tool.py`), which runs
+each command in a fresh process and does **not** preserve state.
 
 Key features:
 - Supports `^C` / `ctrl+c` / `\x03` as an interrupt command
-- Dynamic description tells the model whether sessions are stateful or stateless
 - Timeout returns partial output + `<status>timeout</status>` XML
+- Returns statuses: completed, executing, timed_out, paginated, waiting_input, stuck
+
+### Layer 1b: SubprocessTool (fallback)
+
+Registered when no terminal backend is available (e.g. subagents or when
+`use_terminal=false`). Each invocation is stateless.
 
 ### Layer 2: TerminalSession (`framework/tools/terminal/session.py`)
 
@@ -164,13 +167,13 @@ poll_until_settled(session, registry, proc_id, config, yield_ms=..., timeout_sec
 
 ---
 
-## How ShellTool and TerminalTool Work Together
+## How CommandTool and TerminalTool Work Together
 
 ### Normal Flow
 
 ```
-Agent calls shell.execute("ls -la")
-  -> TerminalSessionExecutor
+Agent calls bash.execute("ls -la")
+  -> CommandTool
     -> TerminalManager.get_default_session() [creates "default" if none]
       -> TerminalSession.execute("ls -la")
         -> backend.write("ls -la\n")
@@ -181,21 +184,21 @@ Agent calls shell.execute("ls -la")
 ### Timeout Recovery Flow
 
 ```
-Agent calls shell.execute("sleep 100")
+Agent calls bash.execute("sleep 100")
   -> TerminalSession returns:
      <status>timeout</status>
      <message>Timed out after 60s...</message>
 
-Agent calls shell.execute("echo next")
+Agent calls bash.execute("echo next")
   -> TerminalSession returns:
      <status>busy</status>
-     <message>Send ^C via shell tool or terminal.interrupt</message>
+     <message>Send ^C via bash or terminal.interrupt</message>
 
-Agent calls shell.execute("^C")   # or terminal.interrupt
+Agent calls bash.execute("^C")   # or terminal.interrupt
   -> session.send_interrupt() writes \x03
   -> busy state cleared
 
-Agent calls shell.execute("echo done")
+Agent calls bash.execute("echo done")
   -> Normal execution resumes
 ```
 
@@ -271,8 +274,8 @@ Two Windows backends: visible (OS console window, human can observe/intervene) a
 
 ### Fallback: SubprocessExecutor
 
-When bash is unavailable or `use_terminal=false`, `ShellTool` falls back to
-`SubprocessExecutor` — each command runs in a fresh process, no state persists.
+When bash is unavailable or `use_terminal=false`, the bot falls back to
+`SubprocessTool` — each command runs in a fresh process, no state persists.
 
 ---
 
@@ -282,7 +285,7 @@ When bash is unavailable or `use_terminal=false`, `ShellTool` falls back to
 
 ```yaml
 main:
-  use_terminal: true   # Enable TerminalSessionExecutor
+  use_terminal: true   # Enable CommandTool/ProcessTool/TerminalTool
 
 terminal:
   close_on_exit: false  # Keep tabs open after bot shutdown
@@ -290,19 +293,20 @@ terminal:
 
 `examples/bot_project/bot/service/core.py`:
 - Detects bash via `detect_platform_shell()` — uses WSL bash on Windows,
-  falls back to `SubprocessExecutor` if bash unavailable
-- Creates `TerminalManager` with shell detection result
-- Registers `ShellTool` with `TerminalSessionExecutor`
-- Registers `TerminalTool` when `TerminalManager` exists
+  falls back to `SubprocessTool` if bash unavailable
+- Creates a terminal manager with shell detection result
+- Registers `CommandTool` for persistent command execution
+- Registers `ProcessTool` for interacting with running commands
+- Registers `TerminalTool` when the terminal manager exists
 
 `examples/bot_project/bot/service/builders.py`:
-- `_make_shell_tool()` wires `TerminalSessionExecutor` or `SubprocessExecutor`
+- `_make_shell_tool()` returns `SubprocessTool` for agents without terminal support
 
 ---
 
 ## Key Behaviors and Constraints
 
-1. **Bash-only**: Bot project enforces WSL bash (detected via `detect_platform_shell()`). No CMD, no PowerShell, no Git Bash.
+1. **Bash-only on Windows**: Bot project enforces WSL bash or Git Bash via `detect_platform_shell()`. CMD and PowerShell are not supported as terminal shells; if no bash is available the pool falls back to `SubprocessTool`.
 2. **Eager startup on open**: `TerminalTool.open` calls `ensure_started()` so visible windows appear immediately — no need to wait for first command.
 3. **Unstarted sessions survive `list`**: A tab created by `open` but not yet
    used will show in `list` — it is not purged just because `is_alive()` is
@@ -326,9 +330,10 @@ terminal:
 | `managers.py` | `WindowsTerminalManager`, `LinuxTerminalManager` — platform-specific manager variants with auto-detection |
 | `session.py` | Per-tab execution, timeout XML, cleanup, history |
 | `tool.py` | LLM terminal management tool (open/close/list/select/interrupt) |
-| `process_tool.py` | Process management tool — list/kill processes |
+| `process_tool.py` | Process management tool — write/submit/send_keys/kill running commands |
 | `process_registry.py` | Process tracking and registry |
 | `command_tool.py` | Command execution tool — submits commands with input guard |
+| `subprocess_tool.py` | Stateless `bash` fallback — fresh process per call |
 | `guard.py` | `TerminalGuard` — pre-flight input validation. `check_command_writable()` (CommandTool) and `check_process_writable()` (ProcessTool) enforce status-based allowlists; returns `TerminalGuardResult` with diagnostic `TerminalSnapshot` |
 | `poll_loop.py` | Shared `poll_until_settled()` — reused by CommandTool and ProcessTool for post-write drain. `PollOutcome` enum (PROMPT_DETECTED / YIELDED / TIMED_OUT / INPUT_WAIT / STUCK / LONG_RUNNING / PROCESS_EXIT / PAGINATED) |
 | `env.py` | `build_full_env()` — complete environment dict for child processes. On Windows, merges missing HKLM/HKCU PATH entries from registry |
@@ -346,4 +351,3 @@ terminal:
 | `backends/windows_hidden.py` | `WindowsHiddenPtyBackend` — hidden Windows PTY backend |
 | `backends/pexpect_pty.py` | `PexpectPtyBackend` — Linux native PTY via pexpect |
 | `backends/tmux_pty.py` | `TmuxPtyBackend` — Unix tmux backend |
-| `../standard/shell_tool.py` | LLM shell tool with executor selection |

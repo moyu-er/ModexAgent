@@ -97,7 +97,8 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                     "conversation.\n\n"
                     "**Your current conversation always takes priority.** If anything "
                     "below conflicts with the current conversation, trust the current "
-                    "conversation."
+                    "conversation. When summaries and full transcripts differ, "
+                    "transcripts are the authoritative source."
                 ),
                 priority=110,
             )
@@ -110,7 +111,11 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         memory_system: MemorySystem,
         query: str,
     ) -> None:
-        """Inject knowledge as natural XML with file paths and editability."""
+        """Inject knowledge as natural XML with relative file names.
+
+        The directory path is emitted once at the top of the section; each
+        element carries only the filename (e.g. ``file="SOUL.md"``).
+        """
         try:
             knowledge = await memory_system.retrieve_knowledge(context, query=query)
             knowledge_dir = await memory_system.get_knowledge_directory(context)
@@ -120,7 +125,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
             if knowledge.soul:
                 file_attr = ""
                 if knowledge_dir:
-                    file_attr = f' file="{xml_attr(str((knowledge_dir / "SOUL.md").resolve()))}"'
+                    file_attr = ' file="SOUL.md"'
                 tag = KnowledgeTag.YOUR_IDENTITY.value
                 xml_parts.extend(
                     [
@@ -134,7 +139,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
             if knowledge.user:
                 file_attr = ""
                 if knowledge_dir:
-                    file_attr = f' file="{xml_attr(str((knowledge_dir / "USER.md").resolve()))}"'
+                    file_attr = ' file="USER.md"'
                 tag = KnowledgeTag.USER_PROFILE.value
                 xml_parts.extend(
                     [
@@ -148,7 +153,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
             if knowledge.memory:
                 file_attr = ""
                 if knowledge_dir:
-                    file_attr = f' file="{xml_attr(str((knowledge_dir / "MEMORY.md").resolve()))}"'
+                    file_attr = ' file="MEMORY.md"'
                 tag = KnowledgeTag.KNOWN_FACTS.value
                 xml_parts.extend(
                     [
@@ -176,11 +181,17 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                         ],
                     )
 
+                dir_line = ""
+                if knowledge_dir:
+                    dir_line = (
+                        f"Directory: {xml_attr(str(knowledge_dir.resolve()))}\n\n"
+                    )
                 heading = (
                     "### Knowledge Files\n\n"
                     "Self-maintained files storing your personality, user preferences, "
                     'and learned facts. Files with `editable="true"` can be updated '
-                    "via file tools to evolve your knowledge over time.\n\n"
+                    "via file tools to evolve your knowledge over time.\n"
+                    f"{dir_line}\n"
                 )
                 sections.append(
                     _PromptSection(

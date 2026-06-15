@@ -31,7 +31,7 @@ class RuntimeContextHook(BeforeTurnHook, BeforeToolExecutionHook, AfterToolExecu
             return
         rt_mgr = rt.services.runtime_context_manager
         if rt_mgr is not None and rt._runtime_context is None:
-            rt._runtime_context = await rt_mgr.get_context(ctx.session_id, None)
+            rt._runtime_context = await rt_mgr.get_context(ctx.session, None)
         rc = rt._runtime_context
         if rc is not None:
             await rc.clear()

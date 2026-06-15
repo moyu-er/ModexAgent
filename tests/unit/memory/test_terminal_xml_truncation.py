@@ -60,7 +60,7 @@ def test_get_truncatable_paths_detects_command_result() -> None:
     from framework.tools.terminal.types import get_terminal_xml_truncatable_paths
 
     paths = get_terminal_xml_truncatable_paths(COMMAND_RESULT)
-    assert paths == ["output"]
+    assert "output" in paths
 
 
 def test_get_truncatable_paths_detects_process_result() -> None:

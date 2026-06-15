@@ -8,6 +8,7 @@ from framework.approval.constants import ApprovalTier
 from framework.interceptor.builtin.tool_approval import ArgumentMatcher
 from framework.core.types import ToolCall
 from framework.core.agent import AgentContext
+from framework.core.session_id import SessionInfo
 from framework.core.tool_manager import InMemoryToolManager
 from framework.memory.history import ListMessageHistory
 
@@ -17,6 +18,7 @@ def make_ctx():
         system_prompt="test",
         history=ListMessageHistory(),
         tool_manager=InMemoryToolManager(),
+        session=SessionInfo.from_str("test.agent"),
     )
 
 

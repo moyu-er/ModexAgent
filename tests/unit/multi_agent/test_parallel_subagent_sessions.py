@@ -19,7 +19,8 @@ import asyncio
 
 import pytest
 
-from framework.core.agent import AgentContext, AgentSessionMeta
+from framework.core.agent import AgentContext
+from framework.core.session_id import SessionInfo
 from framework.core.tool_manager import InMemoryToolManager
 from framework.memory.history import ListMessageHistory
 from framework.messaging.broker import BrokerMessage, MessageBroker
@@ -117,16 +118,21 @@ def _make_context(
     comm_kind: AgentCommKind = AgentCommKind.NORMAL,
     invocation_id: str | None = None,
 ) -> AgentContext:
+    metadata: dict[str, str] = {}
+    session_str = f"{conversation_id}.{agent_name}"
+    if invocation_id:
+        metadata["invocation_id"] = invocation_id
+        session_str = f"{session_str}.{invocation_id}"
     return AgentContext(
         system_prompt="test",
         history=ListMessageHistory([]),
         tool_manager=InMemoryToolManager(),
-        session_meta=AgentSessionMeta(
-            conversation_id=conversation_id,
+        session=SessionInfo(
+            session_id=session_str,
             agent_name=agent_name,
-            comm_kind=comm_kind,
-            invocation_id=invocation_id,
+            metadata=metadata,
         ),
+        comm_kind=comm_kind,
     )
 
 

@@ -385,8 +385,9 @@ class UserRetentionBufferInjectionGovernance(ContextGovernance):
         yt = UrbTag.YOU_RESPONSE.value
         lines = [
             f"<{ct}>",
-            "<!-- Recent conversation history pruned for context space. -->",
-            "<!-- user_msg without you_response = this user message was not yet answered. -->",
+            "<!-- Pruned conversation history preserved from context cleanup. -->",
+            "<!-- Each entry is one Q&A pair. entry without <you> = unanswered. -->",
+            "<!-- Last 3 entries shown (FIFO). -->",
         ]
         for e in entries:
             user_text = self._truncate_entry_content(

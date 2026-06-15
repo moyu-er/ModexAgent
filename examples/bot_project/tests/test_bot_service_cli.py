@@ -1,4 +1,4 @@
-"""Tests for bot_service.py command-line parsing."""
+"""Tests for command-line parsing utilities."""
 
 from __future__ import annotations
 
@@ -7,16 +7,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from bot_service import parse_args
+from modexbot.main import parse_args
 
 
-def test_parse_args_defaults_to_pool_mode() -> None:
+def test_parse_args_has_no_mode_option() -> None:
     args = parse_args([])
 
-    assert args.mode == "pool"
-
-
-def test_parse_args_accepts_pipeline_mode() -> None:
-    args = parse_args(["--mode", "pipeline"])
-
-    assert args.mode == "pipeline"
+    assert not hasattr(args, "mode")

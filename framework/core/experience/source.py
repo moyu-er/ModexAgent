@@ -23,25 +23,65 @@ def sanitize_name(name: str) -> str:
     return safe.strip("-") or "untitled"
 
 
+def coerce_tags(raw: object) -> list[str]:
+    """Coerce raw frontmatter ``tags`` to ``list[str]``.
+
+    YAML parses unquoted numerics (e.g. ``tags: [12306]``) as ``int`` and
+    explicit nulls as ``None``.  The ``ExperienceSummary.tags`` contract is
+    ``list[str]``; without coercion, ``",".join(exp.tags)`` in the prompt
+    builder raises ``TypeError`` and silently drops *all* experiences from
+    the system prompt.
+    """
+    if not isinstance(raw, (list, tuple)):
+        return []
+    return [str(tag) for tag in raw if tag is not None]
+
+
 class FileExperienceSource:
     """Load experiences from filesystem directories.
 
     Each experience is a subdirectory containing EXPERIENCE.md with
     YAML frontmatter and markdown body.
+
+    Supports optional ``scope`` for per-user (UserScope) or global
+    (GlobalScope) experience isolation.  When scope is set, the
+    effective directory becomes ``{base_dir}/{scope_key}/``.
     """
 
-    def __init__(self, directories: list[Path]) -> None:
+    def __init__(
+        self,
+        directories: list[Path],
+        scope: "MemoryScope | None" = None,
+    ) -> None:
         self._directories = [d.expanduser().resolve() for d in directories]
+        self._scope = scope
 
     @property
     def directories(self) -> list[Path]:
         return list(self._directories)
 
-    async def list_experiences(self) -> list[ExperienceSummary]:
+    @property
+    def scope(self) -> "MemoryScope | None":
+        return self._scope
+
+    def _resolve_dirs(
+        self, context: "MemoryContext | None" = None
+    ) -> list[Path]:
+        """Return directories, appending scope_key subdir when scope is set."""
+        if self._scope is None or context is None:
+            return self._directories
+        scope_key = self._scope.get_scope_key(context)
+        if not scope_key:
+            return self._directories
+        return [d / scope_key for d in self._directories]
+
+    async def list_experiences(
+        self, context: "MemoryContext | None" = None
+    ) -> list[ExperienceSummary]:
         """Scan all directories for EXPERIENCE.md files, return metadata only."""
         summaries: list[ExperienceSummary] = []
         seen: set[str] = set()
-        for directory in self._directories:
+        for directory in self._resolve_dirs(context):
             if not directory.exists():
                 continue
             for exp_dir in sorted(directory.iterdir()):
@@ -62,7 +102,7 @@ class FileExperienceSource:
                         ExperienceSummary(
                             name=name,
                             description=str(frontmatter.get("description", "")),
-                            tags=list(frontmatter.get("tags", [])),
+                            tags=coerce_tags(frontmatter.get("tags", [])),
                             scenario=str(frontmatter.get("scenario", "")),
                             directory=str(exp_dir.resolve()),
                         )
@@ -71,12 +111,14 @@ class FileExperienceSource:
                     logger.debug("Skipping malformed experience: %s", md_path, exc_info=True)
         return summaries
 
-    async def load_experience(self, name: str) -> Experience | None:
+    async def load_experience(
+        self, name: str, context: "MemoryContext | None" = None
+    ) -> Experience | None:
         """Load full EXPERIENCE.md content by directory *name*.
 
         Matches by directory name — the canonical identity for experiences.
         """
-        for directory in self._directories:
+        for directory in self._resolve_dirs(context):
             if not directory.exists():
                 continue
             for exp_dir in sorted(directory.iterdir()):
@@ -98,7 +140,7 @@ class FileExperienceSource:
                     return Experience(
                         name=name,
                         description=str(frontmatter.get("description", "")),
-                        tags=list(frontmatter.get("tags", [])),
+                        tags=coerce_tags(frontmatter.get("tags", [])),
                         scenario=str(frontmatter.get("scenario", "")),
                         trigger=str(frontmatter.get("trigger", "")),
                         version=int(frontmatter.get("version", 1)),

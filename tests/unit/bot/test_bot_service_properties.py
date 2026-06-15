@@ -12,6 +12,7 @@ _BOT_PROJECT = Path(__file__).parent.parent.parent.parent / "examples" / "bot_pr
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
+from framework.core.session_id import SessionInfo
 from framework.core.types import InputMessage, OutputMessage
 from framework.ioc.configs.agent import AgentConfig
 from framework.ioc.configs.app import AppConfig
@@ -31,7 +32,7 @@ class _StubInput(InputAdapter):
 
     async def receive(self) -> AsyncIterator[InputMessage]:
         if False:
-            yield InputMessage(content="", session_id="")
+            yield InputMessage(content="", session=SessionInfo.from_str("", default_agent_name="main"))
 
     async def send_reply(self, msg: OutputMessage, session_id: str) -> None:
         pass
@@ -54,7 +55,7 @@ class _StubOutput(OutputAdapter):
 
 
 @pytest.fixture
-def pipeline_config() -> AppConfig:
+def agent_config() -> AppConfig:
     return AppConfig(
         llm=LLMConfig(model="test-model", api_key="k"),
         agents=[
@@ -73,7 +74,7 @@ def pool_config() -> AppConfig:
 
 
 class TestMainAgentCfgProperty:
-    def test_returns_main_agent_by_role(self, pipeline_config: AppConfig) -> None:
+    def test_returns_main_agent_by_role(self, agent_config: AppConfig) -> None:
         """_main_agent_cfg finds the agent where role='main'."""
         from bot.service.core import BotService
 
@@ -82,8 +83,7 @@ class TestMainAgentCfgProperty:
             input_adapter=_StubInput(),
             output_adapter=_StubOutput(),
             emitter_factory=lambda s: None,
-            mode="pipeline",
-            app_config=pipeline_config,
+            app_config=agent_config,
         )
         cfg = bot._main_agent_cfg
         assert cfg is not None
@@ -102,7 +102,6 @@ class TestMainAgentCfgProperty:
             input_adapter=_StubInput(),
             output_adapter=_StubOutput(),
             emitter_factory=lambda s: None,
-            mode="pipeline",
             app_config=cfg,
         )
         assert bot._main_agent_cfg is None
@@ -116,12 +115,11 @@ class TestMainAgentCfgProperty:
             input_adapter=_StubInput(),
             output_adapter=_StubOutput(),
             emitter_factory=lambda s: None,
-            mode="pipeline",
         )
         assert bot._main_agent_cfg is None
 
-    def test_pool_mode_returns_none(self, pool_config: AppConfig) -> None:
-        """In pool mode (no agents in AppConfig), _main_agent_cfg returns None."""
+    def test_pool_config_returns_none(self, pool_config: AppConfig) -> None:
+        """Pool configs have no top-level agents, so _main_agent_cfg returns None."""
         from bot.service.core import BotService
 
         bot = BotService(
@@ -129,15 +127,13 @@ class TestMainAgentCfgProperty:
             input_adapter=_StubInput(),
             output_adapter=_StubOutput(),
             emitter_factory=lambda s: None,
-            mode="pool",
             app_config=pool_config,
         )
-        # Pool mode has no agents in AppConfig, so returns None (safe)
         assert bot._main_agent_cfg is None
 
 
 class TestMainMemoryCfgProperty:
-    def test_returns_agent_memory(self, pipeline_config: AppConfig) -> None:
+    def test_returns_agent_memory(self, agent_config: AppConfig) -> None:
         """_main_memory_cfg returns the main agent's memory config."""
         from bot.service.core import BotService
 
@@ -146,8 +142,7 @@ class TestMainMemoryCfgProperty:
             input_adapter=_StubInput(),
             output_adapter=_StubOutput(),
             emitter_factory=lambda s: None,
-            mode="pipeline",
-            app_config=pipeline_config,
+            app_config=agent_config,
         )
         mem = bot._main_memory_cfg
         # Agent has no explicit memory, so returns None
@@ -165,7 +160,6 @@ class TestMainMemoryCfgProperty:
             input_adapter=_StubInput(),
             output_adapter=_StubOutput(),
             emitter_factory=lambda s: None,
-            mode="pipeline",
             app_config=cfg,
         )
         assert bot._main_memory_cfg is None

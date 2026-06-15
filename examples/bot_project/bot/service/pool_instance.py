@@ -29,6 +29,7 @@ class PoolInstance:
     communication_service: Any  # AgentCommunicationService — updated on workspace switch
     experience_curator: Any | None = None  # ExperienceCurator background task
     experience_curator_task: Any | None = None  # asyncio.Task for curator loop
+    experience_dir_ref: list[Any] | None = None  # Mutable [Path] ref for ws switch
 
     @property
     def main_address(self):

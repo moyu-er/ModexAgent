@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Collection
 
@@ -29,6 +30,7 @@ class InMemoryStoreRegistry(MemoryStoreRegistry):
     def __init__(self) -> None:
         self._stores: dict[tuple[MemoryLayerName, str], InMemoryScopedStorage] = {}
         self._records: dict[tuple[MemoryLayerName, str], ScopeRecord] = {}
+        self._lock = asyncio.Lock()
 
     async def initialize(self) -> None:
         pass
@@ -46,11 +48,29 @@ class InMemoryStoreRegistry(MemoryStoreRegistry):
     ) -> MemoryStorage:
         scope_key = scope.get_scope_key(context)
         cache_key = (layer, scope_key)
+        # Fast path: already cached — no lock needed (dict read is atomic)
         storage = self._stores.get(cache_key)
-        if storage is None:
-            storage = InMemoryScopedStorage()
-            await storage.initialize()
-            self._stores[cache_key] = storage
+        if storage is not None:
+            self._update_record(cache_key, scope_key, layer, context)
+            return storage
+        # Slow path: create under lock to prevent TOCTOU race
+        async with self._lock:
+            # Double-check after acquiring lock
+            storage = self._stores.get(cache_key)
+            if storage is None:
+                storage = InMemoryScopedStorage()
+                await storage.initialize()
+                self._stores[cache_key] = storage
+        self._update_record(cache_key, scope_key, layer, context)
+        return storage
+
+    def _update_record(
+        self,
+        cache_key: tuple[MemoryLayerName, str],
+        scope_key: str,
+        layer: MemoryLayerName,
+        context: MemoryContext,
+    ) -> None:
         existing = self._records.get(cache_key)
         self._records[cache_key] = ScopeRecord(
             scope_key=scope_key,
@@ -62,7 +82,6 @@ class InMemoryStoreRegistry(MemoryStoreRegistry):
             created_at=existing.created_at if existing is not None else time.time(),
             updated_at=time.time(),
         )
-        return storage
 
     async def list_records(
         self,

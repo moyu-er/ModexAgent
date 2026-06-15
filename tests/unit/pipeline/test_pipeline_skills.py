@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 
+from framework.core.session_id import SessionInfo
 from framework.core.skills import DefaultSkillBuilder, InlineSkillSource, SkillManager
 from framework.core.skills.models import Skill
 from framework.pipeline.pipeline import AgentPipeline
@@ -71,7 +72,7 @@ class FakeInputAdapter:
     async def receive(self):
         from framework.pipeline.pipeline import InputMessage
 
-        yield InputMessage(content="hi", source="test")
+        yield InputMessage(content="hi", source="test", session=SessionInfo.from_str("test", default_agent_name="main"))
         await asyncio.sleep(10)  # block indefinitely after first message
 
 

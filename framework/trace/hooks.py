@@ -106,16 +106,13 @@ class TraceCollectorHook(
                 )
 
     def _agent_name(self, ctx: AgentContext) -> str:
-        """Return agent name from session_meta or identity."""
-        if ctx.session_meta is not None and ctx.session_meta.agent_name:
-            return ctx.session_meta.agent_name
-        if ctx.identity is not None:
-            return ctx.identity.agent_id
-        return "unknown"
+        """Return agent name from session."""
+        return ctx.session.agent_name if ctx.session else "unknown"
 
     def _invocation_id(self, ctx: AgentContext) -> str | None:
-        if ctx.session_meta is not None:
-            return ctx.session_meta.invocation_id
+        """Return invocation_id from session metadata."""
+        if ctx.session is not None:
+            return str(ctx.session.metadata.get("invocation_id", "")) or None
         return None
 
     async def _last_user_messages(self, ctx: AgentContext, limit: int = 3) -> list[dict[str, object]]:
@@ -150,7 +147,7 @@ class TraceCollectorHook(
         }
         rec = OperationRecord(
             trace_id=trace_id,
-            session_id=ctx.session_id,
+            session_id=str(ctx.session),
             agent_name=self._agent_name(ctx),
             invocation_id=self._invocation_id(ctx),
             kind=OperationKind.TURN_START,
@@ -184,7 +181,7 @@ class TraceCollectorHook(
         status = OperationStatus.FAILED if response.error else OperationStatus.COMPLETED
         rec = OperationRecord(
             trace_id=trace_id,
-            session_id=ctx.session_id,
+            session_id=str(ctx.session),
             agent_name=self._agent_name(ctx),
             invocation_id=self._invocation_id(ctx),
             kind=OperationKind.LLM_CALL,
@@ -203,7 +200,7 @@ class TraceCollectorHook(
         trace_id = self._trace_id(ctx)
         rec = OperationRecord(
             trace_id=trace_id,
-            session_id=ctx.session_id,
+            session_id=str(ctx.session),
             agent_name=self._agent_name(ctx),
             invocation_id=self._invocation_id(ctx),
             kind=OperationKind.TOOL_BATCH,
@@ -235,7 +232,7 @@ class TraceCollectorHook(
             status = OperationStatus.FAILED if result.error else OperationStatus.COMPLETED
             rec = OperationRecord(
                 trace_id=trace_id,
-                session_id=ctx.session_id,
+                session_id=str(ctx.session),
                 agent_name=self._agent_name(ctx),
                 invocation_id=self._invocation_id(ctx),
                 kind=OperationKind.TOOL_CALL,
@@ -263,7 +260,7 @@ class TraceCollectorHook(
                 metadata["content"] = _truncate(result.content)
         rec = OperationRecord(
             trace_id=trace_id,
-            session_id=ctx.session_id,
+            session_id=str(ctx.session),
             agent_name=self._agent_name(ctx),
             invocation_id=self._invocation_id(ctx),
             kind=OperationKind.TURN_END,

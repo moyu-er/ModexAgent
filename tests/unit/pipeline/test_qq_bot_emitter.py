@@ -13,7 +13,9 @@ import pytest
 
 from framework.adapters.platform import StreamingMode
 from framework.agents.react import ReActEvent
-from framework.core.emitter import AgentResult, ToolCall, ToolResult
+from framework.core.emitter import AgentResult
+from framework.core.types import ToolCall
+from framework.core.tool_manager import ToolResult
 
 
 class MockOutputAdapter:

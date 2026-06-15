@@ -8,12 +8,13 @@ from framework.core.graph.interrupt import GraphInterrupt
 from framework.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from framework.runtime.models import TurnIdentity, TurnStateBase
 from framework.runtime.services import AgentRuntime, AgentRuntimeServices
+from framework.core.session_id import SessionInfo
 
 
 class _MinimalRuntime:
     def __init__(self) -> None:
         self.state = TurnStateBase(
-            identity=TurnIdentity(agent_id="test", session_id="s1", turn_id="t1"),
+            identity=TurnIdentity(agent_id="test", session=SessionInfo.from_str("s1"), turn_id="t1"),
             agent_kind=AgentKind.REACT,
             phase=TurnPhase.RUNNING,
         )

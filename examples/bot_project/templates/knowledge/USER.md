@@ -4,9 +4,9 @@ Information about the user to personalize interactions.
 
 ## Basic Information
 
-- **Name**: (user name)
-- **Timezone**: (UTC+8)
-- **Language**: (preferred language)
+- **Name**: [[USER_NAME: unknown]]
+- **Timezone**: [[USER_TIMEZONE: default=UTC+8]]
+- **Language**: [[USER_LANGUAGE: unknown]]
 
 ## Preferences
 
@@ -24,10 +24,8 @@ Information about the user to personalize interactions.
 
 ## Topics of Interest
 
--
--
--
+- [[TOPIC_OF_INTEREST: none specified yet]]
 
 ## Special Instructions
 
-(Any specific instructions for how the assistant should behave)
+[[SPECIAL_INSTRUCTIONS: none provided yet]]

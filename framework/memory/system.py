@@ -158,7 +158,7 @@ class MemorySystemContextManager(ContextManager):
         )
         from framework.memory.layers.config import UserRetentionBufferConfig
 
-        # Mirror the URB layer's default entry limit (5) for injection.
+        # Mirror the URB layer's default entry limit (3) for injection.
         injector = UserRetentionBufferInjectionGovernance(
             urb=urb,
             context_factory=lambda: (
@@ -325,12 +325,16 @@ class MemorySystemContextManager(ContextManager):
             except Exception:
                 pass
 
-        # 8. Experience (static by default)
+        # 8. Experience (scope-aware via context)
         if self._experience_manager is not None:
             try:
-                experience_prompt = await self._experience_manager.build_prompt()
+                experience_prompt = await self._experience_manager.build_prompt(
+                    context=ctx,
+                )
             except Exception:
-                logger.debug("Failed to build experience prompt", exc_info=True)
+                # Elevated from debug: a single malformed experience used to
+                # silently drop ALL experiences from the system prompt.
+                logger.warning("Failed to build experience prompt", exc_info=True)
             else:
                 if experience_prompt:
                     providers.append(ExperienceProvider(experience_prompt))
@@ -525,8 +529,8 @@ class MemorySystemContextManager(ContextManager):
         from datetime import datetime
 
         lines = ["## Runtime"]
-        current_date = str(info.get("current_time") or datetime.now().strftime("%Y-%m-%d"))
-        lines.append(f"Current Date: {current_date}")
+        current_time = str(info.get("current_time") or datetime.now().strftime("%Y-%m-%d %Hh"))
+        lines.append(f"Current Time: {current_time} (hour precision, not exact)")
 
         platform_raw = str(info.get("platform") or sys.platform)
         platform_name = {"win32": "Windows", "darwin": "macOS", "linux": "Linux"}.get(

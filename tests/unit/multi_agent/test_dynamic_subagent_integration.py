@@ -4,7 +4,8 @@ import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-from framework.core.agent import AgentContext, AgentSessionMeta
+from framework.core.agent import AgentContext
+from framework.core.session_id import SessionInfo
 from framework.multi_agent.comm_kind import AgentCommKind
 from framework.multi_agent.message_xml import build_agent_message, build_agent_result
 from framework.multi_agent.template import AgentTemplate
@@ -151,7 +152,7 @@ class TestDynamicCreationAgentAddressBug:
             # This must NOT raise TypeError about comm_kind
             result = await service._create_dynamic_subagent(
                 template=template,
-                conversation_id="conv-1",
+                parent_session_id="conv-1.main",
                 invocation_id="abc12345",
                 content="Do something",
             )
@@ -188,7 +189,7 @@ class TestInvocationIdNullCreatesNewSubagent:
 
             from framework.multi_agent.communication import AgentCommunicationService
             from framework.multi_agent.address import AgentAddress
-            from framework.core.agent import AgentContext, AgentSessionMeta
+            from framework.core.agent import AgentContext
 
             mock_pool = _make_mock_pool()
             mock_broker = AsyncMock()
@@ -210,11 +211,8 @@ class TestInvocationIdNullCreatesNewSubagent:
                 system_prompt="",
                 history=MagicMock(),
                 tool_manager=MagicMock(),
-                session_meta=AgentSessionMeta(
-                    conversation_id="conv-1",
-                    agent_name="main",
-                    comm_kind=AgentCommKind.NORMAL,
-                ),
+                session=SessionInfo.from_str("conv-1.main"),
+                comm_kind=AgentCommKind.NORMAL,
             )
 
             result = await service.send_async(
@@ -232,7 +230,7 @@ class TestInvocationIdNullCreatesNewSubagent:
         """send_to_agent(target='normal-agent', invocation_id=null) sends normally."""
         from framework.multi_agent.communication import AgentCommunicationService
         from framework.multi_agent.address import AgentAddress
-        from framework.core.agent import AgentContext, AgentSessionMeta
+        from framework.core.agent import AgentContext
 
         mock_broker = AsyncMock()
         mock_registry = MagicMock()
@@ -252,11 +250,8 @@ class TestInvocationIdNullCreatesNewSubagent:
             system_prompt="",
             history=MagicMock(),
             tool_manager=MagicMock(),
-            session_meta=AgentSessionMeta(
-                conversation_id="conv-1",
-                agent_name="main",
-                comm_kind=AgentCommKind.NORMAL,
-            ),
+            session=SessionInfo.from_str("conv-1.main"),
+            comm_kind=AgentCommKind.NORMAL,
         )
 
         result = await service.send_async(
@@ -272,7 +267,7 @@ class TestInvocationIdNullCreatesNewSubagent:
         """send_to_agent(target='helper', invocation_id='abc123') continues existing session."""
         from framework.multi_agent.communication import AgentCommunicationService
         from framework.multi_agent.address import AgentAddress
-        from framework.core.agent import AgentContext, AgentSessionMeta
+        from framework.core.agent import AgentContext
 
         mock_broker = AsyncMock()
         mock_registry = MagicMock()
@@ -292,11 +287,8 @@ class TestInvocationIdNullCreatesNewSubagent:
             system_prompt="",
             history=MagicMock(),
             tool_manager=MagicMock(),
-            session_meta=AgentSessionMeta(
-                conversation_id="conv-1",
-                agent_name="main",
-                comm_kind=AgentCommKind.NORMAL,
-            ),
+            session=SessionInfo.from_str("conv-1.main"),
+            comm_kind=AgentCommKind.NORMAL,
         )
 
         result = await service.send_async(
@@ -346,7 +338,7 @@ class TestSubagentIdentityResolution:
 
     async def test_subagent_send_has_correct_source(self):
         """When subagent sends via send_to_agent, envelope source must be subagent name."""
-        from framework.core.agent import AgentContext, current_agent_context, AgentSessionMeta
+        from framework.core.agent import AgentContext, current_agent_context
         from framework.multi_agent.communication import AgentCommunicationService
         from framework.multi_agent.address import AgentAddress
 
@@ -375,11 +367,8 @@ class TestSubagentIdentityResolution:
             system_prompt="",
             history=MagicMock(),
             tool_manager=MagicMock(),
-            session_meta=AgentSessionMeta(
-                conversation_id="conv-1",
-                agent_name="helper",
-                comm_kind=AgentCommKind.SUBAGENT,
-            ),
+            session=SessionInfo.from_str("conv-1.helper"),
+            comm_kind=AgentCommKind.SUBAGENT,
         )
         token = current_agent_context.set(ctx)
         try:
@@ -441,7 +430,7 @@ class TestSubagentIsolation:
 
             result = await service._create_dynamic_subagent(
                 template=template,
-                conversation_id="conv-1",
+                parent_session_id="conv-1.main",
                 invocation_id="test0001",
                 content="Do something",
             )
@@ -484,7 +473,7 @@ class TestSubagentIsolation:
 
             result = await service._create_dynamic_subagent(
                 template=template,
-                conversation_id="conv-1",
+                parent_session_id="conv-1.main",
                 invocation_id="test0002",
                 content="Do something",
             )
@@ -549,7 +538,7 @@ class TestSubagentMemoryCorrectness:
 
             result = await service._create_dynamic_subagent(
                 template=template,
-                conversation_id="conv-1",
+                parent_session_id="conv-1.main",
                 invocation_id="test0001",
                 content="Do something",
             )
@@ -615,7 +604,7 @@ class TestAgentMessageXmlWrapping:
 
             result = await service._create_dynamic_subagent(
                 template=template,
-                conversation_id="conv-1",
+                parent_session_id="conv-1.main",
                 invocation_id="test0001",
                 content="Hello from main",
             )
@@ -635,7 +624,7 @@ class TestAgentMessageXmlWrapping:
 
     async def test_agent_message_wraps_content_in_xml(self):
         """Normal agent_message must also be XML-wrapped."""
-        from framework.core.agent import AgentContext, AgentSessionMeta
+        from framework.core.agent import AgentContext
         from framework.multi_agent.address import AgentAddress
         from framework.multi_agent.communication import AgentCommunicationService
         from framework.multi_agent.descriptor import AgentDescriptor
@@ -663,11 +652,8 @@ class TestAgentMessageXmlWrapping:
             system_prompt="",
             history=MagicMock(),
             tool_manager=MagicMock(),
-            session_meta=AgentSessionMeta(
-                conversation_id="conv-1",
-                agent_name="main",
-                comm_kind=AgentCommKind.NORMAL,
-            ),
+            session=SessionInfo.from_str("conv-1.main"),
+            comm_kind=AgentCommKind.NORMAL,
         )
 
         result = await service.send_async(
@@ -690,62 +676,62 @@ class TestAgentMessageXmlWrapping:
 class TestSessionRoutingSameAgentDifferentInvocation:
     """Same agent name + different invocation_ids → different sessions.
 
-    Session isolation is driven by invocation_id via DefaultSessionIdStrategy.
-    Same invocation_id = same session (memory inheritance).
-    Different invocation_id = different session (fresh context).
+    Session isolation is driven by invocation_id via SessionIdFactory.
+    Same external_id = same session (memory inheritance).
+    Different external_id = different session (fresh context).
     """
 
     def test_same_agent_different_invocation_produces_different_sessions(self):
-        from framework.multi_agent.session_id import DefaultSessionIdStrategy
+        from framework.core.session_id import SessionIdFactory
 
-        strategy = DefaultSessionIdStrategy()
+        factory = SessionIdFactory()
 
-        sid_a = strategy.format(
-            conversation_id="conv-1", agent_name="query-12306", invocation_id="abc123",
+        sid_a = factory.create(
+            agent_name="query-12306", external_id="abc123",
         )
-        sid_b = strategy.format(
-            conversation_id="conv-1", agent_name="query-12306", invocation_id="def456",
+        sid_b = factory.create(
+            agent_name="query-12306", external_id="def456",
         )
 
         # Different invocation_ids must produce different session IDs
-        assert sid_a != sid_b
-        assert sid_a == "conv-1.query-12306.abc123"
-        assert sid_b == "conv-1.query-12306.def456"
+        assert str(sid_a) != str(sid_b)
+        assert sid_a.agent_name == "query-12306"
+        assert sid_b.agent_name == "query-12306"
 
     def test_same_invocation_produces_same_session(self):
-        from framework.multi_agent.session_id import DefaultSessionIdStrategy
+        from framework.core.session_id import SessionIdFactory
 
-        strategy = DefaultSessionIdStrategy()
+        factory = SessionIdFactory()
 
-        sid_1 = strategy.format(
-            conversation_id="conv-1", agent_name="query-12306", invocation_id="abc123",
+        sid_1 = factory.create(
+            agent_name="query-12306", external_id="abc123",
         )
-        sid_2 = strategy.format(
-            conversation_id="conv-1", agent_name="query-12306", invocation_id="abc123",
+        sid_2 = factory.create(
+            agent_name="query-12306", external_id="abc123",
         )
 
-        # Same invocation_id → same session (memory inheritance / continuation)
-        assert sid_1 == sid_2
+        # Same external_id → same snowflake → same session (memory inheritance)
+        assert str(sid_1) == str(sid_2)
 
     def test_different_agent_same_invocation_different_sessions(self):
-        from framework.multi_agent.session_id import DefaultSessionIdStrategy
+        from framework.core.session_id import SessionIdFactory
 
-        strategy = DefaultSessionIdStrategy()
+        factory = SessionIdFactory()
 
-        sid_a = strategy.format(
-            conversation_id="conv-1", agent_name="query-12306", invocation_id="abc123",
+        sid_a = factory.create(
+            agent_name="query-12306", external_id="abc123",
         )
-        sid_b = strategy.format(
-            conversation_id="conv-1", agent_name="office-expert", invocation_id="abc123",
+        sid_b = factory.create(
+            agent_name="office-expert", external_id="abc123",
         )
 
-        # Different agent names → different sessions even with same invocation_id
-        assert sid_a != sid_b
+        # Different agent names → different sessions even with same external_id
+        assert str(sid_a) != str(sid_b)
 
     async def test_second_empty_invocation_id_does_not_recreate_agent(self):
         """Second invocation_id="" on same template must NOT call
         _create_dynamic_subagent again — the agent is already registered."""
-        from framework.core.agent import AgentContext, AgentSessionMeta
+        from framework.core.agent import AgentContext
         from framework.multi_agent.address import AgentAddress
         from framework.multi_agent.communication import AgentCommunicationService
         from framework.multi_agent.descriptor import AgentDescriptor
@@ -782,10 +768,8 @@ class TestSessionRoutingSameAgentDifferentInvocation:
                 system_prompt="",
                 history=MagicMock(),
                 tool_manager=MagicMock(),
-                session_meta=AgentSessionMeta(
-                    conversation_id="conv-1", agent_name="main",
-                    comm_kind=AgentCommKind.NORMAL,
-                ),
+                session=SessionInfo.from_str("conv-1.main"),
+                comm_kind=AgentCommKind.NORMAL,
             )
 
             result1 = await service.send_async(
@@ -898,31 +882,33 @@ class TestOutputMdInjection:
         """OUTPUT.md path must contain session-id components and end with OUTPUT.md."""
         from pathlib import Path as _Path
 
-        from framework.multi_agent.session_id import DefaultSessionIdStrategy
+        from framework.core.session_id import SessionIdFactory
 
-        strategy = DefaultSessionIdStrategy()
-        session_id = strategy.format(
-            conversation_id="conv-1", agent_name="reviewer", invocation_id="abc123",
+        factory = SessionIdFactory()
+        session = factory.create(
+            agent_name="reviewer", external_id="abc123",
         )
+        session_id = str(session)
         runtime_dir = _Path(tempfile.gettempdir()) / "runtime_state" / "coding"
         output_path = runtime_dir / "output" / session_id / "OUTPUT.md"
 
         # Must be absolute (runtime_dir is absolute → output_path is absolute)
         assert output_path.is_absolute(), "OUTPUT.md path must be absolute"
         assert str(output_path).endswith("OUTPUT.md")
-        assert "conv-1.reviewer.abc123" in str(output_path)
+        assert ".reviewer" in str(output_path)
         assert "output" in str(output_path)
 
     def test_scoped_write_dir_covers_output_md(self):
         """READ_ONLY scoped_write_dir must be the parent of OUTPUT.md's directory."""
         from pathlib import Path as _Path
 
-        from framework.multi_agent.session_id import DefaultSessionIdStrategy
+        from framework.core.session_id import SessionIdFactory
 
-        strategy = DefaultSessionIdStrategy()
-        session_id = strategy.format(
-            conversation_id="conv-1", agent_name="scout", invocation_id="xyz789",
+        factory = SessionIdFactory()
+        session = factory.create(
+            agent_name="scout", external_id="xyz789",
         )
+        session_id = str(session)
         runtime_dir = _Path(tempfile.gettempdir()) / "runtime_state" / "coding"
         scoped_write_dir = runtime_dir / "output"
         output_path = runtime_dir / "output" / session_id / "OUTPUT.md"
@@ -1025,10 +1011,8 @@ class TestOutputMdInjection:
             system_prompt="",
             history=MagicMock(),
             tool_manager=MagicMock(),
-            session_meta=AgentSessionMeta(
-                conversation_id="conv-1", agent_name="main",
-                comm_kind=AgentCommKind.NORMAL,
-            ),
+            session=SessionInfo.from_str("conv-1.main"),
+            comm_kind=AgentCommKind.NORMAL,
         )
         result = await service.send_async(
             target_agent="helper", content="do something",
@@ -1093,10 +1077,8 @@ class TestOutputMdInjection:
             system_prompt="",
             history=MagicMock(),
             tool_manager=MagicMock(),
-            session_meta=AgentSessionMeta(
-                conversation_id="conv-1", agent_name="main",
-                comm_kind=AgentCommKind.NORMAL,
-            ),
+            session=SessionInfo.from_str("conv-1.main"),
+            comm_kind=AgentCommKind.NORMAL,
         )
         await service.send_async(
             target_agent="helper", content="do something",
@@ -1193,11 +1175,11 @@ class TestSubagentToolInstanceIsolation:
 
             # Create two subagents
             result_a = await service._create_dynamic_subagent(
-                template=template, conversation_id="conv-1",
+                template=template, parent_session_id="conv-1.main",
                 invocation_id="inv-a", content="task A",
             )
             result_b = await service._create_dynamic_subagent(
-                template=template, conversation_id="conv-1",
+                template=template, parent_session_id="conv-1.main",
                 invocation_id="inv-b", content="task B",
             )
 
@@ -1246,11 +1228,11 @@ class TestSubagentToolInstanceIsolation:
             )
 
             result_a = await service._create_dynamic_subagent(
-                template=template, conversation_id="conv-1",
+                template=template, parent_session_id="conv-1.main",
                 invocation_id="inv-a", content="task A",
             )
             result_b = await service._create_dynamic_subagent(
-                template=template, conversation_id="conv-1",
+                template=template, parent_session_id="conv-1.main",
                 invocation_id="inv-b", content="task B",
             )
 
@@ -1297,11 +1279,11 @@ class TestSubagentToolInstanceIsolation:
             )
 
             await service._create_dynamic_subagent(
-                template=template, conversation_id="conv-1",
+                template=template, parent_session_id="conv-1.main",
                 invocation_id="inv-1", content="task 1",
             )
             await service._create_dynamic_subagent(
-                template=template, conversation_id="conv-1",
+                template=template, parent_session_id="conv-1.main",
                 invocation_id="inv-2", content="task 2",
             )
 

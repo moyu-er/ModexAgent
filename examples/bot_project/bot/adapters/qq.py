@@ -88,6 +88,10 @@ class QQInputAdapter(InputAdapter):
         )
         self._media_dir.mkdir(parents=True, exist_ok=True)
 
+        self._input_pipeline = None
+        self._input_ctx = None
+        self._output_adapter = None
+
     @property
     def name(self) -> str:
         return "qq"
@@ -186,6 +190,11 @@ class QQInputAdapter(InputAdapter):
 
         print("[QQInputAdapter] Stopped")
 
+    def put_input_message(self, msg: InputMessage) -> None:
+        """Push a fully-built InputMessage onto the receive queue.
+        S8 EnqueueStage calls this via ctx.enqueue_message."""
+        self._message_queue.put_nowait(msg)
+
     async def receive(self):
         """接收输入消息（异步迭代器）"""
         while self._running:
@@ -263,10 +272,6 @@ class QQInputAdapter(InputAdapter):
 
             print(f"[QQInputAdapter] Received from {user_id}: {content[:80]}...")
 
-            # --- Control command interception (framework-level) ---
-            if content and await self._try_intercept_control(content, user_id):
-                return  # Handled by control path, don't queue
-
             # 确定 chat_id
             if is_group:
                 chat_id = str(getattr(data, "group_openid", "unknown"))
@@ -289,21 +294,40 @@ class QQInputAdapter(InputAdapter):
             if att_meta:
                 metadata["attachments"] = att_meta
 
-            # 创建输入消息
-            message = InputMessage(
-                content=content,
-                session_id=user_id,
-                source="qq",
-                chat_id=chat_id,
-                metadata=metadata,
-                attachments=attachments,
-            )
-
             # 记录最近一次输入 metadata，供 OutputAdapter 区分 C2C / 群聊
             self.last_input_metadata = metadata
 
-            # 放入队列
-            await self._message_queue.put(message)
+            # ── S0: produce the seed envelope (adapter normalization done above) ──
+            from framework.input_pipeline.envelope import UserInputEnvelope, AttachmentRef
+
+            seed = UserInputEnvelope(
+                conversation_id=user_id,
+                content=content,
+                channel=self.name,            # "qq"
+                explicit_pool=None,
+                metadata={
+                    "message_id": data.id,
+                    "is_group": is_group,
+                    "chat_id": chat_id,
+                    "conversation_id": user_id,
+                },
+                attachments=[AttachmentRef(local_path=p) for p in attachments],
+            )
+            result = await self._input_pipeline.handle(seed, self._input_ctx)
+
+            # ── Surface Terminate responses (pool switch, invalid skill, etc.) ──
+            if not result.should_continue():
+                response = getattr(result, "response", None)
+                if response and isinstance(response, dict):
+                    msg_text = str(response.get("message", ""))
+                    if msg_text:
+                        out = self._output_adapter or self._ctrl_output_adapter
+                        if out is not None:
+                            from framework.core.types import OutputMessage
+                            await out.send(OutputMessage(content=msg_text), user_id)
+                        else:
+                            print(f"[QQInputAdapter] Cannot send Terminate notice (no output adapter): {msg_text}")
+            # continue path: S8 already enqueued via ctx.enqueue_message (= put_input_message)
 
         except Exception as e:
             print(f"[QQInputAdapter] Error handling message: {e}")

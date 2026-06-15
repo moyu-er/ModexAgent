@@ -13,7 +13,7 @@ integrates with the pipeline for pre-lock routing and in-lock execution.
 | File | Description |
 |------|-------------|
 | `parser.py` | `SlashCommandParser` -- strict `/command` syntax validation. |
-| `handlers.py` | Built-in handlers: `ApprovalCommandHandler`, `ContinueCommandHandler`, `SkillCommandHandler`, `UnknownCommandHandler`, `InvalidCommandHandler`. |
+| `handlers.py` | Built-in handlers: `ApprovalCommandHandler`, `ContinueCommandHandler`, `SkillCommandHandler` (uses shared `build_skill_command_xml` from `framework.core.skills.builder`), `UnknownCommandHandler`, `InvalidCommandHandler`. |
 | `processor.py` | `SlashCommandProcessor` -- orchestrates parse → dispatch_policy → handle. |
 | `models.py` | `CommandContext`, `CommandHandlingResult`, `SlashCommandInvocation`, `CommandParseResult`. |
 | `constants.py` | `BuiltinCommand`, `CommandAction`, `CommandDispatchPolicy`, `CommandParseStatus`, notice templates. |

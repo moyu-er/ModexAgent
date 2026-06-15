@@ -1,0 +1,8 @@
+Slide 1: 6 shapes, 3785 bytes
+Slide 2: 11 shapes, 10628 bytes
+Slide 3: 27 shapes, 18113 bytes
+Slide 4: 21 shapes, 16865 bytes
+Slide 5: 6 shapes, 3765 bytes
+
+File size on disk: 111,819 bytes
+Slide count: 5

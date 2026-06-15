@@ -7,6 +7,7 @@ from framework.runtime.codec import RuntimeStateCodecRegistry
 from framework.runtime.enums import AgentKind, SnapshotReason, TurnPhase
 from framework.runtime.models import ResumePoint, TurnIdentity, TurnSnapshot
 from framework.runtime.store import ActiveTurnConflictError
+from framework.core.session_id import SessionInfo
 
 
 class _FakeCodec:
@@ -17,7 +18,7 @@ class _FakeCodec:
             "schema_version": snapshot.schema_version,
             "identity": {
                 "agent_id": snapshot.identity.agent_id,
-                "session_id": snapshot.identity.session_id,
+                "session": str(snapshot.identity.session),
                 "turn_id": snapshot.identity.turn_id,
             },
             "agent_kind": snapshot.agent_kind.value,
@@ -33,8 +34,13 @@ class _FakeCodec:
 
     def decode_turn(self, payload: dict):
         idata = payload["identity"]
+        identity = TurnIdentity(
+            agent_id=idata["agent_id"],
+            session=SessionInfo.from_str(idata["session"]),
+            turn_id=idata["turn_id"],
+        )
         return TurnSnapshot(
-            identity=TurnIdentity(**idata),
+            identity=identity,
             agent_kind=AgentKind(payload["agent_kind"]),
             phase=TurnPhase(payload["phase"]),
             reason=SnapshotReason(payload["reason"]),
@@ -55,7 +61,7 @@ async def test_store_rejects_second_active_turn_for_same_agent_session(tmp_path)
     store = JsonFileTurnStateStore(tmp_path, registry)
 
     first = TurnSnapshot(
-        identity=TurnIdentity(agent_id="bot", session_id="s1", turn_id="t1"),
+        identity=TurnIdentity(agent_id="bot", session=SessionInfo.from_str("s1"), turn_id="t1"),
         agent_kind=AgentKind.REACT,
         phase=TurnPhase.RUNNING,
         reason=SnapshotReason.LLM_COMPLETED,
@@ -64,7 +70,7 @@ async def test_store_rejects_second_active_turn_for_same_agent_session(tmp_path)
         state_payload={"current_node": "llm", "iteration": 1},
     )
     second = TurnSnapshot(
-        identity=TurnIdentity(agent_id="bot", session_id="s1", turn_id="t2"),
+        identity=TurnIdentity(agent_id="bot", session=SessionInfo.from_str("s1"), turn_id="t2"),
         agent_kind=AgentKind.REACT,
         phase=TurnPhase.SUSPENDED,
         reason=SnapshotReason.TOOL_APPROVAL_REQUIRED,

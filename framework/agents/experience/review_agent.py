@@ -8,6 +8,7 @@ from framework.agents.summarizer.abc import _get_registry
 from framework.agents.summarizer.scoped_file_agent import ScopedFileAgent
 from framework.core.experience.meta import ExperienceMetaStore
 from framework.core.provider import LLMProvider
+from framework.core.session_id import SessionInfo
 from framework.memory.tools.experience import (
     ExperienceDeleteTool,
     ExperienceEditTool,
@@ -90,9 +91,9 @@ class ExperienceReviewAgent(ScopedFileAgent):
         user_msg = self.build_user_message(conversation_snapshot, existing_experiences)
 
         trace_key = invocation_id or uuid.uuid4().hex[:8]
-        session_id = f"experience-review-{trace_key}"
+        session_id = f"{trace_key}.experience-review"
         _td = traces_dir or (experience_dir.parent / "review_traces")
-        trace_path = _td / f"review-{trace_key}.jsonl"
+        trace_path = _td / f"{trace_key}"/ "operations.jsonl"
 
         logger.info(
             "ExperienceReviewAgent starting: invocation=%s session=%s",
@@ -196,7 +197,7 @@ class ExperienceReviewAgent(ScopedFileAgent):
         state = ReActTurnState(
             identity=TurnIdentity(
                 agent_id="experience-review",
-                session_id=session_id,
+                session=SessionInfo(session_id=session_id, agent_name=agent_name),
                 turn_id="default",
             ),
             agent_kind=AgentKind.REACT,
@@ -211,7 +212,7 @@ class ExperienceReviewAgent(ScopedFileAgent):
             system_prompt=system_prompt,
             history=history,
             tool_manager=tool_manager,
-            session_id=session_id,
+            session=SessionInfo(session_id=session_id, agent_name=agent_name),
             max_iterations=max_iterations,
             temperature=temperature,
             runtime=runtime,

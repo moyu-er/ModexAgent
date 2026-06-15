@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Mapping
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..agents.react.agent import ReActAgent
@@ -57,12 +56,10 @@ class ApprovalRenderer:
     def __init__(
         self,
         *,
-        approval_workspace: Path,
         agent: ReActAgent | None = None,
         user_interface: ApprovalUserInterface | None = None,
         on_drain: Callable[[InputMessage], Awaitable[None]] | None = None,
     ) -> None:
-        self._approval_workspace = approval_workspace
         self.agent = agent
         self._user_interface = user_interface
         self._on_drain = on_drain

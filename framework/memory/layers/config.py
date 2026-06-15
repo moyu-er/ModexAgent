@@ -58,7 +58,7 @@ class KnowledgeMemoryConfig:
 @dataclass(frozen=True)
 class UserRetentionBufferConfig:
     enabled: bool = True
-    max_entries: int = 5
+    max_entries: int = 3
     max_user_chars: int = 4000
     max_assistant_chars: int = 4000
     scope: MemoryScope = field(default_factory=SessionScope)

@@ -5,6 +5,8 @@ from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import Any
 
+from framework.core.session_id import SessionInfo
+
 
 class MemoryAgentRole(StrEnum):
     """Agent role for memory ownership and background processing."""
@@ -27,7 +29,7 @@ class MemoryLayerName(StrEnum):
 class MemoryContext:
     """统一上下文对象，包含所有可能用到的分组信息。"""
 
-    session_id: str | None = None
+    session_id: SessionInfo | None = None
     user_id: str | None = None
     tenant_id: str | None = None
     agent_id: str | None = None
@@ -59,8 +61,10 @@ class MemoryContext:
         return MemoryContext(**current)
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize context for scope metadata."""
-        return asdict(self)
+        data = asdict(self)
+        if self.session_id is not None:
+            data["session_id"] = str(self.session_id)
+        return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "MemoryContext":
@@ -68,7 +72,14 @@ class MemoryContext:
         if not data:
             return cls()
         allowed = cls.__dataclass_fields__.keys()
-        return cls(**{key: data.get(key) for key in allowed})
+        kwargs = {key: data.get(key) for key in allowed}
+        raw_sid = kwargs.get("session_id")
+        if type(raw_sid) is str:
+            if raw_sid == "default":
+                kwargs["session_id"] = SessionInfo(session_id="default", agent_name="unknown")
+            else:
+                kwargs["session_id"] = SessionInfo.from_str(raw_sid)
+        return cls(**kwargs)
 
 
 @dataclass(frozen=True)
@@ -132,7 +143,8 @@ class SessionScope(MemoryScope):
     """按会话分组。"""
 
     def get_scope_key(self, context: MemoryContext) -> str:
-        return context.session_id or "default"
+        sid = context.session_id
+        return str(sid) if sid else "default"
 
     @property
     def name(self) -> str:
@@ -195,11 +207,15 @@ class ChatScope(MemoryScope):
 
 
 class GlobalScope(MemoryScope):
-    """全局共享，无视任何上下文字段。"""
+    """全局共享，无视任何上下文字段。
+
+    Returns empty scope_key so the storage path has no user-level subdirectory
+    in single-user mode: ``archive/`` instead of ``archive/global/``.
+    """
 
     def get_scope_key(self, context: MemoryContext) -> str:
         _ = context
-        return "global"
+        return ""
 
     @property
     def name(self) -> str:

@@ -20,7 +20,7 @@
 - `framework/commands/`: slash command processor with two-stage dispatch (pre-lock routing + in-lock execution).
 - `framework/sandbox/`: sandboxed execution adapters (Subprocess/Docker/E2B/Landlock).
 
-`examples/bot_project/` is the primary end-to-end reference (Pool + Pipeline modes). Framework-generic behavior in `framework/`; business wiring in `examples/`.
+`examples/bot_project/` is the primary end-to-end reference (Pool + Pipeline modes, WebUI React frontend, QQ adapter). Framework-generic behavior in `framework/`; business wiring in `examples/`.
 
 ## Commands
 

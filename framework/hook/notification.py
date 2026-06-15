@@ -6,7 +6,6 @@ import logging
 from typing import TYPE_CHECKING
 
 from framework.multi_agent.comm_kind import AgentCommKind
-from framework.multi_agent.session_id import DefaultSessionIdStrategy
 
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
@@ -28,18 +27,18 @@ class AgentNotificationService:
         self,
         output_adapter: OutputAdapter,
         agent_bus: AgentMessageBus,
-        session_strategy: DefaultSessionIdStrategy | None = None,
+        parent_agent_name: str = "main",
     ) -> None:
         self._output_adapter = output_adapter
         self._agent_bus = agent_bus
-        self._session_strategy = session_strategy or DefaultSessionIdStrategy()
+        self._parent_agent_name = parent_agent_name
 
     async def notify(
         self,
         ctx: AgentContext,
         xml_content: str,
     ) -> None:
-        if ctx.session_meta is not None and ctx.session_meta.comm_kind == AgentCommKind.SUBAGENT:
+        if ctx.comm_kind == AgentCommKind.SUBAGENT:
             await self._notify_parent(ctx, xml_content)
         else:
             await self._notify_user(ctx, xml_content)
@@ -49,31 +48,30 @@ class AgentNotificationService:
 
         await self._output_adapter.send(
             OutputMessage(content=xml),
-            ctx.session_id,
+            str(ctx.session),
         )
 
     async def _notify_parent(self, ctx: AgentContext, xml: str) -> None:
-        if ctx.session_meta is None:
+        parent_name = self._parent_agent_name
+
+        parent_session_id = ctx.session.parent_session_id
+        if parent_session_id is None:
+            logger.warning(
+                "AgentNotificationService: no parent_session_id for session %s",
+                str(ctx.session),
+            )
             return
-
-        parent_name = self._session_strategy.main_agent_name or "main"
-
-        session_id = ctx.session_id or ""
-        parts = self._session_strategy.parse(session_id)
-        inbox_key = self._session_strategy.format(
-            conversation_id=parts.conversation_id,
-            agent_name=parent_name,
-        )
+        inbox_key = parent_session_id
 
         from framework.multi_agent.address import AgentAddress
         from framework.multi_agent.envelope import AgentMessageEnvelope
 
         envelope = AgentMessageEnvelope(
             payload={"content": xml, "message_type": "agent_result"},
-            source=AgentAddress(name=ctx.session_meta.agent_name),
+            source=AgentAddress(name=ctx.session.agent_name),
             target=AgentAddress(name=parent_name),
             message_type="agent_result",
-            conversation_id=parts.conversation_id,
+            conversation_id=str(ctx.session),
             agent_session_id=inbox_key,
         )
         await self._agent_bus.send(inbox_key, envelope)
@@ -95,8 +93,8 @@ class MaxIterationNotifyHook:
         if getattr(result, "stop_reason", None) != "max_iterations":
             return
 
-        agent_name = ctx.session_meta.agent_name if ctx.session_meta else "unknown"
-        invocation_id = ctx.session_meta.invocation_id if ctx.session_meta else None
+        agent_name = ctx.session.agent_name if ctx.session else "unknown"
+        invocation_id = ctx.session.snowflake if ctx.session else None
 
         content = result.content or ""
         truncated = content[:2000]

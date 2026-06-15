@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Generic
 
 from typing_extensions import TypeVar
 
+from framework.core.session_id import SessionInfo
 from framework.memory.history import MessageHistory
 
 from .emitter import AgentResult, ContentEmitter
@@ -24,31 +25,6 @@ if TYPE_CHECKING:
     from framework.multi_agent.comm_kind import AgentCommKind
     from framework.runtime.models import TurnIdentity
     from framework.runtime.services import AgentRuntime
-
-
-@dataclass(frozen=True)
-class AgentSessionMeta:
-    """Framework-populated session metadata for the current turn.
-
-    Populated by the framework before each turn. The LLM does not provide
-    ``conversation_id``, ``agent_name``, or ``comm_kind`` — these are
-    framework-owned. Tools read session identity from this object.
-    """
-
-    conversation_id: str
-    agent_name: str
-    comm_kind: AgentCommKind
-    invocation_id: str | None = None
-
-    @property
-    def session_id(self) -> str:
-        from framework.multi_agent.session_id import DefaultSessionIdStrategy
-
-        return DefaultSessionIdStrategy().format(
-            conversation_id=self.conversation_id,
-            agent_name=self.agent_name,
-            invocation_id=self.invocation_id,
-        )
 
 
 @dataclass
@@ -74,7 +50,8 @@ class AgentContext:
             ...
     """
     tool_manager: ToolManager
-    session_id: str = ""
+    session: SessionInfo
+    comm_kind: AgentCommKind | None = None
     max_iterations: int = 10
     temperature: float | None = None
     max_tokens: int | None = None
@@ -82,7 +59,6 @@ class AgentContext:
     emitter: ContentEmitter | None = None
     runtime: AgentRuntime | None = None
     identity: TurnIdentity | None = None
-    session_meta: AgentSessionMeta | None = None
     system_prompt_pipeline: SystemPromptPipeline | None = None
 
     @property

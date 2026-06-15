@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from framework.core.agent import AgentContext, AgentSessionMeta
+from framework.core.agent import AgentContext
+from framework.core.session_id import SessionInfo
 from framework.core.tool_manager import InMemoryToolManager
 from framework.memory.history import ListMessageHistory
 from framework.messaging.broker import BrokerMessage, MessageBroker
@@ -14,7 +15,6 @@ from framework.multi_agent.comm_tracker import CommDirection, CommStatus, Commun
 from framework.multi_agent.descriptor import AgentDescriptor
 from framework.multi_agent.registry import AgentProfile
 from framework.multi_agent.communication import AgentCommunicationService
-from framework.multi_agent.session_id import DefaultSessionIdStrategy
 
 
 class _FakeRegistry:
@@ -103,16 +103,21 @@ def _make_context(
     comm_kind: AgentCommKind = AgentCommKind.NORMAL,
     invocation_id: str | None = None,
 ) -> AgentContext:
+    metadata: dict[str, str] = {}
+    session_str = f"{conversation_id}.{agent_name}"
+    if invocation_id:
+        metadata["invocation_id"] = invocation_id
+        session_str = f"{session_str}.{invocation_id}"
     return AgentContext(
         system_prompt="test",
         history=ListMessageHistory([]),
         tool_manager=InMemoryToolManager(),
-        session_meta=AgentSessionMeta(
-            conversation_id=conversation_id,
+        session=SessionInfo(
+            session_id=session_str,
             agent_name=agent_name,
-            comm_kind=comm_kind,
-            invocation_id=invocation_id,
+            metadata=metadata,
         ),
+        comm_kind=comm_kind,
     )
 
 
@@ -224,8 +229,17 @@ class TestCommunicationService:
         assert bus.sent == []
         assert len(bus.sent_silent) == 1
         session_id, envelope = bus.sent_silent[0]
-        assert session_id == "conv-1.office-expert.task-42"
-        assert envelope.agent_session_id == "conv-1.office-expert.task-42"
+        from framework.core.session_id import SessionIdFactory
+        factory = SessionIdFactory()
+        expected_sid = factory.create(
+            agent_name="office-expert",
+            parent_session_id=ctx.session,
+            external_id="task-42",
+            encode_external_id=False,
+        )
+        expected_session_id = str(expected_sid)
+        assert session_id == expected_session_id
+        assert envelope.agent_session_id == expected_session_id
         assert envelope.invocation_id == "task-42"
 
     @pytest.mark.asyncio
@@ -245,17 +259,18 @@ class TestCommunicationService:
     @pytest.mark.asyncio
     async def test_subagent_reply_to_normal_acknowledges_parent_pending_send(self) -> None:
         tracker = CommunicationTracker()
+        # In the new model, trace correlation uses the subagent's snowflake
         tracker.record_send(
             agent_name="main",
             target_agent="office-expert",
-            invocation_id="task-42",
+            invocation_id="conv-1",
             session_id="conv-1.office-expert.task-42",
             content_summary="please do work",
         )
         tracker.record_receive(
             agent_name="office-expert",
             source_agent="main",
-            invocation_id="task-42",
+            invocation_id="conv-1",
             content_summary="please do work",
         )
         svc = self._make_service(

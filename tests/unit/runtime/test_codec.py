@@ -7,6 +7,7 @@ from framework.memory.core.message import ChatMessage
 from framework.runtime.codec import RuntimeStateCodecConfig, RuntimeStateCodecError
 from framework.runtime.enums import AgentKind, MessageDeltaSource, SnapshotReason, TurnPhase
 from framework.runtime.models import MessageDelta, ResumePoint, TurnIdentity, TurnSnapshot
+from framework.core.session_id import SessionInfo
 
 
 class _FakeCodec:
@@ -19,7 +20,7 @@ class _FakeCodec:
             "schema_version": snapshot.schema_version,
             "identity": {
                 "agent_id": snapshot.identity.agent_id,
-                "session_id": snapshot.identity.session_id,
+                "session": str(snapshot.identity.session),
                 "turn_id": snapshot.identity.turn_id,
                 "conversation_id": snapshot.identity.conversation_id,
             },
@@ -47,7 +48,7 @@ class _FakeCodec:
         return TurnSnapshot(
             identity=TurnIdentity(
                 agent_id=identity_data["agent_id"],
-                session_id=identity_data["session_id"],
+                session=SessionInfo.from_str(identity_data["session"]),
                 turn_id=identity_data["turn_id"],
                 conversation_id=identity_data.get("conversation_id"),
             ),
@@ -73,7 +74,7 @@ class _FakeCodec:
 
 def test_codec_round_trips_snapshot_payload() -> None:
     codec = _FakeCodec()
-    identity = TurnIdentity(agent_id="bot", session_id="s1", turn_id="t1")
+    identity = TurnIdentity(agent_id="bot", session=SessionInfo.from_str("s1"), turn_id="t1")
     snapshot = TurnSnapshot(
         identity=identity,
         agent_kind=AgentKind.REACT,

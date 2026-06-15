@@ -372,7 +372,9 @@ def _spawn_pty(
         kwargs["cwd"] = cwd
     if env:
         kwargs["env"] = env
-    return winpty.PtyProcess.spawn(shell, **kwargs)
+    # Pass argv as a single-element list so shell paths containing spaces
+    # (e.g. "C:\Program Files\Git\bin\bash.exe") are not split by shlex.
+    return winpty.PtyProcess.spawn([shell], **kwargs)
 
 
 def main() -> None:

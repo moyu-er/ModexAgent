@@ -58,7 +58,7 @@ async def test_edit_rejects_outside_dir(tmp_path: Path) -> None:
         path="/etc/hosts", old_text="a", new_text="b"
     )
     assert not result.success
-    assert "outside allowed directories" in result.error
+    assert "ACCESS DENIED" in result.error
 
 
 @pytest.mark.asyncio

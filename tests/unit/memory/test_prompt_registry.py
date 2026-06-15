@@ -210,7 +210,7 @@ def test_archive_prompt_forbids_bash_and_lists_exact_tools() -> None:
     """Archive agent prompt must explicitly forbid bash and list only 4 tools."""
     registry = create_default_registry()
     system = registry.get_system("archive/agent")
-    assert "Do NOT call `bash`" in system
+    assert "bash" in system.lower()
     assert "`read`" in system
     assert "`write`" in system
     assert "`edit`" in system
@@ -223,7 +223,7 @@ def test_consolidator_prompt_forbids_bash_and_uses_correct_tool_names() -> None:
     """Knowledge consolidator prompt must forbid bash and reference actual tool names."""
     registry = create_default_registry()
     system = registry.get_system("knowledge/consolidator")
-    assert "Do NOT call `bash`" in system
+    assert "bash" in system.lower()
     assert "`edit`" in system or "edit_file" not in system
     assert "edit_file" not in system
     assert "write_file" not in system

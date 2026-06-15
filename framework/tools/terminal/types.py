@@ -199,20 +199,25 @@ def detect_platform_shell() -> ShellInfo | None:
     plat = _parse_platform(_platform.system().lower())
 
     if plat is Platform.WINDOWS:
-        # wsl_path = shutil.which("wsl")
-        # if wsl_path and _verify_wsl(wsl_path):
-        #     for candidate in [
-        #         shutil.which("bash"),
-        #         str(Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "bash.exe"),
-        #     ]:
-        #         if candidate and Path(candidate).is_file():
-        #             info = _verify_bash(candidate)
-        #             if info is not None:
-        #                 return info
+        wsl_path = shutil.which("wsl")
+        if wsl_path and _verify_wsl(wsl_path):
+            for candidate in [
+                shutil.which("bash"),
+                str(Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "bash.exe"),
+            ]:
+                if candidate and Path(candidate).is_file():
+                    info = _verify_bash(candidate)
+                    if info is not None:
+                        return info
 
         git_bash = detect_git_bash()
         if git_bash is not None:
             return git_bash
+
+        # Fallback: try bash directly (same as Linux/macOS path).
+        bash_path = shutil.which("bash")
+        if bash_path and _verify_bash(bash_path):
+            return ShellInfo(family=ShellFamily.BASH, path=bash_path, platform=plat)
 
         return None
 

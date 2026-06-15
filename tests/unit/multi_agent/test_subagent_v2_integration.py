@@ -17,7 +17,7 @@ from unittest.mock import patch
 import pytest
 
 from framework.agents.react.state import ReActTurnState
-from framework.core.agent import AgentContext, AgentSessionMeta
+from framework.core.agent import AgentContext
 from framework.core.constants import StopReason
 from framework.core.emitter import AgentResult
 from framework.core.tool_manager import InMemoryToolManager, ToolManagerConfig
@@ -31,6 +31,7 @@ from framework.multi_agent.inbox.server_local import LocalFileInboxServer
 from framework.runtime.enums import AgentKind, OperationKind, OperationStatus, TurnPhase
 from framework.runtime.models import TurnIdentity
 from framework.runtime.services import AgentRuntime, AgentRuntimeServices
+from framework.core.session_id import SessionInfo
 from framework.trace import JsonFileTraceStore, TraceCollectorHook
 
 
@@ -38,16 +39,21 @@ from framework.trace import JsonFileTraceStore, TraceCollectorHook
 # Helpers
 # ---------------------------------------------------------------------------
 
-SESSION_ID = "conv123.worker:a1b2"
+SESSION_ID = "a1b2.worker"
 
 
 def _make_context(
     session_id: str = SESSION_ID,
     agent_name: str = "worker",
-    invocation_id: str = "a1b2",
+    parent_session_id: str = "conv123.main",
 ) -> AgentContext:
+    session = SessionInfo(
+        session_id=session_id,
+        agent_name=agent_name,
+        parent_session_id=parent_session_id,
+    )
     state = ReActTurnState(
-        identity=TurnIdentity(agent_id=agent_name, session_id=session_id, turn_id="t1"),
+        identity=TurnIdentity(agent_id=agent_name, session=session, turn_id="t1"),
         agent_kind=AgentKind.REACT,
         phase=TurnPhase.CREATED,
     )
@@ -56,13 +62,8 @@ def _make_context(
         system_prompt="test",
         history=ListMessageHistory(),
         tool_manager=InMemoryToolManager(config=ToolManagerConfig()),
-        session_id=session_id,
-        session_meta=AgentSessionMeta(
-            conversation_id="conv123",
-            agent_name=agent_name,
-            comm_kind=AgentCommKind.SUBAGENT,
-            invocation_id=invocation_id,
-        ),
+        session=session,
+        comm_kind=AgentCommKind.SUBAGENT,
         runtime=runtime,
     )
 
@@ -143,10 +144,8 @@ class TestFullLifecycleNotification:
         assert turn_start.status == OperationStatus.COMPLETED
 
         # --- Verify bus ---
-        # The notification is sent to the parent's inbox.  For a path-safe
-        # session_id the strategy parses conversation_id = session_id and
-        # agent_name = None, so the inbox_key becomes "{session_id}:main".
-        parent_inbox = f"{session_id}.main"
+        # The notification is sent to the parent's inbox via parent_session_id.
+        parent_inbox = "conv123.main"
         envelopes = await bus.consume(parent_inbox, block=False)
         assert len(envelopes) == 1
 

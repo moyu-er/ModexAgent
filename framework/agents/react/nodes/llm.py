@@ -133,7 +133,7 @@ class LLMNode(Node):
         ):
             await runtime.interceptors.around_iteration(
                 ctx,
-                IterationContext(iteration=state.iteration, turn_id=ctx.session_id),
+                IterationContext(iteration=state.iteration, turn_id=str(ctx.session)),
                 actual_iteration,
             )
         else:

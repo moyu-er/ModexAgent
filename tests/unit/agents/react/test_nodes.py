@@ -21,11 +21,12 @@ from framework.memory.history import ListMessageHistory
 from framework.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from framework.runtime.models import TurnIdentity
 from framework.runtime.services import AgentRuntime, AgentRuntimeServices
+from framework.core.session_id import SessionInfo
 
 
 def _make_runtime() -> AgentRuntime:
     state = ReActTurnState(
-        identity=TurnIdentity(agent_id="test", session_id="s1", turn_id="t1"),
+        identity=TurnIdentity(agent_id="test", session=SessionInfo.from_str("s1"), turn_id="t1"),
         agent_kind=AgentKind.REACT, phase=TurnPhase.CREATED,
     )
     return AgentRuntime(services=AgentRuntimeServices(), state=state)
@@ -74,6 +75,7 @@ class TestStartNode:
             system_prompt="test", history=ListMessageHistory(),
             tool_manager=InMemoryToolManager(),
             identity=runtime.state.identity, runtime=runtime,
+            session=SessionInfo.from_str("test.agent"),
         )
         ctx.emitter = _MockEmitter()
 
@@ -92,6 +94,7 @@ class TestStartNode:
             system_prompt="test", history=ListMessageHistory(),
             tool_manager=InMemoryToolManager(),
             identity=runtime.state.identity, runtime=runtime,
+            session=SessionInfo.from_str("test.agent"),
         )
         ctx.emitter = _MockEmitter()
 
@@ -109,6 +112,7 @@ class TestStartNode:
             system_prompt="test", history=ListMessageHistory(),
             tool_manager=InMemoryToolManager(),
             identity=runtime.state.identity, runtime=runtime,
+            session=SessionInfo.from_str("test.agent"),
         )
         ctx.emitter = _MockEmitter()
 
@@ -134,6 +138,7 @@ class TestEndNode:
             system_prompt="test", history=ListMessageHistory(),
             tool_manager=InMemoryToolManager(),
             identity=runtime.state.identity, runtime=runtime,
+            session=SessionInfo.from_str("test.agent"),
         )
         ctx.emitter = _MockEmitter()
 
@@ -154,6 +159,7 @@ class TestEndNode:
             system_prompt="test", history=ListMessageHistory(),
             tool_manager=InMemoryToolManager(),
             identity=runtime.state.identity, runtime=runtime,
+            session=SessionInfo.from_str("test.agent"),
         )
         ctx.emitter = _MockEmitter()
 
@@ -175,6 +181,7 @@ class TestEndNode:
             system_prompt="test", history=ListMessageHistory(),
             tool_manager=InMemoryToolManager(),
             identity=runtime.state.identity, runtime=runtime,
+            session=SessionInfo.from_str("test.agent"),
         )
         ctx.emitter = _MockEmitter()
 
@@ -209,6 +216,7 @@ class TestLLMNode:
             system_prompt="test", history=_MockHistory(),
             tool_manager=InMemoryToolManager(),
             identity=runtime.state.identity, runtime=runtime,
+            session=SessionInfo.from_str("test.agent"),
         )
         ctx.emitter = _MockEmitter()
 
@@ -239,6 +247,7 @@ class TestLLMNode:
             system_prompt="test", history=_MockHistory(),
             tool_manager=InMemoryToolManager(),
             identity=runtime.state.identity, runtime=runtime,
+            session=SessionInfo.from_str("test.agent"),
         )
         ctx.emitter = _MockEmitter()
 
@@ -259,6 +268,7 @@ class TestLLMNode:
         ctx = AgentContext(
             system_prompt="test", history=ListMessageHistory(),
             tool_manager=InMemoryToolManager(),
+            session=SessionInfo.from_str("test.agent"),
             max_iterations=5,
             identity=runtime.state.identity, runtime=runtime,
         )
@@ -290,6 +300,7 @@ class TestLLMNode:
             system_prompt="test", history=_MockHistory(),
             tool_manager=InMemoryToolManager(),
             identity=runtime.state.identity, runtime=runtime,
+            session=SessionInfo.from_str("test.agent"),
         )
         ctx.emitter = _MockEmitter()
 
@@ -335,6 +346,7 @@ class TestToolNode:
             system_prompt="test", history=history,
             tool_manager=InMemoryToolManager(),
             identity=runtime.state.identity, runtime=runtime,
+            session=SessionInfo.from_str("test.agent"),
         )
         ctx.emitter = _MockEmitter()
 
@@ -381,6 +393,7 @@ class TestToolNode:
             system_prompt="test", history=history,
             tool_manager=InMemoryToolManager(),
             identity=runtime.state.identity, runtime=runtime,
+            session=SessionInfo.from_str("test.agent"),
         )
 
         from framework.runtime.enums import ApprovalDenyPolicy
@@ -419,6 +432,7 @@ class TestToolNode:
             system_prompt="test", history=_MockHistory(),
             tool_manager=InMemoryToolManager(),
             identity=runtime.state.identity, runtime=runtime,
+            session=SessionInfo.from_str("test.agent"),
         )
         ctx.emitter = _MockEmitter()
 
@@ -449,6 +463,7 @@ class TestToolNode:
             system_prompt="test", history=_MockHistory(),
             tool_manager=InMemoryToolManager(),
             identity=runtime.state.identity, runtime=runtime,
+            session=SessionInfo.from_str("test.agent"),
         )
         ctx.emitter = _MockEmitter()
 
@@ -468,6 +483,7 @@ class TestToolNode:
         ctx = AgentContext(
             system_prompt="test", history=ListMessageHistory(),
             tool_manager=InMemoryToolManager(),
+            session=SessionInfo.from_str("test.agent"),
         )
 
         decisions = node._classify_all(tool_calls, ctx)

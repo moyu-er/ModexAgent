@@ -294,14 +294,23 @@ async def drain_windows_startup(
         # Phase 4: consume any trailing sequences until quiet again
         await _drain_until_quiet(max_empty_reads=3, read_timeout=0.3)
 
-        # Phase 5: handshake - send empty command to confirm bash is truly ready.
-    # After line clearing, bash may still have delayed bracketed-paste sequences
-    # or readline state transitions pending.  An empty command forces bash to
-    # process anything in its input buffer and emit a fresh prompt.  If there
-    # is still trailing pollution it gets consumed here, not mixed with the
-    # first real command.
+        # Phase 5: handshake — send empty command, then wait for the prompt
+    # to actually appear in the output.  This is stricter than waiting for
+    # silence: a slowly-starting bash may pause between bytes and trick the
+    # silence detector, leaving the first real command corrupted.
     await write_fn("\n")
     await asyncio.sleep(0.2)
+    # Read until a clean prompt appears — not just silence.
+    post_handshake = ""
+    while _time.monotonic() < deadline:
+        if not await is_alive_fn():
+            return
+        chunk = await read_fn(0.3, 65536)
+        if chunk:
+            post_handshake += chunk
+        if _is_clean_prompt(post_handshake):
+            break
+    # Drain remaining output after the prompt.
     await _drain_until_quiet(max_empty_reads=3, read_timeout=0.3)
 
 

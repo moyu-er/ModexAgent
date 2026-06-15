@@ -20,8 +20,8 @@ from framework.commands.models import (
     CommandHandlingResult,
     SlashCommandInvocation,
 )
+from framework.core.skills.builder import build_skill_command_xml
 from framework.memory.core.message import ContentFormat
-from framework.utils.xml import xml_attr, xml_text
 
 logger = logging.getLogger(__name__)
 
@@ -275,12 +275,7 @@ class SkillCommandHandler(CommandHandler):
                 notice=NOTICE_SKILL_NOT_FOUND.format(command=invocation.command),
                 invocation=invocation,
             )
-        content = (
-            f'<command_context type="skill" name="{xml_attr(skill.name)}">\n'
-            f"<skill>\n{xml_text(skill.content)}\n</skill>\n"
-            f"</command_context>\n\n"
-            f"<user_input>\n{xml_text(invocation.args)}\n</user_input>"
-        )
+        content = build_skill_command_xml(skill.name, skill.content, invocation.args)
         logger.info("Resolved slash skill command: /%s", invocation.command)
         return CommandHandlingResult(
             action=CommandAction.TRANSFORM_TO_USER_INPUT,

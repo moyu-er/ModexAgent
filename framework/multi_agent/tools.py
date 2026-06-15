@@ -35,7 +35,14 @@ class CommunicationTarget:
 _NORMAL_PARAMS: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "target_agent": {"type": "string", "description": "Name of the target agent."},
+        "target_agent": {
+            "type": "string",
+            "description": (
+                "REQUIRED: exact name of the target agent. "
+                "MUST be one of the names listed under 'Available targets:' in the tool description. "
+                "Do not invent names, do not use descriptions as names, and do not guess."
+            ),
+        },
         "content": {
             "type": "string",
             "description": "Complete task description with necessary context.",
@@ -43,9 +50,9 @@ _NORMAL_PARAMS: dict[str, Any] = {
         "invocation_id": {
             "type": ["string", "null"],
             "description": (
-                "Omit or null to start a new task. "
-                "To continue an existing session, pass the invocation_id "
-                "from the target agent's previous reply."
+                "Pass null to start a new task. The tool result will include an invocation_id. "
+                "To continue an existing session, pass that exact invocation_id back. "
+                "The target agent's session_id is '{invocation_id}.{target_agent}'."
             ),
         },
     },
@@ -55,7 +62,10 @@ _NORMAL_PARAMS: dict[str, Any] = {
 _SUBAGENT_PARAMS: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "target_agent": {"type": "string", "description": "Your parent agent name."},
+        "target_agent": {
+            "type": "string",
+            "description": "Exact name of your parent agent (from the list above).",
+        },
         "content": {"type": "string", "description": "Message content."},
     },
     "required": ["target_agent", "content"],
@@ -126,7 +136,7 @@ class CommunicationTargetStore:
         if not self._targets:
             lines.append("No targets currently available.")
             return "\n".join(lines)
-        lines.append("Available targets:")
+        lines.append("Available targets (you MUST use the exact name as target_agent):")
         for t in self._targets.values():
             entry = f"  - {t.name} ({t.kind.value})"
             if t.description:
@@ -136,15 +146,11 @@ class CommunicationTargetStore:
             [
                 "",
                 "Usage:",
-                "  target_agent: Name from the list above.",
+                "  target_agent: Exact name from the list above.",
                 "  content: Complete task description with all needed context.",
-                "  invocation_id: Omit or null to start a new task. To continue",
-                "    an existing session, pass the invocation_id from a previous",
-                "    incomplete notification.",
+                "  invocation_id: Pass null to start a new task. The tool result will include an invocation_id. To continue an existing session, pass that exact invocation_id back.",
                 "",
-                "The tool result shows trace/output paths — these are for LATER",
-                "reference only. The files are NOT ready yet. Wait for the",
-                "notification, then read the Output file for the deliverable.",
+                "The tool result shows trace/output paths and the invocation_id — these are for LATER reference only. The files are NOT ready yet. Wait for the notification, then read the Output file for the deliverable.",
             ]
         )
         return "\n".join(lines)
@@ -155,14 +161,14 @@ class CommunicationTargetStore:
             lines.append("No parent available.")
             return "\n".join(lines)
         lines.append("")
-        lines.append("Your parent:")
+        lines.append("Your parent (use the exact name as target_agent):")
         for t in self._targets.values():
             lines.append(f"  - {t.name}")
         lines.extend(
             [
                 "",
                 "Usage:",
-                "  target_agent: Name from above.",
+                "  target_agent: Exact name from above.",
                 '  content: "NEED_DECISION: <question>" for blocking decisions,',
                 '    "PROGRESS_UPDATE: <info>" for non-blocking updates.',
                 "",
@@ -208,6 +214,24 @@ class SendToAgentTool(Tool):
     @property
     def description(self) -> str:
         return self._store.description
+
+    def get_dynamic_schema(self) -> dict[str, Any]:
+        """Return schema with target_agent enum bound to current available targets."""
+        schema = super().get_dynamic_schema()
+        function = dict(schema.get("function", {}))
+        parameters = dict(function.get("parameters", {}))
+        properties = dict(parameters.get("properties", {}))
+
+        target_names = [t.name for t in self.list_targets()]
+        if target_names and "target_agent" in properties:
+            properties["target_agent"] = {
+                **properties["target_agent"],
+                "enum": target_names,
+            }
+
+        parameters["properties"] = properties
+        function["parameters"] = parameters
+        return {**schema, "function": function}
 
     # -- target management delegates ------------------------------------------
 

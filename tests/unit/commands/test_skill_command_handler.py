@@ -12,6 +12,7 @@ import pytest
 
 from framework.commands.handlers import SkillCommandHandler
 from framework.commands.models import CommandContext, SlashCommandInvocation
+from framework.core.session_id import SessionInfo
 from framework.core.skills import FileSkillSource, DefaultSkillBuilder, SkillManager
 from framework.core.skills.cache import DirectorySkillCache
 from framework.core.types import InputMessage
@@ -53,7 +54,7 @@ async def test_can_handle_returns_true_for_existing_skill() -> None:
         invocation = SlashCommandInvocation(command="test-skill", args="", raw="/test-skill")
         context = CommandContext(
             session_id="s1",
-            input_msg=InputMessage(content="/test-skill", session_id="s1"),
+            input_msg=InputMessage(content="/test-skill", session=SessionInfo.from_str("s1", default_agent_name="main")),
             agent_name="main",
             skill_manager=mgr,
         )
@@ -69,7 +70,7 @@ async def test_can_handle_returns_false_when_skill_manager_is_none() -> None:
     invocation = SlashCommandInvocation(command="test-skill", args="", raw="/test-skill")
     context = CommandContext(
         session_id="s1",
-        input_msg=InputMessage(content="/test-skill", session_id="s1"),
+        input_msg=InputMessage(content="/test-skill", session=SessionInfo.from_str("s1", default_agent_name="main")),
         agent_name="main",
         skill_manager=None,  # This is the suspected runtime condition
     )
@@ -89,7 +90,7 @@ async def test_handle_returns_skill_content_when_found() -> None:
         invocation = SlashCommandInvocation(command="test-skill", args="do something", raw="/test-skill do something")
         context = CommandContext(
             session_id="s1",
-            input_msg=InputMessage(content="/test-skill do something", session_id="s1"),
+            input_msg=InputMessage(content="/test-skill do something", session=SessionInfo.from_str("s1", default_agent_name="main")),
             agent_name="main",
             skill_manager=mgr,
         )

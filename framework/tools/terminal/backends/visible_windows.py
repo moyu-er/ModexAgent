@@ -150,7 +150,7 @@ class VisibleWindowsPtyBackend(TerminalBackend):
             self._proc.kill()
 
     async def drain_startup(self) -> None:
-        """Consume startup output then suppress pagers for readline shells."""
+        """Consume startup banner / ANSI sequences until the prompt is stable."""
         is_bash = self._shell and "bash" in self._shell.lower()
         await drain_windows_startup(
             read_fn=self.read,
@@ -158,7 +158,8 @@ class VisibleWindowsPtyBackend(TerminalBackend):
             is_alive_fn=self.is_alive,
             uses_readline=bool(is_bash),
         )
-        # Suppress interactive pagers for bash
+        # Drain any late-arriving output after the prompt is confirmed.
+        # Pager suppression is handled by PAGER=cat in build_full_env().
         if is_bash:
             await asyncio.sleep(0.3)
             for _ in range(5):

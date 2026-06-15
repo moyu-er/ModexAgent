@@ -11,6 +11,7 @@ import pytest
 
 from framework.core.context import ContextState
 from framework.core.emitter import AgentResult, StreamingAwareEmitter
+from framework.core.session_id import SessionInfo
 from framework.core.types import InputMessage
 from framework.pipeline.pipeline import AgentPipeline
 
@@ -120,11 +121,11 @@ class TestPipelineEmitterSelection:
         pipeline, agent = self._make_pipeline(emitter_factory=lambda sid: factory_emitter)
         msg = InputMessage(
             content="subagent result",
-            session_id="conv_001:main",
+            session=SessionInfo.from_str("conv_001:main", default_agent_name="main"),
             metadata={"source_agent": "office-expert"},
         )
 
-        await pipeline._process_message_locked(msg, "conv_001:main")
+        await pipeline._process_message_locked(msg, "conv_001:main", session=msg.session)
 
         assert agent.received_emitter is factory_emitter
 
@@ -132,9 +133,9 @@ class TestPipelineEmitterSelection:
         """Main agent + user message → factory emitter (normal output)."""
         factory_emitter = MagicMock()
         pipeline, agent = self._make_pipeline(emitter_factory=lambda sid: factory_emitter)
-        msg = InputMessage(content="hello", session_id="conv_001:main")
+        msg = InputMessage(content="hello", session=SessionInfo.from_str("conv_001:main", default_agent_name="main"))
 
-        await pipeline._process_message_locked(msg, "conv_001:main")
+        await pipeline._process_message_locked(msg, "conv_001:main", session=msg.session)
 
         assert agent.received_emitter is factory_emitter
 
@@ -143,19 +144,19 @@ class TestPipelineEmitterSelection:
         pipeline, agent = self._make_pipeline(emitter_factory=None)
         msg = InputMessage(
             content="please help",
-            session_id="conv_001:main:office-expert",
+            session=SessionInfo.from_str("conv_001:main:office-expert", default_agent_name="main"),
             metadata={"source_agent": "main"},
         )
 
-        await pipeline._process_message_locked(msg, "conv_001:main:office-expert")
+        await pipeline._process_message_locked(msg, "conv_001:main:office-expert", session=msg.session)
 
         assert isinstance(agent.received_emitter, StreamingAwareEmitter)
 
     async def test_subagent_without_source_agent_uses_streaming_emitter(self):
         """Subagent agent (no emitter_factory) + user message → StreamingAwareEmitter."""
         pipeline, agent = self._make_pipeline(emitter_factory=None)
-        msg = InputMessage(content="hello", session_id="conv_001:main:office-expert")
+        msg = InputMessage(content="hello", session=SessionInfo.from_str("conv_001:main:office-expert", default_agent_name="main"))
 
-        await pipeline._process_message_locked(msg, "conv_001:main:office-expert")
+        await pipeline._process_message_locked(msg, "conv_001:main:office-expert", session=msg.session)
 
         assert isinstance(agent.received_emitter, StreamingAwareEmitter)

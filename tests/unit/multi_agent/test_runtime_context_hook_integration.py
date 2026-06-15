@@ -15,6 +15,7 @@ from framework.core.agent import AgentContext
 from framework.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from framework.runtime.models import TurnIdentity, TurnStateBase
 from framework.runtime.services import AgentRuntime, AgentRuntimeServices
+from framework.core.session_id import SessionInfo
 from framework.core.emitter import AgentResult, ContentEmitter
 from framework.hook import Hook, HookErrorPolicy, HookSpec, HookRunner
 from framework.hook.abc import AfterToolExecutionHook, AfterTurnHook, BeforeTurnHook
@@ -24,7 +25,7 @@ from framework.core.runtime_context import RuntimeContextManager
 
 def _make_runtime(hook_runner=None, runtime_mgr=None):
     """Build a minimal AgentRuntime with typed state for test contexts."""
-    identity = TurnIdentity(agent_id="test", session_id="test", turn_id="t1")
+    identity = TurnIdentity(agent_id="test", session=SessionInfo.from_str("test"), turn_id="t1")
     state = TurnStateBase(
         identity=identity, agent_kind=AgentKind.REACT, phase=TurnPhase.RUNNING,
     )
@@ -178,7 +179,11 @@ class TestHookCollaboration:
             system_prompt="",
             history=ListMessageHistory([]),
             tool_manager=InMemoryToolManager(),
-            session_id="conv_001:main:doc-expert",
+            session=SessionInfo(
+                session_id="inv-123.agent",
+                agent_name="agent",
+                parent_session_id="parent.main",
+            ),
             runtime=runtime,
             identity=identity,
         )
@@ -187,6 +192,8 @@ class TestHookCollaboration:
         ]).run(ctx, MagicMock(spec=ContentEmitter))
 
         bus.send.assert_awaited_once()
+        _inbox_key, envelope = bus.send.call_args.args
+        assert envelope.invocation_id == "inv-123"
 
     async def test_subagent_auto_send_fires_even_with_send_to_agent(self):
         """SubagentAutoSendHook always fires — no skip logic.
@@ -206,7 +213,11 @@ class TestHookCollaboration:
             system_prompt="",
             history=ListMessageHistory([]),
             tool_manager=InMemoryToolManager(),
-            session_id="conv_001:main:doc-expert",
+            session=SessionInfo(
+                session_id="inv-123.agent",
+                agent_name="agent",
+                parent_session_id="parent.main",
+            ),
             runtime=runtime,
             identity=identity,
         )
@@ -216,6 +227,8 @@ class TestHookCollaboration:
         ]).run(ctx, MagicMock(spec=ContentEmitter))
 
         bus.send.assert_awaited_once()
+        _inbox_key, envelope = bus.send.call_args.args
+        assert envelope.invocation_id == "inv-123"
 
     async def test_runtime_context_hook_records_tool_calls_correctly(self):
         """RuntimeContextHook.before_tool_execution + after_tool_execution
@@ -231,7 +244,7 @@ class TestHookCollaboration:
             system_prompt="",
             history=ListMessageHistory([]),
             tool_manager=InMemoryToolManager(),
-            session_id="test_session",
+            session=SessionInfo.from_str("test.agent"),
 
             runtime=runtime,
             identity=identity,
@@ -296,8 +309,11 @@ class TestHookCollaboration:
             system_prompt="",
             history=ListMessageHistory([]),
             tool_manager=InMemoryToolManager(),
-            session_id="conv_001:main:doc-expert",
-
+            session=SessionInfo(
+                session_id="inv-123.agent",
+                agent_name="agent",
+                parent_session_id="parent.main",
+            ),
             runtime=runtime,
             identity=identity,
         )
@@ -310,3 +326,5 @@ class TestHookCollaboration:
 
         # SubagentAutoSendHook always fires (FinallyTurnHook)
         bus.send.assert_awaited_once()
+        _inbox_key, envelope = bus.send.call_args.args
+        assert envelope.invocation_id == "inv-123"

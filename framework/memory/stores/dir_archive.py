@@ -68,16 +68,18 @@ class DirArchiveStorage(MemoryStorage):
 
     async def read_archive_state(self) -> dict[str, Any] | None:
         """Return the persisted archive state, or ``None`` if absent."""
-        return read_json_robust(self._base / "state.json")
+        async with self.get_lock().read():
+            return read_json_robust(self._base / "state.json")
 
     async def write_archive_state(self, state: dict[str, Any]) -> None:
-        """Persist the archive state atomically."""
-        self._base.mkdir(parents=True, exist_ok=True)
-        state_path = self._base / "state.json"
-        state_path.write_text(
-            json.dumps(state, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        """Persist the archive state atomically under write lock."""
+        async with self.get_lock().write():
+            self._base.mkdir(parents=True, exist_ok=True)
+            state_path = self._base / "state.json"
+            state_path.write_text(
+                json.dumps(state, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
 
     async def append_channel_log(self, channel: str, entry: dict[str, Any]) -> dict[str, Any]:
         """Append *entry* to the log for *channel* and return the stored record.

@@ -41,7 +41,7 @@ async def test_list_rejects_outside_dir(tmp_path: Path) -> None:
     tool = ScopedListTool(allowed_dirs=[tmp_path])
     result = await tool.execute(path="/etc")
     assert not result.success
-    assert "outside allowed directories" in result.error
+    assert "ACCESS DENIED" in result.error
 
 
 @pytest.mark.asyncio

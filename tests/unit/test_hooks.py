@@ -4,7 +4,8 @@ import logging
 
 import pytest
 
-from framework.core.agent import AgentContext, AgentSessionMeta
+from framework.core.agent import AgentContext
+from framework.core.session_id import SessionInfo
 from framework.core.emitter import AgentResult
 from framework.core.tool_manager import ToolResult
 from framework.core.types import LLMResponse, ToolCall
@@ -136,7 +137,7 @@ class TestHookRunnerLogging:
             @property
             def name(self) -> str: return "tracking_hook"
             async def after_llm_response(self, ctx, response):
-                calls.append(f"{ctx.session_id}:{response.content}")
+                calls.append(f"{ctx.session}:{response.content}")
 
         hooks = [
             HookSpec(hook=TrackingHook(), on_error=HookErrorPolicy.LOG),
@@ -146,7 +147,7 @@ class TestHookRunnerLogging:
             system_prompt="",
             history=None,  # type: ignore[arg-type]
             tool_manager=None,  # type: ignore[arg-type]
-            session_id="session-1",
+            session=SessionInfo.from_str("session-1"),
         )
 
         await runner.dispatch(
@@ -168,7 +169,7 @@ class TestRunLoggingHook:
             system_prompt="",
             history=None,  # type: ignore[arg-type]
             tool_manager=None,  # type: ignore[arg-type]
-            session_id="chat-a",
+            session=SessionInfo.from_str("chat-a"),
         )
 
         with caplog.at_level(logging.INFO, logger="tests.run_logging"):
@@ -196,7 +197,7 @@ class TestRunLoggingHook:
             system_prompt="",
             history=None,  # type: ignore[arg-type]
             tool_manager=None,  # type: ignore[arg-type]
-            session_id="chat-b",
+            session=SessionInfo.from_str("chat-b"),
         )
         tool_call = ToolCall(
             tool_name="search",
@@ -230,7 +231,7 @@ class TestRunLoggingHook:
             system_prompt="",
             history=None,  # type: ignore[arg-type]
             tool_manager=None,  # type: ignore[arg-type]
-            session_id="chat-c",
+            session=SessionInfo.from_str("chat-c"),
         )
         tool_call = ToolCall(
             tool_name="write",
@@ -278,12 +279,7 @@ class TestProgressReportHook:
             system_prompt="",
             history=None,  # type: ignore[arg-type]
             tool_manager=None,  # type: ignore[arg-type]
-            session_id="s-1",
-            session_meta=AgentSessionMeta(
-                conversation_id="c-1",
-                agent_name="main",
-                comm_kind=None,  # type: ignore[arg-type]
-            ),
+            session=SessionInfo.from_str("s-1", default_agent_name="main"),
             max_iterations=50,
         )
 
@@ -321,7 +317,7 @@ class TestProgressReportHook:
             system_prompt="",
             history=None,  # type: ignore[arg-type]
             tool_manager=None,  # type: ignore[arg-type]
-            session_id="s-2",
+            session=SessionInfo.from_str("s-2"),
             max_iterations=50,
         )
 
@@ -347,7 +343,7 @@ class TestProgressReportHook:
             system_prompt="",
             history=None,  # type: ignore[arg-type]
             tool_manager=None,  # type: ignore[arg-type]
-            session_id="s-3",
+            session=SessionInfo.from_str("s-3"),
         )
 
         tool_call = ToolCall(tool_name="write", arguments={"path": "/a", "content": "x" * 100}, call_id="c2")
@@ -374,7 +370,7 @@ class TestProgressReportHook:
             system_prompt="",
             history=None,  # type: ignore[arg-type]
             tool_manager=None,  # type: ignore[arg-type]
-            session_id="s-4",
+            session=SessionInfo.from_str("s-4"),
             max_iterations=100,
         )
 

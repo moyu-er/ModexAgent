@@ -160,8 +160,9 @@ class WindowsHiddenTerminalManager(BaseTerminalManager):
 class WindowsVisibleTerminalManager(BaseTerminalManager):
     """Terminal manager for visible Windows PTY sessions.
 
-    Uses WSL bash > Git bash > PowerShell.  Raises RuntimeError if
-    no supported shell is available.
+    Uses WSL bash > Git bash.  Raises RuntimeError if no supported shell is
+    available; the application layer falls back to SubprocessTool in that case.
+    PowerShell is not supported.
     """
 
     def __init__(self, config: TerminalRuntimeConfig | None = None) -> None:
@@ -223,7 +224,11 @@ class LinuxTerminalManager(BaseTerminalManager):
 
 
 def _require_windows_shell() -> ShellInfo:
-    """Detect shell: WSL bash > Git bash > PowerShell."""
+    """Detect shell: WSL bash > Git bash.
+
+    Raises RuntimeError if no supported shell is found. Callers that need a
+    fallback should degrade to SubprocessTool.
+    """
     info = detect_platform_shell()
     if info is not None:
         return info

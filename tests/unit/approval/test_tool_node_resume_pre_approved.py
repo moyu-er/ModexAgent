@@ -13,6 +13,7 @@ from framework.approval.constants import ApprovalDecision, ApprovalTier
 from framework.core.agent import AgentContext
 from framework.core.emitter import AgentResult, ContentEmitter
 from framework.core.graph.interrupt import GraphInterrupt
+from framework.core.session_id import SessionInfo
 from framework.core.tool_manager import InMemoryToolManager, Tool
 from framework.core.types import LLMResponse, ToolCall
 from framework.memory.history import ListMessageHistory
@@ -86,7 +87,7 @@ class _Emitter(ContentEmitter):
 def _make_ctx(store, executed, default_deny_policy=ApprovalDenyPolicy.TOOL_RESULT_ONLY):
     manager = InMemoryToolManager()
     manager.register(_RecordTool(executed))
-    identity = TurnIdentity(agent_id="agent", session_id="s1", turn_id="t1", conversation_id="s1")
+    identity = TurnIdentity(agent_id="agent", session=SessionInfo.from_str("s1"), turn_id="t1", conversation_id="s1")
     state = ReActTurnState(
         identity=identity,
         agent_kind=AgentKind.REACT,
@@ -97,7 +98,7 @@ def _make_ctx(store, executed, default_deny_policy=ApprovalDenyPolicy.TOOL_RESUL
         system_prompt="",
         history=ListMessageHistory(),
         tool_manager=manager,
-        session_id="s1",
+        session=SessionInfo.from_str("test.agent"),
         max_iterations=5,
     )
     ctx.identity = identity

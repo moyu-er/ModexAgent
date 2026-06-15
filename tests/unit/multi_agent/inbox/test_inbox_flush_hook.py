@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock
 
 from framework.core.agent import AgentContext
+from framework.core.session_id import SessionInfo
 from framework.core.tool_manager import ToolManager
 from framework.memory.history import ListMessageHistory
 from framework.multi_agent.inbox.consumer import InboxConsumer
@@ -27,7 +28,7 @@ class TestInboxFlushHook:
             system_prompt="",
             history=history,
             tool_manager=MagicMock(spec=ToolManager),
-            session_id="s1",
+            session=SessionInfo.from_str("s1"),
         )
         await hook.before_turn(ctx)
 
@@ -48,7 +49,7 @@ class TestInboxFlushHook:
             system_prompt="",
             history=history,
             tool_manager=MagicMock(spec=ToolManager),
-            session_id="",
+            session=SessionInfo.from_str("s1"),
         )
         await hook.before_turn(ctx)
         assert await history.to_list() == []
@@ -63,7 +64,7 @@ class TestInboxFlushHook:
             system_prompt="",
             history=history,
             tool_manager=MagicMock(spec=ToolManager),
-            session_id="s1",
+            session=SessionInfo.from_str("s1"),
         )
         await hook.before_turn(ctx)
         assert await history.to_list() == []
@@ -83,7 +84,7 @@ class TestInboxFlushHook:
             system_prompt="",
             history=history,
             tool_manager=MagicMock(spec=ToolManager),
-            session_id="s1",
+            session=SessionInfo.from_str("s1"),
         )
         await hook.before_iteration(ctx)
 
@@ -105,6 +106,7 @@ class TestInboxFlushHook:
             system_prompt="",
             history=history,
             tool_manager=MagicMock(spec=ToolManager),
+            session=SessionInfo.from_str("s1"),
         )
 
         # First hook instance flushes
@@ -117,6 +119,7 @@ class TestInboxFlushHook:
             system_prompt="",
             history=history2,
             tool_manager=MagicMock(spec=ToolManager),
+            session=SessionInfo.from_str("s1"),
         )
         hook2 = InboxFlushHook(consumer=InboxConsumer(server=server), agent_name="main")
         await hook2.before_turn(ctx2)

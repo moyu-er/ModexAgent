@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from framework.core.graph.interrupt import GraphInterrupt
+from framework.core.session_id import SessionInfo
 from framework.core.types import InputMessage
 from framework.pipeline.pipeline import AgentPipeline
 
@@ -57,7 +58,7 @@ class TestPipelineRunInterrupt:
         Before fix: caught by ``except Exception`` → logged and loop continued.
         After fix: re-raised unchanged.
         """
-        msg = InputMessage(content="trigger approval", session_id="s1")
+        msg = InputMessage(content="trigger approval", session=SessionInfo.from_str("s1", default_agent_name="main"))
         pipeline.input_adapter = _FakeInputAdapter([msg])
 
         with patch.object(
@@ -69,7 +70,7 @@ class TestPipelineRunInterrupt:
     @pytest.mark.asyncio
     async def test_run_handles_regular_exception(self, pipeline):
         """Regular exceptions should still be caught and logged."""
-        msg = InputMessage(content="trigger error", session_id="s1")
+        msg = InputMessage(content="trigger error", session=SessionInfo.from_str("s1", default_agent_name="main"))
         pipeline.input_adapter = _FakeInputAdapter([msg])
 
         with patch.object(

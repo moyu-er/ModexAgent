@@ -15,6 +15,7 @@ from framework.core.tool_manager import ToolResult
 from framework.core.types import LLMResponse, ToolCall
 from framework.runtime.enums import AgentKind, TurnPhase
 from framework.runtime.models import TurnIdentity
+from framework.core.session_id import SessionInfo
 from framework.runtime.services import AgentRuntime, AgentRuntimeServices
 
 
@@ -24,13 +25,13 @@ def _make_ctx(**kw):
     from framework.memory.history import ListMessageHistory
     from framework.core.tool_manager import InMemoryToolManager
     state = ReActTurnState(
-        identity=TurnIdentity(agent_id="test", session_id="s1", turn_id="t1"),
+        identity=TurnIdentity(agent_id="test", session=SessionInfo.from_str("s1"), turn_id="t1"),
         agent_kind=AgentKind.REACT, phase=TurnPhase.CREATED,
     )
     runtime = AgentRuntime(services=AgentRuntimeServices(), state=state)
     return AgentContext(
         system_prompt="", history=ListMessageHistory(),
-        tool_manager=InMemoryToolManager(), session_id="error-test",
+        tool_manager=InMemoryToolManager(), session=SessionInfo.from_str("test.agent"),
         max_iterations=5,
         identity=state.identity, runtime=runtime,
         **kw,

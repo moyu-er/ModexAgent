@@ -15,11 +15,14 @@ from typing import TYPE_CHECKING, Any
 from framework.adapters.platform import StreamingMode
 
 from ..core.types import InputMessage, OutputMessage
+from ..core.session_id import SessionInfo
 from .filters import ContentFilter
 
 if TYPE_CHECKING:
     from framework.commands.models import CommandProcessor
     from framework.control.channel import InMemoryControlChannel
+    from framework.input_pipeline.context import InputContext
+    from framework.input_pipeline.pipeline import UserInputPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -29,10 +32,16 @@ class InputAdapter(ABC):
 
     支持多种输入源：QQ、CLI、HTTP、Webhook、消息队列等。
 
-    Subclasses that process raw messages before enqueuing (e.g. QQ, Discord)
-    should call ``_try_intercept_control(text, session_id)`` before
-    ``_message_queue.put()`` so that /stop and other control commands bypass
-    Pipeline entirely.
+    Control commands (/cd /pool /exit /stop) are intercepted by the
+    **input pipeline** stages (``EnvironmentControlStage`` /
+    ``SessionControlStage``) via ``ctx.command_adapter._try_intercept_control``
+    BEFORE messages reach the queue.  Adapter subclasses should NOT call
+    ``_try_intercept_control`` inline — the pipeline stages own that
+    responsibility.
+
+    ``configure_control_filter`` must still be called once per adapter to
+    inject the control channel and command processor so the stages can
+    use ``_try_intercept_control``.
     """
 
     def __init__(self) -> None:
@@ -41,6 +50,11 @@ class InputAdapter(ABC):
         self._ctrl_output_adapter: OutputAdapter | None = None
         self._session_checker: Callable[[str], bool] | None = None
         self._turn_uuid_getter: Callable[[], str] | None = None
+        # Set by configure_input_pipeline (default impl); overrides may use
+        # different attr names.
+        self._input_pipeline: "UserInputPipeline | None" = None
+        self._input_ctx: "InputContext | None" = None
+        self._output_adapter: OutputAdapter | None = None
 
     @property
     @abstractmethod
@@ -62,6 +76,26 @@ class InputAdapter(ABC):
     async def receive(self) -> AsyncIterator[InputMessage]:
         """接收输入消息（异步迭代器）"""
         pass
+
+    def configure_input_pipeline(
+        self,
+        pipeline: "UserInputPipeline",
+        ctx: "InputContext",
+        output: OutputAdapter | None,
+    ) -> None:
+        """Inject the converged input pipeline for this channel.
+
+        Default stores *pipeline*, *ctx*, and *output* as instance attributes
+        so the adapter's receive loop can run incoming messages through the
+        converged stages.  This covers all IM adapters (QQ, Discord, etc.).
+
+        Override with a no-op when the channel is configured elsewhere — e.g.
+        WebSocket, whose pipeline is held by the server and dispatched inline
+        from ``_ws_send_message``.
+        """
+        self._input_pipeline = pipeline
+        self._input_ctx = ctx
+        self._output_adapter = output
 
     def configure_control_filter(
         self,
@@ -91,8 +125,9 @@ class InputAdapter(ABC):
         into InMemoryControlChannel and acknowledged to the user.  The message
         does NOT enter Pipeline's queue.
 
-        Subclasses call this before ``_message_queue.put()`` in their
-        message-receive path.  The default implementation is a no-op when
+        Called by the **input pipeline** stages (``EnvironmentControlStage`` /
+        ``SessionControlStage``) via ``ctx.command_adapter._try_intercept_control``,
+        NOT by adapter subclasses inline.  Returns False (no-op) when
         ``configure_control_filter`` has not been called.
         """
         processor = self._cmd_processor
@@ -106,28 +141,25 @@ class InputAdapter(ABC):
         if parse_result.invocation is None:
             return False
 
-        # Normalise to canonical session_id (conversation_id:agent_name)
-        # so the ControlScope matches what the consumer (agent) uses.
-        from framework.multi_agent.session_id import DefaultSessionIdStrategy
-
-        canonical_sid = DefaultSessionIdStrategy().normalize(session_id)
-
         from framework.commands.constants import BuiltinCommand, CommandDispatchPolicy
         from framework.commands.models import CommandContext
 
         ctx = CommandContext(
-            session_id=canonical_sid,
-            input_msg=InputMessage(content=text, session_id=canonical_sid),
+            session_id=session_id,
+            input_msg=InputMessage(content=text, session=SessionInfo.from_str(session_id, default_agent_name="main")),
             agent_name="main",
         )
 
-        # Workspace switch commands (cd/exit) are handled at the adapter
-        # layer — they never trigger agent sessions or change agent state.
-        # This avoids self-blocking: the command's own dispatch would
-        # otherwise appear as an "active agent" in pool mode.
+        # Workspace commands (cd/exit/pwd) are handled at the adapter
+        # layer — they never trigger agent sessions or change agent state
+        # (cd/exit change state but are routed through the workspace
+        # callback, not the agent).  This avoids self-blocking: the
+        # command's own dispatch would otherwise appear as an "active
+        # agent" in pool mode.
         if parse_result.invocation.command in (
             BuiltinCommand.CD.value,
             BuiltinCommand.EXIT.value,
+            BuiltinCommand.PWD.value,
         ):
             result = await processor.handle(text, ctx)
             if result.notice and output:
@@ -145,7 +177,7 @@ class InputAdapter(ABC):
         from framework.control.types import ControlCommandType, ControlScope
 
         existing = await channel.peek(
-            ControlScope(session_id=canonical_sid),
+            ControlScope(session_id=session_id),
             command_types={ControlCommandType.CANCEL_TURN},
         )
         if existing:
@@ -295,43 +327,6 @@ class NullOutputAdapter(OutputAdapter):
     def streaming_mode(self) -> StreamingMode:
         return StreamingMode.NONE
 
-
-class SessionPrefixStripAdapter(OutputAdapter):
-    """剥离 session_id 中内部 agent 名称前缀/后缀的通用适配器。
-
-    AgentPool 内部使用 {conversation_id}:{agent_name} 作为 session_id，
-    但外部 I/O 平台（QQ、微信、Discord 等）通常只需要 conversation_id。
-    """
-
-    def __init__(self, inner: OutputAdapter, separator: str = ":", keep: str = "first") -> None:
-        self._inner = inner
-        self._separator = separator
-        self._keep = keep  # "first" 或 "last"
-
-    @property
-    def name(self) -> str:
-        return f"session_prefix_strip:{self._inner.name}"
-
-    @property
-    def streaming_mode(self) -> StreamingMode:
-        return self._inner.streaming_mode
-
-    def _map_session_id(self, session_id: str) -> str:
-        if self._separator not in session_id:
-            return session_id
-        parts = session_id.split(self._separator)
-        return parts[0] if self._keep == "first" else self._separator.join(parts[:-1])
-
-    async def send(self, message: OutputMessage, session_id: str) -> None:
-        await self._inner.send(message, self._map_session_id(session_id))
-
-    async def send_delta(
-        self, delta: str, session_id: str, metadata: dict[str, Any] | None = None
-    ) -> None:
-        await self._inner.send_delta(delta, self._map_session_id(session_id), metadata)
-
-    async def flush_deltas(self, session_id: str) -> None:
-        await self._inner.flush_deltas(self._map_session_id(session_id))
 
 
 class CLIOutputAdapter(OutputAdapter):

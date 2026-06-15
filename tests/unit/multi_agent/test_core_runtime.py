@@ -41,7 +41,7 @@ def sample_descriptor():
 
 @pytest.mark.asyncio
 async def test_default_agent_factory_pipeline_uses_mesh_router(sample_descriptor, any_broker):
-    factory = DefaultAgentFactory()
+    factory = DefaultAgentFactory(default_llm_provider=MagicMock())
     instance = await factory.create_agent(sample_descriptor, broker=any_broker)
 
     assert instance.pipeline is not None
@@ -228,8 +228,8 @@ async def test_agent_pool_tracks_and_caps_invocation_sessions(any_broker):
             await pool._dispatch_task_request(fake_instance, descriptor, envelope)
 
         worker_sessions = [
-            sid for sid, meta in pool._session_meta.items()
-            if meta.agent_name == "worker"
+            sid for sid, agent in pool._session_agents.items()
+            if agent == "worker"
         ]
         assert len(worker_sessions) == 10
         assert "conv:worker:inv_00" not in worker_sessions
@@ -261,9 +261,9 @@ async def test_agent_pool_session_cap_evicts_lru_after_touching_oldest(any_broke
 
         await pool._enforce_session_cap("worker")
 
-        assert "conv:worker:inv_old" in pool._session_meta
-        assert "conv:worker:inv_new" in pool._session_meta
-        assert "conv:worker:inv_mid" not in pool._session_meta
+        assert "conv:worker:inv_old" in pool._session_agents
+        assert "conv:worker:inv_new" in pool._session_agents
+        assert "conv:worker:inv_mid" not in pool._session_agents
         fake_instance.context_manager.clear.assert_awaited_once_with("conv:worker:inv_mid")
     finally:
         await pool.shutdown_all()

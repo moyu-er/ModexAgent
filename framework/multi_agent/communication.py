@@ -8,14 +8,19 @@ from __future__ import annotations
 
 import logging
 import uuid as _uuid_mod
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from framework.pipeline.adapters import OutputAdapter
+
+from framework.core.session_id import SessionInfo, SessionIdFactory
+from framework.core.session_registry import SessionRegistry
+from framework.memory.core.message import ChatMessage
 from framework.multi_agent.address import AgentAddress
 from framework.multi_agent.comm_kind import AgentCommKind
 from framework.multi_agent.envelope import AgentMessageEnvelope
-from framework.multi_agent.session_id import DefaultSessionIdStrategy
 from framework.multi_agent.template import AgentTemplate
 from framework.multi_agent.template_registry import AgentTemplateRegistry
 from framework.multi_agent.tools import CommunicationTarget, CommunicationTargetStore
@@ -144,20 +149,18 @@ class AgentSendResult:
     output_path: Path | None = None
 
 
-def _messages_to_xml(messages: list[Any], parent_name: str) -> str:
+def _messages_to_xml(messages: list[ChatMessage], parent_name: str) -> str:
     """Convert ChatMessage list to XML for system-prompt injection."""
     lines = [
         f'<forked_context source="{parent_name}">',
         f"  <info>Inherited {len(messages)} messages from parent session.</info>",
     ]
     for i, msg in enumerate(messages):
-        role = getattr(msg, "role", "unknown")
-        content = getattr(msg, "content", "")
-        if content is None:
-            content = ""
+        role = msg.role
+        content = msg.content or ""
         content_str = str(content)[:2000]
         name_attr = ""
-        if role == "tool" and hasattr(msg, "name") and getattr(msg, "name", None):
+        if role == "tool" and msg.name:
             name_attr = f' name="{msg.name}"'
         lines.append(f'  <message index="{i}" role="{role}"{name_attr}>')
         lines.append(f"    <![CDATA[{content_str}]]>")
@@ -180,7 +183,8 @@ class AgentCommunicationService:
         registry: AgentRegistry,
         *,
         agent_bus: AgentMessageBus | None = None,
-        session_strategy: DefaultSessionIdStrategy | None = None,
+        session_factory: SessionIdFactory | None = None,
+        session_registry: SessionRegistry | None = None,
         comm_tracker: CommunicationTracker | None = None,
         template_registry: AgentTemplateRegistry | None = None,
         pool: AgentPool | None = None,
@@ -198,12 +202,16 @@ class AgentCommunicationService:
         pruned_manager: Any | None = None,
         target_store: CommunicationTargetStore | None = None,
         runtime_dir: Path | None = None,
+        # ── Injection points for bot-layer customization ──
+        output_adapter_factory: Callable[[], OutputAdapter] | None = None,
+        on_subagent_created: Callable[[str, str], Awaitable[None]] | None = None,
     ) -> None:
         self._source = source
         self._broker = broker
         self._registry = registry
         self._agent_bus = agent_bus
-        self._session_strategy = session_strategy or DefaultSessionIdStrategy()
+        self._session_factory = session_factory or SessionIdFactory()
+        self._session_registry = session_registry
         self._comm_tracker = comm_tracker
         self._template_registry = template_registry
         self._pool = pool
@@ -220,13 +228,24 @@ class AgentCommunicationService:
         self._pruned_manager = pruned_manager
         self._target_store = target_store
         self._runtime_dir = runtime_dir
+        self._output_adapter_factory = output_adapter_factory
+        self._on_subagent_created = on_subagent_created
 
     def _resolve_source(self, context: AgentContext) -> AgentAddress:
         """Resolve effective source address from context, fallback to constructor default."""
-        meta = context.session_meta
-        if meta is not None and meta.agent_name:
-            return AgentAddress(name=meta.agent_name)
+        if context.session.agent_name:
+            return AgentAddress(name=context.session.agent_name)
         return self._source
+
+    def _fork_workspace(self) -> Path | None:
+        """Return the fork context workspace directory, or None if not available."""
+        if self._project_dir is None:
+            return None
+        return self._memory_dir or (
+            self._project_dir / "data" / "memory" / self._pool_name
+            if self._pool_name
+            else self._project_dir / "data" / "memory"
+        )
 
     def _resolve_target(
         self, target_agent: str
@@ -259,7 +278,7 @@ class AgentCommunicationService:
     def _ensure_invocation(
         self,
         target_agent: str,
-        conversation_id: str,
+        parent_session_id: SessionInfo | str,
         invocation_id: str | None,
         target_kind: AgentCommKind | None,
     ) -> tuple[str | None, Path | None, Path | None]:
@@ -276,21 +295,24 @@ class AgentCommunicationService:
             invocation_id = _uuid_mod.uuid4().hex[:_TASK_ID_BYTES]
         else:
             # Check if existing trace directory exists for this invocation
-            existing_session = self._session_strategy.format(
-                conversation_id=conversation_id,
+            existing_sid = self._session_factory.create(
                 agent_name=target_agent,
-                invocation_id=invocation_id,
+                parent_session_id=parent_session_id,
+                external_id=invocation_id,
             )
+            existing_session = str(existing_sid)
             if self._runtime_dir is not None:
                 trace_path = self._runtime_dir / "trace" / existing_session
                 if not trace_path.exists():
                     invocation_id = _uuid_mod.uuid4().hex[:_TASK_ID_BYTES]
 
-        session_id = self._session_strategy.format(
-            conversation_id=conversation_id,
+        target_sid = self._session_factory.create(
             agent_name=target_agent,
-            invocation_id=invocation_id,
+            parent_session_id=parent_session_id,
+            external_id=invocation_id,
+            encode_external_id=False,
         )
+        session_id = str(target_sid)
 
         runtime_dir = self._runtime_dir or Path(".")
         trace_dir = runtime_dir / "trace" / session_id
@@ -304,7 +326,7 @@ class AgentCommunicationService:
     async def _create_dynamic_subagent(
         self,
         template: AgentTemplate,
-        conversation_id: str,
+        parent_session_id: SessionInfo | str,
         invocation_id: str,
         content: str,
         source: AgentAddress | None = None,
@@ -330,7 +352,7 @@ class AgentCommunicationService:
         # ── Ensure invocation_id and create trace/output directories ──
         _inv_id, _trace_dir, _output_path = self._ensure_invocation(
             target_agent=name,
-            conversation_id=conversation_id,
+            parent_session_id=parent_session_id,
             invocation_id=invocation_id,
             target_kind=AgentCommKind.SUBAGENT,
         )
@@ -415,12 +437,9 @@ class AgentCommunicationService:
         from framework.tools.presets import ContextMode
 
         if template.context_mode == ContextMode.FORK and self._project_dir is not None:
-            fork_workspace = self._memory_dir or (
-                self._project_dir / "data" / "memory" / self._pool_name
-                if self._pool_name
-                else self._project_dir / "data" / "memory"
-            )
-            fork_file = fork_workspace / "fork_contexts" / f"{name}_{invocation_id}.xml"
+            fork_workspace = self._fork_workspace()
+            if fork_workspace is not None:
+                fork_file = fork_workspace / "fork_contexts" / f"{name}_{invocation_id}.xml"
 
             if fork_file.exists():
                 # ── Resume: load persisted fork context ──
@@ -438,14 +457,11 @@ class AgentCommunicationService:
                     f"</forked_context>"
                 )
                 try:
-                    parent_session_id = self._session_strategy.format(
-                        conversation_id=conversation_id,
-                        agent_name=parent_name,
-                    )
-                    parent_ctx = MemoryContext(session_id=parent_session_id)
+                    parent_sid_str = str(parent_session_id)
+                    parent_ctx = MemoryContext(session_id=parent_sid_str)
 
                     # Read parent messages via abstract API
-                    subagent_memory = getattr(subagent_ctx, "memory_system", None)
+                    subagent_memory = subagent_ctx.memory_system
                     if subagent_memory is not None:
                         parent_messages = await subagent_memory.get_history(
                             parent_ctx,
@@ -475,23 +491,12 @@ class AgentCommunicationService:
                                     user_head_chars=lc.user_head_chars,
                                     tool_args_head_chars=lc.tool_args_head_chars,
                                 )
-                                from framework.memory.core.message import ChatMessage
 
                                 msg_dicts: list[dict[str, Any]] = [
-                                    m.model_dump()
-                                    if hasattr(m, "model_dump")
-                                    else (
-                                        m
-                                        if isinstance(m, dict)
-                                        else {"role": "unknown", "content": str(m)}
-                                    )
-                                    for m in truncated
+                                    m.model_dump() for m in truncated
                                 ]
                                 compacted = await governor.apply(msg_dicts)
-                                truncated = [
-                                    ChatMessage(**m) if isinstance(m, dict) else m
-                                    for m in compacted
-                                ]
+                                truncated = [ChatMessage(**m) for m in compacted]
 
                             # Format as XML
                             fork_xml = _messages_to_xml(truncated, parent_name)
@@ -582,8 +587,24 @@ class AgentCommunicationService:
             context_manager=subagent_ctx,
             tool_manager=subagent_tm,
             skill_manager=subagent_sm,
-            output_adapter=NullOutputAdapter(),
+            output_adapter=(self._output_adapter_factory or NullOutputAdapter)(),
         )
+
+        # ── Build child session and record parent-child relationship ──
+        child_session = self._session_factory.create(
+            agent_name=name,
+            parent_session_id=parent_session_id,
+            external_id=invocation_id,
+            encode_external_id=False,
+        )
+        session_id = str(child_session)
+
+        # ── Register child session in registry ──
+        if self._session_registry is not None:
+            await self._session_registry.register(child_session)
+
+        if self._on_subagent_created is not None:
+            await self._on_subagent_created(session_id, str(parent_session_id))
 
         # ── Mark as dynamic (eligible for idle cleanup) ──
         self._pool._mark_dynamic(name)
@@ -591,27 +612,9 @@ class AgentCommunicationService:
         # ── Wire hooks ──
         self._wire_subagent_hooks(name, parent_name=parent_name)
 
-        # ── Send initial task (XML-wrapped per spec Section 4.1) ──
-        session_id = self._session_strategy.format(
-            conversation_id=conversation_id,
-            agent_name=name,
-            invocation_id=invocation_id,
-        )
-
         # ── Register fork context file for cleanup on session eviction ──
         if template.context_mode == ContextMode.FORK:
-            # fork_file was computed in the fork block above;
-            # use the same path construction to reference it
-            _fw = (
-                self._memory_dir
-                or (
-                    self._project_dir / "data" / "memory" / self._pool_name
-                    if self._project_dir and self._pool_name
-                    else self._project_dir / "data" / "memory"
-                )
-                if self._project_dir
-                else None
-            )
+            _fw = self._fork_workspace()
             if _fw is not None:
                 _fork_path = _fw / "fork_contexts" / f"{name}_{invocation_id}.xml"
                 if _fork_path.exists():
@@ -630,7 +633,7 @@ class AgentCommunicationService:
             source=effective_source,
             target=AgentAddress(name=name),
             message_type="task_request",
-            conversation_id=conversation_id,
+            conversation_id=str(parent_session_id),
             agent_session_id=session_id,
             invocation_id=invocation_id,
         )
@@ -848,19 +851,8 @@ class AgentCommunicationService:
         async_mode: bool,
     ) -> AgentSendResult | None:
         """Core routing logic shared by sync and async sends."""
-        # 1. Validate context
-        session_meta = context.session_meta
-        if session_meta is None:
-            return AgentSendResult(
-                target_agent=target_agent,
-                target_kind=AgentCommKind.NORMAL,
-                session_id="",
-                invocation_id=None,
-                created_new_task=False,
-                error="No agent session metadata available",
-            )
-
-        conversation_id = session_meta.conversation_id
+        # 1. Resolve parent session from context
+        parent_sid = context.session
         effective_source = self._resolve_source(context)
 
         # 2. Look up target
@@ -882,7 +874,7 @@ class AgentCommunicationService:
                 new_invocation_id = _uuid_mod.uuid4().hex[:_TASK_ID_BYTES]
                 return await self._create_dynamic_subagent(
                     template=template,
-                    conversation_id=conversation_id,
+                    parent_session_id=parent_sid,
                     invocation_id=new_invocation_id,
                     content=content,
                     source=effective_source,
@@ -893,7 +885,7 @@ class AgentCommunicationService:
                 # Re-create with the same invocation_id to resume session
                 return await self._create_dynamic_subagent(
                     template=template,
-                    conversation_id=conversation_id,
+                    parent_session_id=parent_sid,
                     invocation_id=invocation_id,
                     content=content,
                     source=effective_source,
@@ -912,7 +904,7 @@ class AgentCommunicationService:
             and (invocation_id is None or invocation_id.strip() == "")
         ):
             # Subagent-to-subagent still forbidden
-            if session_meta.comm_kind == AgentCommKind.SUBAGENT:
+            if context.comm_kind == AgentCommKind.SUBAGENT:
                 return AgentSendResult(
                     target_agent=target_agent,
                     target_kind=target_kind,
@@ -925,16 +917,20 @@ class AgentCommunicationService:
             # Ensure invocation and create trace/output directories
             resolved_invocation_id, trace_dir, output_path = self._ensure_invocation(
                 target_agent=target_agent,
-                conversation_id=conversation_id,
+                parent_session_id=parent_sid,
                 invocation_id=None,
                 target_kind=AgentCommKind.SUBAGENT,
             )
 
-            session_id = self._session_strategy.format(
-                conversation_id=conversation_id,
+            target_session = self._session_factory.create(
                 agent_name=target_agent,
-                invocation_id=resolved_invocation_id,
+                parent_session_id=parent_sid,
+                external_id=resolved_invocation_id,
+                encode_external_id=False,
             )
+            session_id = str(target_session)
+            if self._session_registry is not None:
+                await self._session_registry.register(target_session)
 
             from framework.multi_agent.message_xml import build_agent_message
 
@@ -948,7 +944,7 @@ class AgentCommunicationService:
                 source=effective_source,
                 target=AgentAddress(name=target_agent),
                 message_type="task_request",
-                conversation_id=conversation_id,
+                conversation_id=str(parent_sid),
                 agent_session_id=session_id,
                 invocation_id=resolved_invocation_id,
             )
@@ -990,7 +986,7 @@ class AgentCommunicationService:
 
         # 3. Validate invocation_id
         if (
-            session_meta.comm_kind == AgentCommKind.SUBAGENT
+            context.comm_kind == AgentCommKind.SUBAGENT
             and target_kind == AgentCommKind.SUBAGENT
         ):
             return AgentSendResult(
@@ -1015,17 +1011,26 @@ class AgentCommunicationService:
         created_new_task = invocation_id == "" and target_kind == AgentCommKind.SUBAGENT
 
         # 4. Build session ID (receiver-owned)
-        session_id = self._session_strategy.format(
-            conversation_id=conversation_id,
-            agent_name=target_agent,
-            invocation_id=normalized_invocation_id,
-        )
+        if target_kind == AgentCommKind.SUBAGENT and normalized_invocation_id is not None:
+            target_session = self._session_factory.create(
+                agent_name=target_agent,
+                parent_session_id=parent_sid,
+                external_id=normalized_invocation_id,
+                encode_external_id=False,
+            )
+        else:
+            target_session = self._session_factory.create(
+                agent_name=target_agent,
+                parent_session_id=parent_sid,
+                external_id=normalized_invocation_id,
+            )
+        session_id = str(target_session)
 
         # 5. Build envelope (XML-wrapped per spec Section 4.1)
-        # For subagent replying to normal parent: preserve caller's invocation_id on envelope
+        # For subagent replying to normal parent: preserve caller's snowflake on envelope
         envelope_invocation_id = normalized_invocation_id
-        if target_kind == AgentCommKind.NORMAL and session_meta.comm_kind == AgentCommKind.SUBAGENT:
-            envelope_invocation_id = session_meta.invocation_id
+        if target_kind == AgentCommKind.NORMAL and context.comm_kind == AgentCommKind.SUBAGENT:
+            envelope_invocation_id = parent_sid.snowflake
 
         from framework.multi_agent.message_xml import build_agent_message
 
@@ -1040,7 +1045,7 @@ class AgentCommunicationService:
             source=effective_source,
             target=AgentAddress(kind="agent", name=target_agent),
             message_type="agent_message",
-            conversation_id=conversation_id,
+            conversation_id=str(parent_sid),
             agent_session_id=session_id,
             invocation_id=envelope_invocation_id,
         )
@@ -1049,7 +1054,7 @@ class AgentCommunicationService:
         if self._comm_tracker is not None and envelope.invocation_id is not None:
             if (
                 target_kind == AgentCommKind.NORMAL
-                and session_meta.comm_kind == AgentCommKind.SUBAGENT
+                and context.comm_kind == AgentCommKind.SUBAGENT
             ):
                 self._comm_tracker.acknowledge(
                     invocation_id=envelope.invocation_id,

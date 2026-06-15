@@ -65,14 +65,15 @@ def _make_fake_ctx(*, interceptor_chain=None):
     from framework.runtime.services import AgentRuntime, AgentRuntimeServices
     from framework.runtime.models import TurnIdentity
     from framework.runtime.enums import AgentKind, TurnPhase
+    from framework.core.session_id import SessionInfo
     state = ReActTurnState(
-        identity=TurnIdentity(agent_id="test", session_id="test-session-001", turn_id="t1"),
+        identity=TurnIdentity(agent_id="test", session=SessionInfo.from_str("test-session-001"), turn_id="t1"),
         agent_kind=AgentKind.REACT, phase=TurnPhase.CREATED,
     )
     runtime = AgentRuntime(services=AgentRuntimeServices(interceptors=interceptor_chain), state=state)
     ctx = AgentContext(
         system_prompt="", history=ListMessageHistory(),
-        tool_manager=InMemoryToolManager(), session_id="test-session-001",
+        tool_manager=InMemoryToolManager(), session=SessionInfo.from_str("test.agent"),
         max_iterations=3,
         identity=state.identity, runtime=runtime,
     )

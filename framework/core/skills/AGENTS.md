@@ -11,8 +11,8 @@ Skill loading, filtering, caching, and progressive prompt building. Skills are m
 |------|-------------|
 | `models.py` | `Skill`, `SkillSummary`, `SkillMetadata`, `SkillResource`, `ResolutionContext` — data structures |
 | `source.py` | `SkillSource` ABC — `list_skills()`, `load_skill(name)`; `FileSkillSource` (filesystem, flat/directory layouts); `InlineSkillSource` (in-memory); `CompositeSkillSource` (multi-source with last_wins/error/first_wins merge) |
-| `manager.py` | `SkillManager` — facade coordinating source, filter, cache, builder; runtime overrides via `register_skill()`/`unregister_skill()` |
-| `builder.py` | `SkillPromptBuilder` ABC — `InlineBuilder` (full content), `ProgressiveBuilder` (XML directory, degrades to inline if no read_file tool), `HybridBuilder` (inline `always=True` skills + directory for rest) |
+| `manager.py` | `SkillManager` — facade coordinating source, filter, cache, builder; runtime overrides via `register_skill()`/`unregister_skill()`. `get_skill()` triggers `DirectorySkillCache` freshness check so add/remove is live-detected. |
+| `builder.py` | `SkillPromptBuilder` ABC — `InlineBuilder` (full content), `ProgressiveBuilder` (XML directory, degrades to inline if no read_file tool), `HybridBuilder` (inline `always=True` skills + directory for rest). Also exports `build_skill_command_xml()` shared helper used by both `SkillCommandHandler` and business-layer skill registries. |
 | `filter.py` | `SkillFilter` ABC — `AlwaysFilter`, `AllowListFilter`, `DenyListFilter`, `CompositeFilter` (sequential chain); `SkillWhitelistFilter` (wrapper delegating to SkillManager) |
 | `cache.py` | `SkillCache` ABC; `DirectorySkillCache` — per-directory name-set change detection, partial prompt rebuild on stale directories |
 

@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import pytest
 from bot.service.core import BotService
 
+from framework.core.session_id import SessionInfo
 from framework.core.types import InputMessage
 from framework.pipeline.adapters import InputAdapter, NullOutputAdapter
 from framework.tools.terminal.subprocess_tool import SubprocessTool
@@ -34,7 +35,7 @@ class _InputAdapter(InputAdapter):
 
     async def receive(self) -> AsyncIterator[InputMessage]:
         if False:
-            yield InputMessage(content="", session_id="s1")
+            yield InputMessage(content="", session=SessionInfo.from_str("s1", default_agent_name="main"))
 
 
 @pytest.fixture

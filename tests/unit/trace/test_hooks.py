@@ -8,8 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from framework.core.agent import AgentContext, AgentSessionMeta
+from framework.core.agent import AgentContext
 from framework.core.emitter import AgentResult
+from framework.core.session_id import SessionInfo
 from framework.core.tool_manager import InMemoryToolManager, ToolManagerConfig, ToolResult
 from framework.core.types import LLMResponse, ToolCall
 from framework.memory.history import ListMessageHistory
@@ -26,7 +27,7 @@ from framework.trace.store import JsonFileTraceStore, TraceStore
 
 def _make_trace_context(session_id: str) -> AgentContext:
     state = ReActTurnState(
-        identity=TurnIdentity(agent_id="test", session_id=session_id, turn_id="t1"),
+        identity=TurnIdentity(agent_id="test", session=SessionInfo.from_str(session_id), turn_id="t1"),
         agent_kind=AgentKind.REACT,
         phase=TurnPhase.CREATED,
     )
@@ -35,7 +36,7 @@ def _make_trace_context(session_id: str) -> AgentContext:
         system_prompt="test",
         history=ListMessageHistory(),
         tool_manager=InMemoryToolManager(config=ToolManagerConfig()),
-        session_id=session_id,
+        session=SessionInfo.from_str(session_id),
         runtime=runtime,
     )
 

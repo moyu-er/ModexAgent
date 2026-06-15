@@ -18,7 +18,7 @@ Unlike Interceptors, hooks do NOT wrap execution — they observe and optionally
 ## Subdirectories
 | Directory | Purpose |
 |-----------|---------|
-| `builtin/` | 6 hooks (logging, runtime_context, inbox_flush, subagent_auto_send, progress_report) + TraceFileWriter (event subscriber) |
+| `builtin/` | 6 hooks (logging, runtime_context, inbox_flush, subagent_auto_send, progress_report) |
 
 ## HookPoint Dispatch
 | HookPoint | Method | When | Common Use |

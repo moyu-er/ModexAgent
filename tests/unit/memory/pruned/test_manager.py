@@ -238,7 +238,7 @@ class TestInjectionXml:
 
         assert f"<{PrunedTag.CONTAINER.value}>" in xml
         assert xml.strip().endswith(f"</{PrunedTag.CONTAINER.value}>")
-        assert "### Conversation Transcripts" in xml
+        assert "### Previous Conversation Transcripts" in xml
         assert "index.jsonl" in xml
 
     @pytest.mark.asyncio()
