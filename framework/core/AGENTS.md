@@ -46,4 +46,4 @@ Abstract base classes and shared types forming the framework's type-safe foundat
 
 ### Common Patterns
 - `TYPE_CHECKING` guard for import-only types
-- `contextvars.ContextVar` for per-asyncio-task state (`current_agent_context`, `current_conversation_id`)
+- `contextvars.ContextVar` for per-asyncio-task state (`current_agent_context`)

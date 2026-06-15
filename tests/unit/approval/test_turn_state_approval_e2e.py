@@ -81,7 +81,6 @@ def _context(store: InMemoryTurnStateStore, tool_calls: list[str], default_deny_
         agent_id="agent",
         session=SessionInfo.from_str("s1"),
         turn_id="t1",
-        conversation_id="s1",
     )
     state = ReActTurnState(
         identity=identity,
