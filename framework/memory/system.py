@@ -528,8 +528,12 @@ class MemorySystemContextManager(ContextManager):
         import sys
         from datetime import datetime
 
+        from framework.utils.timezone import get_user_timezone
+
         lines = ["## Runtime"]
-        current_time = str(info.get("current_time") or datetime.now().strftime("%Y-%m-%d %Hh"))
+        current_time = str(
+            info.get("current_time") or datetime.now(get_user_timezone()).strftime("%Y-%m-%d %Hh")
+        )
         lines.append(f"Current Time: {current_time} (hour precision, not exact)")
 
         platform_raw = str(info.get("platform") or sys.platform)

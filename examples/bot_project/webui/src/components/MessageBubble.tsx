@@ -4,6 +4,7 @@ import { MarkdownRenderer } from "./MarkdownRenderer";
 import { ReasoningBlock } from "./ReasoningBlock";
 import { ToolTraceCard } from "./ToolTraceCard";
 import { TypewriterText } from "../hooks/useTypewriter";
+import { formatClock } from "../lib/timezone";
 
 // ── Agent-specific colors ────────────────────────────────────────────────
 
@@ -54,18 +55,7 @@ function renderBlock(
 
 function formatTime(timestamp?: number): string | null {
   if (!timestamp) return null;
-  const ms = timestamp < 1e12 ? timestamp * 1000 : timestamp;
-  const date = new Date(ms);
-  const now = new Date();
-  const pad = (n: number): string => String(n).padStart(2, "0");
-  const timeStr = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
-  const isToday =
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate();
-  if (isToday) return timeStr;
-  const dateStr = `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
-  return `${dateStr} ${timeStr}`;
+  return formatClock(timestamp);
 }
 
 const UserAvatar: FC = () => (

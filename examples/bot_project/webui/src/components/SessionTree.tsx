@@ -1,4 +1,5 @@
-import { useEffect, useState, type FC } from "react";
+import { useState, type FC } from "react";
+import { formatShort } from "../lib/timezone";
 
 export interface SessionNodeData {
   session_id: string;
@@ -31,13 +32,6 @@ const SessionNode: FC<{
   const isSelected = node.session_id === selected;
   const isRoot = node.parent_session_id === null;
   const [expanded, setExpanded] = useState(false);
-
-  // Auto-expand when children appear (subagent created during live session)
-  useEffect(() => {
-    if (hasChildren) {
-      setExpanded(true);
-    }
-  }, [hasChildren]);
 
   return (
     <div>
@@ -73,7 +67,7 @@ const SessionNode: FC<{
               type="button"
               data-testid="expand-arrow"
               onClick={(): void => setExpanded(!expanded)}
-              className="mr-2 shrink-0 text-[10px] leading-none text-text-secondary-light dark:text-text-secondary-dark transition-colors hover:text-text-primary-light dark:hover:text-text-primary-dark"
+              className="mr-2 w-4 shrink-0 text-center text-[10px] leading-none text-text-secondary-light dark:text-text-secondary-dark transition-colors hover:text-text-primary-light dark:hover:text-text-primary-dark"
             >
               {expanded ? "▼" : "▶"}
             </button>
@@ -85,13 +79,18 @@ const SessionNode: FC<{
           <button
             type="button"
             onClick={(): void => onSelect(node.session_id)}
-            className={`flex-1 truncate py-2 text-left font-mono text-sm transition-colors ${
+            className={`flex-1 min-w-0 py-1.5 text-left font-mono text-sm transition-colors ${
               isSelected
                 ? "text-ai-brand-light dark:text-ai-brand-dark"
                 : "text-text-secondary-light dark:text-text-secondary-dark hover:text-text-primary-light dark:hover:text-text-primary-dark"
             }`}
           >
-            {node.displayName}
+            <span className="block truncate">{node.displayName}</span>
+            {typeof node.updated_at === "number" && (
+              <span className="block truncate text-[10px] font-sans text-text-disabled-light dark:text-text-disabled-dark">
+                {formatShort(node.updated_at)}
+              </span>
+            )}
           </button>
 
           {/* Delete — only for root sessions */}
