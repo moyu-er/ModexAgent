@@ -1,10 +1,8 @@
 """Tests for SubprocessTool."""
 
-import pytest
 
-from framework.core.tool_manager import ToolConfig
 from framework.ioc.configs.safety import SafetyConfig
-from framework.tools.terminal.subprocess_tool import SubprocessTool, SubprocessExecutor
+from framework.tools.terminal.subprocess_tool import SubprocessExecutor, SubprocessTool
 
 
 class TestSubprocessToolConfig:
@@ -13,7 +11,7 @@ class TestSubprocessToolConfig:
         InMemoryToolManager's outer asyncio.wait_for never preempts
         SubprocessTool's own timeout handling (which returns partial output).
         """
-        tool = SubprocessTool(executor=SubprocessExecutor(), timeout=60)
+        tool = SubprocessTool(executor=SubprocessExecutor(), timeout=300)
         assert tool.config.timeout >= tool.timeout, (
             f"ToolManager timeout ({tool.config.timeout}s) must not be less than "
             f"SubprocessTool timeout ({tool.timeout}s) or partial output on timeout is lost"
@@ -21,16 +19,16 @@ class TestSubprocessToolConfig:
 
     def test_config_timeout_has_margin(self) -> None:
         """There should be a safety margin between the two timeouts."""
-        tool = SubprocessTool(executor=SubprocessExecutor(), timeout=60)
+        tool = SubprocessTool(executor=SubprocessExecutor(), timeout=300)
         assert tool.config.timeout >= tool.timeout + 10, (
             f"Expected at least 10s margin, got {tool.config.timeout - tool.timeout}s"
         )
 
     def test_default_timeout_values(self) -> None:
-        """Default timeout should be 60s with ToolManager margin applied."""
+        """Default timeout should be 300s with ToolManager margin applied."""
         tool = SubprocessTool(executor=SubprocessExecutor())
-        assert tool.timeout == 60
-        assert tool.config.timeout >= 70
+        assert tool.timeout == 300
+        assert tool.config.timeout >= 310
 
 
 class TestSafetyTimeoutNotTruncatesShell:
@@ -41,7 +39,7 @@ class TestSafetyTimeoutNotTruncatesShell:
         and partial output is lost -- tool has no chance to return anything.
         """
         safety = SafetyConfig()
-        shell = SubprocessTool(executor=SubprocessExecutor(), timeout=60)
+        shell = SubprocessTool(executor=SubprocessExecutor(), timeout=300)
         assert safety.turn.tool_timeout > shell.timeout, (
             f"Safety turn.tool_timeout ({safety.turn.tool_timeout}s) must be "
             f"greater than SubprocessTool.timeout ({shell.timeout}s) or outer "
@@ -54,7 +52,7 @@ class TestSafetyTimeoutNotTruncatesShell:
         shell timeout to account for scheduling jitter.
         """
         safety = SafetyConfig()
-        shell = SubprocessTool(executor=SubprocessExecutor(), timeout=60)
+        shell = SubprocessTool(executor=SubprocessExecutor(), timeout=300)
         assert safety.turn.tool_timeout >= shell.timeout + 30, (
             f"Expected at least 30s margin, got "
             f"{safety.turn.tool_timeout - shell.timeout}s"

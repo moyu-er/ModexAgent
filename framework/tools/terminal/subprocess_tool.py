@@ -26,7 +26,7 @@ class ShellExecutor(ABC):
     """Abstract strategy for executing shell commands."""
 
     @abstractmethod
-    async def execute(self, command: str, working_dir: str | None = None, timeout: int = 60) -> str:
+    async def execute(self, command: str, working_dir: str | None = None, timeout: int = 300) -> str:
         """Execute a shell command and return its output."""
 
     @abstractmethod
@@ -52,7 +52,7 @@ class SubprocessExecutor(ShellExecutor):
             )
         )
 
-    async def execute(self, command: str, working_dir: str | None = None, timeout: int = 60) -> str:
+    async def execute(self, command: str, working_dir: str | None = None, timeout: int = 300) -> str:
         from framework.tools.terminal.env import build_full_env
 
         cwd = working_dir or os.getcwd()
@@ -100,7 +100,7 @@ class SubprocessTool(Tool):
     def __init__(
         self,
         executor: ShellExecutor | None = None,
-        timeout: int = 60,
+        timeout: int = 300,
     ) -> None:
         """Initialize SubprocessTool.
 

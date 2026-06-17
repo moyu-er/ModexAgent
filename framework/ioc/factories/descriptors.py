@@ -39,7 +39,7 @@ def _make_file_tools() -> list[Tool]:
     ]
 
 
-def _make_shell_tool(timeout: int = 60) -> Tool:
+def _make_shell_tool(timeout: int = 300) -> Tool:
     from framework.tools.terminal import SubprocessTool
 
     return SubprocessTool(timeout=timeout)
