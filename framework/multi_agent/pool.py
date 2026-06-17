@@ -469,10 +469,24 @@ class AgentPool(AgentRegistry):
                 self._track_agent_task(address.name, task)
             except asyncio.CancelledError:
                 break
+            except GeneratorExit:
+                break
             except GraphInterrupt:
                 # Approval interrupt must propagate to the pipeline handler,
                 # not be treated as a consumer-level error.
                 raise
+            except RuntimeError as exc:
+                # Event loop is closing (or already closed) — the consumer
+                # cannot recover, so exit gracefully instead of crashing
+                # during the backoff sleep.
+                if "event loop" in str(exc).lower():
+                    logger.debug(
+                        "Consumer for %s: event loop is closing, exiting",
+                        address.name,
+                    )
+                    break
+                logger.exception("RuntimeError consuming messages for %s", address.name)
+                break
             except Exception:
                 logger.exception("Error consuming messages for %s", address.name)
                 self._transition(address.name, AgentState.ERROR, reason="consume_error")
@@ -485,7 +499,11 @@ class AgentPool(AgentRegistry):
                     )
                     break
                 sleep_seconds = min(self._max_backoff_seconds, 2**error_count)
-                await asyncio.sleep(sleep_seconds)
+                try:
+                    await asyncio.sleep(sleep_seconds)
+                except RuntimeError:
+                    # Event loop closed during backoff — shut down
+                    break
                 self._transition(address.name, AgentState.IDLE, reason="consume_recover")
 
     async def _handle_inbox_wakeup(
