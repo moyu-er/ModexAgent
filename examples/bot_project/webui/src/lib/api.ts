@@ -6,6 +6,43 @@ import type {
 
 const API_BASE = "/api";
 
+// ── Error handling ──────────────────────────────────────────────────────────
+
+/**
+ * Raised when a REST call returns a non-2xx response. Carries the HTTP status
+ * plus a best-effort detail string so callers can log (or surface) what failed
+ * instead of silently swallowing parse errors or treating an error body as data.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly statusText: string;
+  readonly detail: string;
+
+  constructor(status: number, statusText: string, detail: string) {
+    super(`API ${status} ${statusText}${detail ? `: ${detail}` : ""}`);
+    this.name = "ApiError";
+    this.status = status;
+    this.statusText = statusText;
+    this.detail = detail;
+  }
+}
+
+/**
+ * Throws ApiError if `resp` is not ok. Reads the body only on the error path so
+ * the success path can still call `resp.json()` as normal.
+ */
+async function assertOk(resp: Response): Promise<void> {
+  if (!resp.ok) {
+    let detail = "";
+    try {
+      detail = await resp.text();
+    } catch {
+      // Body already consumed or unreadable — leave detail empty.
+    }
+    throw new ApiError(resp.status, resp.statusText, detail);
+  }
+}
+
 // ── Pool types ──────────────────────────────────────────────────────────────
 
 export interface PoolInfo {
@@ -14,24 +51,26 @@ export interface PoolInfo {
 
 export async function fetchPools(): Promise<PoolInfo[]> {
   const resp = await fetch(`${API_BASE}/pools`);
+  await assertOk(resp);
   return resp.json() as Promise<PoolInfo[]>;
 }
 
 // ── Session / conversation ──────────────────────────────────────────────────
 
 export async function fetchSessions(
-  workspace?: string,
+  ws?: string,
   pool?: string,
 ): Promise<ConversationInfo[]> {
   const query = new URLSearchParams();
-  if (workspace) {
-    query.set("workspace", workspace);
+  if (ws) {
+    query.set("ws", ws);
   }
   if (pool) {
     query.set("pool", pool);
   }
   const params = query.toString() ? `?${query.toString()}` : "";
   const resp = await fetch(`${API_BASE}/sessions${params}`);
+  await assertOk(resp);
   return resp.json() as Promise<ConversationInfo[]>;
 }
 
@@ -44,15 +83,21 @@ export async function createConversation(
     headers: body ? { "Content-Type": "application/json" } : undefined,
     body,
   });
+  await assertOk(resp);
   return resp.json() as Promise<CreateConversationResponse>;
 }
 
 export async function deleteConversation(
   sessionId: string,
+  ws?: string,
 ): Promise<{ deleted: string }> {
-  const resp = await fetch(`${API_BASE}/sessions/${sessionId}`, {
+  // ws (workspace) scopes the delete to the session's workspace, so it removes
+  // the transcript + index record from the right workspace, not home.
+  const params = ws ? `?ws=${encodeURIComponent(ws)}` : "";
+  const resp = await fetch(`${API_BASE}/sessions/${sessionId}${params}`, {
     method: "DELETE",
   });
+  await assertOk(resp);
   return resp.json() as Promise<{ deleted: string }>;
 }
 
@@ -60,27 +105,33 @@ export async function deleteConversation(
 
 export async function fetchMessages(
   sessionId: string,
+  ws?: string,
 ): Promise<ServerEventUnion[]> {
-  const resp = await fetch(`${API_BASE}/sessions/${sessionId}/messages`);
+  // ws (workspace) scopes the read to the session's workspace — without it the
+  // server reads home and a message written under another workspace is lost.
+  const params = ws ? `?ws=${encodeURIComponent(ws)}` : "";
+  const resp = await fetch(`${API_BASE}/sessions/${sessionId}/messages${params}`);
+  await assertOk(resp);
   return resp.json() as Promise<ServerEventUnion[]>;
 }
 
 export async function fetchAllMessages(
   sessionId: string,
+  ws?: string,
 ): Promise<ServerEventUnion[]> {
-  return fetchMessages(sessionId);
+  return fetchMessages(sessionId, ws);
 }
 
 export interface WorkspaceInfo {
-  cwd: string;
   home: string;
-  is_home: boolean;
+  recent: { path: string }[];
   /** Configured timezone (IANA name or fixed offset) for readable-time rendering. */
   timezone?: string;
 }
 
 export async function fetchWorkspace(): Promise<WorkspaceInfo> {
   const resp = await fetch(`${API_BASE}/workspace`);
+  await assertOk(resp);
   return resp.json() as Promise<WorkspaceInfo>;
 }
 
@@ -98,6 +149,7 @@ export async function changeWorkspace(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path }),
   });
+  await assertOk(resp);
   return resp.json() as Promise<ChangeWorkspaceResult>;
 }
 
@@ -119,18 +171,6 @@ export async function browseWorkspace(
 ): Promise<BrowseResult> {
   const params = path ? `?path=${encodeURIComponent(path)}` : "";
   const resp = await fetch(`${API_BASE}/workspace/browse${params}`);
+  await assertOk(resp);
   return resp.json() as Promise<BrowseResult>;
-}
-
-// ── Recent workspaces ──────────────────────────────────────────────────────
-
-export interface RecentWorkspaceEntry {
-  path: string;
-  last_used: number;
-}
-
-export async function fetchRecentWorkspaces(): Promise<RecentWorkspaceEntry[]> {
-  const resp = await fetch(`${API_BASE}/workspace/recent`);
-  const data = await resp.json();
-  return (data.recent || []) as RecentWorkspaceEntry[];
 }

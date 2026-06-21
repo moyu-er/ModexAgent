@@ -4,11 +4,13 @@ export type WebUIEventType =
   | "user_message"
   | "model_content_delta"
   | "model_reasoning_delta"
+  | "assistant_reasoning"
   | "tool_call_start"
   | "tool_call_end"
   | "turn_end"
   | "assistant_turn"
   | "conversation_ready"
+  | "conversation_created"
   | "attached"
   | "conversation_deleted"
   | "error";
@@ -35,6 +37,12 @@ export interface ModelContentDelta extends ServerEvent {
 
 export interface ModelReasoningDelta extends ServerEvent {
   event: "model_reasoning_delta";
+  text: string;
+  turn_id: string;
+}
+
+export interface AssistantReasoningEvent extends ServerEvent {
+  event: "assistant_reasoning";
   text: string;
   turn_id: string;
 }
@@ -71,6 +79,11 @@ export interface ConversationReadyEvent extends ServerEvent {
   session_id: string;
 }
 
+export interface ConversationCreatedEvent extends ServerEvent {
+  event: "conversation_created";
+  parent_session_id: string | null;
+}
+
 export interface AttachedEvent extends ServerEvent {
   event: "attached";
   session_id: string;
@@ -90,11 +103,13 @@ export type ServerEventUnion =
   | UserMessageEvent
   | ModelContentDelta
   | ModelReasoningDelta
+  | AssistantReasoningEvent
   | ToolCallStartEvent
   | ToolCallEndEvent
   | TurnEndEvent
   | AssistantTurnEvent
   | ConversationReadyEvent
+  | ConversationCreatedEvent
   | AttachedEvent
   | ConversationDeletedEvent
   | ErrorEvent;
@@ -124,6 +139,7 @@ export function unwrapEnvelope(env: DeltaEnvelope): ServerEventUnion {
     session_id: env.session_id,
     agent_name: env.agent_name,
     timestamp: env.timestamp,
+    parent_session_id: env.parent_session_id,
     ...env.payload,
     // Tagged fields for UIMessage enrichment (tree, pool display, etc.)
     _pool: env.pool,
@@ -265,6 +281,15 @@ export function eventsToMessages(events: ServerEventUnion[]): UIMessage[] {
         role: "user",
         agent_name: ev.agent_name,
         blocks: [{ kind: "text", text: ev.content }],
+        isStreaming: false,
+        timestamp: ev.timestamp,
+      });
+    } else if (ev.event === "assistant_reasoning") {
+      messages.push({
+        id: `hist_${++_histId}`,
+        role: "assistant",
+        agent_name: ev.agent_name,
+        blocks: [{ kind: "reasoning", text: ev.text }],
         isStreaming: false,
         timestamp: ev.timestamp,
       });

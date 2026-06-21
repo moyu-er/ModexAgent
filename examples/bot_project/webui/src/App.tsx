@@ -2,16 +2,36 @@ import { useState, useCallback, useEffect, useMemo, useRef, type FC } from "reac
 import { Sidebar } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
 import { useWebUIStream } from "./hooks/useWebUIStream";
-import { fetchSessions, fetchPools, fetchWorkspace, deleteConversation, changeWorkspace, fetchRecentWorkspaces } from "./lib/api";
+import { fetchSessions, fetchPools, fetchWorkspace, deleteConversation, changeWorkspace } from "./lib/api";
 import { setTimezone } from "./lib/timezone";
 import type { ConversationInfo } from "./types/events";
-import type { PoolInfo, RecentWorkspaceEntry } from "./lib/api";
+import type { PoolInfo } from "./lib/api";
 
 const ACTIVE_POOL_STORAGE_KEY = "modexbot_active_pool";
 const SIDEBAR_WIDTH_KEY = "modexbot_sidebar_width";
 const DEFAULT_SIDEBAR_WIDTH = 260;
 const MIN_SIDEBAR_WIDTH = 200;
 const MAX_SIDEBAR_WIDTH = 480;
+
+const WS_STORAGE_KEY = "modexbot_workspace";
+
+function loadWorkspace(home: string): string {
+  try {
+    const s = sessionStorage.getItem(WS_STORAGE_KEY);
+    if (s) return s;
+  } catch {
+    // sessionStorage unavailable
+  }
+  return home;
+}
+
+function saveWorkspace(ws: string): void {
+  try {
+    sessionStorage.setItem(WS_STORAGE_KEY, ws);
+  } catch {
+    // sessionStorage unavailable
+  }
+}
 
 function loadActivePool(): string {
   try {
@@ -118,11 +138,21 @@ const App: FC = () => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [pools, setPools] = useState<PoolInfo[]>([]);
   const [activePool, setActivePool] = useState<string>(() => loadActivePool());
+  const [home, setHome] = useState<string>("");
   const [workspace, setWorkspace] = useState<string>("");
   const [isHome, setIsHome] = useState<boolean>(true);
-  const [recentWorkspaces, setRecentWorkspaces] = useState<RecentWorkspaceEntry[]>([]);
+  const [recentWorkspaces, setRecentWorkspaces] = useState<{ path: string }[]>([]);
   const [sidebarMobileOpen, setSidebarMobileOpen] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => loadSidebarWidth());
+  const [isLoadingSessions, setIsLoadingSessions] = useState<boolean>(false);
+  const [workspaceVersion, setWorkspaceVersion] = useState<number>(0);
+  // Monotonic counter incremented on every workspace/pool switch. Each
+  // fetchSessions call captures the current value; its .then() compares it
+  // to the latest — if they differ, the response is stale (the user has
+  // since switched to another workspace/pool) and is discarded. Without this
+  // guard, a slow fetch from the OLD workspace can resolve after the NEW
+  // workspace's fetch and overwrite the sidebar with stale sessions.
+  const fetchEpochRef = useRef<number>(0);
 
   // uuidPrefix → pool, for client-side empty session generation.
   // Cleared once the backend echoes a real session id via the attached event.
@@ -159,6 +189,7 @@ const App: FC = () => {
                 session_id: fullSessionId,
                 agent_name:
                   fullSessionId.split(".")[1] || "main",
+                updated_at: Date.now(),
               }
             : s,
         ),
@@ -170,6 +201,9 @@ const App: FC = () => {
   // A non-selected session (e.g. a subagent) just started a turn: bump its
   // updated_at so the sidebar re-sorts it to the top of its group immediately,
   // then debounce a refresh so any brand-new session also appears in the tree.
+  // Also reveal it in the tree so the SessionTree cascades-expands its
+  // ancestor chain (parent, grandparent, … up to the root).
+  const [revealSessionId, setRevealSessionId] = useState<string | null>(null);
   const onSessionActivity = useCallback((sid: string): void => {
     const now = Date.now();
     setSessions((prev) =>
@@ -177,6 +211,7 @@ const App: FC = () => {
         ? prev.map((s) => (s.session_id === sid ? { ...s, updated_at: now } : s))
         : prev,
     );
+    setRevealSessionId(sid);
     if (treeRefreshTimerRef.current) return;
     treeRefreshTimerRef.current = setTimeout(() => {
       treeRefreshTimerRef.current = null;
@@ -184,8 +219,50 @@ const App: FC = () => {
     }, 600);
   }, []);
 
+  // A new subagent session was spawned: insert it into the sidebar tree
+  // immediately (even before the backend refresh) so the user sees it right
+  // away, and reveal its ancestor chain.
+  const onSessionCreated = useCallback(
+    (sid: string, parentSessionId: string | null): void => {
+      const now = Date.now();
+      setSessions((prev) => {
+        if (prev.some((s) => s.session_id === sid)) {
+          return prev;
+        }
+        const parent = prev.find((s) => s.session_id === parentSessionId);
+        const pool = parent?.pool || "main";
+        const agentName = sid.split(".")[1] || "unknown";
+        return [
+          ...prev,
+          {
+            session_id: sid,
+            agent_name: agentName,
+            pool,
+            parent_session_id: parentSessionId,
+            created_at: now,
+            updated_at: now,
+          },
+        ];
+      });
+      setRevealSessionId(sid);
+      // Refresh immediately so the backend authoritative record fills in any
+      // missing fields (created_at, etc.) and the tree stays consistent.
+      refreshSessionsRef.current?.();
+    },
+    [],
+  );
+
   const { messages, isStreaming, isPending, connect, disconnect, send } =
-    useWebUIStream(selectedId, getPoolForUuid, handleSessionReady, onSessionActivity);
+    useWebUIStream(
+      selectedId,
+      getPoolForUuid,
+      handleSessionReady,
+      onSessionActivity,
+      // Home is its own workspace partition; pass ws only for non-home so home
+      // reads/writes use the canonical home dir (matching the no-ws behavior).
+      isHome ? "" : workspace,
+      onSessionCreated,
+    );
 
   const sessionTree = useMemo(() => buildTree(sessions), [sessions]);
 
@@ -241,12 +318,32 @@ const App: FC = () => {
     saveActivePool(activePool);
   }, [activePool]);
 
-  // Load sessions on mount (filtered by current workspace and pool)
+  // Load sessions once the workspace is known, and re-fetch when workspace
+  // or active pool changes.  Waiting for `home` prevents the mount-time race
+  // where we fetched home's sessions before sessionStorage/workspace info was
+  // available, which displayed the wrong workspace's conversations.
   useEffect(() => {
+    if (!home) {
+      return;
+    }
+    const epoch = fetchEpochRef.current;
     fetchSessions(workspace || undefined, activePool)
-      .then(setSessions)
-      .catch(() => {});
-  }, []);
+      .then((loaded) => {
+        if (fetchEpochRef.current !== epoch) return;
+        setSessions((prev) => {
+          const draftEntries = prev.filter(
+            (s) => draftIdsRef.current.has(s.session_id),
+          );
+          const nonDraft = loaded.filter(
+            (s) => !draftIdsRef.current.has(s.session_id),
+          );
+          return [...draftEntries, ...nonDraft];
+        });
+      })
+      .catch((err) => {
+        console.error("Failed to load sessions:", err);
+      });
+  }, [home, workspace, activePool]);
 
   // Load available pools on mount
   useEffect(() => {
@@ -260,27 +357,40 @@ const App: FC = () => {
           }
         }
       })
-      .catch(() => {});
+      .catch((err) => {
+        console.error("Failed to load pools:", err);
+      });
   }, []);
 
-  // Fetch workspace on mount and on conversation change
+  // Fetch workspace info on mount (home, recent, timezone, initial ws)
   useEffect(() => {
     fetchWorkspace()
       .then((info) => {
-        setWorkspace(info.cwd);
-        setIsHome(info.is_home);
-        // Cache the configured timezone for readable-time rendering. The
-        // shared module persists it to localStorage, so later reloads use it
-        // before the first fetch completes.
+        setHome(info.home);
+        setRecentWorkspaces(info.recent);
+        const initial = loadWorkspace(info.home);
+        setWorkspace(initial);
+        setIsHome(initial === info.home);
         if (info.timezone) {
           setTimezone(info.timezone);
         }
       })
-      .catch(() => {});
-    fetchRecentWorkspaces()
-      .then(setRecentWorkspaces)
-      .catch(() => {});
-  }, [selectedId]);
+      .catch((err) => {
+        console.error("Failed to load workspace info:", err);
+      });
+  }, []);
+
+  // Refresh recentWorkspaces after a workspace switch (not on every conv change)
+  useEffect(() => {
+    if (workspaceVersion === 0) return;
+    fetchWorkspace()
+      .then((info) => {
+        setRecentWorkspaces(info.recent);
+      })
+      .catch((err) => {
+        console.error("Failed to refresh recent workspaces:", err);
+      });
+  }, [workspaceVersion]);
 
   // Connect WebSocket on mount
   useEffect(() => {
@@ -296,13 +406,11 @@ const App: FC = () => {
   }, []);
 
   const refreshSessions = useCallback((): void => {
+    const epoch = fetchEpochRef.current;
     fetchSessions(workspace || undefined, activePool)
       .then((loaded) => {
+        if (fetchEpochRef.current !== epoch) return;
         setSessions((prev) => {
-          // Keep any client-side drafts that the backend doesn't know about
-          // yet so they don't vanish from the sidebar on refresh.  Drafts are
-          // pool-scoped (cleared on pool/workspace switch), so this only
-          // applies to the active pool.
           const draftEntries = prev.filter(
             (s) => draftIdsRef.current.has(s.session_id),
           );
@@ -312,7 +420,9 @@ const App: FC = () => {
           return [...draftEntries, ...nonDraft];
         });
       })
-      .catch(() => {});
+      .catch((err) => {
+        console.error("Failed to refresh sessions:", err);
+      });
   }, [workspace, activePool]);
 
   useEffect(() => {
@@ -342,6 +452,7 @@ const App: FC = () => {
             }
             const now = Date.now();
             return [
+              ...prev,
               {
                 session_id: draftId,
                 agent_name: "…",
@@ -350,7 +461,6 @@ const App: FC = () => {
                 created_at: now,
                 updated_at: now,
               },
-              ...prev,
             ];
           });
           return;
@@ -367,6 +477,9 @@ const App: FC = () => {
       // suspenders — draftIdsRef tracking should prevent duplicates, but
       // cleanup ensures we never show two "…" entries).
       setSessions((prev) => [
+        ...prev.filter(
+          (s) => s.agent_name !== "…" || draftIdsRef.current.has(s.session_id),
+        ),
         {
           session_id: uuidPrefix,
           agent_name: "…",
@@ -375,9 +488,6 @@ const App: FC = () => {
           created_at: now,
           updated_at: now,
         },
-        ...prev.filter(
-          (s) => s.agent_name !== "…" || draftIdsRef.current.has(s.session_id),
-        ),
       ]);
     },
     [],
@@ -396,7 +506,7 @@ const App: FC = () => {
         }
         return;
       }
-      deleteConversation(sessionId)
+      deleteConversation(sessionId, isHome ? undefined : (workspace || undefined))
         .then(() => {
           setSessions((prev) =>
             prev.filter((s) => s.session_id !== sessionId),
@@ -409,58 +519,87 @@ const App: FC = () => {
           console.error("Failed to delete conversation:", err);
         });
     },
-    [selectedId],
+    [selectedId, workspace, isHome],
   );
 
   const handleWorkspaceChanged = useCallback(
     (cwd: string): void => {
-      setWorkspace(cwd);
+      const cwdStr = typeof cwd === "string" ? cwd : String(cwd);
+      // Cancel any pending debounced refreshSessions from a stale workspace
+      // — without this, a 600ms-debounced fetch from the OLD workspace could
+      // resolve AFTER this fetch and overwrite the sidebar with stale sessions.
+      if (treeRefreshTimerRef.current) {
+        clearTimeout(treeRefreshTimerRef.current);
+        treeRefreshTimerRef.current = null;
+      }
+      fetchEpochRef.current += 1;
+      const epoch = fetchEpochRef.current;
+      setWorkspace(cwdStr);
+      setIsHome(cwdStr === home);
+      saveWorkspace(cwdStr);
       setSelectedId(null);
       pendingRef.current.clear();
       draftIdsRef.current.clear();
-      fetchWorkspace()
-        .then((info) => setIsHome(info.is_home))
-        .catch(() => {});
-      fetchRecentWorkspaces()
-        .then(setRecentWorkspaces)
-        .catch(() => {});
-      fetchSessions(cwd, activePool)
-        .then(setSessions)
-        .catch(() => {});
+      setWorkspaceVersion((v) => v + 1);
+      setSessions([]);
+      setIsLoadingSessions(true);
+      fetchSessions(cwdStr, activePool)
+        .then((loaded) => {
+          if (fetchEpochRef.current !== epoch) return;
+          setSessions(loaded);
+        })
+        .catch((err) => {
+          console.error("Failed to load sessions after workspace change:", err);
+        })
+        .finally(() => {
+          if (fetchEpochRef.current === epoch) {
+            setIsLoadingSessions(false);
+          }
+        });
     },
-    [activePool],
+    [activePool, home],
   );
 
   const handleGoHome = useCallback(async (): Promise<void> => {
     try {
       const result = await changeWorkspace("");
       if (result.success) {
-        setWorkspace(result.cwd);
-        setIsHome(true);
-        setSelectedId(null);
-        pendingRef.current.clear();
-        draftIdsRef.current.clear();
-        fetchSessions(result.cwd, activePool)
-          .then(setSessions)
-          .catch(() => {});
+        handleWorkspaceChanged(result.cwd);
       } else {
         alert(result.notice || "Failed to return home");
       }
     } catch {
       alert("Network error");
     }
-  }, [activePool]);
+  }, [handleWorkspaceChanged]);
 
   const handlePoolChange = useCallback(
     (pool: string): void => {
+      if (treeRefreshTimerRef.current) {
+        clearTimeout(treeRefreshTimerRef.current);
+        treeRefreshTimerRef.current = null;
+      }
+      fetchEpochRef.current += 1;
+      const epoch = fetchEpochRef.current;
       setActivePool(pool);
       setSelectedId(null);
-      // Clear all draft/pending state — switching pools is a fresh context.
       pendingRef.current.clear();
       draftIdsRef.current.clear();
+      setSessions([]);
+      setIsLoadingSessions(true);
       fetchSessions(workspace || undefined, pool)
-        .then(setSessions)
-        .catch(() => {});
+        .then((loaded) => {
+          if (fetchEpochRef.current !== epoch) return;
+          setSessions(loaded);
+        })
+        .catch((err) => {
+          console.error("Failed to load sessions after pool change:", err);
+        })
+        .finally(() => {
+          if (fetchEpochRef.current === epoch) {
+            setIsLoadingSessions(false);
+          }
+        });
     },
     [workspace],
   );
@@ -497,6 +636,7 @@ const App: FC = () => {
         isHome={isHome}
         activePool={activePool}
         recentWorkspaces={recentWorkspaces}
+        isLoadingSessions={isLoadingSessions}
         mobileOpen={sidebarMobileOpen}
         onCloseMobile={() => setSidebarMobileOpen(false)}
         onSelect={handleSelect}
@@ -505,6 +645,7 @@ const App: FC = () => {
         onWorkspaceChanged={handleWorkspaceChanged}
         onGoHome={handleGoHome}
         onPoolChange={handlePoolChange}
+        revealSessionId={revealSessionId}
       />
 
       {/* Resize handle — desktop only */}
