@@ -377,7 +377,6 @@ class BotService(AgentBuilderMixin):
                 ),
                 turn=TurnTimeoutPolicy(
                     agent_run_timeout_seconds=s.turn.agent_run_timeout,
-                    dispatch_timeout_seconds=s.turn.dispatch_timeout,
                     hook_timeout_seconds=s.turn.hook_timeout,
                     tool_timeout_seconds=s.turn.tool_timeout,
                 ),

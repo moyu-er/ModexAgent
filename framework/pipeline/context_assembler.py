@@ -10,12 +10,10 @@ from typing import TYPE_CHECKING, Any
 
 from ..core.emitter import AgentResult
 from ..core.types import InputMessage, MessageRole
-from ..memory.core.message import ContentFormat
 from ..memory.history import (
     ListMessageHistory,
     history_to_list,
 )
-from ..memory.xml_truncate import truncate_xml_safe
 
 if TYPE_CHECKING:
     from ..core.skills import SkillManager
@@ -24,8 +22,6 @@ if TYPE_CHECKING:
     from ..utils.context_builder import MultiAgentContextBuilder
 
 logger = logging.getLogger(__name__)
-
-_PERSIST_XML_MAX_CHARS = 4000
 
 
 async def assemble_context(
@@ -76,16 +72,6 @@ async def assemble_context(
         user_message["content_format"] = input_msg.content_format
     if input_msg.truncatable_paths is not None:
         user_message["truncatable_paths"] = input_msg.truncatable_paths
-
-    # Pre-persistence XML truncation: limit XML content before storing
-    # to avoid oversized skill/agent messages bloating session history.
-    _content = user_message.get("content")
-    if (isinstance(_content, str)
-            and user_message.get("content_format") == ContentFormat.XML
-            and user_message.get("truncatable_paths")):
-        user_message["content"] = truncate_xml_safe(
-            _content, _PERSIST_XML_MAX_CHARS, user_message["truncatable_paths"],
-        )
 
     agent_name = agent_descriptor.address.name if agent_descriptor else "main"
     runtime_info: dict[str, Any] = {"caller_context": {"agent_name": agent_name}}
