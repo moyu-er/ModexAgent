@@ -210,7 +210,7 @@ def test_kill_process_failure(proc_module, monkeypatch) -> None:
 
 def _patch_all_bot(monkeypatch, proc_module) -> None:
     """Treat every discovered PID as a modexbot process."""
-    monkeypatch.setattr(proc_module, "_is_bot_process", lambda pid: True)
+    monkeypatch.setattr(proc_module, "_is_bot_process", lambda pid, via_port=False: True)
 
 
 def test_stop_running_by_pid_file(proc_module, monkeypatch, tmp_path) -> None:
@@ -249,7 +249,7 @@ def test_stop_running_ignores_non_bot_pid_file(
 
     monkeypatch.setattr(proc_module, "_PID_FILE", pid_file)
     monkeypatch.setattr(proc_module, "_is_running", lambda pid: True)
-    monkeypatch.setattr(proc_module, "_is_bot_process", lambda pid: False)
+    monkeypatch.setattr(proc_module, "_is_bot_process", lambda pid, via_port=False: False)
     monkeypatch.setattr(proc_module, "_find_processes_by_port", lambda port: [])
 
     killed: list[int] = []
@@ -327,7 +327,7 @@ def test_stop_running_no_pid_file_falls_back_to_port(
 def test_stop_running_port_ignores_non_bot(proc_module, monkeypatch) -> None:
     """Port is used by a non-bot process → do not kill it."""
     monkeypatch.setattr(proc_module, "_read_pid", lambda: None)
-    monkeypatch.setattr(proc_module, "_is_bot_process", lambda pid: False)
+    monkeypatch.setattr(proc_module, "_is_bot_process", lambda pid, via_port=False: False)
     monkeypatch.setattr(
         proc_module, "_find_processes_by_port", lambda port: [12345]
     )

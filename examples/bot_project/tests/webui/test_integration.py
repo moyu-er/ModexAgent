@@ -79,7 +79,7 @@ def test_multi_agent_threads() -> None:
         store.append(main_sid, UserMessageEvent(session_id=main_sid, agent_name="main", content="hi"))
         store.append(sub_sid, UserMessageEvent(session_id=sub_sid, agent_name="office-expert", content="analyzing..."))
 
-        sessions = store.list_sessions_in_conversation("multiagent")
+        sessions = store.list_sessions_by_prefix("multiagent")
         assert sessions == {main_sid, sub_sid}
 
         main_events = list(store.load(main_sid))

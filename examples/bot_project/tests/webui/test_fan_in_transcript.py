@@ -31,7 +31,7 @@ from framework.pipeline.adapters import InputAdapter
 
 
 def _sid(agent: str, conv: str) -> str:
-    """Factory-derived full session id for an agent + conversation_id."""
+    """Factory-derived full session id for an agent + session_id."""
     return SessionIdFactory().create(agent_name=agent, external_id=conv).session_id
 
 # ── Stub adapters / registries for testing ────────────────────────────────────

@@ -48,6 +48,27 @@ def test_venv_python_path_respects_platform() -> None:
         assert ".venv/bin/python" in venv_str
 
 
+def test_resolve_venv_python_candidates() -> None:
+    """_resolve_venv_python checks repo_root/.venv first, then bot_project/.venv."""
+    from modexbot.cli import _PKG_ROOT, _REPO_ROOT, _resolve_venv_python
+
+    result = _resolve_venv_python()
+
+    # Either candidate could be returned depending on what exists on this machine.
+    valid: list[Path]
+    if sys.platform == "win32":
+        valid = [
+            _REPO_ROOT / ".venv" / "Scripts" / "python.exe",
+            _PKG_ROOT / ".venv" / "Scripts" / "python.exe",
+        ]
+    else:
+        valid = [
+            _REPO_ROOT / ".venv" / "bin" / "python",
+            _PKG_ROOT / ".venv" / "bin" / "python",
+        ]
+    assert result in valid
+
+
 def test_start_help() -> None:
     """start --help shows options."""
     result = runner.invoke(app, ["start", "--help"])

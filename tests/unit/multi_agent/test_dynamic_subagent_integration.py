@@ -888,7 +888,7 @@ class TestOutputMdInjection:
         session = factory.create(
             agent_name="reviewer", external_id="abc123",
         )
-        session_id = str(session)
+        session_id = session.session_id
         runtime_dir = _Path(tempfile.gettempdir()) / "runtime_state" / "coding"
         output_path = runtime_dir / "output" / session_id / "OUTPUT.md"
 
@@ -908,7 +908,7 @@ class TestOutputMdInjection:
         session = factory.create(
             agent_name="scout", external_id="xyz789",
         )
-        session_id = str(session)
+        session_id = session.session_id
         runtime_dir = _Path(tempfile.gettempdir()) / "runtime_state" / "coding"
         scoped_write_dir = runtime_dir / "output"
         output_path = runtime_dir / "output" / session_id / "OUTPUT.md"

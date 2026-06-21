@@ -1,7 +1,7 @@
 """Tests that _dispatch_raw_broker_message preserves original adapter metadata.
 
 Regression: _dispatch_raw_broker_message was constructing a new metadata dict
-that only contained conversation_id and agent_session_id, DISCARDING all original
+that only contained session_id and agent_session_id, DISCARDING all original
 metadata from the payload — including user_id.  This caused IM users'
 archive/knowledge to fall back to user_id="default", sharing scope with WebUI.
 """
@@ -41,7 +41,7 @@ class TestDispatchMetadataPreservation:
     async def test_raw_dispatch_preserves_user_id_from_metadata(self, pool):
         """QQ adapter sets user_id in metadata; the pipeline must receive it.
 
-        Before fix: metadata was overwritten to only {conversation_id, agent_session_id},
+        Before fix: metadata was overwritten to only {session_id, agent_session_id},
         dropping user_id so all sessions fell back to "default" scope.
         """
         from framework.core.types import InputMessage
@@ -75,7 +75,7 @@ class TestDispatchMetadataPreservation:
                 "session_id": "user12345",
                 "metadata": {
                     "user_id": "user12345",
-                    "conversation_id": "user12345",
+                    "session_id": "user12345",
                     "message_id": "msg-001",
                     "message_type": "agent_message",
                     "source_agent": "qq",
@@ -83,7 +83,7 @@ class TestDispatchMetadataPreservation:
             },
             sender=AgentAddress(kind="channel", name="qq"),
             recipient=AgentAddress(kind="agent", name="main"),
-            headers={"conversation_id": "user12345"},
+            headers={"session_id": "user12345"},
         )
 
         await pool._dispatch_raw_broker_message(instance, descriptor, broker_msg)
@@ -99,13 +99,13 @@ class TestDispatchMetadataPreservation:
         assert metadata.get("message_id") == "msg-001", (
             f"message_id lost in dispatch! metadata={metadata}"
         )
-        assert metadata.get("conversation_id") == "user12345", (
-            f"conversation_id should always be present. metadata={metadata}"
+        assert metadata.get("session_id") == "user12345", (
+            f"session_id should always be present. metadata={metadata}"
         )
 
     @pytest.mark.asyncio
     async def test_raw_dispatch_metadata_falls_back_gracefully(self, pool):
-        """When payload has NO metadata dict, conversation_id is still set."""
+        """When payload has NO metadata dict, session_id is still set."""
         from framework.core.types import InputMessage
         from framework.multi_agent.address import AgentAddress
         from framework.messaging.broker import BrokerMessage
@@ -142,10 +142,106 @@ class TestDispatchMetadataPreservation:
 
         assert len(captured) == 1
         metadata = captured[0].metadata or {}
-        assert metadata.get("conversation_id") is not None, (
-            "conversation_id should always be set even with no input metadata"
+        assert metadata.get("session_id") is not None, (
+            "session_id should always be set even with no input metadata"
         )
         assert captured[0].content == "bare message"
+
+
+class TestDispatchSourceAgentClassification:
+    """source_agent must be set only for agent->agent traffic, not human turns.
+
+    Regression: _dispatch_agent_message set source_agent from
+    envelope.source.name unconditionally, so a webui/qq message (sender
+    kind="channel") got source_agent="websocket", which ContextAssembler
+    then classified as role=AGENT instead of role=USER. Only genuine
+    agent->agent traffic (source.kind == "agent") should carry a source
+    agent.
+    """
+
+    @pytest.fixture
+    async def pool(self):
+        p = AgentPool(
+            broker=_FakeBroker(),
+            agent_factory=MagicMock(),
+            enable_inbox_polling=False,
+        )
+        yield p
+        await p.shutdown_all(timeout=0.1)
+
+    @pytest.mark.asyncio
+    async def test_channel_source_does_not_set_source_agent(self, pool):
+        from framework.core.types import InputMessage
+        from framework.multi_agent.address import AgentAddress
+        from framework.multi_agent.envelope import AgentMessageEnvelope
+        from framework.multi_agent.descriptor import AgentDescriptor
+
+        captured: list[InputMessage] = []
+
+        class _FakePipeline:
+            async def process_message(self, msg: InputMessage):
+                captured.append(msg)
+
+        descriptor = AgentDescriptor(address=AgentAddress(kind="agent", name="main"))
+        instance = AsyncMock()
+        instance.pipeline = _FakePipeline()
+        instance.descriptor = descriptor
+        pool._status["main"] = AgentState.IDLE
+
+        # WebUI user message — sender is a CHANNEL, not an agent.
+        envelope = AgentMessageEnvelope(
+            payload={"content": "hello from webui"},
+            source=AgentAddress(kind="channel", name="websocket"),
+            target=AgentAddress(kind="agent", name="main"),
+            message_type="agent_message",
+            session_id="abc",
+            agent_session_id="abc.main",
+        )
+
+        await pool._dispatch_agent_message(instance, envelope)
+
+        assert len(captured) == 1
+        metadata = captured[0].metadata or {}
+        assert metadata.get("source_agent") is None, (
+            f"channel/user turn must not carry source_agent (drives role=AGENT). "
+            f"metadata={metadata}"
+        )
+        assert metadata.get("sender_agent") is None
+
+    @pytest.mark.asyncio
+    async def test_agent_source_still_sets_source_agent(self, pool):
+        from framework.core.types import InputMessage
+        from framework.multi_agent.address import AgentAddress
+        from framework.multi_agent.envelope import AgentMessageEnvelope
+        from framework.multi_agent.descriptor import AgentDescriptor
+
+        captured: list[InputMessage] = []
+
+        class _FakePipeline:
+            async def process_message(self, msg: InputMessage):
+                captured.append(msg)
+
+        descriptor = AgentDescriptor(address=AgentAddress(kind="agent", name="coding"))
+        instance = AsyncMock()
+        instance.pipeline = _FakePipeline()
+        instance.descriptor = descriptor
+        pool._status["coding"] = AgentState.IDLE
+
+        envelope = AgentMessageEnvelope(
+            payload={"content": "subagent result"},
+            source=AgentAddress(kind="agent", name="reviewer"),
+            target=AgentAddress(kind="agent", name="coding"),
+            message_type="subagent_result",
+            session_id="abc",
+            agent_session_id="abc.coding",
+        )
+
+        await pool._dispatch_agent_message(instance, envelope)
+
+        assert len(captured) == 1
+        metadata = captured[0].metadata or {}
+        assert metadata.get("source_agent") == "reviewer"
+        assert metadata.get("sender_agent") == "reviewer"
 
 
 class TestDispatchSessionInfoResolution:
@@ -207,7 +303,7 @@ class TestDispatchSessionInfoResolution:
             source=AgentAddress(kind="agent", name="reviewer"),
             target=AgentAddress(kind="agent", name="coding"),
             message_type="subagent_result",
-            conversation_id="abc",
+            session_id="abc",
             agent_session_id=child_sid,
             invocation_id="ee11",
         )
@@ -248,7 +344,7 @@ class TestDispatchSessionInfoResolution:
             source=AgentAddress(kind="agent", name="main"),
             target=AgentAddress(kind="agent", name="coding"),
             message_type="agent_message",
-            conversation_id="abc",
+            session_id="abc",
             agent_session_id="abc.coding",
         )
 
@@ -281,7 +377,7 @@ class TestDispatchSessionInfoResolution:
             source=AgentAddress(kind="agent", name="main"),
             target=AgentAddress(kind="agent", name="coding"),
             message_type="agent_message",
-            conversation_id="abc",
+            session_id="abc",
             agent_session_id="abc.coding",
         )
 

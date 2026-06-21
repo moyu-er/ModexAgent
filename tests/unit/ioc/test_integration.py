@@ -106,7 +106,7 @@ class TestSafetyConfigDefaults:
         cfg = SafetyConfig()
         assert cfg.llm.request_timeout == 45.0
         assert cfg.llm.max_retries == 1
-        assert cfg.turn.tool_timeout == 180.0  # updated default
+        assert cfg.turn.tool_timeout == 360.0  # updated default
 
     def test_safety_partial_llm_override(self) -> None:
         from framework.ioc.configs.safety import LLMSafetyConfig
@@ -116,4 +116,4 @@ class TestSafetyConfigDefaults:
         )
         assert cfg.llm.request_timeout == 30.0
         assert cfg.llm.max_retries == 1  # default preserved
-        assert cfg.turn.tool_timeout == 180.0  # updated default  # default preserved
+        assert cfg.turn.tool_timeout == 360.0  # updated default  # default preserved

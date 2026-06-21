@@ -35,14 +35,19 @@ class _InputAdapter(InputAdapter):
 
 
 def test_default_interceptor_chain_keeps_only_effective_defaults() -> None:
-    service = BotService(
-        config_dir=Path("examples/bot_project/config"),
-        input_adapter=_InputAdapter(),
-        output_adapter=NullOutputAdapter(),
-        emitter_factory=lambda _session_id: None,
-    )
+    """The per-workspace interceptor chain (re-homed from BotService into
+    wiring) still installs the ToolResultLimitInterceptor."""
+    from unittest.mock import MagicMock
 
-    chain = service._build_interceptor_chain()
+    from bot.workspace.wiring import _build_workspace_interceptor_chain
+    from framework.tools.overflow.local import LocalFileToolOverflowStore
+
+    service = MagicMock()
+    service.control_channel = MagicMock()
+    overflow_store = LocalFileToolOverflowStore(
+        workspace=Path("/tmp/_test_overflow"), max_chunk_size=10_000
+    )
+    chain = _build_workspace_interceptor_chain(service, overflow_store)
     interceptors = chain.interceptors
 
     assert any(isinstance(item, ToolResultLimitInterceptor) for item in interceptors)

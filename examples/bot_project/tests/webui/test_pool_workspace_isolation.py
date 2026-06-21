@@ -22,18 +22,25 @@ from bot.webui.server import WebUIServer, _new_uuid_prefix
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import UserMessageEvent, _unwrap_envelope
 from bot.webui.transcript_store import JSONLTranscriptStore
+from framework.workspace.paths import WorkspacePaths
+from framework.workspace.runtime import bind_workspace_root
+
+_DATA_DIR_NAME = ".modex"
 
 
 def _make_server(data_dir: Path) -> tuple[WebUIServer, WebSocketInputAdapter]:
     inp = WebSocketInputAdapter()
-    holder: list = []
-    def _ws_resolver() -> str:
-        s = holder[0] if holder else None
-        return str(s._workspace_ctx.current) if s is not None and s._workspace_ctx is not None else ""
-    store = WorkspaceScopedTranscriptStore(data_dir, _ws_resolver)
+    store = WorkspaceScopedTranscriptStore(data_dir_name=_DATA_DIR_NAME)
     store.set_agent_pool_map({"main": "main", "coding": "coding"})
-    server = WebUIServer(inp, store, static_dist=None, data_dir=data_dir)
-    holder.append(server)
+    home_sessions_dir = WorkspacePaths(root=data_dir / _DATA_DIR_NAME).sessions_dir
+    server = WebUIServer(
+        inp,
+        store,
+        static_dist=None,
+        data_dir=data_dir,
+        home_sessions_dir=home_sessions_dir,
+    )
+    server.set_data_dir_name(_DATA_DIR_NAME)
     server.set_workspace_index(store)
     server.set_pool_agent_names(["main", "coding"])
     server.set_agent_pool_map({"main": "main", "coding": "coding"})
@@ -69,7 +76,13 @@ async def test_pool_fixed_on_creation_not_overridden_by_attach() -> None:
 
     # Inject the WebUI input pipeline so _ws_send_message works.
     from tests.webui._pipeline_fixture import attach_default_pipeline
-    attach_default_pipeline(server, server._store, inp, pool_session_store=real_store)
+    attach_default_pipeline(
+        server,
+        server._store,
+        inp,
+        pool_session_store=real_store,
+        workspace_root=data_dir,
+    )
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
@@ -77,19 +90,20 @@ async def test_pool_fixed_on_creation_not_overridden_by_attach() -> None:
         # Create with coding pool via WS attach
         ws = await client.ws_connect("/ws")
         uuid = _new_uuid_prefix()
-        await ws.send_json({"action": "attach", "uuid_prefix": uuid, "pool": "coding"})
-        attached = _unwrap_envelope(await ws.receive_json())
-        coding_sid = attached["session_id"]
-        conv_id = uuid
+        with bind_workspace_root(data_dir):
+            await ws.send_json({"action": "attach", "uuid_prefix": uuid, "pool": "coding"})
+            attached = _unwrap_envelope(await ws.receive_json())
+            coding_sid = attached["session_id"]
+            conv_id = uuid
 
-        # Attach and send (S5 persists explicit_pool into ctx.pool_session_store)
+            # Attach and send (S5 persists explicit_pool into ctx.pool_session_store)
 
-        await ws.send_json({
-            "action": "send_message",
-            "session_id": coding_sid,
-            "content": "hello coding",
-        })
-        _unwrap_envelope(await ws.receive_json(timeout=2))
+            await ws.send_json({
+                "action": "send_message",
+                "session_id": coding_sid,
+                "content": "hello coding",
+            })
+            _unwrap_envelope(await ws.receive_json(timeout=2))
 
         # S5 persists explicit_pool directly into the real PoolSessionStore.
         pool = real_store.get(conv_id, "main")
@@ -115,37 +129,45 @@ async def test_pool_survives_multiple_attach_cycles() -> None:
 
     # Inject the WebUI input pipeline so _ws_send_message works.
     from tests.webui._pipeline_fixture import attach_default_pipeline
-    attach_default_pipeline(server, server._store, inp, pool_session_store=real_store)
+    attach_default_pipeline(
+        server,
+        server._store,
+        inp,
+        pool_session_store=real_store,
+        workspace_root=data_dir,
+    )
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
     try:
         ws = await client.ws_connect("/ws")
         uuid = _new_uuid_prefix()
-        await ws.send_json({"action": "attach", "uuid_prefix": uuid, "pool": "coding"})
-        attached = _unwrap_envelope(await ws.receive_json())
-        coding_sid = attached["session_id"]
-        conv_id = uuid
+        with bind_workspace_root(data_dir):
+            await ws.send_json({"action": "attach", "uuid_prefix": uuid, "pool": "coding"})
+            attached = _unwrap_envelope(await ws.receive_json())
+            coding_sid = attached["session_id"]
+            conv_id = uuid
 
-        # Cycle 1: attach → send → close
-        await ws.send_json({
-            "action": "send_message",
-            "session_id": coding_sid,
-            "content": "cycle-1",
-        })
-        _unwrap_envelope(await ws.receive_json(timeout=2))
+            # Cycle 1: attach → send → close
+            await ws.send_json({
+                "action": "send_message",
+                "session_id": coding_sid,
+                "content": "cycle-1",
+            })
+            _unwrap_envelope(await ws.receive_json(timeout=2))
         await ws.close()
 
         # Cycle 2: reattach → send
         ws2 = await client.ws_connect("/ws")
-        await ws2.send_json({"action": "attach", "session_id": coding_sid})
-        await ws2.receive_json()
-        await ws2.send_json({
-            "action": "send_message",
-            "session_id": coding_sid,
-            "content": "cycle-2",
-        })
-        await ws2.receive_json(timeout=2)
+        with bind_workspace_root(data_dir):
+            await ws2.send_json({"action": "attach", "session_id": coding_sid})
+            await ws2.receive_json()
+            await ws2.send_json({
+                "action": "send_message",
+                "session_id": coding_sid,
+                "content": "cycle-2",
+            })
+            await ws2.receive_json(timeout=2)
 
         # Pool must still be 'coding'
         pool = real_store.get(conv_id, "main")
@@ -186,7 +208,8 @@ async def test_im_conversation_stored_in_current_workspace() -> None:
             agent_name="main",
             content="QQ message from user"
 )
-        server._store.append(im_sid, event)
+        with bind_workspace_root(data_dir):
+            server._store.append(im_sid, event)
 
         # Save IM session to the session store.
         await session_store.save(SessionInfo(
@@ -226,7 +249,7 @@ async def test_sessions_from_different_workspaces_are_isolated() -> None:
     ws_ctx = MagicMock()
     ws_ctx.current = Path("/ws-a")
     ws_ctx.home = Path("/ws-a")
-    server.set_workspace_context(ws_ctx)
+    server.set_workspace_control(ws_ctx)
 
     agent_pool_map = {"main": "main", "coding": "coding"}
     session_store_a = WorkspacePoolSessionStore(
@@ -244,7 +267,10 @@ async def test_sessions_from_different_workspaces_are_isolated() -> None:
         event_a = UserMessageEvent(
             session_id=sid_a, agent_name="main", content="ws-a msg"
 )
-        server._store.append(sid_a, event_a)
+        # Workspace-A write: bind to data_dir_a so it lands under
+        # data_dir_a/.modex/sessions/...
+        with bind_workspace_root(data_dir_a):
+            server._store.append(sid_a, event_a)
 
         # Save session_a to workspace A's session store.
         await session_store_a.save(SessionInfo(
@@ -254,13 +280,7 @@ async def test_sessions_from_different_workspaces_are_isolated() -> None:
             updated_at=now_ms(),
         ))
 
-        # Switch to workspace-b: recreate store with new data dir
-        server._store = WorkspaceScopedTranscriptStore(data_dir_b, lambda: str(ws_ctx.current))
-        server._store.set_agent_pool_map(agent_pool_map)
-        if server._workspace_index is not None:
-            server.set_workspace_index(server._store)
-
-        # Switch session store to workspace B.
+        # Switch session store to workspace B (for SessionInfo saves).
         session_store_b = WorkspacePoolSessionStore(
             base_dir=data_dir_b,
             pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
@@ -273,7 +293,10 @@ async def test_sessions_from_different_workspaces_are_isolated() -> None:
         event_b = UserMessageEvent(
             session_id=sid_b, agent_name="main", content="ws-b msg"
 )
-        server._store.append(sid_b, event_b)
+        # Workspace-B write: bind to data_dir_b so it lands under
+        # data_dir_b/.modex/sessions/...
+        with bind_workspace_root(data_dir_b):
+            server._store.append(sid_b, event_b)
 
         # Save session_b to workspace B's session store.
         await session_store_b.save(SessionInfo(
@@ -283,22 +306,19 @@ async def test_sessions_from_different_workspaces_are_isolated() -> None:
             updated_at=now_ms(),
         ))
 
-        # In workspace-b, only conv_b is visible
-        resp = await client.get("/api/sessions")
+        # In workspace-b (queried via ?ws=), only conv_b is visible.
+        # The server's home_sessions_dir points at workspace A, so the
+        # workspace-B listing must go through the ?ws= override.
+        resp = await client.get("/api/sessions", params={"ws": str(data_dir_b)})
         sessions = await resp.json()
         conv_ids = {s["session_id"].split(".")[0] for s in sessions}
         assert conv_b in conv_ids, "conv-b must be visible in ws-b"
         assert conv_a not in conv_ids, "conv-a must NOT appear in ws-b"
 
-        # Switch back to workspace-a
-        server._store = WorkspaceScopedTranscriptStore(data_dir_a, lambda: str(ws_ctx.current))
-        server._store.set_agent_pool_map(agent_pool_map)
-        if server._workspace_index is not None:
-            server.set_workspace_index(server._store)
-
         # Switch session store back to workspace A.
         server.set_session_store(session_store_a)
 
+        # In workspace-a (home, no ?ws=), only conv_a is visible.
         resp = await client.get("/api/sessions")
         sessions = await resp.json()
         conv_ids = {s["session_id"].split(".")[0] for s in sessions}
@@ -316,30 +336,28 @@ def test_append_follows_current_workspace_after_switch() -> None:
     the new workspace so the frontend can discover them in the session list.
     """
     data_dir = Path(tempfile.mkdtemp())
-    _ws: list[str] = ["/home/bot_project"]
+    ws_a = data_dir
+    ws_b = Path(tempfile.mkdtemp())
 
-    def _resolver() -> str:
-        return _ws[0]
-
-    store = WorkspaceScopedTranscriptStore(data_dir, _resolver)
+    store = WorkspaceScopedTranscriptStore(data_dir_name=_DATA_DIR_NAME)
     store.set_agent_pool_map({"main": "main"})
     sid = "conv-q1.main"
 
     # 1. Write in workspace A (default)
-    store.append(sid, UserMessageEvent(
-        session_id=sid, agent_name="main", content="msg-in-home"
-))
+    with bind_workspace_root(ws_a):
+        store.append(sid, UserMessageEvent(
+            session_id=sid, agent_name="main", content="msg-in-home"
+        ))
 
     # 2. Switch to workspace B (simulating cd E:\\download\\bot)
-    _ws[0] = "E:\\download\\bot"
-
     # 3. Write another event for same session — must go to workspace B
-    store.append(sid, UserMessageEvent(
-        session_id=sid, agent_name="main", content="msg-after-cd"
-))
+    with bind_workspace_root(ws_b):
+        store.append(sid, UserMessageEvent(
+            session_id=sid, agent_name="main", content="msg-after-cd"
+        ))
 
     # 4. Verify the second write went to workspace B (CURRENT), not A (sticky)
-    events_b = list(JSONLTranscriptStore(data_dir / "main").load(sid))
+    events_b = list(JSONLTranscriptStore(ws_b / ".modex" / "sessions" / "main").load(sid))
     assert len(events_b) >= 1, (
         f"Expected events in workspace B, but none found. "
         "append() must use CURRENT workspace, not sticky."
@@ -349,7 +367,7 @@ def test_append_follows_current_workspace_after_switch() -> None:
     )
 
     # 5. Previous message still intact in workspace A
-    events_a = list(JSONLTranscriptStore(data_dir / "main").load(sid))
+    events_a = list(JSONLTranscriptStore(ws_a / ".modex" / "sessions" / "main").load(sid))
     assert any("msg-in-home" in str(e.to_dict()) for e in events_a), (
         "msg-in-home must still be in workspace A"
     )
@@ -358,49 +376,48 @@ def test_append_follows_current_workspace_after_switch() -> None:
 def test_append_follows_repeated_workspace_switches() -> None:
     """Repeated cd switches correctly route writes to the current workspace."""
     data_dir = Path(tempfile.mkdtemp())
-    _ws: list[str] = ["/home"]
+    ws_a = data_dir
+    ws_b = Path(tempfile.mkdtemp())
+    ws_c = Path(tempfile.mkdtemp())
 
-    def _resolver() -> str:
-        return _ws[0]
-
-    store = WorkspaceScopedTranscriptStore(data_dir, _resolver)
+    store = WorkspaceScopedTranscriptStore(data_dir_name=_DATA_DIR_NAME)
     store.set_agent_pool_map({"main": "main"})
     sid = "conv-r1.main"
 
     # W1 → A
-    store.append(sid, UserMessageEvent(
-        session_id=sid, agent_name="main", content="w1-in-A"
-))
+    with bind_workspace_root(ws_a):
+        store.append(sid, UserMessageEvent(
+            session_id=sid, agent_name="main", content="w1-in-A"
+        ))
 
     # cd B, W2 → B
-    _ws[0] = "/workspace-b"
-    store.append(sid, UserMessageEvent(
-        session_id=sid, agent_name="main", content="w2-in-B"
-))
+    with bind_workspace_root(ws_b):
+        store.append(sid, UserMessageEvent(
+            session_id=sid, agent_name="main", content="w2-in-B"
+        ))
 
     # cd C, W3 → C
-    _ws[0] = "/workspace-c"
-    store.append(sid, UserMessageEvent(
-        session_id=sid, agent_name="main", content="w3-in-C"
-))
+    with bind_workspace_root(ws_c):
+        store.append(sid, UserMessageEvent(
+            session_id=sid, agent_name="main", content="w3-in-C"
+        ))
 
     # cd back to A, W4 → A
-    _ws[0] = "/home"
-    store.append(sid, UserMessageEvent(
-        session_id=sid, agent_name="main", content="w4-back-in-A"
-))
+    with bind_workspace_root(ws_a):
+        store.append(sid, UserMessageEvent(
+            session_id=sid, agent_name="main", content="w4-back-in-A"
+        ))
 
-    # Verify each workspace has correct events
-    # data_dir is already workspace-specific; use pool dirs directly
-    for _ws_path, expected_content in [
-        ("/home", "w1-in-A"),
-        ("/home", "w4-back-in-A"),
-        ("/workspace-b", "w2-in-B"),
-        ("/workspace-c", "w3-in-C"),
+    # Verify each write landed in its respective workspace's sessions/main.
+    for root, expected_content in [
+        (ws_a, "w1-in-A"),
+        (ws_a, "w4-back-in-A"),
+        (ws_b, "w2-in-B"),
+        (ws_c, "w3-in-C"),
     ]:
-        events = list(JSONLTranscriptStore(data_dir / "main").load(sid))
+        events = list(JSONLTranscriptStore(root / ".modex" / "sessions" / "main").load(sid))
         assert any(expected_content in str(e.to_dict()) for e in events), (
-            f"Expected {expected_content!r} in data_dir"
+            f"Expected {expected_content!r} under {root}/.modex/sessions/main"
         )
 
 
@@ -470,58 +487,77 @@ def test_relation_store_follows_workspace_switch() -> None:
     )
 
 
-def test_transcript_store_rebase_on_workspace_restore() -> None:
-    """After workspace restore at startup, rebase must route writes to the
-    restored workspace — not the stale project-home directory.
+def test_transcript_store_resolver_routes_writes_correctly() -> None:
+    """The resolver callback determines the physical directory per prefix.
 
-    Regression: ``WorkspaceScopedTranscriptStore`` is created in
-    ``WebUIService.__init__`` with ``_base`` pointing at the project home.
-    If the workspace is restored to a different directory during
-    ``initialize()`` and ``rebase()`` is never called, subsequent writes
-    (via S7 ``PersistUserMessageStage``) and reads (via
-    ``_handle_sessions``) target the wrong workspace.
+    With the session-aware store, writes are routed by the resolver rather
+    than a global rebase. This test verifies that different prefixes can
+    land in different directories.
+    """
+    from tempfile import TemporaryDirectory
+
+    with TemporaryDirectory() as home_tmp, TemporaryDirectory() as ws_tmp:
+        home_dir = Path(home_tmp)
+        ws_dir = Path(ws_tmp)
+
+        store = WorkspaceScopedTranscriptStore(data_dir_name=_DATA_DIR_NAME)
+        store.set_agent_pool_map({"main": "main"})
+
+        # Unmapped prefix -> home
+        sid_home = "conv1.main"
+        with bind_workspace_root(home_dir):
+            store.append(sid_home, UserMessageEvent(
+                session_id=sid_home, agent_name="main", content="home"
+            ))
+        home_events = list(JSONLTranscriptStore(home_dir / ".modex" / "sessions" / "main").load(sid_home))
+        assert len(home_events) == 1 and "home" in str(home_events[0].to_dict())
+
+        # Mapped prefix -> workspace
+        sid_ws = "conv2.main"
+        with bind_workspace_root(ws_dir):
+            store.append(sid_ws, UserMessageEvent(
+                session_id=sid_ws, agent_name="main", content="workspace"
+            ))
+        ws_events = list(JSONLTranscriptStore(ws_dir / ".modex" / "sessions" / "main").load(sid_ws))
+        assert len(ws_events) == 1 and "workspace" in str(ws_events[0].to_dict())
+
+        # Home should not have the workspace session
+        home_events2 = list(JSONLTranscriptStore(home_dir / ".modex" / "sessions" / "main").load(sid_ws))
+        assert home_events2 == []
+
+
+
+
+def test_transcript_store_prefix_resolver_routes_to_restored_workspace() -> None:
+    """With the new per-prefix resolver, writes always go to the directory
+    returned by sessions_dir_for_prefix — there is no stale base.
+
+    This test verifies that when the resolver returns the restored workspace
+    directory, writes land there directly without needing a rebase.
     """
     from tempfile import TemporaryDirectory
 
     with TemporaryDirectory() as home_tmp, TemporaryDirectory() as restored_tmp:
         home_dir = Path(home_tmp)
         restored_dir = Path(restored_tmp)
-        sessions_dir_home = home_dir / "sessions"
-        sessions_dir_restored = restored_dir / "sessions"
 
-        # ── Simulate startup: store created at project home ──
-        store = WorkspaceScopedTranscriptStore(sessions_dir_home, lambda: str(restored_dir))
+        # Store created with no resolver — writes route by the bound root.
+        store = WorkspaceScopedTranscriptStore(data_dir_name=_DATA_DIR_NAME)
         store.set_agent_pool_map({"main": "main"})
         sid = "conv1.main"
 
-        # ── Write through store BEFORE rebase (pre-fix behavior) ──
-        store.append(sid, UserMessageEvent(
-            session_id=sid, agent_name="main", content="before-rebase"
-))
-        # BUG: write goes to stale _base (home), NOT the restored workspace
-        home_events = list(JSONLTranscriptStore(sessions_dir_home / "main").load(sid))
-        assert len(home_events) == 1 and "before-rebase" in str(home_events[0].to_dict()), (
-            "before rebase: write must go to _base (home) — this is the stale path"
-        )
-        restored_events = list(JSONLTranscriptStore(sessions_dir_restored / "main").load(sid))
-        assert restored_events == [], (
-            "before rebase: restored workspace must be empty — _base was never updated"
+        # Write goes directly to the restored workspace (bound root)
+        with bind_workspace_root(restored_dir):
+            store.append(sid, UserMessageEvent(
+                session_id=sid, agent_name="main", content="restored-write"
+            ))
+        restored_events = list(JSONLTranscriptStore(restored_dir / ".modex" / "sessions" / "main").load(sid))
+        assert len(restored_events) == 1 and "restored-write" in str(restored_events[0].to_dict()), (
+            "write must go to the bound (restored) workspace"
         )
 
-        # ── NOW rebase (simulating the fix) ──
-        store.rebase(sessions_dir_restored)
-
-        # ── Write AFTER rebase ──
-        store.append(sid, UserMessageEvent(
-            session_id=sid, agent_name="main", content="after-rebase"
-))
-        # Verify write goes to the restored workspace
-        restored_events2 = list(JSONLTranscriptStore(sessions_dir_restored / "main").load(sid))
-        assert len(restored_events2) == 1 and "after-rebase" in str(restored_events2[0].to_dict()), (
-            "after rebase: write must go to restored workspace"
-        )
-        # Verify home is unchanged
-        home_events2 = list(JSONLTranscriptStore(sessions_dir_home / "main").load(sid))
-        assert len(home_events2) == 1, (
-            "after rebase: home must still have only the pre-rebase event"
+        # Home should be empty (write was routed elsewhere)
+        home_events = list(JSONLTranscriptStore(home_dir / ".modex" / "sessions" / "main").load(sid))
+        assert home_events == [], (
+            "home must be empty — write was routed to the restored workspace"
         )

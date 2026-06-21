@@ -93,7 +93,7 @@ def test_factory_subagent_links_parent():
     factory = SessionIdFactory()
     parent = factory.create(agent_name="main")
     child = factory.create(agent_name="reviewer", parent_session_id=parent)
-    assert child.parent_session_id == str(parent)
+    assert child.parent_session_id == parent.session_id
     # subagent snowflake differs from parent
     assert child.session_id_prefix != parent.session_id_prefix
 

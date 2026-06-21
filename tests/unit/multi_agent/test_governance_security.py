@@ -39,12 +39,12 @@ class TestAgentMessageEnvelope:
             payload={"content": "hello"},
             source=AgentAddress(kind="agent", name="a"),
             target=AgentAddress(kind="agent", name="b"),
-            conversation_id="conv1",
+            session_id="conv1",
             agent_session_id="conv1.b",
             message_id="msg123",
         )
         bm = env.to_broker_message()
-        assert bm.headers["conversation_id"] == "conv1"
+        assert bm.headers["session_id"] == "conv1"
         assert bm.headers["agent_session_id"] == "conv1.b"
         assert bm.headers["message_id"] == "msg123"
         assert bm.sender == Address(kind="agent", name="a")
@@ -55,7 +55,7 @@ class TestAgentMessageEnvelope:
             sender=Address(kind="agent", name="a"),
             recipient=Address(kind="agent", name="b"),
             headers={
-                "conversation_id": "conv1",
+                "session_id": "conv1",
                 "agent_session_id": "conv1.b",
                 "message_id": "msg123",
                 "message_type": "agent_message",
@@ -63,7 +63,7 @@ class TestAgentMessageEnvelope:
         )
         env = AgentMessageEnvelope.from_broker_message(bm)
         assert env is not None
-        assert env.conversation_id == "conv1"
+        assert env.session_id == "conv1"
         assert env.agent_session_id == "conv1.b"
         assert env.message_id == "msg123"
 
@@ -163,7 +163,7 @@ class TestMultiAgentContextBuilder:
         env = AgentMessageEnvelope(
             payload={"content": "hello"},
             source=AgentAddress(kind="agent", name="user"),
-            conversation_id="c1",
+            session_id="c1",
             agent_session_id="c1:a",
         )
         messages = builder.build_messages([], env, desc)

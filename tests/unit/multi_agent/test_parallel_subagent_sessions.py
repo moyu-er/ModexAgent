@@ -113,13 +113,13 @@ class _FakeAgentBus:
 
 
 def _make_context(
-    conversation_id: str = "conv-1",
+    session_id: str = "conv-1",
     agent_name: str = "main",
     comm_kind: AgentCommKind = AgentCommKind.NORMAL,
     invocation_id: str | None = None,
 ) -> AgentContext:
     metadata: dict[str, str] = {}
-    session_str = f"{conversation_id}.{agent_name}"
+    session_str = f"{session_id}.{agent_name}"
     if invocation_id:
         metadata["invocation_id"] = invocation_id
         session_str = f"{session_str}.{invocation_id}"

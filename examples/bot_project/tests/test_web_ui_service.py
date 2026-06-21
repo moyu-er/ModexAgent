@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -12,33 +13,47 @@ from bot.service.web_ui_service import WebUIService
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import _unwrap_envelope
 from bot.webui.server import WebUIServer
+from framework.workspace.paths import WorkspacePaths
+from framework.workspace.runtime import bind_workspace_root
+
+
+def _make_fake_app_config(pools: dict[str, list[dict[str, str]]]) -> SimpleNamespace:
+    """Build a minimal app_config stand-in for _build_agent_pool_map tests."""
+    return SimpleNamespace(
+        pools={
+            pool_name: SimpleNamespace(
+                agents=[
+                    SimpleNamespace(name=agent["name"], role=agent.get("role", "main"))
+                    for agent in agents
+                ]
+            )
+            for pool_name, agents in pools.items()
+        }
+    )
 
 
 class TestWebUIService:
     """Unit tests for WebUIService helpers."""
 
-    def test_build_agent_pool_map_reads_pool_yml_files(self) -> None:
-        """Pool configs live at config/pools/{pool}.yml.
+    def test_build_agent_pool_map_uses_app_config_pools(self) -> None:
+        """Pool mapping is built from the already-loaded AppConfig pools.
 
-        Regression: _build_agent_pool_map looked for 'pool.yaml' inside a
-        subdirectory, producing an empty mapping. Empty mapping caused all
-        transcripts (including coding-pool sessions) to be written to the main
-        pool directory.
+        Regression: _build_agent_pool_map used to re-parse config/pools/*.yml,
+        which duplicated AppConfig loading and could produce an empty mapping.
+        Empty mapping caused all transcripts (including coding-pool sessions)
+        to be written to the main pool directory.
         """
         with tempfile.TemporaryDirectory() as tmp:
             project_dir = Path(tmp)
-            (project_dir / "config" / "pools").mkdir(parents=True)
-            (project_dir / "config" / "pools" / "coding.yml").write_text(
-                "agents:\n  - name: coding\n    role: main\n",
-                encoding="utf-8",
-            )
-            (project_dir / "config" / "pools" / "main.yml").write_text(
-                "agents:\n  - name: main\n    role: main\n",
-                encoding="utf-8",
-            )
 
             class _FakeService:
                 _project_dir = project_dir
+                _app_config = _make_fake_app_config(
+                    {
+                        "coding": [{"name": "coding", "role": "main"}],
+                        "main": [{"name": "main", "role": "main"}],
+                    }
+                )
 
             mapping = WebUIService._build_agent_pool_map(_FakeService())
 
@@ -49,17 +64,18 @@ class TestWebUIService:
         """Agents listed in a pool config besides the main agent are mapped."""
         with tempfile.TemporaryDirectory() as tmp:
             project_dir = Path(tmp)
-            (project_dir / "config" / "pools").mkdir(parents=True)
-            (project_dir / "config" / "pools" / "coding.yml").write_text(
-                "agents:\n"
-                "  - name: coding\n    role: main\n"
-                "  - name: scout\n    role: subagent\n"
-                "  - name: reviewer\n    role: subagent\n",
-                encoding="utf-8",
-            )
 
             class _FakeService:
                 _project_dir = project_dir
+                _app_config = _make_fake_app_config(
+                    {
+                        "coding": [
+                            {"name": "coding", "role": "main"},
+                            {"name": "scout", "role": "subagent"},
+                            {"name": "reviewer", "role": "subagent"},
+                        ],
+                    }
+                )
 
             mapping = WebUIService._build_agent_pool_map(_FakeService())
 
@@ -83,19 +99,25 @@ async def test_coding_session_transcript_written_to_coding_pool_directory() -> N
     input_adapter = WebSocketInputAdapter()
 
     # Use the production mapping builder with the real project config.
+    from framework.ioc.configs.app import AppConfig
+
+    project_dir = Path(__file__).resolve().parent.parent
+
     class _MappingSource:
-        _project_dir = Path(__file__).resolve().parent.parent
+        _project_dir = project_dir
+        _app_config = AppConfig.from_yaml(project_dir / "config" / "bot_config.yml")
 
     mapping = WebUIService._build_agent_pool_map(_MappingSource())
     assert mapping.get("coding") == "coding", (
         "test setup: real project must map coding agent to coding pool"
     )
 
-    store = WorkspaceScopedTranscriptStore(data_dir, lambda: "")
+    store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     store.set_agent_pool_map(mapping)
 
     server = WebUIServer(
-        input_adapter, store, static_dist=None, data_dir=data_dir
+        input_adapter, store, static_dist=None, data_dir=data_dir,
+        home_sessions_dir=WorkspacePaths(root=data_dir / ".modex").sessions_dir,
     )
     server.set_workspace_index(store)
     server.set_pool_agent_names(["main", "coding"])
@@ -103,43 +125,48 @@ async def test_coding_session_transcript_written_to_coding_pool_directory() -> N
     server.set_agent_resolver(lambda pool_name: mapping.get(pool_name, pool_name))
 
     from tests.webui._pipeline_fixture import attach_default_pipeline
-    attach_default_pipeline(server, store, input_adapter, agent_pool_map=mapping)
+    attach_default_pipeline(
+        server, store, input_adapter, agent_pool_map=mapping, workspace_root=data_dir
+    )
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
     try:
-        # Create a coding-pool session via the API.
-        resp = await client.post("/api/sessions", json={"pool": "coding"})
-        assert resp.status == 200
-        data = await resp.json()
-        session_id: str = data["session_id"]
-        assert data["pool"] == "coding"
-        uuid_prefix = session_id.split(".")[0]
+        with bind_workspace_root(data_dir):
+            # Create a coding-pool session via the API.
+            resp = await client.post("/api/sessions", json={"pool": "coding"})
+            assert resp.status == 200
+            data = await resp.json()
+            session_id: str = data["session_id"]
+            assert data["pool"] == "coding"
+            uuid_prefix = session_id.split(".")[0]
 
-        # Send a message so the transcript is materialized on disk.
-        ws = await client.ws_connect("/ws")
-        await ws.send_json({"action": "attach", "session_id": session_id})
-        attached = _unwrap_envelope(await ws.receive_json())
-        assert attached["event"] == "attached"
+            # Send a message so the transcript is materialized on disk.
+            ws = await client.ws_connect("/ws")
+            await ws.send_json({"action": "attach", "session_id": session_id})
+            attached = _unwrap_envelope(await ws.receive_json())
+            assert attached["event"] == "attached"
 
-        await ws.send_json({
-            "action": "send_message",
-            "session_id": session_id,
-            "content": "hello coding",
-        })
-        echoed = _unwrap_envelope(await ws.receive_json(timeout=2))
-        assert echoed["event"] == "user_message"
+            await ws.send_json({
+                "action": "send_message",
+                "session_id": session_id,
+                "content": "hello coding",
+            })
+            echoed = _unwrap_envelope(await ws.receive_json(timeout=2))
+            assert echoed["event"] == "user_message"
 
         # The transcript MUST live under the coding pool directory.
         expected_file = (
-            data_dir / "coding" / f"{uuid_prefix}.coding.jsonl"
+            data_dir / ".modex" / "sessions" / "coding" / f"{uuid_prefix}.coding.jsonl"
         )
         assert expected_file.exists(), (
             f"coding transcript not found at expected path {expected_file}"
         )
 
         # It MUST NOT have leaked into the main pool directory.
-        wrong_file = data_dir / "main" / f"{uuid_prefix}.coding.jsonl"
+        wrong_file = (
+            data_dir / ".modex" / "sessions" / "main" / f"{uuid_prefix}.coding.jsonl"
+        )
         assert not wrong_file.exists(), (
             f"coding transcript leaked into main pool directory {wrong_file}"
         )
@@ -164,7 +191,7 @@ def test_resolver_fallback_default_is_importable_from_module() -> None:
 
     # Direct access: if _DEFAULT_AGENT_NAME is not defined in the module,
     # this raises AttributeError → RED.
-    assert "main" == wuis._DEFAULT_AGENT_NAME
+    assert wuis._DEFAULT_AGENT_NAME == "main"
 
 
 @pytest.mark.asyncio
@@ -198,6 +225,7 @@ async def test_production_style_resolver_does_not_crash_emitter() -> None:
     from bot.adapters.register_websocket import _resolve_meta_for
     from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
     from bot.webui.emitter import WebBotEmitter
+
     from framework.core.emitter import EmitterConfig
 
     input_adapter = WebSocketInputAdapter()
