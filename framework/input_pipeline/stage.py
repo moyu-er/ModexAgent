@@ -21,6 +21,11 @@ class StageResult(ABC):
     def envelope(self) -> "UserInputEnvelope":
         raise NotImplementedError("This StageResult carries no envelope")
 
+    @property
+    def response(self) -> Any | None:
+        """Optional user-facing payload (Terminate overrides)."""
+        return None
+
 
 @dataclass
 class Continue(StageResult):
