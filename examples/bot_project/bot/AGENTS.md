@@ -28,15 +28,16 @@ Core business logic for the ModexAgent bot — service lifecycle, I/O adapters, 
 ## For AI Agents
 
 ### Working In This Directory
-- `service/core.py` is the main orchestration hub — it wires together workspace, pool, broker, adapters, input pipeline, and callbacks.
+- `service/core.py` is the main orchestration hub — it owns a `WorkspaceManager` that wires workspace activation/deactivation into pools, broker, and input pipeline.
 - `input_pipeline/` is the converged message processing layer — all user messages pass through it before reaching `PoolRouter`.
-- Changes to initialization flow should preserve the workspace callback registration order (stop_and_rebuild before terminal_reset).
+- Changes to initialization flow should preserve the `build_workspace_stack` → `registry.materialize(home_context)` → pool creation order.
 - `web/dist/` is rebuilt by `cd webui && npm run build` — never edit files there directly.
 
 ### Common Patterns
 - Adapters follow `InputAdapter`/`OutputAdapter` ABC from `framework/pipeline/adapters.py`.
 - Pool creation goes through `create_pool()` in `pool_builder.py`, not `AgentPool` directly.
-- Workspace switching uses callback pattern — new subsystems register via `workspace_context.register_callback()`.
+- Workspace switching mutates only a per-session pointer (`SessionWorkspaceMap`); resources are lazy + cached + evictable via `WorkspaceRegistry` — no `on_activate`/`on_deactivate` callbacks.
+- Per-pool data (memory, runtime stores, experience) lives on the workspace's `R.pool_data[pool]`; `PoolInstance` holds only deployment-level resources.
 
 ## Dependencies
 

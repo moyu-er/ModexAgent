@@ -220,7 +220,7 @@ def test_scan_experience_dir(tmp_path: Path, meta_store: PerFileExperienceMetaSt
     (tmp_path / ".archive").mkdir()  # should be skipped
     (tmp_path / "traces").mkdir()    # should be skipped
 
-    result = hook._scan_experience_dir()
+    result = hook._scan_experience_dir(tmp_path)
     assert "exp-a" in result
     assert "exp-b" in result
     assert ".archive" not in result
@@ -240,7 +240,7 @@ async def test_cleanup_removes_deleted(tmp_path: Path, meta_store: PerFileExperi
     before = {"exp-a": 1000.0, "exp-b": 2000.0}
     after = {"exp-a": 1000.0}  # exp-b deleted
 
-    await hook._cleanup(before, after)
+    await hook._cleanup(before, after, tmp_path)
 
     assert meta_store.get("exp-a") is not None
     assert meta_store.get("exp-b") is None
@@ -262,7 +262,7 @@ async def test_cleanup_removes_invalid(tmp_path: Path, meta_store: PerFileExperi
     before = {}
     after = {"bad-exp": exp_md.stat().st_mtime}
 
-    await hook._cleanup(before, after)
+    await hook._cleanup(before, after, tmp_path)
 
     assert not exp_md.exists()
     assert not exp_dir.exists()  # empty dir removed
@@ -288,7 +288,7 @@ async def test_cleanup_fixes_dir_name_mismatch(
     before = {}
     after = {"old-name": exp_md.stat().st_mtime}
 
-    await hook._cleanup(before, after)
+    await hook._cleanup(before, after, tmp_path)
 
     # The hook's cleanup auto-corrects frontmatter name, NOT renames directory.
     # So old-name directory stays, but frontmatter name is corrected to "old-name".
@@ -323,7 +323,7 @@ async def test_cleanup_skips_name_mismatch_if_target_exists(
     before = {}
     after = {"old-name": exp_md.stat().st_mtime}
 
-    await hook._cleanup(before, after)
+    await hook._cleanup(before, after, tmp_path)
 
     # Should NOT rename because target exists
     assert (tmp_path / "old-name").exists()

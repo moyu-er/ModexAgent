@@ -24,6 +24,8 @@ from bot.webui.server import (
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import _unwrap_envelope
 from bot.webui.transcript_store import JSONLTranscriptStore
+from framework.workspace.paths import WorkspacePaths
+from framework.workspace.runtime import bind_workspace_root
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -33,10 +35,16 @@ def _make_server(data_dir: Path) -> tuple[WebUIServer, WebSocketInputAdapter]:
     holder: list = []
     def _ws_resolver() -> str:
         s = holder[0] if holder else None
-        return str(s._workspace_ctx.current) if s is not None and s._workspace_ctx is not None else ""
-    store = WorkspaceScopedTranscriptStore(data_dir, _ws_resolver)
+        return str(s._workspace_control.current) if s is not None and s._workspace_control is not None else ""
+    store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     store.set_agent_pool_map({"main": "main", "coding": "coding"})
-    server = WebUIServer(inp, store, static_dist=None, data_dir=data_dir)
+    server = WebUIServer(
+        inp,
+        store,
+        static_dist=None,
+        data_dir=data_dir,
+        home_sessions_dir=WorkspacePaths(root=data_dir / ".modex").sessions_dir,
+    )
     holder.append(server)
     server.set_workspace_index(store)
     server.set_pool_agent_names(["main", "coding"])
@@ -81,11 +89,12 @@ async def test_pool_switch_full_flow_routes_to_coding() -> None:
     from tests.webui._pipeline_fixture import attach_default_pipeline
     # _make_server uses a holder pattern to get the workspace; unwrap
     store = server._store
-    attach_default_pipeline(server, store, inp, pool_session_store=real_store)
+    attach_default_pipeline(server, store, inp, pool_session_store=real_store, workspace_root=data_dir)
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
     try:
+      with bind_workspace_root(data_dir):
         # ── Step 1+2: WS attach with uuid_prefix+pool (creates + attaches) ──
         conv_id = _new_uuid_prefix()
         ws = await client.ws_connect("/ws")
@@ -154,11 +163,12 @@ async def test_no_callback_defaults_to_main() -> None:
     # Inject pipeline (uses a MagicMock pool_session_store)
     from tests.webui._pipeline_fixture import attach_default_pipeline
     store = server._store
-    attach_default_pipeline(server, store, inp)
+    attach_default_pipeline(server, store, inp, workspace_root=data_dir)
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
     try:
+      with bind_workspace_root(data_dir):
         # Create with pool=coding
         resp = await client.post("/api/sessions", json={"pool": "coding"})
         coding_sid = (await resp.json())["session_id"]
@@ -194,41 +204,16 @@ async def test_no_callback_defaults_to_main() -> None:
 
 @pytest.mark.asyncio
 async def test_control_command_intercepted_before_enqueue() -> None:
-    """Slash commands (/cd, /exit, /stop) must be intercepted by
-    _try_intercept_control and NOT enqueued to PoolRouter.
+    """Slash commands (/stop) must be intercepted by _try_intercept_control.
 
-    Simulates: user types /cd /tmp in WebUI → server intercepts → not enqueued
+    /cd and /exit are now handled directly by S2 (EnvironmentControlStage),
+    not by _try_intercept_control. This test verifies /stop interception.
     """
-    # Build a command processor with cd/exit/pwd handlers
     from framework.commands.handlers import build_default_builtin_handlers
     from framework.commands.processor import SlashCommandProcessor
     from framework.control.channel import InMemoryControlChannel
-    from framework.workspace.handlers import (
-        CdCommandHandler,
-        ExitCommandHandler,
-        PwdCommandHandler,
-    )
 
     handlers = list(build_default_builtin_handlers())
-
-    # Create a mock WorkspaceContext for the command handlers
-    workspace_ctx = MagicMock()
-    workspace_ctx.current = Path("/fake/cwd")
-    workspace_ctx.home = Path("/fake/home")
-    workspace_ctx.data_dir = Path(tempfile.mkdtemp())
-
-    async def mock_cd(target: str):
-        return MagicMock(success=True, notice=f"cd: changed to {target}")
-
-    async def mock_exit():
-        return MagicMock(success=True, notice="exited")
-
-    workspace_ctx.cd = mock_cd
-    workspace_ctx.exit = mock_exit
-
-    handlers.append(CdCommandHandler(workspace_ctx))
-    handlers.append(ExitCommandHandler(workspace_ctx))
-    handlers.append(PwdCommandHandler(workspace_ctx))
     processor = SlashCommandProcessor(handlers=handlers)
     channel = InMemoryControlChannel()
 
@@ -248,18 +233,6 @@ async def test_control_command_intercepted_before_enqueue() -> None:
         "After configure_control_filter, _control_channel must NOT be None"
     )
 
-    # Test /cd interception — must return True (handled)
-    result = await inp._try_intercept_control("/cd /tmp", "test-session.main")
-    assert result is True, (
-        f"/cd must be intercepted, got {result}"
-    )
-
-    # Test /exit interception
-    result = await inp._try_intercept_control("/exit", "test-session.main")
-    assert result is True, (
-        f"/exit must be intercepted, got {result}"
-    )
-
     # Test /stop interception
     result = await inp._try_intercept_control("/stop", "test-session.main")
     assert result is True, (
@@ -273,7 +246,6 @@ async def test_control_command_intercepted_before_enqueue() -> None:
     )
 
     # Verify /stop added a control command to the channel
-    # (/cd and /exit are handled directly, not via control channel)
     from framework.control.types import ControlCommandType, ControlScope
 
     cmds = await channel.drain(
@@ -380,9 +352,15 @@ async def test_pool_mapping_survives_server_recreation() -> None:
     # First server instance: create a session via API and send a message so
     # the transcript is persisted (empty sessions are not persisted).
     inp1 = WebSocketInputAdapter()
-    store1 = WorkspaceScopedTranscriptStore(data_dir, lambda: "")
+    store1 = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     store1.set_agent_pool_map(agent_pool_map)
-    server1 = WebUIServer(inp1, store1, static_dist=None, data_dir=data_dir)
+    server1 = WebUIServer(
+        inp1,
+        store1,
+        static_dist=None,
+        data_dir=data_dir,
+        home_sessions_dir=WorkspacePaths(root=data_dir / ".modex").sessions_dir,
+    )
     server1.set_workspace_index(store1)
     server1.set_agent_pool_map(agent_pool_map)
     server1.set_pool_agent_names(["main", "coding"])
@@ -393,10 +371,11 @@ async def test_pool_mapping_survives_server_recreation() -> None:
     server1.set_session_store(session_store1)
     server1.set_session_factory(factory)
     from tests.webui._pipeline_fixture import attach_default_pipeline
-    attach_default_pipeline(server1, store1, inp1)
+    attach_default_pipeline(server1, store1, inp1, workspace_root=data_dir)
     client1 = TestClient(TestServer(server1.app))
     await client1.start_server()
     try:
+      with bind_workspace_root(data_dir):
         resp = await client1.post("/api/sessions", json={"pool": "coding"})
         session_id = (await resp.json())["session_id"]
         conv_id = session_id.split(".")[0]
@@ -414,18 +393,24 @@ async def test_pool_mapping_survives_server_recreation() -> None:
         await client1.close()
 
     # Verify transcript file exists under the coding pool directory.
-    transcript_file = data_dir / "coding" / f"{conv_id}.coding.jsonl"
+    transcript_file = data_dir / ".modex" / "sessions" / "coding" / f"{conv_id}.coding.jsonl"
     assert transcript_file.exists()
 
     # No sessions.json in the new design.
-    meta_file = data_dir / "sessions.json"
+    meta_file = data_dir / ".modex" / "sessions.json"
     assert not meta_file.exists()
 
     # Second server instance: must load session from disk.
     inp2 = WebSocketInputAdapter()
-    store2 = WorkspaceScopedTranscriptStore(data_dir, lambda: "")
+    store2 = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     store2.set_agent_pool_map(agent_pool_map)
-    server2 = WebUIServer(inp2, store2, static_dist=None, data_dir=data_dir)
+    server2 = WebUIServer(
+        inp2,
+        store2,
+        static_dist=None,
+        data_dir=data_dir,
+        home_sessions_dir=WorkspacePaths(root=data_dir / ".modex").sessions_dir,
+    )
     server2.set_workspace_index(store2)
     server2.set_agent_pool_map(agent_pool_map)
     server2.set_pool_agent_names(["main", "coding"])
@@ -462,11 +447,12 @@ async def test_different_conversations_route_to_different_pools() -> None:
     server.set_pool_switch_callback(callback)
 
     from tests.webui._pipeline_fixture import attach_default_pipeline
-    attach_default_pipeline(server, server._store, inp, pool_session_store=real_store)
+    attach_default_pipeline(server, server._store, inp, pool_session_store=real_store, workspace_root=data_dir)
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
     try:
+      with bind_workspace_root(data_dir):
         # Create coding conversation
         resp = await client.post("/api/sessions", json={"pool": "coding"})
         coding_conv = (await resp.json())["session_id"].split(".")[0]
@@ -532,16 +518,22 @@ async def test_control_interception_in_full_server_flow() -> None:
     holder: list = []
     def _ws_resolver() -> str:
         s = holder[0] if holder else None
-        return str(s._workspace_ctx.current) if s is not None and s._workspace_ctx is not None else ""
-    store = WorkspaceScopedTranscriptStore(data_dir, _ws_resolver)
-    server = WebUIServer(inp, store, static_dist=None, data_dir=data_dir)
+        return str(s._workspace_control.current) if s is not None and s._workspace_control is not None else ""
+    store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
+    server = WebUIServer(
+        inp,
+        store,
+        static_dist=None,
+        data_dir=data_dir,
+        home_sessions_dir=WorkspacePaths(root=data_dir / ".modex").sessions_dir,
+    )
     holder.append(server)
     server.set_workspace_index(store)
     server.set_pool_agent_names(["main", "coding"])
 
     # Inject the input pipeline
     from tests.webui._pipeline_fixture import attach_default_pipeline
-    attach_default_pipeline(server, store, inp)
+    attach_default_pipeline(server, store, inp, workspace_root=data_dir)
 
     callback, real_store, calls = _make_real_callback(data_dir)
     server.set_pool_switch_callback(callback)
@@ -549,6 +541,7 @@ async def test_control_interception_in_full_server_flow() -> None:
     client = TestClient(TestServer(server.app))
     await client.start_server()
     try:
+      with bind_workspace_root(data_dir):
         ws = await client.ws_connect("/ws")
 
         # Create a conversation
@@ -613,11 +606,6 @@ async def test_initialize_pool_wires_control_filter_to_websocket() -> None:
     from framework.commands.handlers import build_default_builtin_handlers
     from framework.commands.processor import SlashCommandProcessor
     from framework.control.channel import InMemoryControlChannel
-    from framework.workspace.handlers import (
-        CdCommandHandler,
-        ExitCommandHandler,
-        PwdCommandHandler,
-    )
 
     ws_input = WebSocketInputAdapter()
 
@@ -626,23 +614,10 @@ async def test_initialize_pool_wires_control_filter_to_websocket() -> None:
     fan_in.add_source(ws_input)
 
     # Build command processor as _build_main_command_processor does
-    workspace_ctx = MagicMock()
-    workspace_ctx.current = Path("/fake/cwd")
-    workspace_ctx.home = Path("/fake/home")
-
-    async def mock_cd(target: str):
-        return MagicMock(success=True, notice=f"changed to {target}")
-
-    async def mock_exit():
-        return MagicMock(success=True, notice="exited")
-
-    workspace_ctx.cd = mock_cd
-    workspace_ctx.exit = mock_exit
+    workspace_ctrl = MagicMock()
+    workspace_ctrl.home = Path("/fake/home")
 
     handlers = list(build_default_builtin_handlers())
-    handlers.append(CdCommandHandler(workspace_ctx))
-    handlers.append(ExitCommandHandler(workspace_ctx))
-    handlers.append(PwdCommandHandler(workspace_ctx))
     processor = SlashCommandProcessor(handlers=handlers)
     channel = InMemoryControlChannel()
 
@@ -665,13 +640,13 @@ async def test_initialize_pool_wires_control_filter_to_websocket() -> None:
         "CRITICAL: WebSocketInputAdapter._control_channel must NOT be None."
     )
 
-    # Verify /cd interception actually works
-    result = await ws_input._try_intercept_control("/cd /tmp", "test.main")
-    assert result is True, f"/cd must be intercepted, got {result}"
-
-    # Verify /stop interception works
+    # Verify /stop interception actually works (cd/exit/pwd are handled by S2 now)
     result = await ws_input._try_intercept_control("/stop", "test.main")
     assert result is True, f"/stop must be intercepted, got {result}"
+
+    # Verify /cd is NOT intercepted by _try_intercept_control (handled by S2)
+    result = await ws_input._try_intercept_control("/cd /tmp", "test.main")
+    assert result is False, f"/cd must NOT be intercepted by _try_intercept_control, got {result}"
 
     # Normal text passes through
     result = await ws_input._try_intercept_control("hello", "test.main")
@@ -691,16 +666,22 @@ async def test_server_intercepts_cd_before_enqueue() -> None:
     holder: list = []
     def _ws_resolver() -> str:
         s = holder[0] if holder else None
-        return str(s._workspace_ctx.current) if s is not None and s._workspace_ctx is not None else ""
-    store = WorkspaceScopedTranscriptStore(data_dir, _ws_resolver)
-    server = WebUIServer(inp, store, static_dist=None, data_dir=data_dir)
+        return str(s._workspace_control.current) if s is not None and s._workspace_control is not None else ""
+    store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
+    server = WebUIServer(
+        inp,
+        store,
+        static_dist=None,
+        data_dir=data_dir,
+        home_sessions_dir=WorkspacePaths(root=data_dir / ".modex").sessions_dir,
+    )
     holder.append(server)
     server.set_workspace_index(store)
     server.set_pool_agent_names(["main"])
 
     # Inject the input pipeline (no-op skill registry — /cd terminates at S6)
     from tests.webui._pipeline_fixture import attach_default_pipeline
-    attach_default_pipeline(server, store, inp)
+    attach_default_pipeline(server, store, inp, workspace_root=data_dir)
 
     callback, _, _ = _make_real_callback(data_dir)
     server.set_pool_switch_callback(callback)
@@ -708,6 +689,7 @@ async def test_server_intercepts_cd_before_enqueue() -> None:
     client = TestClient(TestServer(server.app))
     await client.start_server()
     try:
+      with bind_workspace_root(data_dir):
         ws = await client.ws_connect("/ws")
         resp = await client.post("/api/sessions", json={"pool": "main"})
         conv_id = (await resp.json())["session_id"].split(".")[0]
@@ -773,11 +755,12 @@ async def test_conversations_survive_pool_switching() -> None:
     server.set_session_store(session_store)
 
     from tests.webui._pipeline_fixture import attach_default_pipeline
-    attach_default_pipeline(server, server._store, inp, pool_session_store=real_store)
+    attach_default_pipeline(server, server._store, inp, pool_session_store=real_store, workspace_root=data_dir)
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
     try:
+      with bind_workspace_root(data_dir):
         ws = await client.ws_connect("/ws")
 
         # ── Create and message main-pool conversation ──
@@ -868,11 +851,12 @@ async def test_conversation_visible_after_first_message() -> None:
     server.set_session_store(session_store)
 
     from tests.webui._pipeline_fixture import attach_default_pipeline
-    attach_default_pipeline(server, server._store, inp, pool_session_store=real_store)
+    attach_default_pipeline(server, server._store, inp, pool_session_store=real_store, workspace_root=data_dir)
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
     try:
+      with bind_workspace_root(data_dir):
         ws = await client.ws_connect("/ws")
 
         coding_uuid = _new_uuid_prefix()
@@ -970,15 +954,16 @@ async def test_sessions_includes_external_adapter_conversations() -> None:
         agent_name="main",
         content="QQ message",
     )
-    server._store.append(qq_sid, event)
+    with bind_workspace_root(data_dir):
+        server._store.append(qq_sid, event)
 
-    # Save QQ session to the session store so it appears in listing.
-    await session_store.save(SessionInfo(
-        session_id=qq_sid,
-        agent_name="main",
-        created_at=now_ms(),
-        updated_at=now_ms(),
-    ))
+        # Save QQ session to the session store so it appears in listing.
+        await session_store.save(SessionInfo(
+            session_id=qq_sid,
+            agent_name="main",
+            created_at=now_ms(),
+            updated_at=now_ms(),
+        ))
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
@@ -1017,7 +1002,7 @@ async def test_pool_router_forwards_agent_session_id() -> None:
     """PoolRouter must include ``agent_session_id`` in the BrokerMessage it sends
     to the pool.  Without it, AgentPool's ``from_broker_message`` returns None,
     falls back to ``_dispatch_raw_broker_message``, and re-encodes the
-    conversation_id — creating a brand-new session instead of routing to the
+    session_id — creating a brand-new session instead of routing to the
     existing one.
     """
     from framework.core.session_id import SessionInfo
@@ -1071,5 +1056,5 @@ async def test_pool_router_forwards_agent_session_id() -> None:
         f"PoolRouter should also set agent_session_id in payload for robustness; "
         f"got {broker_msg.payload!r}"
     )
-    assert broker_msg.payload.get("session_id") == existing_sid
-    assert broker_msg.headers.get("conversation_id") == "legacy123"
+    assert broker_msg.payload.get("session_id") == "legacy123"
+    assert broker_msg.headers.get("session_id") == "legacy123"

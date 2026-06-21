@@ -164,8 +164,6 @@ class TestPoolInstanceStructure:
             config=None,
             pool=None,
             broker_bridge=None,
-            memory_system=None,
-            context_manager=None,
             tool_manager=None,
             skill_manager=None,
             mcp_manager=None,

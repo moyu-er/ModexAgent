@@ -6,6 +6,7 @@ export interface WorkspaceBrowserProps {
   open: boolean;
   onClose: () => void;
   onChanged: (cwd: string) => void;
+  onGoHome: () => Promise<void> | void;
 }
 
 function buildBreadcrumbs(p: string): { label: string; path: string }[] {
@@ -37,6 +38,7 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
   open,
   onClose,
   onChanged,
+  onGoHome,
 }) => {
   const [current, setCurrent] = useState("");
   const [entries, setEntries] = useState<BrowseEntry[]>([]);
@@ -200,23 +202,7 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
             </button>
             <button
               type="button"
-              onClick={async (): Promise<void> => {
-                setSwitching(true);
-                setError(null);
-                try {
-                  const result = await changeWorkspace("");
-                  if (result.success) {
-                    onChanged(result.cwd);
-                    onClose();
-                  } else {
-                    setError(result.notice || "Failed to return home");
-                  }
-                } catch {
-                  setError("Network error");
-                } finally {
-                  setSwitching(false);
-                }
-              }}
+              onClick={(): Promise<void> | void => onGoHome()}
               disabled={switching}
               className="rounded px-3 py-1.5 text-xs text-text-secondary-light transition-colors hover:bg-sidebar-hover-light hover:text-text-primary-light disabled:opacity-50 dark:text-text-secondary-dark dark:hover:bg-sidebar-hover-dark dark:hover:text-text-primary-dark"
             >

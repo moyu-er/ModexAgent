@@ -472,10 +472,24 @@ class AgentPool(AgentRegistry):
                 self._track_agent_task(address.name, task)
             except asyncio.CancelledError:
                 break
+            except GeneratorExit:
+                break
             except GraphInterrupt:
                 # Approval interrupt must propagate to the pipeline handler,
                 # not be treated as a consumer-level error.
                 raise
+            except RuntimeError as exc:
+                # Event loop is closing (or already closed) — the consumer
+                # cannot recover, so exit gracefully instead of crashing
+                # during the backoff sleep.
+                if "event loop" in str(exc).lower():
+                    logger.debug(
+                        "Consumer for %s: event loop is closing, exiting",
+                        address.name,
+                    )
+                    break
+                logger.exception("RuntimeError consuming messages for %s", address.name)
+                break
             except Exception:
                 logger.exception("Error consuming messages for %s", address.name)
                 self._transition(address.name, AgentState.ERROR, reason="consume_error")
@@ -488,7 +502,11 @@ class AgentPool(AgentRegistry):
                     )
                     break
                 sleep_seconds = min(self._max_backoff_seconds, 2**error_count)
-                await asyncio.sleep(sleep_seconds)
+                try:
+                    await asyncio.sleep(sleep_seconds)
+                except RuntimeError:
+                    # Event loop closed during backoff — shut down
+                    break
                 self._transition(address.name, AgentState.IDLE, reason="consume_recover")
 
     async def _handle_inbox_wakeup(
@@ -565,7 +583,7 @@ class AgentPool(AgentRegistry):
             payload=payload,
             source=AgentAddress(kind=source_kind, name=source_name),
             message_type=payload.get("message_type", "subagent_result"),
-            conversation_id=meta.get("conversation_id", session_id),
+            session_id=meta.get("session_id", session_id),
             agent_session_id=meta.get("agent_session_id", session_id),
             invocation_id=meta.get("invocation_id"),
             message_id=inbox_msg.message_id,
@@ -573,7 +591,7 @@ class AgentPool(AgentRegistry):
             metadata={
                 k: v
                 for k, v in meta.items()
-                if k not in ("payload", "conversation_id", "invocation_id")
+                if k not in ("payload", "session_id", "invocation_id")
             },
         )
 
@@ -607,14 +625,14 @@ class AgentPool(AgentRegistry):
     ) -> None:
         """将 task_request 信封转换为 InputMessage 并执行用户回合。"""
         task_prompt = envelope.payload.get("task_prompt") or envelope.payload.get("content", "")
-        conversation_id = envelope.conversation_id or envelope.payload.get(
-            "conversation_id", "default"
+        session_id = envelope.session_id or envelope.payload.get(
+            "session_id", "default"
         )
         session_id = envelope.agent_session_id or str(self._session_factory.create(
-            agent_name=descriptor.address.name, external_id=conversation_id
+            agent_name=descriptor.address.name, external_id=session_id
         ))
         metadata = {
-            "conversation_id": conversation_id,
+            "session_id": session_id,
             "agent_session_id": session_id,
             "message_type": envelope.message_type,
             "invocation_id": envelope.invocation_id,
@@ -670,23 +688,30 @@ class AgentPool(AgentRegistry):
         envelope: AgentMessageEnvelope,
     ) -> None:
         """分发标准 agent_message（或 subagent_result）到 Agent Pipeline。"""
-        conversation_id = envelope.conversation_id or envelope.payload.get(
-            "conversation_id", "default"
+        session_id = envelope.session_id or envelope.payload.get(
+            "session_id", "default"
         )
         session_id = envelope.agent_session_id or str(self._session_factory.create(
-            agent_name=instance.descriptor.address.name, external_id=conversation_id
+            agent_name=instance.descriptor.address.name, external_id=session_id
         ))
         content = envelope.payload.get("content", "")
         source_name = envelope.source.name if envelope.source else None
         target_name = envelope.target.name if envelope.target else None
+        # source_agent / sender_agent describe an *agent* originator and drive
+        # the role=AGENT classification in ContextAssembler. A channel/user
+        # sender is a human turn (role=USER); only genuine agent->agent traffic
+        # carries a source agent. Setting source_agent to a channel name
+        # ("websocket", "qq") would wrongly classify human input as an agent
+        # message.
+        is_agent_source = bool(envelope.source and envelope.source.kind == "agent")
         metadata = {
-            "conversation_id": conversation_id,
+            "session_id": session_id,
             "agent_session_id": session_id,
             "message_type": envelope.message_type,
             "invocation_id": envelope.invocation_id,
-            "source_agent": source_name,
-            "sender_agent": source_name,
-            "receiver_agent": target_name,
+            "source_agent": source_name if is_agent_source else None,
+            "sender_agent": source_name if is_agent_source else None,
+            "receiver_agent": target_name if is_agent_source else None,
             **envelope.metadata,
         }
         if self._comm_tracker is not None:
@@ -737,23 +762,23 @@ class AgentPool(AgentRegistry):
         """处理无法解析为 AgentMessageEnvelope 的原始 BrokerMessage。"""
         session_id = msg.payload.get("agent_session_id")
         if not session_id:
-            conversation_id = (
-                msg.headers.get("conversation_id")
-                or msg.payload.get("conversation_id")
+            session_id = (
+                msg.headers.get("session_id")
+                or msg.payload.get("session_id")
                 or msg.payload.get("session_id", "default")
             )
             session_id = str(self._session_factory.create(
-                agent_name=descriptor.address.name, external_id=conversation_id
+                agent_name=descriptor.address.name, external_id=session_id
             ))
         else:
             # Prefer the resolved session's parent link so subagent messages
-            # carry the parent conversation_id, matching the envelope path.
+            # carry the parent session_id, matching the envelope path.
             resolved = await self._resolve_session_info(session_id, descriptor.address.name)
-            conversation_id = resolved.parent_session_id or str(resolved)
+            session_id = resolved.parent_session_id or str(resolved)
         content = msg.payload.get("content", "")
         # Preserve original metadata (user_id, chat_id, etc.) from the adapter layer
         metadata = dict(msg.payload.get("metadata") or {})
-        metadata.setdefault("conversation_id", conversation_id)
+        metadata.setdefault("session_id", session_id)
         metadata["agent_session_id"] = session_id
         if instance.pipeline is not None:
             lock = self.get_lock(session_id)

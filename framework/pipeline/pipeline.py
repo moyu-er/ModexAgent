@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from framework.hook.runner import HookRunner
     from framework.interceptor.chain import InterceptorChain
     from framework.multi_agent.router import RouteResult
+    from framework.multi_agent.communication import WorkspaceManager
     from framework.runtime.store import RuntimeCommandStore, TurnStateStore
     from framework.utils.media_utils import MediaBlock, MediaProcessor
 
@@ -67,6 +68,7 @@ from ..utils.deduplicator import MessageDeduplicator
 from .adapters import InputAdapter, OutputAdapter, OutputMessage
 from .approval_renderer import ApprovalRenderer, format_approval_prompt
 from .context_assembler import assemble_context
+from .snapshot import PoolDataSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +147,9 @@ class AgentPipeline:
         command_store: RuntimeCommandStore | None = None,
         runtime_services: AgentRuntimeServices | None = None,
         command_processor: CommandProcessor | None = None,
+        workspace_manager: WorkspaceManager | None = None,
+        pool_name: str | None = None,
+        pool_data_resolver: Callable[[str], str | None] | None = None,
     ) -> None:
         """
         Args:
@@ -154,6 +159,12 @@ class AgentPipeline:
             turn_store: TurnStateStore — typed turn snapshot persistence
             command_store: RuntimeCommandStore — durable command queue
             runtime_services: process-scope services copied into each turn runtime
+            workspace_manager: optional WorkspaceManager; when set together
+                with ``pool_name`` each turn resolves its per-turn stores
+                (context manager / turn store / command store) from the
+                active workspace's PoolData snapshot instead of ``self``.
+            pool_name: name of the pool whose PoolData snapshot backs each
+                turn when ``workspace_manager`` is wired.
         """
         if sanitizer is _UNSET:
             from framework.utils.sanitizer import ContentSanitizer
@@ -191,6 +202,9 @@ class AgentPipeline:
         self.command_store = command_store
         self.runtime_services = runtime_services
         self.command_processor = command_processor
+        self.workspace_manager = workspace_manager
+        self.pool_name = pool_name
+        self.pool_data_resolver = pool_data_resolver
         self._approval = ApprovalRenderer(
             agent=agent,
             user_interface=user_interface,
@@ -210,6 +224,44 @@ class AgentPipeline:
     @_user_interface.setter
     def _user_interface(self, value):
         self._approval._user_interface = value
+
+    def _resolve_pool_data(
+        self, session_id: str = ""
+    ) -> PoolDataSnapshot | None:
+        """Resolve the per-turn data snapshot from the active workspace.
+
+        When ``pool_data_resolver`` is set it takes precedence: the callable
+        receives *session_id* and returns the pool name, so the pipeline
+        follows per‑session pool routing (PoolSessionStore) instead of the
+        static ``pool_name`` assigned at pipeline creation.  This keeps a
+        session's memory, trace, and turn/command stores consistently in the
+        same pool, even when pool routing changes between turns.
+
+        When no resolver is wired the old static ``pool_name`` path is used
+        (backward‑compatible).
+        """
+        if self.workspace_manager is None:
+            return None
+        ws = self.workspace_manager.resolve_workspace()
+
+        if self.pool_data_resolver is not None and session_id:
+            pool_name = self.pool_data_resolver(session_id)
+            if pool_name is not None:
+                return ws.pool_data.get(pool_name)
+            return None
+
+        if self.pool_name is None:
+            return None
+        return ws.pool_data.get(self.pool_name)
+
+    def _is_subagent(self) -> bool:
+        """Whether this pipeline backs a subagent (vs the pool's main agent)."""
+        from framework.multi_agent.comm_kind import AgentCommKind
+
+        return (
+            self.agent_descriptor is not None
+            and self.agent_descriptor.comm_kind == AgentCommKind.SUBAGENT
+        )
 
     async def run(self) -> None:
         """运行流水线"""
@@ -372,7 +424,7 @@ class AgentPipeline:
         else:
             route_result = None
             session = input_msg.session
-        session_id = str(session)
+        session_id = session.session_id
         logger.info(f"Processing message: session_id={session_id}")
 
         prelock_dispatch_policy = None
@@ -571,11 +623,12 @@ class AgentPipeline:
         ctx_mgr: ContextManager,
         *,
         input_metadata: dict[str, Any] | None = None,
+        pool_data: PoolDataSnapshot | None = None,
     ) -> tuple[AgentContext, ContentEmitter]:
         """Build AgentContext and emitter for the turn."""
 
         # Ensure per-session injection queue exists
-        self._injection_queues.setdefault(str(session), asyncio.Queue(maxsize=50))
+        self._injection_queues.setdefault(session.session_id, asyncio.Queue(maxsize=50))
 
         # ---- typed TurnIdentity (new) ----
         from uuid import uuid4
@@ -603,14 +656,31 @@ class AgentPipeline:
         )
         agent_context.system_prompt_pipeline = context_state.system_prompt_pipeline
         agent_context.identity = turn_identity
+        # Per-turn snapshot (opaque PoolData) for hooks/agents that need
+        # the resolved workspace's stores (e.g. experience dir). None when
+        # no workspace manager is wired.
+        agent_context.workspace_snapshot = pool_data
 
         # ---- governance (pending injection, etc.) — unconditional ----
         base_services = self.runtime_services
         base_gov = base_services.governance if base_services is not None else None
-        governance = ctx_mgr.wrap_governance(base_gov or self.governance, str(session))
+        governance = ctx_mgr.wrap_governance(base_gov or self.governance, session.session_id)
+
+        # Resolve the turn-scoped turn/command stores. Precedence:
+        # process-scope runtime_services override > per-turn pool snapshot
+        # > pipeline-level self.turn_store / self.command_store.
+        snapshot_turn_store = (
+            pool_data.turn_store if pool_data is not None else self.turn_store
+        )
+        snapshot_command_store = (
+            pool_data.command_store if pool_data is not None else self.command_store
+        )
+        snapshot_trace_store = (
+            pool_data.trace_store if pool_data is not None else None
+        )
 
         # ---- typed AgentRuntime with ReActTurnState (new) ----
-        if self.turn_store is not None:
+        if snapshot_turn_store is not None:
             from framework.agents.react.state import ReActTurnState
             from framework.runtime.enums import AgentKind, TurnCustomKey
             from framework.runtime.enums import TurnPhase as RTurnPhase
@@ -633,14 +703,15 @@ class AgentPipeline:
                 turn_store=(
                     base_services.turn_store
                     if base_services is not None and base_services.turn_store is not None
-                    else self.turn_store
+                    else snapshot_turn_store
                 ),
                 command_store=(
                     base_services.command_store
                     if base_services is not None and base_services.command_store is not None
-                    else self.command_store
+                    else snapshot_command_store
                 ),
-                pending_input_queue=self._injection_queues.get(str(session)),
+                trace_store=snapshot_trace_store,
+                pending_input_queue=self._injection_queues.get(session.session_id),
                 safety=base_services.safety if base_services is not None else self.safety,
                 runtime_context_manager=(
                     base_services.runtime_context_manager
@@ -663,6 +734,7 @@ class AgentPipeline:
             agent_context.runtime = AgentRuntime(
                 services=AgentRuntimeServices(
                     governance=governance,
+                    trace_store=snapshot_trace_store,
                     control_channel=self.control_channel
                     or (base_services.control_channel if base_services is not None else None),
                 ),
@@ -675,11 +747,11 @@ class AgentPipeline:
 
         # Emitter selection
         if self.emitter_factory:
-            emitter = self.emitter_factory(str(session))
+            emitter = self.emitter_factory(session.session_id)
         else:
             emitter = StreamingAwareEmitter(
                 output_adapter=self.output_adapter,
-                session_id=str(session),
+                session_id=session.session_id,
                 send_timeout=self.safety.turn.output_send_timeout_seconds,
             )
 
@@ -790,6 +862,7 @@ class AgentPipeline:
         context_state: ContextState,
         input_metadata: dict[str, Any],
         ctx_mgr: ContextManager,
+        pool_data: PoolDataSnapshot | None = None,
     ) -> AgentResult | None:
         approval = ReActSnapshotPolicy.approval_from_snapshot(snapshot)
         if approval is None:
@@ -808,12 +881,13 @@ class AgentPipeline:
                     break
 
         snapshot = ReActSnapshotPolicy.replace_approval(snapshot, approval)
-        if self.turn_store is None:
+        turn_store = pool_data.turn_store if pool_data is not None else self.turn_store
+        if turn_store is None:
             logger.error("Approval resume requested but no TurnStateStore is configured")
             return None
 
         if not approval.every_tool_decided:
-            await self.turn_store.save_turn(snapshot)
+            await turn_store.save_turn(snapshot)
             if self._user_interface is not None:
                 for req in approval.requests:
                     current = approval.decisions.get(req.tool_call_id, ApprovalDecision.PENDING)
@@ -839,15 +913,18 @@ class AgentPipeline:
             ctx_mgr,
         )
         if result is not None:
-            await self.turn_store.delete_turn(snapshot.identity)
+            await turn_store.delete_turn(snapshot.identity)
             await self._approval.drain(session_id)
         return result
 
-    async def _load_pending_approval_snapshot(self, session_id: str) -> TurnSnapshot | None:
-        if self.turn_store is None:
+    async def _load_pending_approval_snapshot(
+        self, session_id: str, *, pool_data: PoolDataSnapshot | None = None,
+    ) -> TurnSnapshot | None:
+        turn_store = pool_data.turn_store if pool_data is not None else self.turn_store
+        if turn_store is None:
             return None
         agent_id = self.agent.name
-        snapshots = await self.turn_store.list_active_turns(
+        snapshots = await turn_store.list_active_turns(
             StateQueryScope(
                 agent_id=agent_id,
                 session_id=session_id,
@@ -866,6 +943,8 @@ class AgentPipeline:
         session_id: str,
         input_metadata: dict[str, Any],
         pending_snapshot: TurnSnapshot | None,
+        *,
+        pool_data: PoolDataSnapshot | None = None,
     ) -> TurnRequest | None:
         if self.command_processor is None:
             parsed_command = parse_input_command(input_msg.content or "")
@@ -896,7 +975,7 @@ class AgentPipeline:
             input_msg=input_msg,
             agent_name=self.agent.name,
             skill_manager=self.skill_manager,
-            turn_store=self.turn_store,
+            turn_store=pool_data.turn_store if pool_data is not None else self.turn_store,
             pending_approval=pending_snapshot,
         )
         result = await self.command_processor.handle(input_msg.content or "", command_context)
@@ -957,12 +1036,29 @@ class AgentPipeline:
         )
         input_metadata = getattr(input_msg, "metadata", None) or {}
 
-        pending_snapshot = await self._load_pending_approval_snapshot(session_id)
+        # Resolve the per-turn PoolData snapshot once, at turn start, so a
+        # workspace switch mid-turn cannot corrupt the in-flight turn.
+        pool_data = self._resolve_pool_data(session_id)
+        # Only the pool's main agent follows the workspace's pool_data
+        # context_manager (to track workspace switches). A subagent registers
+        # its OWN context_manager — its own system prompt + OUTPUT.md base dir
+        # — and must never be overridden by the main agent's, otherwise every
+        # subagent inherits the main prompt and loses its OUTPUT.md task.
+        # (turn_store / command_store below are still shared — they are
+        # pool-level and session-isolated, and the subagent needs them so its
+        # runtime + FINALLY_TURN hooks are constructed.)
+        if pool_data is not None and not self._is_subagent():
+            ctx_mgr = pool_data.context_manager
+
+        pending_snapshot = await self._load_pending_approval_snapshot(
+            session_id, pool_data=pool_data,
+        )
         turn_request = await self._build_turn_request(
             input_msg,
             session_id,
             input_metadata,
             pending_snapshot,
+            pool_data=pool_data,
         )
         if turn_request is None:
             return None
@@ -1015,6 +1111,7 @@ class AgentPipeline:
             context_state,
             ctx_mgr,
             input_metadata=input_metadata,
+            pool_data=pool_data,
         )
 
         if approval_state is not None:
@@ -1027,6 +1124,7 @@ class AgentPipeline:
                 context_state=context_state,
                 input_metadata=input_metadata,
                 ctx_mgr=ctx_mgr,
+                pool_data=pool_data,
             )
 
         if not turn_request.trigger_agent:

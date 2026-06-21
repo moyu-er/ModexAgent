@@ -61,7 +61,7 @@ async def test_agent_pool_dispatches_inbox_wakeup_to_pipeline():
         source=AgentAddress(kind="agent", name="subagent"),
         target=AgentAddress(kind="agent", name="worker"),
         message_type="agent_message",
-        conversation_id="conv1",
+        session_id="conv1",
         agent_session_id="conv1.worker",
     )
     await bus.send("conv1.worker", envelope)

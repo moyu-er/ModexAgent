@@ -1,11 +1,12 @@
-"""modexbot CLI — start / stop / restart / logs for ModexAgent bot.
+"""modexbot CLI — start / stop / restart / status / logs for ModexAgent bot.
 
 Usage::
 
     modexbot start   [--config DIR] [--port PORT] [--no-webui]
     modexbot stop    [--port PORT]
     modexbot restart [--config DIR] [--port PORT] [--no-webui]
-    modexbot logs    [--lines N] [--follow]
+    modexbot status  [--port PORT]
+    modexbot logs    [--lines N] [--follow] [--clear]
 
 Run ``modexbot --help`` or ``modexbot <command> --help`` for details.
 """
@@ -28,7 +29,7 @@ from modexbot.config_env import check_env_llm_config
 app = typer.Typer(
     name="modexbot",
     help="ModexAgent bot — multi-channel agent runtime.\n\n"
-    "Commands: start, stop, restart, install, config, logs. Use <command> --help for details.\n\n"
+    "Commands: start, stop, restart, status, install, config, logs. Use <command> --help for details.\n\n"
     "Run 'modexbot install' to rebuild the WebUI after editing frontend sources.",
     no_args_is_help=True,
 )
@@ -202,7 +203,7 @@ def _find_processes_by_command(pattern: str) -> list[int]:
     return sorted(pids)
 
 
-_BOT_CMD_MARKERS: tuple[str, ...] = ("modexbot.cli", "modexbot.main")
+_BOT_CMD_MARKERS: tuple[str, ...] = ("modexbot.cli", "modexbot.main", "debug_main")
 
 
 def _get_command_line(pid: int) -> str | None:
@@ -244,12 +245,19 @@ def _get_command_line(pid: int) -> str | None:
         return None
 
 
-def _is_bot_process(pid: int) -> bool:
-    """True if *pid* appears to be a modexbot process based on its command line."""
+def _is_bot_process(pid: int, *, via_port: bool = False) -> bool:
+    """True if *pid* appears to be a modexbot process.
+
+    When *via_port* is True the check is more lenient: any Python process
+    listening on the bot port is accepted.  This catches the bot regardless
+    of how it was launched (``debug_main.py``, ``python bot_service.py``, etc).
+    """
     cmdline = _get_command_line(pid)
     if not cmdline:
         return False
-    return any(marker in cmdline for marker in _BOT_CMD_MARKERS)
+    if any(marker in cmdline for marker in _BOT_CMD_MARKERS):
+        return True
+    return bool(via_port and "python" in cmdline.lower())
 
 
 def _is_port_in_use(port: int) -> bool:
@@ -358,7 +366,7 @@ def _stop_running(port: int = _DEFAULT_PORT) -> bool:
         for p in port_pids:
             if p == current_pid:
                 continue
-            if _is_bot_process(p):
+            if _is_bot_process(p, via_port=True):
                 pids_to_kill.add(p)
                 typer.echo(f"  Found bot on port {port}: pid={p}")
             else:
@@ -391,6 +399,186 @@ def _stop_running(port: int = _DEFAULT_PORT) -> bool:
 
     _remove_pid()
     return True
+
+
+# ── Bot discovery (read-only, no kill) ────────────────────────────────────
+
+
+def _discover_bot_pids(port: int) -> dict[int, str]:
+    """Discover running modexbot PIDs without stopping them.
+
+    Returns ``{pid: found_via}`` where ``found_via`` is ``"pid_file"``,
+    ``"port_scan"``, or ``"both"``.  Excludes the current process.
+    """
+    current_pid = os.getpid()
+    result: dict[int, str] = {}
+
+    # Layer 1: PID file
+    pid = _read_pid()
+    if pid is not None and pid != current_pid and _is_running(pid) and _is_bot_process(pid):
+        result[pid] = "pid_file"
+
+    # Layer 2: Port scan
+    port_pids = _find_processes_by_port(port)
+    for p in port_pids:
+        if p == current_pid:
+            continue
+        if _is_bot_process(p, via_port=True):
+            result[p] = "both" if p in result else "port_scan"
+
+    return result
+
+
+# ── Process info (cross-platform) ─────────────────────────────────────────
+
+
+def _parse_ps_etime(etime: str) -> float | None:
+    """Parse ``ps -o etime=`` output to seconds.
+
+    Format: ``[[dd-]hh:]mm:ss`` (POSIX).
+    """
+    etime = etime.strip()
+    if not etime:
+        return None
+    try:
+        days = 0
+        rest = etime
+        if "-" in rest:
+            days_str, rest = rest.split("-", 1)
+            days = int(days_str)
+        parts = rest.split(":")
+        if len(parts) == 3:
+            return float(
+                days * 86400
+                + int(parts[0]) * 3600
+                + int(parts[1]) * 60
+                + int(parts[2])
+            )
+        elif len(parts) == 2:
+            return float(days * 86400 + int(parts[0]) * 60 + int(parts[1]))
+    except (ValueError, IndexError):
+        pass
+    return None
+
+
+def _get_process_uptime_seconds(pid: int) -> float | None:
+    """Return process uptime in seconds, or *None* if unavailable (cross-platform)."""
+    if sys.platform == "win32":
+        try:
+            result = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    "(Get-CimInstance Win32_Process "
+                    f"-Filter \"ProcessId={pid}\").CreationDate",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            dt_str = result.stdout.strip()
+            if dt_str:
+                from datetime import datetime as _dt
+
+                dt = _dt.fromisoformat(dt_str)
+                return time.time() - dt.timestamp()
+        except (subprocess.TimeoutExpired, OSError, ValueError):
+            pass
+        return None
+
+    # Unix: try etimes= (Linux — raw seconds), then etime= (POSIX — formatted)
+    for opt in ("etimes=", "etime="):
+        try:
+            result = subprocess.run(
+                ["ps", "-o", opt, "-p", str(pid)],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            output = result.stdout.strip()
+            if not output:
+                continue
+            if opt == "etimes=":
+                for line in output.splitlines():
+                    line = line.strip()
+                    if line.lstrip("-").isdigit():
+                        elapsed = int(line)
+                        if elapsed >= 0:
+                            return float(elapsed)
+            else:
+                for line in output.splitlines():
+                    elapsed = _parse_ps_etime(line.strip())
+                    if elapsed is not None:
+                        return elapsed
+                break  # etime fallback — don't try anything else
+        except (subprocess.TimeoutExpired, OSError, ValueError, FileNotFoundError):
+            continue
+
+    return None
+
+
+def _get_process_memory_mb(pid: int) -> float | None:
+    """Return process RSS memory in MB, or *None* if unavailable (cross-platform)."""
+    if sys.platform == "win32":
+        try:
+            result = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    "(Get-CimInstance Win32_Process "
+                    f"-Filter \"ProcessId={pid}\").WorkingSetSize",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            val = result.stdout.strip()
+            if val and val.isdigit():
+                return int(val) / (1024 * 1024)
+        except (subprocess.TimeoutExpired, OSError, ValueError):
+            pass
+        return None
+
+    # Unix: ps -o rss= (KB)
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "rss=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        val = result.stdout.strip()
+        if val and val.isdigit():
+            return int(val) / 1024
+    except (subprocess.TimeoutExpired, OSError, ValueError, FileNotFoundError):
+        pass
+
+    return None
+
+
+def _format_uptime(seconds: float) -> str:
+    """Format seconds as ``"2h 14m 32s"``."""
+    if seconds < 0:
+        return "unknown"
+
+    days, remainder = divmod(int(seconds), 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, secs = divmod(remainder, 60)
+
+    parts: list[str] = []
+    if days:
+        parts.append(f"{days}d")
+    if hours or days:
+        parts.append(f"{hours}h")
+    if minutes or hours or days:
+        parts.append(f"{minutes}m")
+    parts.append(f"{secs}s")
+    return " ".join(parts)
+
+
+# ── Run helpers ────────────────────────────────────────────────────────────
 
 
 def _run_bot(config_str: str, port: int, no_webui: bool) -> None:
@@ -673,6 +861,44 @@ def config_cmd() -> None:
     run_config_wizard(_ENV_PATH)
 
 
+@app.command("status")
+def status(
+    port: int = typer.Option(  # noqa: B008
+        _DEFAULT_PORT, "--port", "-p", help="Port to check for running instances"
+    ),
+) -> None:
+    """Show the bot's running status (PID, port, uptime, memory)."""
+    instances = _discover_bot_pids(port)
+
+    if not instances:
+        typer.echo("Bot Status: STOPPED")
+        typer.echo(f"  Port {port}: not in use")
+        pid = _read_pid()
+        if pid is not None and not _is_running(pid):
+            typer.echo(f"  PID file (.modex/bot.pid) is stale (pid={pid})")
+        elif pid is not None:
+            typer.echo(f"  PID file (.modex/bot.pid) points to pid={pid}, "
+                        "but the process is not a modexbot instance")
+        return
+
+    for pid, found_via in instances.items():
+        uptime_s = _get_process_uptime_seconds(pid)
+        memory_mb = _get_process_memory_mb(pid)
+
+        typer.echo("Bot Status: RUNNING")
+        typer.echo(f"  PID:       {pid}")
+        typer.echo(f"  Port:      {port}")
+        if uptime_s is not None and uptime_s >= 0:
+            typer.echo(f"  Uptime:    {_format_uptime(uptime_s)}")
+        if memory_mb is not None:
+            typer.echo(f"  Memory:    {memory_mb:.1f} MB")
+        typer.echo(f"  WebUI:     http://localhost:{port}/webui/")
+        typer.echo(f"  Log:       {_log_file()}")
+        typer.echo(f"  Config:    {_PKG_ROOT / 'config'}")
+        if found_via == "port_scan":
+            typer.echo("  Found via: port scan (PID file is missing or stale)")
+
+
 def _tail_file(path: Path, lines: int) -> list[str]:
     """Return the last *lines* lines of *path*.
 
@@ -697,9 +923,25 @@ def logs(
     follow: bool = typer.Option(  # noqa: B008
         False, "--follow", "-f", help="Follow log output like tail -f"
     ),
+    clear: bool = typer.Option(  # noqa: B008
+        False, "--clear", help="Truncate the log file before showing"
+    ),
 ) -> None:
-    """Show the bot log. Use -f/--follow to tail continuously."""
+    """Show the bot log. Use -f/--follow to tail continuously. Use --clear to truncate."""
     log_path = _log_file()
+
+    if clear:
+        instances = _discover_bot_pids(_DEFAULT_PORT)
+        if instances:
+            typer.echo("Bot is running — clearing the log while the bot is active.")
+            typer.echo("New log entries will appear after this point.")
+        try:
+            log_path.write_text("", encoding="utf-8")
+            typer.echo(f"Log cleared: {log_path}\n")
+        except OSError as e:
+            typer.echo(f"ERROR: could not clear log file: {e}")
+            raise typer.Exit(1) from e
+
     if not log_path.is_file():
         typer.echo(f"No log file found at {log_path}")
         raise typer.Exit(0)
@@ -750,7 +992,7 @@ def _build_webui(force: bool = False) -> None:
     node_modules = webui_dir / "node_modules"
     if not node_modules.is_dir():
         typer.echo("Installing frontend dependencies (npm install)...")
-        _run_npm("install", webui_dir)
+        _run_npm("install --no-fund --no-audit --progress=false", webui_dir)
 
     typer.echo("Building frontend (npm run build)...")
     _run_npm("run build", webui_dir)
@@ -770,11 +1012,22 @@ def _run_npm(args: str, cwd: Path) -> None:
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=120,
+            timeout=300,
         )
     except subprocess.CalledProcessError as e:
         stderr = e.stderr.strip() if e.stderr else str(e)
         typer.echo(f"ERROR: '{full_cmd}' failed:\n{stderr}")
+        lowered = stderr.lower()
+        if any(
+            token in lowered
+            for token in ("eacces", "permission denied", "eperm", "operation not permitted")
+        ):
+            typer.echo("\nHINT: npm's global prefix may be owned by root.")
+            typer.echo("  Fix it by running the following (no sudo needed):")
+            typer.echo("    npm config set prefix ~/.npm-global")
+            typer.echo("    mkdir -p ~/.npm-global/bin")
+            typer.echo("    export PATH=~/.npm-global/bin:$PATH")
+            typer.echo("  Then re-run this command.")
         raise typer.Exit(1) from e
     except subprocess.TimeoutExpired:
         typer.echo(f"ERROR: '{full_cmd}' timed out")

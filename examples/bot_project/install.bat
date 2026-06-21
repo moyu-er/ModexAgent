@@ -2,11 +2,13 @@
 setlocal enabledelayedexpansion
 pushd "%~dp0"
 
-set "ROOT_VENV=%~dp0..\..\.venv"
+:: Resolve to absolute path so the registry entry has no "..\" components
+for %%i in ("%~dp0..\..\.venv") do set "ROOT_VENV=%%~fi"
 set "VENV_PYTHON=%ROOT_VENV%\Scripts\python.exe"
 set "VENV_MARKER=%ROOT_VENV%\.modexbot-pyproject-mtime"
 set "TEMP_FILE=%TEMP%\_mx_setup_path.txt"
 set "VER_FILE=%TEMP%\_mx_ver.txt"
+set "BOT_PID_FILE=%~dp0.modex\bot.pid"
 
 echo.
 echo  =============================================
@@ -187,8 +189,17 @@ exit /b 1
 :: VENV_PYTHON now points to the root venv (ModexAgent\.venv).
 :: All venv operations must use the same path to stay in sync.
 if exist "%VENV_PYTHON%" (
-    echo   Virtual environment already exists, skipping creation.
-    goto :venv_skip_create
+    echo   Virtual environment found, checking health...
+    :: Verify the venv is actually isolated: sys.prefix must point inside it.
+    :: Do NOT import third-party packages here; only validate Python itself.
+    "%VENV_PYTHON%" -c "import sys; sys.exit(0 if sys.prefix.lower() == r'%ROOT_VENV%'.lower() else 1)" >nul 2>&1
+    if errorlevel 1 (
+        echo   Existing venv is unhealthy ^(not isolated from system Python^), recreating...
+        rmdir /s /q "%ROOT_VENV%"
+    ) else (
+        echo   Virtual environment is healthy.
+        goto :venv_skip_create
+    )
 )
 
 echo Creating virtual environment...
@@ -218,6 +229,20 @@ if errorlevel 1 (
 :: ==========================================================================
 :: 4. Python dependencies
 :: ==========================================================================
+:: Copy mode avoids cross-filesystem hardlink failures (cache on C:, venv on
+:: another drive) that can leave packages half-extracted. Belt-and-suspenders
+:: with [tool.uv] link-mode in the root pyproject.
+set "UV_LINK_MODE=copy"
+
+:: Stop any running bot first. On Windows a process holds its imported .pyd/.py
+:: files open; reinstalling aiohttp (or any package the bot imports) while it is
+:: running corrupts the install — old files deleted, new ones not written, RECORD
+:: left empty (the "No module named 'aiohttp._cookie_helpers'" crash).
+if exist "%BOT_PID_FILE%" (
+    echo   Stopping running bot before dependency reinstall...
+    "%VENV_PYTHON%" -m modexbot stop >nul 2>&1
+)
+
 set "NEEDS_PIP=0"
 if not exist "%VENV_MARKER%" set "NEEDS_PIP=1"
 
@@ -229,22 +254,37 @@ if exist "pyproject.toml" (
     )
 )
 
-if "!NEEDS_PIP!"=="0" goto :pip_done
+if "!NEEDS_PIP!"=="1" (
+    echo Installing Python dependencies...
+    call :pip_install
+    if errorlevel 1 goto :pip_failed
+    for %%I in ("pyproject.toml") do echo %%~tI> "%VENV_MARKER%"
+)
 
-echo Installing Python dependencies...
-uv pip install --python "%VENV_PYTHON%" -e "..\..\.[all,dev]"
+:: Integrity smoke check — runs even when the marker says "already installed",
+:: so a previously-corrupted install (interrupted / files held open) is detected
+:: and self-heals instead of being silently skipped. aiohttp._cookie_helpers is a
+:: canary: it is a pure-python module whose absence is exactly the production
+:: crash signature of a half-extracted aiohttp.
+"%VENV_PYTHON%" -c "import aiohttp, aiohttp._cookie_helpers, aiohttp.web" >nul 2>&1
 if errorlevel 1 (
-    echo [ERROR] Framework install failed
-    popd
-    exit /b 1
+    echo   Critical import check failed — environment is corrupted, forcing clean reinstall...
+    call :pip_install --reinstall
+    if errorlevel 1 goto :pip_failed
+    "%VENV_PYTHON%" -c "import aiohttp, aiohttp._cookie_helpers, aiohttp.web" >nul 2>&1
+    if errorlevel 1 (
+        echo [ERROR] aiohttp still fails to import after reinstall.
+        echo   Ensure the bot is stopped, then delete %ROOT_VENV% and re-run install.bat.
+        popd
+        exit /b 1
+    )
+    for %%I in ("pyproject.toml") do echo %%~tI> "%VENV_MARKER%"
 )
-uv pip install --python "%VENV_PYTHON%" -e ".[webui,dev]"
-if errorlevel 1 (
-    echo [ERROR] CLI install failed
-    popd
-    exit /b 1
-)
-for %%I in ("pyproject.toml") do echo %%~tI> "%VENV_MARKER%"
+goto :pip_done
+
+:pip_failed
+popd
+exit /b 1
 
 :pip_done
 
@@ -292,7 +332,7 @@ if "!HAS_NODE!"=="1" (
 :: ==========================================================================
 :: 7. Register modexbot CLI globally (add .venv\Scripts to user PATH)
 :: ==========================================================================
-set "VENV_SCRIPTS=%~dp0..\..\.venv\Scripts"
+set "VENV_SCRIPTS=%ROOT_VENV%\Scripts"
 
 :: Check if already registered by looking for the full venv Scripts path in
 :: the current HKCU PATH. This works regardless of the parent directory name.
@@ -323,7 +363,14 @@ if defined USER_PATH (
 )
 if not errorlevel 1 (
     echo   Added to user PATH.
-    :: Update current session PATH without duplicating the entry.
+    :: Broadcast environment change to all running Windows processes so new
+    :: terminals and Explorer pick up the updated PATH immediately.
+    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+        "[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path', 'User'), 'User')" >nul 2>&1
+    :: Refresh current session PATH from registry (picks up the venv entry
+    :: we just wrote, plus any other recent system-wide changes).
+    call :reload_path
+    :: Ensure the venv Scripts is in the current session PATH (belt-and-suspenders).
     call :path_contains PATH VENV_SCRIPTS
     if "!PATH_CONTAINS!"=="0" set "PATH=!PATH!;!VENV_SCRIPTS!"
 ) else (
@@ -333,9 +380,10 @@ if not errorlevel 1 (
 )
 if exist "%TEMP_FILE%" del "%TEMP_FILE%" 2>nul
 echo.
-echo   To use 'modexbot' right now without restarting:
-echo     - cmd.exe: already active in this window
-echo     - PowerShell: run this in your current terminal:
+echo   Environment variable refresh:
+echo     - This cmd window: PATH is already updated, 'modexbot' is ready.
+echo     - New terminal windows: will pick up the change automatically.
+echo     - Current PowerShell: refresh your session with this command:
 echo         $env:Path = [Environment]::GetEnvironmentVariable('Path','User')
 goto :path_done
 
@@ -367,6 +415,8 @@ echo  Next step:
 echo.
 echo        modexbot start
 echo.
+echo  (If 'modexbot' is not found, open a NEW terminal window first.)
+echo.
 echo  The bot will be available at: http://localhost:21800/webui/
 if "!HAS_NODE!"=="0" (
     echo.
@@ -382,4 +432,16 @@ echo    modexbot config       - Interactive config wizard
 echo.
 
 popd
+exit /b 0
+
+:: ==========================================================================
+:: Subroutine: install framework + bot deps. Optional %1 = extra uv flags
+:: (e.g. --reinstall for the self-healing recovery path). Returns errorlevel.
+:: ==========================================================================
+:pip_install
+set "_PIP_EXTRA=%~1"
+uv pip install %_PIP_EXTRA% --python "%VENV_PYTHON%" -e "..\..\.[all,dev]"
+if errorlevel 1 exit /b 1
+uv pip install %_PIP_EXTRA% --python "%VENV_PYTHON%" -e ".[webui,dev]"
+if errorlevel 1 exit /b 1
 exit /b 0

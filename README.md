@@ -140,6 +140,7 @@ source .venv/bin/activate
 uv pip install -e ".[all,dev]"
 
 # Install bot project (registers the 'modexbot' CLI)
+# Keep the venv activated, or use --python path explicitly
 cd examples\bot_project
 uv pip install -e ".[webui,dev]"
 

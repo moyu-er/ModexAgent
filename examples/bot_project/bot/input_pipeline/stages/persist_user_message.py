@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from bot.webui.events import UserMessageEvent
 from framework.input_pipeline.envelope import UserInputEnvelope
 from framework.input_pipeline.stage import Continue, InputStage, StageResult
+from framework.workspace.runtime import bind_workspace_root
 
 logger = logging.getLogger(__name__)
 
@@ -33,5 +35,12 @@ class PersistUserMessageStage(InputStage):
             agent_name=agent,
             content=envelope.content,
         )
-        ctx.transcript_store.append(full_sid, event)
+        # The transcript store routes writes by the bound workspace root
+        # (ctxvar).  This stage runs in the input pipeline, OUTSIDE the
+        # dispatch turn where the root is bound, so bind the envelope's
+        # resolved workspace around the append so the user message lands in
+        # the right workspace.
+        workspace: Path = envelope.metadata[RoutingMeta.WORKSPACE]
+        with bind_workspace_root(workspace):
+            ctx.transcript_store.append(full_sid, event)
         return Continue(value=envelope)

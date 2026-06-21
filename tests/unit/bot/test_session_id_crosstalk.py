@@ -4,7 +4,7 @@ When a WebUI session is created with ``factory.create(agent_name)``, the
 snowflake is ``encode_snowflake(random_uuid)``.  When ``_ws_send_message``
 forwards the message, it must pass the **already-resolved** SessionInfo
 via ``UserInputEnvelope.pre_resolved_session``, not the raw snowflake as
-``conversation_id`` — otherwise ``resolve_session_routing`` re-encodes the
+``session_id`` — otherwise ``resolve_session_routing`` re-encodes the
 already-encoded snowflake, producing a different session_id and causing
 transcripts to be saved under the wrong key.
 """
@@ -21,9 +21,9 @@ def test_factory_double_encode_changes_snowflake():
     # Simulate POST /api/sessions: create session with random snowflake
     session = factory.create(agent_name="coding")
     original_snowflake = session.session_id_prefix
-    original_session_id = str(session)
+    original_session_id = session.session_id
 
-    # Simulate _ws_send_message: the snowflake is extracted as conversation_id
+    # Simulate _ws_send_message: the snowflake is extracted as session_id
     conv_id = original_snowflake
 
     # Simulate resolve_session_routing WITHOUT pre_resolved_session:

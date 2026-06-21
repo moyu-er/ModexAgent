@@ -166,6 +166,15 @@ class Interceptor(ABC):
                 result.add(s)
         return frozenset(result)
 
+    def repoint_overflow_store(self, store: object) -> None:
+        """Retarget any overflow store this interceptor holds at *store*.
+
+        Default no-op: most interceptors do not manage overflow storage.
+        Overflow-aware interceptors (e.g. ToolResultLimitInterceptor) override
+        this to re-point their handler's store during a workspace switch.
+        """
+        return None
+
 
 class ToolCallInterceptor(Interceptor):
     """TOOL_CALL scope interceptor ABC."""

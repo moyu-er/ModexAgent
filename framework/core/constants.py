@@ -71,7 +71,7 @@ class DefaultValues:
     MAX_ITERATIONS = 10
     MAX_TOOL_CALLS = 10
     TIMEOUT_SECONDS = 60.0
-    TOOL_TIMEOUT_SECONDS = 180.0
+    TOOL_TIMEOUT_SECONDS = 360.0
     TOOL_VERSION = "1.0"
     TOOL_CATEGORY = "general"
     CALL_ID_PREFIX = "call_"

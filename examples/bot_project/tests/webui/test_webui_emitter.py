@@ -2,18 +2,24 @@
 
 from __future__ import annotations
 
-import json
 import tempfile
 from pathlib import Path
 
 import pytest
 
 from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
-from bot.webui.emitter import CompositeEmitter, WebBotEmitter, _merge_blocks
-from bot.webui.events import WebUIEventType
+from bot.webui.emitter import CompositeEmitter, WebBotEmitter
+from bot.webui.events import (
+    AssistantTextEvent as Ate,
+    ToolCallEvent as Tce,
+    ToolResultEvent as Tre,
+    WebUIEventType,
+)
 from bot.webui.transcript_store import JSONLTranscriptStore
 from framework.agents.react.agent import ReActEvent
 from framework.core.emitter import AgentResult, ContentEmitter, EmitterConfig
+from framework.core.tool_manager import ToolResult
+from framework.core.types import ToolCall
 
 
 @pytest.mark.asyncio
@@ -26,8 +32,10 @@ async def test_emit_content_delta() -> None:
     q = input_adapter._delta_queues.get("web:abc.main")
     assert q is not None
     envelope = q.get_nowait()
-    assert envelope.event_type == "model_content_delta"
-    assert envelope.payload == {"text": "hello", "turn_id": "turn_1"}
+    assert envelope.event_type == WebUIEventType.MODEL_CONTENT_DELTA.value
+    assert envelope.payload["text"] == "hello"
+    assert isinstance(envelope.payload["turn_id"], str)
+    assert len(envelope.payload["turn_id"]) > 0
     assert envelope.session_id == "web:abc.main"
     assert envelope.agent_name == "main"
 
@@ -42,47 +50,12 @@ async def test_emit_complete_sends_turn_end() -> None:
     q = input_adapter._delta_queues.get("web:abc.main")
     assert q is not None
     envelope = q.get_nowait()
-    assert envelope.event_type == "turn_end"
-
-
-@pytest.mark.asyncio
-async def test_emit_complete_saves_to_transcript() -> None:
-    """emitter_complete persists a complete AssistantTurnEvent to transcript."""
-    with tempfile.TemporaryDirectory() as tmp:
-        input_adapter = WebSocketInputAdapter()
-        output_adapter = WebSocketOutputAdapter(input_adapter)
-        store = JSONLTranscriptStore(Path(tmp))
-        emitter = WebBotEmitter(
-            output_adapter, "conv1.main",
-            config=EmitterConfig(),
-            transcript_store=store,
-        )
-        input_adapter.register_connection("conv1.main", None)
-
-        # Simulate streaming in order: reasoning → content → tool → content
-        emitter._blocks.append({"kind": "reasoning", "text": "Let me think."})
-        emitter._blocks.append({"kind": "text", "text": "Hello"})
-        emitter._blocks.append({"kind": "tool", "tool": "read", "args": {"path": "doc.md"}, "result": "content"})
-        emitter._blocks.append({"kind": "text", "text": " World"})
-
-        await emitter.emit_complete(AgentResult(content="Hello World"))
-
-        # Verify transcript save — blocks preserved in order
-        events = list(store.load("conv1.main"))
-        assert len(events) == 1
-        saved = events[0]
-        assert saved.event == WebUIEventType.ASSISTANT_TURN.value
-        blocks = saved.blocks  # type: ignore[attr-defined]
-        assert len(blocks) == 4
-        assert blocks[0]["kind"] == "reasoning"
-        assert blocks[1]["kind"] == "text"
-        assert blocks[2]["kind"] == "tool"
-        assert blocks[3]["kind"] == "text"
+    assert envelope.event_type == WebUIEventType.TURN_END.value
 
 
 @pytest.mark.asyncio
 async def test_streaming_does_not_save_deltas() -> None:
-    """emit_delta pushes WS events but does NOT write to transcript."""
+    """emit_delta pushes WS events but does NOT persist content to transcript."""
     with tempfile.TemporaryDirectory() as tmp:
         input_adapter = WebSocketInputAdapter()
         output_adapter = WebSocketOutputAdapter(input_adapter)
@@ -97,11 +70,10 @@ async def test_streaming_does_not_save_deltas() -> None:
         await emitter.emit_delta("hello")
         await emitter.emit_delta(" world")
 
-        # No events saved yet — only at turn end
         events = list(store.load("conv1.main"))
-        assert len(events) == 0
+        assert all(e.event != WebUIEventType.MODEL_CONTENT_DELTA.value for e in events)
+        assert all(e.event != WebUIEventType.ASSISTANT_TEXT.value for e in events)
 
-        # WS delta IS queued
         q = input_adapter._delta_queues.get("conv1.main")
         assert q is not None
         assert q.qsize() == 2
@@ -127,14 +99,14 @@ async def test_subagent_emitter_preserves_full_session_id() -> None:
         )
         input_adapter.register_connection(full_sid, None)
 
-        emitter._blocks.append({"kind": "text", "text": "review done"})
+        await emitter.emit_content("review done")
         await emitter.emit_complete(AgentResult(content="review done"))
 
         # WebSocket delta events carry the FULL session id + correct agent.
         q = input_adapter._delta_queues.get(full_sid)
         assert q is not None
         envelope = q.get_nowait()
-        assert envelope.event_type == "turn_end"
+        assert envelope.event_type == WebUIEventType.TURN_END.value
         assert envelope.session_id == full_sid
         assert envelope.agent_name == "reviewer"
 
@@ -157,12 +129,115 @@ async def test_two_subagent_emitters_persist_to_separate_transcripts() -> None:
                 config=EmitterConfig(),
                 transcript_store=store,
             )
-            em._blocks.append({"kind": "text", "text": sid})
+            await em.emit_content(sid)
             await em.emit_complete(AgentResult(content=sid))
 
-        assert len(list(store.load("conv1.reviewer.aa11"))) == 1
-        assert len(list(store.load("conv1.reviewer.bb22"))) == 1
+        assert len(list(store.load("conv1.reviewer.aa11"))) >= 1
+        assert len(list(store.load("conv1.reviewer.bb22"))) >= 1
         assert store.list_sessions() == {"conv1.reviewer.aa11", "conv1.reviewer.bb22"}
+
+
+# ── Incremental persistence tests ─────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_emit_content_saves_assistant_text_to_transcript() -> None:
+    """Buffered text is flushed to the transcript store at stream/turn end."""
+    with tempfile.TemporaryDirectory() as tmp:
+        input_adapter = WebSocketInputAdapter()
+        output_adapter = WebSocketOutputAdapter(input_adapter)
+        store = JSONLTranscriptStore(Path(tmp))
+        emitter = WebBotEmitter(output_adapter, "conv1.main", config=EmitterConfig(), transcript_store=store)
+        input_adapter.register_connection("conv1.main", None)
+        await emitter.emit_content("Hello World")
+        await emitter.emit_stream_end(resuming=False)
+        events = list(store.load("conv1.main"))
+        # TurnStartEvent is WebSocket-only (not persisted). Only AssistantTextEvent.
+        assert len(events) == 1
+        assert events[0].event == WebUIEventType.ASSISTANT_TEXT.value
+
+
+@pytest.mark.asyncio
+async def test_emit_complete_flushes_remaining_text_buffer() -> None:
+    """If emit_stream_end is not called, emit_complete flushes the buffer."""
+    with tempfile.TemporaryDirectory() as tmp:
+        input_adapter = WebSocketInputAdapter()
+        output_adapter = WebSocketOutputAdapter(input_adapter)
+        store = JSONLTranscriptStore(Path(tmp))
+        emitter = WebBotEmitter(output_adapter, "conv1.main", config=EmitterConfig(), transcript_store=store)
+        input_adapter.register_connection("conv1.main", None)
+        await emitter.emit_content("Hello World")
+        await emitter.emit_complete(AgentResult(content="done"))
+        events = list(store.load("conv1.main"))
+        assert any(e.event == WebUIEventType.ASSISTANT_TEXT.value for e in events)
+        assert not any(e.event == WebUIEventType.TURN_END.value for e in events)
+
+
+@pytest.mark.asyncio
+async def test_tool_call_events_persisted_incrementally() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        input_adapter = WebSocketInputAdapter()
+        output_adapter = WebSocketOutputAdapter(input_adapter)
+        store = JSONLTranscriptStore(Path(tmp))
+        emitter = WebBotEmitter(output_adapter, "conv1.main", config=EmitterConfig(), transcript_store=store)
+        input_adapter.register_connection("conv1.main", None)
+        tc = ToolCall(tool_name="read_file", arguments={"path": "/x"}, call_id="call_0")
+        result = ToolResult(tool_name="read_file", result="content", error=None)
+        await emitter.emit(ReActEvent.TOOL_CALL_START, tc)
+        await emitter.emit(ReActEvent.TOOL_CALL_END, (tc, result))
+        events = list(store.load("conv1.main"))
+        assert any(e.event == WebUIEventType.TOOL_CALL.value for e in events)
+        assert any(e.event == WebUIEventType.TOOL_RESULT.value for e in events)
+
+
+@pytest.mark.asyncio
+async def test_reasoning_not_persisted_to_transcript() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        input_adapter = WebSocketInputAdapter()
+        output_adapter = WebSocketOutputAdapter(input_adapter)
+        store = JSONLTranscriptStore(Path(tmp))
+        emitter = WebBotEmitter(output_adapter, "conv1.main", config=EmitterConfig(), transcript_store=store)
+        input_adapter.register_connection("conv1.main", None)
+        await emitter.emit(ReActEvent.MODEL_REASONING, "thinking...")
+        await emitter.emit_complete(AgentResult(content="done"))
+        events = list(store.load("conv1.main"))
+        assert not any(e.event == WebUIEventType.MODEL_REASONING_DELTA.value for e in events)
+
+
+@pytest.mark.asyncio
+async def test_emit_content_empty_skips_persist() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        input_adapter = WebSocketInputAdapter()
+        output_adapter = WebSocketOutputAdapter(input_adapter)
+        store = JSONLTranscriptStore(Path(tmp))
+        emitter = WebBotEmitter(output_adapter, "conv1.main", config=EmitterConfig(), transcript_store=store)
+        input_adapter.register_connection("conv1.main", None)
+        await emitter.emit_content("   ")
+        events = list(store.load("conv1.main"))
+        assert all(e.event != WebUIEventType.ASSISTANT_TEXT.value for e in events)
+
+
+@pytest.mark.asyncio
+async def test_streaming_delta_flush_persists_content() -> None:
+    """Regression: the control-interceptor stream path calls emit_delta +
+    emit_stream_end, not emit_content.  Assistant text must still reach the
+    transcript store.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        input_adapter = WebSocketInputAdapter()
+        output_adapter = WebSocketOutputAdapter(input_adapter)
+        store = JSONLTranscriptStore(Path(tmp))
+        emitter = WebBotEmitter(
+            output_adapter, "conv1.main", config=EmitterConfig(), transcript_store=store
+        )
+        input_adapter.register_connection("conv1.main", None)
+        await emitter.emit_delta("Hello ")
+        await emitter.emit_delta("world")
+        await emitter.emit_stream_end(resuming=False)
+        events = list(store.load("conv1.main"))
+        assert any(e.event == WebUIEventType.ASSISTANT_TEXT.value for e in events), (
+            f"Expected assistant text in transcript, got: {[e.event for e in events]}"
+        )
 
 
 # ── CompositeEmitter tests ────────────────────────────────────────────────
@@ -249,50 +324,3 @@ async def test_composite_wants_streaming_or_semantics() -> None:
         emitters=[_NoStreaming(), _NoStreaming()],
     )
     assert composite2.wants_streaming() is False
-
-
-# ── Block merge ──────────────────────────────────────────────────────────
-
-
-def test_merge_adjacent_text_blocks() -> None:
-    """Adjacent text blocks are merged into one."""
-    blocks: list[dict[str, object]] = [
-        {"kind": "text", "text": "Hello"},
-        {"kind": "text", "text": " World"},
-        {"kind": "text", "text": "!"},
-    ]
-    merged = _merge_blocks(blocks)
-    assert len(merged) == 1
-    assert merged[0] == {"kind": "text", "text": "Hello World!"}
-
-
-def test_merge_adjacent_reasoning_blocks() -> None:
-    """Adjacent reasoning blocks are merged into one."""
-    blocks: list[dict[str, object]] = [
-        {"kind": "reasoning", "text": "Let"},
-        {"kind": "reasoning", "text": " me think."},
-    ]
-    merged = _merge_blocks(blocks)
-    assert len(merged) == 1
-    assert merged[0] == {"kind": "reasoning", "text": "Let me think."}
-
-
-def test_merge_preserves_interleaving() -> None:
-    """Interleaved text/reasoning/tool blocks stay separate."""
-    blocks: list[dict[str, object]] = [
-        {"kind": "reasoning", "text": "Hmm"},
-        {"kind": "text", "text": "Hello"},
-        {"kind": "tool", "tool": "read", "args": {"path": "x"}},
-        {"kind": "text", "text": " World"},
-    ]
-    merged = _merge_blocks(blocks)
-    assert len(merged) == 4
-    assert merged[0] == {"kind": "reasoning", "text": "Hmm"}
-    assert merged[1] == {"kind": "text", "text": "Hello"}
-    assert merged[2]["kind"] == "tool"
-    assert merged[3] == {"kind": "text", "text": " World"}
-
-
-def test_merge_empty_blocks() -> None:
-    """Empty list returns empty."""
-    assert _merge_blocks([]) == []

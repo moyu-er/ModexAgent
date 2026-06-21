@@ -8,7 +8,6 @@ the universal observer — all conversations from any channel are visible.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from pathlib import Path
 from typing import Any
@@ -18,11 +17,14 @@ from aiohttp import web
 from bot.adapters.fan_in import FanInInputAdapter
 from bot.adapters.register_websocket import get_ws_input  # noqa: F401 — ensure import
 from bot.service.core import BotService
+from bot.service.recent_workspaces import RecentWorkspaces
+from bot.service.session_store import WorkspacePoolSessionStore
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.emitter import CompositeEmitter
 from bot.webui.server import WebUIServer
 from framework.agents.react.agent import ReActEvent
 from framework.core.emitter import ContentEmitter
+from framework.core.session_store import LocalFileSessionStore
 from framework.ioc.configs.app import AppConfig
 from framework.pipeline.adapters import InputAdapter, OutputAdapter
 
@@ -33,33 +35,6 @@ logger = logging.getLogger(__name__)
 _DEFAULT_PORT: int = 21800
 _DEFAULT_HOST: str = "0.0.0.0"
 _DEFAULT_AGENT_NAME: str = "main"
-def _modex_dir(project_dir: Path) -> Path:
-    """Data root — ``project_dir / MODEX_DATA_DIR``.
-
-    Used for the home (project) workspace only.  After ``cd``, session
-    stores are rebuilt to point at ``{new_workspace}/.modex/``.
-    """
-    import os
-
-    return project_dir / os.environ.get("MODEX_DATA_DIR", ".modex")
-
-
-def _sessions_dir(workspace_data_dir: Path) -> Path:
-    """Transcript directory under the given workspace data dir.
-
-    After ``cd``, this is rebuilt to point at the new workspace's
-    ``.modex/sessions/`` so each workspace maintains its own transcripts.
-    """
-    return workspace_data_dir / "sessions"
-
-
-def _session_index_dir(workspace_data_dir: Path) -> Path:
-    """SessionInfo metadata index — flat directory, separate from transcripts.
-
-    Each session has one ``{safe_id}.json`` file.  Workspace switching
-    rebases the store root to the new workspace's index directory.
-    """
-    return workspace_data_dir / "session_index"
 
 
 class WebUIService(BotService):
@@ -70,6 +45,15 @@ class WebUIService(BotService):
     are merged; outputs fan out via ``CompositeEmitter`` with per-channel
     filtering so QQ only responds to QQ-originated conversations, etc.
     """
+
+    # This service runs the WebUI; workspace-level transcript/session_index
+    # stores are wired by Workspace when webui=True.
+    webui: bool = True
+
+    # Unified transcript store instance shared by the WebSocket emitter factory,
+    # the server index, and the input pipeline. The _sessions_dir_for_prefix callback
+    # provides the current workspace's sessions_dir dynamically per session prefix.
+    _emitter_transcript_store: WorkspaceScopedTranscriptStore | None = None
 
     @staticmethod
     def _import_adapter_registration_modules(channels_module: Any) -> None:
@@ -130,39 +114,40 @@ class WebUIService(BotService):
         )
 
         # ── 2. Shared transcript store + workspace membership ──────────
-        # Sessions live per-workspace under {workspace}/.modex/sessions/.
-        # At startup use the home (project) workspace; after cd the stores
-        # are rebuilt via _update_session_stores() called from the workspace
-        # switch callback in core.py.
-        sessions_dir = _sessions_dir(_modex_dir(project_dir))
-        transcript_store = WorkspaceScopedTranscriptStore(
-            sessions_dir,
-            self._resolve_workspace,
+        # Stores are created from the project home dir for initial adapter
+        # builds; after workspace activation the _transcript_store /
+        # _session_store properties delegate to the active Workspace.
+        _data_dir_name: str = app_cfg.paths.data_dir_name
+        home_data_dir: Path = project_dir / _data_dir_name
+        home_sessions: Path = home_data_dir / "sessions"
+        home_session_index: Path = home_data_dir / "session_index"
+        self._home_sessions_dir: Path = home_sessions
+
+        transcript_store: WorkspaceScopedTranscriptStore = WorkspaceScopedTranscriptStore(
+            data_dir_name=_data_dir_name,
         )
         self._transcript_store = transcript_store
+        # The emitter factory (register_websocket.py) captures the store at
+        # build time in a closure. The _sessions_dir_for_prefix callback
+        # resolves the workspace sessions_dir per conversation prefix so the
+        # transcript store routes writes to the correct workspace.
+        self._emitter_transcript_store: WorkspaceScopedTranscriptStore | None = (
+            transcript_store
+        )
 
         # ── 2.5 Session store + registry ───────────────────────────────
-        # Flat index under .modex/session_index/ — separate from
-        # .modex/sessions/ (transcripts).  One JSON file per SessionInfo.
         from bot.service.session_store import WorkspacePoolSessionStore
         from framework.core.session_registry import InMemorySessionRegistry
 
-        index_dir = _session_index_dir(_modex_dir(project_dir))
-        self._session_store = WorkspacePoolSessionStore(
-            index_dir,
+        session_store: WorkspacePoolSessionStore = WorkspacePoolSessionStore(
+            home_session_index,
             pool_resolver=lambda session: self._pool_for_agent(session.agent_name),
+            data_dir_name=_data_dir_name,
         )
-        self._session_registry = InMemorySessionRegistry(store=self._session_store)
+        self._session_store = session_store
+        self._session_registry = InMemorySessionRegistry(store=session_store)
         # Sync cache for parent lookups at emit time (hot path).
         self._parent_ids: dict[str, str] = {}
-
-        # ── 2.6 Recent workspaces store ────────────────────────────
-        # Lives in the project home .modex/ (not per-workspace) because
-        # it tracks which workspaces the user has visited, not data owned
-        # by any single workspace.
-        from bot.service.recent_workspaces import RecentWorkspaces
-
-        self._recent_workspaces = RecentWorkspaces(_modex_dir(project_dir))
 
         # ── 3. Build adapters from registry ────────────────────────────
         # Auto-import all register_*.py modules so @register decorators fire.
@@ -250,26 +235,37 @@ class WebUIService(BotService):
         ws_output = get_ws_output()
         output_adapter_factory = lambda: ws_output
 
-        # on_subagent_created: records parent→child relation AND pre-registers
-        # the delta queue so subagent streaming output reaches the browser.
-        # The watcher in _ws_attach picks up the queue within 1s and starts
-        # a _forward_deltas task for it.
-        from bot.adapters.register_websocket import get_ws_input
+        # on_subagent_created: pre-registers the delta queue so subagent
+        # streaming output reaches the browser. The actual SessionInfo record
+        # is written by the per-workspace registry inside
+        # AgentCommunicationService._create_dynamic_subagent; we do NOT write it
+        # again here to avoid leaking it into the home workspace.
 
         async def _on_subagent_created(child_id: str, parent_id: str) -> None:
             # child_id is already a full session_id (e.g. "invocation.helper").
-            # Use from_str to recover it verbatim — factory.create or
-            # create_with_prefix would re-encode the prefix.
-            from framework.core.session_id import SessionInfo as _SI
-
-            child_session = _SI.from_str(child_id)
-            if parent_id:
-                child_session = child_session.model_copy(update={"parent_session_id": parent_id})
-            await self._session_registry.register(child_session)
             # Sync cache for hot-path parent lookups at emit time.
             self._parent_ids[child_id] = parent_id
             ws_input = get_ws_input()
             ws_input.ensure_queue(child_id)
+            # Notify the browser immediately so the new subagent appears in the
+            # sidebar tree as soon as it is spawned, rather than waiting for its
+            # first streaming event (or for the user to refresh).
+            from bot.adapters.register_websocket import get_ws_output
+            from bot.webui.events import DeltaEnvelope, WebUIEventType
+            from framework.core.session_id import agent_of
+
+            ws_output = get_ws_output()
+            child_agent = agent_of(child_id, default="unknown")
+            pool = self._agent_pool_map.get(child_agent, _DEFAULT_AGENT_NAME)
+            await ws_output.send_envelope(
+                DeltaEnvelope(
+                    session_id=child_id,
+                    agent_name=child_agent,
+                    event_type=WebUIEventType.CONVERSATION_CREATED.value,
+                    pool=pool,
+                    parent_session_id=parent_id or None,
+                )
+            )
 
         super().__init__(
             config_dir,
@@ -281,7 +277,7 @@ class WebUIService(BotService):
             output_adapter_factory=output_adapter_factory,
             on_subagent_created=_on_subagent_created,
             session_registry=self._session_registry,
-            session_store=self._session_store,
+            session_store=session_store,
         )
 
         # ── 7. WebUI server ────────────────────────────────────────────
@@ -298,61 +294,64 @@ class WebUIService(BotService):
             _ws_in(),
             transcript_store,
             static_dist,
-            data_dir=sessions_dir,
+            data_dir=home_sessions,
+            home_sessions_dir=home_sessions,
         )
+        self._server.set_data_dir_name(_data_dir_name)
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def _resolve_workspace(self) -> str:
-        """Return the currently active workspace path (shared by all channels).
+    @property
+    def _transcript_store(self) -> WorkspaceScopedTranscriptStore | None:
+        """Return the unified transcript store used by all channels.
 
-        Lazily read at message-write time so the resolver always reflects the
-        latest ``cd``/``exit``.  Returns "" before the workspace context exists.
+        The same store instance is passed to the WebSocket emitter factory at
+        init time.  Writes route by the bound workspace root (ctxvar); reads
+        pass an explicit ``sessions_dir`` from HTTP handlers.
         """
-        ctx = self.workspace_context
-        return str(ctx.current) if ctx is not None else ""
+        return self._emitter_transcript_store
+
+    @_transcript_store.setter
+    def _transcript_store(self, value: WorkspaceScopedTranscriptStore | None) -> None:
+        self.__dict__["_transcript_store"] = value
+        if value is not None:
+            self._emitter_transcript_store = value
+
+    @property
+    def _session_store(self) -> WorkspacePoolSessionStore | LocalFileSessionStore | None:
+        """Return the home workspace's session index store, falling back to
+        the initial store set during ``__init__``.
+
+        After ``initialize`` materializes home this delegates to
+        ``self._home_resources.session_index_store``.
+        """
+        home = self._home_resources
+        if home is not None:
+            return home.session_index_store
+        return self.__dict__.get("_session_store")
+
+    @_session_store.setter
+    def _session_store(
+        self, value: WorkspacePoolSessionStore | LocalFileSessionStore | None
+    ) -> None:
+        self.__dict__["_session_store"] = value
+
+    def _build_recent_workspaces(self) -> RecentWorkspaces:
+        """Build the project-level recent-workspaces store.
+
+        Uses ``AppConfig.paths.data_dir_name`` so the file lives next to the
+        workspace metadata directory even when the default ``.modex`` name is
+        overridden in config.
+        """
+        return RecentWorkspaces(
+            self._project_dir / self._app_config.paths.data_dir_name
+        )
 
     def _pool_for_agent(self, agent_name: str) -> str:
         """Return the pool name for *agent_name*, defaulting to ``main``."""
         return self._agent_pool_map.get(agent_name, _DEFAULT_AGENT_NAME)
-
-    def update_session_stores(self, new_data_dir: Path) -> None:
-        """Rebase transcript and session-index stores to *new_data_dir*.
-
-        Called after a workspace switch.  Transcripts go to
-        ``.modex/sessions/``; SessionInfo metadata goes to
-        ``.modex/session_index/`` (separate flat tree).  The runtime
-        registry cache is cleared and reloaded from the new index.
-        """
-        new_sessions_dir = _sessions_dir(new_data_dir)
-        new_sessions_dir.mkdir(parents=True, exist_ok=True)
-        new_index_dir = _session_index_dir(new_data_dir)
-        new_index_dir.mkdir(parents=True, exist_ok=True)
-
-        # Rebase transcript store.
-        self._transcript_store.rebase(new_sessions_dir)
-
-        # Rebase session index and reload registry cache.
-        self._session_store._root = new_index_dir
-        self._parent_ids.clear()
-
-        # Reload runtime cache from the new workspace's index (fire-and-forget).
-        async def _reload() -> None:
-            try:
-                await self._session_registry.load_all()
-            except Exception:
-                logger.exception("Failed to reload session registry after workspace switch")
-        try:
-            asyncio.create_task(_reload())
-        except RuntimeError:
-            # No event loop running (e.g. tests); skip async reload.
-            pass
-
-        # Update server's data_dir if already set.
-        if self._server is not None:
-            self._server._data_dir = new_sessions_dir
 
     async def start(self) -> None:
         """Start aiohttp server, then BotService (pools, router).
@@ -361,16 +360,6 @@ class WebUIService(BotService):
         connections so attach/send_message requests see a fully configured
         callback list from the first request.
         """
-        # ── Rebase stores to current workspace (covers initial restore) ─
-        # WorkspaceScopedTranscriptStore is created in __init__ with _base
-        # pointing at the project home.  If initialize() restored a different
-        # workspace from disk, the callback that would normally rebase the
-        # store was registered AFTER restore, so _base never moved.  We fix
-        # that here — idempotent rebase before the first read or write.
-        if self.workspace_context is not None:
-            ws_data_dir = self.workspace_context.data_dir
-            self.update_session_stores(ws_data_dir)
-
         # ── Inject server callbacks BEFORE aiohttp starts ───────────
         # Use main_agent_name from each pool's config — NOT the pool key.
         # This ensures the frontend only sees main agent events, never
@@ -381,8 +370,8 @@ class WebUIService(BotService):
         self._server.set_pool_agent_names(pool_agent_names)
         logger.info("Pool agents: %s", pool_agent_names)
 
-        if self.workspace_context is not None:
-            self._server.set_workspace_context(self.workspace_context)
+        if self.workspace_stack is not None:
+            self._server.set_workspace_control(self.workspace_stack.controller)
 
         # The shared transcript store physically partitions sessions by
         # (workspace, pool) and serves as the WebUI's partition index.
@@ -446,7 +435,10 @@ class WebUIService(BotService):
         # Pass session store to server for session list API enrichment
         self._server.set_session_store(self._session_store)
 
-        # Inject recent workspaces store for the recent-workspaces API
+        # Inject recent workspaces store for the recent-workspaces API.
+        # RecentWorkspaces lives in the project home data dir (not per-workspace)
+        # and uses the configured data_dir_name, not the MODEX_DATA_DIR env var.
+        self._recent_workspaces = self._build_recent_workspaces()
         self._server.set_recent_workspaces(self._recent_workspaces)
 
         # ── Input pipeline convergence ─────────────────────────────
@@ -464,18 +456,36 @@ class WebUIService(BotService):
         self._session_factory = SessionIdFactory()
         self._server.set_session_factory(self._session_factory)
 
-        def _build_input_context(inp) -> BotInputContext:
+        def _build_input_context(inp, *, current_ws_provider=None) -> BotInputContext:
             # Both channels share the same routing/persistence wiring; only the
             # physical queue (enqueue_message) and the control adapter differ.
+            # Use the service-level pool_session_store so mappings written here
+            # are visible to every workspace's PoolRouter during dispatch.
+            pool_store = self._pool_session_store
+            if pool_store is None:
+                # Should not happen: initialize() sets _pool_session_store
+                # before start(). Falling back to the home router's store only
+                # stays correct while home's router shares the service store;
+                # log loudly so a misconfigured startup is diagnosable.
+                logger.warning(
+                    "[pool-routing] _pool_session_store is None when building "
+                    "input context for channel '%s' — falling back to "
+                    "pool_router._session_store. Session→pool mappings written "
+                    "by this channel may be invisible to other workspaces if "
+                    "that store is not the service-level singleton.",
+                    inp.name,
+                )
+                pool_store = self.pool_router._session_store
             return BotInputContext(
                 default_pool=self._app_config.multi_agent.default_pool,
-                pool_session_store=self.pool_router._session_store,
+                pool_session_store=pool_store,
                 agent_pool_map=agent_pool_map,
                 agent_resolver=_agent_resolver,
                 transcript_store=self._transcript_store,
                 enqueue_message=inp.put_input_message,
                 command_adapter=inp,
                 session_factory=self._session_factory,
+                current_ws_provider=current_ws_provider,
             )
 
         webui_pipeline = build_webui_pipeline(
@@ -498,11 +508,14 @@ class WebUIService(BotService):
         im_pipeline = build_im_pipeline(
             skill_registry=skill_registry,
             known_pools=known_pools,
+            workspace_controller=self.workspace_stack.controller if self.workspace_stack is not None else None,
         )
         for inp in self._channel_inputs:
             if inp.name == "websocket":
                 continue  # WebSocket is configured via server.set_input_context above
-            im_ctx = _build_input_context(inp)
+            im_ctx = _build_input_context(
+                inp, current_ws_provider=lambda: inp.current_ws
+            )
             raw_out = self._channel_outputs_by_name.get(inp.name)
             inp.configure_input_pipeline(im_pipeline, im_ctx, raw_out)
 
@@ -524,19 +537,12 @@ class WebUIService(BotService):
         """
         from framework.multi_agent.template_registry import AgentTemplateRegistry
 
-        mapping: dict[str, str] = {}
-        # Read pool configs (config/pools/{pool}.yml).
-        pools_dir = self._project_dir / "config" / "pools"
-        if pools_dir.is_dir():
-            import yaml
-            for config_path in sorted(pools_dir.glob("*.yml")):
-                pool_name = config_path.stem
-                try:
-                    raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-                except Exception:
-                    continue
-                for agent in (raw.get("agents") or []):
-                    mapping[agent["name"]] = pool_name
+        # Use the already-loaded AppConfig instead of re-parsing YAML files.
+        mapping: dict[str, str] = {
+            agent.name: pool_name
+            for pool_name, pool_cfg in self._app_config.pools.items()
+            for agent in pool_cfg.agents
+        }
 
         # Dynamic-subagent template types per pool.
         try:

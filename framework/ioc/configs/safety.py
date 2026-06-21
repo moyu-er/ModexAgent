@@ -15,12 +15,11 @@ class LLMSafetyConfig(BaseModel):
 class TurnSafetyConfig(BaseModel):
     """Per-turn safety timeouts."""
 
-    agent_run_timeout: float = 180.0
-    dispatch_timeout: float = 300.0
+    agent_run_timeout: float = 420.0
     hook_timeout: float = 10.0
-    tool_timeout: float = 180.0  # Must exceed CommandTool.timeout (60s) so outer
+    tool_timeout: float = 360.0  # Must exceed SubprocessTool.timeout (300s) so outer
     # interceptors never cancel the coroutine before
-    # CommandTool's own timeout handling can return
+    # SubprocessTool's own timeout handling can return
     # partial output.
 
 

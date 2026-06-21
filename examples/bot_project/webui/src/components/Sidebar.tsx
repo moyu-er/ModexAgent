@@ -1,5 +1,5 @@
 import { useState, type FC, type CSSProperties } from "react";
-import type { PoolInfo, RecentWorkspaceEntry } from "../lib/api";
+import type { PoolInfo } from "../lib/api";
 import { changeWorkspace } from "../lib/api";
 import { WorkspaceBrowser } from "./WorkspaceBrowser";
 import { SessionTree, type TreeNode } from "./SessionTree";
@@ -12,7 +12,8 @@ export interface SidebarProps {
   workspace: string;
   isHome: boolean;
   activePool: string;
-  recentWorkspaces: RecentWorkspaceEntry[];
+  recentWorkspaces: { path: string }[];
+  isLoadingSessions?: boolean;
   mobileOpen: boolean;
   onCloseMobile: () => void;
   onSelect: (sessionId: string) => void;
@@ -21,6 +22,7 @@ export interface SidebarProps {
   onWorkspaceChanged: (cwd: string) => void;
   onGoHome: () => void;
   onPoolChange: (pool: string) => void;
+  revealSessionId?: string | null;
   style?: CSSProperties;
 }
 
@@ -32,6 +34,7 @@ export const Sidebar: FC<SidebarProps> = ({
   isHome,
   activePool,
   recentWorkspaces,
+  isLoadingSessions = false,
   mobileOpen,
   onCloseMobile,
   onSelect,
@@ -40,6 +43,7 @@ export const Sidebar: FC<SidebarProps> = ({
   onWorkspaceChanged,
   onGoHome,
   onPoolChange,
+  revealSessionId,
   style,
 }) => {
   const [browserOpen, setBrowserOpen] = useState(false);
@@ -55,7 +59,10 @@ export const Sidebar: FC<SidebarProps> = ({
     try {
       const result = await changeWorkspace(path);
       if (result.success) {
-        onWorkspaceChanged(result.cwd);
+        // Defensive: backend may serialize cwd as a path object; coerce to string.
+        onWorkspaceChanged(
+          typeof result.cwd === "string" ? result.cwd : String(result.cwd),
+        );
       }
     } catch {
       // Network error — silently ignore; the browser dialog has proper error handling
@@ -98,7 +105,7 @@ export const Sidebar: FC<SidebarProps> = ({
           className="-ml-2 mt-1.5 flex w-full cursor-pointer items-center gap-1.5 truncate rounded-md px-2 py-1 text-left font-mono text-sm text-text-body-light dark:text-text-body-dark transition-colors hover:bg-sidebar-hover-light dark:hover:bg-sidebar-hover-dark hover:text-text-primary-light dark:hover:text-text-primary-dark"
         >
           <span className="shrink-0 text-sm">📂</span>
-          <span className="truncate">{workspace || "(not set)"}</span>
+          <span className="truncate">{String(workspace || "(not set)")}</span>
         </button>
 
         {/* Recent workspaces dropdown */}
@@ -117,14 +124,14 @@ export const Sidebar: FC<SidebarProps> = ({
               <div className="mt-1 max-h-40 overflow-y-auto rounded-md border border-card-border-light dark:border-card-border-dark bg-content-bg-light dark:bg-content-bg-dark">
                 {recentFiltered.map((entry) => (
                   <button
-                    key={entry.path}
+                    key={String(entry.path)}
                     type="button"
-                    onClick={(): void => { handleRecentClick(entry.path); }}
-                    title={entry.path}
+                    onClick={(): void => { handleRecentClick(String(entry.path)); }}
+                    title={String(entry.path)}
                     className="flex w-full items-center gap-1.5 truncate px-2.5 py-1.5 text-left font-mono text-xs text-text-body-light dark:text-text-body-dark transition-colors hover:bg-sidebar-hover-light dark:hover:bg-sidebar-hover-dark hover:text-text-primary-light dark:hover:text-text-primary-dark"
                   >
                     <span className="shrink-0 text-xs opacity-50">📁</span>
-                    <span className="truncate">{entry.path}</span>
+                    <span className="truncate">{String(entry.path)}</span>
                   </button>
                 ))}
               </div>
@@ -138,6 +145,10 @@ export const Sidebar: FC<SidebarProps> = ({
         open={browserOpen}
         onClose={(): void => setBrowserOpen(false)}
         onChanged={(cwd): void => onWorkspaceChanged(cwd)}
+        onGoHome={(): void => {
+          setBrowserOpen(false);
+          onGoHome();
+        }}
       />
 
       {/* Header */}
@@ -173,7 +184,11 @@ export const Sidebar: FC<SidebarProps> = ({
 
       {/* Session tree */}
       <div className="flex-1 overflow-y-auto py-2">
-        {sessionTree.length === 0 ? (
+        {isLoadingSessions ? (
+          <p className="px-4 py-3 text-sm text-text-secondary-light dark:text-text-secondary-dark">
+            Loading…
+          </p>
+        ) : sessionTree.length === 0 ? (
           <p className="px-4 py-3 text-sm text-text-secondary-light dark:text-text-secondary-dark">
             No conversations in {activePool}
           </p>
@@ -183,6 +198,7 @@ export const Sidebar: FC<SidebarProps> = ({
             selected={selected}
             onSelect={onSelect}
             onDelete={onDelete}
+            revealSessionId={revealSessionId}
           />
         )}
       </div>

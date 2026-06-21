@@ -47,3 +47,24 @@ agents:
             assert cfg.agents[0].max_steps == 30
         finally:
             Path(tmp).unlink()
+
+    def test_data_dir_name_defaults_to_modex(self) -> None:
+        cfg = AppConfig()
+        assert cfg.paths.data_dir_name == ".modex"
+
+    def test_data_dir_name_overridable_from_yaml(self) -> None:
+        yaml_content = """
+paths:
+  data_dir_name: ".custom-modex"
+"""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yml", delete=False, encoding="utf-8",
+        ) as f:
+            f.write(yaml_content)
+            tmp = f.name
+
+        try:
+            cfg = AppConfig.from_yaml(tmp)
+            assert cfg.paths.data_dir_name == ".custom-modex"
+        finally:
+            Path(tmp).unlink()

@@ -66,6 +66,7 @@ class PathsConfig(BaseModel):
     data_dir: str = "data"
     memory_dir: str = "data/memory"
     inbox_dir: str = "data/inbox"
+    data_dir_name: str = ".modex"
 
 
 class SessionRetentionConfig(BaseModel):
@@ -82,6 +83,12 @@ class MultiAgentConfig(BaseModel):
 
     default_pool: str = "main"
     session_retention: SessionRetentionConfig = Field(default_factory=SessionRetentionConfig)
+
+
+class WorkspaceConfig(BaseModel):
+    """Workspace multi-live settings."""
+
+    enabled: bool = False
 
 
 class AppConfig(BaseModel):
@@ -105,6 +112,7 @@ class AppConfig(BaseModel):
     observability: ObservabilityConfig | None = None
     paths: PathsConfig = Field(default_factory=PathsConfig)
     multi_agent: MultiAgentConfig = Field(default_factory=MultiAgentConfig)
+    workspace: WorkspaceConfig = Field(default_factory=WorkspaceConfig)
     pools: dict[str, PoolConfig] = Field(default_factory=dict)
 
     @classmethod

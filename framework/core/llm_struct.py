@@ -103,7 +103,7 @@ class LLMTimeoutPolicy:
 class TurnTimeoutPolicy:
     """单个 Turn 各阶段超时配置。"""
 
-    agent_run_timeout_seconds: float = 180.0
+    agent_run_timeout_seconds: float = 420.0
     dispatch_timeout_seconds: float = 300.0
     output_send_timeout_seconds: float = 20.0
     memory_flush_timeout_seconds: float = 30.0

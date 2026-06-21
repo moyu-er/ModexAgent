@@ -5,6 +5,15 @@ build-backend = "hatchling.build"
 [[tool.uv.index]]
 url = "https://pypi.tuna.tsinghua.edu.cn/simple"
 
+# Copy mode (not hardlink). uv's cache lives under %LOCALAPPDATA% (C:) while the
+# venv/target is often on a different drive (e.g. F:). Hardlinking across
+# filesystems is unsupported, so uv falls back to a copy path that — observed in
+# the wild — can leave a package half-extracted (empty RECORD, missing .py
+# files) if an install is interrupted or the bot is holding files open. Copy mode
+# makes extraction deterministic and avoids the cross-filesystem hardlink path.
+[tool.uv]
+link-mode = "copy"
+
 [project]
 name = "ModexAgent"
 version = "0.1.0"
@@ -45,7 +54,7 @@ dev = [
 ]
 llm = ["litellm>=1.82.6", "openai>=2.20.0,<3"]
 sandbox = ["docker>=6.0.0", "e2b-code-interpreter>=0.1.0"]
-gateway = ["qq-botpy>=1.2.0", "python-dotenv>=1.0.0", "aiohttp>=3.8.0", "questionary>=2.0.0"]
+gateway = ["qq-botpy>=1.2.0", "python-dotenv>=1.0.0", "aiohttp>=3.9.0", "questionary>=2.0.0"]
 skills = [
   "pypdf>=4.0.0",
   "python-docx>=1.1.0",
@@ -78,7 +87,10 @@ python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 asyncio_mode = "auto"
-addopts = "-v --tb=short"
+# importlib mode derives each test module's name from its full path, so
+# same-basename files in different dirs (e.g. several test_models.py) no longer
+# collide, and test dirs without __init__.py coexist with packaged ones.
+addopts = "-v --tb=short --import-mode=importlib"
 markers = [
   "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
 ]

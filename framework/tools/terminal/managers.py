@@ -69,12 +69,14 @@ class BaseTerminalManager(TerminalManagerBase):
         visibility: TerminalVisibility,
         backend_factory: Callable[[], Any],
         config: TerminalRuntimeConfig | None = None,
+        default_cwd: str | None = None,
     ) -> None:
         self.platform = shell_info.platform
         self.shell_info = shell_info
         self.visibility = visibility
         self.config = config or TerminalRuntimeConfig()
         self._backend_factory = backend_factory
+        self._default_cwd: str | None = default_cwd
         self._sessions: dict[str, TerminalSession] = {}
         self._default_name: str | None = None
 
@@ -83,12 +85,15 @@ class BaseTerminalManager(TerminalManagerBase):
         session = self._sessions.get(session_name)
         if session is not None:
             return session
+        # Fall back to the workspace default cwd (e.g. the workspace target)
+        # so a terminal-enabled pool opens in the workspace, not process CWD.
+        effective_cwd = cwd if cwd is not None else self._default_cwd
         backend = self._backend_factory()
         session = TerminalSession(
             name=session_name,
             backend=backend,
             shell_info=self.shell_info,
-            cwd=cwd,
+            cwd=effective_cwd,
         )
         self._sessions[session_name] = session
         # A newly created tab becomes the default, matching TerminalManager
@@ -150,13 +155,18 @@ class BaseTerminalManager(TerminalManagerBase):
 class WindowsHiddenTerminalManager(BaseTerminalManager):
     """Terminal manager for hidden Windows PTY sessions."""
 
-    def __init__(self, config: TerminalRuntimeConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: TerminalRuntimeConfig | None = None,
+        default_cwd: str | None = None,
+    ) -> None:
         shell_info = _require_windows_shell()
         super().__init__(
             shell_info=shell_info,
             visibility=TerminalVisibility.HIDDEN,
             backend_factory=WindowsHiddenPtyBackend,
             config=config,
+            default_cwd=default_cwd,
         )
 
 
@@ -168,13 +178,18 @@ class WindowsVisibleTerminalManager(BaseTerminalManager):
     PowerShell is not supported.
     """
 
-    def __init__(self, config: TerminalRuntimeConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: TerminalRuntimeConfig | None = None,
+        default_cwd: str | None = None,
+    ) -> None:
         shell_info = _require_windows_shell()
         super().__init__(
             shell_info=shell_info,
             visibility=TerminalVisibility.VISIBLE,
             backend_factory=VisibleWindowsPtyBackend,
             config=config,
+            default_cwd=default_cwd,
         )
 
 
@@ -208,7 +223,11 @@ class LinuxTerminalManager(BaseTerminalManager):
     Degradation chain (per-session): pexpect → tmux.
     """
 
-    def __init__(self, config: TerminalRuntimeConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: TerminalRuntimeConfig | None = None,
+        default_cwd: str | None = None,
+    ) -> None:
         shell_info = detect_platform_shell()
         super().__init__(
             shell_info=shell_info
@@ -220,6 +239,7 @@ class LinuxTerminalManager(BaseTerminalManager):
             visibility=TerminalVisibility.HIDDEN,
             backend_factory=_create_linux_backend,
             config=config,
+            default_cwd=default_cwd,
         )
         # Eager validation: fail now (at pool startup) rather than at
         # first command if no backend is available.
@@ -250,12 +270,15 @@ def create_terminal_manager(
     *,
     manager_kind: str,
     config: TerminalRuntimeConfig | None = None,
+    default_cwd: str | None = None,
 ) -> TerminalManagerBase:
     """Create a terminal manager by kind string.
 
     Args:
         manager_kind: "windows_hidden", "windows_visible", or "linux".
         config: Optional runtime configuration.
+        default_cwd: Optional directory new sessions open in when no explicit
+            ``cwd`` is given (e.g. the workspace target).
 
     Returns:
         A TerminalManagerBase instance.
@@ -265,9 +288,9 @@ def create_terminal_manager(
         RuntimeError: If the selected manager cannot find an available backend.
     """
     if manager_kind == "windows_hidden":
-        return WindowsHiddenTerminalManager(config=config)
+        return WindowsHiddenTerminalManager(config=config, default_cwd=default_cwd)
     if manager_kind == "windows_visible":
-        return WindowsVisibleTerminalManager(config=config)
+        return WindowsVisibleTerminalManager(config=config, default_cwd=default_cwd)
     if manager_kind == "linux":
-        return LinuxTerminalManager(config=config)
+        return LinuxTerminalManager(config=config, default_cwd=default_cwd)
     raise ValueError(f"Unsupported terminal manager kind: {manager_kind}")

@@ -8,12 +8,13 @@ dependencies = [
     "rich>=14.0.0,<15.0.0",
     "questionary>=2.0.0",
     "python-dotenv>=1.0.0",
+    # aiohttp is the runtime backbone of WebUIService (server.py, web_socket adapter,
+    # etc.) — keep it in main deps so `uv pip install -e .` is enough to run debug_main.
+    "aiohttp>=3.9.0,<4.0.0",
 ]
 
 [project.optional-dependencies]
-webui = [
-    "aiohttp>=3.9.0,<4.0.0",
-]
+webui = []
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",

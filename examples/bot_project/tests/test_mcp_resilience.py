@@ -55,8 +55,6 @@ class TestBuildToolsMcpResilience:
         minimal_pool_cfg.mcp = MCPConfig(enabled=False)
 
         output_adapter = MagicMock()
-        workspace_context = MagicMock()
-        workspace_context.data_dir = data_dir
 
         with patch(
             "bot.service.pool_builder._load_agent_mcp_tools",
@@ -70,7 +68,8 @@ class TestBuildToolsMcpResilience:
                 output_adapter=output_adapter,
                 pool_name="main",
                 data_dir=data_dir,
-                workspace_context=workspace_context,
+                pool_data=None,
+                root_provider=None,
             )
 
         mock_load_mcp.assert_not_called()
@@ -90,8 +89,6 @@ class TestBuildToolsMcpResilience:
         minimal_pool_cfg.mcp = MCPConfig(enabled=True)
 
         output_adapter = MagicMock()
-        workspace_context = MagicMock()
-        workspace_context.data_dir = data_dir
 
         with patch(
             "bot.service.pool_builder._load_agent_mcp_tools",
@@ -105,7 +102,8 @@ class TestBuildToolsMcpResilience:
                 output_adapter=output_adapter,
                 pool_name="main",
                 data_dir=data_dir,
-                workspace_context=workspace_context,
+                pool_data=None,
+                root_provider=None,
             )
 
         mock_load_mcp.assert_called_once()

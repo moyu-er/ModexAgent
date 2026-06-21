@@ -4,12 +4,19 @@ from bot.input_pipeline.stages.environment_control import EnvironmentControlStag
 from bot.input_pipeline.stages.enqueue import EnqueueStage
 from bot.input_pipeline.stages.persist_user_message import PersistUserMessageStage
 from bot.input_pipeline.stages.resolve_pool import ResolvePoolStage
+from bot.input_pipeline.stages.resolve_workspace import ResolveWorkspaceStage
 from bot.input_pipeline.stages.session_control import SessionControlStage
 from bot.input_pipeline.stages.set_channel import SetChannelStage
 from bot.input_pipeline.stages.skill_parse import SkillParseStage, SkillRegistry
+from framework.workspace.control import WorkspaceController
 from framework.input_pipeline.pipeline import UserInputPipeline
 
-def build_im_pipeline(*, skill_registry: SkillRegistry, known_pools: set[str]) -> UserInputPipeline:
+def build_im_pipeline(
+    *,
+    skill_registry: SkillRegistry,
+    known_pools: set[str],
+    workspace_controller: WorkspaceController | None = None,
+) -> UserInputPipeline:
     """IM pipeline: S4→S2→S3→S5→S6→S7→S8.
 
     SetChannel runs first so that _try_intercept_control responses
@@ -19,7 +26,8 @@ def build_im_pipeline(*, skill_registry: SkillRegistry, known_pools: set[str]) -
     """
     return UserInputPipeline([
         SetChannelStage(),                                 # S4 (runs first — see docstring)
-        EnvironmentControlStage(known_pools=known_pools),  # S2
+        ResolveWorkspaceStage(),                           # resolve ws (default home)
+        EnvironmentControlStage(known_pools=known_pools, workspace_controller=workspace_controller),  # S2
         SessionControlStage(),                             # S3
         ResolvePoolStage(),                                # S5
         SkillParseStage(skill_registry, known_pools=known_pools),  # S6
@@ -30,6 +38,7 @@ def build_im_pipeline(*, skill_registry: SkillRegistry, known_pools: set[str]) -
 def build_webui_pipeline(*, skill_registry: SkillRegistry, known_pools: set[str]) -> UserInputPipeline:
     return UserInputPipeline([
         SetChannelStage(),                                 # S4
+        ResolveWorkspaceStage(),                           # resolve ws (default home)
         ResolvePoolStage(),                                # S5
         SkillParseStage(skill_registry, known_pools=known_pools),  # S6
         PersistUserMessageStage(),                         # S7

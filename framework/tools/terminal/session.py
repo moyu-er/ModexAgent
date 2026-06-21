@@ -167,6 +167,11 @@ class TerminalSession:
         """True if the backend process was started at least once."""
         return self._backend_started
 
+    @property
+    def cwd(self) -> str | None:
+        """The directory the backend starts in (None = inherit process CWD)."""
+        return self._cwd
+
     async def execute(self, command: str, timeout: float = 60.0) -> str:
         """Execute a command and return output.
 

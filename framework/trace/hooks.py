@@ -93,9 +93,21 @@ class TraceCollectorHook(
         ctx.runtime.state.custom[TurnCustomKey.TRACE_ID] = new_id
         return new_id
 
-    async def _save(self, rec: OperationRecord) -> None:
-        """Persist a record to all configured stores, logging failures."""
-        for s in self._stores:
+    async def _save(self, rec: OperationRecord, ctx: AgentContext) -> None:
+        """Persist a record to all configured stores, logging failures.
+
+        Stores come from two sources, unioned: the constructor stores
+        (direct/test use) and the per-turn store resolved from
+        ``ctx.runtime.services.trace_store`` (the workspace-rooted store
+        wired by the pipeline).
+        """
+        runtime_store: TraceStore | None = (
+            ctx.runtime.services.trace_store if ctx.runtime is not None else None
+        )
+        stores: list[TraceStore] = list(self._stores)
+        if runtime_store is not None and runtime_store not in stores:
+            stores.append(runtime_store)
+        for s in stores:
             try:
                 await s.save(rec)
             except Exception:
@@ -155,7 +167,7 @@ class TraceCollectorHook(
             timestamp=time.time(),
             metadata=metadata,
         )
-        await self._save(rec)
+        await self._save(rec, ctx)
 
     async def after_llm_response(self, ctx: AgentContext, response: LLMResponse) -> None:
         if not self._enabled:
@@ -190,7 +202,7 @@ class TraceCollectorHook(
             metadata=metadata,
             error=response.error,
         )
-        await self._save(rec)
+        await self._save(rec, ctx)
 
     async def before_tool_execution(
         self, ctx: AgentContext, tool_calls: Sequence[ToolCall]
@@ -215,7 +227,7 @@ class TraceCollectorHook(
                 ],
             },
         )
-        await self._save(rec)
+        await self._save(rec, ctx)
 
     async def after_tool_execution(
         self, ctx: AgentContext, results: Sequence[ToolResult]
@@ -241,7 +253,7 @@ class TraceCollectorHook(
                 metadata=metadata,
                 error=result.error,
             )
-            await self._save(rec)
+            await self._save(rec, ctx)
 
     async def finally_turn(self, ctx: AgentContext, result: AgentResult | None) -> None:
         if not self._enabled:
@@ -269,4 +281,4 @@ class TraceCollectorHook(
             metadata=metadata,
             error=error,
         )
-        await self._save(rec)
+        await self._save(rec, ctx)

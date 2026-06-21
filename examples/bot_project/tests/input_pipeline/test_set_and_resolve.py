@@ -92,8 +92,10 @@ async def test_resolve_pool_persists_explicit_pool_choice() -> None:
 
 
 @pytest.mark.asyncio
-async def test_resolve_pool_does_not_persist_when_no_explicit_pool() -> None:
-    # IM path (explicit_pool=None): must NOT overwrite the stored pool.
+async def test_resolve_pool_persists_even_when_no_explicit_pool() -> None:
+    # IM path (explicit_pool=None): resolved pool is always persisted so
+    # PoolRouter never silently defaults to "main". This is an idempotent
+    # write — it doesn't change the stored pool, just ensures the mapping exists.
     store = MagicMock()
     store.get.return_value = "coding"
     ctx = BotInputContext(
@@ -109,5 +111,5 @@ async def test_resolve_pool_does_not_persist_when_no_explicit_pool() -> None:
         external_id="u1", content="hi", channel="qq", explicit_pool=None
     )
     await ResolvePoolStage().process(env, ctx)
-    store.set.assert_not_called()
+    store.set.assert_called_once_with("4YEJ6AuZcPW5eZRoP", "coding")
     assert env.metadata["resolved_pool"] == "coding"  # read from store

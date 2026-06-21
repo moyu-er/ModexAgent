@@ -51,7 +51,7 @@ class MultiAgentContextBuilder:
         meta = {
             "message_id": envelope.message_id,
             "agent_session_id": envelope.agent_session_id,
-            "conversation_id": envelope.conversation_id,
+            "session_id": envelope.session_id,
             **envelope.metadata,
         }
         return {

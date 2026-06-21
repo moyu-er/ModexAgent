@@ -26,6 +26,8 @@ export function useWebUIStream(
   getPoolForUuid?: (uuid: string) => string | undefined,
   onSessionReady?: (uuidPrefix: string, fullSessionId: string) => void,
   onSessionActivity?: (sessionId: string) => void,
+  currentWs?: string,
+  onSessionCreated?: (sessionId: string, parentSessionId: string | null) => void,
 ): UseWebUIStreamResult {
   const [state, setState] = useState<StreamState>({
     messages: [],
@@ -45,12 +47,29 @@ export function useWebUIStream(
 
   const agentName = sessionId ? sessionId.split(".")[1] || "main" : "main";
 
+  // Keep mutable refs to the latest session id, pool resolver, and current
+  // workspace so the WebSocket client's onopen callback can attach a pending
+  // session even when the socket opens after the selection happened.
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
+  const getPoolForUuidRef = useRef(getPoolForUuid);
+  getPoolForUuidRef.current = getPoolForUuid;
+  const currentWsRef = useRef(currentWs);
+  currentWsRef.current = currentWs;
+
   const handleEvent = useCallback(
     (event: ServerEventUnion): void => {
+      // A new subagent conversation was spawned — notify the host immediately
+      // so the sidebar can render it before any streaming output arrives.
+      if (event.event === "conversation_created") {
+        onSessionCreated?.(event.session_id, event.parent_session_id ?? null);
+        return;
+      }
       if (
         event.event === "attached" &&
         sessionId &&
         event.session_id !== sessionId &&
+        event.session_id.startsWith(sessionId + ".") &&
         getPoolForUuid?.(sessionId) !== undefined
       ) {
         onSessionReady?.(sessionId, event.session_id);
@@ -77,7 +96,7 @@ export function useWebUIStream(
         applyServerEvent(prev, event, sessionId, pendingRequestRef),
       );
     },
-    [sessionId, getPoolForUuid, onSessionReady, onSessionActivity],
+    [sessionId, getPoolForUuid, onSessionReady, onSessionActivity, onSessionCreated],
   );
 
   // Keep a mutable reference to the latest handler so the WebSocket client
@@ -94,17 +113,32 @@ export function useWebUIStream(
     if (clientRef.current) {
       clientRef.current.disconnect();
     }
-    const client = new WebSocketClient(buildWsUrl(), wsHandleEvent, () => {
-      // Connection lost — the live stream is gone, so clear every streaming
-      // flag. Otherwise the UI would be stuck showing the pause/busy state
-      // forever (no turn_end will ever arrive over a dead socket).
-      streamingSessionsRef.current.clear();
-      setState((prev) => ({
-        ...prev,
-        isStreaming: false,
-        sessionStreaming: {},
-      }));
-    });
+    const client = new WebSocketClient(
+      buildWsUrl(),
+      wsHandleEvent,
+      () => {
+        // Connection lost — the live stream is gone, so clear every streaming
+        // flag. Otherwise the UI would be stuck showing the pause/busy state
+        // forever (no turn_end will ever arrive over a dead socket).
+        streamingSessionsRef.current.clear();
+        setState((prev) => ({
+          ...prev,
+          isStreaming: false,
+          sessionStreaming: {},
+        }));
+      },
+      () => {
+        // Socket just opened. If the current session is a pending draft,
+        // attach it now so the user can send the first message.
+        const currentSessionId = sessionIdRef.current;
+        const pool = currentSessionId
+          ? getPoolForUuidRef.current?.(currentSessionId)
+          : undefined;
+        if (currentSessionId && pool !== undefined) {
+          clientRef.current?.attach(currentSessionId, pool, currentWsRef.current);
+        }
+      },
+    );
     clientRef.current = client;
     client.connect();
   }, [wsHandleEvent]);
@@ -122,6 +156,21 @@ export function useWebUIStream(
       disconnect();
     };
   }, [disconnect]);
+
+  // Clear per-session buffers when the workspace changes. Without this,
+  // buffered events from the OLD workspace's sessions persist and can leak
+  // into the new workspace's chat view when a session with the same id is
+  // selected. Also clear the streaming-sessions tracker so stale turn_end
+  // events from the old workspace don't confuse the activity notifier.
+  useEffect(() => {
+    setState((prev) => ({
+      messages: prev.messages,
+      isStreaming: prev.isStreaming,
+      sessionMessages: {},
+      sessionStreaming: {},
+    }));
+    streamingSessionsRef.current.clear();
+  }, [currentWs]);
 
   // Attach + load history when sessionId changes
   useEffect(() => {
@@ -144,7 +193,7 @@ export function useWebUIStream(
         sessionStreaming: prev.sessionStreaming,
       }));
       if (clientRef.current?.connected) {
-        clientRef.current.attach(sessionId, pool);
+        clientRef.current.attach(sessionId, pool, currentWsRef.current);
       }
       return;
     }
@@ -163,7 +212,7 @@ export function useWebUIStream(
       sessionStreaming: prev.sessionStreaming,
     }));
 
-    fetchMessages(sessionId)
+    fetchMessages(sessionId, currentWs)
       .then((events) => {
         if (cancelled) return;
         const history = eventsToMessages(events);
@@ -191,7 +240,7 @@ export function useWebUIStream(
     return (): void => {
       cancelled = true;
     };
-  }, [sessionId, getPoolForUuid]);
+  }, [sessionId, getPoolForUuid, currentWs]);
 
   const isPending = sessionId
     ? getPoolForUuid?.(sessionId) !== undefined
@@ -229,11 +278,7 @@ export function useWebUIStream(
         console.warn("WebSocket: not connected");
         return;
       }
-      client.send("send_message", {
-        session_id: sessionId,
-        content,
-        _request_id: requestId,
-      });
+      client.sendMessage(sessionId, content, currentWsRef.current, requestId);
     },
     [sessionId, agentName, getPoolForUuid],
   );

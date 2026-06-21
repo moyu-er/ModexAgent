@@ -46,7 +46,7 @@ class AgentFactory(ABC):
     async def create_agent(
         self,
         descriptor: AgentDescriptor,
-        conversation_id: str | None = None,
+        session_id: str | None = None,
         context_manager: ContextManager | None = None,
         broker: Any | None = None,
         tool_manager: InMemoryToolManager | None = None,
@@ -135,7 +135,7 @@ class DefaultAgentFactory(AgentFactory):
     def _resolve_context_manager(
         self,
         descriptor: AgentDescriptor,
-        conversation_id: str | None = None,
+        session_id: str | None = None,
         provided_context_manager: ContextManager | None = None,
     ) -> ContextManager:
         """根据 descriptor 的 context_strategy 解析合适的 ContextManager。"""
@@ -154,7 +154,7 @@ class DefaultAgentFactory(AgentFactory):
     async def create_agent(
         self,
         descriptor: AgentDescriptor,
-        conversation_id: str | None = None,
+        session_id: str | None = None,
         context_manager: ContextManager | None = None,
         broker: Any | None = None,
         tool_manager: InMemoryToolManager | None = None,
@@ -170,7 +170,7 @@ class DefaultAgentFactory(AgentFactory):
         agent = self._build_agent(descriptor, provider)
 
         # Context manager
-        ctx_mgr = self._resolve_context_manager(descriptor, conversation_id, context_manager)
+        ctx_mgr = self._resolve_context_manager(descriptor, session_id, context_manager)
 
         # Tool manager with filtering
         tool_mgr = tool_manager or self._default_tool_manager or InMemoryToolManager()
@@ -277,18 +277,21 @@ class DefaultAgentFactory(AgentFactory):
             control_channel=self._control_channel,
         )
 
-        # Auto-inject TraceCollectorHook — ALL agents get per-session trace
-        if self._trace_store is not None:
-            from framework.hook import HookErrorPolicy, HookSpec
-            from framework.trace import TraceCollectorHook
+        # Auto-inject TraceCollectorHook — ALL agents get per-session trace.
+        # The hook reads the store per turn from ctx.runtime.services.trace_store
+        # (resolved per turn from the active workspace's pool_data), so it
+        # follows workspace switches and works for main agents and subagents
+        # uniformly — no special-casing, no distinction.
+        from framework.hook import HookErrorPolicy, HookSpec
+        from framework.trace import TraceCollectorHook
 
-            trace_hook = TraceCollectorHook(store=self._trace_store)
-            if pipeline.hook_runner is not None:
-                pipeline.hook_runner.add(
-                    HookSpec(hook=trace_hook, on_error=HookErrorPolicy.LOG)
-                )
-            else:
-                pipeline.hooks.append(trace_hook)
+        trace_hook = TraceCollectorHook()
+        if pipeline.hook_runner is not None:
+            pipeline.hook_runner.add(
+                HookSpec(hook=trace_hook, on_error=HookErrorPolicy.LOG)
+            )
+        else:
+            pipeline.hooks.append(trace_hook)
 
         return AgentInstance(
             descriptor=descriptor,

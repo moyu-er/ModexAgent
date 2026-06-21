@@ -1,7 +1,7 @@
 """Integration tests for session isolation.
 
 验证:
-- 同一 conversation_id 下不同 agent 的 history 互不干扰
+- 同一 session_id 下不同 agent 的 history 互不干扰
 - coder 和 planner 使用不同的 agent_session_id
 """
 
@@ -22,7 +22,7 @@ from framework.multi_agent import (
 async def test_coder_and_planner_history_isolation():
     """coder 和 planner 应在不同的 agent_session_id 中保存历史。"""
     factory = DefaultAgentFactory()
-    conversation_id = "conv_001"
+    session_id = "conv_001"
 
     coder_descriptor = AgentDescriptor(
         address=AgentAddress(name="coder"),
@@ -36,15 +36,15 @@ async def test_coder_and_planner_history_isolation():
     )
 
     coder_instance = await factory.create_agent(
-        coder_descriptor, mode="session", conversation_id=conversation_id
+        coder_descriptor, session_id=session_id,
     )
     planner_instance = await factory.create_agent(
-        planner_descriptor, mode="session", conversation_id=conversation_id
+        planner_descriptor, session_id=session_id,
     )
 
     # 各自使用独立的 session_id
-    coder_session = f"{conversation_id}:coder"
-    planner_session = f"{conversation_id}:planner"
+    coder_session = f"{session_id}:coder"
+    planner_session = f"{session_id}:planner"
 
     # 保存 coder 的用户消息
     await coder_instance.context_manager.save(

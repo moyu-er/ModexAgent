@@ -6,6 +6,7 @@ from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
 
+from framework.tools.workspace_scoped import WorkspaceRootProvider, wrap_standard_tools
 from framework.core.tool_manager import Tool
 from framework.tools.standard import (
     EditFileTool,
@@ -110,6 +111,7 @@ def get_preset_tools(
     *,
     subprocess_tool_factory: Callable[[], Tool] | None = None,
     scoped_write_dir: Path | None = None,
+    root_provider: WorkspaceRootProvider | None = None,
 ) -> list[Tool]:
     """Return the list of tools for a preset.
 
@@ -119,6 +121,8 @@ def get_preset_tools(
         scoped_write_dir: If provided and the preset lacks native write capability
             (READ_ONLY, NONE), a ScopedWriteFileTool restricted to this directory
             is injected so the subagent can still write OUTPUT.md.
+        root_provider: If provided, standard tools are wrapped so their relative
+            paths resolve against the workspace root instead of process CWD.
 
     Returns:
         List of Tool instances ready for registration.
@@ -135,6 +139,10 @@ def get_preset_tools(
     factory = tool_lists[preset]
     tools: list[Tool] = factory()
 
+    # Wrap standard tools with workspace root provider when given
+    if root_provider is not None:
+        tools = wrap_standard_tools(tools, root_provider)
+
     # Presets without native write/edit: inject scoped tools for OUTPUT.md
     if scoped_write_dir is not None and preset in (ToolPreset.READ_ONLY, ToolPreset.NONE):
         from framework.memory.tools.scoped_edit import ScopedEditFileTool
@@ -150,6 +158,14 @@ def get_preset_tools(
         ToolPreset.READ_ONLY,
         ToolPreset.READ_WRITE,
     ):
-        tools.append(subprocess_tool_factory())
+        bash_tool = subprocess_tool_factory()
+        if root_provider is not None:
+            wrapped = wrap_standard_tools([bash_tool], root_provider)
+            if not wrapped:
+                raise RuntimeError(
+                    "wrap_standard_tools returned empty list for bash tool"
+                )
+            bash_tool = wrapped[0]
+        tools.append(bash_tool)
 
     return tools

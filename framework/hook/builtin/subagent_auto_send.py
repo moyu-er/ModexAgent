@@ -63,8 +63,10 @@ class SubagentAutoSendHook(FinallyTurnHook):
 
         session_id = str(ctx.session)
 
-        # 1. Derive artifact paths from session_id (deterministic)
-        trace_dir = self._runtime_dir / "trace" / session_id
+        # 1. Derive artifact paths from session_id (deterministic).
+        #    Trace is written by TraceCollectorHook -> JsonFileTraceStore per
+        #    session_id under the workspace runtime/trace dir; the directory
+        #    is no longer pre-created here (the store handles it uniformly).
         output_path = self._runtime_dir / "output" / session_id / "OUTPUT.md"
 
         # 2. Check OUTPUT.md status
@@ -203,7 +205,7 @@ class SubagentAutoSendHook(FinallyTurnHook):
         from framework.multi_agent.address import AgentAddress
         from framework.multi_agent.envelope import AgentMessageEnvelope
 
-        conversation_id = str(ctx.session)
+        session_id = str(ctx.session)
         invocation_id = ctx.session.session_id_prefix
         parent_session_id = ctx.session.parent_session_id
         if parent_session_id is None:
@@ -228,7 +230,7 @@ class SubagentAutoSendHook(FinallyTurnHook):
             source=AgentAddress(name=self._self_name),
             target=AgentAddress(name=self._parent_name),
             message_type="agent_result",
-            conversation_id=conversation_id,
+            session_id=session_id,
             agent_session_id=inbox_key,
             invocation_id=invocation_id,
         )

@@ -245,7 +245,7 @@ class TestReplyOutputFlow:
                 payload={"content": "审查完成", "is_final": True, "session_id": "sess-1"},
                 sender=AgentAddress(kind="agent", name="coding"),
                 recipient=AgentAddress(kind="channel", name="qq"),
-                headers={"conversation_id": "conv-1"},
+                headers={"session_id": "conv-1"},
             ),
         )
         await asyncio.sleep(0.3)  # let bridge process the message

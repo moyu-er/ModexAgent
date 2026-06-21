@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import ClassVar, get_origin, get_type_hints
 
-
 # ── Protocol enums ────────────────────────────────────────────────────────
 
 
@@ -20,9 +19,15 @@ class WebUIEventType(str, Enum):
     MODEL_REASONING_DELTA = "model_reasoning_delta"
     TOOL_CALL_START = "tool_call_start"
     TOOL_CALL_END = "tool_call_end"
+    TURN_START = "turn_start"
+    ASSISTANT_TEXT = "assistant_text"
+    ASSISTANT_REASONING = "assistant_reasoning"
+    TOOL_CALL = "tool_call"
+    TOOL_RESULT = "tool_result"
     TURN_END = "turn_end"
     ASSISTANT_TURN = "assistant_turn"
     CONVERSATION_READY = "conversation_ready"
+    CONVERSATION_CREATED = "conversation_created"
     ATTACHED = "attached"
     CONVERSATION_DELETED = "conversation_deleted"
     ERROR = "error"
@@ -33,7 +38,6 @@ class WebSocketAction(str, Enum):
 
     ATTACH = "attach"
     SEND_MESSAGE = "send_message"
-    NEW_CONVERSATION = "new_conversation"
     DELETE_CONVERSATION = "delete_conversation"
 
 
@@ -54,64 +58,6 @@ def _unwrap_envelope(data: dict[str, object]) -> dict[str, object]:
         flat.update(payload)
     return flat
 
-
-
-# ── WebSocket client message dataclasses ───────────────────────────────────
-
-
-@dataclass
-class _WSClientMessage:
-    """Base for typed WebSocket client messages."""
-
-    action: str = field(default="", init=False)
-
-    @classmethod
-    def from_dict(cls, data: dict[str, object]) -> _WSClientMessage:
-        action = str(data.get("action", ""))
-        sub_cls = _WS_MESSAGE_REGISTRY.get(action, cls)
-        kwargs = {k: v for k, v in data.items() if k != "action"}
-        return sub_cls(**kwargs)  # type: ignore[call-arg]
-
-
-_WS_MESSAGE_REGISTRY: dict[str, type[_WSClientMessage]] = {}
-
-
-def _register_ws_message(cls: type[_WSClientMessage]) -> None:
-    field_obj = cls.__dict__.get("action")
-    try:
-        _WS_MESSAGE_REGISTRY[field_obj.default] = cls
-    except AttributeError:
-        pass
-
-
-@dataclass
-class AttachMessage(_WSClientMessage):
-    conversation_id: str = ""
-    action: str = field(default=WebSocketAction.ATTACH.value, init=False)
-
-
-@dataclass
-class SendMessageMessage(_WSClientMessage):
-    conversation_id: str = ""
-    content: str = ""
-    action: str = field(default=WebSocketAction.SEND_MESSAGE.value, init=False)
-
-
-@dataclass
-class NewConversationMessage(_WSClientMessage):
-    action: str = field(default=WebSocketAction.NEW_CONVERSATION.value, init=False)
-
-
-@dataclass
-class DeleteConversationMessage(_WSClientMessage):
-    conversation_id: str = ""
-    action: str = field(default=WebSocketAction.DELETE_CONVERSATION.value, init=False)
-
-
-_register_ws_message(AttachMessage)
-_register_ws_message(SendMessageMessage)
-_register_ws_message(NewConversationMessage)
-_register_ws_message(DeleteConversationMessage)
 
 
 # ── Legacy format migration ────────────────────────────────────────────────
@@ -195,11 +141,11 @@ class ServerEvent:
         if sub_cls is AssistantTurnEvent and "blocks" not in kwargs:
             kwargs = _migrate_assistant_turn(kwargs)
 
-        # ── Field rename migration: conversation_id -> session_id ──
-        if "session_id" not in kwargs and "conversation_id" in kwargs:
-            cid = kwargs.pop("conversation_id")
+        # ── Field rename migration: session_id -> session_id ──
+        if "session_id" not in kwargs and "session_id" in kwargs:
+            cid = kwargs.pop("session_id")
             agent = kwargs.get("agent_name")
-            # Old format: conversation_id was just the conv prefix.
+            # Old format: session_id was just the conv prefix.
             # Upgrade to full session_id.
             if isinstance(cid, str) and isinstance(agent, str) and "." not in cid:
                 kwargs["session_id"] = f"{cid}.{agent}"
@@ -269,12 +215,63 @@ class TurnEndEvent(ServerEvent):
 
 
 @dataclass
+class TurnStartEvent(ServerEvent):
+    """Emitted when a new ReAct turn begins (lazy, on first content event)."""
+    turn_id: str = ""
+    event: str = field(default=WebUIEventType.TURN_START.value, init=False)
+
+
+@dataclass
+class AssistantTextEvent(ServerEvent):
+    """LLM text output for one round — clean content, no reasoning."""
+    turn_id: str = ""
+    text: str = ""
+    event: str = field(default=WebUIEventType.ASSISTANT_TEXT.value, init=False)
+
+
+@dataclass
+class AssistantReasoningEvent(ServerEvent):
+    """LLM reasoning/thinking content persisted as an independent event."""
+    turn_id: str = ""
+    text: str = ""
+    event: str = field(default=WebUIEventType.ASSISTANT_REASONING.value, init=False)
+
+
+@dataclass
+class ToolCallEvent(ServerEvent):
+    """Tool call parameters from assistant. Linked to ToolResultEvent by call_id."""
+    turn_id: str = ""
+    call_id: str = ""
+    tool_name: str = ""
+    args: dict[str, object] = field(default_factory=dict)
+    event: str = field(default=WebUIEventType.TOOL_CALL.value, init=False)
+
+
+@dataclass
+class ToolResultEvent(ServerEvent):
+    """Tool execution result. Linked to ToolCallEvent by call_id."""
+    turn_id: str = ""
+    call_id: str = ""
+    tool_name: str = ""
+    result: str = ""
+    error: str | None = None
+    event: str = field(default=WebUIEventType.TOOL_RESULT.value, init=False)
+
+
+@dataclass
 class AssistantTurnEvent(ServerEvent):
     """Complete assistant turn — persisted to transcript store at turn end."""
     blocks: list[dict[str, object]] = field(default_factory=list)
     turn_id: str = ""
     latency_ms: float = 0.0
     event: str = field(default=WebUIEventType.ASSISTANT_TURN.value, init=False)
+
+
+@dataclass
+class ConversationCreatedEvent(ServerEvent):
+    """A new subagent conversation was spawned under its parent session."""
+    parent_session_id: str | None = None
+    event: str = field(default=WebUIEventType.CONVERSATION_CREATED.value, init=False)
 
 
 # ---------------------------------------------------------------------------

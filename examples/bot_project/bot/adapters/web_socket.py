@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -15,6 +16,13 @@ from framework.pipeline.adapters import InputAdapter, OutputAdapter
 # ── Constants ──────────────────────────────────────────────────────────────
 
 WEBSOCKET_CHANNEL: str = "websocket"
+
+# Per-session delta queue capacity. Deltas are transient UI refresh (not
+# persisted); when a client lags or disconnects we drop new deltas rather than
+# grow memory unbounded. Turn-level complete events do not travel this queue.
+DELTA_QUEUE_MAXSIZE: int = 1024
+
+logger = logging.getLogger(__name__)
 
 
 def _agent_of(session_id: str) -> str:
@@ -67,7 +75,7 @@ class WebSocketInputAdapter(InputAdapter):
     def register_connection(self, session_id: str, ws: object) -> None:
         """Register a WebSocket connection for a session and create its delta queue."""
         self._connections[session_id] = ws
-        self._delta_queues[session_id] = asyncio.Queue()
+        self._delta_queues[session_id] = asyncio.Queue(maxsize=DELTA_QUEUE_MAXSIZE)
 
     def unregister_connection(self, session_id: str) -> None:
         """Remove a WebSocket connection and its delta queue."""
@@ -82,7 +90,7 @@ class WebSocketInputAdapter(InputAdapter):
         """Get or create a delta queue for *session_id*, reusing *ws* if provided."""
         if session_id not in self._delta_queues:
             self._connections[session_id] = ws
-            self._delta_queues[session_id] = asyncio.Queue()
+            self._delta_queues[session_id] = asyncio.Queue(maxsize=DELTA_QUEUE_MAXSIZE)
         elif ws is not None and self._connections.get(session_id) is None:
             self._connections[session_id] = ws
         return self._delta_queues[session_id]
@@ -138,10 +146,22 @@ class WebSocketOutputAdapter(OutputAdapter):
         Drops the envelope silently when no delta queue is registered (e.g. for
         cleaned-up sessions).  Subagent queues are pre-registered at dispatch
         time via the ``on_subagent_created`` callback.
+
+        When the queue is full (client lagging/disconnected) the delta is
+        dropped and logged — deltas are transient UI refresh, never persisted,
+        so dropping protects memory without losing any durable state.
         """
         q = self._input.get_delta_queue(envelope.session_id)
-        if q is not None:
+        if q is None:
+            return
+        try:
             q.put_nowait(envelope)
+        except asyncio.QueueFull:
+            logger.warning(
+                "delta queue full for session %s; dropping delta (event_type=%s)",
+                envelope.session_id,
+                envelope.event_type,
+            )
 
     async def send_delta(
         self, delta: str, session_id: str, metadata: dict[str, Any] | None = None

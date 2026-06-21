@@ -361,3 +361,28 @@ async def test_single_store_failure_does_not_block_others(tmp_path: Path) -> Non
 
     records_a = await store_a.list_by_session("s_skip")
     assert len(records_a) == 1, "Healthy store must still receive record"
+
+
+@pytest.mark.asyncio
+async def test_hook_writes_to_runtime_trace_store_without_ctor_store(tmp_path: Path) -> None:
+    """The trace store is resolved per-turn from ctx.runtime.services.trace_store.
+
+    Regression: the workspace builds a correct session_id-keyed JsonFileTraceStore
+    in PoolData, but the agent factory passed trace_store=None and the pipeline
+    never resolved it — so TraceCollectorHook was never installed and NO trace
+    was written (main or subagent). The hook must write to the runtime-attached
+    store even when constructed with no ctor store.
+    """
+    store = JsonFileTraceStore(tmp_path / "traces")
+    ctx = _make_trace_context("ws_sess.main")
+    ctx.runtime.services.trace_store = store
+
+    # No ctor store — must come from the runtime.
+    hook = TraceCollectorHook()
+    await hook.before_turn(ctx)
+
+    records = await store.list_by_session("ws_sess.main")
+    assert len(records) == 1
+    assert records[0].kind == OperationKind.TURN_START
+    # File landed under {base}/{session_id}/operations.jsonl — by session_id.
+    assert (tmp_path / "traces" / "ws_sess.main" / "operations.jsonl").exists()

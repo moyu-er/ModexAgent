@@ -25,7 +25,7 @@ class AgentMessageEnvelope:
     target: AgentAddress | None = None
     topic: str | None = None
     message_type: str = "agent_message"
-    conversation_id: str = ""
+    session_id: str = ""
     agent_session_id: str = ""
     invocation_id: str | None = None
     """Source subagent's snowflake, for trace correlation only."""
@@ -40,7 +40,7 @@ class AgentMessageEnvelope:
         """转换为 BrokerMessage，所有路由字段放入 headers。"""
         recipient = self.target or Address(kind="agent", name="")
         headers: dict[str, str] = {
-            "conversation_id": self.conversation_id,
+            "session_id": self.session_id,
             "agent_session_id": self.agent_session_id,
             "message_id": self.message_id,
             "in_reply_to": self.in_reply_to or "",
@@ -64,13 +64,13 @@ class AgentMessageEnvelope:
     def from_broker_message(cls, msg: BrokerMessage) -> AgentMessageEnvelope | None:
         """从 BrokerMessage 还原，若缺少必要 headers 则返回 None。
 
-        conversation_id/agent_session_id may be empty strings (legacy).
+        session_id/agent_session_id may be empty strings (legacy).
         Only reject when they are None (not present in headers at all).
         """
         headers = msg.headers
-        conversation_id = headers.get("conversation_id")
+        session_id = headers.get("session_id")
         agent_session_id = headers.get("agent_session_id")
-        if conversation_id is None or agent_session_id is None:
+        if session_id is None or agent_session_id is None:
             return None
         from framework.multi_agent.address import AgentAddress
 
@@ -84,7 +84,7 @@ class AgentMessageEnvelope:
             else None,
             topic=msg.topic,
             message_type=headers.get("message_type", "agent_message"),
-            conversation_id=conversation_id,
+            session_id=session_id,
             agent_session_id=agent_session_id,
             invocation_id=envelope_invocation_id,
             message_id=headers.get("message_id") or uuid.uuid4().hex,
@@ -96,7 +96,7 @@ class AgentMessageEnvelope:
                 for k, v in headers.items()
                 if k
                 not in {
-                    "conversation_id",
+                    "session_id",
                     "agent_session_id",
                     "message_id",
                     "in_reply_to",

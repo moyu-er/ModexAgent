@@ -140,6 +140,7 @@ source .venv/bin/activate
 uv pip install -e ".[all,dev]"
 
 # 安装 bot 项目（注册 'modexbot' CLI）
+# 保持 venv 激活状态，或使用 --python 显式指定路径
 cd examples\bot_project
 uv pip install -e ".[webui,dev]"
 

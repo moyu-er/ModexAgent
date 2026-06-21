@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-ROOT_VENV="$SCRIPT_DIR/../../.venv"
+ROOT_VENV="$(cd "$SCRIPT_DIR/../.." && pwd)/.venv"
 VENV_PYTHON="$ROOT_VENV/bin/python"
 VENV_MARKER="$ROOT_VENV/.modexbot-pyproject-mtime"
 
@@ -103,6 +103,59 @@ path_contains() {
     [[ ":${PATH}:" == *":${entry}:"* ]]
 }
 
+# ── Helper: ensure npm prefix is user-writable ───────────────────────────
+# Node's official macOS installer sets prefix to /usr/local, which is owned
+# by root. npm installs then fail with EACCES/EPERM. Fix by moving prefix
+# into the user's home directory.
+ensure_npm_prefix_usable() {
+    if ! command -v npm &>/dev/null; then
+        return 0
+    fi
+
+    local npm_prefix
+    npm_prefix=$(npm config get prefix 2>/dev/null) || true
+    if [ -z "$npm_prefix" ]; then
+        return 0
+    fi
+
+    if [ -d "$npm_prefix" ] && [ -w "$npm_prefix" ]; then
+        return 0
+    fi
+
+    echo ""
+    echo "  [WARNING] npm prefix '$npm_prefix' is not writable by your user."
+    echo "  This usually happens when Node.js is installed with the official"
+    echo "  installer or with sudo. Local 'npm install' will fail with permission"
+    echo "  errors until this is fixed."
+    echo ""
+
+    if ! prompt_yn "Move npm prefix to ~/.npm-global (recommended, no sudo)? [Y/n]:"; then
+        echo ""
+        echo "  [WARNING] Continuing with a root-owned npm prefix may cause"
+        echo "  'EACCES: permission denied' errors during frontend builds."
+        echo ""
+        return 0
+    fi
+
+    local user_prefix="$HOME/.npm-global"
+    mkdir -p "$user_prefix/bin"
+    npm config set prefix "$user_prefix"
+
+    # Make the new global bin directory available now and in future shells.
+    case ":$PATH:" in
+        *":$user_prefix/bin:") ;;
+        *) export PATH="$user_prefix/bin:$PATH" ;;
+    esac
+
+    local profile
+    profile=$(detect_shell_profile)
+    append_path_once "$profile" "$user_prefix/bin" || true
+
+    echo ""
+    echo "  npm prefix moved to $user_prefix"
+    echo "  Global packages will install there instead of $npm_prefix"
+}
+
 # ==========================================================================
 # 1. Node.js
 # ==========================================================================
@@ -166,6 +219,9 @@ else
     echo ""
 fi
 
+# Fix common npm permission issues before any npm command runs.
+ensure_npm_prefix_usable
+
 # ==========================================================================
 # 2. uv
 # ==========================================================================
@@ -205,8 +261,18 @@ fi
 # 3. Virtual environment
 # ==========================================================================
 if [ -x "$VENV_PYTHON" ]; then
-    echo "  Virtual environment already exists, skipping creation."
-else
+    echo "  Virtual environment found, checking health..."
+    # Verify the venv is actually isolated: sys.prefix must point inside it.
+    # Do NOT import third-party packages here; only validate Python itself.
+    if "$VENV_PYTHON" -c "import sys; sys.exit(0 if sys.prefix == '$ROOT_VENV' else 1)" >/dev/null 2>&1; then
+        echo "  Virtual environment is healthy."
+    else
+        echo "  Existing venv is unhealthy (not isolated from system Python), recreating..."
+        rm -rf "$ROOT_VENV"
+    fi
+fi
+
+if [ ! -x "$VENV_PYTHON" ]; then
     echo "Creating virtual environment (Python 3.12)..."
     if ! uv venv --python 3.12 "$ROOT_VENV"; then
         echo ""
@@ -219,6 +285,26 @@ fi
 # ==========================================================================
 # 4. Python dependencies
 # ==========================================================================
+# Copy mode avoids cross-filesystem hardlink failures (uv cache vs venv on
+# different mounts) that can leave packages half-extracted. Belt-and-suspenders
+# with [tool.uv] link-mode in the root pyproject.
+export UV_LINK_MODE=copy
+
+# Stop any running bot first. A running process may hold its imported files open;
+# reinstalling a package the bot imports while it runs can corrupt the install.
+BOT_PID_FILE="$SCRIPT_DIR/.modex/bot.pid"
+if [ -f "$BOT_PID_FILE" ]; then
+    echo "Stopping running bot before dependency reinstall..."
+    "$VENV_PYTHON" -m modexbot stop >/dev/null 2>&1 || true
+fi
+
+pip_install() {
+    # $1 = extra uv flags (e.g. --reinstall) for the self-healing recovery path.
+    local extra="${1:-}"
+    uv pip install $extra --python "$VENV_PYTHON" -e "../../.[all,dev]"
+    uv pip install $extra --python "$VENV_PYTHON" -e ".[webui,dev]"
+}
+
 NEEDS_PIP=0
 if [ ! -f "$VENV_MARKER" ]; then
     NEEDS_PIP=1
@@ -230,8 +316,25 @@ fi
 
 if [ "$NEEDS_PIP" -eq 1 ]; then
     echo "Installing Python dependencies..."
-    uv pip install --python "$VENV_PYTHON" -e "../../.[all,dev]"
-    uv pip install --python "$VENV_PYTHON" -e ".[webui,dev]"
+    pip_install
+    if [ -f "pyproject.toml" ]; then
+        file_hash "pyproject.toml" > "$VENV_MARKER"
+    fi
+fi
+
+# Integrity smoke check — runs even when the marker says "already installed", so
+# a previously-corrupted install (interrupted / files held open) is detected and
+# self-heals instead of being silently skipped. aiohttp._cookie_helpers is a
+# canary: its absence is exactly the production crash signature of a
+# half-extracted aiohttp.
+if ! "$VENV_PYTHON" -c "import aiohttp, aiohttp._cookie_helpers, aiohttp.web" >/dev/null 2>&1; then
+    echo "Critical import check failed — environment is corrupted, forcing clean reinstall..."
+    pip_install --reinstall
+    "$VENV_PYTHON" -c "import aiohttp, aiohttp._cookie_helpers, aiohttp.web" >/dev/null 2>&1 || {
+        echo "[ERROR] aiohttp still fails to import after reinstall."
+        echo "  Ensure the bot is stopped, then delete $ROOT_VENV and re-run install.sh."
+        exit 1
+    }
     if [ -f "pyproject.toml" ]; then
         file_hash "pyproject.toml" > "$VENV_MARKER"
     fi
@@ -337,8 +440,19 @@ if prompt_yn "Add $VENV_BIN to your PATH ($SHELL_PROFILE)? [Y/n]:"; then
         *":$VENV_BIN:"*) ;;
         *) export PATH="$VENV_BIN:$PATH" ;;
     esac
-    echo "  PATH updated for this session — 'modexbot' is ready to use."
-    echo "  (New terminals will pick up the change from $SHELL_PROFILE)"
+    echo ""
+    echo "  Shell profile updated — new terminals will pick up the change automatically."
+    echo ""
+    echo "  ┌─────────────────────────────────────────────────────────────┐"
+    echo "  │ To use 'modexbot' in your CURRENT terminal RIGHT NOW:       │"
+    echo "  │                                                             │"
+    if [ "$(basename "${SHELL:-}")" = "fish" ]; then
+        echo "  │   source $SHELL_PROFILE                                    │"
+    else
+        echo "  │   source $SHELL_PROFILE                                    │"
+        echo "  │   (or: exec \$SHELL -l   to restart your shell)             │"
+    fi
+    echo "  └─────────────────────────────────────────────────────────────┘"
 fi
 
 # ==========================================================================
@@ -362,6 +476,9 @@ echo ""
 echo " Next step:"
 echo ""
 echo "       modexbot start"
+echo ""
+echo " (If 'modexbot' is not found, open a NEW terminal or run:"
+echo "   source $SHELL_PROFILE)"
 echo ""
 echo " The bot will be available at: http://localhost:21800/webui/"
 if [ "$HAS_NODE" -eq 0 ]; then

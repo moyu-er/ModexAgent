@@ -66,3 +66,28 @@ async def test_send_delta_to_unregistered_session_is_noop() -> None:
     output_adapter = WebSocketOutputAdapter(input_adapter)
     # Should not raise — unregistered session, no queue
     await output_adapter.send_delta("ghost", "nonexistent")
+
+
+@pytest.mark.asyncio
+async def test_delta_queue_drops_when_full() -> None:
+    """A full delta queue must drop new deltas instead of growing unbounded.
+
+    Deltas are transient UI refresh; dropping them under backpressure protects
+    memory when a client disconnects or lags, without crashing the agent.
+    """
+    input_adapter = WebSocketInputAdapter()
+    output_adapter = WebSocketOutputAdapter(input_adapter)
+    input_adapter.register_connection("sess1", None)
+    q = input_adapter.get_delta_queue("sess1")
+    assert q is not None
+    capacity = q.maxsize
+
+    # Fill the queue exactly to capacity.
+    for i in range(capacity):
+        await output_adapter.send_delta(f"chunk-{i}", "sess1")
+    assert q.qsize() == capacity
+
+    # One more beyond capacity: must not raise and must not grow the queue.
+    await output_adapter.send_delta("overflow", "sess1")
+    assert q.qsize() == capacity
+

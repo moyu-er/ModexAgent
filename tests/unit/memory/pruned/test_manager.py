@@ -177,7 +177,7 @@ class TestSessionIsolation:
 
 
 class TestCrossPlatformSessionId:
-    """Session IDs use ``{conversation_id}:{agent_name}`` format — colons and
+    """Session IDs use ``{session_id}:{agent_name}`` format — colons and
     other characters must be sanitized for filesystem-safe directory names."""
 
     @pytest.mark.asyncio()
@@ -190,7 +190,7 @@ class TestCrossPlatformSessionId:
 
     @pytest.mark.asyncio()
     async def test_multiple_colons_subagent_session(self, pruned_base_dir, now: datetime) -> None:
-        """Subagent sessions: conversation_id:parent_agent:invocation_id."""
+        """Subagent sessions: session_id:parent_agent:invocation_id."""
         mgr = PrunedManager(pruned_base_dir=pruned_base_dir)
         msgs = _messages([datetime(2024, 6, 1, 9, 0, tzinfo=TZ)])
         sid = "ABC123:main:inv_def456"

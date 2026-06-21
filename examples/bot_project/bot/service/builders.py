@@ -11,11 +11,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bot.plugins.integration import PluginIntegration
-from framework import InMemoryToolManager, ToolManagerConfig
 
 if TYPE_CHECKING:
     from framework.ioc.configs.agent import AgentConfig as IOCAgentConfig
-    from framework.workspace import DefaultWorkspaceContext
 from framework.core.skills import SkillManager
 from framework.core.tool_manager import Tool
 from framework.ioc.configs.app import AppConfig
@@ -45,7 +43,7 @@ def _make_file_tools() -> list[Tool]:
 
 def _make_shell_tool(
     terminal_manager: Any | None = None,
-    timeout: int = 60,
+    timeout: int = 300,
 ) -> Tool:
     from framework.tools.terminal import SubprocessExecutor, SubprocessTool
 
@@ -125,9 +123,6 @@ class AgentBuilderMixin:
 
     # Configuration
     _app_config: AppConfig | None
-
-    # Workspace — writeable instance attr on BotService
-    workspace_context: DefaultWorkspaceContext | None
 
     # Core components
     output_adapter: OutputAdapter

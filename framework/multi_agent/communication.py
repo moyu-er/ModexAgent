@@ -7,15 +7,15 @@ envelope building, and delivery. Tool classes become thin wrappers around it.
 from __future__ import annotations
 
 import logging
+import tempfile
 import uuid as _uuid_mod
-from collections.abc import Awaitable, Callable
+from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from framework.pipeline.adapters import OutputAdapter
-
-from framework.core.session_id import SessionInfo, SessionIdFactory
+from framework.core.session_id import SessionIdFactory, SessionInfo
 from framework.core.session_registry import SessionRegistry
 from framework.memory.core.message import ChatMessage
 from framework.multi_agent.address import AgentAddress
@@ -24,6 +24,10 @@ from framework.multi_agent.envelope import AgentMessageEnvelope
 from framework.multi_agent.template import AgentTemplate
 from framework.multi_agent.template_registry import AgentTemplateRegistry
 from framework.multi_agent.tools import CommunicationTarget, CommunicationTargetStore
+from framework.pipeline.adapters import OutputAdapter
+from framework.pipeline.snapshot import PoolDataSnapshot
+from framework.tools.workspace_scoped import WorkspaceRootProvider
+from framework.workspace.resources import WorkspaceResources
 
 if TYPE_CHECKING:
     from framework.core.agent import AgentContext
@@ -33,6 +37,26 @@ if TYPE_CHECKING:
     from framework.multi_agent.comm_tracker import CommunicationTracker
     from framework.multi_agent.pool import AgentPool
     from framework.multi_agent.registry import AgentRegistry
+
+
+class WorkspaceManager(ABC):
+    """Abstract interface for workspace resolution used by AgentCommunicationService.
+
+    The concrete implementation (e.g. ``WorkspaceResolverCell``) is provided
+    by the bot layer.  This ABC keeps the framework decoupled from business
+    types while giving the constructor a precise type annotation.
+    """
+
+    @abstractmethod
+    def resolve_workspace(self) -> WorkspaceResources:
+        """Return the currently active workspace's resources.
+
+        The returned :class:`WorkspaceResources` exposes ``pool_data`` (pool
+        name → :class:`PoolDataSnapshot`), whose values carry ``memory_dir``,
+        ``runtime_dir``, and ``pruned_manager``.
+        """
+        ...
+
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +117,7 @@ async def _load_per_agent_mcp(
 
     try:
         await _asyncio.wait_for(manager.initialize(), timeout=15.0)
-    except _asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning(
             "Agent %s: MCP initialization timed out after 15s for %s — "
             "server(s) %s unreachable; continuing without MCP tools",
@@ -205,6 +229,16 @@ class AgentCommunicationService:
         # ── Injection points for bot-layer customization ──
         output_adapter_factory: Callable[[], OutputAdapter] | None = None,
         on_subagent_created: Callable[[str, str], Awaitable[None]] | None = None,
+        # ── Workspace integration (Unit E) ──
+        # When both are set, ``_memory_dir`` / ``_runtime_dir`` / ``_pruned_manager``
+        # are resolved per-call from the active Workspace's pool_data instead of
+        # the fixed ctor args. The fixed args remain as fallbacks (used by tests
+        # and any non-workspace wiring).
+        # DEPRECATED: workspace_manager is superseded by root_provider for path
+        # resolution.  Retained only for pool_data store resolution (memory_dir,
+        # runtime_dir, pruned_manager) which has no replacement yet.
+        workspace_manager: WorkspaceManager | None = None,
+        root_provider: WorkspaceRootProvider | None = None,
     ) -> None:
         self._source = source
         self._broker = broker
@@ -230,6 +264,9 @@ class AgentCommunicationService:
         self._runtime_dir = runtime_dir
         self._output_adapter_factory = output_adapter_factory
         self._on_subagent_created = on_subagent_created
+        self._workspace_manager = workspace_manager
+        self._root_provider = root_provider
+        self._fallback_output_root: Path | None = None
 
     def _resolve_source(self, context: AgentContext) -> AgentAddress:
         """Resolve effective source address from context, fallback to constructor default."""
@@ -237,15 +274,78 @@ class AgentCommunicationService:
             return AgentAddress(name=context.session.agent_name)
         return self._source
 
-    def _fork_workspace(self) -> Path | None:
-        """Return the fork context workspace directory, or None if not available."""
-        if self._project_dir is None:
+    # ------------------------------------------------------------------
+    # Workspace-aware path resolution (Unit E)
+    # ------------------------------------------------------------------
+
+    def _resolve_pool_data(self) -> PoolDataSnapshot | None:
+        """Return the active Workspace's PoolData snapshot for this pool, or None.
+
+        When a workspace_manager is wired AND it has an active workspace AND
+        that workspace has built pool_data for ``_pool_name``, return it.
+        Otherwise return None so callers fall back to the fixed ctor args.
+        """
+        mgr = self._workspace_manager
+        if mgr is None or self._pool_name is None:
             return None
-        return self._memory_dir or (
-            self._project_dir / "data" / "memory" / self._pool_name
-            if self._pool_name
-            else self._project_dir / "data" / "memory"
-        )
+        try:
+            ws = mgr.resolve_workspace()
+        except RuntimeError:
+            return None
+        if ws is None:
+            return None
+        return ws.pool_data.get(self._pool_name)
+
+    def _resolved_memory_dir(self) -> Path | None:
+        """memory_dir: prefer the active workspace's pool_data, else ctor arg."""
+        pool_data = self._resolve_pool_data()
+        if pool_data is not None:
+            return pool_data.memory_dir
+        return self._memory_dir
+
+    def _resolved_runtime_dir(self) -> Path | None:
+        """runtime_dir: prefer the active workspace's pool_data, else ctor arg."""
+        pool_data = self._resolve_pool_data()
+        if pool_data is not None:
+            return pool_data.runtime_dir
+        return self._runtime_dir
+
+    def _resolve_output_root(self) -> Path:
+        """Resolved runtime_dir, NEVER the process CWD.
+
+        Subagent OUTPUT.md is written under this dir; silently defaulting to the
+        process CWD (``Path('.')``) would collide across workspaces and leak
+        outside the owning workspace. When neither workspace pool_data nor a
+        constructor runtime_dir is available (broken wiring / isolated unit
+        tests), fall back to a single isolated temp dir per service and warn —
+        never the shared process CWD.
+        """
+        runtime_dir = self._resolved_runtime_dir()
+        if runtime_dir is not None:
+            return runtime_dir
+        if self._fallback_output_root is None:
+            self._fallback_output_root = Path(tempfile.mkdtemp(prefix="modex-subagent-"))
+            logger.warning(
+                "Subagent runtime_dir unresolved; writing OUTPUT.md to isolated "
+                "temp dir %s. Materialize the workspace to write into it.",
+                self._fallback_output_root,
+            )
+        return self._fallback_output_root
+
+    def _resolved_pruned_manager(self) -> Any | None:
+        """pruned_manager: prefer the active workspace's pool_data, else ctor arg."""
+        pool_data = self._resolve_pool_data()
+        if pool_data is not None:
+            return pool_data.pruned_manager
+        return self._pruned_manager
+
+    def _fork_workspace(self) -> Path | None:
+        """Return the fork context workspace directory, or None if unavailable.
+
+        Never synthesizes a path under ``project_dir`` — that would write outside
+        the owning workspace. Returns None when no workspace memory dir is resolved.
+        """
+        return self._resolved_memory_dir()
 
     def _resolve_target(
         self, target_agent: str
@@ -281,11 +381,13 @@ class AgentCommunicationService:
         parent_session_id: SessionInfo | str,
         invocation_id: str | None,
         target_kind: AgentCommKind | None,
-    ) -> tuple[str | None, Path | None, Path | None]:
-        """Ensure invocation_id and create trace/output dirs for subagent targets.
+    ) -> tuple[str | None, None, Path | None]:
+        """Ensure invocation_id and create output dir for subagent targets.
 
-        Returns (invocation_id, trace_dir, output_path).  Returns (invocation_id, None, None)
-        when target is not a subagent.
+        Returns (invocation_id, None, output_path).  Returns (invocation_id, None, None)
+        when target is not a subagent.  Trace dirs are no longer created here —
+        the workspace-rooted ``JsonFileTraceStore`` creates them on first write
+        via ``TraceCollectorHook``, uniformly for ALL agents (no subagent distinction).
         """
         if target_kind != AgentCommKind.SUBAGENT:
             return invocation_id, None, None
@@ -294,16 +396,17 @@ class AgentCommunicationService:
         if not invocation_id or str(invocation_id).lower() == "null":
             invocation_id = _uuid_mod.uuid4().hex[:_TASK_ID_BYTES]
         else:
-            # Check if existing trace directory exists for this invocation
+            # Check if output already exists (collision-avoidance).
             existing_sid = self._session_factory.create(
                 agent_name=target_agent,
                 parent_session_id=parent_session_id,
                 external_id=invocation_id,
             )
             existing_session = str(existing_sid)
-            if self._runtime_dir is not None:
-                trace_path = self._runtime_dir / "trace" / existing_session
-                if not trace_path.exists():
+            runtime_dir = self._resolved_runtime_dir()
+            if runtime_dir is not None:
+                existing_output = runtime_dir / "output" / existing_session
+                if not existing_output.exists():
                     invocation_id = _uuid_mod.uuid4().hex[:_TASK_ID_BYTES]
 
         target_sid = self._session_factory.create_with_prefix(
@@ -313,14 +416,12 @@ class AgentCommunicationService:
         )
         session_id = str(target_sid)
 
-        runtime_dir = self._runtime_dir or Path(".")
-        trace_dir = runtime_dir / "trace" / session_id
+        runtime_dir = self._resolve_output_root()
         output_path = runtime_dir / "output" / session_id / "OUTPUT.md"
 
-        trace_dir.mkdir(parents=True, exist_ok=True)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        return invocation_id, trace_dir, output_path
+        return invocation_id, None, output_path
 
     async def _create_dynamic_subagent(
         self,
@@ -391,9 +492,10 @@ class AgentCommunicationService:
         # ── OUTPUT.md base dir — passed to MemorySystemContextManager so
         # OutputMdProvider can compute the correct per-session path at turn time.
         # No static injection into system_prompt — the path is always fresh. ──
+        runtime_dir_resolved = self._resolved_runtime_dir()
         output_base_dir: Path | None = None
-        if self._runtime_dir is not None:
-            output_base_dir = self._runtime_dir / "output"
+        if runtime_dir_resolved is not None:
+            output_base_dir = runtime_dir_resolved / "output"
 
         # ── Read-only guard: remind agent not to modify project files ──
         if template.tool_preset == ToolPreset.READ_ONLY:
@@ -416,7 +518,7 @@ class AgentCommunicationService:
         from framework.ioc.factories.descriptors import build_session_only_memory
         from framework.memory.core.scope import MemoryAgentRole
 
-        memory_workspace = self._memory_dir or (
+        memory_workspace = self._resolved_memory_dir() or (
             self._project_dir / "data" / "memory" / self._pool_name
             if self._project_dir and self._pool_name
             else Path(".")
@@ -427,7 +529,7 @@ class AgentCommunicationService:
             agent_id=name,
             agent_role=MemoryAgentRole.SUBAGENT,
             system_prompt=system_prompt,
-            pruned_manager=self._pruned_manager,
+            pruned_manager=self._resolved_pruned_manager(),
             output_base_dir=output_base_dir,
         )
 
@@ -437,100 +539,105 @@ class AgentCommunicationService:
 
         if template.context_mode == ContextMode.FORK and self._project_dir is not None:
             fork_workspace = self._fork_workspace()
-            if fork_workspace is not None:
-                fork_file = fork_workspace / "fork_contexts" / f"{name}_{invocation_id}.xml"
-
-            if fork_file.exists():
-                # ── Resume: load persisted fork context ──
-                fork_xml = fork_file.read_text(encoding="utf-8")
-                logger.info(
-                    "Fork context: loaded persisted file for %s/%s",
+            if fork_workspace is None:
+                logger.warning(
+                    "Fork context: no workspace available for %s, skipping injection",
                     name,
-                    invocation_id,
                 )
             else:
-                # ── Initial creation: two-stage truncate + persist ──
-                fork_xml = (
-                    f'<forked_context source="{parent_name}">'
-                    f"  <info>No parent messages available.</info>"
-                    f"</forked_context>"
-                )
-                try:
-                    parent_sid_str = str(parent_session_id)
-                    parent_ctx = MemoryContext(session_id=parent_sid_str)
+                fork_file = fork_workspace / "fork_contexts" / f"{name}_{invocation_id}.xml"
 
-                    # Read parent messages via abstract API
-                    subagent_memory = subagent_ctx.memory_system
-                    if subagent_memory is not None:
-                        parent_messages = await subagent_memory.get_history(
-                            parent_ctx,
-                            max_messages=10000,
-                        )
-
-                        if parent_messages:
-                            # Stage 1: count-based truncation
-                            fork_max = template.fork_max_messages
-                            truncated = parent_messages[-fork_max:]
-
-                            # Stage 2: lossy governance (on kept messages)
-                            if (
-                                template.memory is not None
-                                and template.memory.governance is not None
-                                and template.memory.governance.lossy_compaction is not None
-                            ):
-                                from framework.memory.context_governance import (
-                                    LossyContentCompactionGovernance,
-                                )
-
-                                lc = template.memory.governance.lossy_compaction
-                                governor = LossyContentCompactionGovernance(
-                                    tool_result_head_chars=lc.tool_result_head_chars,
-                                    assistant_head_chars=lc.assistant_head_chars,
-                                    agent_head_chars=lc.agent_head_chars,
-                                    user_head_chars=lc.user_head_chars,
-                                    tool_args_head_chars=lc.tool_args_head_chars,
-                                )
-
-                                msg_dicts: list[dict[str, Any]] = [
-                                    m.model_dump() for m in truncated
-                                ]
-                                compacted = await governor.apply(msg_dicts)
-                                truncated = [ChatMessage(**m) for m in compacted]
-
-                            # Format as XML
-                            fork_xml = _messages_to_xml(truncated, parent_name)
-
-                    else:
-                        logger.warning(
-                            "Fork context: context manager lacks memory_system attribute, "
-                            "fork context will be empty for %s",
-                            name,
-                        )
-
-                    # Persist
-                    fork_file.parent.mkdir(parents=True, exist_ok=True)
-                    fork_file.write_text(fork_xml, encoding="utf-8")
+                if fork_file.exists():
+                    # ── Resume: load persisted fork context ──
+                    fork_xml = fork_file.read_text(encoding="utf-8")
                     logger.info(
-                        "Fork context: persisted for %s/%s",
+                        "Fork context: loaded persisted file for %s/%s",
                         name,
                         invocation_id,
                     )
-                except Exception:
-                    logger.exception(
-                        "Fork context: failed to build for %s, continuing with empty",
-                        name,
+                else:
+                    # ── Initial creation: two-stage truncate + persist ──
+                    fork_xml = (
+                        f'<forked_context source="{parent_name}">'
+                        f"  <info>No parent messages available.</info>"
+                        f"</forked_context>"
                     )
+                    try:
+                        parent_sid_str = str(parent_session_id)
+                        parent_ctx = MemoryContext(session_id=parent_sid_str)
 
-            # ── Inject fork context into system prompt ──
-            fork_preamble = (
-                "\n\n---\n\n"
-                "## Fork Context\n"
-                f"You are a subagent running from a fork of agent '{parent_name}'.\n"
-                "The context below is READ-ONLY reference. Do NOT continue the\n"
-                "prior conversation. Your task starts now.\n\n"
-                f"{fork_xml}"
-            )
-            system_prompt = system_prompt + fork_preamble
+                        # Read parent messages via abstract API
+                        subagent_memory = subagent_ctx.memory_system
+                        if subagent_memory is not None:
+                            parent_messages = await subagent_memory.get_history(
+                                parent_ctx,
+                                max_messages=10000,
+                            )
+
+                            if parent_messages:
+                                # Stage 1: count-based truncation
+                                fork_max = template.fork_max_messages
+                                truncated = parent_messages[-fork_max:]
+
+                                # Stage 2: lossy governance (on kept messages)
+                                if (
+                                    template.memory is not None
+                                    and template.memory.governance is not None
+                                    and template.memory.governance.lossy_compaction is not None
+                                ):
+                                    from framework.memory.context_governance import (
+                                        LossyContentCompactionGovernance,
+                                    )
+
+                                    lc = template.memory.governance.lossy_compaction
+                                    governor = LossyContentCompactionGovernance(
+                                        tool_result_head_chars=lc.tool_result_head_chars,
+                                        assistant_head_chars=lc.assistant_head_chars,
+                                        agent_head_chars=lc.agent_head_chars,
+                                        user_head_chars=lc.user_head_chars,
+                                        tool_args_head_chars=lc.tool_args_head_chars,
+                                    )
+
+                                    msg_dicts: list[dict[str, Any]] = [
+                                        m.model_dump() for m in truncated
+                                    ]
+                                    compacted = await governor.apply(msg_dicts)
+                                    truncated = [ChatMessage(**m) for m in compacted]
+
+                                # Format as XML
+                                fork_xml = _messages_to_xml(truncated, parent_name)
+
+                        else:
+                            logger.warning(
+                                "Fork context: context manager lacks memory_system attribute, "
+                                "fork context will be empty for %s",
+                                name,
+                            )
+
+                        # Persist
+                        fork_file.parent.mkdir(parents=True, exist_ok=True)
+                        fork_file.write_text(fork_xml, encoding="utf-8")
+                        logger.info(
+                            "Fork context: persisted for %s/%s",
+                            name,
+                            invocation_id,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Fork context: failed to build for %s, continuing with empty",
+                            name,
+                        )
+
+                # ── Inject fork context into system prompt ──
+                fork_preamble = (
+                    "\n\n---\n\n"
+                    "## Fork Context\n"
+                    f"You are a subagent running from a fork of agent '{parent_name}'.\n"
+                    "The context below is READ-ONLY reference. Do NOT continue the\n"
+                    "prior conversation. Your task starts now.\n\n"
+                    f"{fork_xml}"
+                )
+                system_prompt = system_prompt + fork_preamble
 
         # ── Tool manager: standard + MCP + communication ──
         subagent_tm = await self._build_subagent_tool_manager(
@@ -628,7 +735,7 @@ class AgentCommunicationService:
             source=effective_source,
             target=AgentAddress(name=name),
             message_type="task_request",
-            conversation_id=str(parent_session_id),
+            session_id=str(parent_session_id),
             agent_session_id=session_id,
             invocation_id=invocation_id,
         )
@@ -694,7 +801,7 @@ class AgentCommunicationService:
                     agent_bus=self._agent_bus,
                     self_name=agent_name,
                     parent_name=parent_name,
-                    runtime_dir=self._runtime_dir,
+                    runtime_dir=self._resolved_runtime_dir(),
                 ),
             )
 
@@ -729,18 +836,20 @@ class AgentCommunicationService:
         from framework.tools.terminal import SubprocessTool
 
         def _make_bash() -> SubprocessTool:
-            return SubprocessTool(timeout=60)
+            return SubprocessTool(timeout=300)
 
         # Register preset tools — pass scoped_write_dir so READ_ONLY agents
         # (scout, oracle) can still write OUTPUT.md via restricted write tool.
         scoped_write_dir: Path | None = None
-        if self._runtime_dir is not None:
-            scoped_write_dir = self._runtime_dir / "output"
+        runtime_dir_resolved = self._resolved_runtime_dir()
+        if runtime_dir_resolved is not None:
+            scoped_write_dir = runtime_dir_resolved / "output"
 
         for tool in get_preset_tools(
             template.tool_preset,
             subprocess_tool_factory=_make_bash,
             scoped_write_dir=scoped_write_dir,
+            root_provider=self._root_provider,
         ):
             tm.register(tool)
 
@@ -938,7 +1047,7 @@ class AgentCommunicationService:
                 source=effective_source,
                 target=AgentAddress(name=target_agent),
                 message_type="task_request",
-                conversation_id=str(parent_sid),
+                session_id=str(parent_sid),
                 agent_session_id=session_id,
                 invocation_id=resolved_invocation_id,
             )
@@ -1019,6 +1128,11 @@ class AgentCommunicationService:
             )
         session_id = str(target_session)
 
+        # Register subagent session in registry so the parent→child relationship
+        # is persisted to session_index — the WebUI tree depends on it.
+        if target_kind == AgentCommKind.SUBAGENT and self._session_registry is not None:
+            await self._session_registry.register(target_session)
+
         # 5. Build envelope (XML-wrapped per spec Section 4.1)
         # For subagent replying to normal parent: preserve caller's snowflake on envelope
         envelope_invocation_id = normalized_invocation_id
@@ -1038,7 +1152,7 @@ class AgentCommunicationService:
             source=effective_source,
             target=AgentAddress(kind="agent", name=target_agent),
             message_type="agent_message",
-            conversation_id=str(parent_sid),
+            session_id=str(parent_sid),
             agent_session_id=session_id,
             invocation_id=envelope_invocation_id,
         )

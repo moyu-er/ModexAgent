@@ -115,7 +115,7 @@ class TestDispatchTaskRequestFallback:
             payload={"content": "legacy task", "message_type": "task_request"},
             source=AgentAddress(name="main"),
             message_type="task_request",
-            conversation_id="conv",
+            session_id="conv",
         )
 
         await pool._dispatch_task_request(instance, desc, envelope)

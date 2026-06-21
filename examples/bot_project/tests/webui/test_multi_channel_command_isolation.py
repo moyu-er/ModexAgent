@@ -12,6 +12,7 @@ import tempfile
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock, AsyncMock
 
 import pytest
 
@@ -23,17 +24,10 @@ from bot.adapters.channels import (
 from bot.adapters.fan_in import FanInInputAdapter
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.pool_router import PoolRouter, PoolSessionStore
-from framework.commands.handlers import build_default_builtin_handlers
-from framework.commands.processor import SlashCommandProcessor
 from framework.control.channel import InMemoryControlChannel
 from framework.core.session_id import SessionInfo
 from framework.core.types import InputMessage, OutputMessage
 from framework.pipeline.adapters import InputAdapter, OutputAdapter
-from framework.workspace.handlers import (
-    CdCommandHandler,
-    ExitCommandHandler,
-    PwdCommandHandler,
-)
 
 
 class _RecordingOutputAdapter(OutputAdapter):
@@ -97,7 +91,7 @@ class _DummyInputAdapter(InputAdapter):
                 session=SessionInfo.from_str(session_id, default_agent_name="main"),
                 source=self._channel_name,
                 channel=self._channel_name,
-                metadata={"conversation_id": session_id},
+                metadata={"session_id": session_id},
             )
         )
         return False
@@ -113,74 +107,78 @@ def _clear_channel_registry():
     channels._conversation_channels.clear()
 
 
-def _workspace_context(cwd: Path, home: Path):
-    from unittest.mock import MagicMock
+class _FakeAdapter:
+    """Test double for InputAdapter that allows attribute assignment."""
 
-    ctx = MagicMock()
-    ctx.current = cwd
-    ctx.home = home
-    ctx.data_dir = cwd
+    def __init__(self, name: str, current_ws: Path, home: Path) -> None:
+        self.name = name
+        self.current_ws = current_ws
+        self.home = home
 
-    async def mock_cd(target: str):
-        return MagicMock(success=True, notice=f"cd: changed to {target}")
-
-    async def mock_exit():
-        return MagicMock(success=True, notice="exit: returned home")
-
-    ctx.cd = mock_cd
-    ctx.exit = mock_exit
-    return ctx
-
-
-def _command_processor(workspace_ctx):
-    handlers = list(build_default_builtin_handlers())
-    handlers.extend([
-        CdCommandHandler(workspace_ctx),
-        ExitCommandHandler(workspace_ctx),
-        PwdCommandHandler(workspace_ctx),
-    ])
-    return SlashCommandProcessor(handlers=handlers)
+    def save_current_ws(self) -> None:
+        pass
 
 
 @pytest.mark.asyncio
-async def test_control_commands_isolated_across_im_channels():
-    """/cd from QQ must only reply on QQ; /exit from Telegram only on Telegram."""
-    qq_out = _RecordingOutputAdapter("qq")
-    tg_out = _RecordingOutputAdapter("telegram")
-    ws_out = _RecordingOutputAdapter("websocket")
-    router = ChannelRouterOutputAdapter({
-        "qq": qq_out,
-        "telegram": tg_out,
-        "websocket": ws_out,
-    })
+async def test_control_commands_isolated_across_im_channels(tmp_path: Path):
+    """S2 handles /cd and /exit directly; each adapter's current_ws is updated."""
+    from bot.input_pipeline.stages.environment_control import EnvironmentControlStage
+    from bot.input_pipeline.context import BotInputContext
+    from framework.input_pipeline.envelope import UserInputEnvelope
+    from unittest.mock import MagicMock
+    from framework.workspace.control import WorkspaceController
+    from framework.workspace.models import CdResult
 
-    workspace_ctx = _workspace_context(Path("/fake/cwd"), Path("/fake/home"))
-    processor = _command_processor(workspace_ctx)
-    channel = InMemoryControlChannel()
+    project_dir = tmp_path / "home"
+    project_dir.mkdir()
+    workspace_dir = project_dir / "workspace"
+    workspace_dir.mkdir()
 
-    qq_in = _DummyInputAdapter("qq")
-    tg_in = _DummyInputAdapter("telegram")
-    fan_in = FanInInputAdapter()
-    fan_in.add_source(qq_in)
-    fan_in.add_source(tg_in)
-    fan_in.configure_control_filter(
-        control_channel=channel,
-        command_processor=processor,
-        output_adapter=router,
+    controller = MagicMock(spec=WorkspaceController)
+    controller.home = project_dir
+    controller.open_workspace = AsyncMock(
+        return_value=CdResult(
+            success=True,
+            current_path=workspace_dir,
+            original_path=project_dir,
+            notice=f"cd: workspace ready at {workspace_dir}",
+        )
     )
+    stage = EnvironmentControlStage(workspace_controller=controller)
 
-    intercepted_qq = await qq_in.inject("/cd /tmp", "qq-user-1")
-    intercepted_tg = await tg_in.inject("/exit", "tg-user-1")
+    # QQ /cd
+    qq_adapter = _FakeAdapter("qq", project_dir, project_dir)
+    ctx_qq = BotInputContext(
+        default_pool="main",
+        pool_session_store=MagicMock(),
+        agent_pool_map={"main": "main"},
+        agent_resolver=lambda p: p,
+        transcript_store=MagicMock(),
+        enqueue_message=MagicMock(),
+        command_adapter=qq_adapter,  # type: ignore[arg-type]
+        current_ws_provider=lambda: project_dir,
+    )
+    env_qq = UserInputEnvelope(external_id="u1", content="/cd workspace", channel="qq")
+    result_qq = await stage.process(env_qq, ctx_qq)
+    assert not result_qq.should_continue()
+    assert qq_adapter.current_ws == workspace_dir
 
-    assert intercepted_qq is True
-    assert intercepted_tg is True
-
-    assert qq_out.messages == [("qq-user-1", "cd: changed to /tmp")]
-    assert tg_out.messages == [("tg-user-1", "exit: returned home")]
-    assert ws_out.messages == []
-
-    # No message should have leaked into the merged queue.
-    assert fan_in._merged_queue.empty()
+    # Telegram /exit
+    tg_adapter = _FakeAdapter("telegram", workspace_dir, project_dir)
+    ctx_tg = BotInputContext(
+        default_pool="main",
+        pool_session_store=MagicMock(),
+        agent_pool_map={"main": "main"},
+        agent_resolver=lambda p: p,
+        transcript_store=MagicMock(),
+        enqueue_message=MagicMock(),
+        command_adapter=tg_adapter,  # type: ignore[arg-type]
+        current_ws_provider=lambda: workspace_dir,
+    )
+    env_tg = UserInputEnvelope(external_id="u2", content="/exit", channel="telegram")
+    result_tg = await stage.process(env_tg, ctx_tg)
+    assert not result_tg.should_continue()
+    assert tg_adapter.current_ws == project_dir
 
 
 @pytest.mark.asyncio
@@ -220,8 +218,14 @@ async def test_pool_switch_isolated_across_im_channels():
 
 
 @pytest.mark.asyncio
-async def test_webui_control_command_does_not_leak_to_im():
-    """A /cd typed in the WebUI input box must only reply on WebSocket."""
+async def test_webui_control_command_does_not_leak_to_im(tmp_path: Path):
+    """A /cd typed in the WebUI input box is handled by S2 for the websocket adapter only."""
+    from bot.input_pipeline.stages.environment_control import EnvironmentControlStage
+    from bot.input_pipeline.context import BotInputContext
+    from framework.input_pipeline.envelope import UserInputEnvelope
+    from framework.workspace.control import WorkspaceController
+    from framework.workspace.models import CdResult
+
     qq_out = _RecordingOutputAdapter("qq")
     tg_out = _RecordingOutputAdapter("telegram")
     ws_out = _RecordingOutputAdapter("websocket")
@@ -231,22 +235,41 @@ async def test_webui_control_command_does_not_leak_to_im():
         "websocket": ws_out,
     })
 
-    workspace_ctx = _workspace_context(Path("/fake/cwd"), Path("/fake/home"))
-    processor = _command_processor(workspace_ctx)
-    channel = InMemoryControlChannel()
+    project_dir = tmp_path / "home"
+    project_dir.mkdir()
+    workspace_dir = project_dir / "workspace"
+    workspace_dir.mkdir()
 
-    ws_in = WebSocketInputAdapter()
-    ws_in.configure_control_filter(
-        control_channel=channel,
-        command_processor=processor,
-        output_adapter=router,
+    controller = MagicMock(spec=WorkspaceController)
+    controller.home = project_dir
+    controller.open_workspace = AsyncMock(
+        return_value=CdResult(
+            success=True,
+            current_path=workspace_dir,
+            original_path=project_dir,
+            notice=f"cd: workspace ready at {workspace_dir}",
+        )
     )
+    stage = EnvironmentControlStage(workspace_controller=controller)
 
-    set_conv_channel("ws-conv-1", "websocket")
-    intercepted = await ws_in._try_intercept_control("/cd /tmp", "ws-conv-1.main")
+    ws_adapter = _FakeAdapter("websocket", project_dir, project_dir)
+    ctx_ws = BotInputContext(
+        default_pool="main",
+        pool_session_store=MagicMock(),
+        agent_pool_map={"main": "main"},
+        agent_resolver=lambda p: p,
+        transcript_store=MagicMock(),
+        enqueue_message=MagicMock(),
+        command_adapter=ws_adapter,  # type: ignore[arg-type]
+        current_ws_provider=lambda: project_dir,
+    )
+    env_ws = UserInputEnvelope(external_id="u1", content="/cd workspace", channel="websocket")
+    result = await stage.process(env_ws, ctx_ws)
 
-    assert intercepted is True
-    assert ws_out.messages == [("ws-conv-1.main", "cd: changed to /tmp")]
+    assert not result.should_continue()
+    # WebSocket adapter's current_ws was updated
+    assert ws_adapter.current_ws == workspace_dir
+    # QQ and Telegram adapters were not touched
     assert qq_out.messages == []
     assert tg_out.messages == []
 
@@ -263,8 +286,10 @@ async def test_plain_message_not_intercepted_routes_normally():
         "websocket": ws_out,
     })
 
-    workspace_ctx = _workspace_context(Path("/fake/cwd"), Path("/fake/home"))
-    processor = _command_processor(workspace_ctx)
+    from framework.commands.handlers import build_default_builtin_handlers
+    from framework.commands.processor import SlashCommandProcessor
+
+    processor = SlashCommandProcessor(handlers=list(build_default_builtin_handlers()))
     channel = InMemoryControlChannel()
 
     qq_in = _DummyInputAdapter("qq")

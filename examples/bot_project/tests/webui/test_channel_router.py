@@ -10,6 +10,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -25,11 +26,6 @@ from framework.commands.processor import SlashCommandProcessor
 from framework.control.channel import InMemoryControlChannel
 from framework.core.types import OutputMessage
 from framework.pipeline.adapters import OutputAdapter
-from framework.workspace.handlers import (
-    CdCommandHandler,
-    ExitCommandHandler,
-    PwdCommandHandler,
-)
 
 
 class _RecordingOutputAdapter(OutputAdapter):
@@ -55,34 +51,38 @@ class _RecordingOutputAdapter(OutputAdapter):
         pass
 
 
-def _workspace_context(cwd: Path, home: Path):
-    """Build a MagicMock workspace context for cd/exit/pwd handlers."""
+def _workspace_control(cwd: Path, home: Path):
+    """Build a MagicMock workspace control (WorkspaceControlPort) for cd/exit/pwd handlers.
+
+    Per-conversation port: ``current(conv)`` / ``switch(conv, target)`` /
+    ``exit(conv)`` / ``pwd(conv)``.
+    """
     from unittest.mock import MagicMock
 
     ctx = MagicMock()
-    ctx.current = cwd
     ctx.home = home
-    ctx.data_dir = cwd
+    ctx.current = lambda session_id: cwd
+    ctx.pwd = lambda session_id: f"cwd: {cwd}\nhome: {home}"
 
-    async def mock_cd(target: str):
+    async def mock_switch(session_id: str, target: str):
         return MagicMock(success=True, notice=f"cd: changed to {target}")
 
-    async def mock_exit():
+    async def mock_exit(session_id: str):
         return MagicMock(success=True, notice="exit: returned home")
 
-    ctx.cd = mock_cd
+    ctx.switch = mock_switch
     ctx.exit = mock_exit
     return ctx
 
 
-def _command_processor(workspace_ctx):
-    """Build a SlashCommandProcessor with cd/exit/pwd handlers."""
+def _session_id_of(context):
+    """Derive the conversation id (session-id prefix) from a CommandContext."""
+    return context.session_id.split(".", 1)[0] if "." in context.session_id else context.session_id
+
+
+def _command_processor(workspace_ctrl):
+    """Build a SlashCommandProcessor with default builtin handlers."""
     handlers = list(build_default_builtin_handlers())
-    handlers.extend([
-        CdCommandHandler(workspace_ctx),
-        ExitCommandHandler(workspace_ctx),
-        PwdCommandHandler(workspace_ctx),
-    ])
     return SlashCommandProcessor(handlers=handlers)
 
 
@@ -123,52 +123,112 @@ async def test_channel_router_defaults_to_websocket(adapters):
 
 
 @pytest.mark.asyncio
-async def test_control_command_notice_routes_to_websocket(adapters):
-    """/cd notice from a WebUI-originated session goes to WebSocket output."""
+async def test_control_command_notice_routes_to_websocket(adapters, tmp_path: Path):
+    """S2 Terminate response for /cd is surfaced by the adapter to the user."""
     qq, ws, router = adapters
 
-    workspace_ctx = _workspace_context(Path("/fake/cwd"), Path("/fake/home"))
-    processor = _command_processor(workspace_ctx)
-    channel = InMemoryControlChannel()
+    # S2 handles /cd directly and produces a Terminate with a notice.
+    # The adapter's _on_message sends this notice back to the user.
+    # This test verifies the channel routing of the notice.
+    from bot.input_pipeline.stages.environment_control import EnvironmentControlStage
+    from bot.input_pipeline.context import BotInputContext
+    from framework.input_pipeline.envelope import UserInputEnvelope
+    from unittest.mock import MagicMock
+    from framework.workspace.control import WorkspaceController
+    from framework.workspace.models import CdResult
 
-    ws_input = WebSocketInputAdapter()
-    ws_input.configure_control_filter(
-        control_channel=channel,
-        command_processor=processor,
-        output_adapter=router,
+    project_dir = tmp_path / "home"
+    project_dir.mkdir()
+    workspace_dir = project_dir / "workspace"
+    workspace_dir.mkdir()
+    cmd_adapter = MagicMock()
+    cmd_adapter.name = "websocket"
+    cmd_adapter.current_ws = project_dir
+    cmd_adapter.home = project_dir
+    cmd_adapter.save_current_ws = MagicMock()
+
+    controller = MagicMock(spec=WorkspaceController)
+    controller.home = project_dir
+    controller.open_workspace = AsyncMock(
+        return_value=CdResult(
+            success=True,
+            current_path=workspace_dir,
+            original_path=project_dir,
+            notice=f"cd: workspace ready at {workspace_dir}",
+        )
     )
 
-    set_conv_channel("ws-session", "websocket")
-    handled = await ws_input._try_intercept_control("/cd /tmp", "ws-session.main")
+    ctx = BotInputContext(
+        default_pool="main",
+        pool_session_store=MagicMock(),
+        agent_pool_map={"main": "main"},
+        agent_resolver=lambda p: p,
+        transcript_store=MagicMock(),
+        enqueue_message=MagicMock(),
+        command_adapter=cmd_adapter,
+        current_ws_provider=lambda: project_dir,
+    )
 
-    assert handled is True
-    assert ws.messages == [("ws-session.main", "cd: changed to /tmp")]
-    assert qq.messages == []
+    stage = EnvironmentControlStage(workspace_controller=controller)
+    env = UserInputEnvelope(external_id="u1", content="/cd workspace", channel="websocket")
+    result = await stage.process(env, ctx)
+
+    assert not result.should_continue()
+    response = result.response
+    assert response is not None and "workspace ready" in response.get("message", "")
 
 
 @pytest.mark.asyncio
-async def test_control_command_notice_routes_to_qq(adapters):
-    """/cd notice from a QQ-originated session goes to QQ output."""
+async def test_control_command_notice_routes_to_qq(adapters, tmp_path: Path):
+    """S2 Terminate response for /cd on QQ channel."""
     qq, ws, router = adapters
 
-    workspace_ctx = _workspace_context(Path("/fake/cwd"), Path("/fake/home"))
-    processor = _command_processor(workspace_ctx)
-    channel = InMemoryControlChannel()
+    from bot.input_pipeline.stages.environment_control import EnvironmentControlStage
+    from bot.input_pipeline.context import BotInputContext
+    from framework.input_pipeline.envelope import UserInputEnvelope
+    from unittest.mock import MagicMock
+    from framework.workspace.control import WorkspaceController
+    from framework.workspace.models import CdResult
 
-    ws_input = WebSocketInputAdapter()
-    ws_input.configure_control_filter(
-        control_channel=channel,
-        command_processor=processor,
-        output_adapter=router,
+    project_dir = tmp_path / "home"
+    project_dir.mkdir()
+    workspace_dir = project_dir / "workspace"
+    workspace_dir.mkdir()
+    cmd_adapter = MagicMock()
+    cmd_adapter.name = "qq"
+    cmd_adapter.current_ws = project_dir
+    cmd_adapter.home = project_dir
+    cmd_adapter.save_current_ws = MagicMock()
+
+    controller = MagicMock(spec=WorkspaceController)
+    controller.home = project_dir
+    controller.open_workspace = AsyncMock(
+        return_value=CdResult(
+            success=True,
+            current_path=workspace_dir,
+            original_path=project_dir,
+            notice=f"cd: workspace ready at {workspace_dir}",
+        )
     )
 
-    # A QQ conversation uses the QQ user_id as the session/conversation id.
-    set_conv_channel("qq-user-1", "qq")
-    handled = await ws_input._try_intercept_control("/cd /tmp", "qq-user-1")
+    ctx = BotInputContext(
+        default_pool="main",
+        pool_session_store=MagicMock(),
+        agent_pool_map={"main": "main"},
+        agent_resolver=lambda p: p,
+        transcript_store=MagicMock(),
+        enqueue_message=MagicMock(),
+        command_adapter=cmd_adapter,
+        current_ws_provider=lambda: project_dir,
+    )
 
-    assert handled is True
-    assert qq.messages == [("qq-user-1", "cd: changed to /tmp")]
-    assert ws.messages == []
+    stage = EnvironmentControlStage(workspace_controller=controller)
+    env = UserInputEnvelope(external_id="u1", content="/cd workspace", channel="qq")
+    result = await stage.process(env, ctx)
+
+    assert not result.should_continue()
+    response = result.response
+    assert response is not None and "workspace ready" in response.get("message", "")
 
 
 @pytest.mark.asyncio

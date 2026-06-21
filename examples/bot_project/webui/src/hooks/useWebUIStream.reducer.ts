@@ -1,4 +1,5 @@
 import type {
+  AssistantReasoningEvent,
   ErrorEvent,
   ModelContentDelta,
   ModelReasoningDelta,
@@ -113,6 +114,14 @@ function _applyEventToMessages(
     }
     case "model_reasoning_delta": {
       const delta = event as ModelReasoningDelta;
+      const msgs = _upsertStreamingBlock(messages, delta.agent_name,
+        { kind: "reasoning", text: delta.text },
+        (prev) => prev.kind === "reasoning" ? { ...prev, text: prev.text + delta.text } : null,
+      );
+      return { messages: msgs, isStreaming: true };
+    }
+    case "assistant_reasoning": {
+      const delta = event as AssistantReasoningEvent;
       const msgs = _upsertStreamingBlock(messages, delta.agent_name,
         { kind: "reasoning", text: delta.text },
         (prev) => prev.kind === "reasoning" ? { ...prev, text: prev.text + delta.text } : null,

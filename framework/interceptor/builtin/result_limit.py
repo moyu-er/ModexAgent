@@ -49,6 +49,14 @@ class ToolResultLimitInterceptor(ToolCallInterceptor):
     def handler(self) -> ToolResultOverflowHandler | None:
         return self._handler
 
+    def repoint_overflow_store(self, store: object) -> None:
+        """Retarget the overflow handler's store (workspace switch).
+
+        No-op when this interceptor has no overflow handler installed.
+        """
+        if self._handler is not None:
+            self._handler.repoint_store(store)
+
     async def around_tool_call(
         self,
         ctx: AgentContext,

@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import json
 import logging
 import mimetypes
 import os
@@ -41,6 +42,10 @@ QQ_FILE_TYPE_FILE = 4
 
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".ico", ".svg"}
 
+# Persistence file for per-channel current workspace
+_CHANNEL_WS_FILE: str = "channel_ws.json"
+_REGISTRY_DIR: str = "_registry"
+
 
 def _guess_send_file_type(filename: str) -> int:
     """判断发送文件的类型：图片 -> 1，其他 -> 4。"""
@@ -49,6 +54,37 @@ def _guess_send_file_type(filename: str) -> int:
     if ext in _IMAGE_EXTS or (mime and mime.startswith("image/")):
         return QQ_FILE_TYPE_IMAGE
     return QQ_FILE_TYPE_FILE
+
+
+def _read_channel_ws(path: Path, channel_name: str, default: Path) -> Path:
+    """Read persisted current_ws for *channel_name* from *path*."""
+    if not path.is_file():
+        return default
+    try:
+        with open(path, encoding="utf-8") as f:
+            raw = json.load(f)
+        try:
+            ws_str = raw.get(channel_name)
+        except AttributeError:
+            ws_str = None
+        if ws_str:
+            return Path(ws_str)
+    except (json.JSONDecodeError, OSError):
+        pass
+    return default
+
+
+def _write_channel_ws(path: Path, data: dict[str, str]) -> None:
+    """Atomically write channel_ws mapping to *path*."""
+    tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
 
 
 class QQInputAdapter(InputAdapter):
@@ -65,6 +101,7 @@ class QQInputAdapter(InputAdapter):
         sandbox: bool = False,
         allow_from: list | None = None,
         media_dir: str | None = None,
+        project_dir: Path | None = None,
     ):
         super().__init__()
         self.app_id = app_id
@@ -92,9 +129,36 @@ class QQInputAdapter(InputAdapter):
         self._input_ctx = None
         self._output_adapter = None
 
+        # Per-channel workspace persistence
+        self._project_dir: Path = project_dir or Path.cwd()
+        self._channel_ws_path: Path = (
+            self._project_dir / ".modex" / _REGISTRY_DIR / _CHANNEL_WS_FILE
+        )
+        self.home = self._project_dir
+        self.current_ws: Path = _read_channel_ws(
+            self._channel_ws_path, self.name, self._project_dir
+        )
+
     @property
     def name(self) -> str:
         return "qq"
+
+    def save_current_ws(self) -> None:
+        """Persist current_ws to channel_ws.json atomically."""
+        data: dict[str, str] = {}
+        if self._channel_ws_path.is_file():
+            try:
+                with open(self._channel_ws_path, encoding="utf-8") as f:
+                    raw = json.load(f)
+                try:
+                    data = raw
+                    _ = raw.get("__probe")
+                except AttributeError:
+                    data = {}
+            except (json.JSONDecodeError, OSError):
+                pass
+        data[self.name] = str(self.current_ws)
+        _write_channel_ws(self._channel_ws_path, data)
 
     def _get_botpy(self):
         """Lazy import botpy"""
@@ -285,7 +349,7 @@ class QQInputAdapter(InputAdapter):
                 "message_id": data.id,
                 "raw_message": data,
                 "user_id": user_id,
-                "conversation_id": user_id,
+                "session_id": user_id,
                 "is_group": is_group,
                 "chat_id": chat_id,
             }
@@ -309,7 +373,7 @@ class QQInputAdapter(InputAdapter):
                     "message_id": data.id,
                     "is_group": is_group,
                     "chat_id": chat_id,
-                    "conversation_id": user_id,
+                    "session_id": user_id,
                 },
                 attachments=[AttachmentRef(local_path=p) for p in attachments],
             )
@@ -317,16 +381,20 @@ class QQInputAdapter(InputAdapter):
 
             # ── Surface Terminate responses (pool switch, invalid skill, etc.) ──
             if not result.should_continue():
-                response = getattr(result, "response", None)
-                if response and isinstance(response, dict):
-                    msg_text = str(response.get("message", ""))
-                    if msg_text:
-                        out = self._output_adapter or self._ctrl_output_adapter
-                        if out is not None:
-                            from framework.core.types import OutputMessage
-                            await out.send(OutputMessage(content=msg_text), user_id)
-                        else:
-                            print(f"[QQInputAdapter] Cannot send Terminate notice (no output adapter): {msg_text}")
+                response = result.response
+                msg_text = ""
+                if response is not None:
+                    try:
+                        msg_text = str(response.get("message", ""))
+                    except AttributeError:
+                        msg_text = ""
+                if msg_text:
+                    out = self._output_adapter or self._ctrl_output_adapter
+                    if out is not None:
+                        from framework.core.types import OutputMessage
+                        await out.send(OutputMessage(content=msg_text), user_id)
+                    else:
+                        print(f"[QQInputAdapter] Cannot send Terminate notice (no output adapter): {msg_text}")
             # continue path: S8 already enqueued via ctx.enqueue_message (= put_input_message)
 
         except Exception as e:

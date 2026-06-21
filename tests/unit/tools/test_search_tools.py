@@ -175,11 +175,22 @@ class TestSearchFilesTool:
         assert "not found" in result.lower()
 
     @pytest.mark.asyncio
+    async def test_search_single_file(self, tmp_workspace):
+        (tmp_workspace / "file.txt").write_text("target value\n")
+        (tmp_workspace / "other.py").write_text("target value\n")
+        tool = SearchFilesTool()
+        result = await tool.execute(query="target", path=str(tmp_workspace / "file.txt"))
+        assert "file.txt" in result
+        assert "target" in result
+        assert "other.py" not in result
+
+    @pytest.mark.asyncio
     async def test_search_not_a_directory(self, tmp_workspace):
         (tmp_workspace / "file.txt").write_text("x")
         tool = SearchFilesTool()
         result = await tool.execute(query="test", path=str(tmp_workspace / "file.txt"))
-        assert "not a directory" in result.lower()
+        assert "not a directory" not in result.lower()
+        assert "No matches found" in result or "Found" in result
 
     # ------------------------------------------------------------------
     # Parser unit tests — cross-platform path handling

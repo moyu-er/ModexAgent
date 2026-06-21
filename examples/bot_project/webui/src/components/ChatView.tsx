@@ -71,6 +71,12 @@ export const ChatView: FC<ChatViewProps> = ({
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
+    // Ignore Enter while an IME is composing (e.g. Chinese / Japanese / Korean
+    // input on macOS).  Pressing Enter to confirm a composition candidate
+    // fires a keydown with ``e.key === "Enter"`` — without this guard the
+    // message is sent prematurely.  ``isComposing`` is the standard flag;
+    // ``keyCode === 229`` is the legacy fallback for older Safari/Edge.
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       submit();
@@ -200,8 +206,8 @@ const SendIcon = (): JSX.Element => (
     strokeLinejoin="round"
     aria-hidden="true"
   >
-    <path d="M12 19V5" />
-    <path d="m5 12 7-7 7 7" />
+    <path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z" />
+    <path d="m21.854 2.147-10.94 10.939" />
   </svg>
 );
 

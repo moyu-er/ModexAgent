@@ -70,5 +70,5 @@ data
 *.pptx
 *.xlsx
 *.pdf
-workspace
+/workspace/
 

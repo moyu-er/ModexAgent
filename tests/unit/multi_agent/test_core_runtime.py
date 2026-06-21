@@ -50,7 +50,7 @@ async def test_default_agent_factory_pipeline_uses_mesh_router(sample_descriptor
 
 def test_agent_factory_abc():
     class DummyFactory(AgentFactory):
-        async def create_agent(self, descriptor, conversation_id=None, context_manager=None):
+        async def create_agent(self, descriptor, session_id=None, context_manager=None):
             return MagicMock()
 
     dummy = DummyFactory()
@@ -162,7 +162,7 @@ async def test_agent_pool_resets_error_count_on_success(any_broker):
     # Mock consume to return one valid message then cancel
     msg = MagicMock()
     msg.headers = {}
-    msg.payload = {"content": "hi", "conversation_id": "c1", "agent_session_id": "c1:resilient_agent"}
+    msg.payload = {"content": "hi", "session_id": "c1", "agent_session_id": "c1:resilient_agent"}
 
     original_consume = any_broker.consume
     call_count = 0
@@ -221,7 +221,7 @@ async def test_agent_pool_tracks_and_caps_invocation_sessions(any_broker):
                 source=AgentAddress(name="main"),
                 target=AgentAddress(name="worker"),
                 message_type="task_request",
-                conversation_id="conv",
+                session_id="conv",
                 agent_session_id=f"conv:worker:{invocation_id}",
                 correlation_id=invocation_id,
             )
@@ -300,7 +300,7 @@ async def test_agent_pool_injects_communication_sideband_metadata(any_broker):
             source=AgentAddress(name="main"),
             target=AgentAddress(name="worker"),
             message_type="agent_message",
-            conversation_id="conv",
+            session_id="conv",
             agent_session_id="conv:worker",
         )
         await pool._dispatch_agent_message(fake_instance, envelope)

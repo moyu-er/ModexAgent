@@ -28,6 +28,7 @@ class RoutingMeta(StrEnum):
     FULL_SESSION_ID = "full_session_id"
     SKILL_XML = "skill_xml"
     SKILL_NAME = "skill_name"
+    WORKSPACE = "workspace"
 
 
 def conversation_session_prefix(envelope: UserInputEnvelope, ctx: BotInputContext) -> str:
@@ -56,7 +57,7 @@ def resolve_session_routing(
 
     The pool store keys by the agent-independent prefix (see
     :func:`conversation_session_prefix`); the transcript / delta-queue key is the
-    full ``str(session)``. When the upstream channel already established a
+    full ``session.session_id``. When the upstream channel already established a
     session (``envelope.pre_resolved_session``), it is reused verbatim — this
     prevents the WebUI from double-encoding the prefix.
     """
@@ -72,7 +73,7 @@ def resolve_session_routing(
         session = ctx.session_factory.create(
             agent_name=agent, external_id=envelope.external_id
         )
-    return pool, agent, str(session)
+    return pool, agent, session.session_id
 
 
 class ResolvePoolStage(InputStage):
@@ -80,10 +81,12 @@ class ResolvePoolStage(InputStage):
         self, envelope: UserInputEnvelope, ctx: BotInputContext
     ) -> StageResult:
         pool, agent, full_sid = resolve_session_routing(envelope, ctx)
-        # Persist an explicit UI pool choice so PoolRouter routes correctly.
-        # Keyed by the agent-independent prefix (same key PoolRouter reads).
-        if envelope.explicit_pool:
-            ctx.pool_session_store.set(conversation_session_prefix(envelope, ctx), pool)
+        # Always persist the resolved pool mapping so PoolRouter routes
+        # correctly, whether the pool was explicitly chosen (WebUI dropdown) or
+        # resolved from fallback. Without this, a session created in a non-main
+        # pool silently defaults to "main" on every subsequent turn.
+        session_prefix = conversation_session_prefix(envelope, ctx)
+        ctx.pool_session_store.set(session_prefix, pool)
         envelope.metadata[RoutingMeta.RESOLVED_POOL] = pool
         envelope.metadata[RoutingMeta.RESOLVED_AGENT] = agent
         envelope.metadata[RoutingMeta.FULL_SESSION_ID] = full_sid
