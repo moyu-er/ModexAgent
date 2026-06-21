@@ -51,10 +51,12 @@ references
 !.python-version
 !.github
 uv.lock
+bun.lock
 trace
 
 /trace
 /output
+node_modules
 
 openspec
 design_doc/

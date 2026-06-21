@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-13 -->
+<!-- Updated: 2026-06-19 -->
 
 # service
 
@@ -10,53 +10,75 @@ Bot service lifecycle, pool orchestration, and workspace management. This is the
 | File | Description |
 |------|-------------|
 | `__init__.py` | Package marker |
-| `core.py` | `BotService` — initialization, workspace context, pool creation, pipeline assembly (calls `configure_input_pipeline` on adapters), lifecycle management |
+| `core.py` | `BotService` — initialization, workspace stack assembly (multi-live), pool creation, pipeline assembly, lifecycle management |
 | `builders.py` | Tool registration, MCP tool loading, subagent memory/skill construction, terminal tool setup |
-| `pool_builder.py` | `create_pool()` — assembles an `AgentPool` with main agent + subagent descriptors from config |
+| `pool_builder.py` | `create_pool()` — assembles an `AgentPool` with main agent + subagent descriptors from config; per-workspace tool wrapping via `WorkspaceRootProvider` |
 | `pool_instance.py` | `PoolInstance` dataclass — holds pool config, `AgentPool` reference, main agent name |
 | `pool_router.py` | `PoolRouter` — session→pool dispatch; `PoolSessionStore` persists session→pool mapping. Now delegates message processing to input pipeline (adapter produces seed envelope → pipeline stages → enqueue callback enters broker queue) |
 | `web_ui_service.py` | `WebUIService` — assembles and starts the WebUI HTTP + WS server; creates `PoolSkillManagerRegistry` and `BotInputContext`; wires pipeline into adapters |
 | `qq_service.py` | QQ platform service — wires QQ adapters to the bot |
 
-## Workspace Switching Flow
+## Workspace Model (multi-live)
 
-Defined in `core.py`:
+The workspace system lives in `bot/workspace/` (generic half) + `bot/workspace/bundle/` (business half). It REPLACES the old single-active `WorkspaceManager` (deleted) with:
 
-1. `DefaultWorkspaceContext` created with `active_checker` (checks all pools for running sessions).
-2. Two callbacks registered: `_on_ws_stop_and_rebuild` and `_on_ws_terminal_reset`.
-3. On `cd(target)`: check idle → run callbacks → `os.chdir()` → persist `cwd.json`.
-4. `_on_ws_stop_and_rebuild`: stop dream engine → clear subagent caches → rebuild pool memory → rebuild shared infra.
-5. `_on_ws_terminal_reset`: close all terminal sessions.
+- **`WorkspaceRegistry[R]`** — holds multiple `WorkspaceContext`s + lazily-cached resource bundles (`R`). Resources materialize on first use and are LRU-evictable.
+- **`SessionWorkspaceMap`** — per-session `session_id → target` pointer (replaces global `cwd.json`). `/cd` mutates only this pointer — no deactivation, no re-point.
+- **`WorkspaceMessageDispatcher`** — per-message routing: resolves session → workspace → binds `current_workspace_root` contextvar → routes into that workspace's `PoolRouter`.
+- **Per-workspace broker/inbox/bus** — each workspace owns its own; no shared re-point (fixes the old inbox-stranding defect).
+- **`WorkspaceHandleRootProvider`** — per-workspace tool default-path binding (fixes the old tool-CWD defect).
+
+Key architectural decisions:
+- `workspace.enabled` flag in `WorkspaceConfig` (default `False`) → single-home stack (no `/cd`); `True` → full multi-live.
+- `bot/workspace/` (generic half, except `bundle/`) has zero business imports — migration-ready to `framework/workspace/`.
+- `WorkspaceManager` (ABC, `framework/multi_agent/communication.py`) is now a framework-level interface for pipeline workspace access, NOT a single-active switch engine.
+
+## Workspace directory layout (paths.py as single authority)
+```
+<target>/.<data_dir_name>/
+├── memory/<pool>/          # MemorySystem + pruned + fork_contexts
+├── runtime_state/<pool>/   # turns, commands, trace, output
+├── experiences/<pool>/<agent>/
+├── inbox/                  # agent message delivery
+├── pool_sessions/          # session→pool routing
+├── sessions/               # transcript (WebUI)
+├── session_index/          # SessionInfo
+└── overflow/               # tool result overflow
+
+Global tier (not under any workspace): `<home>/.<data_dir_name>/_registry/{workspaces.json, session_map.json}`
+```
 
 ## Pool Routing Flow
 
 Defined in `pool_router.py`:
 
-1. `PoolRouter.run()` receives messages from `InputAdapter`.
-2. Looks up session's current pool from `PoolSessionStore` (default: configured default pool).
+1. `WorkspaceMessageDispatcher` resolves the session's workspace and routes messages into that workspace's `PoolRouter`.
+2. `PoolRouter` looks up session's current pool from `PoolSessionStore` (default: configured default pool).
 3. Routes message to pool's main agent via `BrokerMessage`.
-4. **Pool-switch commands** (`/pool_name`) are handled upstream by the input pipeline (S2), not by `PoolRouter` directly. The pipeline reads/writes `PoolSessionStore` and terminates early with a user-facing notice before reaching `PoolRouter`.
+4. **Pool-switch commands** (`/pool_name`) are handled upstream by the input pipeline (S2), not by `PoolRouter` directly.
 
 ## For AI Agents
 
 ### Working In This Directory
 - `core.py` is the single most important file — read it first to understand the entire initialization chain.
-- The callback pattern in workspace switching means new subsystems only need `register_callback()`.
-- Pool creation order matters: shared infra (broker, inbox, retention) is built first, then pools individually.
-- `pool_router.py` no longer handles `/pool_name` inline — pool commands flow through the input pipeline (S2 for IM, prohibited in WebUI).
-- `web_ui_service.py` wires the entire input pipeline per adapter (IM vs WebUI entry points) and creates the `SkillRegistry` concrete implementation.
+- The workspace stack is assembled in `bot/workspace/bundle/wiring.py` (`build_workspace_stack` / `build_single_workspace_stack`); `core.py` branches on `workspace.enabled`.
+- Per-workspace resources (broker, inbox, bus, interceptor, background tasks, pools) are built inside `_build_resources` (`wiring.py`); each workspace gets its own set.
+- Pool creation order matters: per-workspace infra (broker, inbox, retention) is built first, then pools individually.
+- `web_ui_service.py` wires the entire input pipeline per adapter (IM vs WebUI entry points).
 
 ### Common Patterns
 - IOC pattern: `AppConfig` is the single source of truth; all config flows from it.
 - Builder pattern: `builders.py` and `pool_builder.py` construct complex objects with many dependencies.
-- Callback pattern: workspace switching, pool lifecycle hooks.
+- Multi-live pattern: switching mutates only a per-session pointer; resources are lazy + cached + evictable; in-flight turns are unaffected.
 
 ## Dependencies
 
 ### Internal
-- `framework/workspace/context.py` — `DefaultWorkspaceContext`
+- `framework/workspace/port.py` — `WorkspaceControlPort` (per-session cd/exit/pwd contract)
+- `bot/workspace/` — generic workspace mechanism (registry, resolver, session map, controller)
+- `bot/workspace/bundle/` — business resource factory, dispatcher, per-workspace wiring
 - `framework/multi_agent/pool.py` — `AgentPool`
-- `framework/multi_agent/router.py` — `DefaultMeshRouter`
+- `framework/multi_agent/communication.py` — `WorkspaceManager` ABC (framework view of workspace resources)
 - `framework/pipeline/pipeline.py` — `Pipeline`
 - `framework/memory/` — memory system, store registries
 - `bot/adapters/` — input/output adapters

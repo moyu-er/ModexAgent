@@ -174,6 +174,13 @@ modexbot start
 > - Windows: `..\..\.venv\Scripts\python.exe -m modexbot start`
 > - Linux/macOS: `../../.venv/bin/python -m modexbot start`
 
+> [!NOTE]
+> **安装损坏自愈**：安装脚本现在会在重装依赖前**先停掉运行中的 bot**，并在安装后做一次完整性导入校验（`import aiohttp._cookie_helpers`）——若校验失败会自动触发干净重装。这能避免 Windows 下"bot 进程占用 aiohttp 文件句柄时重装导致安装残缺"（典型症状：`No module named 'aiohttp._cookie_helpers'`，启动即崩溃）。
+> 仍可手动恢复：**先停 bot**（`modexbot stop`），删除项目根的 `.venv` 目录后重新运行 `install.bat` / `install.sh`。
+> 跨盘符（uv 缓存在 C:、venv 在其他盘）下，根 `pyproject.toml` 的 `[tool.uv] link-mode = "copy"` 已强制 uv 用复制而非硬链接，从源头规避解压不完整。
+
+---
+
 ---
 
 ### 方式 B：手动配置

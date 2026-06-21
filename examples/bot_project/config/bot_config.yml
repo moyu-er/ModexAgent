@@ -29,6 +29,10 @@ safety:
 paths:
   data_dir: "data"
 
+# ---- Workspace (multi-live) ----
+workspace:
+  enabled: true
+
 # ---- Multi-agent ----
 multi_agent:
   default_pool: "main"

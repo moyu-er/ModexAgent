@@ -47,14 +47,15 @@ Primary end-to-end reference implementation for the ModexAgent framework. Demons
 - **Conversation**: External chat scope, identified by `conversation_id`.
 - **Session**: Agent-owned scope, format `{conversation_id}.{agent_name}[.{invocation_id}]`.
 
-### Workspace Switching Rules
+### Workspace Model (multi-live)
 
-1. **Guard**: `active_checker()` verifies ALL pools have zero active sessions before allowing switch.
-2. **Callbacks** (registered in `core.py`):
-   - `_on_ws_stop_and_rebuild`: Stop background tasks → rebuild pool memory stores → rebuild shared infra.
-   - `_on_ws_terminal_reset`: Close all terminal sessions.
-3. **After switch**: `os.chdir()` updates cwd; `cwd.json` persists for restart recovery.
-4. **Data source switch**: Memory stores rebuild to new `data_dir`. Conversation metadata (`conversations.json`) is global and filtered by workspace.
+The workspace system lives in `bot/workspace/` (generic) + `bot/workspace/bundle/` (business). Key properties:
+
+1. **Multi-live**: Many workspaces coexist concurrently. Switching mutates only a per-session pointer (`SessionWorkspaceMap`), not a global `_active`. No `os.chdir`, no busy-check.
+2. **Per-workspace isolation**: Each workspace owns its own broker/inbox/bus/interceptor. Inbox cross-consume is structurally impossible.
+3. **Lazy materialization**: Heavy resources (`R`) are built on first use, cached, and LRU-evictable. WorkspaceContext (identity) is cheap and always retained.
+4. **Optional**: `workspace.enabled = False` → single-home stack (no `/cd`); `True` → full multi-live. Data layout is identical in both modes.
+5. **Per-turn workspace binding**: `WorkspaceMessageDispatcher` resolves the workspace before every turn, binds `current_workspace_root` contextvar, and routes into that workspace's `PoolRouter`. In-flight turns hold their `R` and are unaffected by switches.
 
 ### Input Pipeline Convergence
 

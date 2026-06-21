@@ -175,6 +175,11 @@ Common commands (all shell-agnostic after PATH setup): `modexbot stop` \| `modex
 > - Windows: `..\..\.venv\Scripts\python.exe -m modexbot start`
 > - Linux/macOS: `../../.venv/bin/python -m modexbot start`
 
+> [!NOTE]
+> **Self-healing installs**: the install scripts now **stop the running bot before reinstalling dependencies** and run a post-install integrity check (`import aiohttp._cookie_helpers`); if it fails they trigger a clean reinstall. This avoids the Windows failure where reinstalling a package the bot imports while it is running corrupts the install (typical symptom: `No module named 'aiohttp._cookie_helpers'`, crash on startup).
+> Manual recovery if ever needed: **stop the bot** (`modexbot stop`), delete the root `.venv`, and re-run `install.bat` / `install.sh`.
+> On cross-filesystem setups (uv cache on C:, venv on another drive) the root `pyproject.toml` sets `[tool.uv] link-mode = "copy"`, forcing copy over hardlink so extraction can't be left half-done.
+
 ---
 
 ### Option B: Manual Setup
