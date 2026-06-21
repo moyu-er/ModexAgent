@@ -82,7 +82,7 @@ class SearchFilesTool(Tool):
                 },
                 "path": {
                     "type": "string",
-                    "description": "Directory to search in (default: current directory)",
+                    "description": "File or directory to search in (default: current directory)",
                     "default": ".",
                 },
                 "file_pattern": {
@@ -125,9 +125,9 @@ class SearchFilesTool(Tool):
     ) -> str:
         search_path = _resolve_path(path)
         if not search_path.exists():
-            return f"Error: Directory not found: {path}"
-        if not search_path.is_dir():
-            return f"Error: Not a directory: {path}"
+            return f"Error: Path not found: {path}"
+        if not search_path.is_file() and not search_path.is_dir():
+            return f"Error: Not a file or directory: {path}"
 
         max_results = min(max_results, self.ABSOLUTE_MAX_RESULTS)
 
@@ -154,9 +154,11 @@ class SearchFilesTool(Tool):
     async def _is_git_repo(self, search_path: Path) -> bool:
         if shutil.which("git") is None:
             return False
+        # When given a file, check the directory that contains it.
+        check_path = search_path if search_path.is_dir() else search_path.parent
         try:
             proc = await _async_subprocess_run(
-                ["git", "-C", str(search_path), "rev-parse", "--git-dir"],
+                ["git", "-C", str(check_path), "rev-parse", "--git-dir"],
                 capture_output=True,
                 text=True,
                 timeout=5,
@@ -178,6 +180,7 @@ class SearchFilesTool(Tool):
         max_results: int,
         context_lines: int,
     ) -> str:
+        is_file = search_path.is_file()
         cmd = [
             "rg",
             "--vimgrep",
@@ -189,7 +192,7 @@ class SearchFilesTool(Tool):
         ]
         for d in DEFAULT_EXCLUDES:
             cmd.extend(["--glob", f"!{d}"])
-        if file_pattern != "*":
+        if not is_file and file_pattern != "*":
             # ripgrep --glob matches against the full relative path.
             # A pattern like "sub/*.py" does NOT match "search_root/sub/x.py"
             # unless prefixed with "**/".  Python rglob("sub/*.py") *does* match
@@ -295,10 +298,29 @@ class SearchFilesTool(Tool):
         max_results: int,
         context_lines: int,
     ) -> str:
+        is_file = search_path.is_file()
+        if is_file:
+            repo_root_proc = await _async_subprocess_run(
+                ["git", "-C", str(search_path.parent), "rev-parse", "--show-toplevel"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if repo_root_proc.returncode != 0:
+                return f"Error: git rev-parse failed: {repo_root_proc.stderr[:200]}"
+            git_dir = Path(repo_root_proc.stdout.strip())
+            try:
+                git_file_pattern = search_path.relative_to(git_dir).as_posix()
+            except ValueError:
+                git_file_pattern = str(search_path)
+        else:
+            git_dir = search_path
+            git_file_pattern = file_pattern
+
         cmd = [
             "git",
             "-C",
-            str(search_path),
+            str(git_dir),
             "grep",
             "-n",
             f"-C{context_lines}",
@@ -308,7 +330,7 @@ class SearchFilesTool(Tool):
             cmd.append("-E")  # Extended regex (| is alternation, not literal)
         else:
             cmd.append("-F")  # Fixed string (literal match)
-        cmd.extend(["-e", query, "--", file_pattern])
+        cmd.extend(["-e", query, "--", git_file_pattern])
 
         try:
             proc = await _async_subprocess_run(cmd, capture_output=True, text=True, timeout=30)
@@ -411,7 +433,11 @@ class SearchFilesTool(Tool):
         exclude_set = set(DEFAULT_EXCLUDES)
         results: list[tuple[str, int, str, list[tuple[int, str]], list[tuple[int, str]]]] = []
 
-        for file_path in search_path.rglob(file_pattern.lstrip("/")):
+        is_file = search_path.is_file()
+        rel_root = search_path.parent if is_file else search_path
+        files_to_search = [search_path] if is_file else search_path.rglob(file_pattern.lstrip("/"))
+
+        for file_path in files_to_search:
             if not file_path.is_file():
                 continue
             # Skip files inside excluded directories
@@ -437,8 +463,8 @@ class SearchFilesTool(Tool):
                         for ln, txt in all_lines[i + 1 : min(len(all_lines), i + 1 + context_lines)]
                     ]
                     rel_path = str(
-                        file_path.relative_to(search_path)
-                        if file_path.is_relative_to(search_path)
+                        file_path.relative_to(rel_root)
+                        if file_path.is_relative_to(rel_root)
                         else file_path
                     )
                     results.append(
