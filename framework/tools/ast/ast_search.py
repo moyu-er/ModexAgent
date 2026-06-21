@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from framework.core.tool_manager import Tool
+from framework.workspace.runtime import resolve_workspace_root
 from framework.tools.ast.engine import (
     _EXT_MAP,
     AST_UNAVAILABLE_MSG,
@@ -72,7 +73,7 @@ class AstGrepSearchTool(Tool):
         if not is_ast_available():
             return AST_UNAVAILABLE_MSG
 
-        search_path = Path(path) if path else Path.cwd()
+        search_path = Path(path) if path else resolve_workspace_root()
 
         try:
             if search_path.is_file():

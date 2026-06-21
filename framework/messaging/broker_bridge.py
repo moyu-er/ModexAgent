@@ -83,7 +83,7 @@ def _broker_msg_to_input_message(
     metadata = dict(payload.get("metadata", {}))
     # 透传 AgentMessageEnvelope 路由字段到 metadata
     for key in (
-        "conversation_id",
+        "session_id",
         "agent_session_id",
         "message_id",
         "in_reply_to",
@@ -109,9 +109,9 @@ def _broker_msg_to_input_message(
     raw_session = payload.get("session_id", str(sender))
     session: SessionInfo | None = None
 
-    # Orphan 隔离：来自 agent 的消息若缺失 conversation_id，隔离到 synthetic session
+    # Orphan 隔离：来自 agent 的消息若缺失 session_id，隔离到 synthetic session
     if sender.kind == "agent":
-        cid = payload.get("conversation_id") or msg.headers.get("conversation_id")
+        cid = payload.get("session_id") or msg.headers.get("session_id")
         if not cid:
             import uuid
 
@@ -178,7 +178,7 @@ class BrokerOutputAdapter(OutputAdapter):
                 "content": message.content,
                 "session_id": session_id,
                 "metadata": metadata,
-                "conversation_id": metadata.get("conversation_id", session_id),
+                "session_id": metadata.get("session_id", session_id),
                 "agent_session_id": metadata.get("agent_session_id", session_id),
                 "message_id": metadata.get("message_id", ""),
                 "in_reply_to": metadata.get("in_reply_to", ""),
@@ -186,7 +186,7 @@ class BrokerOutputAdapter(OutputAdapter):
             sender=self.sender,
             correlation_id=metadata.get("correlation_id", session_id),
             headers={
-                "conversation_id": metadata.get("conversation_id", session_id),
+                "session_id": metadata.get("session_id", session_id),
                 "agent_session_id": metadata.get("agent_session_id", session_id),
                 "message_id": metadata.get("message_id", ""),
                 "in_reply_to": metadata.get("in_reply_to", ""),
@@ -362,14 +362,14 @@ class BrokerBridgeService:
                             "metadata": msg.metadata,
                             "sender_id": msg.sender_id,
                             "chat_id": msg.chat_id,
-                            "conversation_id": msg.session.session_id_prefix,
+                            "session_id": msg.session.session_id_prefix,
                         },
                         sender=Address(kind="channel", name=msg.source or "unknown"),
                         recipient=addr,
                         headers={
                             "channel": msg.channel,
                             "chat_id": msg.chat_id,
-                            "conversation_id": msg.session.session_id_prefix,
+                            "session_id": msg.session.session_id_prefix,
                             "agent_session_id": str(msg.session),
                         },
                     )

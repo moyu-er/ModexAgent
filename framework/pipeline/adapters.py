@@ -10,6 +10,7 @@ import json
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from framework.adapters.platform import StreamingMode
@@ -55,6 +56,19 @@ class InputAdapter(ABC):
         self._input_pipeline: "UserInputPipeline | None" = None
         self._input_ctx: "InputContext | None" = None
         self._output_adapter: OutputAdapter | None = None
+        # Per-channel current workspace; overridden by subclasses that
+        # support workspace switching (e.g. QQ).  Default is CWD.
+        self.current_ws: Path = Path.cwd()
+        # Home directory for /exit reset; subclasses override.
+        self.home: Path = Path.cwd()
+
+    def save_current_ws(self) -> None:
+        """Persist current_ws to external storage.
+
+        Default no-op; adapters with per-channel workspace persistence
+        (e.g. QQ) override this.
+        """
+        pass
 
     @property
     @abstractmethod
@@ -141,7 +155,7 @@ class InputAdapter(ABC):
         if parse_result.invocation is None:
             return False
 
-        from framework.commands.constants import BuiltinCommand, CommandDispatchPolicy
+        from framework.commands.constants import CommandDispatchPolicy
         from framework.commands.models import CommandContext
 
         ctx = CommandContext(
@@ -149,25 +163,6 @@ class InputAdapter(ABC):
             input_msg=InputMessage(content=text, session=SessionInfo.from_str(session_id, default_agent_name="main")),
             agent_name="main",
         )
-
-        # Workspace commands (cd/exit/pwd) are handled at the adapter
-        # layer — they never trigger agent sessions or change agent state
-        # (cd/exit change state but are routed through the workspace
-        # callback, not the agent).  This avoids self-blocking: the
-        # command's own dispatch would otherwise appear as an "active
-        # agent" in pool mode.
-        if parse_result.invocation.command in (
-            BuiltinCommand.CD.value,
-            BuiltinCommand.EXIT.value,
-            BuiltinCommand.PWD.value,
-        ):
-            result = await processor.handle(text, ctx)
-            if result.notice and output:
-                await output.send(
-                    OutputMessage(content=result.notice, session_id=session_id),
-                    session_id,
-                )
-            return True
 
         policy = processor.dispatch_policy(parse_result.invocation, ctx)
         if policy != CommandDispatchPolicy.BYPASS_QUEUE:

@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 from abc import ABC, abstractmethod
 
-from framework.core.session_id import SessionInfo
+from framework.core.session_id import SessionInfo, now_ms
 from framework.core.session_store import SessionStore
 
 
@@ -48,11 +48,11 @@ class InMemorySessionRegistry(SessionRegistry):
         async with self._lock:
             self._cache.clear()
             for session in await self._store.list_sessions():
-                self._cache[str(session)] = session
+                self._cache[session.session_id] = session
 
     async def register(self, session: SessionInfo) -> None:
         async with self._lock:
-            existing = self._cache.get(str(session))
+            existing = self._cache.get(session.session_id)
             if existing is not None:
                 # Merge: keep existing richer fields; only update fields
                 # the incoming session explicitly provides (non-None / non-empty).
@@ -69,11 +69,20 @@ class InMemorySessionRegistry(SessionRegistry):
                     update["metadata"] = merged_meta
                 if update:
                     merged = existing.model_copy(update=update)
-                    self._cache[str(session)] = merged
+                    self._cache[session.session_id] = merged
                     if self._store is not None:
                         await self._store.save(merged)
             else:
-                self._cache[str(session)] = session
+                # New record: ensure timestamps are initialized so callers that
+                # reconstruct a SessionInfo from its id (e.g. AgentPool._track_session
+                # using SessionInfo.from_str) do not persist a null updated_at.
+                if session.created_at is None or session.updated_at is None:
+                    now = now_ms()
+                    session = session.model_copy(update={
+                        "created_at": session.created_at or now,
+                        "updated_at": session.updated_at or now,
+                    })
+                self._cache[session.session_id] = session
                 if self._store is not None:
                     await self._store.save(session)
 

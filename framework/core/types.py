@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, StrEnum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .constants import DefaultValues
@@ -75,6 +76,7 @@ class InputMessage:
     timestamp: datetime = field(default_factory=datetime.now)
     content_format: Any | None = None
     truncatable_paths: list[str] | None = None
+    workspace: Path | None = None
 
 
 @dataclass

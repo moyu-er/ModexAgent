@@ -78,6 +78,20 @@ class ExperienceReviewHook(AfterTurnHook):
     def name(self) -> str:
         return "experience_review_hook"
 
+    # -- dir resolution --------------------------------------------------
+
+    def _resolve_dir(self, ctx: AgentContext) -> Path:
+        """Resolve the experience dir for this turn.
+
+        Prefers the per-turn workspace snapshot on ``ctx`` (wired by the
+        workspace manager); falls back to this hook's configured dir when
+        no snapshot is present (legacy / non-workspace wiring).
+        """
+        snap = ctx.workspace_snapshot
+        if snap is not None:
+            return snap.experience_dir
+        return self._get_dir()
+
     # -- hook lifecycle --------------------------------------------------
 
     async def after_turn(
@@ -132,18 +146,23 @@ class ExperienceReviewHook(AfterTurnHook):
             )
             return
 
+        # Resolve the experience dir for THIS turn from the per-turn
+        # workspace snapshot (or the hook's configured fallback).
+        exp_dir = self._resolve_dir(ctx)
+
         # Gather existing experiences for user message
-        existing_xml = await self._build_existing_experiences_xml()
+        existing_xml = await self._build_existing_experiences_xml(exp_dir)
 
         invocation_id = uuid.uuid4().hex
         logger.info(
-            "ExperienceReviewHook: triggering review invocation=%s turn=%s",
+            "ExperienceReviewHook: triggering review invocation=%s turn=%s dir=%s",
             invocation_id,
             self._turn_counter,
+            exp_dir,
         )
 
         task = asyncio.create_task(
-            self._do_review(snapshot, existing_xml, invocation_id),
+            self._do_review(snapshot, existing_xml, invocation_id, exp_dir),
             name=f"exp-review-{invocation_id[:8]}",
         )
         self._pending.add(task)
@@ -158,7 +177,7 @@ class ExperienceReviewHook(AfterTurnHook):
 
     # -- internal --------------------------------------------------------
 
-    async def _build_existing_experiences_xml(self) -> str:
+    async def _build_existing_experiences_xml(self, exp_dir: Path) -> str:
         """Gather existing experience summaries as XML for the reviewer.
 
         Includes name, description, tags, scenario, and directory so the
@@ -166,7 +185,7 @@ class ExperienceReviewHook(AfterTurnHook):
         whether to update or extend it.
         """
         try:
-            source = FileExperienceSource(directories=[self._get_dir()])
+            source = FileExperienceSource(directories=[exp_dir])
             summaries = await source.list_experiences()
             if not summaries:
                 return ""
@@ -193,12 +212,18 @@ class ExperienceReviewHook(AfterTurnHook):
             logger.debug("Failed to build existing experiences XML", exc_info=True)
             return ""
 
-    async def _do_review(self, snapshot: str, existing_xml: str, invocation_id: str) -> None:
-        before = self._scan_experience_dir()
+    async def _do_review(
+        self,
+        snapshot: str,
+        existing_xml: str,
+        invocation_id: str,
+        exp_dir: Path,
+    ) -> None:
+        before = self._scan_experience_dir(exp_dir)
         try:
             ok = await self._agent.review(
                 conversation_snapshot=snapshot,
-                experience_dir=self._get_dir(),
+                experience_dir=exp_dir,
                 meta_store=self._meta_store,
                 existing_experiences=existing_xml,
                 invocation_id=invocation_id,
@@ -219,15 +244,15 @@ class ExperienceReviewHook(AfterTurnHook):
                 invocation_id,
             )
         finally:
-            after = self._scan_experience_dir()
-            await self._cleanup(before, after)
+            after = self._scan_experience_dir(exp_dir)
+            await self._cleanup(before, after, exp_dir)
 
-    def _scan_experience_dir(self) -> dict[str, float]:
+    def _scan_experience_dir(self, exp_dir: Path) -> dict[str, float]:
         """Scan experience directory, return {name: mtime}."""
         result: dict[str, float] = {}
-        if not self._get_dir().exists():
+        if not exp_dir.exists():
             return result
-        for entry in self._get_dir().iterdir():
+        for entry in exp_dir.iterdir():
             if not entry.is_dir() or entry.name.startswith("."):
                 continue
             md = entry / "EXPERIENCE.md"
@@ -242,6 +267,7 @@ class ExperienceReviewHook(AfterTurnHook):
         self,
         before: dict[str, float],
         after: dict[str, float],
+        exp_dir: Path,
     ) -> None:
         """Deterministic post-review cleanup."""
         created = after.keys() - before.keys()
@@ -265,7 +291,7 @@ class ExperienceReviewHook(AfterTurnHook):
 
         # Validate all existing EXPERIENCE.md files
         for name in list(after.keys()):
-            md_path = self._get_dir() / name / "EXPERIENCE.md"
+            md_path = exp_dir / name / "EXPERIENCE.md"
             if not md_path.exists():
                 continue
             try:
@@ -279,7 +305,7 @@ class ExperienceReviewHook(AfterTurnHook):
                     md_path.unlink()
                 except OSError:
                     pass
-                dir_path = self._get_dir() / name
+                dir_path = exp_dir / name
                 try:
                     if dir_path.exists() and not any(dir_path.iterdir()):
                         dir_path.rmdir()
@@ -290,7 +316,7 @@ class ExperienceReviewHook(AfterTurnHook):
                 continue
 
             # Auto-correct frontmatter name to match directory name
-            auto_correct_frontmatter_name(self._get_dir() / name)
+            auto_correct_frontmatter_name(exp_dir / name)
 
     # -- trigger logic ---------------------------------------------------
 

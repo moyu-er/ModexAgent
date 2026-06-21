@@ -150,7 +150,7 @@ class LocalAgentMessageBus(AgentMessageBus):
                 payload=payload,
                 source=AgentAddress(kind="agent", name=msg.source),
                 message_type=msg.message_type,
-                conversation_id=msg.metadata.get("conversation_id", session_id),
+                session_id=msg.metadata.get("session_id", session_id),
                 agent_session_id=msg.metadata.get("agent_session_id", session_id),
                 invocation_id=msg.metadata.get("invocation_id") if msg.metadata else None,
                 message_id=msg.message_id,

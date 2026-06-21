@@ -72,6 +72,9 @@ class ToolNode(Node):
             return NodeTransition(ReActNode.END, ReActReason.TURN_CANCELLED)
 
         decisions = self._classify_all(tool_calls, ctx)
+        if ctx.emitter is not None:
+            for tc in tool_calls:
+                await ctx.emitter.emit(ReActEvent.TOOL_CALL_START, tc)
         call_states = [
             ToolCallState(
                 call_id=tc.call_id or uuid4().hex,
@@ -272,9 +275,6 @@ class ToolNode(Node):
         denied_encountered = False
         tool_results: list[Any] = []
         for tc, decision in zip(tool_calls, decisions, strict=False):
-            if ctx.emitter is not None:
-                await ctx.emitter.emit(ReActEvent.TOOL_CALL_START, tc)
-
             if decision == ApprovalDecision.ALLOWED:
                 result = await self._agent._execute_tool(tc, ctx)
             else:

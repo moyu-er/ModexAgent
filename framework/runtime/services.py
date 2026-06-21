@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from framework.memory.context_governance import ContextGovernance
 
     from .store import RuntimeCommandStore, TurnStateStore
+    from framework.trace.store import TraceStore
 
 TState = TypeVar("TState", bound=TurnStateBase)
 
@@ -38,6 +39,7 @@ class AgentRuntimeServices:
     governance: ContextGovernance | None = None
     turn_store: TurnStateStore | None = None
     command_store: RuntimeCommandStore | None = None
+    trace_store: TraceStore | None = None
     pending_input_queue: asyncio.Queue[str] | None = None
     safety: RuntimeSafetyPolicy = field(default_factory=RuntimeSafetyPolicy)
     runtime_context_manager: RuntimeContextManager | None = None
@@ -75,6 +77,10 @@ class AgentRuntime:
     @property
     def command_store(self) -> RuntimeCommandStore | None:
         return self.services.command_store
+
+    @property
+    def trace_store(self) -> TraceStore | None:
+        return self.services.trace_store
 
     @property
     def injection_queue(self) -> asyncio.Queue[str] | None:

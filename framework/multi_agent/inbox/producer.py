@@ -69,7 +69,7 @@ class InboxProducer(BaseInboxProducer):
         metadata["payload"] = envelope.payload
         metadata["source_kind"] = envelope.source.kind if envelope.source else "agent"
         metadata["source_name"] = envelope.source.name if envelope.source else "unknown"
-        metadata["conversation_id"] = envelope.conversation_id
+        metadata["session_id"] = envelope.session_id
         if envelope.agent_session_id:
             metadata["agent_session_id"] = envelope.agent_session_id
         if envelope.invocation_id is not None:

@@ -23,6 +23,7 @@ from .tool_manager import ToolManager
 if TYPE_CHECKING:
     from framework.memory.pipeline.pipeline import SystemPromptPipeline
     from framework.multi_agent.comm_kind import AgentCommKind
+    from framework.pipeline.snapshot import PoolDataSnapshot
     from framework.runtime.models import TurnIdentity
     from framework.runtime.services import AgentRuntime
 
@@ -60,6 +61,13 @@ class AgentContext:
     runtime: AgentRuntime | None = None
     identity: TurnIdentity | None = None
     system_prompt_pipeline: SystemPromptPipeline | None = None
+    workspace_snapshot: PoolDataSnapshot | None = None
+    """Per-turn data snapshot resolved from the active Workspace at turn start.
+
+    Hooks and agents that need workspace-scoped data (e.g. the experience dir)
+    read it from here. None when no workspace manager is wired, in which case
+    consumers fall back to their own defaults.
+    """
 
     @property
     def current_turn_uuid(self) -> str | None:

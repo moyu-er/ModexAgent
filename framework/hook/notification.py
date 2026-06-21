@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from framework.hook.abc import AfterTurnHook
 from framework.multi_agent.comm_kind import AgentCommKind
 
 if TYPE_CHECKING:
@@ -71,18 +72,22 @@ class AgentNotificationService:
             source=AgentAddress(name=ctx.session.agent_name),
             target=AgentAddress(name=parent_name),
             message_type="agent_result",
-            conversation_id=str(ctx.session),
+            session_id=str(ctx.session),
             agent_session_id=inbox_key,
         )
         await self._agent_bus.send(inbox_key, envelope)
 
 
-class MaxIterationNotifyHook:
+class MaxIterationNotifyHook(AfterTurnHook):
     """Sends XML notification when agent hits max_iterations.
 
     Agent-agnostic: same instance works for NORMAL and SUBAGENT agents.
     Routing is handled internally by AgentNotificationService.
     """
+
+    @property
+    def name(self) -> str:
+        return "max_iteration_notify"
 
     def __init__(self, notification_service: AgentNotificationService | None = None) -> None:
         self._svc = notification_service
