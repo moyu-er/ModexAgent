@@ -45,7 +45,7 @@ e2b-code-interpreter>=0.1.0
 # ---- Gateway adapters (QQ Bot, env loading, HTTP) ----
 qq-botpy>=1.2.0
 python-dotenv>=1.0.0
-aiohttp>=3.8.0
+aiohttp>=3.9.0
 questionary>=2.0.0
 
 # ---- Skills & document processing (bot_project subagents / media_utils) ----
