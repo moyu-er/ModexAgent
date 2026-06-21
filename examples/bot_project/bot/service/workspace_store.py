@@ -1,4 +1,4 @@
-"""Workspace- and pool-partitioned transcript store (write-dispatching).
+"""Workspace- and pool-partitioned transcript store (ctxvar-routed writes).
 
 This module lives in ``bot.service`` (the central wiring hub) because
 workspace/pool partitioning is a cross-cutting **business** concern shared by
@@ -6,34 +6,50 @@ every channel (WebUI and IM) — it belongs to neither.
 
 Design — physical partition, self-documenting::
 
-    <base>/<pool>/{full_session_id}.jsonl
+    <sessions_dir>/<pool>/{full_session_id}.jsonl
 
 The store is keyed by the **full session id** (the receiver-owned identifier
 ``{conv}.{agent}[.{invocation_id}]`` shared with the memory system), so two
 subagent invocations of the same agent persist to separate files.
+
+Routing is driven by the per-turn ``bind_workspace_root`` ctxvar
+(:mod:`framework.workspace.runtime`):
+
+- **Writes** (``append``) resolve the owning ``<root>/<data_dir_name>/sessions``
+  from :func:`resolve_workspace_root`. The dispatcher already binds the turn's
+  workspace root; the framework emitter therefore needs no workspace argument.
+  The only writer outside a bound turn — the input pipeline's
+  :class:`PersistUserMessageStage` — binds the envelope's workspace around its
+  append.
+- **Reads** accept an optional ``sessions_dir: Path | None`` override so HTTP
+  request handlers (which run outside any turn) can pass the ``?ws=``-resolved
+  directory explicitly; in-turn reads fall back to the ctxvar root.
 
 The framework (agent emitter, IM FanIn) writes through this store
 transparently.  It only ever calls ``append(session_id, event)``; the
 dispatcher resolves the owning pool for that session — pool is derived from
 the agent segment of the session id via the pool map — and routes the write
 to the matching physical store.
-
-The ``base_dir`` points directly to ``{workspace}/.modex/sessions/``, so
-workspace path encoding is unnecessary.
 """
 
 from __future__ import annotations
 
+import functools
 import logging
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from pathlib import Path
 
 import pathvalidate
 
-from framework.core.session_id import agent_of, session_id_prefix_of
-
 from bot.webui.events import ServerEvent
-from bot.webui.transcript_store import JSONLTranscriptStore, TranscriptStore
+from bot.webui.transcript_store import (
+    JSONLTranscriptStore,
+    ResilientTranscriptStore,
+    TranscriptStore,
+)
+from framework.core.session_id import agent_of, session_id_prefix_of
+from framework.workspace.paths import WorkspacePaths
+from framework.workspace.runtime import is_workspace_root_bound, resolve_workspace_root
 
 logger = logging.getLogger(__name__)
 
@@ -63,35 +79,25 @@ def _conversation_prefix(session_id: str) -> str:
 
 
 class WorkspaceScopedTranscriptStore(TranscriptStore):
-    """Transcript store physically partitioned by pool.
+    """Transcript store physically partitioned by pool, routed by ctxvar.
 
     - One :class:`JSONLTranscriptStore` per pool, lazily created under
-      ``<base>/<pool>/``.
-    - ``append`` routes to the session's owning pool.  Pool is derived from
-      the agent segment of the session id via the pool map; subagents absent
-      from the map inherit the main pool.
+      ``<sessions_dir>/<pool>/``.
+    - ``append`` routes to the session's owning pool under the ctxvar-resolved
+      workspace root.  Pool is derived from the agent segment of the session id
+      via the pool map; subagents absent from the map inherit the main pool.
     - Ownership is read from the physical layout and cached in memory.  No
       ``sessions.json`` is written or read.
 
-    The ``base_dir`` already encodes the workspace (typically
-    ``{workspace}/.modex/sessions/``), so there is no separate workspace path
-    layer in the directory layout.
+    The physical sessions directory is resolved from the bound workspace root
+    (``<root>/<data_dir_name>/sessions``); reads can override it with an
+    explicit ``sessions_dir`` so HTTP handlers do not depend on the ctxvar.
     """
 
-    def __init__(
-        self,
-        meta_base_dir: Path | None,
-        workspace_resolver: Callable[[], str],
-    ) -> None:
-        self._base: Path | None = meta_base_dir
-        self._resolver: Callable[[], str] = workspace_resolver
+    def __init__(self, data_dir_name: str) -> None:
+        self._data_dir_name: str = data_dir_name
         # agent_name -> pool_name (main agents); set by the service after pools built.
         self._agent_pool_map: dict[str, str] = {}
-        # pool_key -> store
-        self._stores: dict[str, JSONLTranscriptStore] = {}
-        # session_id -> pool_key ownership cache
-        self._owners: dict[str, str] = {}
-        self._scanned: bool = False
 
     # ------------------------------------------------------------------
     # Configuration
@@ -101,68 +107,58 @@ class WorkspaceScopedTranscriptStore(TranscriptStore):
         """Set agent_name -> pool_name mapping (main agents)."""
         self._agent_pool_map = dict(mapping)
 
-    def rebase(self, new_base_dir: Path) -> None:
-        """Atomically switch backing directory and invalidate cached state.
+    # ------------------------------------------------------------------
+    # Directory resolution
+    # ------------------------------------------------------------------
 
-        Called during workspace switches (``cd``) so the store writes to the
-        new ``{workspace}/.modex/sessions/`` directory instead of the old one.
+    def _ctxvar_sessions_dir(self) -> Path:
+        """Resolve the sessions dir from the bound workspace root (ctxvar)."""
+        root = resolve_workspace_root()
+        return WorkspacePaths(root=root / self._data_dir_name).sessions_dir
+
+    def _resolve_dir(self, sessions_dir: Path | None) -> Path:
+        """Return the explicit dir when given, else the ctxvar-resolved dir."""
+        if sessions_dir is not None:
+            return sessions_dir
+        return self._ctxvar_sessions_dir()
+
+    def sessions_dir_for_session(self, session_id: str) -> Path:
+        """Return the resolved sessions directory for *session_id*.
+
+        Uses the ctxvar root — appropriate for in-turn callers.  HTTP handlers
+        should pass an explicit ``sessions_dir`` to the read methods instead.
         """
-        logger.info("WorkspaceStore rebase: %s -> %s", self._base, new_base_dir)
-        self._base = new_base_dir
-        self._stores.clear()
-        self._owners.clear()
-        self._scanned = False
+        return self._ctxvar_sessions_dir()
 
     # ------------------------------------------------------------------
     # Physical stores
     # ------------------------------------------------------------------
 
-    def _dir_for(self, pool_key: str) -> Path:
-        return (self._base if self._base is not None else Path()) / pool_key
+    @staticmethod
+    @functools.lru_cache(maxsize=64)
+    def _store_for(sessions_dir: Path, pool_key: str) -> TranscriptStore:
+        """Return a wrapped JSONL store for *sessions_dir* + *pool_key*.
 
-    def _store_for(self, pool_key: str) -> JSONLTranscriptStore:
-        if pool_key not in self._stores:
-            self._stores[pool_key] = JSONLTranscriptStore(self._dir_for(pool_key))
-        return self._stores[pool_key]
-
-    def store_for(self, workspace: str, pool: str) -> TranscriptStore:
-        """Return the physical store for *pool*.
-
-        *workspace* is accepted for backward compatibility but no longer used
-        for path construction — the base directory already encodes the workspace.
+        Stores are stateless wrappers, so the LRU cache is safe: evicted entries
+        are recreated on next access with no loss of persisted data.
         """
-        del workspace  # Backward compatibility; base dir already encodes the workspace.
-        return self._store_for(_pool_sanitized(pool))
+        return ResilientTranscriptStore(
+            JSONLTranscriptStore(sessions_dir / pool_key)
+        )
 
-    def pools_in(self, workspace: str) -> list[str]:
-        """Return pool directory names that exist under the base directory.
+    def store_for(self, sessions_dir: Path, pool: str) -> TranscriptStore:
+        """Return the physical store for *sessions_dir* + *pool*."""
+        return self._store_for(sessions_dir, _pool_sanitized(pool))
 
-        *workspace* is accepted for backward compatibility but no longer used.
-        """
-        del workspace  # Backward compatibility; base dir already encodes the workspace.
-        self._scan()
-        if self._base is None or not self._base.is_dir():
+    def pools_in(self, sessions_dir: Path) -> list[str]:
+        """Return pool directory names that exist under *sessions_dir*."""
+        if not sessions_dir.is_dir():
             return []
-        return sorted(p.name for p in self._base.iterdir() if p.is_dir())
+        return sorted(p.name for p in sessions_dir.iterdir() if p.is_dir())
 
     # ------------------------------------------------------------------
     # Ownership (sourced from the physical layout, cached in memory)
     # ------------------------------------------------------------------
-
-    def _scan(self) -> None:
-        """Populate the session→pool cache from the on-disk layout."""
-        if self._scanned:
-            return
-        self._scanned = True
-        if self._base is None or not self._base.is_dir():
-            return
-        for pool_dir in sorted(self._base.iterdir()):
-            if not pool_dir.is_dir():
-                continue
-            pool_key = pool_dir.name
-            self._store_for(pool_key)
-            for f in pool_dir.glob("*.jsonl"):
-                self._owners[f.stem] = pool_key
 
     def _pool_for_agent(self, agent: str) -> str:
         """Resolve the pool for an agent from the configured map.
@@ -182,68 +178,103 @@ class WorkspaceScopedTranscriptStore(TranscriptStore):
                 return pool
         return _DEFAULT_POOL
 
-    def workspace_of(self, session_id: str) -> str | None:
-        """Return the workspace owning *session_id*.
-
-        Since ``base_dir`` already encodes the workspace, this always returns
-        the resolver's current value (or None if empty).
-        """
-        del session_id
-        ws = self._resolver()
-        return ws or None
-
-    def _owner(self, session_id: str) -> str:
+    def _owner_pool(self, sessions_dir: Path, session_id: str) -> str:
         """Owning pool_key; defaults to the agent's pool."""
-        self._scan()
-        if session_id in self._owners:
-            return self._owners[session_id]
+        for pool_key in self.pools_in(sessions_dir):
+            store = self._store_for(sessions_dir, pool_key)
+            if session_id in store.list_sessions():
+                return pool_key
         return _pool_sanitized(self._pool_for_agent(_agent_of(session_id)))
-
-    def _pools_for_active_workspace(self) -> list[str]:
-        return self.pools_in(self._resolver())
 
     # ------------------------------------------------------------------
     # TranscriptStore interface
     # ------------------------------------------------------------------
 
-    def append(self, session_id: str, event: ServerEvent) -> None:
+    def append(
+        self, session_id: str, event: ServerEvent, *, sessions_dir: Path | None = None
+    ) -> None:
+        # Workspace resolution: prefer an explicit ``sessions_dir`` (resolver-cell
+        # driven, the same source memory uses — survives the broker-queue task
+        # boundary). Only when none is given do we fall back to the bound ctxvar
+        # root; in that fallback, an unbound root would silently land under
+        # Path.cwd()/.modex (home/cwd), so surface it loudly.
+        if sessions_dir is not None:
+            resolved = sessions_dir
+        else:
+            if not is_workspace_root_bound():
+                logger.warning(
+                    "[ws-partition] transcript append for %s with NO bound workspace "
+                    "root — writing under %s (cwd/home). This is expected only outside "
+                    "a turn; a turn-time writer must run inside bind_workspace_root() "
+                    "or pass an explicit sessions_dir.",
+                    session_id,
+                    resolve_workspace_root(),
+                )
+            resolved = self._ctxvar_sessions_dir()
         pool_key = _pool_sanitized(self._pool_for_agent(_agent_of(session_id)))
-        self._store_for(pool_key).append(session_id, event)
+        self._store_for(resolved, pool_key).append(session_id, event)
 
-    def load(self, session_id: str) -> Iterator[ServerEvent]:
-        pool_key = self._owner(session_id)
-        yield from self._store_for(pool_key).load(session_id)
+    def load(
+        self, session_id: str, sessions_dir: Path | None = None
+    ) -> Iterator[ServerEvent]:
+        resolved = self._resolve_dir(sessions_dir)
+        pool_key = self._owner_pool(resolved, session_id)
+        yield from self._store_for(resolved, pool_key).load(session_id)
 
-    def load_conversation(self, conversation_id: str) -> Iterator[ServerEvent]:
-        for pool_key in self.pools_in(self._resolver()):
-            yield from self._store_for(pool_key).load_conversation(conversation_id)
+    def load_sessions_by_prefix(
+        self, session_prefix: str, sessions_dir: Path | None = None
+    ) -> Iterator[ServerEvent]:
+        resolved = self._resolve_dir(sessions_dir)
+        for pool_key in self.pools_in(resolved):
+            yield from self._store_for(resolved, pool_key).load_sessions_by_prefix(
+                session_prefix
+            )
 
-    def list_sessions(self) -> set[str]:
+    def list_sessions(self, sessions_dir: Path) -> set[str]:
         seen: set[str] = set()
-        for pool_key in self._pools_for_active_workspace():
-            seen |= self._store_for(pool_key).list_sessions()
+        for pool_key in self.pools_in(sessions_dir):
+            seen |= self._store_for(sessions_dir, pool_key).list_sessions()
         return seen
 
-    def list_sessions_in_conversation(self, conversation_id: str) -> set[str]:
+    def list_sessions_by_prefix(
+        self, session_prefix: str, sessions_dir: Path | None = None
+    ) -> set[str]:
+        resolved = self._resolve_dir(sessions_dir)
         seen: set[str] = set()
-        for pool_key in self.pools_in(self._resolver()):
-            seen |= self._store_for(pool_key).list_sessions_in_conversation(conversation_id)
+        for pool_key in self.pools_in(resolved):
+            seen |= self._store_for(resolved, pool_key).list_sessions_by_prefix(
+                session_prefix
+            )
         return seen
 
-    def delete_session(self, session_id: str) -> None:
-        pool_key = self._owner(session_id)
-        self._store_for(pool_key).delete_session(session_id)
-        self._owners.pop(session_id, None)
+    def delete_session(
+        self, session_id: str, sessions_dir: Path | None = None
+    ) -> None:
+        resolved = self._resolve_dir(sessions_dir)
+        pool_key = self._owner_pool(resolved, session_id)
+        self._store_for(resolved, pool_key).delete_session(session_id)
 
-    def delete_conversation(self, conversation_id: str) -> None:
-        """Delete a conversation from every pool."""
-        for pool_key in self.pools_in(self._resolver()):
-            self._store_for(pool_key).delete_conversation(conversation_id)
-        # Drop any cached owners belonging to this conversation.
-        for sid in [s for s in self._owners if _conversation_prefix(s) == conversation_id]:
-            self._owners.pop(sid, None)
+    def delete_sessions_by_prefix(
+        self, session_prefix: str, sessions_dir: Path | None = None
+    ) -> None:
+        resolved = self._resolve_dir(sessions_dir)
+        for pool_key in self.pools_in(resolved):
+            self._store_for(resolved, pool_key).delete_sessions_by_prefix(session_prefix)
 
-    def last_updated(self, session_id: str) -> int | None:
-        """Return the last update timestamp for *session_id* in milliseconds."""
-        pool_key = self._owner(session_id)
-        return self._store_for(pool_key).last_updated(session_id)
+    def last_updated(
+        self, session_id: str, sessions_dir: Path | None = None
+    ) -> int | None:
+        resolved = self._resolve_dir(sessions_dir)
+        pool_key = self._owner_pool(resolved, session_id)
+        return self._store_for(resolved, pool_key).last_updated(session_id)
+
+    def load_materialized_by_prefix(
+        self, session_prefix: str, sessions_dir: Path | None = None
+    ) -> list:
+        """Materialize events for *session_prefix* into merged turn blocks."""
+        from bot.webui.transcript_store import _materialize_events
+
+        events: list[ServerEvent] = list(
+            self.load_sessions_by_prefix(session_prefix, sessions_dir=sessions_dir)
+        )
+        return _materialize_events(events)

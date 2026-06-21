@@ -7,6 +7,8 @@ WS-specific method.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from framework.core.types import InputMessage
@@ -40,6 +42,9 @@ class EnqueueStage(InputStage):
             chat_id=envelope.metadata.get("chat_id", ""),  # broker header; never drop to default
             metadata=envelope.metadata,
             attachments=attachments,
+            workspace=Path(envelope.metadata[RoutingMeta.WORKSPACE])
+            if RoutingMeta.WORKSPACE in envelope.metadata
+            else None,
         )
         ctx.enqueue_message(msg)
         return Continue(value=envelope)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 from bot.service.pool_router import PoolSessionStore
 from bot.webui.transcript_store import TranscriptStore
@@ -35,6 +36,7 @@ class BotInputContext(InputContext):
         enqueue_message: Callable[[InputMessage], None],
         command_adapter: InputAdapter,
         session_factory: SessionIdFactory | None = None,
+        current_ws_provider: Callable[[], Path] | None = None,
     ) -> None:
         self._default_pool = default_pool
         self._pool_session_store = pool_session_store
@@ -44,6 +46,10 @@ class BotInputContext(InputContext):
         self._enqueue_message = enqueue_message
         self._command_adapter = command_adapter
         self._session_factory = session_factory or SessionIdFactory()
+        self._current_ws_provider = current_ws_provider or (lambda: Path.cwd())
+
+    def current_ws(self) -> Path:
+        return self._current_ws_provider()
 
     @property
     def default_pool(self) -> str:

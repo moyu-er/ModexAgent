@@ -11,11 +11,25 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import replace as _dc_replace
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from framework.core.emitter import ContentEmitter
+if TYPE_CHECKING:
+    # ``WorkspaceHandle`` / ``WorkspaceResolverCell`` live in the bundle,
+    # which is imported by BotService via this module; deferring them to
+    # TYPE_CHECKING keeps the import graph acyclic. Runtime references
+    # (``WorkspaceHandleRootProvider``) are imported lazily inside
+    # ``create_pool`` for the same reason.
+    from bot.workspace.handle import (
+        WorkspaceHandle,
+        WorkspaceResolverCell,
+    )
+
 from framework.control.channel import InMemoryControlChannel
+from framework.core.emitter import ContentEmitter
 from framework.core.llm_struct import RuntimeSafetyPolicy
+from framework.core.session_id import SessionIdFactory
+from framework.core.session_registry import SessionRegistry
+from framework.core.session_store import SessionStore
 from framework.core.tool_manager import InMemoryToolManager, ToolManagerConfig
 from framework.hook import HookErrorPolicy, HookRunner, HookSpec
 from framework.hook.builtin import InboxFlushHook
@@ -25,7 +39,6 @@ from framework.ioc.configs.memory import MemoryConfig
 from framework.ioc.configs.pool import PoolConfig
 from framework.ioc.factories.governance import create_governance
 from framework.ioc.factories.llm import create_llm_provider
-from framework.ioc.factories.memory import create_memory
 from framework.memory.core.scope import MemoryContext
 from framework.memory.default_system import DefaultMemorySystem
 from framework.memory.injection import FullInjectionPolicy
@@ -44,20 +57,20 @@ from framework.multi_agent.comm_kind import AgentCommKind
 from framework.multi_agent.communication import AgentCommunicationService
 from framework.multi_agent.descriptor import AgentLLMConfig
 from framework.multi_agent.inbox.consumer import InboxConsumer
-from framework.multi_agent.inbox.producer import InboxProducer
 from framework.multi_agent.inbox.server import InboxServer
-from framework.core.session_id import SessionIdFactory
-from framework.core.session_registry import SessionRegistry
-from framework.core.session_store import SessionStore
 from framework.multi_agent.tools import (
     CommunicationTarget,
     CommunicationTargetStore,
     SendToAgentTool,
 )
 from framework.pipeline.adapters import OutputAdapter
+from framework.pipeline.snapshot import PoolDataSnapshot
 from framework.tools.standard import FindFilesTool, SearchFilesTool
 from framework.tools.terminal import SubprocessExecutor, SubprocessTool
-from framework.tools.terminal.managers import TerminalManagerBase
+from framework.tools.workspace_scoped import (
+    WorkspaceRootProvider,
+    wrap_standard_tools,
+)
 
 from .builders import _load_agent_mcp_tools, _make_file_tools, resolve_system_prompt
 from .pool_instance import PoolInstance
@@ -90,7 +103,9 @@ async def create_pool(
     shared_interceptor_chain: Any,
     control_channel: InMemoryControlChannel | None = None,
     command_processor: Any = None,
-    workspace_context: Any = None,
+    pool_data: PoolDataSnapshot | None = None,
+    workspace_handle: WorkspaceHandle | None = None,
+    workspace_resolver: WorkspaceResolverCell | None = None,
     emitter_factory: Callable[[str], ContentEmitter] | None = None,
     # ── Injection points for bot-layer customization ──
     output_adapter_factory: Callable[[], OutputAdapter] | None = None,
@@ -98,33 +113,54 @@ async def create_pool(
     session_registry: SessionRegistry | None = None,
     session_store: SessionStore | None = None,
 ) -> PoolInstance:
-    """Build one PoolInstance from PoolConfig.
+    """Build one PoolInstance's DEPLOYMENT resources from PoolConfig.
 
-    Each step delegates to a focused method — no inline if-else chains.
+    Per-pool data (memory / runtime stores / experience layer) is owned by
+    the workspace and passed in as the already-built ``pool_data`` snapshot;
+    this factory wires only: provider, tool/skill/MCP/terminal managers, agent
+    pool, broker bridge, and the communication service. ``workspace_handle``
+    is the FIXED per-workspace target/data-root used to scope file/shell tools
+    to this workspace (None = legacy/non-workspace path, e.g. unit tests).
     """
     main_cfg = _require_main_agent(pool_cfg)
     main_agent_name = main_cfg.name
     system_prompt = resolve_system_prompt(main_cfg, project_dir)
 
     provider = _build_llm_provider(pool_cfg, pool_name)
-    terminal_manager = _build_terminal_manager(pool_cfg, pool_name)
-    memory_system = await _build_memory(pool_cfg, provider, data_dir, pool_name)
-    await ensure_long_term_defaults(project_dir, pool_cfg.memory, memory_system)
-    context_manager = _build_context(memory_system, main_cfg, system_prompt, data_dir, pool_name)
+    terminal_manager = _build_terminal_manager(pool_cfg, pool_name, workspace_handle)
+
+    # Per-pool data (memory/runtime/experience) is owned by the workspace and
+    # passed in as an already-built snapshot. None = non-workspace wiring
+    # (unit tests) — the fallback context manager keeps create_pool callable.
+    context_manager = (
+        pool_data.context_manager
+        if pool_data is not None
+        else _fallback_context_manager(main_cfg, system_prompt)
+    )
+    if pool_data is not None:
+        await ensure_long_term_defaults(
+            project_dir, pool_cfg.memory, pool_data.context_manager.memory_system
+        )
+
+    root_provider: WorkspaceRootProvider | None = None
+    if workspace_handle is not None:
+        # Lazy import: the bundle imports BotService (via this module's
+        # package), so a top-level import would create a cycle.
+        from bot.workspace.handle import WorkspaceHandleRootProvider
+
+        root_provider = WorkspaceHandleRootProvider(workspace_handle)
     tool_manager, mcp_manager = await _build_tools(
         pool_cfg, main_cfg, terminal_manager, project_dir,
-        output_adapter, pool_name, data_dir, workspace_context,
+        output_adapter, pool_name, data_dir, pool_data, root_provider,
     )
     _register_extra_tools_from_config(tool_manager, main_cfg, pool_name)
 
-    runtime_data_dir = data_dir / "runtime_state" / pool_name
-    turn_store, command_store = _build_runtime_stores(runtime_data_dir, pool_name)
     skill_manager = _build_skill_manager(main_cfg, project_dir, pool_name)
     factory = _build_agent_factory(
         provider, tool_manager, skill_manager,
         inbox_server, shared_hooks, shared_hook_runner,
-        shared_interceptor_chain, turn_store, control_channel,
-        runtime_data_dir, emitter_factory,
+        shared_interceptor_chain, control_channel,
+        workspace_resolver, pool_name, emitter_factory,
     )
     session_factory = SessionIdFactory()
     pool = _build_agent_pool(
@@ -144,12 +180,15 @@ async def create_pool(
     )
     main_service, main_store = _build_communication(
         pool, main_agent_name, broker, agent_bus,
-        comm_tracker, project_dir, pool_name, pool_cfg, memory_system,
-        safety, inbox_consumer, notification_service, data_dir, runtime_data_dir,
+        comm_tracker, project_dir, pool_name, pool_cfg,
+        safety, inbox_consumer, notification_service,
+        data_dir,
         # ── Injection points ──
         output_adapter_factory=output_adapter_factory,
         on_subagent_created=on_subagent_created,
         session_registry=session_registry,
+        workspace_resolver=workspace_resolver,
+        root_provider=root_provider,
     )
     tool_manager.register(
         SendToAgentTool(
@@ -165,13 +204,10 @@ async def create_pool(
     main_service._target_store = main_store
     logger.info("Pool '%s': communication tool registered", pool_name)
 
-    exp_review_hook, exp_curator, exp_dir_ref = _build_experience_layer(
-        main_cfg, provider, data_dir, pool_name
-    )
     _wire_main_pipeline(
         pool, main_agent_name, inbox_consumer,
-        notification_service, exp_review_hook,
-        shared_interceptor_chain, turn_store,
+        notification_service,
+        shared_interceptor_chain,
         im_ui, pool_cfg,
         command_processor, skill_manager,
         pool_name,
@@ -193,8 +229,6 @@ async def create_pool(
         config=pool_cfg,
         pool=pool,
         broker_bridge=bridge,
-        memory_system=memory_system,
-        context_manager=context_manager,
         tool_manager=tool_manager,
         skill_manager=skill_manager,
         mcp_manager=mcp_manager,
@@ -203,9 +237,24 @@ async def create_pool(
         provider=provider,
         notification_service=notification_service,
         communication_service=main_service,
-        experience_curator=exp_curator,
-        experience_curator_task=None,
-        experience_dir_ref=exp_dir_ref,
+    )
+
+
+def _fallback_context_manager(main_cfg: AgentConfig, system_prompt: str) -> Any:
+    """A minimal context_manager for tests / non-workspace wiring.
+
+    The main agent's real context manager comes from the workspace pool_data;
+    this fallback keeps create_pool callable without a workspace (used by
+    unit tests that mock the build steps).
+    """
+
+    return MemorySystemContextManager(
+        memory_system=None,
+        default_agent_id=main_cfg.name,
+        default_agent_role="main",
+        base_system_prompt=system_prompt,
+        injection_policy=FullInjectionPolicy(pruned_manager=None),
+        experience_manager=None,
     )
 
 
@@ -230,12 +279,20 @@ def _build_llm_provider(pool_cfg: PoolConfig, pool_name: str):
 # ── Terminal ─────────────────────────────────────────────────────────────
 
 
-def _build_terminal_manager(pool_cfg: PoolConfig, pool_name: str) -> Any | None:
+def _build_terminal_manager(
+    pool_cfg: PoolConfig,
+    pool_name: str,
+    workspace_handle: WorkspaceHandle | None,
+) -> Any | None:
     """Create terminal manager from pool config.
 
     Convention: read ``use_terminal`` + ``terminal_visibility`` from the
     main agent config.  If ``use_terminal`` is false or absent, terminal
     tools are skipped and SubprocessTool is used instead.
+
+    New terminal sessions open in the workspace target (the working dir) when
+    a ``workspace_handle`` is wired, so a terminal-enabled pool follows the
+    workspace rather than the process CWD.
     """
     use_terminal = any(getattr(a, "use_terminal", False) for a in pool_cfg.agents)
     if not use_terminal:
@@ -247,6 +304,10 @@ def _build_terminal_manager(pool_cfg: PoolConfig, pool_name: str) -> Any | None:
         if getattr(a, "role", None) == "main":
             visibility = getattr(a, "terminal_visibility", True)
             break
+
+    default_cwd: str | None = (
+        str(workspace_handle.current) if workspace_handle is not None else None
+    )
 
     import sys
 
@@ -260,7 +321,7 @@ def _build_terminal_manager(pool_cfg: PoolConfig, pool_name: str) -> Any | None:
     last_err: Exception | None = None
     for kind in kinds:
         try:
-            mgr = create_terminal_manager(manager_kind=kind)
+            mgr = create_terminal_manager(manager_kind=kind, default_cwd=default_cwd)
             logger.info(
                 "Pool '%s': TerminalManager created (kind=%s, visibility=%s)",
                 pool_name, kind, mgr.visibility.value,
@@ -283,18 +344,11 @@ def _build_terminal_manager(pool_cfg: PoolConfig, pool_name: str) -> Any | None:
 # ── Memory ───────────────────────────────────────────────────────────────
 
 
-async def _build_memory(
-    pool_cfg: PoolConfig,
-    provider,
-    data_dir: Path,
-    pool_name: str,
-):
-    memory_dir = data_dir / "memory" / pool_name
-    memory_dir.mkdir(parents=True, exist_ok=True)
-    memory_system = create_memory(pool_cfg.memory, provider, memory_dir)
-    await memory_system.initialize()
-    logger.info("Pool '%s': MemorySystem (%s)", pool_name, memory_dir)
-    return memory_system
+# NOTE: memory / runtime stores / experience layer are no longer built here.
+# They are owned by the active Workspace (Workspace.build_pool_data) and
+# resolved at turn time via the per-turn PoolData snapshot. Only the
+# long-term-defaults helper remains, invoked from create_pool against the
+# workspace-provided memory_system.
 
 
 async def ensure_long_term_defaults(
@@ -308,7 +362,7 @@ async def ensure_long_term_defaults(
     config. Template paths in config are relative to the project directory.
     Resolves them to absolute paths before calling ``ensure_defaults`` so
     the knowledge layer finds templates regardless of CWD (critical after
-    ``/cd`` which calls ``os.chdir`` to a different directory).
+    ``/cd`` switches the conversation to a different workspace).
     """
     if memory_cfg is None:
         return
@@ -364,27 +418,8 @@ async def ensure_long_term_defaults(
 # ── Context ──────────────────────────────────────────────────────────────
 
 
-def _build_context(
-    memory_system,
-    main_cfg: AgentConfig,
-    system_prompt: str,
-    data_dir: Path,
-    pool_name: str,
-) -> MemorySystemContextManager:
-    from bot.service.pool_builder import _build_pool_experience_manager
-
-    exp_manager = _build_pool_experience_manager(main_cfg, data_dir, pool_name)
-    ctx = MemorySystemContextManager(
-        memory_system=memory_system,
-        default_agent_id=main_cfg.name,
-        default_agent_role="main",
-        base_system_prompt=system_prompt,
-        injection_policy=FullInjectionPolicy(pruned_manager=memory_system.pruned_manager),
-        experience_manager=exp_manager,
-    )
-    if exp_manager is not None:
-        logger.info("Pool '%s': experience manager injected", pool_name)
-    return ctx
+# NOTE: _build_context was removed — the context manager is now built inside
+# Workspace.build_pool_data and resolved from pool_data at turn time.
 
 
 # ── Tools ────────────────────────────────────────────────────────────────
@@ -398,13 +433,25 @@ async def _build_tools(
     output_adapter,
     pool_name: str,
     data_dir: Path,
-    workspace_context,
+    pool_data: PoolDataSnapshot | None,
+    root_provider: WorkspaceRootProvider | None,
 ) -> tuple[InMemoryToolManager, Any | None]:
-    """Build tool manager from config — convention over configuration."""
+    """Build tool manager from config — convention over configuration.
+
+    When ``root_provider`` is given, the standard file/search/shell tools are
+    wrapped via :func:`wrap_standard_tools` so their relative paths resolve
+    against THIS workspace's root (a workspace switch is a different workspace
+    with its own provider). Terminal tools (Command/Process/Terminal) stay
+    UNWRAPPED — their cwd is the terminal manager's, bound separately.
+    """
     tm = InMemoryToolManager(config=ToolManagerConfig())
 
-    # File tools (always registered)
-    for tool in _make_file_tools():
+    # File tools (always registered). Wrap when a workspace root provider is
+    # wired so relative paths resolve against the workspace, not process CWD.
+    file_tools = _make_file_tools()
+    if root_provider is not None:
+        file_tools = wrap_standard_tools(file_tools, root_provider)
+    for tool in file_tools:
         tm.register(tool)
 
     # Terminal tools — or subprocess fallback
@@ -419,11 +466,22 @@ async def _build_tools(
         tm.register(TerminalTool(terminal_manager))
         logger.info("Pool '%s': terminal tools registered (Command/Process/Terminal)", pool_name)
     else:
-        tm.register(SubprocessTool(executor=SubprocessExecutor(), timeout=60))
+        # SubprocessTool is workspace-scoped when a provider is wired (its
+        # working_dir defaults to the workspace root); legacy unwrapped path
+        # otherwise (tests / non-workspace wiring).
+        sub = SubprocessTool(executor=SubprocessExecutor(), timeout=300)
+        if root_provider is not None:
+            sub_tools = wrap_standard_tools([sub], root_provider)
+            tm.register(sub_tools[0])
+        else:
+            tm.register(sub)
         logger.info("Pool '%s': SubprocessTool registered (no terminal backend)", pool_name)
 
-    # Search tools (always registered)
-    for tool in [SearchFilesTool(), FindFilesTool()]:
+    # Search tools (always registered); wrap to scope their path arg.
+    search_tools = [SearchFilesTool(), FindFilesTool()]
+    if root_provider is not None:
+        search_tools = wrap_standard_tools(search_tools, root_provider)
+    for tool in search_tools:
         tm.register(tool)
 
     # Custom tools
@@ -431,18 +489,22 @@ async def _build_tools(
 
     tm.register(SendFileToUserTool(output_adapter=output_adapter))
 
-    # Experience tool (if enabled in config)
+    # Experience tool (if enabled in config). The experience dir comes from
+    # the workspace's pool_data (fixed per workspace); fallback to a data_dir
+    # relative path for the non-workspace (test) wiring.
     exp_cfg = getattr(main_cfg, "experience", None)
     if exp_cfg is not None and getattr(exp_cfg, "enabled", False):
         from framework.core.experience.meta import PerFileExperienceMetaStore
         from framework.memory.tools.experience import ExperienceTool
 
-        if workspace_context is not None:
-            def _exp_path() -> Path:
-                return workspace_context.data_dir / "experiences" / pool_name / main_cfg.name
+        if pool_data is not None:
+            base_exp_dir: Path = pool_data.experience_dir
+            _exp_path: Callable[[], Path] = lambda: base_exp_dir
         else:
+            fallback = data_dir / "experiences" / pool_name / main_cfg.name
+
             def _exp_path() -> Path:
-                return data_dir / "experiences" / pool_name / main_cfg.name
+                return fallback
 
         _exp_path().mkdir(parents=True, exist_ok=True)
         exp_meta = PerFileExperienceMetaStore(_exp_path)
@@ -492,17 +554,10 @@ def _register_extra_tools_from_config(
 # ── Runtime stores ───────────────────────────────────────────────────────
 
 
-def _build_runtime_stores(runtime_data_dir: Path, pool_name: str):
-    from framework.agents.react.state import ReActRuntimeStateCodec
-    from framework.runtime.codec import RuntimeStateCodecRegistry
-    from framework.runtime.enums import AgentKind
-    from framework.runtime.store import JsonFileRuntimeCommandStore, JsonFileTurnStateStore
-
-    codec_registry = RuntimeStateCodecRegistry({AgentKind.REACT: ReActRuntimeStateCodec()})
-    turn_store = JsonFileTurnStateStore(runtime_data_dir / "turns", codec_registry)
-    command_store = JsonFileRuntimeCommandStore(runtime_data_dir / "commands")
-    logger.info("Pool '%s': runtime stores (%s)", pool_name, runtime_data_dir)
-    return turn_store, command_store
+# NOTE: _build_runtime_stores was removed — runtime stores (turn/command/trace)
+# are now built inside Workspace.build_pool_data and resolved per turn from the
+# PoolData snapshot. The agent factory no longer takes a turn_store / trace_store;
+# the pipeline resolves them from the workspace snapshot.
 
 
 # ── Skill manager ────────────────────────────────────────────────────────
@@ -548,6 +603,50 @@ def _build_skill_manager(main_cfg: AgentConfig, project_dir: Path, pool_name: st
 # ── Agent factory ────────────────────────────────────────────────────────
 
 
+def _cell_sessions_dir(cell: WorkspaceResolverCell | None) -> Path | None:
+    """Resolve the workspace sessions dir from a resolver cell.
+
+    Returns ``None`` when the cell is not yet materialized so callers fall back
+    to the ctxvar-based resolution path.
+    """
+    if cell is None:
+        return None
+    try:
+        return cell.resolve_workspace().ctx.paths.sessions_dir
+    except RuntimeError:
+        return None
+
+
+class _WorkspaceEmitterFactory:
+    """Wraps an emitter factory so every created emitter gets a sessions-dir
+    provider derived from the workspace resolver cell.
+
+    Keeping the original factory and provider as explicit attributes avoids
+    capturing the entire enclosing build scope in a closure.
+    """
+
+    __slots__ = ("_orig", "_provider")
+
+    def __init__(
+        self,
+        orig: Callable[[str], Any],
+        provider: Callable[[], Path | None],
+    ) -> None:
+        self._orig = orig
+        self._provider = provider
+
+    def __call__(self, session_id: str) -> Any:
+        emitter = self._orig(session_id)
+        # The concrete emitter may be a WebBotEmitter or a CompositeEmitter
+        # wrapping one. Both types expose set_sessions_dir_provider as a
+        # public setter — CompositeEmitter forwards to its children, so the
+        # provider reaches every WebBotEmitter leaf.
+        setter = getattr(emitter, "set_sessions_dir_provider", None)
+        if setter is not None:
+            setter(self._provider)
+        return emitter
+
+
 def _build_agent_factory(
     provider,
     tool_manager,
@@ -556,14 +655,13 @@ def _build_agent_factory(
     shared_hooks,
     shared_hook_runner,
     shared_interceptor_chain,
-    turn_store,
     control_channel,
-    runtime_data_dir: Path,
+    workspace_resolver: WorkspaceResolverCell | None,
+    pool_name: str,
     emitter_factory: Callable | None,
 ) -> DefaultAgentFactory:
-    from framework.trace import JsonFileTraceStore
-
-    trace_store = JsonFileTraceStore(base_dir=runtime_data_dir / "trace")
+    # turn_store / trace_store are intentionally NOT passed: the pipeline
+    # resolves them per turn from the active workspace's PoolData snapshot.
     factory = DefaultAgentFactory(
         default_llm_provider=provider,
         default_tool_manager=tool_manager,
@@ -572,18 +670,38 @@ def _build_agent_factory(
         default_hooks=shared_hooks,
         default_hook_runner=shared_hook_runner,
         default_interceptor_chain=shared_interceptor_chain,
-        default_turn_store=turn_store,
         control_channel=control_channel,
-        trace_store=trace_store,
     )
 
     # Wrap create_agent → inject emitter for ALL agents (resident + subagent)
+    # AND wire each pipeline's workspace_manager + pool_name so turns resolve
+    # their per-turn stores from this workspace. ``workspace_resolver`` is the
+    # late-binding cell build_resources fills with the PoolWorkspaceResources
+    # (R) once the workspace is assembled; R.resolve_workspace().pool_data[pool]
+    # is what the pipeline reads per turn.
+    #
+    # When both emitters and a workspace resolver are configured, the emitter
+    # factory is also wrapped so every created emitter gets a sessions-dir
+    # provider derived from the resolver cell: transcript writes then resolve
+    # the owning workspace's sessions dir from the cell — the SAME source that
+    # memory/runtime/output use — instead of the fallible bind_workspace_root
+    # ctxvar (which is lost across the broker-queue task boundary).
     _orig_create = factory.create_agent
+
+    if emitter_factory is not None and workspace_resolver is not None:
+        emitter_factory = _WorkspaceEmitterFactory(
+            emitter_factory,
+            lambda: _cell_sessions_dir(workspace_resolver),
+        )
 
     async def _create_with_emitter(*args: Any, **kwargs: Any) -> Any:
         instance = await _orig_create(*args, **kwargs)
-        if emitter_factory is not None and instance.pipeline is not None:
-            instance.pipeline.emitter_factory = emitter_factory
+        if instance.pipeline is not None:
+            if emitter_factory is not None:
+                instance.pipeline.emitter_factory = emitter_factory
+            if workspace_resolver is not None:
+                instance.pipeline.workspace_manager = workspace_resolver
+                instance.pipeline.pool_name = pool_name
         return instance
 
     factory.create_agent = _create_with_emitter  # type: ignore[method-assign]
@@ -668,16 +786,16 @@ def _build_communication(
     project_dir: Path,
     pool_name: str,
     pool_cfg: PoolConfig,
-    memory_system,
     safety,
     inbox_consumer,
     notification_service,
     data_dir: Path,
-    runtime_data_dir: Path,
     # ── Injection points for bot-layer customization ──
     output_adapter_factory: Callable[[], OutputAdapter] | None = None,
     on_subagent_created: Callable[[str, str], Awaitable[None]] | None = None,
     session_registry: SessionRegistry | None = None,
+    workspace_resolver: WorkspaceResolverCell | None = None,
+    root_provider: WorkspaceRootProvider | None = None,
 ):
     from framework.multi_agent.template_registry import AgentTemplateRegistry
 
@@ -686,6 +804,16 @@ def _build_communication(
     logger.info("Pool '%s': %d subagent templates available", pool_name, len(templates))
 
     main_address = AgentAddress(name=main_agent_name)
+    # memory_dir / runtime_dir / pruned_manager are intentionally NOT passed
+    # as fixed values: AgentCommunicationService resolves them per call from
+    # the active workspace's pool_data (see _resolve_pool_data). The fixed
+    # ctor args are left None so the workspace path always wins when a
+    # workspace_manager is wired.
+    # However, we provide a stable fallback runtime_dir derived from data_dir
+    # so subagents still get OUTPUT.md write tooling if pool_data resolution
+    # is momentarily unavailable (e.g. during early boot or workspace switch).
+    fallback_runtime_dir = data_dir / "runtime_state" / pool_name
+    fallback_runtime_dir.mkdir(parents=True, exist_ok=True)
     main_service = AgentCommunicationService(
         source=main_address,
         broker=broker,
@@ -696,7 +824,6 @@ def _build_communication(
         pool=pool,
         pool_name=pool_name,
         project_dir=project_dir,
-        memory_dir=data_dir / "memory" / pool_name,
         safety=safety,
         pool_llm_model=pool_cfg.llm.model,
         pool_llm_temperature=pool_cfg.llm.temperature,
@@ -704,12 +831,13 @@ def _build_communication(
         inbox_consumer=inbox_consumer,
         notification_service=notification_service,
         main_agent_name=main_agent_name,
-        pruned_manager=memory_system.pruned_manager,
-        runtime_dir=runtime_data_dir,
+        runtime_dir=fallback_runtime_dir,
         # ── Injection points ──
         output_adapter_factory=output_adapter_factory,
         on_subagent_created=on_subagent_created,
         session_registry=session_registry,
+        workspace_manager=workspace_resolver,
+        root_provider=root_provider,
     )
 
     # Communication target store — populate from registered agents + templates
@@ -738,55 +866,10 @@ def _build_communication(
 # ── Experience layer ─────────────────────────────────────────────────────
 
 
-def _build_experience_layer(
-    main_cfg: AgentConfig,
-    provider,
-    data_dir: Path,
-    pool_name: str,
-) -> tuple[Any | None, Any | None, list[Path] | None]:
-    """Convention: if experience.enabled in agent config, wire review hook + curator.
-
-    Returns ``(review_hook, curator, dir_ref)`` where *dir_ref* is a mutable
-    single-element list holding the current experience directory.  All three
-    returned objects use ``lambda: dir_ref[0]`` internally so they resolve the
-    path dynamically — updating ``dir_ref[0]`` on workspace switch is all that
-    is needed.
-    """
-    exp_cfg = getattr(main_cfg, "experience", None)
-    if exp_cfg is None or not getattr(exp_cfg, "enabled", False):
-        return None, None, None
-
-    from framework.agents.experience.review_agent import ExperienceReviewAgent
-    from framework.core.experience.curator import ExperienceCurator
-    from framework.core.experience.meta import PerFileExperienceMetaStore
-    from framework.hook.builtin.experience_review import ExperienceReviewHook
-
-    exp_dir = data_dir / "experiences" / pool_name / main_cfg.name
-    exp_dir.mkdir(parents=True, exist_ok=True)
-    # Mutable reference so workspace switch can update all three objects at once.
-    _dir_ref: list[Path] = [exp_dir]
-    exp_meta = PerFileExperienceMetaStore(lambda: _dir_ref[0])
-
-    review_agent = ExperienceReviewAgent(
-        provider=provider,
-        max_iterations=getattr(exp_cfg, "max_iterations", 50),
-    )
-    review_hook = ExperienceReviewHook(
-        review_agent=review_agent,
-        experience_dir=lambda: _dir_ref[0],
-        meta_store=exp_meta,
-        min_messages=getattr(exp_cfg, "min_messages", 6),
-        exp_cooldown_turns=getattr(exp_cfg, "exp_cooldown_turns", 3),
-    )
-    logger.info("Pool '%s': ExperienceReviewHook created", pool_name)
-
-    curator = ExperienceCurator(
-        experience_dir=lambda: _dir_ref[0],
-        meta_store=exp_meta,
-        max_experiences=getattr(exp_cfg, "max_experiences", 20),
-    )
-    logger.info("Pool '%s': ExperienceCurator created", pool_name)
-    return review_hook, curator, _dir_ref
+# NOTE: _build_experience_layer was removed. The experience review hook is
+# now built in bot.workspace.wiring._wire_pool_to_resources from the
+# workspace's pool_data, and the curator is workspace-scoped (Unit G). The
+# review hook reads its dir from the per-turn workspace snapshot.
 
 
 # ── Pipeline wiring ──────────────────────────────────────────────────────
@@ -797,16 +880,20 @@ def _wire_main_pipeline(
     main_agent_name: str,
     inbox_consumer,
     notification_service,
-    exp_review_hook,
     shared_interceptor_chain,
-    turn_store,
     im_ui,
     pool_cfg: PoolConfig,
     command_processor,
     skill_manager,
     pool_name: str,
 ) -> None:
-    """Wire hooks, interceptors, governance, and command processor on main pipeline."""
+    """Wire hooks, interceptors, governance, and command processor on main pipeline.
+
+    The experience review hook and turn_store are NOT wired here — the review
+    hook is built in bot.workspace.wiring._wire_pool_to_resources from
+    the workspace's pool_data, and turn_store is resolved per turn from the
+    workspace snapshot.
+    """
     main_instance = pool._agents.get(main_agent_name)
     if main_instance is None or main_instance.pipeline is None:
         logger.warning(
@@ -821,12 +908,9 @@ def _wire_main_pipeline(
     # Hooks
     _add_hook(pipeline, InboxFlushHook(consumer=inbox_consumer, agent_name=main_agent_name))
     _add_hook(pipeline, MaxIterationNotifyHook(notification_service=notification_service))
-    if exp_review_hook is not None:
-        _add_hook(pipeline, exp_review_hook)
 
     # Runtime wiring
     pipeline.interceptor_chain = shared_interceptor_chain
-    pipeline.turn_store = turn_store
     pipeline._user_interface = im_ui
     pipeline.governance = create_governance(pool_cfg.memory, pool_cfg.llm.max_tokens)
 
@@ -872,22 +956,6 @@ def _register_extra_tools(tool_manager: InMemoryToolManager, tool_names: list[st
             tool_manager.register(tool_cls())
         except Exception:
             logger.exception("Failed to register extra_tool: %s", name)
-
-
-def _build_pool_experience_manager(
-    main_cfg: AgentConfig,
-    data_dir: Path,
-    pool_name: str,
-) -> Any | None:
-    exp_cfg = getattr(main_cfg, "experience", None)
-    if exp_cfg is None or not getattr(exp_cfg, "enabled", False):
-        return None
-    from framework.core.experience.manager import ExperienceManager
-    from framework.core.experience.source import FileExperienceSource
-
-    exp_dir = data_dir / "experiences" / pool_name / main_cfg.name
-    exp_dir.mkdir(parents=True, exist_ok=True)
-    return ExperienceManager(source=FileExperienceSource(directories=[exp_dir]))
 
 
 def _add_hook(pipeline: Any, hook: Any) -> None:

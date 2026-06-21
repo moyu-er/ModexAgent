@@ -80,14 +80,23 @@ class PoolRouter:
 
     async def run(self) -> None:
         async for msg in self._input_adapter.receive():
-            # Pool store keys by the agent-independent prefix so routing is
-            # stable across pool switches.
-            session_prefix = msg.session.session_id_prefix
-            target = self._session_store.get(session_prefix, self._default_pool)
-            pool = self._pools.get(target)
-            if pool is None:
-                pool = self._pools[self._default_pool]
-            await self._route_to_pool(msg, pool)
+            await self.route_message(msg)
+
+    async def route_message(self, msg: InputMessage) -> None:
+        """Route a single already-received message to its pool.
+
+        Used by the per-workspace dispatcher, which reads the shared
+        InputAdapter itself and calls this once per message after binding the
+        workspace root for the turn.
+        """
+        # Pool store keys by the agent-independent prefix so routing is
+        # stable across pool switches.
+        session_prefix = msg.session.session_id_prefix
+        target = self._session_store.get(session_prefix, self._default_pool)
+        pool = self._pools.get(target)
+        if pool is None:
+            pool = self._pools[self._default_pool]
+        await self._route_to_pool(msg, pool)
 
     def set_pool(self, session_id: str, pool_name: str) -> None:
         """Set pool routing for a session without sending a notification.
@@ -104,7 +113,7 @@ class PoolRouter:
         sid = str(msg.session)
         conv_id = msg.session.session_id_prefix
         metadata = dict(msg.metadata) if msg.metadata else {}
-        metadata.setdefault("conversation_id", conv_id)
+        metadata.setdefault("session_id", conv_id)
         broker_msg = BrokerMessage(
             payload={
                 "content": msg.content,
@@ -112,7 +121,7 @@ class PoolRouter:
                 "metadata": metadata,
                 "sender_id": msg.sender_id,
                 "chat_id": msg.chat_id,
-                "conversation_id": conv_id,
+                "session_id": conv_id,
                 "agent_session_id": sid,
             },
             sender=AgentAddress(kind="channel", name=msg.source or "unknown"),
@@ -120,7 +129,7 @@ class PoolRouter:
             headers={
                 "channel": msg.channel or "",
                 "chat_id": msg.chat_id or "",
-                "conversation_id": conv_id,
+                "session_id": conv_id,
                 "agent_session_id": sid,
             },
         )

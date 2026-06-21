@@ -17,11 +17,11 @@ import json
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
-import pathvalidate
 from aiohttp import web
 
 from bot.adapters.channels import set_conv_channel
@@ -35,9 +35,27 @@ from bot.webui.events import (
 from framework.core.session_id import SessionInfo, SessionIdFactory, agent_of, session_id_prefix_of
 from framework.core.session_store import SessionStore
 from framework.utils.timezone import get_user_timezone
+from framework.workspace.port import WorkspaceControlPort
+from framework.workspace.runtime import resolve_workspace_root
 from bot.webui.transcript_store import TranscriptStore
 
 logger = logging.getLogger(__name__)
+
+
+async def _safe_send_json(ws: web.WebSocketResponse, data: dict[str, object]) -> None:
+    """Send JSON to *ws*, swallowing errors from a closed/broken connection.
+
+    Used for fire-and-forget notifications (attached/error/conversation_deleted)
+    so a send failure does not leak as an unretrieved asyncio task exception.
+    The failure is logged so it can be diagnosed if it occurs unexpectedly.
+    """
+    try:
+        await ws.send_json(data)
+    except (ConnectionError, RuntimeError) as exc:
+        # Connection already closed or message serialisation impossible; the
+        # main WebSocket loop will detect the close and clean up.
+        logger.warning("WebSocket send_json failed: %s", exc)
+
 
 
 @dataclass
@@ -46,9 +64,27 @@ class _WsConnectionState:
 
     attached_sessions: list[str] = field(default_factory=list)
     forward_tasks: list[asyncio.Task[None]] = field(default_factory=list)
+    # Set by cleanup() before cancelling tasks so the queue watcher stops
+    # appending sessions / spawning forward tasks that would escape cancellation.
+    _stopped: bool = False
 
     async def cleanup(self, input_adapter: WebSocketInputAdapter) -> None:
-        """Cancel all forward tasks and unregister all sessions."""
+        """Drain queues, cancel forward tasks, and unregister all sessions."""
+        # Signal the queue watcher to stop BEFORE cancelling tasks so it does
+        # not append a new session / spawn a forward task between our clear()
+        # and task cancellation (which would orphan that task forever).
+        self._stopped = True
+        # Drain pending deltas first so a cancelling forward task cannot consume
+        # messages intended for an old session and forward them to a reused
+        # WebSocket connection during re-attach.
+        for session_id in self.attached_sessions:
+            q = input_adapter.get_delta_queue(session_id)
+            if q is not None:
+                while not q.empty():
+                    try:
+                        q.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
         for task in self.forward_tasks:
             if not task.done():
                 task.cancel()
@@ -73,6 +109,36 @@ _WEBUI_STATIC_PREFIX: str = "/webui/"
 _DEFAULT_STATIC_DIST: Path = Path(__file__).resolve().parent.parent / "web" / "dist"
 
 
+@dataclass
+class SessionListEntry:
+    """One row of the ``GET /api/sessions`` response.
+
+    A typed view over :class:`SessionInfo` plus the resolved pool name, so the
+    session list API serializes a structure rather than a loose dict.
+    """
+
+    session_id: str
+    agent_name: str
+    pool: str
+    parent_session_id: str | None
+    created_at: int | None
+    updated_at: int | None
+    metadata: dict[str, Any]
+
+
+def _entry_from_session(session: SessionInfo, pool: str) -> SessionListEntry:
+    """Build a :class:`SessionListEntry` from a stored session + its pool."""
+    return SessionListEntry(
+        session_id=session.session_id,
+        agent_name=session.agent_name,
+        pool=pool,
+        parent_session_id=session.parent_session_id,
+        created_at=session.created_at,
+        updated_at=session.updated_at,
+        metadata=session.metadata,
+    )
+
+
 def _new_uuid_prefix() -> str:
     """Generate a new 12-char uuid prefix for a session_id."""
     return uuid4().hex[:12]
@@ -91,13 +157,23 @@ class WorkspaceIndex(ABC):
     """
 
     @abstractmethod
-    def store_for(self, workspace: str, pool: str) -> TranscriptStore:
-        """Return the physical transcript store for *workspace* + *pool*."""
+    def store_for(self, sessions_dir: Path, pool: str) -> TranscriptStore:
+        """Return the physical transcript store for *sessions_dir* + *pool*."""
         ...
 
     @abstractmethod
-    def pools_in(self, workspace: str) -> list[str]:
-        """Return pool names that exist under *workspace*."""
+    def pools_in(self, sessions_dir: Path) -> list[str]:
+        """Return pool names that exist under *sessions_dir*."""
+        ...
+
+    @abstractmethod
+    def list_sessions(self, sessions_dir: Path) -> set[str]:
+        """Return all session ids under *sessions_dir*."""
+        ...
+
+    @abstractmethod
+    def sessions_dir_for_session(self, session_id: str) -> Path:
+        """Return the resolved sessions directory for *session_id*."""
         ...
 
 
@@ -120,6 +196,7 @@ class WebUIServer:
         transcript_store: TranscriptStore,
         static_dist: Path | None = None,
         data_dir: Path | None = None,
+        home_sessions_dir: Path | None = None,
     ) -> None:
         self._input: WebSocketInputAdapter = input_adapter
         # Shared flat transcript store -- same store the agent emitter and IM
@@ -127,16 +204,19 @@ class WebUIServer:
         self._store: TranscriptStore = transcript_store
         self._static_dist: Path | None = static_dist
         self._data_dir: Path | None = data_dir
-
-        self._delta_tasks: dict[str, asyncio.Task[None]] = {}
+        self._home_sessions_dir: Path = home_sessions_dir if home_sessions_dir is not None else Path()
+        self._data_dir_name: str = ""
 
         # Session store (WorkspacePoolSessionStore) -- injected by WebUIService.
         self._session_store: SessionStore | None = None
         # SessionIdFactory -- injected by WebUIService for creating new sessions.
         self._session_factory: SessionIdFactory | None = None
 
-        # Workspace context -- injected by WebUIService for the workspace API.
-        self._workspace_ctx = None
+        # Workspace control -- injected by WebUIService for the workspace API.
+        # A per-conversation WorkspaceControlPort. The HTTP workspace API is
+        # single-active (the browser's current workspace), so it drives the
+        # port under a global sentinel conversation id.
+        self._workspace_control: WorkspaceControlPort | None = None
         # Workspace+pool partition index -- injected by WebUIService.  When None,
         # the flat shared store is used (workspace-agnostic, basic tests).
         self._workspace_index: WorkspaceIndex | None = None
@@ -157,11 +237,72 @@ class WebUIServer:
     # Workspace helpers
     # ------------------------------------------------------------------
 
-    def _current_workspace(self) -> str:
-        """Return the current workspace path (empty string if none configured)."""
-        if self._workspace_ctx is None:
-            return ""
-        return str(self._workspace_ctx.current)
+    def _ws_root_of(self, ws_raw: str) -> Path:
+        """Resolve a ws ("ws" == workspace) value to its ROOT directory.
+
+        Single source of truth for workspace-root resolution, shared by every
+        read AND write path (session index, transcript sessions dir, the
+        pipeline's bound workspace root) so a message written under a workspace
+        is always read back from the same workspace.
+
+        - Empty string -> home workspace root (canonical home).
+        - Relative path -> resolved against the home workspace root.
+        - Absolute path -> used as-is.
+        Falls back to the home root on any resolution error.
+
+        Note: the ``_sessions_dir_of_ws`` / ``_index_dir_of_ws`` readers
+        short-circuit home to the precomputed ``_home_sessions_dir`` so home
+        never depends on ``_data_dir_name`` being set; this method is the
+        fallback for the home ROOT (e.g. the pipeline's bound workspace root).
+        """
+        home_root = self._home_sessions_dir.parent.parent
+        if not ws_raw:
+            return home_root
+        base = Path(ws_raw).expanduser()
+        if not base.is_absolute() and self._workspace_control is not None:
+            base = self._workspace_control.home / base
+        try:
+            return base.resolve(strict=False)
+        except (OSError, ValueError) as exc:
+            logger.warning("Failed to resolve workspace path %r: %s", ws_raw, exc)
+            return home_root
+
+    def _sessions_dir_of_ws(self, ws_raw: str) -> Path:
+        """Resolve the raw ws path to the sessions directory (transcripts).
+
+        Home (empty ``ws_raw``) returns the canonical ``_home_sessions_dir``;
+        a non-home workspace resolves to ``<root>/<data_dir>/sessions``.
+        """
+        from framework.workspace.paths import WorkspacePaths
+
+        if not ws_raw:
+            return self._home_sessions_dir
+        try:
+            return WorkspacePaths(
+                root=self._ws_root_of(ws_raw) / self._data_dir_name
+            ).sessions_dir
+        except (OSError, ValueError) as exc:
+            logger.warning("Failed to build sessions dir for %r: %s", ws_raw, exc)
+            return self._home_sessions_dir
+
+    def _index_dir_of_ws(self, ws_raw: str) -> Path:
+        """Resolve the raw ws path to the session-INDEX directory.
+
+        Mirrors :meth:`_sessions_dir_of_ws` but for the ``session_index`` layer,
+        so the session index is read/written per-workspace (no cross-ws leakage).
+        """
+        from framework.workspace.paths import WorkspacePaths
+
+        home_index = WorkspacePaths(root=self._home_sessions_dir.parent).session_index_dir
+        if not ws_raw:
+            return home_index
+        try:
+            return WorkspacePaths(
+                root=self._ws_root_of(ws_raw) / self._data_dir_name
+            ).session_index_dir
+        except (OSError, ValueError) as exc:
+            logger.warning("Failed to build session-index dir for %r: %s", ws_raw, exc)
+            return home_index
 
     def _pool_of_agent(self, agent_name: str) -> str:
         """Return the pool an agent belongs to (default main)."""
@@ -180,16 +321,6 @@ class WebUIServer:
             if agent_name.startswith(f"{template_type}-"):
                 return pool
         return None
-
-    def _active_store(self, pool: str) -> TranscriptStore:
-        """Return the physical store for the current workspace + *pool*.
-
-        When no workspace index is injected (basic tests), fall back to the
-        flat shared store.
-        """
-        if self._workspace_index is None:
-            return self._store
-        return self._workspace_index.store_for(self._current_workspace(), pool)
 
     # ------------------------------------------------------------------
     # Late-binding configuration (called by WebUIService after init)
@@ -211,13 +342,17 @@ class WebUIServer:
         """Set callback for resolving pool_name -> main_agent_name."""
         self._agent_resolver = callback
 
+    def set_data_dir_name(self, data_dir_name: str) -> None:
+        """Set the data directory name (e.g. '.modex') for workspace path resolution."""
+        self._data_dir_name = data_dir_name
+
     def set_agent_pool_map(self, mapping: dict[str, str]) -> None:
         """Set mapping from main_agent_name -> pool_name for session list labels."""
         self._agent_pool_map = dict(mapping)
 
-    def set_workspace_context(self, ctx) -> None:
-        """Inject the WorkspaceContext for workspace API."""
-        self._workspace_ctx = ctx
+    def set_workspace_control(self, control: WorkspaceControlPort) -> None:
+        """Inject the WorkspaceControlPort for the workspace API."""
+        self._workspace_control = control
 
     def set_workspace_index(self, index: WorkspaceIndex) -> None:
         """Inject the session→workspace membership index."""
@@ -248,28 +383,33 @@ class WebUIServer:
     # SessionInfo resolution helpers
     # ------------------------------------------------------------------
 
-    async def _resolve_session(self, session_id: str) -> SessionInfo:
+    async def _resolve_session(
+        self, session_id: str, index_dir: Path | None = None
+    ) -> SessionInfo:
         """Resolve a SessionInfo from *session_id*.
 
         Prefers the session store; falls back to ``SessionInfo.from_str()``
-        when no store is injected (e.g. basic tests).
+        when no store is injected (e.g. basic tests). *index_dir* scopes the
+        lookup to a workspace's session index.
         """
         if self._session_store is not None:
-            session = await self._session_store.get(session_id)
+            session = await self._session_store.get(session_id, index_dir=index_dir)
             if session is not None:
                 return session
         return SessionInfo.from_str(session_id)
 
-    async def _resolve_agent(self, session_id: str) -> str:
+    async def _resolve_agent(
+        self, session_id: str, index_dir: Path | None = None
+    ) -> str:
         """Return the agent name bound to *session_id*.
 
         Prefers the authoritative session store; falls back to
         ``SessionInfo.from_str()`` when no store is injected.
         """
-        session = await self._resolve_session(session_id)
+        session = await self._resolve_session(session_id, index_dir=index_dir)
         return session.agent_name
 
-    def _derive_sessions_from_transcripts(self) -> list[SessionInfo]:
+    def _derive_sessions_from_transcripts(self, sessions_dir: Path | None = None) -> list[SessionInfo]:
         """Build SessionInfo records from transcript files when the session
         index is missing or incomplete.
 
@@ -277,8 +417,9 @@ class WebUIServer:
         and no ``.modex/session_index/``.  This fallback lets the frontend
         list and attach to those sessions without a separate migration step.
         """
+        target_dir = sessions_dir if sessions_dir is not None else self._home_sessions_dir
         derived: list[SessionInfo] = []
-        for session_id in self._store.list_sessions():
+        for session_id in self._store.list_sessions(target_dir):
             session_prefix = session_id_prefix_of(session_id)
             if session_prefix == session_id:
                 # No separator → not a usable display id.
@@ -295,12 +436,14 @@ class WebUIServer:
             if session_id.count(".") == 2:
                 candidates = sorted(
                     sid
-                    for sid in self._store.list_sessions_in_conversation(session_prefix)
+                    for sid in self._store.list_sessions_by_prefix(
+                        session_prefix, sessions_dir=target_dir
+                    )
                     if sid != session_id and sid.count(".") == 1
                 )
                 if candidates:
                     parent_session_id = candidates[0]
-            updated_at = self._store.last_updated(session_id)
+            updated_at = self._store.last_updated(session_id, sessions_dir=target_dir)
             created_at = updated_at
             derived.append(
                 SessionInfo(
@@ -358,18 +501,16 @@ class WebUIServer:
         return web.json_response(pools)
 
     async def _handle_workspace(self, request: web.Request) -> web.Response:
-        """GET /api/workspace -- return current workspace path and home status."""
-        cwd: str = ""
-        home: str = ""
-        if self._workspace_ctx is not None:
-            cwd = str(self._workspace_ctx.current)
-            home = str(self._workspace_ctx.home)
-        is_home = cwd == home if cwd else True
-        # Expose the configured timezone (IANA name or fixed offset) so the
-        # frontend can cache it and render readable times in the user's zone
-        # rather than the browser's local zone.
-        timezone = str(get_user_timezone())
-        return web.json_response({"cwd": cwd, "home": home, "is_home": is_home, "timezone": timezone})
+        """GET /api/workspace -- return home path, recent workspaces, and timezone."""
+        home = str(self._workspace_control.home) if self._workspace_control is not None else ""
+        recent: list[dict[str, object]] = []
+        if self._recent_workspaces is not None:
+            recent = [
+                {"path": r.get("path")}
+                for r in self._recent_workspaces.list_recent()
+                if isinstance(r, dict) and "path" in r
+            ]
+        return web.json_response({"home": home, "recent": recent, "timezone": str(get_user_timezone())})
 
     async def _handle_workspace_browse(self, request: web.Request) -> web.Response:
         """GET /api/workspace/browse?path=<dir> -- list directory contents."""
@@ -377,44 +518,50 @@ class WebUIServer:
         target = Path(raw).expanduser() if raw else Path.home()
 
         if not target.is_absolute():
-            target = Path.cwd() / target
+            target = resolve_workspace_root() / target
         target = target.resolve(strict=False)
         if not target.is_dir():
             target = Path.home()
 
-        entries: list[dict[str, object]] = []
-        try:
-            for child in sorted(target.iterdir()):
-                try:
-                    is_dir = child.is_dir()
-                except OSError:
-                    continue
-                if not is_dir and not child.is_file():
-                    continue
-                entries.append({
-                    "name": child.name,
-                    "path": str(child),
-                    "is_dir": is_dir,
-                })
-        except PermissionError:
-            pass
-        entries.sort(key=lambda e: (not bool(e["is_dir"]), str(e["name"]).lower()))
-        parent_path = str(target.parent) if target.parent != target else ""
+        # The directory walk is pure synchronous I/O — run it off the event
+        # loop so one slow/large directory cannot block other requests.
+        def _walk(directory: Path) -> tuple[list[dict[str, object]], str, list[dict[str, object]]]:
+            entries: list[dict[str, object]] = []
+            try:
+                for child in sorted(directory.iterdir()):
+                    try:
+                        is_dir = child.is_dir()
+                    except OSError:
+                        continue
+                    if not is_dir and not child.is_file():
+                        continue
+                    entries.append({
+                        "name": child.name,
+                        "path": str(child),
+                        "is_dir": is_dir,
+                    })
+            except PermissionError:
+                pass
+            entries.sort(key=lambda e: (not bool(e["is_dir"]), str(e["name"]).lower()))
+            parent_path = str(directory.parent) if directory.parent != directory else ""
 
-        drives: list[dict[str, object]] = []
-        if target == target.parent:
-            import platform
-            import string
-            if platform.system() == "Windows":
-                from pathlib import Path as _P
-                for letter in string.ascii_uppercase:
-                    drive = _P(f"{letter}:\\")
-                    if drive.exists():
-                        drives.append({
-                            "name": f"{letter}:",
-                            "path": str(drive),
-                            "is_dir": True,
-                        })
+            drives: list[dict[str, object]] = []
+            if directory == directory.parent:
+                import platform
+                import string
+                if platform.system() == "Windows":
+                    from pathlib import Path as _P
+                    for letter in string.ascii_uppercase:
+                        drive = _P(f"{letter}:\\")
+                        if drive.exists():
+                            drives.append({
+                                "name": f"{letter}:",
+                                "path": str(drive),
+                                "is_dir": True,
+                            })
+            return entries, parent_path, drives
+
+        entries, parent_path, drives = await asyncio.to_thread(_walk, target)
 
         return web.json_response({
             "path": str(target),
@@ -425,7 +572,7 @@ class WebUIServer:
 
     async def _handle_workspace_cd(self, request: web.Request) -> web.Response:
         """POST /api/workspace/cd -- change current workspace directory."""
-        if self._workspace_ctx is None:
+        if self._workspace_control is None:
             return web.json_response(
                 {"success": False, "cwd": "", "notice": "Workspace not configured"},
                 status=503,
@@ -433,15 +580,16 @@ class WebUIServer:
         target: str = ""
         try:
             body = await request.json()
-            if isinstance(body, dict):
-                raw = body.get("path", "")
-                if isinstance(raw, str):
-                    target = raw.strip()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to parse workspace/cd JSON body: %s", exc)
+            return web.json_response({"error": "invalid body"}, status=400)
+        if isinstance(body, dict):
+            raw = body.get("path", "")
+            if isinstance(raw, str):
+                target = raw.strip()
         if not target:
-            target = str(self._workspace_ctx.home)
-        result = await self._workspace_ctx.cd(target)
+            target = str(self._workspace_control.home)
+        result = await self._workspace_control.open_workspace(target)  # registers the workspace without mutating the agent_pool_map
         if result.success and self._recent_workspaces is not None:
             self._recent_workspaces.add(str(result.current_path))
         return web.json_response({
@@ -461,17 +609,24 @@ class WebUIServer:
     async def _handle_create_session(self, request: web.Request) -> web.Response:
         """POST /api/sessions -- create a new session.
 
-        Optional JSON body: ``{"pool": "pool_name"}``.
+        Optional JSON body: ``{"pool": "pool_name", "ws": "<workspace path>"}``.
+        ``ws`` scopes the new session to a workspace's session index (home when
+        absent) so it never leaks into another workspace's listing.
         """
         pool_name: str | None = None
+        ws_raw: str = ""
         try:
             body = await request.json()
             if isinstance(body, dict):
                 raw_pool = body.get("pool")
                 if isinstance(raw_pool, str) and raw_pool:
                     pool_name = raw_pool
-        except Exception:
-            pass
+                raw_ws = body.get("ws")
+                if isinstance(raw_ws, str):
+                    ws_raw = raw_ws
+        except Exception as exc:
+            logger.warning("Failed to parse /api/sessions JSON body: %s", exc)
+        index_dir = self._index_dir_of_ws(ws_raw)
 
         effective_pool = pool_name or _DEFAULT_AGENT_NAME
         agent_name = (
@@ -481,12 +636,12 @@ class WebUIServer:
         )
         if self._session_factory is not None:
             session = self._session_factory.create(agent_name)
-            session_id = str(session)
+            session_id = session.session_id
             session_prefix = session.session_id_prefix
             created_at = session.created_at
             updated_at = session.updated_at
             if self._session_store is not None:
-                await self._session_store.save(session)
+                await self._session_store.save(session, index_dir=index_dir)
         else:
             uuid_prefix = _new_uuid_prefix()
             session_id = f"{uuid_prefix}.{agent_name}"
@@ -509,19 +664,33 @@ class WebUIServer:
         """GET /api/sessions -- list sessions visible in the current workspace.
 
         Query ``?pool=X`` to filter to a single pool (default: all pools).
+        Query ``?ws=<path>`` to filter to a specific workspace directory.
         All sessions are listed; the frontend builds the tree from
         ``parent_session_id`` — root nodes have ``parent_session_id: null``.
+
+        Sessions are hard-partitioned by workspace: the listing reads ONLY this
+        workspace's session index + transcript dir. Home (no ``?ws=``) lists
+        only home's sessions — it never leaks other workspaces' sessions.
 
         Falls back to deriving SessionInfo records from transcript files when
         the session index is empty or incomplete, so legacy workspaces (which
         only have ``.modex/sessions/``) still render existing conversations.
         """
         pool_filter: str | None = request.query.get("pool")
-        session_list: list[dict[str, object]] = []
+        ws_raw = request.query.get("ws", "")
+        index_dir = self._index_dir_of_ws(ws_raw)
+        sessions_dir = self._sessions_dir_of_ws(ws_raw)
+        session_list: list[SessionListEntry] = []
         seen_session_ids: set[str] = set()
 
         if self._session_store is not None:
-            for session in await self._session_store.list_sessions():
+            for session in await self._session_store.list_sessions(index_dir=index_dir):
+                session_id = session.session_id
+                # The store reads recursively, so a record may exist in both a
+                # legacy flat layout and a pool subdirectory.  De-dup by id so
+                # each conversation appears exactly once.
+                if session_id in seen_session_ids:
+                    continue
                 agent_name = session.agent_name
                 # Show sessions for any agent that maps to a known pool
                 # (main agents, resident subagents, and dynamic subagent types).
@@ -530,23 +699,15 @@ class WebUIServer:
                     continue
                 if pool_filter and pool != pool_filter:
                     continue
-                seen_session_ids.add(str(session))
-                entry: dict[str, object] = {
-                    "session_id": str(session),
-                    "agent_name": agent_name,
-                    "pool": pool,
-                    "parent_session_id": session.parent_session_id,
-                    "created_at": session.created_at,
-                    "updated_at": session.updated_at,
-                    "metadata": session.metadata,
-                }
-                session_list.append(entry)
+                seen_session_ids.add(session_id)
+                session_list.append(_entry_from_session(session, pool))
 
         # Fallback: derive any sessions that have transcripts but are not yet
         # indexed.  This covers legacy data created before the SessionInfo index
         # existed and lets the user interact with them immediately.
-        for session in self._derive_sessions_from_transcripts():
-            if str(session) in seen_session_ids:
+        for session in self._derive_sessions_from_transcripts(sessions_dir):
+            session_id = session.session_id
+            if session_id in seen_session_ids:
                 continue
             agent_name = session.agent_name
             pool = self._pool_for_agent_name(agent_name)
@@ -554,27 +715,64 @@ class WebUIServer:
                 continue
             if pool_filter and pool != pool_filter:
                 continue
-            seen_session_ids.add(str(session))
-            session_list.append({
-                "session_id": str(session),
-                "agent_name": agent_name,
-                "pool": pool,
-                "parent_session_id": session.parent_session_id,
-                "created_at": session.created_at,
-                "updated_at": session.updated_at,
-                "metadata": session.metadata,
-            })
+            seen_session_ids.add(session_id)
+            session_list.append(_entry_from_session(session, pool))
 
-        session_list.sort(key=lambda s: s.get("updated_at") or 0, reverse=True)
-        return web.json_response(session_list)
+        session_list.sort(key=lambda s: s.updated_at or 0, reverse=True)
+        return web.json_response([asdict(entry) for entry in session_list])
 
     async def _handle_get_messages(self, request: web.Request) -> web.Response:
-        """GET /api/sessions/{session_id}/messages -- load transcript events."""
+        """GET /api/sessions/{session_id}/messages -- load transcript events.
+
+        Returns user messages (as-is) and materialized assistant turns
+        (synthetic assistant_turn dicts with blocks), merged by timestamp.
+        """
         session_id: str = request.match_info["session_id"]
-        agent_name = await self._resolve_agent(session_id)
-        pool = self._pool_of_agent(agent_name)
-        events = [e.to_dict() for e in self._active_store(pool).load(session_id)]
-        return web.json_response(events)
+        # HTTP handlers run outside any dispatch turn, so the ctxvar is not
+        # bound — resolve the sessions dir explicitly from ?ws=.
+        ws_raw = request.query.get("ws", "")
+        sessions_dir = self._sessions_dir_of_ws(ws_raw)
+        index_dir = self._index_dir_of_ws(ws_raw)
+        agent_name: str = await self._resolve_agent(session_id, index_dir=index_dir)
+        pool: str = self._pool_of_agent(agent_name)
+        session_prefix: str = session_id_prefix_of(session_id)
+
+        store = self._store
+
+        user_events: list[dict[str, object]] = [
+            e.to_dict()
+            for e in store.load_sessions_by_prefix(session_prefix, sessions_dir=sessions_dir)
+            if e.event == "user_message"
+        ]
+
+        turns = store.load_materialized_by_prefix(
+            session_prefix, sessions_dir=sessions_dir
+        )
+        assistant_events: list[dict[str, object]] = []
+        for t in turns:
+            assistant_events.append({
+                "event": "assistant_turn",
+                "session_id": session_id,
+                "agent_name": agent_name,
+                "timestamp": t.started_at,
+                "turn_id": t.turn_id,
+                "blocks": t.blocks,
+                "latency_ms": 0,
+            })
+
+        result = user_events + assistant_events
+
+        def _event_ts(event: dict[str, object]) -> int:
+            ts = event.get("timestamp", 0)
+            if ts is None:
+                return 0
+            try:
+                return int(str(ts))
+            except (ValueError, TypeError):
+                return 0
+
+        result.sort(key=_event_ts)
+        return web.json_response(result)
 
     async def _handle_delete_session(self, request: web.Request) -> web.Response:
         """DELETE /api/sessions/{session_id} -- delete a session.
@@ -582,25 +780,16 @@ class WebUIServer:
         Removes the transcript keyed by the FULL session id.  Because the
         dispatcher keys by session id (not conv+agent), a single delete removes
         exactly one session even when several subagents share a conversation.
-        We also sweep every pool of the current workspace to clean up
-        transcripts that earlier bugs may have written to the wrong pool dir.
         """
         session_id: str = request.match_info["session_id"]
-        agent_name = await self._resolve_agent(session_id)
-        pool = self._pool_of_agent(agent_name)
-        self._active_store(pool).delete_session(session_id)
+        ws_raw = request.query.get("ws", "")
+        sessions_dir = self._sessions_dir_of_ws(ws_raw)
+        index_dir = self._index_dir_of_ws(ws_raw)
+        self._store.delete_session(session_id, sessions_dir=sessions_dir)
 
         # Delete from session store if available.
         if self._session_store is not None:
-            await self._session_store.delete(session_id)
-
-        # Robustness: sweep every pool dir to remove transcripts mis-routed by
-        # earlier bugs (when an empty agent-pool map wrote everything to main).
-        if self._workspace_index is not None:
-            for other_pool in self._workspace_index.pools_in(self._current_workspace()):
-                if other_pool == pool:
-                    continue
-                self._active_store(other_pool).delete_session(session_id)
+            await self._session_store.delete(session_id, index_dir=index_dir)
 
         return web.json_response({"deleted": session_id})
 
@@ -675,6 +864,13 @@ class WebUIServer:
     ) -> None:
         session_id = str(data.get("session_id", ""))
 
+        # The workspace ("ws") the client attached under — scopes every
+        # transcript / session-index read in this attach so history and
+        # subagent discovery never cross workspace boundaries. Empty == home.
+        attach_ws_raw = str(data.get("ws", ""))
+        attach_sessions_dir = self._sessions_dir_of_ws(attach_ws_raw)
+        attach_index_dir = self._index_dir_of_ws(attach_ws_raw)
+
         # ── New conversation path: frontend sends uuid_prefix + pool ──
         uuid_prefix_raw = str(data.get("uuid_prefix", ""))
         pool_from_client = str(data.get("pool", ""))
@@ -686,15 +882,13 @@ class WebUIServer:
                 else pool_from_client
             )
             if self._pool_agent_names and agent_name not in self._pool_agent_names:
-                asyncio.create_task(
-                    ws.send_json(DeltaEnvelope(
-                        session_id=session_id or "",
-                        agent_name=agent_name,
-                        event_type=WebUIEventType.ERROR.value,
-                        pool=pool_from_client,
-                        payload={"message": f"unknown pool: {pool_from_client}"},
-                    ).to_dict())
-                )
+                await _safe_send_json(ws, DeltaEnvelope(
+                    session_id=session_id or "",
+                    agent_name=agent_name,
+                    event_type=WebUIEventType.ERROR.value,
+                    pool=pool_from_client,
+                    payload={"message": f"unknown pool: {pool_from_client}"},
+                ).to_dict())
                 return
             # Deferred creation: empty drafts are NOT persisted — the client's
             # uuid_prefix is used verbatim as the session_prefix so the session id
@@ -709,45 +903,52 @@ class WebUIServer:
             # (reattach of a persisted session that already received a message),
             # routing is already established — attach is idempotent.
             try:
-                store = self._active_store(pool_from_client)
-                if store is not None and any(True for _ in store.load(session_id)):
+                if any(True for _ in self._store.load(session_id, sessions_dir=attach_sessions_dir)):
                     pass  # Session persisted; attach is idempotent, routing intact.
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Failed to check existing transcript for %s: %s", session_id, exc)
         else:
             if not session_id or "." not in session_id:
-                asyncio.create_task(
-                    ws.send_json(DeltaEnvelope(
-                        session_id=session_id or "",
-                        agent_name=_DEFAULT_AGENT_NAME,
-                        event_type=WebUIEventType.ERROR.value,
-                        payload={"message": "session_id required"},
-                    ).to_dict())
-                )
+                await _safe_send_json(ws, DeltaEnvelope(
+                    session_id=session_id or "",
+                    agent_name=_DEFAULT_AGENT_NAME,
+                    event_type=WebUIEventType.ERROR.value,
+                    payload={"message": "session_id required"},
+                ).to_dict())
                 return
-            resolved = await self._resolve_session(session_id)
+            resolved = await self._resolve_session(session_id, index_dir=attach_index_dir)
             session_prefix = resolved.session_id_prefix
             uuid_prefix = session_prefix
             explicit_agent = resolved.agent_name
 
         # Unregister any previous sessions and cancel their forward tasks.
+        # cleanup() sets state._stopped (to halt the previous watcher); reset
+        # it here because this state is being reused for a fresh attach cycle
+        # and the new watcher spawned below must run.
         await state.cleanup(self._input)
+        state._stopped = False
 
         self._input.register_connection(session_id, ws)
         state.attached_sessions.append(session_id)
 
         # PoolRouter's session store is the single source of truth for routing.
-        if explicit_agent and self._agent_pool_map:
+        # pool_from_client is the user's explicit choice from the UI dropdown;
+        # use it directly as the pool name without going through agent_pool_map
+        # (which may not yet be populated in every edge case).
+        pool_name = pool_from_client if pool_from_client else None
+        if not pool_name and explicit_agent and self._agent_pool_map:
             pool_name = self._agent_pool_map.get(explicit_agent)
-            if pool_name and self._pool_switch_callback is not None:
-                self._pool_switch_callback(session_prefix, pool_name)
-        else:
-            resolved_pool = (
-                self._pool_resolver(uuid_prefix) if self._pool_resolver is not None else None
-            )
-            pool_name = resolved_pool or _DEFAULT_AGENT_NAME
-            if self._pool_switch_callback is not None:
-                self._pool_switch_callback(session_prefix, pool_name)
+        if not pool_name and self._pool_resolver is not None:
+            pool_name = self._pool_resolver(uuid_prefix)
+        if not pool_name:
+            pool_name = _DEFAULT_AGENT_NAME
+        if self._pool_switch_callback is not None:
+            self._pool_switch_callback(session_prefix, pool_name)
+        # Failsafe: if the callback is not wired (edge case during early
+        # startup or test setups), write directly through the input context's
+        # pool_session_store so the PoolRouter can still read the mapping.
+        elif self._input_ctx is not None and self._input_ctx.pool_session_store is not None:
+            self._input_ctx.pool_session_store.set(session_prefix, pool_name)
 
         # Proactively register ALL pool agent sessions so deltas from any
         # pool's agent are forwarded to this WebSocket client.
@@ -769,10 +970,19 @@ class WebUIServer:
         # These are full session ids (``{conv}.{agent}.{invocation_id}``); each
         # invocation is a distinct session.  ``session_prefix`` is the stable
         # conversation prefix used by the transcript store.
-        for sub_sid in sorted(self._store.list_sessions_in_conversation(session_prefix)):
-            sub_obj = SessionInfo.from_str(sub_sid)
-            if sub_obj.agent_name in self._pool_agent_names and not sub_obj.is_subagent:
-                continue  # main-agent session already handled above
+        for sub_sid in sorted(self._store.list_sessions_by_prefix(session_prefix, sessions_dir=attach_sessions_dir)):
+            sub_agent_name = agent_of(sub_sid, default="unknown")
+            # Main-agent sessions have exactly two segments ({prefix}.{agent})
+            # and were already registered in the pool_agent_names loop above.
+            # Subagent invocations have three segments ({prefix}.{agent}.{inv})
+            # and must always be registered — even when the invocation_id
+            # coincidentally matches a pool agent name, which would confuse
+            # ``SessionInfo.from_str``'s rightmost-segment parsing.
+            is_main_agent_session = (
+                sub_sid.count(".") == 1 and sub_agent_name in self._pool_agent_names
+            )
+            if is_main_agent_session:
+                continue
             if self._input.get_delta_queue(sub_sid) is None:
                 self._input.register_connection(sub_sid, ws)
                 state.attached_sessions.append(sub_sid)
@@ -784,7 +994,7 @@ class WebUIServer:
         # been dispatched but not yet written to transcript.
         if self._session_store is not None:
             for parent_sid in list(state.attached_sessions):
-                for child_session in await self._session_store.get_children(parent_sid):
+                for child_session in await self._session_store.get_children(parent_sid, index_dir=attach_index_dir):
                     child_sid = str(child_session)
                     if self._input.get_delta_queue(child_sid) is None:
                         self._input.register_connection(child_sid, ws)
@@ -804,28 +1014,29 @@ class WebUIServer:
             asyncio.create_task(self._forward_deltas(session_id, ws))
         )
 
-        att_agent = await self._resolve_agent(session_id)
-        asyncio.create_task(
-            ws.send_json(DeltaEnvelope(
-                session_id=session_id,
-                agent_name=att_agent,
-                event_type=WebUIEventType.ATTACHED.value,
-                pool=self._pool_of_agent(att_agent),
-            ).to_dict())
-        )
+        att_agent = await self._resolve_agent(session_id, index_dir=attach_index_dir)
+        await _safe_send_json(ws, DeltaEnvelope(
+            session_id=session_id,
+            agent_name=att_agent,
+            event_type=WebUIEventType.ATTACHED.value,
+            pool=self._pool_of_agent(att_agent),
+        ).to_dict())
 
-    async def _materialize_deferred_session(self, session_id: str) -> None:
+    async def _materialize_deferred_session(
+        self, session_id: str, index_dir: Path | None = None
+    ) -> None:
         """Persist a deferred (uuid_prefix-prefixed) session on first message.
 
         Attach creates a provisional id ``{uuid_prefix}.{agent}`` without
         persisting; this materializes it just before the pipeline writes the
         transcript, using ``create_with_prefix`` so ``uuid_prefix`` is
         the verbatim session_prefix — same id, no re-encoding.  Already-persisted
-        sessions (reattach, existing conversations) are a no-op.
+        sessions (reattach, existing conversations) are a no-op. *index_dir*
+        scopes the record to the message's workspace session index.
         """
         if self._session_store is None or self._session_factory is None:
             return
-        if await self._session_store.get(session_id) is not None:
+        if await self._session_store.get(session_id, index_dir=index_dir) is not None:
             return  # already persisted
         session_prefix = session_id_prefix_of(session_id)
         agent = agent_of(session_id, default="unknown")
@@ -833,11 +1044,11 @@ class WebUIServer:
             agent_name=agent,
             prefix=session_prefix,
         )
-        if str(session) != session_id:
+        if session.session_id != session_id:
             # Fallback: session_prefix contained a separator or was empty; persist a
             # from_str record so the session list still shows the conversation.
             session = SessionInfo.from_str(session_id)
-        await self._session_store.save(session)
+        await self._session_store.save(session, index_dir=index_dir)
 
     async def _ws_send_message(
         self,
@@ -850,10 +1061,20 @@ class WebUIServer:
         request_id = str(data.get("_request_id", ""))
         if "." not in session_id or not content:
             return
+
+        # Resolve the target workspace ("ws" == workspace) from the payload up
+        # front: every per-workspace store/index call below needs it. Empty ws
+        # means the home workspace. Route the bound workspace root through the
+        # SAME resolver the read paths use, so a message written here is always
+        # read back from the same workspace.
+        ws_raw = str(data.get("ws", ""))
+        index_dir = self._index_dir_of_ws(ws_raw)
+        workspace_path = self._ws_root_of(ws_raw)
+
         # Materialize a deferred draft (created via uuid_prefix+pool attach)
         # on its first message so the session enters the index before the
         # pipeline writes the transcript. Empty drafts are never persisted.
-        await self._materialize_deferred_session(session_id)
+        await self._materialize_deferred_session(session_id, index_dir=index_dir)
 
         # NOTE: DO NOT call _try_intercept_control here.
         # Control slash commands (/pwd, /cd, /exit, /stop) are handled by
@@ -863,7 +1084,7 @@ class WebUIServer:
         # In WebUI, /pwd etc. correctly reach S6 (SkillParseStage) which
         # rejects them with "builtin_not_supported". That is intentional.
 
-        resolved = await self._resolve_session(session_id)
+        resolved = await self._resolve_session(session_id, index_dir=index_dir)
         uuid_prefix = resolved.session_id_prefix
         explicit_agent = resolved.agent_name
 
@@ -872,14 +1093,22 @@ class WebUIServer:
         # The entry only hands the UI-selected pool (derived from the
         # session_id's agent segment) as explicit_pool; no inline resolution,
         # no _pool_switch_callback call here. (attach still uses the callback.)
-        explicit_pool = self._agent_pool_map.get(explicit_agent) if explicit_agent else None
+        # For main agents the agent name IS the pool name; fall back to
+        # explicit_agent directly when agent_pool_map lacks the entry (edge
+        # case: map not yet populated during early server startup).
+        explicit_pool = (
+            self._agent_pool_map.get(explicit_agent) or explicit_agent
+        ) if explicit_agent else None
 
         # The session was already established upstream (attach / create_session).
-        # Pass it through so the pipeline reuses str(session) verbatim instead of
-        # re-encoding the session_prefix (which would break transcript/pool keying).
-        pre_resolved = await self._resolve_session(session_id)
+        # Pass it through so the pipeline reuses session.session_id verbatim
+        # instead of re-encoding the session_prefix (which would break
+        # transcript/pool keying).  Reuse the already-resolved SessionInfo
+        # from above (same args) rather than resolving a second time.
+        pre_resolved = resolved
 
         # Run the WebUI sub-pipeline (S4..S8).
+        from bot.input_pipeline.stages.resolve_pool import RoutingMeta
         from framework.input_pipeline.envelope import UserInputEnvelope
 
         envelope = UserInputEnvelope(
@@ -889,15 +1118,16 @@ class WebUIServer:
             explicit_pool=explicit_pool,
             pre_resolved_session=pre_resolved,
         )
+        envelope.metadata[RoutingMeta.WORKSPACE] = str(workspace_path)
         result = await self._input_pipeline.handle(envelope, self._input_ctx)
 
         if result.should_continue():
             # Echo the user message back to the WS client so the frontend
             # can reconcile its optimistic message.
             final = result.envelope()
-            full_sid = final.metadata["full_session_id"]
-            agent_name = final.metadata["resolved_agent"]
-            pool_name = final.metadata["resolved_pool"]
+            full_sid = final.metadata[RoutingMeta.FULL_SESSION_ID]
+            agent_name = final.metadata[RoutingMeta.RESOLVED_AGENT]
+            pool_name = final.metadata[RoutingMeta.RESOLVED_POOL]
             from bot.webui.events import UserMessageEvent
 
             event = UserMessageEvent(
@@ -906,19 +1136,22 @@ class WebUIServer:
             meta: dict[str, object] = {}
             if request_id:
                 meta["_request_id"] = request_id
-            await ws.send_json(
-                DeltaEnvelope.from_event(event, meta, pool=pool_name).to_dict()
+            await _safe_send_json(
+                ws, DeltaEnvelope.from_event(event, meta, pool=pool_name).to_dict()
             )
         else:
             # Terminate: pipeline consumed the message (e.g. /cd /pwd /exit
             # in WebUI chat which has no S2/S3, or unknown /skill).
             # Surface the reason to the client as an error envelope.
-            response = getattr(result, "response", None)
+            response = result.response
             message = ""
-            if isinstance(response, dict):
-                message = str(response.get("message", ""))
+            if response is not None:
+                try:
+                    message = str(response["message"])
+                except (KeyError, TypeError):
+                    pass
             pool = explicit_pool or _DEFAULT_AGENT_NAME
-            await ws.send_json(DeltaEnvelope(
+            await _safe_send_json(ws, DeltaEnvelope(
                 session_id=session_id,
                 agent_name=explicit_agent or _DEFAULT_AGENT_NAME,
                 event_type=WebUIEventType.ERROR.value,
@@ -934,19 +1167,25 @@ class WebUIServer:
         session_id = str(data.get("session_id", ""))
         if "." not in session_id:
             return
-        resolved = await self._resolve_session(session_id)
+        ws_raw = str(data.get("ws", ""))
+        sessions_dir = self._sessions_dir_of_ws(ws_raw)
+        index_dir = self._index_dir_of_ws(ws_raw)
+        resolved = await self._resolve_session(session_id, index_dir=index_dir)
         uuid_prefix = resolved.session_id_prefix
         agent_name = resolved.agent_name
         pool = self._pool_of_agent(agent_name)
-        self._active_store(pool).delete_conversation(uuid_prefix)
-        asyncio.create_task(
-            ws.send_json(DeltaEnvelope(
-                session_id=session_id,
-                agent_name=agent_name,
-                event_type=WebUIEventType.CONVERSATION_DELETED.value,
-                pool=pool,
-            ).to_dict())
-        )
+        self._store.delete_sessions_by_prefix(uuid_prefix, sessions_dir=sessions_dir)
+        # Also remove session-index records for the whole conversation so
+        # subagent invocation files don't linger as orphans (mirrors the
+        # single-session delete path below).
+        if self._session_store is not None:
+            await self._session_store.delete_sessions_by_prefix(uuid_prefix, index_dir=index_dir)
+        await _safe_send_json(ws, DeltaEnvelope(
+            session_id=session_id,
+            agent_name=agent_name,
+            event_type=WebUIEventType.CONVERSATION_DELETED.value,
+            pool=pool,
+        ).to_dict())
 
     # ------------------------------------------------------------------
     # Delta forwarding
@@ -968,6 +1207,24 @@ class WebUIServer:
         except Exception:
             logger.exception("Delta forwarding error for session %s", session_id)
 
+    @staticmethod
+    def _queue_belongs_to_connection(
+        attached_sessions: list[str], session_id: str
+    ) -> bool:
+        """True if *session_id*'s conversation is already owned by this connection.
+
+        Convergence point for ws isolation on the shared WebSocket adapter: the
+        adapter multiplexes every workspace/tab through one set of delta queues,
+        keyed only by session id. A dynamically-created subagent queue
+        (``{conv}.{agent}.{inv}``) belongs to whichever connection attached that
+        conversation. We derive that from the connection's own
+        ``attached_sessions`` — every attached session shares one conversation
+        prefix — so no per-connection ws bookkeeping is needed: claim a queue
+        only when its prefix matches a conversation this connection already owns.
+        """
+        prefix = session_id_prefix_of(session_id)
+        return any(session_id_prefix_of(s) == prefix for s in attached_sessions)
+
     async def _watch_new_queues(
         self, ws: web.WebSocketResponse, state: _WsConnectionState
     ) -> None:
@@ -978,16 +1235,33 @@ class WebUIServer:
         queues auto-created by ``send_envelope``, but no ``_forward_deltas``
         task is running for them.  This watcher discovers those queues and
         starts forwarding.
+
+        ws-scoped: only queues whose conversation this connection already owns
+        are claimed (see :meth:`_queue_belongs_to_connection`), so a subagent
+        stream from one workspace/tab is never bound to another connection.
         """
         try:
             while True:
                 await asyncio.sleep(1.0)
+                if state._stopped:
+                    # cleanup() has started: stop claiming queues so we never
+                    # append a session / spawn a task that cleanup just cleared.
+                    break
                 for session_id in list(self._input._delta_queues):
-                    if session_id not in state.attached_sessions:
-                        state.attached_sessions.append(session_id)
-                        state.forward_tasks.append(
-                            asyncio.create_task(self._forward_deltas(session_id, ws))
-                        )
+                    if state._stopped:
+                        break
+                    if session_id in state.attached_sessions:
+                        continue
+                    if not self._queue_belongs_to_connection(
+                        state.attached_sessions, session_id
+                    ):
+                        # Belongs to another connection's conversation; let that
+                        # connection's own watcher claim it.
+                        continue
+                    state.attached_sessions.append(session_id)
+                    state.forward_tasks.append(
+                        asyncio.create_task(self._forward_deltas(session_id, ws))
+                    )
         except (asyncio.CancelledError, ConnectionError):
             pass
         except Exception:

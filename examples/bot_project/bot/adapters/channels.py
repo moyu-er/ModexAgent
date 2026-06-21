@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from framework.pipeline.adapters import InputAdapter
 
 
-# ── Channel tracking (conversation_id → channel_name) ────────────────────
+# ── Channel tracking (session_id → channel_name) ────────────────────
 
 _conversation_channels: dict[str, str] = {}
 
@@ -120,7 +120,7 @@ def register(name: str, *, enabled: bool = True):
 # ── Channel-aware output router ─────────────────────────────────────────
 
 
-def _session_to_conversation_id(session_id: str) -> str:
+def _session_to_session_id(session_id: str) -> str:
     """Extract the session id prefix from a session identifier.
 
     Handles both canonical ``{prefix}.{agent}`` IDs and raw prefixes.
@@ -159,7 +159,7 @@ class ChannelRouterOutputAdapter(OutputAdapter):
         return StreamingMode.PSEUDO
 
     def _resolve(self, session_id: str) -> OutputAdapter:
-        conv_id = _session_to_conversation_id(session_id)
+        conv_id = _session_to_session_id(session_id)
         channel = get_conv_channel(conv_id)
         adapter = self._adapters.get(channel)
         if adapter is None:

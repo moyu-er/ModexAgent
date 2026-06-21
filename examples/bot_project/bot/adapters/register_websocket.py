@@ -8,6 +8,7 @@ directly for delta queue management and user-message enqueuing.
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 from bot.adapters.channels import AdapterBuildContext, register
 from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
@@ -55,6 +56,30 @@ def set_session_meta_resolver(resolver: Callable[[str], SessionMeta]) -> None:
     _session_meta_resolver = resolver
 
 
+def build_websocket_emitter(
+    session_id: str,
+    output_adapter: WebSocketOutputAdapter,
+    transcript_store: TranscriptStore,
+    *,
+    sessions_dir_provider: Callable[[], Path | None] | None = None,
+    session_meta_resolver: Callable[[], SessionMeta] | None = None,
+) -> WebBotEmitter:
+    """Construct a WebBotEmitter wired to the shared WS adapter + store.
+
+    Used both by the shared channel factory (no provider — ctxvar fallback)
+    and by per-workspace factories (with a provider from the workspace's
+    resolver cell).
+    """
+    return WebBotEmitter(
+        output_adapter=output_adapter,
+        session_id=session_id,
+        config=EmitterConfig(),
+        transcript_store=transcript_store,
+        session_meta_resolver=session_meta_resolver,
+        sessions_dir_provider=sessions_dir_provider,
+    )
+
+
 @register("websocket", enabled=True)
 def build_websocket(ctx: AdapterBuildContext):
     """Build WebSocket channel adapters + emitter."""
@@ -67,10 +92,9 @@ def build_websocket(ctx: AdapterBuildContext):
     assert isinstance(store, TranscriptStore)
 
     def emitter_factory(session_id: str) -> WebBotEmitter:
-        return WebBotEmitter(
+        return build_websocket_emitter(
+            session_id,
             output_adapter=_ws_output,
-            session_id=session_id,
-            config=EmitterConfig(),
             transcript_store=store,
             session_meta_resolver=_resolve_meta_for(session_id),
         )

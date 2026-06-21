@@ -1,21 +1,23 @@
 """Transcript store for WebUI conversations.
 
 The store is keyed by the **full session id** — the same receiver-owned
-identifier the memory system uses (``{conversation_id}.{agent_name}`` for main
-agents, ``{conversation_id}.{agent_name}.{invocation_id}`` for subagents).
+identifier the memory system uses (``{session_prefix}.{agent_name}`` for main
+agents, ``{session_prefix}.{agent_name}.{invocation_id}`` for subagents).
 Using the full session id as the persistence key means two subagent
 invocations of the same agent (e.g. two ``reviewer`` runs) never collapse into
 one transcript file.
 
-The conversation prefix (everything before the first ``.``) is the user-facing
+The session prefix (everything before the first ``.``) is the user-facing
 grouping: a UI conversation owns many sessions (the main agent + each
-subagent invocation).  ``load_conversation`` merges them by timestamp.
+subagent invocation).  ``load_sessions_by_prefix`` merges them by timestamp.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 from abc import ABC, abstractmethod
+from dataclasses import dataclass as _dataclass, field as _dc_field
 from pathlib import Path
 from typing import Iterator
 
@@ -24,9 +26,11 @@ from framework.core.session_store import safe_filename
 
 from bot.webui.events import ServerEvent
 
+logger = logging.getLogger(__name__)
 
-def _conversation_prefix(session_id: str) -> str:
-    """Return the conversation prefix (segment before the first ``.``).
+
+def _session_id_prefix(session_id: str) -> str:
+    """Return the session prefix (segment before the first ``.``).
 
     ``"abc.main"`` → ``"abc"``; ``"abc.reviewer.z9"`` → ``"abc"``.
     Delegates to :func:`framework.core.session_id.session_id_prefix_of`.
@@ -48,8 +52,8 @@ class TranscriptStore(ABC):
         ...
 
     @abstractmethod
-    def load_conversation(self, conversation_id: str) -> Iterator[ServerEvent]:
-        """Yield events from every session in *conversation_id*, merged by timestamp."""
+    def load_sessions_by_prefix(self, session_prefix: str) -> Iterator[ServerEvent]:
+        """Yield events from every session sharing *session_prefix*, merged by timestamp."""
         ...
 
     @abstractmethod
@@ -58,8 +62,8 @@ class TranscriptStore(ABC):
         ...
 
     @abstractmethod
-    def list_sessions_in_conversation(self, conversation_id: str) -> set[str]:
-        """Return the set of full session ids owned by *conversation_id*."""
+    def list_sessions_by_prefix(self, session_prefix: str) -> set[str]:
+        """Return the set of full session ids whose prefix matches *session_prefix*."""
         ...
 
     @abstractmethod
@@ -68,18 +72,155 @@ class TranscriptStore(ABC):
         ...
 
     @abstractmethod
-    def delete_conversation(self, conversation_id: str) -> None:
-        """Remove all records for every session in *conversation_id*."""
+    def delete_sessions_by_prefix(self, session_prefix: str) -> None:
+        """Remove all records for every session matching *session_prefix*."""
         ...
 
     def last_updated(self, session_id: str) -> int | None:
-        """Return the last update timestamp for *session_id* in milliseconds, or None.
-
-        The default implementation returns ``None``; concrete stores should
-        override this with an efficient lookup (e.g. file mtime or the newest
-        event timestamp).
-        """
         return None
+
+    def load_materialized_by_prefix(self, session_prefix: str) -> list[MaterializedTurn]:
+        """Materialize incremental events into merged turn blocks.
+
+        Loads all events whose session ids share *session_prefix* and
+        materializes them via :func:`_materialize_events`.
+        Returns turns sorted by start time.
+        """
+        events: list[ServerEvent] = list(self.load_sessions_by_prefix(session_prefix))
+        return _materialize_events(events)
+
+
+class ResilientTranscriptStore(TranscriptStore):
+    """Decorator that keeps the agent run alive when transcript I/O fails.
+
+    ``append`` is on the hot path of every agent turn and tool call. A disk
+    error (full disk, permission, transient I/O) must not crash the turn, so
+    ``OSError`` from the delegate's ``append`` is logged and swallowed. Read /
+    list / delete paths delegate unchanged — those run off the turn hot path
+    (serving the UI) where surfacing errors is preferable to silent staleness.
+    """
+
+    def __init__(self, delegate: TranscriptStore) -> None:
+        self._delegate = delegate
+
+    def append(self, session_id: str, event: ServerEvent) -> None:
+        try:
+            self._delegate.append(session_id, event)
+        except OSError:
+            logger.exception(
+                "transcript append failed for session %s (event=%s); "
+                "continuing without persisting this event",
+                session_id,
+                getattr(event, "event", type(event).__name__),
+            )
+
+    def load(self, session_id: str) -> Iterator[ServerEvent]:
+        return self._delegate.load(session_id)
+
+    def load_sessions_by_prefix(self, session_prefix: str) -> Iterator[ServerEvent]:
+        return self._delegate.load_sessions_by_prefix(session_prefix)
+
+    def list_sessions(self) -> set[str]:
+        return self._delegate.list_sessions()
+
+    def list_sessions_by_prefix(self, session_prefix: str) -> set[str]:
+        return self._delegate.list_sessions_by_prefix(session_prefix)
+
+    def delete_session(self, session_id: str) -> None:
+        self._delegate.delete_session(session_id)
+
+    def delete_sessions_by_prefix(self, session_prefix: str) -> None:
+        self._delegate.delete_sessions_by_prefix(session_prefix)
+
+    def last_updated(self, session_id: str) -> int | None:
+        return self._delegate.last_updated(session_id)
+
+
+# ── Materialization helpers ────────────────────────────────────────────────
+
+
+@_dataclass
+class MaterializedTurn:
+    """A complete ReAct turn materialized from incremental events."""
+    turn_id: str = ""
+    blocks: list[dict[str, object]] = _dc_field(default_factory=list)
+    started_at: int = 0  # ms epoch
+
+
+def _materialize_events(events: list[ServerEvent]) -> list[MaterializedTurn]:
+    """Convert incremental transcript events into merged turn blocks.
+
+    Groups events by turn_id, matches ToolCallEvent -> ToolResultEvent
+    by call_id, and builds blocks arrays identical to the old
+    AssistantTurnEvent.blocks format.
+
+    Uses isinstance dispatch for type narrowing — this is a legitimate
+    polymorphic boundary where events arrive as a heterogeneous list of
+    ServerEvent subclasses (rule 6 + rule 9).
+    """
+    from bot.webui.events import (
+        AssistantReasoningEvent,
+        AssistantTextEvent,
+        AssistantTurnEvent,
+        ToolCallEvent,
+        ToolResultEvent,
+        TurnStartEvent,
+    )
+
+    _event_with_turn = (
+        TurnStartEvent,
+        AssistantReasoningEvent,
+        AssistantTextEvent,
+        ToolCallEvent,
+        ToolResultEvent,
+        AssistantTurnEvent,
+    )
+    turns: dict[str, list[ServerEvent]] = {}
+    for evt in events:
+        if isinstance(evt, _event_with_turn) and evt.turn_id:
+            turns.setdefault(evt.turn_id, []).append(evt)
+
+    result: list[MaterializedTurn] = []
+
+    for turn_id, group in turns.items():
+        group_sorted = sorted(group, key=lambda e: e.timestamp)
+        blocks: list[dict[str, object]] = []
+        tool_calls: dict[str, dict[str, object]] = {}
+        started_at: int = group_sorted[0].timestamp
+
+        for evt in group_sorted:
+            if isinstance(evt, AssistantTurnEvent):
+                blocks.extend(evt.blocks)
+            elif isinstance(evt, AssistantReasoningEvent):
+                blocks.append({"kind": "reasoning", "text": evt.text})
+            elif isinstance(evt, AssistantTextEvent):
+                blocks.append({"kind": "text", "text": evt.text})
+            elif isinstance(evt, ToolCallEvent):
+                tool_calls[evt.call_id] = {
+                    "tool": evt.tool_name,
+                    "args": evt.args,
+                }
+            elif isinstance(evt, ToolResultEvent):
+                entry = tool_calls.get(evt.call_id, {})
+                block: dict[str, object] = {
+                    "kind": "tool",
+                    "tool": evt.tool_name,
+                    "args": entry.get("args", {}),
+                }
+                if evt.error:
+                    block["result"] = f"Error: {evt.error}"
+                else:
+                    block["result"] = evt.result
+                blocks.append(block)
+
+        result.append(MaterializedTurn(
+            turn_id=turn_id,
+            blocks=blocks,
+            started_at=started_at,
+        ))
+
+    result.sort(key=lambda t: t.started_at)
+    return result
 
 
 # ── JSONL implementation ───────────────────────────────────────────────────
@@ -143,9 +284,9 @@ class JSONLTranscriptStore(TranscriptStore):
                     continue
                 yield ServerEvent.from_dict(data)
 
-    def load_conversation(self, conversation_id: str) -> Iterator[ServerEvent]:
+    def load_sessions_by_prefix(self, session_prefix: str) -> Iterator[ServerEvent]:
         all_events: list[tuple[float, ServerEvent]] = []
-        for session_id in self.list_sessions_in_conversation(conversation_id):
+        for session_id in self.list_sessions_by_prefix(session_prefix):
             for event in self.load(session_id):
                 all_events.append((event.timestamp, event))
         all_events.sort(key=lambda pair: pair[0])
@@ -158,20 +299,20 @@ class JSONLTranscriptStore(TranscriptStore):
             seen.add(self._session_id_of(f))
         return seen
 
-    def list_sessions_in_conversation(self, conversation_id: str) -> set[str]:
-        prefix = safe_filename(conversation_id) + "."
+    def list_sessions_by_prefix(self, session_prefix: str) -> set[str]:
+        prefix = safe_filename(session_prefix) + "."
         seen: set[str] = set()
         for f in self._iter_files():
             stem = self._session_id_of(f)
-            if _conversation_prefix(stem) == safe_filename(conversation_id) or stem.startswith(prefix):
+            if _session_id_prefix(stem) == safe_filename(session_prefix) or stem.startswith(prefix):
                 seen.add(stem)
         return seen
 
     def delete_session(self, session_id: str) -> None:
         self._file_for(session_id).unlink(missing_ok=True)
 
-    def delete_conversation(self, conversation_id: str) -> None:
-        for session_id in self.list_sessions_in_conversation(conversation_id):
+    def delete_sessions_by_prefix(self, session_prefix: str) -> None:
+        for session_id in self.list_sessions_by_prefix(session_prefix):
             self.delete_session(session_id)
 
     def last_updated(self, session_id: str) -> int | None:

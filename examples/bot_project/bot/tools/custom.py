@@ -10,6 +10,7 @@ from framework.core.tool_manager import (
     Tool,
     ToolConfig,
 )
+from framework.workspace.runtime import resolve_workspace_root
 from framework.pipeline.adapters import OutputAdapter
 
 logger = logging.getLogger(__name__)
@@ -55,7 +56,7 @@ class SendFileToUserTool(Tool):
 
         path = Path(file_path).expanduser()
         if not path.is_absolute():
-            path = Path.cwd() / path
+            path = resolve_workspace_root() / path
         path = path.resolve()
 
         if not path.exists():
