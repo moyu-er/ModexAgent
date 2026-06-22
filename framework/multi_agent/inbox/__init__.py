@@ -3,13 +3,12 @@
 提供以 MQ 语义为核心的异步消息接收、持久化和消费能力。
 """
 
-from framework.hook.builtin import InboxFlushHook
-
 from .consumer import InboxConsumer
 from .producer import InboxProducer
 from .server import InboxServer
 from .server_local import LocalFileInboxServer
 from .server_memory import InMemoryInboxServer
+from .tracker import DeliveredIdTracker, FileDeliveredIdTracker
 from .types import InboxMessage
 
 __all__ = [
@@ -19,5 +18,6 @@ __all__ = [
     "InMemoryInboxServer",
     "InboxProducer",
     "InboxConsumer",
-    "InboxFlushHook",
+    "DeliveredIdTracker",
+    "FileDeliveredIdTracker",
 ]
