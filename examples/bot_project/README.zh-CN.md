@@ -414,7 +414,7 @@ agents:
     role: subagent
     system_prompt: |
       你是一个...的 Agent。
-      完成后必须通过 send_to_agent_async 将结果回复给主 Agent（target_agent="main"）
+      完成后必须通过 send_to_agent 将结果回复给主 Agent（target_agent="main"）
     tools:
       file_tools:
         enabled: true
@@ -435,9 +435,9 @@ agents:
 
 | Agent | 文件 | Shell | MCP | 通信工具 | Skills |
 |-------|:----:|:-----:|:---:|----------|--------|
-| **main** | ✅ | ✅ | ✅（全部） | `send_to_agent`, `send_to_agent_async` | `skills/main/*` |
-| **office-expert** | ✅ | ✅ | — | `send_to_agent_async`(→main) | docx/pdf/pptx/xlsx |
-| **query-12306** | ✅ | ✅ | ✅（12306-mcp, fetch） | `send_to_agent_async`(→main) | — |
+| **main** | ✅ | ✅ | ✅（全部） | `send_to_agent`, `send_to_agent` | `skills/main/*` |
+| **office-expert** | ✅ | ✅ | — | `send_to_agent`(→main) | docx/pdf/pptx/xlsx |
+| **query-12306** | ✅ | ✅ | ✅（12306-mcp, fetch） | `send_to_agent`(→main) | — |
 | **helper-sync** | ✅ | ✅ | — | —（spawn 同步返回） | `skills/subagents/*` |
 
 ## 适配其他 IM 平台

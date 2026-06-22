@@ -63,7 +63,7 @@
 ## Multi-Agent Communication Rules
 
 - Star topology: subagents communicate only through main agent. `subagent_validator.py` enforces at registration.
-- Three communication tools: `send_to_agent` (sync broker), `send_to_agent_async` (inbox-based, deferred), `spawn_subagent` (isolated invocation session).
+- Communication is exposed as a single tool: `send_to_agent`. The framework decides internally whether to use broker delivery, inbox delivery, or a new isolated subagent session.
 - `AgentMessageBus` is the primary async channel. `InboxProducer`/`InboxConsumer` wrap `InboxServer` with local-cache dedup.
 - `CommunicationTracker` provides sideband memory: send/acknowledge bracket matching prevents memory compression from silently dropping pending communications.
 - Session ID format: `{conversation_id}:{agent_name}[:{invocation_id}]` (via `DefaultSessionIdStrategy`).

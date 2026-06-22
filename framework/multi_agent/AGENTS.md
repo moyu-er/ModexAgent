@@ -17,7 +17,7 @@ Star-topology multi-agent orchestration. All agents live in `AgentPool`; there a
 | `communication.py` | `AgentCommunicationService` — central target validation, session id construction, envelope construction, sync/async delivery |
 | `comm_tracker.py` | `CommunicationTracker` — sideband communication tracker for send/ack bracket matching |
 | `comm_kind.py` | `AgentCommKind` — communication/session topology kind (NORMAL/SUBAGENT), topology only |
-| `tools.py` | `SendToAgentTool`, `CommunicationTargetStore`, `CommunicationTargetsProvider` |
+| `tools.py` | `SendToAgentTool`, `CommunicationTargetStore`, `CommunicationTarget` |
 | `router.py` | `DefaultMeshRouter` — session identity resolved via `InputMessage.session` (no string parsing) |
 | `envelope.py` | `AgentMessageEnvelope` — source, target, conversation id, session id, invocation id |
 | `descriptor.py` | `AgentDescriptor`, `AgentInstance`, `AgentLLMConfig` — agent metadata + `AgentCommKind` integration |
@@ -41,7 +41,7 @@ Star-topology multi-agent orchestration. All agents live in `AgentPool`; there a
 - `AgentCommKind.NORMAL`: one stable receiver session per conversation.
 - `AgentCommKind.SUBAGENT`: task-scoped receiver sessions with `invocation_id`.
 - Session id format: `{conversation_id}:{agent_name}[:{invocation_id}]`.
-- `send_to_agent` and `send_to_agent_async` accept `target_agent`, `content`, and required nullable `invocation_id`.
+- `send_to_agent` is the single communication tool exposed to the LLM. It accepts `target_agent`, `content`, and a nullable `invocation_id`. The framework routes the call through the broker, the async inbox, or an isolated subagent session depending on target state — this is not visible as separate LLM tools.
 - `invocation_id=None` targets a normal agent.
 - `invocation_id=""` creates a new subagent task session.
 - A concrete `invocation_id` continues an existing subagent task session.

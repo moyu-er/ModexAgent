@@ -414,7 +414,7 @@ agents:
     role: subagent
     system_prompt: |
       You are a specialized agent for ...
-      You must reply to the main agent via send_to_agent_async (target_agent="main")
+      You must reply to the main agent via send_to_agent (target_agent="main")
     tools:
       file_tools:
         enabled: true
@@ -435,9 +435,9 @@ agents:
 
 | Agent | File | Shell | MCP | Communication | Skills |
 |-------|:----:|:-----:|:---:|---------------|--------|
-| **main** | ✅ | ✅ | ✅ (all) | `send_to_agent`, `send_to_agent_async` | `skills/main/*` |
-| **office-expert** | ✅ | ✅ | — | `send_to_agent_async`(→main) | docx/pdf/pptx/xlsx |
-| **query-12306** | ✅ | ✅ | ✅ (12306-mcp, fetch) | `send_to_agent_async`(→main) | — |
+| **main** | ✅ | ✅ | ✅ (all) | `send_to_agent`, `send_to_agent` | `skills/main/*` |
+| **office-expert** | ✅ | ✅ | — | `send_to_agent`(→main) | docx/pdf/pptx/xlsx |
+| **query-12306** | ✅ | ✅ | ✅ (12306-mcp, fetch) | `send_to_agent`(→main) | — |
 | **helper-sync** | ✅ | ✅ | — | — (spawn sync return) | `skills/subagents/*` |
 
 ## Adapting to Other IM Platforms
