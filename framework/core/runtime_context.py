@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from framework.core.session_id import SessionInfo
-from framework.memory.core.scope import MemoryContext, MemoryScope, SessionScope
+from framework.core.scope import MemoryContext, MemoryScope, SessionScope
 
 if TYPE_CHECKING:
     from framework.runtime.models import JsonValue

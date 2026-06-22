@@ -7,12 +7,13 @@ is never modified.
 from __future__ import annotations
 
 import logging
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from collections.abc import Callable
 from enum import StrEnum
 from typing import Any
 
 from framework.core.types import MessageRole
+from framework.core.governance import ContextGovernance
 from framework.memory.core.message import ContentFormat
 from framework.memory.core.scope import MemoryContext
 from framework.memory.tags import UrbTag
@@ -30,27 +31,6 @@ def estimate_token_count(messages: list[dict[str, Any]]) -> int:
 META_CONTEXT_LOSSY = "meta_context_lossy"
 META_ORIGINAL_CHARS = "meta_original_chars"
 META_CONTEXT_REDUCTION = "meta_context_reduction"
-
-
-class ContextGovernance(ABC):
-    """轮内上下文治理抽象基类。
-
-    在每次 LLM 调用前对消息列表进行调整，确保不超出 token 预算
-    或上下文窗口限制。所有实现必须返回新的消息列表副本，不得
-    修改原始输入。
-    """
-
-    @abstractmethod
-    async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """应用治理策略，返回调整后的消息列表副本。
-
-        Args:
-            messages: 原始消息列表（system + history + current turn）
-
-        Returns:
-            新的消息列表副本，可能经过截断、压缩或修复
-        """
-        ...
 
 
 class CompositeGovernance(ContextGovernance):

@@ -12,11 +12,11 @@ from framework.multi_agent import (
     AgentFactory,
     AgentLLMConfig,
     AgentPool,
-    AgentState,
-    CommunicationTracker,
     DefaultAgentFactory,
     SessionRetentionPolicy,
 )
+from framework.multi_agent.comm_tracker import CommunicationTracker
+from framework.multi_agent.state import AgentState
 from framework.multi_agent.address import AgentAddress
 from framework.multi_agent.envelope import AgentMessageEnvelope
 from framework.multi_agent.router import DefaultMeshRouter

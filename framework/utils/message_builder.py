@@ -12,7 +12,7 @@ from typing import Any
 
 from framework.core.tool_manager import ToolResult
 from framework.core.types import ToolCall
-from framework.memory.core.message import ChatMessage
+from framework.core.message import ChatMessage
 
 
 def build_assistant_message(

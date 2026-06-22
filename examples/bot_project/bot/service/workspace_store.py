@@ -222,13 +222,19 @@ class WorkspaceScopedTranscriptStore(TranscriptStore):
         yield from self._store_for(resolved, pool_key).load(session_id)
 
     def load_sessions_by_prefix(
-        self, session_prefix: str, sessions_dir: Path | None = None
+        self,
+        session_prefix: str,
+        sessions_dir: Path | None = None,
+        pool: str | None = None,
     ) -> Iterator[ServerEvent]:
         resolved = self._resolve_dir(sessions_dir)
-        for pool_key in self.pools_in(resolved):
-            yield from self._store_for(resolved, pool_key).load_sessions_by_prefix(
-                session_prefix
-            )
+        if pool is not None:
+            yield from self.store_for(resolved, pool).load_sessions_by_prefix(session_prefix)
+        else:
+            for pool_key in self.pools_in(resolved):
+                yield from self._store_for(resolved, pool_key).load_sessions_by_prefix(
+                    session_prefix
+                )
 
     def list_sessions(self, sessions_dir: Path) -> set[str]:
         seen: set[str] = set()
@@ -269,12 +275,15 @@ class WorkspaceScopedTranscriptStore(TranscriptStore):
         return self._store_for(resolved, pool_key).last_updated(session_id)
 
     def load_materialized_by_prefix(
-        self, session_prefix: str, sessions_dir: Path | None = None
+        self,
+        session_prefix: str,
+        sessions_dir: Path | None = None,
+        pool: str | None = None,
     ) -> list:
         """Materialize events for *session_prefix* into merged turn blocks."""
         from bot.webui.transcript_store import _materialize_events
 
         events: list[ServerEvent] = list(
-            self.load_sessions_by_prefix(session_prefix, sessions_dir=sessions_dir)
+            self.load_sessions_by_prefix(session_prefix, sessions_dir=sessions_dir, pool=pool)
         )
         return _materialize_events(events)

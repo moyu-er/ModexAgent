@@ -20,7 +20,8 @@ from framework.core.tool_manager import InMemoryToolManager
 from framework.core.types import InputMessage
 from framework.memory.history import ListMessageHistory
 from framework.messaging.broker_memory import InMemoryMessageBroker
-from framework.multi_agent import AgentAddress, AgentDescriptor, SessionRetentionPolicy
+from framework.multi_agent.address import AgentAddress
+from framework.multi_agent import AgentDescriptor, SessionRetentionPolicy
 from framework.multi_agent.bus import LocalAgentMessageBus
 from framework.multi_agent.comm_kind import AgentCommKind
 from framework.multi_agent.communication import AgentCommunicationService

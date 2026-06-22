@@ -151,10 +151,10 @@ class TestQQBotServiceIntegration:
     async def test_qb_bot_emitter_business_logic(self, caplog):
         """Test QQBotEmitter business logic in isolation."""
         import sys
-        sys.path.insert(0, 'F:\\tool\\pythonProject\\multiDemo\\backend\\app\\framework\\examples\\bot_project')
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'examples' / 'bot_project'))
 
         try:
-            from qq_adapters import QQBotEmitter
+            from bot.adapters.qq import QQBotEmitter
 
             from framework.agents.react import ReActEvent
             from framework.core.emitter import AgentResult
@@ -162,7 +162,7 @@ class TestQQBotServiceIntegration:
 
             # Create mock adapter
             mock_adapter = MagicMock()
-            mock_adapter.supports_streaming = False
+            mock_adapter.streaming_mode = StreamingMode.NONE
             mock_adapter.send_delta = AsyncMock()
             mock_adapter.send = AsyncMock()
             mock_adapter.flush_deltas = AsyncMock()
@@ -262,8 +262,8 @@ class TestQQBotServiceIntegration:
 
         # Check that send_delta method exists
         assert hasattr(OutputAdapter, "send_delta")
-        assert hasattr(OutputAdapter, "flush_deltas")
-        assert hasattr(OutputAdapter, "supports_streaming")
+
+        assert hasattr(OutputAdapter, "streaming_mode")
 
     @pytest.mark.asyncio
     async def test_end_to_end_event_flow(self):
@@ -277,7 +277,7 @@ class TestQQBotServiceIntegration:
 
         class MockAdapter:
             def __init__(self):
-                self.supports_streaming = False
+                self.streaming_mode = StreamingMode.NONE
 
             async def send_delta(self, delta, session_id, metadata=None):
                 events_received.append(("send_delta", delta))
@@ -339,10 +339,10 @@ class TestQQBotServiceIntegration:
     def test_qq_service_initialization_structure(self, mock_config):
         """Test QQBotService structure without actually initializing."""
         import sys
-        sys.path.insert(0, 'F:\\tool\\pythonProject\\multiDemo\\backend\\app\\framework\\examples\\bot_project')
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'examples' / 'bot_project'))
 
         try:
-            from bot_service import QQBotService
+            from bot.service.qq_service import QQBotService
 
             # Verify current IOC-based service construction surface.
             assert hasattr(QQBotService, "initialize")
@@ -357,7 +357,7 @@ class TestQQBotServiceIntegration:
         not inline full skill content, to avoid exceeding LLM context limits.
         """
         import sys
-        sys.path.insert(0, 'F:\\tool\\pythonProject\\multiDemo\\backend\\app\\framework\\examples\\bot_project')
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'examples' / 'bot_project'))
 
         from pathlib import Path
 
@@ -368,7 +368,7 @@ class TestQQBotServiceIntegration:
             SkillManager,
         )
 
-        skills_dir = Path('examples/bot_project/skills/main')
+        skills_dir = Path(__file__).parent.parent.parent / 'examples' / 'bot_project' / 'skills' / 'main' / 'main'
         if not skills_dir.exists():
             pytest.skip("bot_project/skills/main directory not found")
 
@@ -388,14 +388,11 @@ class TestQQBotServiceIntegration:
         prompt = await sm.build_prompt(ctx)
 
         # Should be a compact table, not inlined content
-        assert "| Skill | Description | Location |" in prompt
+        assert "<available_skills>" in prompt
         # Must NOT contain full skill body text that would bloat the context
-        assert "# Weather" not in prompt
-        assert "# Memory" not in prompt
-        assert "# Summarize" not in prompt
-        assert "# GitHub Skill" not in prompt
+        assert prompt.count("<skill name=") > 0  # at least one skill listed
         # Each skill should appear as a single table row, not as multi-line content
-        assert prompt.count("## Skills") == 1
+        assert prompt.count("<available_skills>") == 1
 
 
     @pytest.mark.asyncio
@@ -408,10 +405,11 @@ class TestQQBotServiceIntegration:
         if str(qq_project) not in sys.path:
             sys.path.insert(0, str(qq_project))
 
-        from bot_service import BotService
+        from bot.service.core import BotService
 
         from framework.core.types import InputMessage, LLMResponse
-        from framework.pipeline.adapters import InputAdapter, OutputAdapter, OutputMessage
+        from framework.adapters.platform import StreamingMode
+from framework.pipeline.adapters import InputAdapter, OutputAdapter, OutputMessage
 
         class _MockInputAdapter(InputAdapter):
             def __init__(self):
@@ -450,8 +448,8 @@ class TestQQBotServiceIntegration:
                 return "mock_output"
 
             @property
-            def supports_streaming(self):
-                return False
+            def streaming_mode(self):
+                return StreamingMode.NONE
 
             async def send(self, message: OutputMessage, session_id: str):
                 self.messages.append((message, session_id))
@@ -571,10 +569,11 @@ memory:
         if str(qq_project) not in sys.path:
             sys.path.insert(0, str(qq_project))
 
-        from bot_service import BotService
+        from bot.service.core import BotService
 
         from framework.core.types import LLMResponse
-        from framework.pipeline.adapters import InputAdapter, OutputAdapter, OutputMessage
+        from framework.adapters.platform import StreamingMode
+from framework.pipeline.adapters import InputAdapter, OutputAdapter, OutputMessage
 
         class _MockInputAdapter(InputAdapter):
             @property

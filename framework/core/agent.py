@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Generic
 from typing_extensions import TypeVar
 
 from framework.core.session_id import SessionInfo
-from framework.memory.history import MessageHistory
+from framework.core.history import MessageHistory
 
 from .emitter import AgentResult, ContentEmitter
 from .events import AgentEvent
@@ -21,7 +21,7 @@ from .message_utils import normalize_agent_messages_for_llm
 from .tool_manager import ToolManager
 
 if TYPE_CHECKING:
-    from framework.memory.pipeline.pipeline import SystemPromptPipeline
+    from framework.core.prompt import SystemPromptPipeline
     from framework.multi_agent.comm_kind import AgentCommKind
     from framework.pipeline.snapshot import PoolDataSnapshot
     from framework.runtime.models import TurnIdentity

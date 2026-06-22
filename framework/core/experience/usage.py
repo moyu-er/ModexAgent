@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from framework.memory.utils import safe_atomic_replace
+from framework.core.utils import safe_atomic_replace
 
 logger = logging.getLogger(__name__)
 

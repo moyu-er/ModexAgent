@@ -11,7 +11,7 @@ from uuid import uuid4
 from framework.approval.constants import ApprovalDecision, ApprovalStatus, ApprovalTier
 from framework.core.agent import AgentContext
 from framework.core.types import LLMResponse
-from framework.memory.core.message import ChatMessage
+from framework.core.message import ChatMessage
 from framework.runtime.codec import RuntimeStateCodec, RuntimeStateCodecConfig
 from framework.runtime.enums import (
     AgentKind,

@@ -40,7 +40,8 @@ from framework.core.types import InputMessage
 from framework.interceptor.builtin import ToolResultLimitInterceptor
 from framework.interceptor.chain import InterceptorChain
 from framework.messaging.broker_memory import InMemoryMessageBroker
-from framework.multi_agent import CommunicationTracker, SessionRetentionPolicy
+from framework.multi_agent.comm_tracker import CommunicationTracker
+from framework.multi_agent import SessionRetentionPolicy
 from framework.multi_agent.bus import LocalAgentMessageBus
 from framework.multi_agent.inbox.consumer import InboxConsumer
 from framework.multi_agent.inbox.producer import InboxProducer
@@ -210,7 +211,7 @@ async def _build_resources(
         ttl_seconds=retention_cfg.ttl_seconds,
         cleanup_interval_seconds=retention_cfg.cleanup_interval_seconds,
     )
-    command_processor = service._build_main_command_processor()
+    command_processor = service.command_processor or service._build_main_command_processor()
 
     # 4. Per-pool data snapshots.
     pool_data: dict[str, Any] = {}

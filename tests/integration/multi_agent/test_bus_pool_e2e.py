@@ -12,11 +12,11 @@ pytestmark = pytest.mark.integration
 from framework.core.types import InputMessage
 from framework.messaging.broker_memory import InMemoryMessageBroker
 from framework.multi_agent import (
-    AgentAddress,
     AgentDescriptor,
     DefaultAgentFactory,
     SessionRetentionPolicy,
 )
+from framework.multi_agent.address import AgentAddress
 from framework.multi_agent.bus import LocalAgentMessageBus
 from framework.multi_agent.envelope import AgentMessageEnvelope
 from framework.multi_agent.inbox.consumer import InboxConsumer

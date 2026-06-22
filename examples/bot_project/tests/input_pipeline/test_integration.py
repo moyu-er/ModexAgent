@@ -138,6 +138,51 @@ async def test_im_stop_command_not_persisted() -> None:
             assert enqueued == [], "/stop must not be enqueued"
 
 
+@pytest.mark.asyncio
+async def test_im_continue_command_not_persisted_but_enqueued() -> None:
+    """IM /continue: not persisted, but enqueued as a continue signal."""
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        with bind_workspace_root(root):
+            store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
+            store.set_agent_pool_map({"main": "main"})
+            enqueued: list[InputMessage] = []
+            ctx = _make_ctx(store, enqueued)
+            pipe = build_im_pipeline(skill_registry=_NoSkill(), known_pools={"main"})
+            env = UserInputEnvelope(external_id="u1", content="/continue", channel="qq")
+            result = await pipe.handle(env, ctx)
+            assert not result.should_continue(), "/continue must terminate"
+            assert list(store.load(_sid("main", "u1"))) == []
+            assert len(enqueued) == 1, "/continue must be enqueued as a control signal"
+            assert enqueued[0].content == "/continue"
+            assert enqueued[0].workspace == root
+
+
+@pytest.mark.asyncio
+async def test_webui_continue_command_rejected() -> None:
+    """WebUI /continue: rejected by S6 as a builtin command."""
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        with bind_workspace_root(root):
+            store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
+            store.set_agent_pool_map({"main": "main"})
+            enqueued: list[InputMessage] = []
+            ctx = _make_ctx(store, enqueued)
+            pipe = build_webui_pipeline(skill_registry=_NoSkill(), known_pools={"main"})
+            env = UserInputEnvelope(
+                external_id="uuid1",
+                content="/continue",
+                channel="websocket",
+                explicit_pool="main",
+            )
+            result = await pipe.handle(env, ctx)
+            assert not result.should_continue(), "/continue must be rejected in WebUI"
+            response = getattr(result, "response", None)
+            assert response is not None
+            assert "not supported" in str(response.get("message", "")).lower()
+            assert enqueued == []
+
+
 # ── Missing E2E tests (added per spec §9 review) ───────────────────────
 
 

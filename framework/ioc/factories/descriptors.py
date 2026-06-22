@@ -21,7 +21,8 @@ from framework.memory.layers.config import (
     UserRetentionBufferConfig,
 )
 from framework.memory.system import MemorySystemContextManager, create_memory_system
-from framework.multi_agent import AgentAddress, AgentDescriptor
+from framework.multi_agent.address import AgentAddress
+from framework.multi_agent import AgentDescriptor
 from framework.multi_agent.comm_kind import AgentCommKind
 from framework.multi_agent.descriptor import AgentLLMConfig
 

@@ -19,7 +19,7 @@ Converged user-input stage pipeline that processes incoming messages identically
     ┌─────────────────────────────────────────┐
     │ S4  SetChannelStage                      │  tag conversation with channel (runs first!)
     ├─────────────────────────────────────────┤
-    │ S2  EnvironmentControlStage              │  IM-only: /cd, /pool, /exit, /pwd
+    │ S2  EnvironmentControlStage              │  IM-only: /cd, /pool, /exit, /pwd, /continue
     │ S3  SessionControlStage                  │  IM-only: /stop (cancel turn)
     ├─────────────────────────────────────────┤
     │ S5  ResolvePoolStage                     │  resolve pool + agent, persist UI choice
@@ -31,7 +31,7 @@ Converged user-input stage pipeline that processes incoming messages identically
 
 - **S0 (adapter-side normalization)**: NOT a pipeline stage. Each channel adapter (QQ `_on_message`, WebSocket `_ws_send_message`) handles dedup, attachment download, content extraction and produces a seed `UserInputEnvelope`. This keeps channel-specific concerns in the adapter layer.
 - **IM pipeline** (7 stages: S4→S2→S3→S5→S6→S7→S8): Full path for IM channels. S4 runs FIRST so ``ChannelRouterOutputAdapter`` can route command responses to the correct channel. S2/S3 intercept control commands before they reach persistence or the agent queue.
-- **WebUI pipeline** (5 stages: S4→S5→S6→S7→S8): WebUI has UI-level controls for workspace/pool/session operations, so S2/S3 are skipped. Unknown `/command` typed in the chat box reaches S6 and terminates with an error notice.
+- **WebUI pipeline** (5 stages: S4→S5→S6→S7→S8): WebUI has UI-level controls for workspace/pool/session operations, so S2/S3 are skipped. Unknown `/command` typed in the chat box reaches S6 and terminates with an error notice. The pause button sends a WebSocket `pause` action which invokes the same control-channel cancellation as IM `/stop`.
 
 ## Pipeline Semantics
 
@@ -48,10 +48,11 @@ The pipeline runs stages in order and stops at the first `Terminate`. There is n
 
 `stages/environment_control.py`
 
-IM-only. Intercepts `/cd <path>`, `/exit`, `/pwd`, and `/pool_name` before they reach persistence.
+IM-only. Intercepts `/cd <path>`, `/exit`, `/pwd`, `/pool_name` and `/continue` before they reach persistence.
 
 - `/cd`, `/exit`, and `/pwd` delegate to `ctx.command_adapter._try_intercept_control()` (framework-provided, no framework changes).
 - `/pool_name` writes directly to `PoolSessionStore` and terminates with a user-facing notice.
+- `/continue` enqueues a raw `InputMessage(content="/continue")` so the downstream `AgentPipeline` executes `ContinueCommandHandler` (no user message appended, triggers the agent), then terminates without persisting.
 - `/stop` is intentionally passed through — S3 owns it.
 - Non-command messages pass through unchanged.
 
@@ -62,14 +63,13 @@ IM-only. Intercepts `/cd <path>`, `/exit`, `/pwd`, and `/pool_name` before they 
 IM-only. Intercepts `/stop` and routes it through `ctx.command_adapter._try_intercept_control("/stop", full_session_id)`.
 
 > [!IMPORTANT]
-> In the current bot this **does not actually cancel the running turn**.
-> `_try_intercept_control` would push a `CANCEL_TURN` into `InMemoryControlChannel`,
-> but that requires `configure_control_filter()` to be called first — and it is
-> **never called in the live bot**, so the method short-circuits with
-> `channel is None` and returns False. The stage then falls through to
-> `Continue` (non-`/stop` passthrough) or only stops the input-pipeline stage
-> processing. Real turn cancellation lives in the pipeline pre-lock `task.cancel()`
-> path. See `framework/control/AGENTS.md`.
+> For this to actually cancel the running turn, the input adapter must be configured with
+> `configure_control_filter()`. `WebUIService.start()` now calls it after all source adapters
+> are wired and before the input adapter starts, injecting the shared `control_channel`,
+> `command_processor`, and cross-workspace `session_checker` / `turn_uuid_getter`.
+> With that wiring in place, `_try_intercept_control` pushes a `CANCEL_TURN` into
+> `InMemoryControlChannel`; the pool's `ControlDrainInterceptor` and `LlmCancelInterceptor`
+> drain it at the next safe point and abort the turn.
 
 - Resolves `full_session_id` using the shared read-only `resolve_session_routing()` helper (does NOT persist — S5 owns persistence). This ensures `/stop` targets the conversation's current pool, not a bare conversation_id that would default to `main`.
 - Non-`/stop` messages pass through unchanged.
@@ -169,7 +169,7 @@ This pipeline reuses the framework's `InputAdapter._try_intercept_control` for `
 |------|-------------|
 | `context.py` | `BotInputContext` — concrete context with all stage dependencies |
 | `assembly.py` | `build_im_pipeline()`, `build_webui_pipeline()` — stage ordering |
-| `stages/environment_control.py` | S2 — `/cd`, `/pool`, `/exit` interception |
+| `stages/environment_control.py` | S2 — `/cd`, `/pool`, `/exit`, `/continue` interception |
 | `stages/session_control.py` | S3 — `/stop` turn cancellation |
 | `stages/set_channel.py` | S4 — conversation channel tagging |
 | `stages/resolve_pool.py` | S5 — pool/agent resolution + persistence |

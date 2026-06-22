@@ -185,7 +185,7 @@ class ToolResult:
             return msg
         paths = get_terminal_xml_truncatable_paths(content_str)
         if paths is not None:
-            from framework.memory.core.message import ContentFormat
+            from framework.core.message import ContentFormat
 
             msg["content_format"] = ContentFormat.XML.value
             msg["truncatable_paths"] = paths

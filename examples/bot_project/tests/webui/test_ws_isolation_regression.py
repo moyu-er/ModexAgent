@@ -242,3 +242,63 @@ async def test_send_message_then_attach_under_ws_finds_history() -> None:
             )
         finally:
             await client.close()
+
+
+def _seed_for_pool(store, ws_root: Path, session_id: str, content: str) -> None:
+    """Append a user message for a specific agent under *ws_root*."""
+    agent_name = session_id.split(".")[1] if "." in session_id else "main"
+    with bind_workspace_root(ws_root):
+        store.append(
+            session_id,
+            UserMessageEvent(session_id=session_id, agent_name=agent_name, content=content),
+        )
+
+
+@pytest.mark.asyncio
+async def test_get_messages_does_not_leak_across_pools() -> None:
+    """BUG: GET /api/sessions/{prefix}.{pool}/messages must only return messages
+    from that specific pool, not from other pools sharing the same conversation
+    prefix.  For example, session 'convA.coding' must NOT include messages from
+    'convA.main' even though they share the prefix 'convA'.
+
+    This is the cross-pool leakage bug in the messages API."""
+    with tempfile.TemporaryDirectory() as tmp:
+        home = Path(tmp) / "home"
+        home.mkdir()
+        server, store = _build_server(home)
+
+        conv_prefix = "convA"
+        sid_main = f"{conv_prefix}.main"
+        sid_coding = f"{conv_prefix}.coding"
+
+        _seed_for_pool(store, home, sid_main, "hello from main pool")
+        _seed_for_pool(store, home, sid_coding, "hello from coding pool")
+
+        client = TestClient(TestServer(server.app))
+        await client.start_server()
+        try:
+            main_events = await (
+                await client.get(f"/api/sessions/{sid_main}/messages")
+            ).json()
+            main_msgs = [e for e in main_events if e.get("event") == "user_message"]
+            main_contents = {e.get("content", "") for e in main_msgs}
+            assert "hello from main pool" in main_contents, (
+                f"main session should contain its own message; got {main_contents}"
+            )
+            assert "hello from coding pool" not in main_contents, (
+                f"BUG: main session leaked coding pool message; got {main_contents}"
+            )
+
+            coding_events = await (
+                await client.get(f"/api/sessions/{sid_coding}/messages")
+            ).json()
+            coding_msgs = [e for e in coding_events if e.get("event") == "user_message"]
+            coding_contents = {e.get("content", "") for e in coding_msgs}
+            assert "hello from coding pool" in coding_contents, (
+                f"coding session should contain its own message; got {coding_contents}"
+            )
+            assert "hello from main pool" not in coding_contents, (
+                f"BUG: coding session leaked main pool message; got {coding_contents}"
+            )
+        finally:
+            await client.close()

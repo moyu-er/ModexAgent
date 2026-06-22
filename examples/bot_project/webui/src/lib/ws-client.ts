@@ -191,6 +191,14 @@ export class WebSocketClient {
   deleteConversation(sessionId: string): boolean {
     return this.send("delete_conversation", { session_id: sessionId });
   }
+
+  /** Send a pause request for the currently streaming session. */
+  pause(sessionId: string, ws?: string): boolean {
+    return this.send("pause", {
+      session_id: sessionId,
+      ...(ws ? { ws } : {}),
+    });
+  }
 }
 
 export function buildWsUrl(): string {

@@ -45,13 +45,13 @@ from framework.memory.injection import FullInjectionPolicy
 from framework.memory.system import MemorySystemContextManager
 from framework.messaging.broker_bridge import BrokerBridgeService, OutputRoute
 from framework.multi_agent import (
-    AgentAddress,
     AgentDescriptor,
     AgentPool,
-    CommunicationTracker,
     DefaultAgentFactory,
     SessionRetentionPolicy,
 )
+from framework.multi_agent.address import AgentAddress
+from framework.multi_agent.comm_tracker import CommunicationTracker
 from framework.multi_agent.bus import AgentMessageBus
 from framework.multi_agent.comm_kind import AgentCommKind
 from framework.multi_agent.communication import AgentCommunicationService

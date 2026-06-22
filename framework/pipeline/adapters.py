@@ -50,7 +50,7 @@ class InputAdapter(ABC):
         self._cmd_processor: CommandProcessor | None = None
         self._ctrl_output_adapter: OutputAdapter | None = None
         self._session_checker: Callable[[str], bool] | None = None
-        self._turn_uuid_getter: Callable[[], str] | None = None
+        self._turn_uuid_getter: Callable[[str], str | None] | None = None
         # Set by configure_input_pipeline (default impl); overrides may use
         # different attr names.
         self._input_pipeline: "UserInputPipeline | None" = None
@@ -118,7 +118,7 @@ class InputAdapter(ABC):
         command_processor: CommandProcessor | None = None,
         output_adapter: OutputAdapter | None = None,
         session_checker: Callable[[str], bool] | None = None,
-        turn_uuid_getter: Callable[[], str] | None = None,
+        turn_uuid_getter: Callable[[str], str | None] | None = None,
     ) -> None:
         """Configure control command interception.
 

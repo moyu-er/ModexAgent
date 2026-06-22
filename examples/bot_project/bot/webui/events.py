@@ -39,6 +39,7 @@ class WebSocketAction(str, Enum):
     ATTACH = "attach"
     SEND_MESSAGE = "send_message"
     DELETE_CONVERSATION = "delete_conversation"
+    PAUSE = "pause"
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────

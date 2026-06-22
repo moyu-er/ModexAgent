@@ -1,4 +1,4 @@
-"""S2: handle /cd, /pool <name>, /exit, /pwd before persistence.
+"""S2: handle /cd, /pool <name>, /exit, /pwd, /continue before persistence.
 
 IM-only stage — the WebUI pipeline (build_webui_pipeline) does NOT include
 S2/S3.  Control commands are handled directly here:
@@ -8,6 +8,7 @@ S2/S3.  Control commands are handled directly here:
 - /exit      -> resets adapter.current_ws to adapter.home, persists, terminates.
 - /pwd       -> terminates with current workspace notice.
 - /pool <n>  -> records pool choice and terminates.
+- /continue  -> enqueues a continue signal for the agent pipeline, does NOT persist.
 - /stop      -> passes through to S3 (SessionControlStage).
 - Other commands -> delegated to ctx.command_adapter._try_intercept_control().
 """
@@ -17,8 +18,14 @@ import re
 from pathlib import Path
 
 from bot.input_pipeline.context import BotInputContext
-from bot.input_pipeline.stages.resolve_pool import conversation_session_prefix
+from bot.input_pipeline.stages.resolve_pool import (
+    RoutingMeta,
+    conversation_session_prefix,
+    resolve_session_routing,
+)
 from framework.workspace.control import WorkspaceController
+from framework.core.session_id import SessionInfo
+from framework.core.types import InputMessage
 from framework.input_pipeline.envelope import UserInputEnvelope
 from framework.input_pipeline.stage import Continue, InputStage, StageResult, Terminate
 
@@ -42,6 +49,12 @@ class EnvironmentControlStage(InputStage):
         # /stop is owned by SessionControlStage (S3) — pass it through
         if content == "/stop":
             return Continue(value=envelope)
+
+        # /continue — IM-only: enqueue a continue signal without persisting the
+        # command text. The downstream AgentPipeline's ContinueCommandHandler
+        # will turn it into CONTINUE_AGENT (no user message append, trigger agent).
+        if content.split(None, 1)[0].lower() == "/continue":
+            return await self._handle_continue(envelope, ctx)
 
         # /cd <dir> — must be checked BEFORE /pool regex because /cd is not a pool name
         if content.startswith("/cd "):
@@ -72,6 +85,22 @@ class EnvironmentControlStage(InputStage):
         if handled:
             return self._terminate_with()
         return Continue(value=envelope)
+
+    async def _handle_continue(self, envelope: UserInputEnvelope, ctx: BotInputContext) -> StageResult:
+        """Handle /continue: enqueue the command for the agent pipeline but do not persist it."""
+        _, _, full_sid = resolve_session_routing(envelope, ctx)
+        workspace = Path(envelope.metadata.get(RoutingMeta.WORKSPACE, str(ctx.current_ws())))
+        msg = InputMessage(
+            content="/continue",
+            session=SessionInfo.from_str(full_sid, default_agent_name="main"),
+            channel=envelope.channel,
+            source=envelope.channel,
+            chat_id=envelope.metadata.get("chat_id", ""),
+            metadata={"session_id": full_sid, "channel": envelope.channel},
+            workspace=workspace,
+        )
+        ctx.enqueue_message(msg)
+        return Terminate(reason="continue_command")
 
     async def _handle_cd(self, ctx: BotInputContext, target: str) -> StageResult:
         """Handle /cd <dir>: validate via controller, set adapter.current_ws, persist, terminate."""

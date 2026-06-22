@@ -1,6 +1,6 @@
-"""Factory for default registry-backed memory layer sets."""
-
 from __future__ import annotations
+
+from typing import Any
 
 from framework.core.provider import LLMProvider
 from framework.memory.core.layers import MemoryLayerSet
@@ -14,6 +14,7 @@ from framework.memory.core.scope import (
 from framework.memory.core.storage import MemoryStorage
 from framework.memory.layers.archive import ScopedArchiveMemoryManager
 from framework.memory.layers.config import (
+    ArchiveMemoryConfig,
     MemoryLayerConfigSet,
     SessionMemoryConfig,
     StorageFactory,
@@ -29,46 +30,27 @@ class MemoryLayerFactory:
     """Build typed layer sets using a MemoryStoreRegistry."""
 
     @staticmethod
-    def single_user(
+    def build(
         *,
         registry: MemoryStoreRegistry,
-        config: MemoryLayerConfigSet | None = None,
-        llm_provider: LLMProvider | None = None,
+        config: MemoryLayerConfigSet,
     ) -> MemoryLayerSet:
-        _ = llm_provider
-        config = config or MemoryLayerConfigSet()
+        """Build a MemoryLayerSet from a MemoryLayerConfigSet."""
         session_manager = ScopedSessionMemoryManager(
             MemoryLayerFactory._storage_factory(
                 registry, MemoryLayerName.SESSION, config.session.scope
             ),
             config.session,
         )
-        archive_manager = (
-            ScopedArchiveMemoryManager(
-                MemoryLayerFactory._storage_factory(
-                    registry, MemoryLayerName.ARCHIVE, config.archive.scope
-                ),
-                config.archive,
-            )
-            if config.archive is not None
-            else None
+        archive_manager = MemoryLayerFactory._maybe_build(
+            registry, config.archive, MemoryLayerName.ARCHIVE, ScopedArchiveMemoryManager
         )
-        knowledge_manager = (
-            ScopedKnowledgeMemoryManager(
-                MemoryLayerFactory._storage_factory(
-                    registry, MemoryLayerName.KNOWLEDGE, config.knowledge.scope
-                ),
-                config.knowledge,
-            )
-            if config.knowledge is not None
-            else None
+        knowledge_manager = MemoryLayerFactory._maybe_build(
+            registry, config.knowledge, MemoryLayerName.KNOWLEDGE, ScopedKnowledgeMemoryManager
         )
         user_retention_manager = (
-            ScopedUserRetentionBuffer(
-                MemoryLayerFactory._storage_factory(
-                    registry, MemoryLayerName.USER_RETENTION, config.user_retention.scope
-                ),
-                config.user_retention,
+            MemoryLayerFactory._maybe_build(
+                registry, config.user_retention, MemoryLayerName.USER_RETENTION, ScopedUserRetentionBuffer
             )
             if config.user_retention is not None and config.user_retention.enabled
             else None
@@ -81,34 +63,44 @@ class MemoryLayerFactory:
         )
 
     @staticmethod
+    def _maybe_build(
+        registry: MemoryStoreRegistry,
+        config: Any | None,
+        layer: MemoryLayerName,
+        manager_cls: Any,
+    ) -> Any:
+        if config is None:
+            return None
+        return manager_cls(
+            MemoryLayerFactory._storage_factory(registry, layer, config.scope),
+            config,
+        )
+
+    @staticmethod
+    def single_user(
+        *,
+        registry: MemoryStoreRegistry,
+        config: MemoryLayerConfigSet | None = None,
+        llm_provider: LLMProvider | None = None,
+    ) -> MemoryLayerSet:
+        _ = llm_provider
+        config = config or MemoryLayerConfigSet()
+        return MemoryLayerFactory.build(registry=registry, config=config)
+
+    @staticmethod
     def session_only(
         *,
         registry: MemoryStoreRegistry,
         config: SessionMemoryConfig | None = None,
         user_retention_config: UserRetentionBufferConfig | None = None,
     ) -> MemoryLayerSet:
-        session_manager = ScopedSessionMemoryManager(
-            MemoryLayerFactory._storage_factory(
-                registry,
-                MemoryLayerName.SESSION,
-                (config or SessionMemoryConfig()).scope,
-            ),
-            config,
+        effective_config = MemoryLayerConfigSet(
+            session=config or SessionMemoryConfig(),
+            archive=None,
+            knowledge=None,
+            user_retention=user_retention_config or UserRetentionBufferConfig(),
         )
-        effective_user_retention_config = user_retention_config or UserRetentionBufferConfig()
-        user_retention_manager = (
-            ScopedUserRetentionBuffer(
-                MemoryLayerFactory._storage_factory(
-                    registry,
-                    MemoryLayerName.USER_RETENTION,
-                    effective_user_retention_config.scope,
-                ),
-                effective_user_retention_config,
-            )
-            if effective_user_retention_config.enabled
-            else None
-        )
-        return MemoryLayerSet(session=session_manager, user_retention=user_retention_manager)
+        return MemoryLayerFactory.build(registry=registry, config=effective_config)
 
     @staticmethod
     def subagent_session_isolated(
@@ -122,42 +114,13 @@ class MemoryLayerFactory:
         - Archive: SessionScope (NOT UserScope — each task session isolated)
         - Knowledge: disabled (None — no SOUL/USER/MEMORY.md access)
         """
-        from framework.memory.layers.config import ArchiveMemoryConfig
-
-        session_config = SessionMemoryConfig(max_messages=max_session_messages)
-        archive_config = ArchiveMemoryConfig(scope=SessionScope())
-        user_retention_config = UserRetentionBufferConfig(enabled=True)
-
-        session_manager = ScopedSessionMemoryManager(
-            MemoryLayerFactory._storage_factory(
-                registry,
-                MemoryLayerName.SESSION,
-                session_config.scope,
-            ),
-            session_config,
-        )
-        archive_manager = ScopedArchiveMemoryManager(
-            MemoryLayerFactory._storage_factory(
-                registry,
-                MemoryLayerName.ARCHIVE,
-                archive_config.scope,
-            ),
-            archive_config,
-        )
-        user_retention_manager = ScopedUserRetentionBuffer(
-            MemoryLayerFactory._storage_factory(
-                registry,
-                MemoryLayerName.USER_RETENTION,
-                user_retention_config.scope,
-            ),
-            user_retention_config,
-        )
-        return MemoryLayerSet(
-            session=session_manager,
-            archive=archive_manager,
+        effective_config = MemoryLayerConfigSet(
+            session=SessionMemoryConfig(max_messages=max_session_messages),
+            archive=ArchiveMemoryConfig(scope=SessionScope()),
             knowledge=None,
-            user_retention=user_retention_manager,
+            user_retention=UserRetentionBufferConfig(enabled=True),
         )
+        return MemoryLayerFactory.build(registry=registry, config=effective_config)
 
     @staticmethod
     def _storage_factory(
