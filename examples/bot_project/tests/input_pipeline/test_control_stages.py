@@ -12,6 +12,7 @@ from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from bot.input_pipeline.stages.session_control import SessionControlStage
 from framework.workspace.control import WorkspaceController
 from framework.core.session_id import SessionIdFactory, encode_snowflake
+from framework.core.types import InputMessage
 from framework.input_pipeline.envelope import UserInputEnvelope
 from framework.workspace.models import CdResult
 
@@ -137,6 +138,24 @@ async def test_stop_command_handled_by_session_stage() -> None:
 
     assert result.should_continue() is False
     assert ctx.command_adapter._called is True
+
+
+@pytest.mark.asyncio
+async def test_continue_command_enqueues_continue_signal() -> None:
+    """S2: /continue enqueues a continue InputMessage and terminates without persisting."""
+    enqueued: list[InputMessage] = []
+    ctx = _ctx(store_get="main")
+    ctx._enqueue_message = MagicMock(side_effect=enqueued.append)
+    ctx.enqueue_message = MagicMock(side_effect=enqueued.append)  # type: ignore[method-assign]
+    env = UserInputEnvelope(external_id="u1", content="/continue", channel="qq")
+    stage = EnvironmentControlStage()
+    result = await stage.process(env, ctx)
+
+    assert result.should_continue() is False
+    assert result.response is None
+    assert len(enqueued) == 1
+    assert enqueued[0].content == "/continue"
+    assert enqueued[0].session.session_id.endswith(".main")
 
 
 @pytest.mark.asyncio

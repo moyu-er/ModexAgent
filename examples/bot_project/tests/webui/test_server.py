@@ -96,6 +96,54 @@ async def test_ws_send_message_echoes_user_message() -> None:
 
 
 @pytest.mark.asyncio
+async def test_ws_pause_sends_cancel_turn() -> None:
+    """WebSocket pause action sends CANCEL_TURN via the configured control filter."""
+    from framework.commands.handlers import build_default_builtin_handlers
+    from framework.commands.processor import SlashCommandProcessor
+    from framework.control.channel import InMemoryControlChannel
+    from framework.control.types import ControlCommandType, ControlScope
+
+    with tempfile.TemporaryDirectory() as tmp:
+        workspace_root = Path(tmp)
+        input_adapter = WebSocketInputAdapter()
+        channel = InMemoryControlChannel()
+        processor = SlashCommandProcessor(handlers=list(build_default_builtin_handlers()))
+        input_adapter.configure_control_filter(
+            control_channel=channel,
+            command_processor=processor,
+            output_adapter=None,
+        )
+        store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
+        home_sessions_dir = WorkspacePaths(root=workspace_root / ".modex").sessions_dir
+        server = WebUIServer(
+            input_adapter, store, static_dist=None, home_sessions_dir=home_sessions_dir
+        )
+        server.set_workspace_index(store)
+        from tests.webui._pipeline_fixture import attach_default_pipeline
+        attach_default_pipeline(server, store, input_adapter, workspace_root=workspace_root)
+        client = TestClient(TestServer(server.app))
+        await client.start_server()
+        try:
+            ws = await client.ws_connect("/ws")
+            await ws.send_json({"action": "attach", "session_id": "web:test.main"})
+            attached = _unwrap_envelope(await ws.receive_json())
+            assert attached["event"] == "attached"
+
+            await ws.send_json({"action": "pause", "session_id": "web:test.main"})
+            # Give the async handler a chance to run.
+            await asyncio.sleep(0.05)
+
+            cmds = await channel.drain(
+                ControlScope(session_id="web:test.main"),
+                command_types={ControlCommandType.CANCEL_TURN},
+            )
+            assert len(cmds) == 1
+            assert cmds[0].type == ControlCommandType.CANCEL_TURN
+        finally:
+            await client.close()
+
+
+@pytest.mark.asyncio
 async def test_api_messages_loads_transcript() -> None:
     """GET /api/sessions/{session_id}/messages returns stored events."""
     with tempfile.TemporaryDirectory() as tmp:

@@ -4,7 +4,7 @@ import asyncio
 import logging
 import sys
 import time
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -791,6 +791,10 @@ class AgentPool(AgentRegistry):
     def get_descriptor(self, name: str) -> AgentDescriptor | None:
         instance = self._agents.get(name)
         return instance.descriptor if instance else None
+
+    def iter_instances(self) -> Iterator[AgentInstance]:
+        """Yield every registered agent instance (main + subagents)."""
+        yield from self._agents.values()
 
     def has_active_sessions(self) -> bool:
         """Return True if any agent has an in-progress dispatch.

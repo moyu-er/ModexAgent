@@ -519,6 +519,11 @@ class WebUIService(BotService):
             raw_out = self._channel_outputs_by_name.get(inp.name)
             inp.configure_input_pipeline(im_pipeline, im_ctx, raw_out)
 
+        # ── Control command interception ────────────────────────────
+        # Wired centrally in BotService.start() (called via super().start()
+        # below) so IM /stop and the WebUI pause button push CANCEL_TURN
+        # through InMemoryControlChannel.
+
         # ── Start aiohttp server ────────────────────────────────────
         runner = web.AppRunner(self._server.app)
         await runner.setup()

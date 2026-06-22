@@ -19,6 +19,7 @@ export interface UseWebUIStreamResult {
   connect: () => void;
   disconnect: () => void;
   send: (content: string) => void;
+  pause: () => void;
 }
 
 export function useWebUIStream(
@@ -283,6 +284,22 @@ export function useWebUIStream(
     [sessionId, agentName, getPoolForUuid],
   );
 
+  const pause = useCallback((): void => {
+    if (!sessionId) {
+      console.warn("Cannot pause: no session selected");
+      return;
+    }
+    if (!state.isStreaming) {
+      return;
+    }
+    const client = clientRef.current;
+    if (!client || !client.connected) {
+      console.warn("WebSocket: not connected");
+      return;
+    }
+    client.pause(sessionId, currentWsRef.current);
+  }, [sessionId, state.isStreaming, currentWsRef.current]);
+
   return {
     messages: state.messages,
     isStreaming: state.isStreaming,
@@ -290,5 +307,6 @@ export function useWebUIStream(
     connect,
     disconnect,
     send,
+    pause,
   };
 }

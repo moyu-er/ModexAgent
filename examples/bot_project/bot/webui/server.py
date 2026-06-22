@@ -851,12 +851,35 @@ class WebUIServer:
             await self._ws_attach(ws, data, state)
         elif action == WebSocketAction.SEND_MESSAGE:
             await self._ws_send_message(ws, data, state)
+        elif action == WebSocketAction.PAUSE:
+            await self._ws_pause(ws, data)
         elif action == WebSocketAction.DELETE_CONVERSATION:
             await self._ws_delete_conversation(ws, data)
         else:
             logger.warning("Unknown WebSocket action: %s", action)
 
     # -- action handlers -----------------------------------------------------
+
+    async def _ws_pause(
+        self,
+        ws: web.WebSocketResponse,
+        data: dict[str, object],
+    ) -> None:
+        """Cancel the running turn for the selected session.
+
+        The WebSocket input adapter is configured with the shared control filter,
+        so reusing _try_intercept_control("/stop", ...) sends a CANCEL_TURN
+        command through InMemoryControlChannel. The interceptors in the active
+        pool drain the command and abort the turn.
+        """
+        session_id = str(data.get("session_id", ""))
+        if "." not in session_id:
+            return
+
+        ws_raw = str(data.get("ws", ""))
+        index_dir = self._index_dir_of_ws(ws_raw)
+        resolved = await self._resolve_session(session_id, index_dir=index_dir)
+        await self._input._try_intercept_control("/stop", resolved.session_id)
 
     async def _ws_attach(
         self,

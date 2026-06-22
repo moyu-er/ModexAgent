@@ -15,7 +15,7 @@ import asyncio
 import contextlib
 import logging
 import traceback
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -259,6 +259,7 @@ class BotService(AgentBuilderMixin):
         # True -> full multi-live stack.
         self._default_provider = self._build_default_provider()
         self.control_channel = self._build_control_channel()
+        self.command_processor = self._build_main_command_processor()
         self.plugin_integration = PluginIntegration(config={"enabled": False})
         if self._app_config.workspace.enabled:
             self.workspace_stack = build_workspace_stack(
@@ -454,6 +455,37 @@ class BotService(AgentBuilderMixin):
 
         return SlashCommandProcessor(handlers=list(build_default_builtin_handlers()))
 
+    def _iter_workspace_resources(self) -> Iterator[Any]:
+        """Yield all materialized workspace resource bundles.
+
+        Used by the control-filter session checker/turn-uuid getter to locate
+        the AgentPipeline responsible for a given session across workspaces.
+        """
+        yield self._home_resources
+        if self.workspace_stack is not None:
+            yield from self.workspace_stack.registry.iter_materialized_resources()
+
+    def _is_session_active(self, session_id: str) -> bool:
+        """Return True if *session_id* has a running turn in any workspace pool."""
+        for resources in self._iter_workspace_resources():
+            for pi in resources.pools.values():
+                for inst in pi.pool.iter_instances():
+                    if inst.pipeline is not None and inst.pipeline.is_session_active(session_id):
+                        return True
+        return False
+
+    def _get_active_turn_uuid(self, session_id: str) -> str | None:
+        """Return the current turn UUID for *session_id*, or None if not running."""
+        for resources in self._iter_workspace_resources():
+            for pi in resources.pools.values():
+                for inst in pi.pool.iter_instances():
+                    if inst.pipeline is None:
+                        continue
+                    uuid = inst.pipeline.get_active_turn_uuid(session_id)
+                    if uuid is not None:
+                        return uuid
+        return None
+
     # ------------------------------------------------------------------ #
     # Start / Stop
     # ------------------------------------------------------------------ #
@@ -464,6 +496,19 @@ class BotService(AgentBuilderMixin):
         # message and routes into that workspace's pool_router).
         # Dream + curator background tasks are workspace-scoped and were
         # started inside build_resources when each workspace materialized.
+
+        # Wire the shared control filter BEFORE the input adapter starts so
+        # IM /stop (and the WebUI pause button, which reuses /stop) actually
+        # push CANCEL_TURN through InMemoryControlChannel. Idempotent if a
+        # subclass (e.g. WebUIService) already wired it earlier.
+        self.input_adapter.configure_control_filter(
+            control_channel=self.control_channel,
+            command_processor=self.command_processor,
+            output_adapter=self.output_adapter,
+            session_checker=self._is_session_active,
+            turn_uuid_getter=self._get_active_turn_uuid,
+        )
+
         await self.input_adapter.start()
         for pool in self._home_resources.pools.values():
             await pool.broker_bridge.start()

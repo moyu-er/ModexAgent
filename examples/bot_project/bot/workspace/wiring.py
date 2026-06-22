@@ -210,7 +210,7 @@ async def _build_resources(
         ttl_seconds=retention_cfg.ttl_seconds,
         cleanup_interval_seconds=retention_cfg.cleanup_interval_seconds,
     )
-    command_processor = service._build_main_command_processor()
+    command_processor = service.command_processor or service._build_main_command_processor()
 
     # 4. Per-pool data snapshots.
     pool_data: dict[str, Any] = {}

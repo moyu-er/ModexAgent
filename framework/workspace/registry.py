@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 from abc import ABC, abstractmethod
 from collections import deque
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Generic, TypeVar
 
@@ -167,6 +168,10 @@ class WorkspaceRegistry(Generic[R]):
 
     def materialized_count(self) -> int:
         return len(self._resources)
+
+    def iter_materialized_resources(self) -> Iterator[R]:
+        """Yield all currently materialized resource bundles."""
+        yield from self._resources.values()
 
     def begin_turn(self, target: Path) -> None:
         """Mark a turn as in-flight on ``target``'s workspace (protected from eviction)."""

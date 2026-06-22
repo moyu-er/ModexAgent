@@ -84,7 +84,7 @@ class FanInInputAdapter(InputAdapter):
         command_processor: CommandProcessor | None = None,
         output_adapter: OutputAdapter | None = None,
         session_checker: Callable[[str], bool] | None = None,
-        turn_uuid_getter: Callable[[], str] | None = None,
+        turn_uuid_getter: Callable[[str], str | None] | None = None,
     ) -> None:
         """Propagate control filter configuration to all source adapters.
 
