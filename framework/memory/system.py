@@ -236,28 +236,12 @@ class MemorySystemContextManager(ContextManager):
             SkillProvider,
         )
 
-        # Determine if the original policy would inject archive/pruned content.
-        # If so, create a pipeline-specific policy that skips them
-        # (those sections are handled by dedicated refreshable providers).
-        # Subagent policies (e.g. RestrictedInjectionPolicy) do not inject
-        # archive/pruned, so the original policy is used as-is.
+        # If the policy injects archive/pruned content itself, those sections are
+        # handled by dedicated refreshable providers below; use a clean policy
+        # that skips them to avoid double emission.
         policy = self.injection_policy
-        needs_clean_policy = False
-        try:
-            needs_clean_policy = policy._pruned_manager is not None
-        except AttributeError:
-            pass
-        if not needs_clean_policy:
-            try:
-                needs_clean_policy = policy._archive_inject_count > 0
-            except AttributeError:
-                pass
-
-        if needs_clean_policy:
-            pipeline_policy = FullInjectionPolicy(
-                pruned_manager=None,
-                archive_inject_count=0,
-            )
+        if policy.injects_pruned() or policy.injects_archive():
+            pipeline_policy = FullInjectionPolicy(pruned_manager=None, archive_inject_count=0)
         else:
             pipeline_policy = policy
         result = await pipeline_policy.assemble(
@@ -296,11 +280,7 @@ class MemorySystemContextManager(ContextManager):
             providers.append(ArchiveProvider(archive_dir))
 
         # 5. Pruned catalog (must refresh on cleanup)
-        pruned_mgr = None
-        try:
-            pruned_mgr = self.memory_system.pruned_manager
-        except AttributeError:
-            pass  # MemorySystem does not have pruned_manager
+        pruned_mgr = self.memory_system.pruned_manager
         if pruned_mgr is not None:
             providers.append(PrunedProvider(pruned_mgr, session_id=session_id))
 

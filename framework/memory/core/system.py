@@ -12,6 +12,7 @@ from framework.memory.core.message import ChatMessage
 from framework.memory.core.models import LongTermMemory
 from framework.memory.core.scope import MemoryContext
 from framework.memory.history import MessageHistory
+from framework.memory.pruned.manager import PrunedManager
 
 
 class MemorySystem(ABC):
@@ -111,6 +112,11 @@ class MemorySystem(ABC):
     async def get_storage_path(self, context: MemoryContext) -> Path | None:
         """Return the storage path for the given context."""
         ...
+
+    @property
+    def pruned_manager(self) -> PrunedManager | None:
+        """Pruned-message manager if configured; None by default."""
+        return None
 
 
 class BudgetManagedMemorySystem(ABC):
