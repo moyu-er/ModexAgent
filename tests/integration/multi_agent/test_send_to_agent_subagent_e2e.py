@@ -38,7 +38,8 @@ from framework.core.session_id import SessionIdFactory
 from framework.core.session_registry import InMemorySessionRegistry
 from framework.core.types import LLMResponse, ToolCall
 from framework.messaging.broker_memory import InMemoryMessageBroker
-from framework.multi_agent import AgentAddress, SessionRetentionPolicy
+from framework.multi_agent.address import AgentAddress
+from framework.multi_agent import SessionRetentionPolicy
 from framework.multi_agent.bus import LocalAgentMessageBus
 from framework.multi_agent.comm_kind import AgentCommKind
 from framework.multi_agent.communication import AgentCommunicationService

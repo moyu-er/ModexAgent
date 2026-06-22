@@ -11,11 +11,11 @@ pytestmark = pytest.mark.integration
 
 from framework.core.emitter import AgentResult
 from framework.multi_agent import (
-    AgentAddress,
     AgentDescriptor,
     AgentLLMConfig,
     DefaultAgentFactory,
 )
+from framework.multi_agent.address import AgentAddress
 
 
 @pytest.mark.asyncio

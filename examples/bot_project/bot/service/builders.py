@@ -18,7 +18,8 @@ from framework.core.skills import SkillManager
 from framework.core.tool_manager import Tool
 from framework.ioc.configs.app import AppConfig
 from framework.messaging.broker_memory import InMemoryMessageBroker
-from framework.multi_agent import AgentMessageBus, CommunicationTracker
+from framework.multi_agent import AgentMessageBus
+from framework.multi_agent.comm_tracker import CommunicationTracker
 from framework.pipeline.adapters import OutputAdapter
 
 logger = logging.getLogger(__name__)

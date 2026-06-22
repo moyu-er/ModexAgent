@@ -50,15 +50,14 @@ from ..core.graph.interrupt import GraphInterrupt
 from ..core.runtime_context import RuntimeContextManager
 from ..core.tool_manager import ToolManager
 from ..core.types import InputMessage
-from ..memory import ContextGovernance, MemoryContext
+from ..memory.context_governance import ContextGovernance
+from ..memory import MemoryContext
 from ..memory.consolidation import DreamEngine
 from ..memory.history import (
     inject_attachments_to_history,
 )
-from ..multi_agent import (
-    AgentDescriptor,
-    AgentMessageRouter,
-)
+from ..multi_agent import AgentDescriptor
+from ..multi_agent.router import AgentMessageRouter
 from ..runtime.dream_locks import _dream_locks
 from ..runtime.enums import SnapshotReason, TurnCustomKey, TurnPhase
 from ..runtime.models import StateQueryScope, TurnSnapshot

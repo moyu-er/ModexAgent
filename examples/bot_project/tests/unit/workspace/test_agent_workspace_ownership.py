@@ -197,7 +197,8 @@ async def test_main_agent_tool_manager_is_workspace_scoped(tmp_path: Path) -> No
     from framework.ioc.configs.llm import LLMConfig
     from framework.ioc.configs.memory import MemoryConfig
     from framework.ioc.configs.pool import PoolConfig
-    from framework.multi_agent import CommunicationTracker, SessionRetentionPolicy
+    from framework.multi_agent.comm_tracker import CommunicationTracker
+    from framework.multi_agent import SessionRetentionPolicy
 
     from framework.interceptor.chain import InterceptorChain
 

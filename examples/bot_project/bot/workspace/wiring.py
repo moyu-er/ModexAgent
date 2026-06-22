@@ -40,7 +40,8 @@ from framework.core.types import InputMessage
 from framework.interceptor.builtin import ToolResultLimitInterceptor
 from framework.interceptor.chain import InterceptorChain
 from framework.messaging.broker_memory import InMemoryMessageBroker
-from framework.multi_agent import CommunicationTracker, SessionRetentionPolicy
+from framework.multi_agent.comm_tracker import CommunicationTracker
+from framework.multi_agent import SessionRetentionPolicy
 from framework.multi_agent.bus import LocalAgentMessageBus
 from framework.multi_agent.inbox.consumer import InboxConsumer
 from framework.multi_agent.inbox.producer import InboxProducer
