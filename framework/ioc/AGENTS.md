@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-10 -->
+<!-- Updated: 2026-06-22 -->
 
 # ioc
 
@@ -27,3 +27,9 @@ Inversion of Control container — typed configuration (Pydantic) and factory fu
 - `AppConfig` is the root config loaded from YAML; all other configs are nested fields
 - Each factory reads its config section and returns fully wired subsystem instances
 - Config classes are pure data (frozen dataclasses); factories own all construction logic
+
+## Dependencies
+- `pydantic` — config model validation
+- Consumed by `framework/runtime/` (AgentRuntimeServices), `framework/pipeline/` (AgentPipeline assembly)
+
+<!-- MANUAL: -->

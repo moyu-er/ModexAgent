@@ -1,4 +1,4 @@
-<!-- Parent: ../../AGENTS.md -->
+<!-- Parent: ../AGENTS.md -->
 <!-- Generated: 2026-06-10 | Updated: 2026-06-10 -->
 
 # summarizer

@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-10 -->
+<!-- Generated: 2026-06-22 -->
 
 # plugins
 
@@ -19,3 +19,9 @@ Plugin system — convention-based extensibility. Three discovery sources: bundl
 - `PluginContext` is the sole registration surface; plugins never import framework internals directly
 - `MemoryProvider` ABC provides the memory extension point with search and prefetch semantics
 - ReAct clean mode runs without plugin-provided runtime services unless full mode re-enables them
+
+## Dependencies
+- `importlib.metadata` — PyPI package discovery in `PluginManager`
+- `pathlib` — filesystem scanning for bundled/user plugin directories
+
+<!-- MANUAL: -->

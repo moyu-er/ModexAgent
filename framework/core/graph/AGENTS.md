@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-10 -->
+<!-- Generated: 2026-06-22 -->
 
 # graph
 
@@ -31,3 +31,5 @@ Directed graph state machine powering ReActAgent's 4-node execution loop (START 
 
 - `framework.core.agent.AgentContext` — node execution context
 - `framework.runtime.enums.TurnCustomKey` — graph result storage key
+
+<!-- MANUAL: -->

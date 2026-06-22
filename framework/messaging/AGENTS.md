@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-10 -->
+<!-- Generated: 2026-06-22 -->
 
 # messaging
 
@@ -17,3 +17,9 @@ Message broker and bridge service for agent communication. Supports pub/sub patt
 - `MessageBroker` ABC defines the pub/sub contract; `InMemoryMessageBroker` is the default implementation
 - `BrokerBridgeService` connects agents via broker in pool mode
 - Runtime control messages should pass through the control plane, not embedded here
+
+## Dependencies
+- `framework.core.types` — `AgentEvent` types used in broker signatures
+- `asyncio.Queue` — backing transport for `InMemoryMessageBroker`
+
+<!-- MANUAL: -->

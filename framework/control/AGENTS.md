@@ -86,4 +86,4 @@ never caught by control code.
 - `AgentControlError`/`AgentCancelled`/`AgentTimeout`/`PolicyViolation` are
   safe to import and raise from anywhere; they are the durable part of this API.
 
-<!-- MANUAL -->
+<!-- MANUAL: -->

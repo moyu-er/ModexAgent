@@ -38,6 +38,8 @@ Core business logic for the ModexAgent bot — service lifecycle, I/O adapters, 
 - Pool creation goes through `create_pool()` in `pool_builder.py`, not `AgentPool` directly.
 - Workspace switching mutates only a per-session pointer (`SessionWorkspaceMap`); resources are lazy + cached + evictable via `WorkspaceRegistry` — no `on_activate`/`on_deactivate` callbacks.
 - Per-pool data (memory, runtime stores, experience) lives on the workspace's `R.pool_data[pool]`; `PoolInstance` holds only deployment-level resources.
+- In-flight turns hold a `PipelineSnapshot` with pinned workspace references, unaffected by mid-turn switches.
+- Per-pool data (memory, runtime stores, experience) lives on the workspace's `R.pool_data[pool]`; `PoolInstance` holds only deployment-level resources.
 
 ## Dependencies
 

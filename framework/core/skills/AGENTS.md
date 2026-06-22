@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-10 -->
+<!-- Generated: 2026-06-22 -->
 
 # skills
 
@@ -35,3 +35,5 @@ Skill loading, filtering, caching, and progressive prompt building. Skills are m
 
 - `pathvalidate` — filename sanitization in `DirectorySkillCache`
 - `pyyaml` (optional) — frontmatter parsing in `FileSkillSource`
+
+<!-- MANUAL: -->
