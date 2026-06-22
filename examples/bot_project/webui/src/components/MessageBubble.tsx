@@ -91,8 +91,8 @@ export const MessageBubble: FC<MessageBubbleProps> = ({ message }) => {
         <div
           className={`shadow-sm ${
             isUser
-              ? "w-fit max-w-[98%] min-w-[240px] rounded-xl rounded-br-md bg-user-bubble-light py-6 px-6 text-user-bubble-text-light dark:bg-user-bubble-dark dark:text-user-bubble-text-dark"
-              : "w-fit max-w-[85%] rounded-xl rounded-bl-md bg-ai-bubble-light p-4 text-ai-bubble-text-light dark:bg-ai-bubble-dark dark:text-ai-bubble-text-dark"
+              ? "w-fit max-w-[98%] min-w-[50%] rounded-xl rounded-br-md bg-user-bubble-light py-6 px-6 text-user-bubble-text-light dark:bg-user-bubble-dark dark:text-user-bubble-text-dark"
+              : "w-fit max-w-[85%] min-w-[60%] rounded-xl rounded-bl-md bg-ai-bubble-light p-4 text-ai-bubble-text-light dark:bg-ai-bubble-dark dark:text-ai-bubble-text-dark"
           }`}
         >
           {!isUser && message.agent_name && (
