@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-10 -->
+<!-- Updated: 2026-06-22 -->
 
 # multi_agent
 
@@ -22,6 +22,21 @@ are no separate execution queues. Pool mode uses resident agents with
 | `envelope.py` | `AgentMessageEnvelope` with source, target, conversation id, session id, invocation id |
 | `descriptor.py` | `AgentDescriptor`, `AgentInstance`, `AgentLLMConfig`, `AgentCommKind` integration |
 | `factory.py` | Creates `AgentInstance` and injects descriptor metadata into pipelines |
+| `pool_reuse.py` | `SubagentPool` - LRU instance reuse for dynamic subagents (framework-layer; `send_to_agent` to a subagent type routes here) |
+| `template.py` / `template_registry.py` | `AgentTemplate` (preset definition for dynamically-created subagents) + `AgentTemplateRegistry` (scans/loads per-pool templates) |
+| `subagent_validator.py` | Framework-layer subagent constraint validation (star-topology enforcement at registration) |
+| `hooks.py` | Multi-agent lifecycle hooks (e.g. `SubagentAutoSendHook` safety net) |
+| `comm_kind.py` | `AgentCommKind` - communication/session topology kind (NORMAL/SUBAGENT), topology only |
+| `state.py` | Enum state types for multi-agent coordination |
+| `address.py` | Agent addressing dataclasses |
+| `message_xml.py` | XML serialization for agent messages |
+| `registry.py` / `utils.py` | Registry utilities + shared helpers |
+
+## Subdirectories
+
+| Directory | Purpose |
+|-----------|---------|
+| inbox/ | InboxServer (ABC + LocalInboxServer/MemoryInboxServer), InboxProducer/InboxConsumer (local-cache dedup), InboxTracker - deferred async delivery + wakeup signaling |
 
 ## Communication Contract
 

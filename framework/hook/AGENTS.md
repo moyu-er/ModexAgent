@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-10 -->
+<!-- Updated: 2026-06-22 -->
 
 # hook
 
@@ -18,7 +18,7 @@ Unlike Interceptors, hooks do NOT wrap execution — they observe and optionally
 ## Subdirectories
 | Directory | Purpose |
 |-----------|---------|
-| `builtin/` | 6 hooks (logging, runtime_context, inbox_flush, subagent_auto_send, progress_report) |
+| `builtin/` | hooks (logging, runtime_context, inbox_flush, subagent_auto_send) + `progress_report` (dead) + `control_drain.py` (interceptors, not hooks). See `hook/builtin/AGENTS.md`. |
 
 ## HookPoint Dispatch
 | HookPoint | Method | When | Common Use |
@@ -39,6 +39,7 @@ Unlike Interceptors, hooks do NOT wrap execution — they observe and optionally
 - Instance-level state keyed by `session_id` if unavoidable
 - `HookResult(veto=True)` for lightweight denial; does NOT exit the agent
 - ReAct clean mode runs without hook services
+- ON_CONTROL_COMMAND / progress_report are tied to the (vestigial) control plane; see ramework/control/AGENTS.md.
 
 ## Dependencies
 - `framework.core.agent` -- AgentContext

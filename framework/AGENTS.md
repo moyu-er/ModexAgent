@@ -1,8 +1,17 @@
-<!-- Updated: 2026-06-10 | Branch: develop_gyt -->
+<!-- Updated: 2026-06-22 | Branch: develop_gyt -->
 
 # framework
 
 Core multi-agent framework package (336+ Python files). All abstractions, implementations, and the three-layer runtime model (Hook / Interceptor / Control) plus Approval and Experience.
+
+> [!NOTE]
+> "Hook / Interceptor / Control" names three packages, but they are not peers
+> at runtime. **Hook and Interceptor are the live extension layers.** The
+> control/ package is largely **vestigial**: its channels are constructed and
+> threaded through the runtime but have no live producers/consumers - real
+> cancellation is syncio.Task.cancel() in the pipeline. Only the
+> AgentControlError exception hierarchy from control/ is widely used. See
+> control/AGENTS.md before relying on the control channel.
 
 ## Subdirectories
 
@@ -14,9 +23,9 @@ Core multi-agent framework package (336+ Python files). All abstractions, implem
 | `pipeline/` | `AgentPipeline` orchestration, I/O adapters, approval renderer, slash commands (see `pipeline/AGENTS.md`) |
 | `input_pipeline/` | Extensible user-input stage pipeline — `UserInputEnvelope`, `InputStage` ABC, `Continue`/`Terminate`, `UserInputPipeline` (see `input_pipeline/AGENTS.md`) |
 
-| `control/` | Runtime control plane — `InMemoryControlChannel`, `CallbackControlEventBus`, `ControlCommand`, `ControlScope`, termination exceptions (see `control/AGENTS.md`) |
+| `control/` | Control-plane data types + channels (mostly **vestigial**) — `InMemoryControlChannel`, `CallbackControlEventBus`, `ControlCommand`, `ControlScope`; `AgentControlError` exceptions (actively used) (see `control/AGENTS.md`) |
 | `hook/` | Lifecycle hooks — `HookRunner`, `HookPoint`, 6 builtin hooks (see `hook/AGENTS.md`) |
-| `interceptor/` | AOP interceptor chain — `InterceptorChain`, 2 builtin interceptors (see `interceptor/AGENTS.md`) |
+| `interceptor/` | AOP interceptor chain — `InterceptorChain`; `interceptor/builtin/` has 1 interceptor + 1 helper; the 2 cancel interceptors live in `hook/builtin/control_drain.py` (see `interceptor/AGENTS.md`) |
 | `memory/` | Three-layer memory — session/archive/knowledge, compaction, consolidation, governance, injection (see `memory/AGENTS.md`) |
 | `multi_agent/` | Star-topology orchestration — `AgentPool`, inbox, `CommunicationTracker`, `AgentMessageBus` (see `multi_agent/AGENTS.md`) |
 | `tools/` | Tool subsystem — registry, executor, MCP, terminal (pexpect/tmux/winpty), overflow, standard tools (see `tools/AGENTS.md`) |
@@ -58,7 +67,9 @@ Core multi-agent framework package (336+ Python files). All abstractions, implem
 - `Protocol` for contracts, `@dataclass` for data, `ABC` + `@abstractmethod` for abstract classes
 - `scopes: frozenset[InterceptorScope]` for declaring interceptor scope
 - Per-turn state in `runtime.state` (typed `ReActTurnState`), not instance attributes
-- Control commands: `ControlChannel` inbound; events: `ControlEventBus` outbound
+- Control: ControlChannel is constructed and threaded but **not fed** in the default runtime;
+  ControlEventBus is never instantiated. Real cancellation is syncio.Task.cancel() in the
+  pipeline pre-lock phase (see control/AGENTS.md)
 - `GraphInterrupt` for approval suspension — never catch and swallow it
 
 ## Approval & Security Architecture
@@ -119,8 +130,10 @@ _execute_batch()
 
 1. **Command content**: the classifier only inspects file path arguments.
    Shell commands like `rm -rf /` are NOT intercepted — the tool executes them.
-   (Previously `SubprocessTool._guard_command()` provided a regex deny list,
-   but it has been removed. Command-level safety is a planned improvement.)
+   There is no longer any command-level deny list (`_guard_command()` was removed).
+   `framework/sandbox/` defines `CommandPatternGuard`/`PathTraversalGuard`/`GuardPipeline`
+   for this, but they are **not wired** into tool execution (see `sandbox/AGENTS.md`).
+   So in the shipped runtime command content is still unguarded.
 
 2. **Subagents**: subagents are created via `DefaultAgentFactory` without
    `ApprovalRuntime`. Their `ToolNode._get_tier()` always returns `NORMAL`.
@@ -133,17 +146,18 @@ _execute_batch()
 4. **SSRF / network safety**: no private-IP detection or URL validation exists.
 
 5. **Workspace boundary**: no filesystem path confinement for shell commands.
+   (`framework/sandbox/workspace_policy.py` + `guard_path.py` exist but are unwired.)
 
 6. **Environment isolation**: subprocesses inherit the full parent environment
    (potential API key leakage).
+   (`framework/sandbox/env_builder.py` (`EnvironmentBuilder`) exists but is unwired.)
 
 ### What NOT To Do
 
 - **Do NOT add safety checks inside Tool subclasses.** Safety belongs at the
   ToolNode / agent level so it is uniformly applied regardless of tool implementation.
-- **Do NOT use `framework/security/` or `framework/tools/secure_wrapper.py`.**
-  These are EXPERIMENTAL modules with zero production integration and are
-  candidates for removal.
 - **Do NOT confuse `TerminalGuard`** (`tools/terminal/guard.py`) with a security
   guard — it manages terminal *state* (is the terminal writable?), not command *content*.
+- Note: `framework/security/` and `framework/tools/secure_wrapper.py` no longer
+  exist in the tree (already removed); do not reintroduce them as safety surfaces.
 - `TurnCustomKey` enum for per-turn custom state keys in `TurnStateBase.custom`

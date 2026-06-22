@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-10 -->
+<!-- Updated: 2026-06-22 -->
 
 # utils
 
@@ -9,12 +9,13 @@ General-purpose utilities — no domain-specific logic. Stateless helpers free o
 
 | File | Description |
 |------|-------------|
-| `tokenizer.py` | Token estimation for context budgeting |
 | `context_builder.py` | Context assembly from multiple sources |
 | `deduplicator.py` | Message deduplication logic |
 | `sanitizer.py` | Content sanitization and cleaning |
 | `helpers.py` | General-purpose helper functions |
-| `log_fmt.py` | Log formatting utilities |
+| `file_io.py` | Encoding-resilient JSON/JSONL readers (`read_json_robust`, `read_jsonl_robust`) |
+| `timezone.py` | User timezone from `TIMEZONE` env (cached, cross-platform) |
+| `xml.py` | Unified XML escaping utilities |
 | `media_utils.py` | `MediaProcessor` — image/audio/video attachments, multi-modal content |
 | `message_builder.py` | Message construction helpers |
 | `think_tag.py` | Think-tag extraction (streaming + non-streaming) |

@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-10 -->
+<!-- Updated: 2026-06-22 -->
 
 # runtime
 
@@ -22,3 +22,12 @@ Runtime state governance — typed state models, enums, persistence, codecs, and
 2. **One active turn per (agent_id, session_id).** `JsonFileTurnStateStore` enforces this via `ActiveTurnConflictError`.
 3. **Services ≠ State.** `AgentRuntimeServices` holds process-scope services; `AgentRuntime.state` holds turn-local state.
 4. **Typed enums only.** All protocol values use `StrEnum`. No ad hoc string keys in metadata.
+
+## Note on Control-Related Types
+`enums.py` defines `ControlCommandKind` and `models.py` defines `ControlCommandState`,
+and `store.py` defines a `RuntimeCommandStore` (ABC + InMemory/JsonFile impls) with
+`save_command`/`load_pending_commands`. These are **vestigial**: no code calls
+`save_command`/`load_pending_commands` outside the store classes themselves. They
+remain as data shapes; the live cancellation path is `asyncio.Task.cancel()` in the
+pipeline (see `framework/control/AGENTS.md`). `AgentRuntimeServices.control_channel`
+is likewise threaded through but not fed in the default runtime.

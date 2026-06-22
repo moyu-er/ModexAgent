@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-10 -->
+<!-- Updated: 2026-06-22 -->
 
 # commands
 
@@ -13,10 +13,10 @@ integrates with the pipeline for pre-lock routing and in-lock execution.
 | File | Description |
 |------|-------------|
 | `parser.py` | `SlashCommandParser` -- strict `/command` syntax validation. |
-| `handlers.py` | Built-in handlers: `ApprovalCommandHandler`, `ContinueCommandHandler`, `SkillCommandHandler` (uses shared `build_skill_command_xml` from `framework.core.skills.builder`), `UnknownCommandHandler`, `InvalidCommandHandler`. |
+| `handlers.py` | Built-in handlers: `ApprovalCommandHandler` (`/approve`, `/deny`), `ContinueCommandHandler` (`/continue`), `ControlCommandHandler` (`/stop`), `SkillCommandHandler`, `UnknownCommandHandler`, `InvalidCommandHandler`. `build_default_builtin_handlers()` returns `(Approval, Continue, Control)`. |
 | `processor.py` | `SlashCommandProcessor` -- orchestrates parse → dispatch_policy → handle. |
-| `models.py` | `CommandContext`, `CommandHandlingResult`, `SlashCommandInvocation`, `CommandParseResult`. |
-| `constants.py` | `BuiltinCommand`, `CommandAction`, `CommandDispatchPolicy`, `CommandParseStatus`, notice templates. |
+| `models.py` | `CommandContext`, `CommandHandlingResult` (carries optional `control_command` / `approval_action`), `SlashCommandInvocation`, `CommandParseResult`. |
+| `constants.py` | `BuiltinCommand` (`approve`/`deny`/`continue`/`cd`/`exit`/`pwd`), `CommandAction` (`noop`/`notice`/`transform_to_user_input`/`continue_agent`/`approval_decision`/`control_command`), `CommandDispatchPolicy` (`normal_queue`/`approval_response`/`bypass_queue`/`drop_if_busy`), `CommandParseStatus`, notice templates. |
 
 ## Command Syntax
 
@@ -34,11 +34,18 @@ Plain input (no leading `/`, or `/` not at start) is passed through to the agent
 
 ## Built-in Commands
 
-| Command | Handler | Behavior |
-|---------|---------|----------|
-| `/approve` | `ApprovalCommandHandler` | Approves pending tool call(s). Returns `APPROVAL_DECISION` action. |
-| `/deny` | `ApprovalCommandHandler` | Denies pending tool call(s). Returns `APPROVAL_DECISION` action. |
-| `/continue` | `ContinueCommandHandler` | Continues agent without appending user message. Returns `CONTINUE_AGENT` action. |
+| Command | Handler | Dispatch Policy | Action | Behavior |
+|---------|---------|-----------------|--------|----------|
+| `/approve` | `ApprovalCommandHandler` | `APPROVAL_RESPONSE` (if pending approval, else `NORMAL_QUEUE`) | `APPROVAL_DECISION` | Approves pending tool call(s) via result field. |
+| `/deny` | `ApprovalCommandHandler` | `APPROVAL_RESPONSE` | `APPROVAL_DECISION` | Denies pending tool call(s) via result field. |
+| `/continue` | `ContinueCommandHandler` | `NORMAL_QUEUE` | `CONTINUE_AGENT` | Continues agent without appending user message. |
+| `/stop` | `ControlCommandHandler` | `BYPASS_QUEUE` | `CONTROL_COMMAND` | Build a `ControlCommand(CANCEL_TURN)` and return it as a result field; the pipeline pre-lock path cancels the running task directly. Notice: "Agent turn stopped." |
+
+`/cd`, `/exit`, `/pwd` are listed in `BuiltinCommand` but are **not** handled by
+the `SlashCommandProcessor` — they are intercepted earlier in the IM input
+pipeline (`EnvironmentControlStage` / `SessionControlStage`). The WebUI pipeline
+does not include those stages, so in WebUI those tokens reach `SkillParseStage`
+and are rejected as `builtin_not_supported`.
 
 ## Skill Commands
 
@@ -74,7 +81,9 @@ Called before acquiring the session lock. Returns a `CommandDispatchPolicy`:
 - `NORMAL_QUEUE` -- process normally through the pipeline.
 - `APPROVAL_RESPONSE` -- approval-related command (used for routing awareness).
 - `DROP_IF_BUSY` -- drop if agent is currently running.
-- `BYPASS_QUEUE` -- bypass queue (reserved for future use).
+- `BYPASS_QUEUE` -- handled immediately, before the session lock and the busy
+  check. **Actively used** by `ControlCommandHandler` (`/stop`); the pipeline
+  (`pipeline.py` pre-lock branch) returns early after cancelling the running task.
 
 The `ApprovalCommandHandler.dispatch_policy` checks `context.pending_approval`:
 - If pending approval exists → `APPROVAL_RESPONSE`
@@ -87,6 +96,7 @@ Called inside the session lock. Returns a `CommandHandlingResult` with `CommandA
 - `CONTINUE_AGENT` -- run agent without appending user message.
 - `TRANSFORM_TO_USER_INPUT` -- replace message with transformed content, then run agent.
 - `APPROVAL_DECISION` -- apply approval decision to pending snapshot.
+- `CONTROL_COMMAND` -- carry a `ControlCommand` on the result; the pipeline acts on it (currently: task cancellation in pre-lock).
 - `NOTICE` -- send notice to user, do not run agent.
 
 ## Handler Protocol
@@ -111,13 +121,12 @@ Handlers are registered in priority order. Built-in handlers take precedence ove
 
 When a pending approval exists, `/continue` returns a `NOTICE` ("A pending approval request exists. Use /approve or /deny first."). It does **not** auto-deny the approval. This preserves the orthogonality between the continue action and the approval subsystem.
 
-## Pipeline Integration
+## Note on `/stop` and the Control Channel
 
-`AgentPipeline._build_turn_request()`:
-1. Parses input via `command_processor.parse()`
-2. If plain input → normal `TurnRequest`
-3. If command → builds `CommandContext` with `pending_approval` loaded from `TurnStateStore`
-4. Calls `command_processor.handle()` → routes by `result.action`
-5. Sends `result.notice` via `output_adapter` if present
+`ControlCommandHandler` constructs a `ControlCommand(type=CANCEL_TURN)` but does
+**not** send it into `InMemoryControlChannel`; it returns it as the result's
+`control_command` field. The actual cancellation is `existing_task.cancel()` in
+the pipeline. The control channel is currently not used for cancellation — see
+`framework/control/AGENTS.md`.
 
-QUEUE busy-input mode: slash commands are **dropped with a busy notice** instead of being queued as raw text (which would bypass the command processor).
+<!-- MANUAL -->

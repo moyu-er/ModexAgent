@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-13 -->
+<!-- Updated: 2026-06-22 -->
 
 # tests
 
@@ -26,7 +26,7 @@ Test suites for the bot_project. Unit and integration tests covering service lif
 | `test_interactive_config.py` | Interactive config wizard (`run_config_wizard`) behavior |
 | `test_mcp_resilience.py` | MCP registration failure does not block pool/tool-manager build |
 | `test_recent_workspaces.py` | `RecentWorkspaces` load/add/list recent workspace paths |
-| `test_session_relation_store.py` | `SessionRelationStore` parent–child session relationship persistence |
+| `test_session_store.py` | Session store persistence tests |
 | `test_web_ui_service.py` | `WebUIService` config wiring with aiohttp test server |
 
 ## Subdirectories
