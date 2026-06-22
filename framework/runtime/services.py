@@ -5,19 +5,22 @@ Services are not serialized into snapshots.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from framework.core.llm_struct import RuntimeSafetyPolicy
+from framework.control.types import ControlCommand, ControlScope
 
-from .enums import TurnCustomKey
-from .models import TurnStateBase
+from .enums import SnapshotReason, TurnCustomKey
+from .models import TurnStateBase, TurnSnapshot
 
 if TYPE_CHECKING:
     import asyncio
 
     from framework.agents.react.approval import ApprovalRuntime
     from framework.control.channel import InMemoryControlChannel
+    from framework.core.agent import AgentContext
     from framework.core.runtime_context import RuntimeContextManager
     from framework.hook import HookRunner
     from framework.interceptor.chain import InterceptorChain
@@ -25,6 +28,8 @@ if TYPE_CHECKING:
 
     from .store import RuntimeCommandStore, TurnStateStore
     from framework.trace.store import TraceStore
+
+logger = logging.getLogger(__name__)
 
 TState = TypeVar("TState", bound=TurnStateBase)
 
@@ -48,11 +53,21 @@ class AgentRuntimeServices:
 
 @dataclass
 class AgentRuntime:
-    """Runtime = services (process-local) + state (turn-local, snapshot-able)."""
+    """Runtime = services (process-local) + state (turn-local, snapshot-able).
+
+    Field-access properties (hooks, interceptors, etc.) remain for backward
+    compatibility, but callers should prefer the operation methods below
+    (snapshot_turn, drain_control) which concentrate the common patterns
+    and handle the absent-subsystem case internally.
+    """
 
     services: AgentRuntimeServices
     state: TurnStateBase
     _runtime_context: Any = field(default=None, repr=False)
+
+    # ------------------------------------------------------------------
+    # Field-access properties (backward compat)
+    # ------------------------------------------------------------------
 
     @property
     def hooks(self) -> HookRunner | None:
@@ -103,6 +118,47 @@ class AgentRuntime:
     def control_channel(self) -> InMemoryControlChannel | None:
         """InMemoryControlChannel for control command consumption."""
         return self.services.control_channel
+
+    # ------------------------------------------------------------------
+    # Operation methods — prefer these over field access
+    # ------------------------------------------------------------------
+    async def save_snapshot(self, snapshot: TurnSnapshot) -> bool:
+        """Persist a turn snapshot to the store.
+
+        Delegates to turn_store when present; returns False when no store
+        is attached. Replaces the ``if runtime.turn_store: await ...save_turn()``
+        pattern. The snapshot is built by the caller (e.g. via
+        ReActSnapshotPolicy().capture()) since construction is agent-specific.
+        """
+        store = self.services.turn_store
+        if store is None:
+            return False
+        await store.save_turn(snapshot)
+        return True
+
+
+    async def drain_control(
+        self,
+        ctx: AgentContext,
+        *,
+        turn_uuid: str | None = None,
+    ) -> bool:
+        """Drain cancel/inject control commands at a safe point.
+
+        Delegates to the shared ``drain_control_channel`` utility, passing the
+        runtime's control channel. Returns True if any command was consumed.
+        Returns False when no channel is attached.
+        """
+        channel = self.services.control_channel
+        if channel is None:
+            return False
+        from framework.hook.builtin.control_drain import drain_control_channel
+
+        return await drain_control_channel(
+            channel,
+            ctx,
+            turn_uuid=turn_uuid or self.turn_uuid,
+        )
 
 
 def require_runtime_state(runtime: AgentRuntime, state_type: type[TState]) -> TState:
