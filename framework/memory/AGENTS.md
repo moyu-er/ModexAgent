@@ -26,7 +26,7 @@ The `memory/` module provides a comprehensive memory system for agents. It manag
 | `history_search.py` | `HistorySearchStrategy` ABC — search over message history |
 | `knowledge_search.py` | `KnowledgeSearchStrategy` ABC — search over knowledge base |
 | `user_buffer.py` | User retention buffer for pending messages |
-| `lifecycle.py` | `MemoryMaintenancePolicy`, `SessionRetentionPolicy`, `ArchiveRetentionPolicy`, `KnowledgeRetentionPolicy` ABCs — lifecycle hooks for memory maintenance |
+| `lifecycle.py` | `DefaultMemoryMaintenancePolicy` (concrete background-maintenance scan) and retention ABCs — `ArchiveRetentionPolicy`, `KnowledgeRetentionPolicy` — with per-scope thresholds called from `scan_once` |
 | `xml_truncate.py` | XML-based content truncation for governance — ensures injected XML stays within token budget |
 | `utils.py` | Memory utility helpers |
 

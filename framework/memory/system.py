@@ -33,7 +33,6 @@ from framework.memory.core.system import (
 from framework.memory.default_system import DefaultMemorySystem
 from framework.memory.layers.config import MemoryLayerConfigSet
 from framework.memory.layers.factory import MemoryLayerFactory
-from framework.memory.lifecycle import MemoryMaintenancePolicy
 from framework.memory.pruned.manager import PrunedManager
 
 # UserRetentionBuffer injection moved to framework.memory.user_buffer (Task 6 stub)
@@ -54,7 +53,6 @@ def create_memory_system(
     llm_provider: LLMProvider | None = None,
     session_only: bool = False,
     cleanup_config: dict[str, int | float] | None = None,
-    maintenance_policy: MemoryMaintenancePolicy | None = None,
     pruned_manager: PrunedManager | None = None,
     archive_agent: ArchiveGenerator | None = None,
     archive_storage: DirArchiveStorage | None = None,
@@ -89,7 +87,6 @@ def create_memory_system(
         layer_set=layer_set,
         store_registry=registry,
         cleanup_config=cleanup_config,
-        maintenance_policy=maintenance_policy,
         pruned_manager=pruned_manager,
         archive_agent=archive_agent,
         archive_storage=archive_storage,
