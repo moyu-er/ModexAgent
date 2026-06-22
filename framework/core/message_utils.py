@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from framework.core.types import MessageRole
-from framework.memory.core.message import ChatMessage, ContentFormat
+from framework.core.message import ChatMessage, ContentFormat
 from framework.utils.xml import xml_attr, xml_text
 
 def _msg_to_dict(msg: ChatMessage | dict[str, Any]) -> dict[str, Any]:

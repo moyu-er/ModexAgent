@@ -11,12 +11,12 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from framework.core.skills import ResolutionContext, SkillManager
-from framework.memory.core.message import ChatMessage
-from framework.memory.history import ListMessageHistory, MessageHistory
+from framework.core.message import ChatMessage
+from framework.core.history import ListMessageHistory, MessageHistory
 
 if TYPE_CHECKING:
-    from framework.memory.context_governance import ContextGovernance
-    from framework.memory.pipeline.pipeline import SystemPromptPipeline
+    from framework.core.governance import ContextGovernance
+    from framework.core.prompt import SystemPromptPipeline
 
 from .emitter import AgentResult
 from .message_utils import normalize_agent_messages_for_llm

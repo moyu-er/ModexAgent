@@ -6,7 +6,7 @@ from framework.core.experience.builder import ExperiencePromptBuilder
 from framework.core.experience.source import FileExperienceSource
 
 if TYPE_CHECKING:
-    from framework.memory.core.scope import MemoryContext
+    from framework.core.scope import MemoryContext
 
 # Cap injected experiences to prevent system prompt bloat.
 _MAX_INJECTED_EXPERIENCES = 20

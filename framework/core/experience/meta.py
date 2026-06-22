@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from framework.memory.utils import safe_atomic_replace
+from framework.core.utils import safe_atomic_replace
 
 logger = logging.getLogger(__name__)
 

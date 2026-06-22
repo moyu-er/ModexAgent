@@ -13,7 +13,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from ..adapters.platform import StreamingMode
-from ..memory.core.message import ChatMessage
+from framework.core.message import ChatMessage
 from .constants import StopReason
 from .events import AgentEvent, EmitterConfig
 
