@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-10 -->
+<!-- Updated: 2026-06-22 -->
 
 # core
 
@@ -9,7 +9,7 @@ Abstract base classes and shared types forming the framework's type-safe foundat
 
 | File | Description |
 |------|-------------|
-| `agent.py` | `Agent[E]` generic ABC, `AgentContext` dataclass, `SessionInfo`, `current_agent_context` ContextVar |
+| `agent.py` | `Agent[E]` generic ABC, `AgentContext` dataclass, `current_agent_context` ContextVar. Imports `SessionInfo` from `session_id.py`. |
 | `emitter.py` | `ContentEmitter[E]` ABC, `AgentResult`, `StreamingAwareEmitter` |
 | `events.py` | `AgentEvent` base, `EmitterConfig` — event filtering/truncation |
 | `provider.py` | `LLMProvider` / `StreamingLLMProvider` ABCs |
@@ -24,6 +24,10 @@ Abstract base classes and shared types forming the framework's type-safe foundat
 | `runtime_context.py` | `ToolCallRecord`, `RuntimeContext` ABC, `InMemoryRuntimeContext`, `RuntimeContextStore` ABC, `InMemoryRuntimeContextStore`, `RuntimeContextManager` |
 
 | `message_utils.py` | `normalize_agent_messages_for_llm` — message normalization for LLM format |
+| `session_id.py` | `SessionInfo` (pydantic BaseModel, the single identity object), `SessionIdFactory`, `DefaultSessionIdStrategy`, `now_ms`, snowflake encoding (`encode_snowflake`/`session_id_prefix_of`/`agent_of`). **`SessionInfo` lives here, not in `agent.py`.** |
+| `session_registry.py` | `SessionRegistry` — async write-through cache over `SessionStore` for SessionInfo resolution (guarded by asyncio.Lock). |
+| `session_store.py` | `SessionStore` ABC + JSON-file implementation — authoritative persistent session storage (one JSON per session_id; I/O via `asyncio.to_thread`). |
+| `frontmatter.py` | Shared YAML frontmatter parsing for markdown docs (skills, experiences). |
 
 ## Subdirectories
 
@@ -47,3 +51,4 @@ Abstract base classes and shared types forming the framework's type-safe foundat
 ### Common Patterns
 - `TYPE_CHECKING` guard for import-only types
 - `contextvars.ContextVar` for per-asyncio-task state (`current_agent_context`)
+- `SessionInfo` fields are authoritative; the string form is opaque — never parse it except via `session_id.py` helpers or `SessionInfo.from_str`.

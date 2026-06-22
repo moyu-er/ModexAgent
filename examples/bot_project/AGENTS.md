@@ -1,5 +1,5 @@
 <!-- Parent: ../../AGENTS.md -->
-<!-- Updated: 2026-06-13 -->
+<!-- Updated: 2026-06-22 -->
 
 # bot_project
 
@@ -73,7 +73,7 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 |--------|-------|-------------|
 | Pool switching | UI selector → `PoolRouter.set_pool()` | `/pool_name` slash command (S2) |
 | Workspace switching | File browser modal → `POST /api/workspace/cd` | `/cd target` command (S2) |
-| Turn cancellation | UI pause button | `/stop` command (S3) |
+| Turn cancellation | Not implemented (no UI control) | `/stop` command (S3) — **note:** in the current bot `/stop` routes through `_try_intercept_control` but `configure_control_filter()` is never called, so it does not cancel the running turn; real cancellation is the pipeline pre-lock `task.cancel()`. See `framework/control/AGENTS.md`. |
 | Conversation listing | `GET /api/sessions?workspace=...` | N/A (single conversation) |
 | Streaming isolation | Per-conversation filtering in `useWebUIStream.reducer.ts` + backend session cleanup | N/A (single conversation) |
 | Message dedup | `request_id`-based optimistic matching | N/A (no optimistic UI) |

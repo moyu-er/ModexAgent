@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-10 -->
+<!-- Updated: 2026-06-22 -->
 
 # react
 
@@ -58,4 +58,9 @@ Deny policy: default `TOOL_RESULT_ONLY` (loop continues); override to `CANCEL_TU
 
 - Only `RuntimeAssembler.assemble()` constructs `AgentRuntime`/`ApprovalRuntime`.
 - Hook state goes in `ctx.runtime.state`, never on shared instance attributes.
-- Approval does NOT go through interceptors; control drains at safe boundaries only.
+- Approval does NOT go through interceptors; it is handled at the `ToolNode`/pipeline layer via `TurnSnapshot`.
+- Control: `drain_control_channel()` is called at safe points (LLMNode, ToolNode,
+  the iteration loop) to check for `CANCEL_TURN`, but the channel is currently not
+  fed in the default runtime (real cancellation is `asyncio.Task.cancel()` in the
+  pipeline). These drain calls are effectively no-ops unless a producer is added —
+  see `framework/control/AGENTS.md`.

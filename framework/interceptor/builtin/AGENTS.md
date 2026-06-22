@@ -1,30 +1,49 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-10 -->
+<!-- Updated: 2026-06-22 -->
 
 # builtin interceptors
 
 ## Purpose
-Framework-provided interceptors and one classification helper. Approval interceptors have been removed; approval is handled through the pipeline layer.
+Framework-provided interceptors and one classification helper that live in
+`framework/interceptor/builtin/`. Note: the cancel-related interceptors
+(`ControlDrainInterceptor`, `LlmCancelInterceptor`) do **not** live here —
+they are in `framework/hook/builtin/control_drain.py` (see that file's note).
+Approval interceptors have been removed; approval is handled through the
+pipeline layer.
 
 ## Files
 | File | Class | Scope(s) | Description |
 |------|-------|----------|-------------|
-| `control_drain.py` | `ControlDrainInterceptor` | TURN, ITERATION | Drains CANCEL_RUN/CANCEL_TURN/INJECT_USER_MESSAGE/SET_DYNAMIC_CONFIG at boundaries |
-| `result_limit.py` | `ToolResultLimitInterceptor` | TOOL_CALL | Truncates tool results to max chars |
-| `tool_approval.py` | `ArgumentMatcher` | (helper, not interceptor) | Path-based tool argument classification for ApprovalRuntime |
+| `result_limit.py` | `ToolResultLimitInterceptor` | TOOL_CALL | Truncates tool results via a `ToolResultOverflowHandler` (default `max_chars=50000`); overflow spilled to `OverflowStore`. |
+| `tool_approval.py` | `ArgumentMatcher` | (helper, not interceptor) | Path-based tool argument classification, used by `ApprovalRuntime.classifier`. |
 
-## Onion Order (Recommended)
+## Where the Cancel Interceptors Actually Live
+| File (NOT here) | Class | Scope(s) | Description |
+|------|-------|----------|-------------|
+| `framework/hook/builtin/control_drain.py` | `ControlDrainInterceptor` | TOOL_CALL | Drains `{CANCEL_TURN}` before each tool call; raises `AgentCancelled` on a turn-matched command. |
+| `framework/hook/builtin/control_drain.py` | `LlmCancelInterceptor` | LLM_STREAM | Drains `{CANCEL_TURN}` before each streamed chunk; aborts the stream on a match. |
+
+Both drain an always-empty queue in the current runtime (see
+`framework/control/AGENTS.md` "Current Status"). They are wired into the bot
+project's shared interceptor chain.
+
+## Bot Project Shared Interceptor Chain (actual order)
+Assembled in `examples/bot_project/bot/workspace/wiring.py::_build_workspace_interceptor_chain`:
+
 ```
-1. ControlDrainInterceptor       -- turn/iteration boundary
-       actual tool execution
-2. ToolResultLimitInterceptor     -- result truncation
+1. ToolResultLimitInterceptor   (TOOL_CALL)      -- result truncation/overflow
+2. ControlDrainInterceptor      (TOOL_CALL)      -- cancel check before tools
+3. LlmCancelInterceptor         (LLM_STREAM)     -- cancel check during streaming
 ```
 
 ## Design Notes
-- `ArgumentMatcher` is a pure classification helper used by `ApprovalRuntime.classifier`, NOT an interceptor
-- `ControlDrainInterceptor` does NOT drain APPROVAL_RESPONSE; cancel/inject/config commands only
-- Bot project default chain: `ControlDrainInterceptor` + `ToolResultLimitInterceptor`
+- `ArgumentMatcher` is a pure classification helper used by `ApprovalRuntime.classifier`, NOT an interceptor.
+- `ControlDrainInterceptor` does NOT drain `APPROVAL_RESPONSE`; it only checks `CANCEL_TURN`.
+- The `ControlCommandType` enum has no `SET_DYNAMIC_CONFIG` value — only `CANCEL_TURN`,
+  `CANCEL_RUN`, `INJECT_USER_MESSAGE`, `APPROVAL_RESPONSE`, `INJECT_STEER`.
 
 ## Dependencies
 - `framework.control` -- ControlChannel, ControlEventBus, ControlCommandType
 - `framework.interceptor.abc` -- InterceptorScope, context types
+
+<!-- MANUAL -->

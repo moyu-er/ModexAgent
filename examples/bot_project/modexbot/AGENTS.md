@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-13 -->
+<!-- Updated: 2026-06-22 -->
 
 # modexbot
 
@@ -12,6 +12,8 @@ CLI entry point for the ModexAgent bot. Provides start/stop/restart/install comm
 | `__init__.py` | Package marker |
 | `__main__.py` | `python -m modexbot` entry point |
 | `cli.py` | CLI implementation — start, stop, restart, install, logs, status commands with process discovery |
+| `interactive_config.py` | Interactive configuration wizard (two-level menu) |
+| `config_env.py` | `.env` read/write helpers preserving comments |
 | `main.py` | CLI → service bootstrap, creates and runs `BotService` |
 
 ## Commands

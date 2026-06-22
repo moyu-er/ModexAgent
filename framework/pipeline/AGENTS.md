@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-10 -->
+<!-- Updated: 2026-06-22 -->
 
 # pipeline
 
@@ -65,6 +65,11 @@ See `framework/commands/AGENTS.md` for full command subsystem documentation.
 
 Key invariant: slash commands must never bypass the command processor. In QUEUE mode,
 busy notice is sent instead of injecting raw text.
+
+> Caveat: the `STEER` mode sends `INJECT_STEER` into the control channel, but
+> nothing drains `INJECT_STEER` today — the command is written but never read.
+> STEER is therefore effectively inert until a consumer is added. See
+> `framework/control/AGENTS.md`.
 
 ## Approval in Pipeline
 

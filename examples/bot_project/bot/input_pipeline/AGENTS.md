@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-14 -->
+<!-- Updated: 2026-06-22 -->
 
 # input_pipeline
 
@@ -59,7 +59,17 @@ IM-only. Intercepts `/cd <path>`, `/exit`, `/pwd`, and `/pool_name` before they 
 
 `stages/session_control.py`
 
-IM-only. Intercepts `/stop` to cancel the current turn via `ctx.command_adapter._try_intercept_control("/stop", full_session_id)`.
+IM-only. Intercepts `/stop` and routes it through `ctx.command_adapter._try_intercept_control("/stop", full_session_id)`.
+
+> [!IMPORTANT]
+> In the current bot this **does not actually cancel the running turn**.
+> `_try_intercept_control` would push a `CANCEL_TURN` into `InMemoryControlChannel`,
+> but that requires `configure_control_filter()` to be called first — and it is
+> **never called in the live bot**, so the method short-circuits with
+> `channel is None` and returns False. The stage then falls through to
+> `Continue` (non-`/stop` passthrough) or only stops the input-pipeline stage
+> processing. Real turn cancellation lives in the pipeline pre-lock `task.cancel()`
+> path. See `framework/control/AGENTS.md`.
 
 - Resolves `full_session_id` using the shared read-only `resolve_session_routing()` helper (does NOT persist — S5 owns persistence). This ensures `/stop` targets the conversation's current pool, not a bare conversation_id that would default to `main`.
 - Non-`/stop` messages pass through unchanged.

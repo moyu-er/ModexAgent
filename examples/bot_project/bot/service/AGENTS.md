@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-19 -->
+<!-- Updated: 2026-06-22 -->
 
 # service
 
@@ -17,6 +17,9 @@ Bot service lifecycle, pool orchestration, and workspace management. This is the
 | `pool_router.py` | `PoolRouter` — session→pool dispatch; `PoolSessionStore` persists session→pool mapping. Now delegates message processing to input pipeline (adapter produces seed envelope → pipeline stages → enqueue callback enters broker queue) |
 | `web_ui_service.py` | `WebUIService` — assembles and starts the WebUI HTTP + WS server; creates `PoolSkillManagerRegistry` and `BotInputContext`; wires pipeline into adapters |
 | `qq_service.py` | QQ platform service — wires QQ adapters to the bot |
+| `session_store.py` | `WorkspacePoolSessionStore` — SessionInfo index partitioned by pool under a per-workspace `session_index` dir |
+| `workspace_store.py` | Workspace- and pool-partitioned transcript store (ctxvar-routed writes); cross-cutting business concern |
+| `recent_workspaces.py` | Recent-workspace tracker (JSON, max 20 paths) for the WebUI quick-switch dropdown |
 
 ## Workspace Model (multi-live)
 

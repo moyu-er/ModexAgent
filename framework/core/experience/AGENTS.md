@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-06-10 | Updated: 2026-06-10 -->
+<!-- Generated: 2026-06-10 | Updated: 2026-06-22 -->
 
 # experience
 
@@ -85,7 +85,7 @@ Body content with problem-solving pattern...
 
 ### Integration Points
 - **Pool builder**: `_build_pool_experience_manager()` in `examples/bot_project/bot/service/pool_builder.py`
-- **System prompt**: injected by `context_assembler.py` via `ExperienceManager.build_prompt()`
+- **System prompt**: injected by `framework/pipeline/context_assembler.py` via `ExperienceManager.build_prompt()`
 - **Review agent**: `framework/agents/experience/review_agent.py` creates/updates experiences from conversation snapshots
 
 ### Testing
