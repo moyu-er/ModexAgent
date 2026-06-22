@@ -23,3 +23,38 @@ _Avoid_: initialization, bootstrapping, wiring (use "assembly" for the process, 
 **Main Agent**:
 The entry-point agent in a pool that receives user input, dispatches to subagents, and produces final output. Identified by `main_agent_name` in `PoolConfig`.
 _Avoid_: primary agent, root agent, orchestrator
+
+**ReAct Agent**:
+The reasoning loop built on `Graph[R]` — a 4-node state machine (START → LLM → TOOL → END) that interleaves model calls with tool execution. The `ReActAgent` is the only shipped agent runtime; other agent types (Summarizer, ExperienceReview) are built on the same graph engine.
+_Avoid_: ReAct loop, reasoning loop (when referring to the module/agent), agent loop
+
+**Graph**:
+The state-machine engine powering agent execution. `Graph[R]` holds named `Node[R]` instances and directed `Edge` instances; `GraphEngine` iterates nodes, propagates `GraphInterrupt`, and reads the result from per-turn state (`TurnCustomKey.GRAPH_RESULT`). Generic over result type `R`.
+_Avoid_: state machine, workflow engine, pipeline (use "pipeline" only for `AgentPipeline`)
+
+**GraphInterrupt**:
+The exception type nodes raise to pause graph execution after persisting resumable turn state. Carries `value`, `node_name`, `iteration`. Approval suspension is the primary producer. Must propagate upward — never caught and swallowed.
+_Avoid_: pause, suspend (when referring to the mechanism), checkpoint exception
+
+**AppConfig**:
+The root Pydantic config object loaded from YAML, aggregating 13 typed config sections (`LLMConfig`, `AgentConfig`, `PoolConfig`, `MemoryConfig`, `ApprovalConfig`, etc.). Single entry point for full-app usage; components can be used independently by loading their individual config directly.
+_Avoid_: root config, top-level config, settings
+
+**PoolConfig**:
+The config for one agent pool (one deployment of one system). Holds `LLMConfig`, a list of `AgentConfig`, optional `MCPConfig` / `MemoryConfig` / `SkillsConfig`, and `TerminalConfig`. Pool identity = name of the agent with `role="main"`. Per ADR-0001, pool mode is the only assembly mode.
+_Avoid_: agent system config, fleet config, cluster config
+
+## Relationships
+
+- A **Workspace** owns one or more **Pool Instances**; pool instances are not shared across workspaces.
+- A **Pool** is described by exactly one **PoolConfig**; multiple pools in one workspace each have their own `PoolConfig`.
+- A **Pool** contains one **Main Agent** (the entry point) and zero or more subagents. Subagents are not separate pools — they share the pool's bus, broker, and tracker.
+- **Assembly** turns `AppConfig` (root) into nested `PoolConfig` instances, then into `Pool` runtime objects held by a `Workspace`.
+- A **ReAct Agent** runs on a **Graph**; the graph is the execution substrate, the ReAct agent is one configuration of it (4-node loop).
+- A **GraphInterrupt** is raised by a `Node[R]`; the engine propagates it, the pipeline catches it for approval, and re-enters the graph after persistence.
+
+## Flagged ambiguities
+
+- "**control channel**" historically meant the runtime control plane in `framework/control/`, but that package is largely **vestigial** — channels are constructed and threaded but have no live producers/consumers. Real cancellation is `asyncio.Task.cancel()` in `AgentPipeline`. Use "control channel" only when quoting the package; prefer "control plane" for the abstraction.
+- "**pipeline**" was overloaded: it meant both the old `create_app`/`App` entry point (removed by ADR-0001) and the `AgentPipeline` orchestration layer that survives. "Pipeline" alone now means `AgentPipeline`; the old entry point is gone.
+- "**Approval**" lives in `framework/approval/` as tier definitions and classifiers, but per `framework/AGENTS.md` the tiered approval is **not wired in pool mode** — `pool_builder.py` skips `RuntimeAssembler`, and subagents' `ToolNode._get_tier()` always returns `NORMAL`. The terminology is in use; the runtime coverage is partial.

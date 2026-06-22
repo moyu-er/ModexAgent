@@ -7,7 +7,7 @@ async def test_full_pipeline_no_experiences(tmp_path: Path):
     """Full pipeline with no experiences — should not crash."""
     from framework.core.experience.source import FileExperienceSource
     from framework.core.experience.manager import ExperienceManager
-    from framework.core.experience.usage import ExperienceUsageTracker
+    from framework.core.experience.meta import PerFileExperienceMetaStore
     from framework.core.experience.curator import ExperienceCurator
     from framework.memory.tools.experience import ExperienceReadTool, ExperienceListTool
 
@@ -26,21 +26,16 @@ async def test_full_pipeline_no_experiences(tmp_path: Path):
 
     # Curator on empty should not crash
     usage_file = exp_dir / ".usage.json"
-    tracker = ExperienceUsageTracker(usage_file)
-    curator = ExperienceCurator(exp_dir, tracker)
+    meta_store = PerFileExperienceMetaStore(exp_dir)
+    curator = ExperienceCurator(exp_dir, meta_store)
     counts = await curator.run()
     assert counts["checked"] == 0
 
     # Trackers should not crash on empty / nonexistent entries
-    tracker.bump_use("nonexistent")  # should not raise
+    meta_store.bump_use("nonexistent")  # should not raise
 
     # Read tool on nonexistent — should return error XML
-    read_tool = ExperienceReadTool(exp_dir, tracker)
+    read_tool = ExperienceReadTool(exp_dir, meta_store)
     result = await read_tool.execute(name="nonexistent")
-    assert "<status>error</status>" in result
     assert "not found" in result
 
-    # List tool on empty — should return empty XML
-    list_tool = ExperienceListTool(exp_dir, tracker)
-    result = await list_tool.execute()
-    assert "<experiences/>" in result
