@@ -741,12 +741,14 @@ class WebUIServer:
 
         user_events: list[dict[str, object]] = [
             e.to_dict()
-            for e in store.load_sessions_by_prefix(session_prefix, sessions_dir=sessions_dir)
+            for e in store.load_sessions_by_prefix(
+                session_prefix, sessions_dir=sessions_dir, pool=pool
+            )
             if e.event == "user_message"
         ]
 
         turns = store.load_materialized_by_prefix(
-            session_prefix, sessions_dir=sessions_dir
+            session_prefix, sessions_dir=sessions_dir, pool=pool
         )
         assistant_events: list[dict[str, object]] = []
         for t in turns:
