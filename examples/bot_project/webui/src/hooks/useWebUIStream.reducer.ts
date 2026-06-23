@@ -1,5 +1,6 @@
 import type {
   AssistantReasoningEvent,
+  ContentEvent,
   ErrorEvent,
   ModelContentDelta,
   ModelReasoningDelta,
@@ -189,14 +190,14 @@ function _applyEventToMessages(
       // (WebSocketOutputAdapter.send wraps OutputMessage). Surface them as a
       // non-streaming system notice so the pause button gives feedback even
       // when there is no active turn to cancel.
-      const raw = event as unknown as { text?: string; agent_name?: string };
-      const text = raw.text ?? "";
+      const content = event as ContentEvent;
+      const text = content.text ?? "";
       if (!text) return { messages, isStreaming: false };
       return {
         messages: [...messages, {
           id: nextId(),
           role: "system" as const,
-          agent_name: raw.agent_name ?? "",
+          agent_name: content.agent_name ?? "",
           blocks: [{ kind: "text" as const, text }],
           isStreaming: false,
           timestamp: Date.now(),
