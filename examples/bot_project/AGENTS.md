@@ -126,6 +126,13 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 - `SubagentAutoSendHook` auto-forwards subagent output to parent.
 - Session ID format: `{conversation_id}.{agent_name}[.{invocation_id}]` (via `DefaultSessionIdStrategy`).
 
+## Todo Tools (main + coding pools)
+
+`todo_write` (full-replace) and `todo_read` (active-only: pending + in_progress) let the agent track a multi-step task list per session. The `TodoStore` is injected at registration in `pool_builder._build_tools` (same path-injection pattern as the experience tool); persisted to `<ws>/.modex/runtime_state/<pool>/todos/<session_id>.json` (ws+pool+session isolated). On every write a bare-string `todo.updated` event is emitted; the WebUI renders active tasks in a paginated `TodoPanel`, hidden when empty.
+
+- Enabled only for the `main` and `coding` pools' main agents (registered in `_build_tools`; subagents do not get these tools).
+- No prompt injection (v1); the agent reads state via `todo_read` or tool results in history.
+
 ## Subdirectories
 
 | Directory | Purpose |
