@@ -7,30 +7,22 @@ from framework.core.agent import current_agent_context
 from framework.runtime.store import JsonFileTodoStore
 
 
-class _RecordingEmitter:
-    def __init__(self) -> None:
-        self.events: list[tuple[str, dict]] = []
-
-    async def emit(self, event, data=None) -> None:  # type: ignore[no-untyped-def]
-        self.events.append((event if isinstance(event, str) else event.value, data))
-
-
-def _set_ctx(session_id: str, emitter) -> object:
+def _set_ctx(session_id: str) -> object:
     return current_agent_context.set(
-        SimpleNamespace(session=SimpleNamespace(session_id=session_id), emitter=emitter)
+        SimpleNamespace(session=SimpleNamespace(session_id=session_id))
     )
 
 
 @pytest.mark.asyncio
-async def test_write_emits_and_persists_across_store_instances(tmp_path) -> None:
+async def test_write_persists_across_store_instances(tmp_path) -> None:
     """A NEW store instance over the same base_dir sees the persisted list
-    (simulates cross-turn / cross-restart)."""
+    (simulates cross-turn / cross-restart). The tool returns only the active
+    subset; the store keeps the full list including completed items."""
     from framework.tools.standard.todo_tool import TodoReadTool, TodoWriteTool
 
-    emitter = _RecordingEmitter()
-    token = _set_ctx("s1", emitter)
+    token = _set_ctx("s1")
     try:
-        await TodoWriteTool(JsonFileTodoStore(tmp_path)).execute(
+        result = await TodoWriteTool(JsonFileTodoStore(tmp_path)).execute(
             todos=[
                 {"content": "do A", "status": "completed"},
                 {"content": "do B", "status": "in_progress"},
@@ -39,13 +31,10 @@ async def test_write_emits_and_persists_across_store_instances(tmp_path) -> None
         )
     finally:
         current_agent_context.reset(token)
-
-    assert emitter.events and emitter.events[0][0] == "todo.updated"
-    # event carries the ACTIVE subset only (in_progress + pending); completed excluded
-    assert [t["content"] for t in emitter.events[0][1]["todos"]] == ["do B", "do C"]
+    assert [t["content"] for t in json.loads(result)] == ["do B", "do C"]
 
     # fresh store instance (new turn / restart) — read filter keeps active only
-    token = _set_ctx("s1", _RecordingEmitter())
+    token = _set_ctx("s1")
     try:
         result = await TodoReadTool(JsonFileTodoStore(tmp_path)).execute()
     finally:
@@ -60,7 +49,7 @@ async def test_session_isolation_through_tool(tmp_path) -> None:
     from framework.tools.standard.todo_tool import TodoWriteTool
 
     for sid, contents in (("s1", ["a"]), ("s2", ["b", "c"])):
-        token = _set_ctx(sid, _RecordingEmitter())
+        token = _set_ctx(sid)
         try:
             await TodoWriteTool(JsonFileTodoStore(tmp_path)).execute(
                 todos=[{"content": c, "status": "pending"} for c in contents]

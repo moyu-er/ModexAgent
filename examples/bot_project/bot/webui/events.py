@@ -30,7 +30,6 @@ class WebUIEventType(str, Enum):
     CONVERSATION_CREATED = "conversation_created"
     ATTACHED = "attached"
     CONVERSATION_DELETED = "conversation_deleted"
-    TODO_UPDATED = "todo_updated"
     ERROR = "error"
 
 
@@ -197,13 +196,6 @@ class ToolCallStartEvent(ServerEvent):
     args: dict[str, object] = field(default_factory=dict)
     turn_id: str = ""
     event: str = field(default=WebUIEventType.TOOL_CALL_START.value, init=False)
-
-
-@dataclass
-class TodoUpdatedEvent(ServerEvent):
-    """The session task list was updated (full list, all statuses)."""
-    todos: list[dict] = field(default_factory=list)
-    event: str = field(default=WebUIEventType.TODO_UPDATED.value, init=False)
 
 
 @dataclass

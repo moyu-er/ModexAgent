@@ -275,3 +275,99 @@ describe("applyServerEvent control notices", () => {
     expect(state.isStreaming).toBe(false);
   });
 });
+
+describe("applyServerEvent todos from tool_call_end", () => {
+  const ref = { current: null as string | null };
+
+  it("extracts the active todo list from a todo_write tool_call_end result", () => {
+    const state = applyServerEvent(
+      emptyState(),
+      {
+        event: "tool_call_end",
+        session_id: "conv.main",
+        agent_name: "main",
+        tool: "todo_write",
+        result_summary: JSON.stringify([
+          { content: "do A", status: "completed" }, // backend strips these in return
+          { content: "cur", status: "in_progress" },
+          { content: "next", status: "pending" },
+        ]),
+        turn_id: "t1",
+      } as unknown as Parameters<typeof applyServerEvent>[1],
+      "conv.main",
+      ref,
+    );
+    expect(state.todos["conv.main"]).toEqual([
+      { content: "do A", status: "completed" },
+      { content: "cur", status: "in_progress" },
+      { content: "next", status: "pending" },
+    ]);
+  });
+
+  it("also reads todos from todo_read tool_call_end", () => {
+    const state = applyServerEvent(
+      emptyState(),
+      {
+        event: "tool_call_end",
+        session_id: "conv.main",
+        agent_name: "main",
+        tool: "todo_read",
+        result_summary: JSON.stringify([{ content: "cur", status: "in_progress" }]),
+        turn_id: "t1",
+      } as unknown as Parameters<typeof applyServerEvent>[1],
+      "conv.main",
+      ref,
+    );
+    expect(state.todos["conv.main"]).toEqual([{ content: "cur", status: "in_progress" }]);
+  });
+
+  it("ignores tool_call_end for non-todo tools", () => {
+    const state = applyServerEvent(
+      emptyState(),
+      {
+        event: "tool_call_end",
+        session_id: "conv.main",
+        agent_name: "main",
+        tool: "read",
+        result_summary: "ok",
+        turn_id: "t1",
+      } as unknown as Parameters<typeof applyServerEvent>[1],
+      "conv.main",
+      ref,
+    );
+    expect(state.todos["conv.main"]).toBeUndefined();
+  });
+
+  it("ignores tool_call_end with missing or invalid result", () => {
+    const ref2 = { current: null as string | null };
+    const a = applyServerEvent(
+      emptyState(),
+      {
+        event: "tool_call_end",
+        session_id: "conv.main",
+        agent_name: "main",
+        tool: "todo_write",
+        result_summary: "",
+        turn_id: "t1",
+      } as unknown as Parameters<typeof applyServerEvent>[1],
+      "conv.main",
+      ref2,
+    );
+    expect(a.todos["conv.main"]).toBeUndefined();
+
+    const b = applyServerEvent(
+      emptyState(),
+      {
+        event: "tool_call_end",
+        session_id: "conv.main",
+        agent_name: "main",
+        tool: "todo_write",
+        result_summary: "Error: no active agent session.",
+        turn_id: "t1",
+      } as unknown as Parameters<typeof applyServerEvent>[1],
+      "conv.main",
+      ref2,
+    );
+    expect(b.todos["conv.main"]).toBeUndefined();
+  });
+});

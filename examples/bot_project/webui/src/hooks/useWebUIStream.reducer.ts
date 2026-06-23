@@ -6,7 +6,6 @@ import type {
   ModelReasoningDelta,
   ServerEventUnion,
   TodoItemDTO,
-  TodoUpdatedEvent,
   ToolCallEndEvent,
   ToolCallStartEvent,
   TurnBlock,
@@ -18,6 +17,33 @@ let _nextId = 0;
 export function nextId(): string {
   _nextId += 1;
   return `msg_${_nextId}`;
+}
+
+const TODO_TOOL_NAMES = new Set(["todo_write", "todo_read"]);
+
+/**
+ * Parse the result of a todo tool call into a list of active TodoItemDTO.
+ * Returns undefined if the result is missing, empty, or not valid JSON; the
+ * caller treats that as "no todos to update". The tool returns the same active
+ * subset (pending + in_progress) for both write and read.
+ */
+function _parseTodoToolResult(resultSummary: string | undefined): TodoItemDTO[] | undefined {
+  if (!resultSummary) return undefined;
+  const trimmed = resultSummary.trim();
+  if (!trimmed || trimmed.startsWith("Error:")) return undefined;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (!Array.isArray(parsed)) return undefined;
+    // Keep only entries that look like TodoItemDTO; tolerate stragglers.
+    return parsed.filter(
+      (t): t is TodoItemDTO =>
+        typeof t === "object" &&
+        t !== null &&
+        typeof (t as { content?: unknown }).content === "string",
+    );
+  } catch {
+    return undefined;
+  }
 }
 
 export interface StreamState {
@@ -228,22 +254,26 @@ export function applyServerEvent(
   currentSessionId: string | null,
   pendingRequestRef: PendingRequestRef,
 ): StreamState {
-  // Todos are not messages: store them per their own session_id before any
-  // message routing. Only active items (pending + in_progress) are kept; the
-  // UI never shows completed/cancelled entries.
-  if (event.event === "todo_updated") {
-    const todoEvt = event as TodoUpdatedEvent;
-    const active = todoEvt.todos.filter(
-      (t) => t.status === "pending" || t.status === "in_progress",
-    );
-    return {
-      ...state,
-      todos: { ...state.todos, [todoEvt.session_id]: active },
-    };
-  }
-
   const raw = event as unknown as Record<string, unknown>;
   const sid: string = (raw.session_id as string) || (raw.conversation_id as string) || "";
+
+  // Todos derive from the generic tool_call_end stream: when a todo tool
+  // completes, parse its result into the active item list and store it under
+  // the tool call's session id. This keeps the tool pure (no presentation
+  // event) and works uniformly for live and replayed sessions, as long as
+  // tool results are carried in history.
+  if (event.event === "tool_call_end") {
+    const end = event as ToolCallEndEvent;
+    if (TODO_TOOL_NAMES.has(end.tool) && sid) {
+      const active = _parseTodoToolResult(end.result_summary);
+      if (active !== undefined) {
+        return {
+          ...state,
+          todos: { ...state.todos, [sid]: active },
+        };
+      }
+    }
+  }
 
   if (sid && sid !== currentSessionId) {
     // Buffer event for a non-selected session (subagent, etc.)
