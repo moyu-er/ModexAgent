@@ -5,6 +5,7 @@ import { fetchMessages } from "../lib/api";
 
 vi.mock("../lib/api", () => ({
   fetchMessages: vi.fn().mockResolvedValue([]),
+  fetchTodos: vi.fn().mockResolvedValue([]),
 }));
 
 // Fake WebSocket that records every sent frame.

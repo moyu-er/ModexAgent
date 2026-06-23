@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ServerEventUnion, TodoItemDTO, UIMessage } from "../types/events";
 import { eventsToMessages } from "../types/events";
 import { WebSocketClient, buildWsUrl } from "../lib/ws-client";
-import { fetchMessages } from "../lib/api";
+import { fetchMessages, fetchTodos } from "../lib/api";
 import { applyServerEvent, type StreamState } from "./useWebUIStream.reducer";
 
 /** Events that mark the start of an assistant turn (set isStreaming=true). */
@@ -99,6 +99,27 @@ export function useWebUIStream(
       setState((prev) =>
         applyServerEvent(prev, event, sessionId, pendingRequestRef),
       );
+
+      // When a todo tool completes, re-fetch the authoritative list from the
+      // backend.  result_summary is truncated by the emitter (~200 chars), so
+      // the reducer cannot reliably parse a full todo list from it.
+      // The fetch endpoint reads directly from the per-session TodoStore.
+      if (
+        event.event === "tool_call_end" &&
+        TODO_TOOL_NAMES_SET.has(event.tool) &&
+        event.session_id
+      ) {
+        fetchTodos(event.session_id, currentWsRef.current).then(
+          (items) => {
+            setState((prev) => ({
+              ...prev,
+              todos: { ...prev.todos, [event.session_id]: items },
+            }));
+          },
+        ).catch((err) => {
+          console.error("Failed to refresh todos after tool_call_end", err);
+        });
+      }
     },
     [sessionId, getPoolForUuid, onSessionReady, onSessionActivity, onSessionCreated],
   );
@@ -220,11 +241,20 @@ export function useWebUIStream(
       todos: prev.todos,
     }));
 
-    fetchMessages(sessionId, currentWs)
-      .then((events) => {
+    Promise.all([
+      fetchMessages(sessionId, currentWs),
+      fetchTodos(sessionId, currentWs).catch((err) => {
+        console.error("Failed to fetch todos for", sessionId, err);
+        return undefined;
+      }),
+    ])
+      .then(([events, fetchedTodos]) => {
         if (cancelled) return;
         const history = eventsToMessages(events);
-        const initialTodos = scanHistoryForTodos(history);
+        // Prefer the dedicated todo endpoint; fall back to scanning history if
+        // the endpoint is unavailable or returns nothing.
+        const initialTodos: TodoItemDTO[] | undefined =
+          fetchedTodos ?? scanHistoryForTodos(history);
         setState((prev) => {
           const buf = prev.sessionMessages[sessionId] || [];
           const streaming = prev.sessionStreaming[sessionId] || false;
@@ -235,8 +265,6 @@ export function useWebUIStream(
             ...prev,
             messages: [...history, ...liveTail],
             isStreaming: streaming,
-            // Seed todos from history scan only when there is no live value yet
-            // for this session (preserves fresher live state across refetches).
             todos:
               initialTodos !== undefined
                 ? { ...prev.todos, [sessionId]: initialTodos }

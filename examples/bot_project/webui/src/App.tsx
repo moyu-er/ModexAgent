@@ -669,6 +669,7 @@ const App: FC = () => {
           isStreaming={isStreaming}
           isPending={isPending}
           todos={todos}
+          sessionId={selectedId}
           onSend={handleSend}
           onPause={pause}
           readOnly={isSelectedSubagent}

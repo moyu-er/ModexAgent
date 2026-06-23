@@ -9,6 +9,8 @@ export interface ChatViewProps {
   isPending: boolean;
   /** Active todos (pending + in_progress) for the selected session. */
   todos: TodoItemDTO[];
+  /** Current session id — passed to TodoPanel so it auto-closes on switch. */
+  sessionId?: string | null;
   onSend: (content: string) => void;
   /** Invoked when the user presses the pause control on a streaming session. */
   onPause?: () => void;
@@ -29,6 +31,7 @@ export const ChatView: FC<ChatViewProps> = ({
   isStreaming,
   isPending,
   todos,
+  sessionId,
   onSend,
   onPause,
   readOnly = false,
@@ -120,7 +123,6 @@ export const ChatView: FC<ChatViewProps> = ({
       {/* Message area */}
       <div className="flex-1 overflow-y-auto">
         <div className={`${CONTENT_WIDTH} px-3 py-6 md:px-5`}>
-          <TodoPanel todos={todos} />
           {messages.length === 0 && (
             <div className="flex h-[55vh] items-center justify-center">
               <p className="text-sm text-text-secondary-light dark:text-text-secondary-dark">
@@ -134,6 +136,9 @@ export const ChatView: FC<ChatViewProps> = ({
           <div ref={bottomRef} />
         </div>
       </div>
+
+      {/* Floating todo widget — outside the scroll area so it stays visible */}
+      <TodoPanel todos={todos} sessionId={sessionId} />
 
       {/* Floating composer */}
       <div className="px-3 pb-6 pt-2 md:px-5">
