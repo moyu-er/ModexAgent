@@ -220,14 +220,37 @@ class ReActAgent(Agent[ReActEvent]):
         except GraphInterrupt:
             raise
         except AgentControlError as e:
-            logger.info(
-                "ReActAgent control exit: %s",
-                str(e) or "error",
+            # Controlled exit (e.g. CANCEL_TURN from the control channel) is
+            # an expected turn outcome, not a failure. Emit the terminal
+            # signal so downstream consumers learn the turn ended — without
+            # this, the WebUI pause button left the frontend stuck streaming
+            # (turn_end never fired) and the pool treated cancel as a dispatch
+            # error. Returning a cancelled result lets the turn close cleanly.
+            logger.info("ReActAgent control exit: %s", str(e) or "error")
+            all_new = _get_turn_messages(context)
+            result = AgentResult(
+                content="",
+                stop_reason=StopReason.CANCELLED,
+                messages=all_new,
+                attachments=context.attachments,
             )
-            raise
+            await emitter.emit_complete(result)
+            return result
         except asyncio.CancelledError:
+            # Task cancellation (e.g. from control-channel CANCEL_TURN that
+            # uses task.cancel() to interrupt an in-flight LLM call) is a
+            # controlled stop, not a crash. Emit the terminal signal and
+            # return a cancelled result so the turn closes cleanly.
             logger.warning("ReActAgent cancelled")
-            raise
+            all_new = _get_turn_messages(context)
+            result = AgentResult(
+                content="",
+                stop_reason=StopReason.CANCELLED,
+                messages=all_new,
+                attachments=context.attachments,
+            )
+            await emitter.emit_complete(result)
+            return result
         except Exception as e:
             logger.exception("Agent execution error")
             await emitter.emit(ReActEvent.ERROR, str(e))
@@ -399,11 +422,30 @@ class ReActAgent(Agent[ReActEvent]):
             nonlocal tool_calls_list
 
             async def _on_content_delta(delta: str) -> None:
+                # Drain control channel between every content delta so a
+                # CANCEL_TURN arriving mid-stream interrupts the LLM
+                # immediately (inside the provider's streaming loop, before
+                # the next chunk). Without this, cancel only takes effect
+                # after the full chat_stream returns.
+                if context.runtime and context.runtime.control_channel:
+                    from framework.hook.builtin.control_drain import drain_control_channel
+                    await drain_control_channel(
+                        context.runtime.control_channel,
+                        context,
+                        turn_uuid=context.runtime.turn_uuid,
+                    )
                 if delta:
                     await emitter.emit_delta(delta)
                     await emitter.emit(ReActEvent.MODEL_OUTPUT, delta)
 
             async def _on_reasoning_delta(delta: str) -> None:
+                if context.runtime and context.runtime.control_channel:
+                    from framework.hook.builtin.control_drain import drain_control_channel
+                    await drain_control_channel(
+                        context.runtime.control_channel,
+                        context,
+                        turn_uuid=context.runtime.turn_uuid,
+                    )
                 if delta:
                     await emitter.emit(ReActEvent.MODEL_REASONING, delta)
 
