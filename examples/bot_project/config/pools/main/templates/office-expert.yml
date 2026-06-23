@@ -10,5 +10,7 @@ memory:
   archive: {enabled: true}
   knowledge: {enabled: true}
   pruned: {enabled: true, max_files: 50, topic_max_chars: 200}
+  governance:
+    tool_chain_repair: true
 skills:
   roots: ["skills/main/office-expert"]

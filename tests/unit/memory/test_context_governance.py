@@ -7,6 +7,7 @@ import pytest
 from framework.core.types import MessageRole
 from framework.memory.context_governance import (
     CompositeGovernance,
+    LossyContentCompactionGovernance,
     MicrocompactGovernance,
     TokenBudgetGovernance,
     ToolChainRepairGovernance,
@@ -207,6 +208,125 @@ async def test_composite_runs_strategies_in_order():
     assert result[2]["content"] == "b"
 
 
+# ── LossyContentCompactionGovernance ─────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_lossy_compaction_not_triggered_below_first_step():
+    """At length == buffer + count - 1 the first step has not started."""
+    messages = [
+        {"role": str(MessageRole.TOOL), "name": "read_file", "content": "A" * 2000, "tool_call_id": "c1"},
+        *[
+            {"role": str(MessageRole.USER), "content": "filler"}
+            for _ in range(68)
+        ],
+    ]
+    # length=69, compact_range_count=50, buffer=20 -> 69 <= 69, no compaction
+    gov = LossyContentCompactionGovernance(tool_result_head_chars=1200)
+    result = await gov.apply(messages)
+
+    assert len(result) == 69
+    assert result[0]["content"] == "A" * 2000
+
+
+@pytest.mark.asyncio
+async def test_lossy_compaction_triggers_at_first_step():
+    """At length == buffer + count the first step compacts one block."""
+    messages = [
+        {"role": str(MessageRole.TOOL), "name": "read_file", "content": "A" * 2000, "tool_call_id": "c1"},
+        *[
+            {"role": str(MessageRole.USER), "content": "filler"}
+            for _ in range(69)
+        ],
+    ]
+    # length=70, compact_range_count=50, buffer=20 -> compact_count=50
+    gov = LossyContentCompactionGovernance(tool_result_head_chars=1200)
+    result = await gov.apply(messages)
+
+    assert "[Context content truncated for role=tool]" in result[0]["content"]
+    assert result[50]["content"] == "filler"
+
+
+@pytest.mark.asyncio
+async def test_lossy_compaction_stays_stable_within_step():
+    """Adding messages within the same step does not change compact_count."""
+    base = [
+        {"role": str(MessageRole.TOOL), "name": "read_file", "content": "A" * 2000, "tool_call_id": "c1"},
+        *[
+            {"role": str(MessageRole.USER), "content": "filler"}
+            for _ in range(69)
+        ],
+    ]
+    # length=70, compact_count=50: tool A compacted.
+    gov = LossyContentCompactionGovernance(tool_result_head_chars=1200)
+
+    result_70 = await gov.apply(base)
+    assert "[Context content truncated for role=tool]" in result_70[0]["content"]
+
+    # Add messages up to the next step boundary (length=119), compact_count still 50
+    for extra in range(49):
+        messages = base + [{"role": str(MessageRole.USER), "content": "extra"} for _ in range(extra + 1)]
+        result = await gov.apply(messages)
+        assert result[0]["content"] == result_70[0]["content"]
+
+    # Next step: length=120 -> compact_count=100, add a long tool message at index 70
+    messages = base + [{"role": str(MessageRole.TOOL), "name": "read_file", "content": "B" * 2000, "tool_call_id": "c2"}] + [{"role": str(MessageRole.USER), "content": "extra"} for _ in range(49)]
+    result_120 = await gov.apply(messages)
+    assert "[Context content truncated for role=tool]" in result_120[70]["content"]
+
+
+@pytest.mark.asyncio
+async def test_lossy_compaction_stable_suffix():
+    """Truncated output must not contain dynamic content that breaks caches."""
+    messages = [
+        {"role": str(MessageRole.TOOL), "name": "read_file", "content": "A" * 2000, "tool_call_id": "c1"},
+        *[
+            {"role": str(MessageRole.USER), "content": "filler"}
+            for _ in range(69)
+        ],
+    ]
+    gov = LossyContentCompactionGovernance(tool_result_head_chars=1200)
+    result = await gov.apply(messages)
+
+    assert "original chars=" not in result[0]["content"]
+    assert "[Context content truncated for role=tool]" in result[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_lossy_compaction_returns_copy():
+    """Must return a new list and not mutate the input."""
+    original = [
+        {"role": str(MessageRole.TOOL), "name": "read_file", "content": "A" * 2000, "tool_call_id": "c1"},
+        *[
+            {"role": str(MessageRole.USER), "content": "filler"}
+            for _ in range(69)
+        ],
+    ]
+    gov = LossyContentCompactionGovernance(tool_result_head_chars=1200)
+    result = await gov.apply(original)
+
+    assert result is not original
+    assert original[0]["content"] == "A" * 2000
+
+
+@pytest.mark.asyncio
+async def test_lossy_compaction_system_never_compacted():
+    """System messages are never compacted regardless of length."""
+    messages = [
+        {"role": "system", "content": "S" * 2000},
+        {"role": str(MessageRole.TOOL), "name": "read_file", "content": "A" * 2000, "tool_call_id": "c1"},
+        *[
+            {"role": str(MessageRole.USER), "content": "filler"}
+            for _ in range(69)
+        ],
+    ]
+    gov = LossyContentCompactionGovernance(tool_result_head_chars=1200)
+    result = await gov.apply(messages)
+
+    assert result[0]["content"] == "S" * 2000
+    assert "[Context content truncated for role=tool]" in result[1]["content"]
+
+
 @pytest.mark.asyncio
 async def test_tool_chain_repair_cleans_up_orphans_in_model_context() -> None:
     """ToolChainRepairGovernance removes orphan tool results when no matching
@@ -281,8 +401,14 @@ async def test_all_strategies_return_copies():
         {"role": str(MessageRole.ASSISTANT), "content": "hello"},
     ]
 
-    for Gov in [ToolChainRepairGovernance, MicrocompactGovernance, TokenBudgetGovernance]:
-        gov = Gov() if Gov is not TokenBudgetGovernance else Gov(max_tokens=100)
+    configs = {
+        ToolChainRepairGovernance: {},
+        MicrocompactGovernance: {},
+        TokenBudgetGovernance: {"max_tokens": 100},
+        LossyContentCompactionGovernance: {"tool_result_head_chars": 10},
+    }
+    for Gov, kwargs in configs.items():
+        gov = Gov(**kwargs)
         result = await gov.apply(original)
         assert result is not original
         assert original == [{"role": str(MessageRole.ASSISTANT), "content": "hello"}]

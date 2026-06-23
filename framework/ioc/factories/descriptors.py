@@ -214,6 +214,7 @@ async def build_subagent_descriptor(
         context_strategy="persistent",
         safety_policy=safety,
         comm_kind=AgentCommKind.SUBAGENT,
+        memory_config=agent_cfg.memory,
     )
     return descriptor, tool_manager, skill_manager, memory_ctx
 

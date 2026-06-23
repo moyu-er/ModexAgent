@@ -62,13 +62,19 @@ class DreamEngineConfig(BaseModel):
 
 
 class LossyConfig(BaseModel):
-    """Lossy content truncation for oversized messages."""
+    """Lossy content compaction for oversized messages.
+
+    Compaction happens in fixed-size steps.  When the conversation length
+    exceeds ``n * compact_range_count + buffer``, the oldest
+    ``n * compact_range_count`` messages become candidates for compaction.
+    """
 
     tool_result_head_chars: int = 1200
     assistant_head_chars: int = 1200
     agent_head_chars: int = 2000
-    user_head_chars: int = 4000
+    user_head_chars: int = 2000
     tool_args_head_chars: int = 2048
+    compact_range_count: int = 50
 
 
 class SessionConfig(BaseModel):

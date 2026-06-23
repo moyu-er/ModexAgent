@@ -208,6 +208,18 @@ class DefaultAgentFactory(AgentFactory):
                 )
             )
 
+        # Subagent governance: build a lightweight chain (tool chain repair +
+        # final legality) from the template's MemoryConfig. Main agents
+        # already have governance wired on the pipeline at the pool level
+        # (see pool_builder._wire_main_pipeline), so we only build here for
+        # subagents. create_subagent_governance handles missing config by
+        # returning a default (tool chain repair + final legality) chain.
+        subagent_governance: Any | None = None
+        if descriptor.comm_kind == AgentCommKind.SUBAGENT:
+            from framework.ioc.factories.governance import create_subagent_governance
+
+            subagent_governance = create_subagent_governance(descriptor.memory_config)
+
         from framework.messaging.broker_bridge import (
             BrokerInputAdapter,
             BrokerOutputAdapter,
@@ -275,6 +287,7 @@ class DefaultAgentFactory(AgentFactory):
             agent_descriptor=descriptor,
             router=DefaultMeshRouter(session_registry=self._session_registry),
             control_channel=self._control_channel,
+            governance=subagent_governance,
         )
 
         # Auto-inject TraceCollectorHook — ALL agents get per-session trace.

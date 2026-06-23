@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pytest
 
+from framework.core.types import MessageRole
 from framework.memory.context_governance import (
     CompositeGovernance,
     LossyContentCompactionGovernance,
@@ -16,20 +17,25 @@ XML_AGENT_MSG = """<agent_message source="planner" timestamp="2026-05-28 14:30:0
 </agent_message>"""
 
 
+def _with_fillers(target: dict[str, object], total: int = 70) -> list[dict[str, object]]:
+    """Return a list starting with *target* and enough fillers to trigger
+    the default compaction step (compact_range_count=50, compact_buffer=20).
+    """
+    return [target] + [
+        {"role": str(MessageRole.USER), "content": "filler"} for _ in range(total - 1)
+    ]
+
+
 @pytest.mark.asyncio
 async def test_xml_agent_message_survives_lossy_truncation():
     """XML agent message: content truncated, structure preserved."""
-    gov = LossyContentCompactionGovernance(
-        user_head_chars=500,
-        keep_range_count=0,
-        keep_range_ratio=0.0,
-    )
-    messages = [{
+    gov = LossyContentCompactionGovernance(user_head_chars=500)
+    messages = _with_fillers({
         "role": "user",
         "content": XML_AGENT_MSG,
         "content_format": "xml",
         "truncatable_paths": ["content"],
-    }]
+    })
     result = await gov.apply(messages)
     assert '<agent_message source="planner"' in result[0]["content"]
     assert '<thinking>query data</thinking>' in result[0]["content"]
@@ -40,16 +46,12 @@ async def test_xml_agent_message_survives_lossy_truncation():
 @pytest.mark.asyncio
 async def test_xml_defaults_to_content_path_when_truncatable_paths_empty():
     """When content_format='xml' but truncatable_paths not set, defaults to ['content']."""
-    gov = LossyContentCompactionGovernance(
-        user_head_chars=500,
-        keep_range_count=0,
-        keep_range_ratio=0.0,
-    )
-    messages = [{
+    gov = LossyContentCompactionGovernance(user_head_chars=500)
+    messages = _with_fillers({
         "role": "user",
         "content": XML_AGENT_MSG,
         "content_format": "xml",
-    }]
+    })
     result = await gov.apply(messages)
     assert '<agent_message source="planner"' in result[0]["content"]
     assert '<thinking>query data</thinking>' in result[0]["content"]
@@ -65,15 +67,17 @@ async def test_system_messages_skip_all_truncation():
         LossyContentCompactionGovernance(
             tool_result_head_chars=100,
             assistant_head_chars=100,
-            keep_range_count=0,
-            keep_range_ratio=0.0,
         ),
-        TokenBudgetGovernance(max_tokens=2000),
+        TokenBudgetGovernance(max_tokens=100000),
     ])
     system_content = "<supplementary-context><content>" + ("x" * 5000) + "</content></supplementary-context>"
     messages = [
         {"role": "system", "content": system_content},
-        {"role": "user", "content": "short"},
+        {"role": str(MessageRole.TOOL), "name": "read_file", "content": "A" * 2000, "tool_call_id": "c1"},
+        *[
+            {"role": str(MessageRole.USER), "content": "filler"}
+            for _ in range(68)
+        ],
     ]
     result = await gov.apply(messages)
     assert result[0]["role"] == "system"

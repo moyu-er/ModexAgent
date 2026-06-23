@@ -388,20 +388,33 @@ Commands are processed by the input pipeline (S2/S3 for control, S6 for skills) 
 
 ### Governance
 
-Auto-repair and optimize context without human intervention:
+Governance runs on the model-visible message copy before each LLM call. It is configured under `memory.governance` in a pool config or subagent template.
+
+Main-agent example (`config/pools/main.yml`):
 
 ```yaml
 memory:
-  main:
-    governance:
-      enabled: true
-      tool_chain_repair: true         # Fix broken tool call chains
-      microcompact:
-        enabled: true
-        keep_recent: 10               # Keep the last 10 messages
-      token_budget:
-        enabled: true
-        budget_ratio: 0.5             # 50% of LLM max_tokens
+  session:
+    max_messages: 150
+    max_tokens: 100000
+  governance:
+    tool_chain_repair: true      # Required: repair orphan/incomplete tool-call groups
+    lossy_compaction:
+      tool_result_head_chars: 1200
+      assistant_head_chars: 1200
+      agent_head_chars: 2000
+      user_head_chars: 4000
+      compact_range_count: 50    # Optional: default 50, min 20
+```
+
+Subagent templates (`config/pools/*/templates/*.yml`) should keep governance lightweight:
+
+```yaml
+memory:
+  session:
+    max_messages: 100
+  governance:
+    tool_chain_repair: true
 ```
 
 ## Adding a New Subagent
@@ -543,15 +556,13 @@ memory:
       interval: 300
       threshold: 5
     governance:
-      enabled: true
       tool_chain_repair: true
-      microcompact:
-        enabled: true
-        keep_recent: 10
-      token_budget:
-        enabled: true
-        budget_ratio: 0.5
-        safety_buffer: 1024
+      lossy_compaction:
+        tool_result_head_chars: 1200
+        assistant_head_chars: 1200
+        agent_head_chars: 2000
+        user_head_chars: 4000
+        compact_range_count: 50
 ```
 
 ### MCP

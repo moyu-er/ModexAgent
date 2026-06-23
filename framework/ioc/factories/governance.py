@@ -51,6 +51,7 @@ def create_governance(
                 agent_head_chars=lc.agent_head_chars,
                 user_head_chars=lc.user_head_chars,
                 tool_args_head_chars=lc.tool_args_head_chars,
+                compact_range_count=lc.compact_range_count,
             )
         )
 
