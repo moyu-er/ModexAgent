@@ -50,6 +50,22 @@ async def test_sessions_isolated(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_real_session_id_preserves_dot_in_filename(tmp_path) -> None:
+    """Regression: filename should look like ``<prefix>.<agent>.json``.
+
+    Old implementation appended a hash suffix (``--0cab0a3d``) because it
+    treated ``.`` as an unsafe character. Session ids are ``{prefix}.{agent}``,
+    so ``.`` should be preserved.
+    """
+    store = JsonFileTodoStore(tmp_path)
+    session_id = "3d1eb6cd187f.main"
+    await store.save(session_id, [_item("a")])
+    expected_file = tmp_path / f"{session_id}.json"
+    assert expected_file.exists(), f"expected {expected_file}, got {list(tmp_path.iterdir())}"
+    assert [t.content for t in await store.get(session_id)] == ["a"]
+
+
+@pytest.mark.asyncio
 async def test_save_is_atomic_on_crash(tmp_path, monkeypatch) -> None:
     """A failed write must not corrupt the existing file."""
     import framework.runtime.store as store_mod

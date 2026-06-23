@@ -417,9 +417,14 @@ class JsonFileTodoStore(TodoStore):
 
     ``base_dir`` is injected by the caller (pool-aware in production; a tmp dir
     in tests). Atomic write via tmp + os.replace.
+
+    ``_safe_segment`` only neutralizes characters that are genuinely unsafe on
+    common filesystems (``/``, ``\``, ``:``, ``*``, ``?``, ``"``, ``<``, ``>``,
+    ``|``). Session ids in this system are ``{prefix}.{agent}[.{invocation_id}]``,
+    so the resulting filename is essentially the session id plus ``.json``.
     """
 
-    _SAFE_RE = re.compile(r"[^A-Za-z0-9_-]")
+    _SAFE_RE = re.compile(r"[^A-Za-z0-9._-]")
 
     def __init__(self, base_dir: Path) -> None:
         self._base_dir = base_dir
@@ -427,11 +432,7 @@ class JsonFileTodoStore(TodoStore):
 
     @classmethod
     def _safe_segment(cls, raw: str) -> str:
-        sanitized = cls._SAFE_RE.sub("_", raw)
-        if sanitized != raw:
-            digest = hashlib.sha256(raw.encode()).hexdigest()[:8]
-            return f"{sanitized}--{digest}"
-        return sanitized
+        return cls._SAFE_RE.sub("_", raw)
 
     def _path(self, session_id: str) -> Path:
         return self._base_dir / f"{self._safe_segment(session_id)}.json"
