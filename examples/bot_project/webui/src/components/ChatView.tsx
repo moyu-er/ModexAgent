@@ -1,11 +1,14 @@
 import { useState, useRef, useEffect, type FC, type FormEvent, type KeyboardEvent } from "react";
-import type { UIMessage } from "../types/events";
+import type { TodoItemDTO, UIMessage } from "../types/events";
 import { MessageBubble } from "./MessageBubble";
+import { TodoPanel } from "./TodoPanel";
 
 export interface ChatViewProps {
   messages: UIMessage[];
   isStreaming: boolean;
   isPending: boolean;
+  /** Active todos (pending + in_progress) for the selected session. */
+  todos: TodoItemDTO[];
   onSend: (content: string) => void;
   /** Invoked when the user presses the pause control on a streaming session. */
   onPause?: () => void;
@@ -25,6 +28,7 @@ export const ChatView: FC<ChatViewProps> = ({
   messages,
   isStreaming,
   isPending,
+  todos,
   onSend,
   onPause,
   readOnly = false,
@@ -116,6 +120,7 @@ export const ChatView: FC<ChatViewProps> = ({
       {/* Message area */}
       <div className="flex-1 overflow-y-auto">
         <div className={`${CONTENT_WIDTH} px-3 py-6 md:px-5`}>
+          <TodoPanel todos={todos} />
           {messages.length === 0 && (
             <div className="flex h-[55vh] items-center justify-center">
               <p className="text-sm text-text-secondary-light dark:text-text-secondary-dark">

@@ -5,6 +5,8 @@ import type {
   ModelContentDelta,
   ModelReasoningDelta,
   ServerEventUnion,
+  TodoItemDTO,
+  TodoUpdatedEvent,
   ToolCallEndEvent,
   ToolCallStartEvent,
   TurnBlock,
@@ -24,6 +26,8 @@ export interface StreamState {
   /** Per-session message buffers for non-selected sessions (subagents, etc.) */
   sessionMessages: Record<string, UIMessage[]>;
   sessionStreaming: Record<string, boolean>;
+  /** Per-session active task list (pending + in_progress), keyed by session_id. */
+  todos: Record<string, TodoItemDTO[]>;
 }
 
 interface PendingRequestRef {
@@ -224,6 +228,20 @@ export function applyServerEvent(
   currentSessionId: string | null,
   pendingRequestRef: PendingRequestRef,
 ): StreamState {
+  // Todos are not messages: store them per their own session_id before any
+  // message routing. Only active items (pending + in_progress) are kept; the
+  // UI never shows completed/cancelled entries.
+  if (event.event === "todo_updated") {
+    const todoEvt = event as TodoUpdatedEvent;
+    const active = todoEvt.todos.filter(
+      (t) => t.status === "pending" || t.status === "in_progress",
+    );
+    return {
+      ...state,
+      todos: { ...state.todos, [todoEvt.session_id]: active },
+    };
+  }
+
   const raw = event as unknown as Record<string, unknown>;
   const sid: string = (raw.session_id as string) || (raw.conversation_id as string) || "";
 

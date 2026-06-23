@@ -57,7 +57,7 @@ describe("unwrapEnvelope", () => {
 });
 
 function emptyState(): StreamState {
-  return { messages: [], isStreaming: false, sessionMessages: {}, sessionStreaming: {} };
+  return { messages: [], isStreaming: false, sessionMessages: {}, sessionStreaming: {}, todos: {} };
 }
 
 describe("applyServerEvent session isolation", () => {

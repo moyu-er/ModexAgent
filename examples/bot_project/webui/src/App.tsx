@@ -252,7 +252,7 @@ const App: FC = () => {
     [],
   );
 
-  const { messages, isStreaming, isPending, connect, disconnect, send, pause } =
+  const { messages, isStreaming, isPending, todos, connect, disconnect, send, pause } =
     useWebUIStream(
       selectedId,
       getPoolForUuid,
@@ -668,6 +668,7 @@ const App: FC = () => {
           messages={messages}
           isStreaming={isStreaming}
           isPending={isPending}
+          todos={todos}
           onSend={handleSend}
           onPause={pause}
           readOnly={isSelectedSubagent}

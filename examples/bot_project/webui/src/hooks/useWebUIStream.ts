@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ServerEventUnion, UIMessage } from "../types/events";
+import type { ServerEventUnion, TodoItemDTO, UIMessage } from "../types/events";
 import { eventsToMessages } from "../types/events";
 import { WebSocketClient, buildWsUrl } from "../lib/ws-client";
 import { fetchMessages } from "../lib/api";
@@ -16,6 +16,8 @@ export interface UseWebUIStreamResult {
   messages: UIMessage[];
   isStreaming: boolean;
   isPending: boolean;
+  /** Active todos for the currently selected session (pending + in_progress). */
+  todos: TodoItemDTO[];
   connect: () => void;
   disconnect: () => void;
   send: (content: string) => void;
@@ -35,6 +37,7 @@ export function useWebUIStream(
     isStreaming: false,
     sessionMessages: {},
     sessionStreaming: {},
+    todos: {},
   });
   const clientRef = useRef<WebSocketClient | null>(null);
   /** ID of the most recent optimistically-added user message.  The server
@@ -169,6 +172,7 @@ export function useWebUIStream(
       isStreaming: prev.isStreaming,
       sessionMessages: {},
       sessionStreaming: {},
+      todos: {},
     }));
     streamingSessionsRef.current.clear();
   }, [currentWs]);
@@ -181,6 +185,7 @@ export function useWebUIStream(
         isStreaming: false,
         sessionMessages: prev.sessionMessages,
         sessionStreaming: prev.sessionStreaming,
+        todos: prev.todos,
       }));
       return;
     }
@@ -192,6 +197,7 @@ export function useWebUIStream(
         isStreaming: false,
         sessionMessages: prev.sessionMessages,
         sessionStreaming: prev.sessionStreaming,
+        todos: prev.todos,
       }));
       if (clientRef.current?.connected) {
         clientRef.current.attach(sessionId, pool, currentWsRef.current);
@@ -211,6 +217,7 @@ export function useWebUIStream(
       isStreaming: false,
       sessionMessages: prev.sessionMessages,
       sessionStreaming: prev.sessionStreaming,
+      todos: prev.todos,
     }));
 
     fetchMessages(sessionId, currentWs)
@@ -304,6 +311,7 @@ export function useWebUIStream(
     messages: state.messages,
     isStreaming: state.isStreaming,
     isPending,
+    todos: sessionId ? state.todos[sessionId] ?? [] : [],
     connect,
     disconnect,
     send,
