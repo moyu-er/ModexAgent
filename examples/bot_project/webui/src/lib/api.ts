@@ -2,6 +2,7 @@ import type {
   ConversationInfo,
   CreateConversationResponse,
   ServerEventUnion,
+  TodoItemDTO,
 } from "../types/events";
 
 const API_BASE = "/api";
@@ -113,6 +114,16 @@ export async function fetchMessages(
   const resp = await fetch(`${API_BASE}/sessions/${sessionId}/messages${params}`);
   await assertOk(resp);
   return resp.json() as Promise<ServerEventUnion[]>;
+}
+
+export async function fetchTodos(
+  sessionId: string,
+  ws?: string,
+): Promise<TodoItemDTO[]> {
+  const params = ws ? `?ws=${encodeURIComponent(ws)}` : "";
+  const resp = await fetch(`${API_BASE}/sessions/${sessionId}/todos${params}`);
+  await assertOk(resp);
+  return resp.json() as Promise<TodoItemDTO[]>;
 }
 
 export async function fetchAllMessages(

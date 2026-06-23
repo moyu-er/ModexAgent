@@ -34,7 +34,10 @@ from bot.webui.events import (
 )
 from framework.core.session_id import SessionInfo, SessionIdFactory, agent_of, session_id_prefix_of
 from framework.core.session_store import SessionStore
+from framework.core.types import TodoStatus
+from framework.runtime.store import JsonFileTodoStore
 from framework.utils.timezone import get_user_timezone
+from framework.workspace.paths import SUBDIR_RUNTIME
 from framework.workspace.port import WorkspaceControlPort
 from framework.workspace.runtime import resolve_workspace_root
 from bot.webui.transcript_store import TranscriptStore
@@ -472,6 +475,9 @@ class WebUIServer:
         self.app.router.add_get(
             f"{_API_SESSIONS_SESSION_PATH}/messages", self._handle_get_messages
         )
+        self.app.router.add_get(
+            f"{_API_SESSIONS_SESSION_PATH}/todos", self._handle_get_todos
+        )
         self.app.router.add_delete(_API_SESSIONS_SESSION_PATH, self._handle_delete_session)
         self.app.router.add_get(_WS_PATH, self._handle_websocket)
 
@@ -775,6 +781,30 @@ class WebUIServer:
 
         result.sort(key=_event_ts)
         return web.json_response(result)
+
+    async def _handle_get_todos(self, request: web.Request) -> web.Response:
+        """GET /api/sessions/{session_id}/todos -- load active todos.
+
+        Reads directly from the per-session TodoStore so the frontend can
+        hydrate the todo panel when a session is reopened, even before any
+        live ``todo_write``/``todo_read`` tool call arrives.
+        """
+        session_id: str = request.match_info["session_id"]
+        ws_raw = request.query.get("ws", "")
+        sessions_dir = self._sessions_dir_of_ws(ws_raw)
+        index_dir = self._index_dir_of_ws(ws_raw)
+        agent_name: str = await self._resolve_agent(session_id, index_dir=index_dir)
+        pool: str = self._pool_of_agent(agent_name)
+
+        todo_dir = sessions_dir.parent / SUBDIR_RUNTIME / pool / "todos"
+        store = JsonFileTodoStore(todo_dir)
+        items = await store.get(session_id)
+        active = [
+            {"content": item.content, "status": item.status.value}
+            for item in items
+            if item.status in (TodoStatus.PENDING, TodoStatus.IN_PROGRESS)
+        ]
+        return web.json_response(active)
 
     async def _handle_delete_session(self, request: web.Request) -> web.Response:
         """DELETE /api/sessions/{session_id} -- delete a session.
