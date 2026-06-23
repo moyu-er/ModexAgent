@@ -301,7 +301,11 @@ class TestBridgeDoneCallbackDefenseInDepth:
         dummy_task = asyncio.create_task(_noop())
         await dummy_task
         service._bridge_done_callback(dummy_task, "input:in1")
-        await asyncio.sleep(0.01)
+        # Wait for the restart scheduling task to finish and be pruned.
+        for _ in range(50):
+            if len(service._tasks) == 2:
+                break
+            await asyncio.sleep(0.01)
 
         assert len(service._tasks) == 2
         await service.stop()

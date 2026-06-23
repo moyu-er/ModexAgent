@@ -121,39 +121,6 @@ describe("useWebUIStream todo fetch", () => {
     await waitFor(() => expect(fetchTodos).toHaveBeenCalledWith(sessionId, workspace));
   });
 
-  it("falls back to history scan when the todo endpoint fails", async () => {
-    vi.mocked(fetchMessages).mockResolvedValue([
-      {
-        event: "assistant_turn",
-        session_id: "abc123.main",
-        agent_name: "main",
-        timestamp: 1,
-        turn_id: "t1",
-        latency_ms: 0,
-        blocks: [
-          {
-            kind: "tool",
-            tool: {
-              tool: "todo_write",
-              args: {},
-              result: JSON.stringify([{ content: "from history", status: "in_progress" }]),
-            },
-          },
-        ],
-      },
-    ]);
-    vi.mocked(fetchTodos).mockRejectedValue(new Error("network error"));
-
-    const sessionId = "abc123.main";
-    const getPoolForUuid = (): undefined => undefined;
-
-    const { result } = renderHook(() => useWebUIStream(sessionId, getPoolForUuid));
-
-    await waitFor(() =>
-      expect(result.current.todos).toEqual([{ content: "from history", status: "in_progress" }]),
-    );
-  });
-
   it("re-fetches todos when a todo_write tool_call_end arrives via WebSocket", async () => {
     // Initial fetch returns two items.
     vi.mocked(fetchMessages).mockResolvedValue([]);

@@ -37,7 +37,7 @@ from framework.core.session_store import SessionStore
 from framework.core.types import TodoStatus
 from framework.runtime.store import JsonFileTodoStore
 from framework.utils.timezone import get_user_timezone
-from framework.workspace.paths import SUBDIR_RUNTIME
+from framework.workspace.paths import WorkspacePaths
 from framework.workspace.port import WorkspaceControlPort
 from framework.workspace.runtime import resolve_workspace_root
 from bot.webui.transcript_store import TranscriptStore
@@ -796,7 +796,7 @@ class WebUIServer:
         agent_name: str = await self._resolve_agent(session_id, index_dir=index_dir)
         pool: str = self._pool_of_agent(agent_name)
 
-        todo_dir = sessions_dir.parent / SUBDIR_RUNTIME / pool / "todos"
+        todo_dir = WorkspacePaths(root=sessions_dir.parent).runtime_dir(pool, "todos")
         store = JsonFileTodoStore(todo_dir)
         items = await store.get(session_id)
         active = [

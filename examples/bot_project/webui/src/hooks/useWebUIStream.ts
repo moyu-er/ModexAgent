@@ -106,8 +106,8 @@ export function useWebUIStream(
       // The fetch endpoint reads directly from the per-session TodoStore.
       if (
         event.event === "tool_call_end" &&
-        TODO_TOOL_NAMES_SET.has(event.tool) &&
-        event.session_id
+        event.session_id &&
+        (event.tool === "todo_write" || event.tool === "todo_read")
       ) {
         fetchTodos(event.session_id, currentWsRef.current).then(
           (items) => {
@@ -245,16 +245,12 @@ export function useWebUIStream(
       fetchMessages(sessionId, currentWs),
       fetchTodos(sessionId, currentWs).catch((err) => {
         console.error("Failed to fetch todos for", sessionId, err);
-        return undefined;
+        return [] as TodoItemDTO[];
       }),
     ])
       .then(([events, fetchedTodos]) => {
         if (cancelled) return;
         const history = eventsToMessages(events);
-        // Prefer the dedicated todo endpoint; fall back to scanning history if
-        // the endpoint is unavailable or returns nothing.
-        const initialTodos: TodoItemDTO[] | undefined =
-          fetchedTodos ?? scanHistoryForTodos(history);
         setState((prev) => {
           const buf = prev.sessionMessages[sessionId] || [];
           const streaming = prev.sessionStreaming[sessionId] || false;
@@ -265,10 +261,7 @@ export function useWebUIStream(
             ...prev,
             messages: [...history, ...liveTail],
             isStreaming: streaming,
-            todos:
-              initialTodos !== undefined
-                ? { ...prev.todos, [sessionId]: initialTodos }
-                : prev.todos,
+            todos: { ...prev.todos, [sessionId]: fetchedTodos },
           };
         });
       })
@@ -354,46 +347,3 @@ export function useWebUIStream(
   };
 }
 
-const TODO_TOOL_NAMES_SET = new Set(["todo_write", "todo_read"]);
-
-/**
- * Approach (a): scan the loaded assistant history for the most recent tool
- * block whose name is a todo tool AND whose result is present, then parse
- * that result as the active todo list. Returns undefined if no todo history
- * was found.
- *
- * Approach (b) — DEFERRED TODO: if we discover that the persisted history
- * does NOT reliably carry tool results (i.e. ``ToolBlock.tool.result`` is
- * often undefined for older sessions), add a server-side fetch endpoint
- * (e.g. ``GET /sessions/:id/todos``) that reads the TodoStore directly and
- * hydrate from that instead of scanning history. See spec §12.
- */
-export function scanHistoryForTodos(history: UIMessage[]): TodoItemDTO[] | undefined {
-  for (let i = history.length - 1; i >= 0; i -= 1) {
-    const msg = history[i];
-    if (!msg || msg.role !== "assistant") continue;
-    for (let j = msg.blocks.length - 1; j >= 0; j -= 1) {
-      const block = msg.blocks[j];
-      if (!block || block.kind !== "tool") continue;
-      const t = block.tool;
-      if (!TODO_TOOL_NAMES_SET.has(t.tool)) continue;
-      if (typeof t.result !== "string" || t.result.length === 0) continue;
-      const trimmed = t.result.trim();
-      if (!trimmed || trimmed.startsWith("Error:")) continue;
-      try {
-        const parsed = JSON.parse(trimmed) as unknown;
-        if (!Array.isArray(parsed)) continue;
-        const items = parsed.filter(
-          (x): x is TodoItemDTO =>
-            typeof x === "object" &&
-            x !== null &&
-            typeof (x as { content?: unknown }).content === "string",
-        );
-        return items;
-      } catch {
-        continue;
-      }
-    }
-  }
-  return undefined;
-}

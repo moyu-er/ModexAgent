@@ -38,7 +38,7 @@ def _resolve_session_id() -> str | None:
     ctx = current_agent_context.get(None)
     if ctx is None:
         return None
-    return getattr(ctx.session, "session_id", None)
+    return ctx.session.session_id
 
 
 def _parse_todos(raw: list[dict[str, Any]]) -> tuple[list[TodoItem], str | None]:

@@ -1,4 +1,4 @@
-import { useState, useEffect, type FC } from "react";
+import { useState, useEffect, useMemo, type FC } from "react";
 import type { TodoItemDTO } from "../types/events";
 
 const PAGE_SIZE = 4;
@@ -65,21 +65,23 @@ export const TodoPanel: FC<TodoPanelProps> = ({ todos, sessionId }) => {
     setOpen(false);
   }, [sessionId]);
 
-  useEffect(() => {
-    setPage(0);
-  }, [todos]);
+  const doneCount = useMemo(
+    () => todos.filter((t) => t.status === "completed").length,
+    [todos],
+  );
+  const pct = useMemo(
+    () => Math.round((doneCount / todos.length) * 100),
+    [doneCount, todos.length],
+  );
 
   if (todos.length === 0) return null;
 
   const pageCount = Math.max(1, Math.ceil(todos.length / PAGE_SIZE));
-  const safePage = Math.min(page, pageCount - 1);
+  const effectivePage = Math.min(page, pageCount - 1);
   const slice = todos.slice(
-    safePage * PAGE_SIZE,
-    safePage * PAGE_SIZE + PAGE_SIZE,
+    effectivePage * PAGE_SIZE,
+    effectivePage * PAGE_SIZE + PAGE_SIZE,
   );
-
-  const done = todos.filter((t) => t.status === "completed").length;
-  const pct = Math.round((done / todos.length) * 100);
 
   return (
     <>
@@ -100,7 +102,7 @@ export const TodoPanel: FC<TodoPanelProps> = ({ todos, sessionId }) => {
                 Tasks
               </span>
               <span className="rounded-full bg-[#e8e5e0] px-2 py-0.5 text-[11px] font-medium text-[#6e6e73] dark:bg-[#3a3a3c] dark:text-[#a1a1a6]">
-                {done}/{todos.length}
+                {doneCount}/{todos.length}
               </span>
             </div>
             <button
@@ -131,7 +133,7 @@ export const TodoPanel: FC<TodoPanelProps> = ({ todos, sessionId }) => {
                 const isActive = t.status === "in_progress";
                 return (
                   <li
-                    key={`${safePage}-${i}`}
+                    key={`${t.content}-${i}`}
                     className="flex items-start gap-2.5 rounded-lg px-2.5 py-2 transition-colors hover:bg-[#f0ede8] dark:hover:bg-[#3a3a3c]"
                   >
                     {/* Status icon */}
@@ -159,18 +161,18 @@ export const TodoPanel: FC<TodoPanelProps> = ({ todos, sessionId }) => {
             <div className="flex items-center justify-between border-t border-[#e8e5e0] px-4 py-2.5 dark:border-[#3a3a3c]">
               <button
                 type="button"
-                disabled={safePage === 0}
+                disabled={effectivePage === 0}
                 onClick={() => setPage((p) => Math.max(0, p - 1))}
                 className="rounded-lg px-3 py-1 text-[11px] font-medium text-[#6e6e73] transition-colors hover:bg-[#e8e5e0] disabled:cursor-not-allowed disabled:opacity-30 dark:text-[#a1a1a6] dark:hover:bg-[#3a3a3c]"
               >
                 ← prev
               </button>
               <span className="text-[11px] tabular-nums text-[#aeaeb2]">
-                {safePage + 1} / {pageCount}
+                {effectivePage + 1} / {pageCount}
               </span>
               <button
                 type="button"
-                disabled={safePage >= pageCount - 1}
+                disabled={effectivePage >= pageCount - 1}
                 onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
                 className="rounded-lg px-3 py-1 text-[11px] font-medium text-[#6e6e73] transition-colors hover:bg-[#e8e5e0] disabled:cursor-not-allowed disabled:opacity-30 dark:text-[#a1a1a6] dark:hover:bg-[#3a3a3c]"
               >

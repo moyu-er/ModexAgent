@@ -441,8 +441,13 @@ class JsonFileTodoStore(TodoStore):
         payload = [t.to_dict() for t in todos]
         target = self._path(session_id)
         tmp = target.with_suffix(target.suffix + ".tmp")
-        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        os.replace(tmp, target)
+        try:
+            tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, target)
+        except Exception:
+            if tmp.exists():
+                tmp.unlink(missing_ok=True)
+            raise
 
     async def get(self, session_id: str) -> list[TodoItem]:
         data = read_json_robust(self._path(session_id))
