@@ -13,7 +13,8 @@ export type WebUIEventType =
   | "conversation_created"
   | "attached"
   | "conversation_deleted"
-  | "error";
+  | "error"
+  | "content";
 
 // ── Server → Client events ──────────────────────────────────────────────────
 
@@ -99,6 +100,16 @@ export interface ErrorEvent extends ServerEvent {
   message: string;
 }
 
+export interface ContentEvent extends ServerEvent {
+  event: "content";
+  text: string;
+}
+
+export interface TodoItemDTO {
+  content: string;
+  status: string;
+}
+
 export type ServerEventUnion =
   | UserMessageEvent
   | ModelContentDelta
@@ -112,7 +123,8 @@ export type ServerEventUnion =
   | ConversationCreatedEvent
   | AttachedEvent
   | ConversationDeletedEvent
-  | ErrorEvent;
+  | ErrorEvent
+  | ContentEvent;
 
 // ── Structured transport envelope ─────────────────────────────────────────────
 

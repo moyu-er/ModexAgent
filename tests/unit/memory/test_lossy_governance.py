@@ -11,18 +11,29 @@ from framework.memory.context_governance import (
 )
 
 
-async def test_lossy_compaction_truncates_tool_result() -> None:
-    messages = [
-        {"role": MessageRole.AGENT, "source_agent": "subagent", "content": "[From Agent subagent]\n" + "a" * 200},
-        {"role": MessageRole.TOOL, "tool_call_id": "t1", "name": "search", "content": "t" * 500},
+def _with_fillers(target: dict[str, object], total: int = 70) -> list[dict[str, object]]:
+    """Return a list starting with *target* and enough fillers to trigger
+    the default compaction step (compact_range_count=50, compact_buffer=20).
+    """
+    return [target] + [
+        {"role": str(MessageRole.USER), "content": "filler"} for _ in range(total - 1)
     ]
+
+
+async def test_lossy_compaction_truncates_tool_result() -> None:
+    messages = _with_fillers(
+        {"role": MessageRole.TOOL, "tool_call_id": "t1", "name": "search", "content": "t" * 500}
+    )
+    messages.insert(
+        0,
+        {"role": MessageRole.AGENT, "source_agent": "subagent", "content": "[From Agent subagent]\n" + "a" * 200},
+    )
+    # Now index 0=agent, index 1=tool, both within first compaction step.
     gov = LossyContentCompactionGovernance(
         tool_result_head_chars=20,
         assistant_head_chars=20,
         agent_head_chars=80,
         user_head_chars=120,
-        keep_range_count=0,
-        keep_range_ratio=0.0,
     )
 
     result = await gov.apply(messages)
@@ -36,9 +47,11 @@ async def test_lossy_compaction_truncates_tool_result() -> None:
 
 
 async def test_lossy_does_not_mutate_input() -> None:
-    messages = [{"role": MessageRole.TOOL, "tool_call_id": "t1", "name": "search", "content": "t" * 500}]
+    messages = _with_fillers(
+        {"role": MessageRole.TOOL, "tool_call_id": "t1", "name": "search", "content": "t" * 500}
+    )
     original_content = messages[0]["content"]
-    gov = LossyContentCompactionGovernance(tool_result_head_chars=20, keep_range_count=0, keep_range_ratio=0.0)
+    gov = LossyContentCompactionGovernance(tool_result_head_chars=20)
 
     result = await gov.apply(messages)
 
@@ -52,20 +65,16 @@ async def test_lossy_truncates_tool_args_json_aware() -> None:
 
     huge_value = "x" * 5000
     args = json.dumps({"content": huge_value, "path": "/tmp/out.md"})
-    messages: list[dict] = [
-        {
-            "role": MessageRole.ASSISTANT,
-            "content": "let me write",
-            "tool_calls": [
-                {"id": "call_1", "type": "function", "function": {"name": "write_file", "arguments": args}},
-            ],
-        },
-    ]
-    gov = LossyContentCompactionGovernance(
-        tool_args_head_chars=200,
-        keep_range_count=0,
-        keep_range_ratio=0.0,
-    )
+    target = {
+        "role": MessageRole.ASSISTANT,
+        "content": "let me write",
+        "tool_calls": [
+            {"id": "call_1", "type": "function", "function": {"name": "write_file", "arguments": args}},
+        ],
+    }
+    messages = _with_fillers(target)
+
+    gov = LossyContentCompactionGovernance(tool_args_head_chars=200)
 
     result = await gov.apply(messages)
 
@@ -83,16 +92,15 @@ async def test_lossy_truncates_tool_args_json_aware() -> None:
 async def test_lossy_skips_invalid_json_tool_args() -> None:
     """Non-JSON tool call arguments are left untouched (don't make them worse)."""
     bad_args = "{not valid json at all"
-    messages: list[dict] = [
-        {
-            "role": MessageRole.ASSISTANT,
-            "content": "",
-            "tool_calls": [
-                {"id": "call_1", "type": "function", "function": {"name": "bad_tool", "arguments": bad_args}},
-            ],
-        },
-    ]
-    gov = LossyContentCompactionGovernance(tool_args_head_chars=10, keep_range_count=0, keep_range_ratio=0.0)
+    target = {
+        "role": MessageRole.ASSISTANT,
+        "content": "",
+        "tool_calls": [
+            {"id": "call_1", "type": "function", "function": {"name": "bad_tool", "arguments": bad_args}},
+        ],
+    }
+    messages = _with_fillers(target)
+    gov = LossyContentCompactionGovernance(tool_args_head_chars=10)
 
     result = await gov.apply(messages)
 
@@ -102,15 +110,14 @@ async def test_lossy_skips_invalid_json_tool_args() -> None:
 
 async def test_lossy_skips_small_tool_args() -> None:
     """Small tool_calls arguments below the limit are left untouched."""
-    messages: list[dict] = [
-        {
-            "role": MessageRole.ASSISTANT,
-            "content": "let me search",
-            "tool_calls": [
-                {"id": "call_1", "type": "function", "function": {"name": "search", "arguments": '{"query": "ok"}'}},
-            ],
-        },
-    ]
+    target = {
+        "role": MessageRole.ASSISTANT,
+        "content": "let me search",
+        "tool_calls": [
+            {"id": "call_1", "type": "function", "function": {"name": "search", "arguments": '{"query": "ok"}'}},
+        ],
+    }
+    messages = _with_fillers(target)
     gov = LossyContentCompactionGovernance(tool_args_head_chars=2048)
 
     result = await gov.apply(messages)

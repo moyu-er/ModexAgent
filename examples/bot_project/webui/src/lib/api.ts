@@ -2,6 +2,7 @@ import type {
   ConversationInfo,
   CreateConversationResponse,
   ServerEventUnion,
+  TodoItemDTO,
 } from "../types/events";
 
 const API_BASE = "/api";
@@ -103,16 +104,31 @@ export async function deleteConversation(
 
 // ── Messages ────────────────────────────────────────────────────────────────
 
+async function fetchSessionResource<T>(
+  sessionId: string,
+  ws: string | undefined,
+  resource: "messages" | "todos",
+): Promise<T> {
+  // ws (workspace) scopes the read to the session's workspace — without it the
+  // server reads home and a message written under another workspace is lost.
+  const params = ws ? `?ws=${encodeURIComponent(ws)}` : "";
+  const resp = await fetch(`${API_BASE}/sessions/${sessionId}/${resource}${params}`);
+  await assertOk(resp);
+  return resp.json() as Promise<T>;
+}
+
 export async function fetchMessages(
   sessionId: string,
   ws?: string,
 ): Promise<ServerEventUnion[]> {
-  // ws (workspace) scopes the read to the session's workspace — without it the
-  // server reads home and a message written under another workspace is lost.
-  const params = ws ? `?ws=${encodeURIComponent(ws)}` : "";
-  const resp = await fetch(`${API_BASE}/sessions/${sessionId}/messages${params}`);
-  await assertOk(resp);
-  return resp.json() as Promise<ServerEventUnion[]>;
+  return fetchSessionResource<ServerEventUnion[]>(sessionId, ws, "messages");
+}
+
+export async function fetchTodos(
+  sessionId: string,
+  ws?: string,
+): Promise<TodoItemDTO[]> {
+  return fetchSessionResource<TodoItemDTO[]>(sessionId, ws, "todos");
 }
 
 export async function fetchAllMessages(

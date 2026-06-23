@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ServerEventUnion, UIMessage } from "../types/events";
+import type { ServerEventUnion, TodoItemDTO, UIMessage } from "../types/events";
 import { eventsToMessages } from "../types/events";
 import { WebSocketClient, buildWsUrl } from "../lib/ws-client";
-import { fetchMessages } from "../lib/api";
+import { fetchMessages, fetchTodos } from "../lib/api";
 import { applyServerEvent, type StreamState } from "./useWebUIStream.reducer";
 
 /** Events that mark the start of an assistant turn (set isStreaming=true). */
@@ -16,6 +16,8 @@ export interface UseWebUIStreamResult {
   messages: UIMessage[];
   isStreaming: boolean;
   isPending: boolean;
+  /** Active todos for the currently selected session (pending + in_progress). */
+  todos: TodoItemDTO[];
   connect: () => void;
   disconnect: () => void;
   send: (content: string) => void;
@@ -35,6 +37,7 @@ export function useWebUIStream(
     isStreaming: false,
     sessionMessages: {},
     sessionStreaming: {},
+    todos: {},
   });
   const clientRef = useRef<WebSocketClient | null>(null);
   /** ID of the most recent optimistically-added user message.  The server
@@ -96,6 +99,27 @@ export function useWebUIStream(
       setState((prev) =>
         applyServerEvent(prev, event, sessionId, pendingRequestRef),
       );
+
+      // When a todo tool completes, re-fetch the authoritative list from the
+      // backend.  result_summary is truncated by the emitter (~200 chars), so
+      // the reducer cannot reliably parse a full todo list from it.
+      // The fetch endpoint reads directly from the per-session TodoStore.
+      if (
+        event.event === "tool_call_end" &&
+        event.session_id &&
+        (event.tool === "todo_write" || event.tool === "todo_read")
+      ) {
+        fetchTodos(event.session_id, currentWsRef.current).then(
+          (items) => {
+            setState((prev) => ({
+              ...prev,
+              todos: { ...prev.todos, [event.session_id]: items },
+            }));
+          },
+        ).catch((err) => {
+          console.error("Failed to refresh todos after tool_call_end", err);
+        });
+      }
     },
     [sessionId, getPoolForUuid, onSessionReady, onSessionActivity, onSessionCreated],
   );
@@ -169,6 +193,7 @@ export function useWebUIStream(
       isStreaming: prev.isStreaming,
       sessionMessages: {},
       sessionStreaming: {},
+      todos: {},
     }));
     streamingSessionsRef.current.clear();
   }, [currentWs]);
@@ -181,6 +206,7 @@ export function useWebUIStream(
         isStreaming: false,
         sessionMessages: prev.sessionMessages,
         sessionStreaming: prev.sessionStreaming,
+        todos: prev.todos,
       }));
       return;
     }
@@ -192,6 +218,7 @@ export function useWebUIStream(
         isStreaming: false,
         sessionMessages: prev.sessionMessages,
         sessionStreaming: prev.sessionStreaming,
+        todos: prev.todos,
       }));
       if (clientRef.current?.connected) {
         clientRef.current.attach(sessionId, pool, currentWsRef.current);
@@ -211,10 +238,17 @@ export function useWebUIStream(
       isStreaming: false,
       sessionMessages: prev.sessionMessages,
       sessionStreaming: prev.sessionStreaming,
+      todos: prev.todos,
     }));
 
-    fetchMessages(sessionId, currentWs)
-      .then((events) => {
+    Promise.all([
+      fetchMessages(sessionId, currentWs),
+      fetchTodos(sessionId, currentWs).catch((err) => {
+        console.error("Failed to fetch todos for", sessionId, err);
+        return [] as TodoItemDTO[];
+      }),
+    ])
+      .then(([events, fetchedTodos]) => {
         if (cancelled) return;
         const history = eventsToMessages(events);
         setState((prev) => {
@@ -227,6 +261,7 @@ export function useWebUIStream(
             ...prev,
             messages: [...history, ...liveTail],
             isStreaming: streaming,
+            todos: { ...prev.todos, [sessionId]: fetchedTodos },
           };
         });
       })
@@ -304,9 +339,11 @@ export function useWebUIStream(
     messages: state.messages,
     isStreaming: state.isStreaming,
     isPending,
+    todos: sessionId ? state.todos[sessionId] ?? [] : [],
     connect,
     disconnect,
     send,
     pause,
   };
 }
+

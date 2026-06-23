@@ -8,6 +8,7 @@ from framework.multi_agent.comm_kind import AgentCommKind
 if TYPE_CHECKING:
     from framework.core.context import ContextManager
     from framework.core.llm_struct import RuntimeSafetyPolicy
+    from framework.ioc.configs.memory import MemoryConfig
     from framework.multi_agent.address import AgentAddress
     from framework.pipeline.pipeline import AgentPipeline
 
@@ -62,6 +63,11 @@ class AgentDescriptor:
     exposed_to_agents: bool = True
     safety_policy: RuntimeSafetyPolicy | None = None
     comm_kind: AgentCommKind = AgentCommKind.NORMAL
+    memory_config: MemoryConfig | None = None
+    """Subagent/template MemoryConfig. Read by AgentFactory to build a
+    ContextGovernance chain (tool chain repair + final legality) for the
+    subagent pipeline. None means the subagent gets no governance — the
+    default in factory.create_agent."""
 
 
 @dataclass

@@ -511,6 +511,20 @@ async def _build_tools(
         tm.register(ExperienceTool(_exp_path, exp_meta))
         logger.info("Pool '%s': experience tool registered", pool_name)
 
+    # Todo tools — path from pool_data (pool-aware) or data_dir fallback,
+    # mirroring the experience-tool path resolution above.
+    from framework.runtime.store import JsonFileTodoStore
+    from framework.tools.standard import TodoReadTool, TodoWriteTool
+
+    if pool_data is not None and pool_data.runtime_dir is not None:
+        todo_dir: Path = pool_data.runtime_dir / "todos"
+    else:
+        todo_dir = data_dir / "runtime_state" / pool_name / "todos"
+    todo_store = JsonFileTodoStore(todo_dir)
+    tm.register(TodoWriteTool(todo_store))
+    tm.register(TodoReadTool(todo_store))
+    logger.info("Pool '%s': todo tools registered (dir=%s)", pool_name, todo_dir)
+
     # MCP tools (convention: config/mcp/{agent_name}.json)
     # Respect pool-level mcp.enabled toggle and never let MCP failures break
     # the rest of the tool manager / pool creation.

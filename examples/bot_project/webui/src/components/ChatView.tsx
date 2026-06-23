@@ -1,11 +1,16 @@
 import { useState, useRef, useEffect, type FC, type FormEvent, type KeyboardEvent } from "react";
-import type { UIMessage } from "../types/events";
+import type { TodoItemDTO, UIMessage } from "../types/events";
 import { MessageBubble } from "./MessageBubble";
+import { TodoPanel } from "./TodoPanel";
 
 export interface ChatViewProps {
   messages: UIMessage[];
   isStreaming: boolean;
   isPending: boolean;
+  /** Active todos (pending + in_progress) for the selected session. */
+  todos: TodoItemDTO[];
+  /** Current session id — passed to TodoPanel so it auto-closes on switch. */
+  sessionId?: string | null;
   onSend: (content: string) => void;
   /** Invoked when the user presses the pause control on a streaming session. */
   onPause?: () => void;
@@ -25,6 +30,8 @@ export const ChatView: FC<ChatViewProps> = ({
   messages,
   isStreaming,
   isPending,
+  todos,
+  sessionId,
   onSend,
   onPause,
   readOnly = false,
@@ -129,6 +136,9 @@ export const ChatView: FC<ChatViewProps> = ({
           <div ref={bottomRef} />
         </div>
       </div>
+
+      {/* Floating todo widget — outside the scroll area so it stays visible */}
+      <TodoPanel todos={todos} sessionId={sessionId} />
 
       {/* Floating composer */}
       <div className="px-3 pb-6 pt-2 md:px-5">

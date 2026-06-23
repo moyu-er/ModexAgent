@@ -683,6 +683,7 @@ class AgentCommunicationService:
             context_strategy="persistent",
             safety_policy=self._safety,
             comm_kind=AgentCommKind.SUBAGENT,
+            memory_config=template.memory,
         )
 
         # ── Register ──

@@ -12,7 +12,7 @@ Runtime state governance — typed state models, enums, persistence, codecs, and
 | File | Description |
 |------|-------------|
 | `services.py` | `AgentRuntimeServices` — process-scope services container (hooks, interceptors, control, approval, governance, stores); `AgentRuntime` — composes services + per-turn state |
-| `store.py` | `TurnStateStore` + `RuntimeCommandStore` ABCs; `NoOpTurnStateStore` / `InMemoryTurnStateStore` / `JsonFileTurnStateStore` implementations; `ActiveTurnConflictError` |
+| `store.py` | `TurnStateStore` + `RuntimeCommandStore` ABCs; `NoOpTurnStateStore` / `InMemoryTurnStateStore` / `JsonFileTurnStateStore` implementations; `ActiveTurnConflictError`. Also `TodoStore` ABC + `JsonFileTodoStore` + `TodoItem` (per-session task-list store, a separate concern from turn snapshots — injected into the todo tools, not part of turn-state governance) |
 | `dispatch.py` | Runtime dispatch utilities |
 | `models.py` | Core data models — `TurnIdentity`, `ToolArguments`, `ApprovalRequest`, `ApprovalTransaction`, `ToolCallRecord`, `ToolBatchState`, `TurnStateBase`, `TurnSnapshot`, `TurnSummary`, `ControlCommandState`, `StateQueryScope`, `MessageDelta` |
 | `enums.py` | Enumerations — `StateScope`, `AgentKind`, `TurnPhase`, `OperationKind`, `ToolBatchStatus`, `ToolCallStatus`, `ApprovalDenyPolicy`, `ApprovalSubjectType`, `OperationStatus`, `CancellationSource`, `SnapshotReason`, `ControlCommandKind`, `MessageDeltaSource`, `TurnCustomKey` |

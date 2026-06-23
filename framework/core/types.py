@@ -40,6 +40,15 @@ class MessageRole(StrEnum):
     PENDING = "pending"
 
 
+class TodoStatus(StrEnum):
+    """Status of a todo item in a session task list."""
+
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+
 # ============================================================================
 # 消息类型（V2 架构统一）
 # ============================================================================

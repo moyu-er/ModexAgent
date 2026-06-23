@@ -388,20 +388,33 @@ skills/
 
 ### 治理系统
 
-自动修复和优化上下文，无需人工干预：
+治理在每次调用 LLM 之前作用于模型可见的消息副本。在 Pool 配置或 Subagent 模板的 `memory.governance` 下配置。
+
+主 Agent 示例（`config/pools/main.yml`）：
 
 ```yaml
 memory:
-  main:
-    governance:
-      enabled: true
-      tool_chain_repair: true         # 修复断裂的工具调用链
-      microcompact:
-        enabled: true
-        keep_recent: 10               # 保留最近 10 条
-      token_budget:
-        enabled: true
-        budget_ratio: 0.5             # LLM max_tokens 的 50%
+  session:
+    max_messages: 150
+    max_tokens: 100000
+  governance:
+    tool_chain_repair: true      # 必需：修复孤儿/不完整 tool-call 组
+    lossy_compaction:
+      tool_result_head_chars: 1200
+      assistant_head_chars: 1200
+      agent_head_chars: 2000
+      user_head_chars: 4000
+      compact_range_count: 50    # 可选：默认 50，最小 20
+```
+
+Subagent 模板（`config/pools/*/templates/*.yml`）保持轻量治理：
+
+```yaml
+memory:
+  session:
+    max_messages: 100
+  governance:
+    tool_chain_repair: true
 ```
 
 ## 添加新 Subagent
@@ -543,15 +556,13 @@ memory:
       interval: 300
       threshold: 5
     governance:
-      enabled: true
       tool_chain_repair: true
-      microcompact:
-        enabled: true
-        keep_recent: 10
-      token_budget:
-        enabled: true
-        budget_ratio: 0.5
-        safety_buffer: 1024
+      lossy_compaction:
+        tool_result_head_chars: 1200
+        assistant_head_chars: 1200
+        agent_head_chars: 2000
+        user_head_chars: 4000
+        compact_range_count: 50
 ```
 
 ### MCP

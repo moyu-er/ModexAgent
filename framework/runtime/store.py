@@ -9,10 +9,14 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
+from framework.core.types import TodoStatus
 from framework.utils.file_io import read_json_robust
 
 from .codec import RuntimeStateCodecRegistry
@@ -373,3 +377,92 @@ class JsonFileRuntimeCommandStore(RuntimeCommandStore):
             data["status"] = "completed"
             data["applied_at"] = time.time()
             path.write_text(json.dumps(data, ensure_ascii=False, default=str), encoding="utf-8")
+
+
+# ===========================================================================
+# TodoStore — per-session task list persistence
+# ===========================================================================
+
+
+@dataclass(frozen=True)
+class TodoItem:
+    """A single task-list entry. Order is conveyed by list position (no id)."""
+
+    content: str
+    status: TodoStatus
+
+    def to_dict(self) -> dict[str, str]:
+        return {"content": self.content, "status": self.status.value}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> TodoItem:
+        return cls(content=str(data["content"]), status=TodoStatus(data["status"]))
+
+
+class TodoStore(ABC):
+    """Per-session task list persistence. Session-scoped; pool-isolated by base_dir."""
+
+    @abstractmethod
+    async def save(self, session_id: str, todos: list[TodoItem]) -> None: ...
+
+    @abstractmethod
+    async def get(self, session_id: str) -> list[TodoItem]: ...
+
+    @abstractmethod
+    async def delete(self, session_id: str) -> None: ...
+
+
+class JsonFileTodoStore(TodoStore):
+    """One JSON file per session: ``<base_dir>/<session_id>.json``.
+
+    ``base_dir`` is injected by the caller (pool-aware in production; a tmp dir
+    in tests). Atomic write via tmp + os.replace.
+
+    ``_safe_segment`` only neutralizes characters that are genuinely unsafe on
+    common filesystems (``/``, ``\``, ``:``, ``*``, ``?``, ``"``, ``<``, ``>``,
+    ``|``). Session ids in this system are ``{prefix}.{agent}[.{invocation_id}]``,
+    so the resulting filename is essentially the session id plus ``.json``.
+    """
+
+    _SAFE_RE = re.compile(r"[^A-Za-z0-9._-]")
+
+    def __init__(self, base_dir: Path) -> None:
+        self._base_dir = base_dir
+        self._base_dir.mkdir(parents=True, exist_ok=True)
+
+    @classmethod
+    def _safe_segment(cls, raw: str) -> str:
+        return cls._SAFE_RE.sub("_", raw)
+
+    def _path(self, session_id: str) -> Path:
+        return self._base_dir / f"{self._safe_segment(session_id)}.json"
+
+    async def save(self, session_id: str, todos: list[TodoItem]) -> None:
+        payload = [t.to_dict() for t in todos]
+        target = self._path(session_id)
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        try:
+            tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, target)
+        except Exception:
+            if tmp.exists():
+                tmp.unlink(missing_ok=True)
+            raise
+
+    async def get(self, session_id: str) -> list[TodoItem]:
+        data = read_json_robust(self._path(session_id))
+        if not isinstance(data, list):
+            return []
+        items: list[TodoItem] = []
+        for entry in data:
+            if isinstance(entry, dict):
+                try:
+                    items.append(TodoItem.from_dict(entry))
+                except (KeyError, ValueError):
+                    continue
+        return items
+
+    async def delete(self, session_id: str) -> None:
+        path = self._path(session_id)
+        if path.exists():
+            path.unlink()

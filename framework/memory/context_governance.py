@@ -74,24 +74,28 @@ class ToolChainRepairGovernance(ContextGovernance):
         return result.messages
 
 
+_COMPACT_BUFFER = 20
+
+
 class LossyContentCompactionGovernance(ContextGovernance):
     """Apply deterministic lossy reductions to LLM context copies only.
 
-    Truncates oversized ``content`` fields by role and, for assistant
-    messages with tool_calls, truncates oversized ``function.arguments``
-    strings so that huge tool-call payloads (e.g. 71 KB write_file
-    content) do not blow through the token budget.
+    Compaction happens in fixed-size steps.  When the conversation length
+    exceeds ``n * compact_range_count + _COMPACT_BUFFER``, the oldest
+    ``n * compact_range_count`` messages become candidates for compaction.
+    Within a step the set of compacted messages does not change, so the
+    prefix stabilizes and prompt caches can warm up.
     """
 
     def __init__(
         self,
         tool_result_head_chars: int = 1200,
         assistant_head_chars: int = 1200,
-        agent_head_chars: int = -1,
-        user_head_chars: int = -1,
+        agent_head_chars: int = 1200,
+        user_head_chars: int = 1200,
         tool_args_head_chars: int = 2048,
-        keep_range_count: int = 20,
-        keep_range_ratio: float = 0.5,
+        compact_range_count: int = 50,
+        compact_buffer: int = _COMPACT_BUFFER,
     ) -> None:
         self._limits = {
             str(MessageRole.TOOL): tool_result_head_chars
@@ -104,17 +108,23 @@ class LossyContentCompactionGovernance(ContextGovernance):
             str(MessageRole.USER): user_head_chars if isinstance(user_head_chars, int) else None,
         }
         self._tool_args_head_chars = tool_args_head_chars
-        self.keep_range_count = keep_range_count
-        self.keep_range_ratio = max(0.0, min(1.0, keep_range_ratio))
+        self.compact_range_count = max(20, compact_range_count)
+        self.compact_buffer = max(5, compact_buffer)
 
     async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        result: list[dict[str, Any]] = []
         length = len(messages)
-        max_range = max(
-            0, min(length - self.keep_range_count, int(length * (1.0 - self.keep_range_ratio)))
-        )
-        if max_range <= 0:
-            return messages
+        buffer = self.compact_buffer
+        if length <= buffer:
+            return list(messages)
+
+        # Step-based compaction: only touch whole blocks of compact_range_count
+        # oldest messages.  The same block stays untouched until the next step.
+        n = (length - buffer) // self.compact_range_count
+        compact_count = n * self.compact_range_count
+        if compact_count <= 0:
+            return list(messages)
+
+        result: list[dict[str, Any]] = []
         for i, msg in enumerate(messages):
             updated = dict(msg)
             role = str(updated.get("role", ""))
@@ -124,7 +134,8 @@ class LossyContentCompactionGovernance(ContextGovernance):
                 result.append(updated)
                 continue
 
-            if i >= max_range:
+            # Only the oldest compact_count messages are candidates.
+            if i >= compact_count:
                 result.append(updated)
                 continue
 
@@ -276,7 +287,10 @@ class LossyContentCompactionGovernance(ContextGovernance):
         *,
         source_agent: str = "",
     ) -> str:
-        suffix = f"\n[Context content truncated for role={role}; original chars={len(content)}]"
+        # Keep the suffix stable (no dynamic length) so identical content
+        # compacted in different turns produces identical output and can
+        # benefit from prompt caches.
+        suffix = f"\n[Context content truncated for role={role}]"
         prefix = (
             f"[From Agent {source_agent}]\n"
             if role == str(MessageRole.AGENT) and source_agent

@@ -25,6 +25,7 @@ SUBDIR_POOL_SESSIONS: str = "pool_sessions"
 SUBDIR_SESSIONS: str = "sessions"
 SUBDIR_SESSION_INDEX: str = "session_index"
 SUBDIR_OVERFLOW: str = "overflow"
+SUBDIR_TODOS: str = "todos"
 SUBDIR_TURNS: str = "turns"
 SUBDIR_COMMANDS: str = "commands"
 SUBDIR_TRACE: str = "trace"
@@ -37,7 +38,7 @@ RESERVED_GLOBAL_DIR: str = "_registry"
 
 # Leaves permitted under the per-pool runtime directory.
 _RUNTIME_LEAVES: frozenset[str] = frozenset(
-    {SUBDIR_TURNS, SUBDIR_COMMANDS, SUBDIR_TRACE, SUBDIR_OUTPUT}
+    {SUBDIR_TURNS, SUBDIR_COMMANDS, SUBDIR_TRACE, SUBDIR_OUTPUT, SUBDIR_TODOS}
 )
 
 # Anything outside [A-Za-z0-9_-] is neutralized to ``_``. Dots are excluded
