@@ -348,7 +348,7 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
             await self._send_event(evt)
 
         elif event_value == _TODO_UPDATED:
-            todo_data: dict = data or {}
+            todo_data: dict[str, object] = data or {}
             evt = TodoUpdatedEvent(
                 session_id=self._session_id,
                 agent_name=self._agent_name,

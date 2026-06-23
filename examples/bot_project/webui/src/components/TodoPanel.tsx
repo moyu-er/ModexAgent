@@ -1,4 +1,4 @@
-import { useMemo, useState, type FC } from "react";
+import { useState, type FC } from "react";
 import type { TodoItemDTO } from "../types/events";
 
 const PAGE_SIZE = 5;
@@ -16,22 +16,18 @@ export interface TodoPanelProps {
  * Shows the active task list (in_progress + pending) for the selected session.
  * Hidden when empty. Paginated when more than PAGE_SIZE items.
  *
- * in_progress items sort before pending (preserving input order within each
- * group) so the currently-active work stays at the top.
+ * Items are shown in the order the agent wrote them — the list order IS the
+ * intended execution sequence (see todo_write description), so we do NOT
+ * re-sort by status for display.
  */
 export const TodoPanel: FC<TodoPanelProps> = ({ todos }) => {
   const [page, setPage] = useState(0);
 
-  const ordered = useMemo(() => {
-    const rank = (s: string): number => (s === "in_progress" ? 0 : 1);
-    return [...todos].sort((a, b) => rank(a.status) - rank(b.status));
-  }, [todos]);
+  if (todos.length === 0) return null;
 
-  if (ordered.length === 0) return null;
-
-  const pageCount = Math.ceil(ordered.length / PAGE_SIZE);
+  const pageCount = Math.ceil(todos.length / PAGE_SIZE);
   const safePage = Math.min(page, pageCount - 1);
-  const slice = ordered.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
+  const slice = todos.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
 
   return (
     <div className="mx-auto mb-4 w-full min-w-[60%] rounded-xl border border-divider-light bg-ai-bubble-light/50 p-3 text-sm dark:border-divider-dark dark:bg-ai-bubble-dark/50">
