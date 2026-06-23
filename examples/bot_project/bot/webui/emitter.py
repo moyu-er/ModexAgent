@@ -21,6 +21,7 @@ import logging
 import time
 import uuid
 from collections.abc import Callable
+from enum import Enum
 from pathlib import Path
 from typing import Any, Generic, TypeVar
 
@@ -39,6 +40,7 @@ from .events import (
     ModelReasoningDelta,
     ServerEvent,
     SessionMeta,
+    TodoUpdatedEvent,
     ToolCallEndEvent,
     ToolCallEvent as TcEvent,
     ToolCallStartEvent,
@@ -53,6 +55,7 @@ from .transcript_store import TranscriptStore
 _MODEL_REASONING: str = "model_reasoning"
 _TOOL_CALL_START: str = "tool_call_start"
 _TOOL_CALL_END: str = "tool_call_end"
+_TODO_UPDATED: str = "todo.updated"
 
 # ── Truncation limits for WebSocket events ─────────────────────────────────
 # Full data is saved in the transcript store; only truncated versions are
@@ -250,8 +253,14 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
     # ------------------------------------------------------------------
 
     async def _on_event(self, event: ReActEvent, data: Any = None) -> None:
-        """Handle framework events — stream to WebSocket and persist incrementally."""
-        event_value: str = event.value
+        """Handle framework events — stream to WebSocket and persist incrementally.
+
+        Supports both ``ReActEvent`` enum members and bare-string event names
+        emitted by framework tools that stay decoupled from the ReAct event enum
+        (e.g. ``"todo.updated"`` from the todo tools). ``str(enum)`` would yield
+        ``"ReActEvent.X"``, so the value is extracted via ``.value`` for enums.
+        """
+        event_value: str = event.value if isinstance(event, Enum) else str(event)
 
         if event_value == _MODEL_REASONING:
             text: str = data
@@ -335,6 +344,15 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
                 tool=tool_name,
                 result_summary=result_summary,
                 turn_id=self._current_turn_id,
+            )
+            await self._send_event(evt)
+
+        elif event_value == _TODO_UPDATED:
+            todo_data: dict = data or {}
+            evt = TodoUpdatedEvent(
+                session_id=self._session_id,
+                agent_name=self._agent_name,
+                todos=list(todo_data.get("todos", [])),
             )
             await self._send_event(evt)
 
