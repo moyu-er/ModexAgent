@@ -78,18 +78,15 @@ class TodoWriteTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Maintain a structured task list for this session to track multi-step work. "
-            "The list and its order are shown to the user.\n\n"
-            "Use when the task has 3+ distinct steps or the user gives multiple tasks. "
-            "Skip for single, trivial, or purely informational requests.\n\n"
-            "Statuses: pending, in_progress (more than one allowed), completed, cancelled.\n"
-            "- ORDER MATTERS: list order is the execution sequence — work top to bottom.\n"
-            "- Update in real time; don't batch.\n"
-            "- Mark completed only after the work is truly done AND verified — never on intent.\n"
-            "- Blocked? Keep it in_progress and add a follow-up item describing the blocker.\n"
-            "- Full-replace: send the entire list every call. Returns the active items "
-            "(in_progress + pending) so you can confirm what remains; completed/cancelled "
-            "are excluded from the return and may be dropped."
+            "Maintain a structured task list for this session.\n"
+            "Status lifecycle: pending → in_progress → completed/cancelled.\n"
+            "NEVER skip in_progress. Mark it BEFORE starting work; mark completed ONLY after "
+            "the work is done and verified.\n"
+            "Keep one in_progress item when possible. List order is execution order. "
+            "Update in real time; don't batch completions.\n"
+            "Use for 3+ distinct steps or multiple user tasks. Skip for trivial or "
+            "informational requests.\n"
+            "Full-replace: send the entire list every call. Returns active items only."
         )
 
     @property
@@ -140,10 +137,8 @@ class TodoReadTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Return the ACTIVE task list (pending + in_progress) for this session, in "
-            "execution order; completed/cancelled are excluded. Call when you're unsure "
-            "what you're working on, or after context compression/archiving may have made "
-            "the list stale."
+            "Return active tasks (pending + in_progress) in execution order. "
+            "Call when unsure what to do next or the list may be stale."
         )
 
     @property

@@ -42,6 +42,7 @@ Work autonomously to complete assigned tasks. Use all available tools as needed.
 1. Send the task description and context to planner (invocation_id="").
 2. Planner returns a detailed implementation plan.
 3. Upon receiving the message, execute according to the plan.
+4. Track progress with `todo_write` / `todo_read` as you work through the steps.
 
 ## Completion Output Format
 
