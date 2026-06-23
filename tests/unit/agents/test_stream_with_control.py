@@ -1,5 +1,10 @@
-"""Tests for ReActAgent._stream_with_control — LLM_STREAM interceptor path."""
+"""Tests for ReActAgent._stream_with_control — LLM_STREAM interceptor path.
 
+Includes mid-turn cancel verification: a CANCEL_TURN injected while the LLM
+is streaming must be consumed by the LlmCancelInterceptor and abort the turn.
+"""
+
+import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -18,6 +23,8 @@ class _StreamingEmitter:
         self.events: list = []
         self.deltas: list[str] = []
         self._stream_end_resuming: bool | None = None
+        self.completed: Any = None
+        self.error: str | None = None
 
     def wants_streaming(self) -> bool:
         return True
@@ -37,27 +44,13 @@ class _StreamingEmitter:
         self._stream_end_resuming = resuming
 
     async def emit_complete(self, result):
-        pass
+        self.completed = result
 
     async def emit_error(self, error: str):
-        pass
+        self.error = error
 
 
-class _FakeHistory:
-    def __init__(self):
-        self.messages: list = []
-
-    async def append(self, message):
-        self.messages.append(message)
-
-    async def replace_all(self, messages):
-        self.messages = list(messages)
-
-    def __iter__(self):
-        return iter(self.messages)
-
-
-def _make_fake_ctx(*, interceptor_chain=None):
+def _make_fake_ctx(*, interceptor_chain=None, control_channel=None):
     from framework.core.agent import AgentContext
     from framework.memory.history import ListMessageHistory
     from framework.core.tool_manager import InMemoryToolManager
@@ -70,7 +63,11 @@ def _make_fake_ctx(*, interceptor_chain=None):
         identity=TurnIdentity(agent_id="test", session=SessionInfo.from_str("test-session-001"), turn_id="t1"),
         agent_kind=AgentKind.REACT, phase=TurnPhase.CREATED,
     )
-    runtime = AgentRuntime(services=AgentRuntimeServices(interceptors=interceptor_chain), state=state)
+    services = AgentRuntimeServices(
+        interceptors=interceptor_chain,
+        control_channel=control_channel,
+    )
+    runtime = AgentRuntime(services=services, state=state)
     ctx = AgentContext(
         system_prompt="", history=ListMessageHistory(),
         tool_manager=InMemoryToolManager(), session=SessionInfo.from_str("test.agent"),
@@ -201,3 +198,146 @@ class TestStreamWithControlPreservesToolCalls:
 
         assert result.content == "Hello!"
         assert emitter._stream_end_resuming is False
+
+
+class TestMidTurnCancelViaInterceptor:
+    """CANCEL_TURN injected while a turn is in-flight must be consumed by the
+    LlmCancelInterceptor and abort the turn cleanly.
+
+    Without this, the WebUI pause button sends CANCEL_TURN but it sits in the
+    channel unconsumed — the LLM streams to completion, tools execute, and
+    the turn finishes naturally.  The user observes "点击暂停→毫无反应".
+    """
+
+    @pytest.mark.asyncio
+    async def test_mid_stream_cancel_via_callback_drain(self):
+        """CANCEL_TURN injected BEFORE the LLM stream begins must be consumed
+        by the drain inside _on_content_delta and abort the turn immediately —
+        before chat_stream returns.  This is the fast path: one content delta
+        fires, the drain finds CANCEL_TURN, the provider aborts the stream."""
+        from framework.control.channel import InMemoryControlChannel
+        from framework.control.types import (
+            ControlCommand,
+            ControlCommandType,
+            ControlScope,
+        )
+        from framework.interceptor.chain import InterceptorChain
+
+        channel = InMemoryControlChannel()
+        chain = InterceptorChain()
+
+        # Pre-load CANCEL_TURN so the first _on_content_delta drain finds it.
+        await channel.send(ControlCommand(
+            command_id="cancel-preloaded",
+            type=ControlCommandType.CANCEL_TURN,
+            scope=ControlScope(session_id="test.agent"),
+        ))
+
+        class CancellableStreamProvider(StreamingLLMProvider):
+            async def chat_stream(self, messages, tools=None, temperature=0.7,
+                                  max_tokens=None, on_content_delta=None,
+                                  on_reasoning_delta=None, **kwargs):
+                if on_content_delta:
+                    # This callback drain will find and consume CANCEL_TURN,
+                    # raising AgentCancelled which propagates through the
+                    # provider back to _stream_with_control.
+                    await on_content_delta("shall be cancelled")
+                # Should never reach here.
+                return LLMResponse(
+                    content="", finish_reason="stop", tool_calls=[],
+                )
+
+            async def chat(self, *args, **kwargs) -> LLMResponse:
+                return LLMResponse(content="", finish_reason="stop")
+
+            def get_default_model(self) -> str:
+                return "test-model"
+
+        provider = CancellableStreamProvider()
+        agent = ReActAgent(provider=provider)
+        emitter = _StreamingEmitter()
+        ctx = _make_fake_ctx(interceptor_chain=chain, control_channel=channel)
+
+        result = await agent.run(ctx, emitter)
+
+        assert emitter.completed is not None, (
+            "Drain inside _on_content_delta must raise AgentCancelled "
+            "immediately, and ReActAgent must emit turn_end."
+        )
+        assert result.stop_reason == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_mid_stream_cancel_aborts_turn(self):
+        from framework.control.channel import InMemoryControlChannel
+        from framework.control.types import (
+            ControlCommand,
+            ControlCommandType,
+            ControlScope,
+        )
+        from framework.hook.builtin.control_drain import LlmCancelInterceptor
+        from framework.interceptor.chain import InterceptorChain
+
+        channel = InMemoryControlChannel()
+        chain = InterceptorChain()
+        chain.add(LlmCancelInterceptor(channel=channel))
+
+        # Slow provider: emits one chunk, then waits for external signal.
+        # The test body injects CANCEL_TURN while chat_stream is "in-flight".
+        chunk_gate = asyncio.Event()
+
+        class SlowStreamingProvider(StreamingLLMProvider):
+            async def chat_stream(self, messages, tools=None, temperature=0.7,
+                                  max_tokens=None, on_content_delta=None,
+                                  on_reasoning_delta=None, **kwargs):
+                if on_content_delta:
+                    await on_content_delta("正在分析问题...")
+                # Simulate a long-running LLM call — the user clicks pause
+                # during this window.
+                await chunk_gate.wait()
+                return LLMResponse(
+                    content="这是完整的回答。",
+                    finish_reason="stop",
+                    tool_calls=[],
+                )
+
+            async def chat(self, *args, **kwargs) -> LLMResponse:
+                return LLMResponse(content="", finish_reason="stop")
+
+            def get_default_model(self) -> str:
+                return "test-model"
+
+        provider = SlowStreamingProvider()
+        agent = ReActAgent(provider=provider)
+        emitter = _StreamingEmitter()
+        ctx = _make_fake_ctx(interceptor_chain=chain, control_channel=channel)
+
+        # Kick off the turn (it will block inside chat_stream at chunk_gate).
+        turn_task = asyncio.create_task(agent.run(ctx, emitter))
+
+        # Wait for the first delta to confirm streaming has started.
+        await asyncio.sleep(0.2)
+        assert len(emitter.deltas) >= 1, "streaming must have started"
+
+        # Inject CANCEL_TURN now (simulating the user clicking pause mid-stream).
+        await channel.send(ControlCommand(
+            command_id="cancel-mid",
+            type=ControlCommandType.CANCEL_TURN,
+            scope=ControlScope(session_id="test.agent"),
+        ))
+
+        # Unblock the provider so chat_stream returns and the interceptor
+        # drains the control channel.
+        chunk_gate.set()
+
+        result = await asyncio.wait_for(turn_task, timeout=10.0)
+
+        assert emitter.completed is not None, (
+            "LlmCancelInterceptor must raise AgentCancelled after draining the "
+            "channel, and ReActAgent must emit turn_end (emit_complete). "
+            "Currently the CANCEL_TURN is silently consumed OR the turn "
+            "completes normally — the pause button has no effect."
+        )
+        assert result.stop_reason == "cancelled", (
+            f"Expected stop_reason='cancelled', got '{result.stop_reason}'. "
+            "The turn must know it was cancelled, not completed normally."
+        )

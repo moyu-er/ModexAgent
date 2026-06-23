@@ -8,7 +8,7 @@ from framework.memory.pruned.manager import PrunedManager
 
 
 class RestrictedInjectionPolicy(MemoryInjectionPolicy):
-    """Peer/subagent policy — session messages only, no knowledge/archive/providers."""
+    """Peer/subagent policy - session messages only, no knowledge/archive/providers."""
 
     def __init__(
         self,
@@ -17,6 +17,9 @@ class RestrictedInjectionPolicy(MemoryInjectionPolicy):
     ) -> None:
         self._max_messages = max_session_messages
         self._pruned_manager = pruned_manager
+
+    def injects_pruned(self) -> bool:
+        return self._pruned_manager is not None
 
     async def assemble(
         self,

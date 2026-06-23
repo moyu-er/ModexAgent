@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-06-10 | Updated: 2026-06-22 -->
+<!-- Generated: 2026-06-22 -->
 
 # experience
 
@@ -101,3 +101,5 @@ Body content with problem-solving pattern...
 
 ### External
 - `pathvalidate` — safe filename sanitization
+
+<!-- MANUAL: -->

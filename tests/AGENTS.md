@@ -1,24 +1,42 @@
-<!-- Updated: 2026-06-10 -->
+<!-- Parent: ../AGENTS.md -->
+<!-- Generated: 2026-06-22 -->
 
 # tests
 
-Test suites for the ModexAgent framework, organized by level.
+Test suites for the ModexAgent framework — unit tests, framework-level tests, and integration tests.
+
+## Purpose
+
+The `tests/` directory mirrors the `framework/` package structure with unit tests and adds framework-level and integration-level test suites. Tests use `pytest` with `pytest-asyncio` for async support.
 
 ## Subdirectories
 
 | Directory | Purpose |
 |-----------|---------|
-| `unit/` | Pure unit tests — no external deps, must run offline (see `unit/AGENTS.md`) |
-| `integration/` | Requires config files, LLM APIs, external services; tagged `@pytest.mark.integration` |
-| `framework/` | Framework-level test fixtures and shared utilities |
-| `framework/tools/terminal/` | Terminal system integration tests — guard, poll loop, prompt detection, backend tests, tool integration |
+| `unit/` | Unit tests mirroring `framework/` package structure (21 sub-modules) |
+| `framework/` | Framework-level tests (e.g., `framework/tools/` tool tests) |
+| `integration/` | Integration tests across multiple modules — `experience/`, `memory/`, `multi_agent/` |
 
 ## For AI Agents
 
-### Testing Requirements
-1. Mirror package structure under `tests/unit/`
-2. Use absolute imports (`from framework.xxx`) inside tests
-3. Tag integration tests with `@pytest.mark.integration`
-4. Run full suite: `pytest tests/unit/ -v`
-5. Run single test: `pytest tests/unit/path/to/test.py::test_name -xvs`
-6. `asyncio_mode = auto` from pyproject.toml — `@pytest.mark.asyncio` not required but accepted
+### Working In This Directory
+- Run all tests: `pytest tests/ -v`
+- Use absolute imports: `from framework.xxx`
+- Mock `LLMProvider`, `ControlChannel`, `ControlEventBus` — never hit real APIs
+- `pytest-asyncio` for async test functions (use `async def` + `await`)
+
+### Common Patterns
+- Tests follow the same package structure as `framework/`
+- `AsyncMock` for async interfaces
+- `conftest.py` for shared fixtures per package
+- Integration tests may require more timeouts due to async coordination
+
+## Dependencies
+
+### Internal
+- `framework/` — all tested modules
+
+### External
+- `pytest` + `pytest-asyncio`
+
+<!-- MANUAL -->

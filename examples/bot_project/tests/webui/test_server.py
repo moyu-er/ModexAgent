@@ -144,6 +144,44 @@ async def test_ws_pause_sends_cancel_turn() -> None:
 
 
 @pytest.mark.asyncio
+async def test_ws_pause_reports_error_when_not_handled() -> None:
+    """When the control filter is not wired (so /stop is not handled), the
+    pause action must surface an error envelope to the client instead of
+    silently doing nothing.
+
+    Regression: _ws_pause discarded the _try_intercept_control return value,
+    so a misconfigured filter left the pause button with zero feedback.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        workspace_root = Path(tmp)
+        # No configure_control_filter() -> _try_intercept_control returns False.
+        input_adapter = WebSocketInputAdapter()
+        store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
+        home_sessions_dir = WorkspacePaths(root=workspace_root / ".modex").sessions_dir
+        server = WebUIServer(
+            input_adapter, store, static_dist=None, home_sessions_dir=home_sessions_dir
+        )
+        server.set_workspace_index(store)
+        from tests.webui._pipeline_fixture import attach_default_pipeline
+        attach_default_pipeline(server, store, input_adapter, workspace_root=workspace_root)
+        client = TestClient(TestServer(server.app))
+        await client.start_server()
+        try:
+            ws = await client.ws_connect("/ws")
+            await ws.send_json({"action": "attach", "session_id": "web:test.main"})
+            assert _unwrap_envelope(await ws.receive_json())["event"] == "attached"
+
+            await ws.send_json({"action": "pause", "session_id": "web:test.main"})
+
+            env = _unwrap_envelope(await ws.receive_json(timeout=2))
+            assert env["event"] == "error", (
+                f"pause with no control filter should surface an error, got {env['event']}"
+            )
+        finally:
+            await client.close()
+
+
+@pytest.mark.asyncio
 async def test_api_messages_loads_transcript() -> None:
     """GET /api/sessions/{session_id}/messages returns stored events."""
     with tempfile.TemporaryDirectory() as tmp:

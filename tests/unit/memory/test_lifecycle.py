@@ -1,6 +1,6 @@
 """Tests for lifecycle and maintenance policies (Phase 6).
 
-Covers: MemoryMaintenancePolicy, retention policies,
+Covers: DefaultMemoryMaintenancePolicy, retention policies,
 and DreamEngine cursor semantics.
 """
 from __future__ import annotations
@@ -33,7 +33,6 @@ from framework.memory.lifecycle import (
     DefaultArchiveRetentionPolicy,
     DefaultKnowledgeRetentionPolicy,
     DefaultMemoryMaintenancePolicy,
-    DefaultSessionRetentionPolicy,
     MaintenanceResult,
 )
 from framework.memory.registry.in_memory import InMemoryStoreRegistry
@@ -235,18 +234,6 @@ class TestDefaultMemoryMaintenancePolicy:
 
 
 # ── Retention ───────────────────────────────────────────────────────────────
-
-
-class TestSessionRetentionPolicy:
-    @pytest.mark.asyncio
-    async def test_default_never_compacts(self):
-        policy = DefaultSessionRetentionPolicy()
-        assert await policy.should_compact(storage=AsyncMock(), context=MagicMock()) is False
-
-    @pytest.mark.asyncio
-    async def test_default_never_evicts_checkpoint(self):
-        policy = DefaultSessionRetentionPolicy()
-        assert await policy.should_evict_checkpoint(storage=AsyncMock(), context=MagicMock()) is False
 
 
 class TestArchiveRetentionPolicy:

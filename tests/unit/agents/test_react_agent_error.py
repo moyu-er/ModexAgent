@@ -8,7 +8,7 @@ import pytest
 
 from framework.agents.react.agent import ReActAgent
 from framework.agents.react.state import ReActTurnState
-from framework.core.constants import FinishReason
+from framework.core.constants import FinishReason, StopReason
 from framework.runtime.enums import TurnCustomKey
 from framework.core.emitter import AgentResult
 from framework.core.tool_manager import ToolResult
@@ -107,7 +107,15 @@ class TestReActAgentErrorResponse:
 
 class TestReActAgentCancelledError:
     @pytest.mark.asyncio
-    async def test_cancelled_error_preserves_checkpoint(self):
+    async def test_cancelled_error_returns_cancelled_result(self):
+        """CancelledError (e.g. from task.cancel() mid-stream) must emit
+        a terminal signal and return a cancelled result, not crash the turn.
+
+        Previously CancelledError re-raised out of the agent and was treated
+        as a dispatch error. The control-channel CANCEL_TURN now uses
+        task.cancel() to interrupt in-flight LLM calls, so the agent must
+        handle CancelledError cleanly.
+        """
         provider = MagicMock()
         async def raise_cancelled(*args, **kwargs):
             raise asyncio.CancelledError()
@@ -116,10 +124,67 @@ class TestReActAgentCancelledError:
         agent = ReActAgent(provider=provider)
         emitter = _FakeEmitter()
         ctx = _make_ctx()
-        # CancelledError propagates to caller; crash recovery will use
-        # TurnSnapshot.message_delta saved by pipeline's snapshot policy.
-        with pytest.raises(asyncio.CancelledError):
-            await agent.run(ctx, emitter)
+        result = await agent.run(ctx, emitter)
+
+        assert emitter.completed is not None, (
+            "CancelledError must emit a terminal signal (emit_complete) "
+            "so the frontend is not stuck streaming."
+        )
+        assert result is not None
+        assert result.stop_reason == StopReason.CANCELLED
+
+
+class TestReActAgentControlCancel:
+    """Control-driven cancel (CANCEL_TURN via control channel) must send a
+    terminal signal to the emitter so downstream consumers (e.g. the WebUI
+    turn_end event) learn the turn ended.
+
+    Regression: the ``except AgentControlError`` branch re-raised without
+    calling ``emit_complete``, so a cancelled turn never produced turn_end and
+    the WebUI pause button appeared to do nothing (frontend stuck streaming).
+    """
+
+    @pytest.mark.asyncio
+    async def test_control_cancel_emits_turn_end(self):
+        from framework.control.channel import InMemoryControlChannel
+        from framework.control.types import (
+            ControlCommand,
+            ControlCommandType,
+            ControlScope,
+        )
+
+        # Pre-load a CANCEL_TURN for this session. The command carries no
+        # turn_uuid, so the turn-start drain executes it immediately
+        # (backward-compatible defense in drain_control_channel).
+        channel = InMemoryControlChannel()
+        await channel.send(ControlCommand(
+            command_id="cancel-1",
+            type=ControlCommandType.CANCEL_TURN,
+            scope=ControlScope(session_id="test.agent"),
+        ))
+
+        provider = MagicMock()
+        provider.chat = AsyncMock(return_value=LLMResponse(
+            content="unreached", finish_reason=FinishReason.STOP.value,
+        ))
+        provider.get_default_model = lambda: "mock"
+
+        agent = ReActAgent(provider=provider)
+        emitter = _FakeEmitter()
+        ctx = _make_ctx()
+        ctx.runtime.services.control_channel = channel
+
+        # The cancel is controlled, not a crash: it must not escape as an
+        # unhandled exception, and it must emit a terminal signal.
+        result = await agent.run(ctx, emitter)
+
+        assert emitter.completed is not None, (
+            "CANCEL_TURN must emit a terminal signal (emit_complete) so the "
+            "turn ends cleanly; otherwise the WebUI pause leaves the frontend "
+            "stuck streaming."
+        )
+        assert result is not None
+        assert result.stop_reason == StopReason.CANCELLED
 
 
 class TestReActAgentToolTimeout:

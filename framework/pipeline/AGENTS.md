@@ -5,19 +5,18 @@
 
 ## Purpose
 
-End-to-end flow orchestration. `AgentPipeline` ties together input adapters, context assembly,
-agent execution, emitter output, and output adapters. Handles deduplication, busy-input-mode
-routing, slash commands, approval snapshot recovery, dream engine, and session lifecycle.
+End-to-end flow orchestration. `AgentPipeline` ties together input adapters, context assembly, agent execution, emitter output, and output adapters. Handles deduplication, busy-input-mode routing, slash commands, approval snapshot recovery, dream engine, and session lifecycle.
 
 ## Key Files
 
 | File | Description |
 |------|-------------|
-| `pipeline.py` | `AgentPipeline` + `TurnRequest` dataclass + `safe_send_output()` helper. Main loop: `run()` → `_process_message()` → `_process_message_locked()`. Inner: `_preprocess_input()`, `_assemble_context()`, `_build_runtime_and_context()`, `_execute_turn()`, `_handle_snapshot_approval()`, `_build_turn_request()`, `_dream_scan_loop()`. |
-| `adapters.py` | `InputAdapter` / `OutputAdapter` ABCs. `InputAdapter.configure_input_pipeline()` typed method stores pipeline/ctx/output (default impl). `WebSocketInputAdapter` overrides with no-op (pipeline held by server). Concrete: `NullOutputAdapter`, `SessionPrefixStripAdapter`, `CLIOutputAdapter`, `HTTPOutputAdapter`. Streaming: `send()` + `send_delta()` + `flush_deltas()`. |
+| `pipeline.py` | `AgentPipeline` + `TurnRequest` dataclass + `safe_send_output()` helper. Main loop: `run()` → `_process_message()` → `_process_message_locked()`. Inner methods: `_preprocess_input()`, `_assemble_context()`, `_build_runtime_and_context()`, `_execute_turn()`, `_handle_snapshot_approval()`, `_build_turn_request()`, `_dream_scan_loop()`. |
+| `adapters.py` | `InputAdapter` / `OutputAdapter` ABCs. `InputAdapter.configure_input_pipeline()` stores pipeline/ctx/output reference. `WebSocketInputAdapter` overrides with no-op. Concrete: `NullOutputAdapter`, `SessionPrefixStripAdapter`, `CLIOutputAdapter`, `HTTPOutputAdapter`. Streaming: `send()` + `send_delta()` + `flush_deltas()`. |
 | `approval_renderer.py` | `ApprovalRenderer` — detects pending approval state, buffers agent messages during approval, applies unrelated-input auto-denial. Standalone `format_approval_prompt()`. Does NOT parse `/approve`/`/deny` (that's `parse_input_command` from `approval/response`). |
 | `context_assembler.py` | `assemble_context()` — loads history, writes user message, builds system prompt, handles multimodal/attachment content, sideband prompts, runs `MultiAgentContextBuilder`. |
 | `filters.py` | `ContentFilter` ABC + `ChainedContentFilter`, `ReasoningContentFilter` (strip/keep), `WhitespaceFilter` (collapse/strip). Applied by `OutputAdapter._apply_filter()`. |
+| `snapshot.py` | `PipelineSnapshot` — captures pipeline state for approval suspend/resume (used by `_handle_snapshot_approval()`) |
 
 ## Flow
 
@@ -63,13 +62,9 @@ See `framework/commands/AGENTS.md` for full command subsystem documentation.
 | **QUEUE** (default) | Push plain text to `injection_queue` | **Dropped with busy notice** |
 | **STEER** | Send `INJECT_STEER` control command | Sent as steer payload |
 
-Key invariant: slash commands must never bypass the command processor. In QUEUE mode,
-busy notice is sent instead of injecting raw text.
+Key invariant: slash commands must never bypass the command processor. In QUEUE mode, busy notice is sent instead of injecting raw text.
 
-> Caveat: the `STEER` mode sends `INJECT_STEER` into the control channel, but
-> nothing drains `INJECT_STEER` today — the command is written but never read.
-> STEER is therefore effectively inert until a consumer is added. See
-> `framework/control/AGENTS.md`.
+> Caveat: the `STEER` mode sends `INJECT_STEER` into the control channel, but nothing drains `INJECT_STEER` today — the command is written but never read. STEER is therefore effectively inert until a consumer is added. See `framework/control/AGENTS.md`.
 
 ## Approval in Pipeline
 
@@ -80,5 +75,23 @@ busy notice is sent instead of injecting raw text.
 
 ## Key Invariant
 
-Pipeline assembles runtime services and handles platform I/O; ReAct owns the turn loop,
-LLM calls, tool execution, approval state, and resume boundaries.
+Pipeline assembles runtime services and handles platform I/O; ReAct owns the turn loop, LLM calls, tool execution, approval state, and resume boundaries.
+
+## For AI Agents
+
+- The pipeline is the outermost orchestration layer; it delegates turn execution to the agent's `.run()` method.
+- Snapshots capture the full agent state (including ReAct loop position) — suspension and resumption is transparent to the agent.
+- Busy-input modes control what happens when user input arrives during agent execution.
+- Slash commands (`/command`) are parsed before context assembly, not after.
+- `snapshot.py` is used exclusively for approval suspend/resume, not for general checkpointing.
+
+## Dependencies
+
+- `framework.core.agent` — `Agent[E]` for execution
+- `framework.agents.react` — `ReActAgent`, `ReActTurnState` for turn execution
+- `framework.runtime` — `AgentRuntimeServices`, `TurnStateStore` for state and snapshot persistence
+- `framework.commands` — `CommandProcessor` for slash command parsing
+- `framework.approval` — approval response parsing and tier classification
+- `framework.multi_agent` — `MultiAgentContextBuilder` for multi-agent context assembly
+- `framework.memory` — memory compaction and consolidation after turns
+- `framework.control` — control channel types (vestigial, for STEER mode)

@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-10 -->
+<!-- Updated: 2026-06-22 -->
 
 # providers
 
@@ -23,3 +23,10 @@ LLM provider implementations — abstracts model invocation behind a common inte
 - Both providers expose a common LLM call interface; consumers should not depend on provider-specific types
 - `shared/delta.py` normalizes streaming chunks across providers
 - `shared/errors.py` provides unified error classification and retry strategies
+
+## Dependencies
+- `litellm` (optional) — for LiteLLMProvider
+- `openai` (optional) — for OpenAIProvider
+- Consumed by `framework/core/` (LLM abstraction layer) and `framework/pipeline/`
+
+<!-- MANUAL: -->

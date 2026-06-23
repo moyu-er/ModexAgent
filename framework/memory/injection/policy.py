@@ -18,3 +18,11 @@ class MemoryInjectionPolicy(ABC):
         memory_system: MemorySystem,
         query: str = "",
     ) -> InjectionResult: ...
+
+    def injects_archive(self) -> bool:
+        """True if this policy emits archive summaries into the prompt."""
+        return False
+
+    def injects_pruned(self) -> bool:
+        """True if this policy emits a pruned-message catalog."""
+        return False

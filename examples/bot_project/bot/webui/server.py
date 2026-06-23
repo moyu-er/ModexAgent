@@ -871,6 +871,10 @@ class WebUIServer:
         so reusing _try_intercept_control("/stop", ...) sends a CANCEL_TURN
         command through InMemoryControlChannel. The interceptors in the active
         pool drain the command and abort the turn.
+
+        When the control command is not handled (filter not configured, or an
+        unexpected parse failure), an error envelope is surfaced to the client
+        so the pause button never silently does nothing.
         """
         session_id = str(data.get("session_id", ""))
         if "." not in session_id:
@@ -879,7 +883,16 @@ class WebUIServer:
         ws_raw = str(data.get("ws", ""))
         index_dir = self._index_dir_of_ws(ws_raw)
         resolved = await self._resolve_session(session_id, index_dir=index_dir)
-        await self._input._try_intercept_control("/stop", resolved.session_id)
+        handled = await self._input._try_intercept_control("/stop", resolved.session_id)
+        if not handled:
+            pool = self._pool_of_agent(resolved.agent_name)
+            await _safe_send_json(ws, DeltaEnvelope(
+                session_id=resolved.session_id,
+                agent_name=resolved.agent_name,
+                event_type=WebUIEventType.ERROR.value,
+                pool=pool,
+                payload={"message": "No turn to pause — the agent is currently idle."},
+            ).to_dict())
 
     async def _ws_attach(
         self,

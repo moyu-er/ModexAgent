@@ -1,5 +1,4 @@
-<!-- Parent: ../../AGENTS.md -->
-<!-- Updated: 2026-06-22 -->
+<!-- Updated: 2026-06-22 | WorkspaceManager refactor -->
 
 # bot_project
 
@@ -37,7 +36,7 @@ Primary end-to-end reference implementation for the ModexAgent framework. Demons
        ┌──────────────────┐                          │
        │ WorkspaceContext │  ← cd/exit workspace     │
        │ (shared, global) │     switching with       │
-       └──────────────────┘     active-agent guard   │
+       └──────────────────┘     active-agent guard │
 ```
 
 ### Workspace / Pool / Session Hierarchy
@@ -49,13 +48,14 @@ Primary end-to-end reference implementation for the ModexAgent framework. Demons
 
 ### Workspace Model (multi-live)
 
-The workspace system lives in `bot/workspace/` (generic) + `bot/workspace/bundle/` (business). Key properties:
+The workspace system lives in `bot/workspace/` (business) backed by `framework/workspace/` (generic). Key properties:
 
-1. **Multi-live**: Many workspaces coexist concurrently. Switching mutates only a per-session pointer (`SessionWorkspaceMap`), not a global `_active`. No `os.chdir`, no busy-check.
-2. **Per-workspace isolation**: Each workspace owns its own broker/inbox/bus/interceptor. Inbox cross-consume is structurally impossible.
-3. **Lazy materialization**: Heavy resources (`R`) are built on first use, cached, and LRU-evictable. WorkspaceContext (identity) is cheap and always retained.
-4. **Optional**: `workspace.enabled = False` → single-home stack (no `/cd`); `True` → full multi-live. Data layout is identical in both modes.
-5. **Per-turn workspace binding**: `WorkspaceMessageDispatcher` resolves the workspace before every turn, binds `current_workspace_root` contextvar, and routes into that workspace's `PoolRouter`. In-flight turns hold their `R` and are unaffected by switches.
+1. **Multi-live**: Many workspaces coexist in a `WorkspaceRegistry`. Switching mutates only a per-session pointer (`SessionWorkspaceMap`), not a global `_active`. No `os.chdir`, no busy-check.
+2. **Snapshot safety**: In-flight turns hold a `PipelineSnapshot` with pinned workspace references, unaffected by mid-turn switches.
+3. **Lazy materialization**: Heavy resources (`PoolWorkspaceResources`) are built on first use via `PoolResourceFactory`, cached, and LRU-evictable. WorkspaceContext (identity) is cheap and always retained.
+4. **Safe paths**: `WorkspacePaths` in `framework/workspace/paths.py` provides containment-checked path accessors.
+5. **Per-workspace isolation**: Each workspace owns its own broker/inbox/bus/interceptor. Inbox cross-consume is structurally impossible.
+6. **Optional**: `workspace.enabled = False` → single-home stack (no `/cd`); `True` → full multi-live. Data layout is identical.
 
 ### Input Pipeline Convergence
 
@@ -73,7 +73,7 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 |--------|-------|-------------|
 | Pool switching | UI selector → `PoolRouter.set_pool()` | `/pool_name` slash command (S2) |
 | Workspace switching | File browser modal → `POST /api/workspace/cd` | `/cd target` command (S2) |
-| Turn cancellation | Not implemented (no UI control) | `/stop` command (S3) — **note:** in the current bot `/stop` routes through `_try_intercept_control` but `configure_control_filter()` is never called, so it does not cancel the running turn; real cancellation is the pipeline pre-lock `task.cancel()`. See `framework/control/AGENTS.md`. |
+| Turn cancellation | Pause button (🧊) → `action: "pause"` WebSocket → `_ws_pause` → CANCEL_TURN via control channel, turn ends with `stop_reason=cancelled` + `turn_end` | `/stop` command (S3) → same control-channel path |
 | Conversation listing | `GET /api/sessions?workspace=...` | N/A (single conversation) |
 | Streaming isolation | Per-conversation filtering in `useWebUIStream.reducer.ts` + backend session cleanup | N/A (single conversation) |
 | Message dedup | `request_id`-based optimistic matching | N/A (no optimistic UI) |
@@ -96,6 +96,12 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 | `bot/service/pool_builder.py` | Pool mode assembly — creates `AgentPool`, subagent descriptors |
 | `bot/service/pool_router.py` | `PoolRouter` — session→pool dispatch, `PoolSessionStore` persistence |
 | `bot/service/pool_instance.py` | `PoolInstance` — pool runtime holder (config, pool, main_agent_name) |
+| `bot/workspace/wiring.py` | `build_workspace_stack` / `build_single_workspace_stack` — workspace assembly |
+| `bot/workspace/handle.py` | `PoolWorkspaceResources` — per-workspace resource bundle |
+| `bot/workspace/dispatch.py` | `WorkspaceMessageDispatcher` — per-message workspace routing |
+| `bot/workspace/pool_data.py` | `PoolData` — frozen per-pool data bundle |
+| `framework/workspace/registry.py` | `WorkspaceRegistry` — multi-live workspace holder with lazy resource materialization |
+| `framework/workspace/routing.py` | `SessionWorkspaceMap` — per-session workspace pointer |
 | `bot/service/web_ui_service.py` | `WebUIService` — assembles and starts the WebUI HTTP/WS server |
 | `bot/service/qq_service.py` | QQ platform service wiring |
 | `bot/adapters/qq.py` | QQ platform input/output adapters (C2C + group + file upload) |

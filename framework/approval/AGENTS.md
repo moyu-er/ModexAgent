@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-10 -->
+<!-- Updated: 2026-06-22 -->
 
 # approval
 
@@ -32,3 +32,5 @@ ToolNode: _resume_suspended_batch() -> PRE_APPROVED_TOOL_IDS -> _execute_batch()
 
 ## Dependencies
 - None internal (pure data types and parsing; no agent/runtime imports)
+
+<!-- MANUAL: -->

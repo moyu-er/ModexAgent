@@ -55,6 +55,12 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         self._archive_inject_count = archive_inject_count
         self._archive_inject_max_chars = archive_inject_max_chars
 
+    def injects_archive(self) -> bool:
+        return self._archive_inject_count > 0
+
+    def injects_pruned(self) -> bool:
+        return self._pruned_manager is not None
+
     async def assemble(
         self,
         *,

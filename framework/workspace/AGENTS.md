@@ -1,34 +1,61 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-19 -->
+<!-- Updated: 2026-06-22 -->
 
-# workspace
+# framework/workspace
 
-Workspace primitives — the framework layer provides a `WorkspaceControlPort` ABC (per-session) and slash-command handlers for workspace switching. The concrete controller (`WorkspaceController`) lives in `bot/workspace/control.py`; the per-session pointer is `SessionWorkspaceMap` in `bot/workspace/routing.py`. The workspace model is **multi-live**: many workspaces coexist, switching = mutating a per-session pointer; no `os.chdir`, no busy-check, no single `_active`.
+Generic workspace mechanism — identifies, isolates, and routes per-workspace resources. Pool-agnostic — pool concepts are business concerns and live in `bot/workspace/`.
+
+## Architecture
+
+```
+WorkspaceRegistry[R]        ← holds multiple WorkspaceContext + lazily-cached R
+  ├── WorkspaceContext       ← identity/value object (path + data_dir_name)
+  └── ResourceFactory[R]    ← materialize() / evict() ABC
+
+SessionWorkspaceMap          ← per-session session_id → target-workspace pointer
+  │                           (replaces global cwd.json)
+  ▼
+WorkspaceControlPort         ← cd() / exit() / pwd() contract
+  │                           (implemented by bot service layer)
+  ▼
+WorkspaceMessageDispatcher   ← per-message: resolve workspace → bind contextvar → route
+```
 
 ## Key Files
 
 | File | Description |
 |------|-------------|
-| `port.py` | `WorkspaceControlPort` ABC — per-session `switch(session_id)`/`exit(session_id)`/`current(session_id)`/`home`; consumed by handlers |
-| `models.py` | `CdResult` (frozen dataclass), `CdError` (StrEnum) |
-| `parse.py` | `parse_user_path()` — resolves user input to absolute path |
-| `handlers.py` | `CdCommandHandler`, `ExitCommandHandler`, `PwdCommandHandler` — slash-command handlers over the port; inject a per-session id extractor |
-| `runtime.py` | `current_workspace_root` contextvar — bound per-turn by the dispatcher so tools read the workspace target |
-| `resources.py` | `WorkspaceResources` ABC — framework view of workspace pool_data (type contract for pipeline + comm service) |
-| `AGENTS.md` | This file |
-
-## Switch Flow (multi-live)
-
-The framework layer does NOT perform switching — it only routes commands:
-1. `/cd <path>` → `CdCommandHandler` → calls `port.switch(session_id, target)` → business `WorkspaceController.switch`.
-2. `/exit` → `ExitCommandHandler` → calls `port.exit(session_id)`.
-3. `/pwd` → `PwdCommandHandler` → reads `port.current(session_id)` / `port.home`.
-
-The business `WorkspaceController.switch` only mutates the per-session pointer (`SessionWorkspaceMap`) and registers a `WorkspaceContext` in the registry (resources materialize lazily on first turn). No workspace is deactivated, no broker/inbox is re-pointed. In-flight turns hold their materialized `R` and finish unaffected.
+| `context.py` | `WorkspaceContext` — immutable identity object (path + data_dir_name) |
+| `factory.py` | `ResourceFactory[R]` — generic ABC for workspace resource materialize/evict |
+| `registry.py` | `WorkspaceRegistry[R]` — holds multiple workspaces, lazy-cached resources, LRU eviction |
+| `routing.py` | `SessionWorkspaceMap` (per-session pointer) + `WorkspaceMessageDispatcher` (per-message binding) |
+| `port.py` | `WorkspaceControlPort` — cd/exit/pwd interface for slash commands |
+| `control.py` | Workspace control commands |
+| `models.py` | `CdResult`, `CdError` — result types |
+| `parse.py` | `parse_user_path()` — user-level path resolution |
+| `paths.py` | `WorkspacePaths` — safe on-disk layout with containment checks |
+| `resources.py` | Resource type helpers |
+| `runtime.py` | Runtime support for workspace operations |
+| `store.py` | Workspace-scoped storage support |
 
 ## For AI Agents
 
-- The `WorkspaceControlPort` ABC is the framework contract; the business implementation is `bot.workspace.control.WorkspaceController`.
-- `data_dir_name` is a config field on `AppConfig.paths` (default `.modex`), not an env var.
-- Busy-check, `os.chdir`, `DefaultWorkspaceContext`, `cwd.json`, `on_activate`/`on_deactivate` callbacks are all removed — the multi-live model replaces all of them.
-- `WorkspaceManager` (ABC, `framework/multi_agent/communication.py`) is a framework-level ABC for the pipeline/comm service's workspace resource access, NOT a single-active switch engine.
+### Working In This Directory
+- This package is pool-agnostic — no `bot` imports should appear here.
+- `ResourceFactory[R]` is a generic ABC — business implementations like `PoolResourceFactory` implement it.
+- `SessionWorkspaceMap` replaces the old global `cwd.json` approach — switching is per-session, not global.
+
+### Common Patterns
+- Generic type `R` parameter on `WorkspaceRegistry` / `ResourceFactory` — business layer provides concrete `PoolWorkspaceResources`
+- `WorkspaceContext` is cheap (value object) — always retained; `R` is heavy — lazily materialized and LRU-evictable
+- `WorkspacePaths` path accessors all use `safe_segment()` + `is_relative_to()` containment to prevent escape
+
+## Dependencies
+
+### Internal
+- `framework/workspace/` — self-contained module, minimal framework imports
+
+### External
+- None beyond standard library + `pathlib`
+
+<!-- MANUAL: -->

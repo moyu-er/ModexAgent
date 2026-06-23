@@ -26,7 +26,6 @@ if TYPE_CHECKING:
     from framework.agents.summarizer.abc import ArchiveGenerator, KnowledgeConsolidatorBase
     from framework.memory.stores.dir_archive import DirArchiveStorage
 from framework.core.types import MessageRole
-from framework.memory.lifecycle import MemoryMaintenancePolicy
 from framework.memory.pruned.manager import PrunedManager
 from framework.memory.recorder import MemoryAppendRecorder
 from framework.memory.registry.base import MemoryStoreRegistry
@@ -177,7 +176,6 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
         store_registry: MemoryStoreRegistry,
         providers: Any | None = None,
         cleanup_config: dict[str, int | float] | None = None,
-        maintenance_policy: MemoryMaintenancePolicy | None = None,
         pruned_manager: PrunedManager | None = None,
         archive_agent: ArchiveGenerator | None = None,
         archive_storage: DirArchiveStorage | None = None,
@@ -188,7 +186,6 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
         self._registry = store_registry
         self._providers = providers
         self._cleanup_config: dict[str, int | float] = cleanup_config or {}
-        self._maintenance_policy = maintenance_policy
         self._pruned_manager: PrunedManager | None = pruned_manager
         self._archive_agent = archive_agent
         self._archive_storage = archive_storage

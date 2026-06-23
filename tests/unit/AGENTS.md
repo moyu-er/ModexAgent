@@ -1,48 +1,45 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-10 -->
+<!-- Generated: 2026-06-22 -->
 
-# unit
+# tests/unit
 
-Pure unit tests — no external deps, must run offline. Mirror the framework package structure.
+Unit tests for all `framework/` modules, mirroring the package structure one-to-one.
+
+## Purpose
+
+Each subdirectory here corresponds to a `framework/` module and contains unit tests for its public APIs. Tests focus on isolated component behavior with mocked dependencies.
 
 ## Subdirectories
 
-| Directory | Purpose |
-|-----------|---------|
-| `agents/` | ReActAgent tests — error handling, tool execution, streaming |
-| `approval/` | Approval system tests |
-| `bot_project/` | Bot project integration tests |
-| `commands/` | Slash command tests — parser, handlers, processor |
-| `control/` | ControlChannel, EventBus, store, task supervision tests |
-| `core/` | Core abstractions — AgentContext, AgentResult, emitter, tool manager, LLM error |
-| `hook/` | Hook runner, error policy tests |
-| `interceptor/` | Interceptor chain tests |
-| `ioc/` | IOC config and factory tests |
-| `memory/` | Memory system — core, stores, compression, consolidation, retention, injection |
-| `messaging/` | Broker and bridge tests |
-| `multi_agent/` | Multi-agent — factory, pool, inbox, hooks, skills |
-| `pipeline/` | Pipeline tests — emitter, adapters, timeout, skills |
-| `plugins/` | Plugin system tests |
-| `providers/` | LLM provider tests |
-| `runtime/` | Runtime services, store, codec tests |
-| `tools/` | Tool registry, executor, MCP, presets, overflow, AST engine tests |
-| `tools/overflow/` | Overflow store, cleaner, handler, e2e pipeline tests |
-| `tools/web/` | Web reader and search tool tests |
-| `utils/` | Utility tests |
+| Directory | Target Module |
+|-----------|--------------|
+| `agents/` | `framework/agents/` — ReAct agent, experience review, summarizer |
+| `approval/` | `framework/approval/` — approval tiers, response parsing |
+| `commands/` | `framework/commands/` — slash command parser, processor |
+| `core/` | `framework/core/` — agent ABC, session store, tool manager, emitter |
+| `hook/` | `framework/hook/` — hook runner, builtin hooks |
+| `interceptor/` | `framework/interceptor/` — interceptor chain, builtin interceptors |
+| `ioc/` | `framework/ioc/` — config models, factory modules |
+| `memory/` | `framework/memory/` — three-layer memory, consolidation, injection |
+| `messaging/` | `framework/messaging/` — broker, broker bridge |
+| `multi_agent/` | `framework/multi_agent/` — pool, bus, communication tracker, inbox |
+| `pipeline/` | `framework/pipeline/` — pipeline orchestration, adapters, snapshot |
+| `plugins/` | `framework/plugins/` — plugin manager, loader |
+| `providers/` | `framework/providers/` — LLM provider implementations |
+| `runtime/` | `framework/runtime/` — runtime services, store, codec |
+| `sandbox/` | `framework/sandbox/` — isolation, adapters, guards |
+| `tools/` | `framework/tools/` — registry, executor, MCP, terminal, standard tools |
+| `trace/` | `framework/trace/` — trace store, hooks |
+| `utils/` | `framework/utils/` — file_io, sanitizer, deduplicator, timezone |
+| `workspace/` | `framework/workspace/` — workspace context, registry, routing |
+| `bot/` | `examples/bot_project/bot/` — lifecycle, pool routing, adapters |
+| `bot_project/` | `examples/bot_project/` — config loader, slash commands, MCP resilience |
 
 ## For AI Agents
 
 ### Working In This Directory
-- Use `pytest.mark.asyncio` for async tests (or `asyncio_mode = auto` from pyproject.toml)
-- Mock `LLMProvider`, `ControlChannel`, `ControlEventBus` — never hit real APIs
-- Test file naming: `test_<module_name>.py`
-- `conftest.py` at any level for shared fixtures
+- Run a single module's tests: `pytest tests/unit/<module>/ -v`
+- Test names follow `test_<function/class>_<scenario>` convention
+- `conftest.py` files in each subdirectory provide shared fixtures
 
-### Key Test Patterns
-```python
-@pytest.mark.asyncio
-async def test_something():
-    ctx = AgentContext(...)
-    result = await agent.run(ctx, emitter)
-    assert result.content == "expected"
-```
+<!-- MANUAL -->

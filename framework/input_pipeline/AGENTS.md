@@ -1,11 +1,11 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-06-14 -->
+<!-- Updated: 2026-06-22 -->
 
 # input_pipeline
 
-Extensible user-input stage pipeline framework. Provides generic abstractions for building channel-agnostic message processing pipelines — envelope, stage, context, and pipeline runner. The business layer (`examples/bot_project/bot/input_pipeline/`) provides concrete stages, context, and assembly.
-
 ## Purpose
+
+Extensible user-input stage pipeline framework. Provides generic abstractions for building channel-agnostic message processing pipelines — envelope, stage, context, and pipeline runner. The business layer (`examples/bot_project/bot/input_pipeline/`) provides concrete stages, context, and assembly.
 
 Decouple user-input processing from the main `AgentPipeline`. Each channel adapter produces a seed `UserInputEnvelope`, the pipeline runs stages in order, and the result is either a `Continue` (envelope reaches the agent queue) or a `Terminate` (intercepted — e.g., control command, invalid skill).
 
@@ -57,3 +57,5 @@ StageResult
 - `examples/bot_project/bot/input_pipeline/` — concrete stages, context, and assembly
 - `examples/bot_project/bot/adapters/qq.py` — QQ adapter produces seed envelopes
 - `examples/bot_project/bot/webui/server.py` — WebSocket adapter produces seed envelopes
+
+<!-- MANUAL: -->

@@ -242,3 +242,36 @@ describe("applyServerEvent streaming stability", () => {
     expect(state.sessionStreaming["conv.main"]).toBe(true);
   });
 });
+
+describe("applyServerEvent control notices", () => {
+  it("surfaces a 'content' notice as a visible non-streaming message", () => {
+    // Backend control notices (e.g. "⏹ Agent turn stopped.",
+    // "No running agent turn to stop.") arrive as event_type="content"
+    // envelopes (WebSocketOutputAdapter.send wraps OutputMessage as a
+    // content DeltaEnvelope). Without handling, the pause button gave no
+    // feedback when there was no active turn to cancel.
+    const ref = { current: null as string | null };
+    const state = applyServerEvent(
+      emptyState(),
+      {
+        event: "content",
+        session_id: "conv.main",
+        agent_name: "main",
+        text: "No running agent turn to stop.",
+        // content envelopes carry the text under `text` (payload {text})
+      } as unknown as Parameters<typeof applyServerEvent>[1],
+      "conv.main",
+      ref,
+    );
+    expect(state.messages).toHaveLength(1);
+    const msg = state.messages[0]!;
+    expect(msg.role).toBe("system");
+    expect(msg.isStreaming).toBe(false);
+    expect(msg.blocks[0]).toMatchObject({
+      kind: "text",
+      text: "No running agent turn to stop.",
+    });
+    // A notice must not flip the streaming flag on.
+    expect(state.isStreaming).toBe(false);
+  });
+});

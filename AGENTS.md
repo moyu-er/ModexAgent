@@ -1,4 +1,4 @@
-<!-- Updated: 2026-06-10 | Branch: develop_gyt -->
+<!-- Updated: 2026-06-22 | Branch: develop_gyt -->
 
 # Repository Guidelines
 
@@ -40,7 +40,7 @@
 5. **Framework vs examples separation**. `framework/` = reusable behavior; `examples/` = business wiring. No example-specific config in framework.
 6. **No dynamic access** (`getattr`/`hasattr`) except at real extension boundaries. Prefer explicit typed attributes and method calls.
 
-## Architecture Rules
+## Architecture Rules (from rules/architecture.md)
 
 - Python 3.12+, `from __future__ import annotations` in all framework modules.
 - `Agent[E]`, `ContentEmitter[E]` with `TypeVar("E", bound=AgentEvent)`.
@@ -63,7 +63,7 @@
 ## Multi-Agent Communication Rules
 
 - Star topology: subagents communicate only through main agent. `subagent_validator.py` enforces at registration.
-- Three communication tools: `send_to_agent` (sync broker), `send_to_agent_async` (inbox-based, deferred), `spawn_subagent` (isolated invocation session).
+- Communication is exposed as a single tool: `send_to_agent`. The framework decides internally whether to use broker delivery, inbox delivery, or a new isolated subagent session.
 - `AgentMessageBus` is the primary async channel. `InboxProducer`/`InboxConsumer` wrap `InboxServer` with local-cache dedup.
 - `CommunicationTracker` provides sideband memory: send/acknowledge bracket matching prevents memory compression from silently dropping pending communications.
 - Session ID format: `{conversation_id}:{agent_name}[:{invocation_id}]` (via `DefaultSessionIdStrategy`).
@@ -81,4 +81,18 @@
 
 ## Testing
 
-Focused regression tests under `tests/unit/`. Write/update tests before production code when practical. Absolute imports (`from framework.xxx`). Mirror package structure. Mock `LLMProvider`, `ControlChannel`, `ControlEventBus` — never hit real APIs.
+Unit tests under `tests/unit/` (mirrors `framework/` structure), framework-level tests under `tests/framework/`, integration tests under `tests/integration/`. Write/update tests before production code when practical. Absolute imports (`from framework.xxx`). Mock `LLMProvider`, `ControlChannel`, `ControlEventBus` — never hit real APIs.
+
+## Documentation
+
+Architecture Decision Records (ADRs) in `docs/adr/` and superpowers documentation in `docs/superpowers/`. Read relevant ADRs before making significant architectural changes.
+
+## Key Files
+
+| File | Location | Description |
+|------|----------|-------------|
+| Root Guidelines | `AGENTS.md` | This file — project overview and conventions |
+| Framework Overview | `framework/AGENTS.md` | All 24 framework modules with file counts and responsibilities |
+| Tests Overview | `tests/AGENTS.md` | Unit, framework, and integration test suites |
+| Docs Overview | `docs/AGENTS.md` | ADRs and superpowers documentation |
+| Bot Reference | `examples/bot_project/AGENTS.md` | End-to-end reference implementation |

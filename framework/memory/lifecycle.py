@@ -8,7 +8,6 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
 
 from framework.memory.archive_models import ArchiveChannel
 from framework.memory.core.layers import MemoryLayerSet
@@ -33,19 +32,7 @@ class MaintenanceResult:
     detail: str | None = None
 
 
-class MemoryMaintenancePolicy(ABC):
-    """Background maintenance: idle compact, retention, orphan cleanup."""
-
-    @abstractmethod
-    async def scan_once(
-        self,
-        *,
-        registry: MemoryStoreRegistry,
-        layers: MemoryLayerSet,
-    ) -> list[MaintenanceResult]: ...
-
-
-class DefaultMemoryMaintenancePolicy(MemoryMaintenancePolicy):
+class DefaultMemoryMaintenancePolicy:
     """Default maintenance: idle auto-compact, archive/knowledge retention enforcement."""
 
     def __init__(
@@ -284,36 +271,6 @@ class DefaultMemoryMaintenancePolicy(MemoryMaintenancePolicy):
 
 
 # ── Retention ───────────────────────────────────────────────────────────────
-
-
-class SessionRetentionPolicy(ABC):
-    """Session layer aging: compression trigger, checkpoint expiry."""
-
-    @abstractmethod
-    async def should_compact(
-        self,
-        *,
-        storage: Any,
-        context: MemoryContext,
-    ) -> bool: ...
-
-    @abstractmethod
-    async def should_evict_checkpoint(
-        self,
-        *,
-        storage: Any,
-        context: MemoryContext,
-    ) -> bool: ...
-
-
-class DefaultSessionRetentionPolicy(SessionRetentionPolicy):
-    async def should_compact(self, *, storage: Any, context: MemoryContext) -> bool:
-        _ = storage, context
-        return False
-
-    async def should_evict_checkpoint(self, *, storage: Any, context: MemoryContext) -> bool:
-        _ = storage, context
-        return False
 
 
 class ArchiveRetentionPolicy(ABC):

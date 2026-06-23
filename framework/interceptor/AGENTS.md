@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-10 -->
+<!-- Generated: 2026-06-22 -->
 
 # interceptor
 
@@ -38,3 +38,5 @@ Reserved (defined but not wired): AGENT_RUN, LLM_CALL, PIPELINE_STEP, POOL_TASK.
 ## Dependencies
 - `framework.control` -- ControlChannel, ControlEventBus, ControlCommandType
 - `framework.core.agent` -- AgentContext
+
+<!-- MANUAL: -->

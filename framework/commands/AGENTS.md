@@ -129,4 +129,4 @@ When a pending approval exists, `/continue` returns a `NOTICE` ("A pending appro
 the pipeline. The control channel is currently not used for cancellation — see
 `framework/control/AGENTS.md`.
 
-<!-- MANUAL -->
+<!-- MANUAL: -->

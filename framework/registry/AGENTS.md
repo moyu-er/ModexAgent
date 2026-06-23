@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-10 -->
+<!-- Generated: 2026-06-22 -->
 
 # registry
 
@@ -11,5 +11,10 @@ Shared registry utilities — minimal module for framework-wide registration pat
 |------|-------------|
 | `__init__.py` | Registry helpers and base registration utilities |
 
+## Dependencies
+- Standard library only — no framework-internal imports.
+
 ## Notes
 - Used by `MemoryProvider`, `SandboxFactory`, and other pluggable subsystems for provider lookup.
+
+<!-- MANUAL: -->

@@ -33,7 +33,6 @@ from framework.memory.core.system import (
 from framework.memory.default_system import DefaultMemorySystem
 from framework.memory.layers.config import MemoryLayerConfigSet
 from framework.memory.layers.factory import MemoryLayerFactory
-from framework.memory.lifecycle import MemoryMaintenancePolicy
 from framework.memory.pruned.manager import PrunedManager
 
 # UserRetentionBuffer injection moved to framework.memory.user_buffer (Task 6 stub)
@@ -54,7 +53,6 @@ def create_memory_system(
     llm_provider: LLMProvider | None = None,
     session_only: bool = False,
     cleanup_config: dict[str, int | float] | None = None,
-    maintenance_policy: MemoryMaintenancePolicy | None = None,
     pruned_manager: PrunedManager | None = None,
     archive_agent: ArchiveGenerator | None = None,
     archive_storage: DirArchiveStorage | None = None,
@@ -89,7 +87,6 @@ def create_memory_system(
         layer_set=layer_set,
         store_registry=registry,
         cleanup_config=cleanup_config,
-        maintenance_policy=maintenance_policy,
         pruned_manager=pruned_manager,
         archive_agent=archive_agent,
         archive_storage=archive_storage,
@@ -236,28 +233,12 @@ class MemorySystemContextManager(ContextManager):
             SkillProvider,
         )
 
-        # Determine if the original policy would inject archive/pruned content.
-        # If so, create a pipeline-specific policy that skips them
-        # (those sections are handled by dedicated refreshable providers).
-        # Subagent policies (e.g. RestrictedInjectionPolicy) do not inject
-        # archive/pruned, so the original policy is used as-is.
+        # If the policy injects archive/pruned content itself, those sections are
+        # handled by dedicated refreshable providers below; use a clean policy
+        # that skips them to avoid double emission.
         policy = self.injection_policy
-        needs_clean_policy = False
-        try:
-            needs_clean_policy = policy._pruned_manager is not None
-        except AttributeError:
-            pass
-        if not needs_clean_policy:
-            try:
-                needs_clean_policy = policy._archive_inject_count > 0
-            except AttributeError:
-                pass
-
-        if needs_clean_policy:
-            pipeline_policy = FullInjectionPolicy(
-                pruned_manager=None,
-                archive_inject_count=0,
-            )
+        if policy.injects_pruned() or policy.injects_archive():
+            pipeline_policy = FullInjectionPolicy(pruned_manager=None, archive_inject_count=0)
         else:
             pipeline_policy = policy
         result = await pipeline_policy.assemble(
@@ -296,11 +277,7 @@ class MemorySystemContextManager(ContextManager):
             providers.append(ArchiveProvider(archive_dir))
 
         # 5. Pruned catalog (must refresh on cleanup)
-        pruned_mgr = None
-        try:
-            pruned_mgr = self.memory_system.pruned_manager
-        except AttributeError:
-            pass  # MemorySystem does not have pruned_manager
+        pruned_mgr = self.memory_system.pruned_manager
         if pruned_mgr is not None:
             providers.append(PrunedProvider(pruned_mgr, session_id=session_id))
 
