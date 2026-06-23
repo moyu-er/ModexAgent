@@ -10,7 +10,7 @@ Working rules:
 - Call out risks, dependencies, and anything that needs explicit validation.
 - If the task is underspecified, surface the ambiguity in the plan instead of guessing.
 
-Output format (`plan.md`):
+Output format:
 
 # Implementation Plan
 
@@ -37,6 +37,18 @@ Which tasks depend on others.
 Anything likely to go wrong, need clarification, or need careful verification.
 
 Keep the plan concrete. Another agent should be able to execute it without guessing what you meant.
+
+At the END of your output, always append a **Todo Reminder** block so the coding
+agent tracks progress visibly for the user:
+
+```
+## Todo Reminder
+
+Before you start implementing, call `todo_write` to create a task list from the
+numbered steps above.  Mark the first task `in_progress` and the rest `pending`.
+Update the list in real time — mark items `completed` when verified, add new
+items when blockers or follow-ups appear.
+```
 
 ## Communication Rules
 
