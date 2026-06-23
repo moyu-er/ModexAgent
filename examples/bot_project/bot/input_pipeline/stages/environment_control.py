@@ -23,11 +23,11 @@ from bot.input_pipeline.stages.resolve_pool import (
     conversation_session_prefix,
     resolve_session_routing,
 )
-from framework.workspace.control import WorkspaceController
 from framework.core.session_id import SessionInfo
 from framework.core.types import InputMessage
 from framework.input_pipeline.envelope import UserInputEnvelope
 from framework.input_pipeline.stage import Continue, InputStage, StageResult, Terminate
+from framework.workspace.control import WorkspaceController
 
 _POOL_RE = re.compile(r"^/([a-z][a-z0-9_-]*)$")
 
@@ -130,7 +130,7 @@ class EnvironmentControlStage(InputStage):
     async def _handle_pwd(self, ctx: BotInputContext) -> StageResult:
         """Handle /pwd: return current workspace notice."""
         current = ctx.current_ws()
-        return self._terminate_with(f"cwd: {current}")
+        return self._terminate_with(f"pwd: {current}")
 
     def _terminate_with(self, message: str | None = None) -> StageResult:
         """Return a Terminate result with an optional notice message."""
