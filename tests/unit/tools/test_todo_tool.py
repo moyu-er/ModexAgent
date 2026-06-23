@@ -50,6 +50,34 @@ async def test_write_saves_and_emits(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_write_returns_active_only_and_keeps_full_in_store(tmp_path) -> None:
+    """write saves the full list but returns/emits only active (in_progress+pending),
+    so the caller can confirm what remains without completed/cancelled noise."""
+    from framework.tools.standard.todo_tool import TodoWriteTool
+
+    store = JsonFileTodoStore(tmp_path)
+    emitter = _RecordingEmitter()
+    token = _set_ctx("s1", emitter)
+    try:
+        result = await TodoWriteTool(store).execute(
+            todos=[
+                {"content": "done", "status": "completed"},
+                {"content": "cur", "status": "in_progress"},
+                {"content": "next", "status": "pending"},
+                {"content": "skipped", "status": "cancelled"},
+            ]
+        )
+    finally:
+        current_agent_context.reset(token)
+
+    parsed = json.loads(result)
+    assert [t["content"] for t in parsed] == ["cur", "next"]  # active only
+    assert emitter.events[0][1]["todos"] == parsed  # event also active only
+    saved = await store.get("s1")
+    assert [t.content for t in saved] == ["done", "cur", "next", "skipped"]  # store keeps full
+
+
+@pytest.mark.asyncio
 async def test_write_rejects_bad_status(tmp_path) -> None:
     from framework.tools.standard.todo_tool import TodoWriteTool
 

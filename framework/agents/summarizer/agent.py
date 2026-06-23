@@ -48,7 +48,9 @@ Output format (plain text, no markdown):
 [Actions] Numbered list of concrete actions and tools used with their results.
 [Decisions] Any important decisions made and WHY.
 [State] Current working context (files, environment, errors, etc.).
-[Pending] Anything still in progress or unanswered — write "None" if nothing.
+[Pending] Anything still in progress or unanswered. If a todo list exists in the
+conversation, briefly list the remaining active tasks and add "(run todo_read to
+confirm)". Write "None" if nothing.
 
 Rules:
 1. Be CONCRETE — include file paths, values, error messages, tool names
@@ -86,6 +88,11 @@ Use this exact structure:
 
 ## Remaining Work
 - Concrete remaining work, blockers, and next safe actions.
+
+## Task List
+- If the conversation contains todo_write or todo_read results, list the latest active
+  tasks (in_progress + pending) here, then add "(call todo_read to confirm)". Omit this
+  section if there was no todo activity.
 
 ## Important Tool Results
 - Tool outputs that affect future decisions.

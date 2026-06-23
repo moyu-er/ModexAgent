@@ -19,6 +19,16 @@ from framework.runtime.store import TodoItem, TodoStore
 _ACTIVE_STATUSES = (TodoStatus.PENDING, TodoStatus.IN_PROGRESS)
 
 
+def _active_view(items: list[TodoItem]) -> list[dict[str, str]]:
+    """Return the active subset (pending + in_progress) as plain dicts, in order.
+
+    Single source of truth for what the agent and the UI see: todo_write returns
+    this for confirmation, todo_read returns this, and the ``todo.updated`` event
+    carries it. Completed/cancelled items stay in the store but are never surfaced.
+    """
+    return [t.to_dict() for t in items if t.status in _ACTIVE_STATUSES]
+
+
 def _resolve_session_and_emitter() -> tuple[str | None, Any]:
     """Return (session_id, emitter) from the active agent context."""
     ctx = current_agent_context.get(None)
@@ -66,19 +76,18 @@ class TodoWriteTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Maintain a structured task list for the current session. Use proactively "
-            "when the task has 3+ distinct steps, when the user gives multiple tasks, "
-            "or when new instructions arrive. When NOT to use: a single straightforward "
-            "task, or a purely informational request.\n\n"
-            "ORDER MATTERS: the list order IS the intended execution sequence. Maintain a "
-            "meaningful order and work through items top-to-bottom.\n\n"
-            "Rules: update the list in real time, do not batch; mark an item 'completed' "
-            "only AFTER the work is truly done including verification, never on intent; if "
-            "blocked, keep it 'in_progress' and add a follow-up item describing the blocker; "
-            "keep items specific and actionable; preserve user-provided commands verbatim. "
-            "Completed/cancelled items are NOT shown to the user or returned by todo_read, so "
-            "you may drop them once done to keep the list focused.\n\n"
-            "Full-replace semantics: send the ENTIRE updated list every call."
+            "Maintain a structured task list for this session to track multi-step work. "
+            "The list and its order are shown to the user.\n\n"
+            "Use when the task has 3+ distinct steps or the user gives multiple tasks. "
+            "Skip for single, trivial, or purely informational requests.\n\n"
+            "Statuses: pending, in_progress (more than one allowed), completed, cancelled.\n"
+            "- ORDER MATTERS: list order is the execution sequence — work top to bottom.\n"
+            "- Update in real time; don't batch.\n"
+            "- Mark completed only after the work is truly done AND verified — never on intent.\n"
+            "- Blocked? Keep it in_progress and add a follow-up item describing the blocker.\n"
+            "- Full-replace: send the entire list every call. Returns the active items "
+            "(in_progress + pending) so you can confirm what remains; completed/cancelled "
+            "are excluded from the return and may be dropped."
         )
 
     @property
@@ -112,10 +121,10 @@ class TodoWriteTool(Tool):
         if err is not None:
             return f"Error: {err}"
         await self._store.save(session_id, items)
-        payload = [t.to_dict() for t in items]
+        active = _active_view(items)
         if emitter is not None:
-            await emitter.emit("todo.updated", {"session_id": session_id, "todos": payload})
-        return json.dumps(payload, ensure_ascii=False)
+            await emitter.emit("todo.updated", {"session_id": session_id, "todos": active})
+        return json.dumps(active, ensure_ascii=False)
 
 
 class TodoReadTool(Tool):
@@ -132,10 +141,10 @@ class TodoReadTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Return the ACTIVE tasks only (pending + in_progress) for the current session, "
-            "in execution order. Completed/cancelled items are excluded. Call this when you "
-            "are unsure what you are currently working on, or when the list may be stale "
-            "(e.g. after a long conversation or context compression)."
+            "Return the ACTIVE task list (pending + in_progress) for this session, in "
+            "execution order; completed/cancelled are excluded. Call when you're unsure "
+            "what you're working on, or after context compression/archiving may have made "
+            "the list stale."
         )
 
     @property
@@ -147,5 +156,4 @@ class TodoReadTool(Tool):
         if session_id is None:
             return "Error: no active agent session."
         all_items = await self._store.get(session_id)
-        active = [t for t in all_items if t.status in _ACTIVE_STATUSES]
-        return json.dumps([t.to_dict() for t in active], ensure_ascii=False)
+        return json.dumps(_active_view(all_items), ensure_ascii=False)

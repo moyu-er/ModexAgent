@@ -41,7 +41,8 @@ async def test_write_emits_and_persists_across_store_instances(tmp_path) -> None
         current_agent_context.reset(token)
 
     assert emitter.events and emitter.events[0][0] == "todo.updated"
-    assert len(emitter.events[0][1]["todos"]) == 3  # full list on the wire
+    # event carries the ACTIVE subset only (in_progress + pending); completed excluded
+    assert [t["content"] for t in emitter.events[0][1]["todos"]] == ["do B", "do C"]
 
     # fresh store instance (new turn / restart) — read filter keeps active only
     token = _set_ctx("s1", _RecordingEmitter())
