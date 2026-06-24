@@ -2,6 +2,7 @@
 
 from .agent import (
     Agent,
+    AgentCommKind,
     AgentContext,
 )
 from .constants import (
@@ -77,6 +78,7 @@ __all__ = [
     "ToolManagerConfig",
     # V2 新架构 - Agent
     "Agent",
+    "AgentCommKind",
     "AgentContext",
     # V2 新架构 - 上下文管理
     "ContextManager",

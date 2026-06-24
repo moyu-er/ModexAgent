@@ -255,7 +255,7 @@ class AgentPipeline:
 
     def _is_subagent(self) -> bool:
         """Whether this pipeline backs a subagent (vs the pool's main agent)."""
-        from modex_agent.multi_agent.comm_kind import AgentCommKind
+        from modex_agent.core import AgentCommKind
 
         return (
             self.agent_descriptor is not None

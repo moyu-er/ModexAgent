@@ -8,6 +8,7 @@ from __future__ import annotations
 import contextvars
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Generic
 
 from typing_extensions import TypeVar
@@ -22,10 +23,16 @@ from .tool_manager import ToolManager
 
 if TYPE_CHECKING:
     from modex_agent.core.prompt import SystemPromptPipeline
-    from modex_agent.multi_agent.comm_kind import AgentCommKind
     from modex_agent.pipeline.snapshot import PoolDataSnapshot
     from modex_agent.runtime.models import TurnIdentity
     from modex_agent.runtime.services import AgentRuntime
+
+
+class AgentCommKind(StrEnum):
+    """Agent topology kind — normal main agent vs subagent invocation."""
+
+    NORMAL = "normal"
+    SUBAGENT = "subagent"
 
 
 @dataclass

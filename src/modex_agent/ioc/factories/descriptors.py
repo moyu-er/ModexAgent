@@ -21,9 +21,9 @@ from modex_agent.memory.layers.config import (
     UserRetentionBufferConfig,
 )
 from modex_agent.memory.system import MemorySystemContextManager, create_memory_system
+from modex_agent.core import AgentCommKind
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent import AgentDescriptor
-from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.descriptor import AgentLLMConfig
 
 # ── Standard tool builders (code objects, no config) ──

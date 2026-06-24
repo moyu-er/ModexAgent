@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from modex_agent.core import AgentCommKind
 from modex_agent.hook.abc import AfterTurnHook
-from modex_agent.multi_agent.comm_kind import AgentCommKind
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
