@@ -19,7 +19,6 @@ TOP_LEVEL = {
 # Offenders fixed incrementally by Tasks 3 (engine) and 4 (tool_manager).
 # This set shrinks to empty as fixes land; the assertion stays strict.
 EXPECTED_OFFENDERS: set[str] = {
-    "modex_agent.runtime.enums",      # core/graph/engine.py — fixed in Task 3
     "modex_agent.tools.terminal.types",  # core/tool_manager.py — fixed in Task 4
 }
 

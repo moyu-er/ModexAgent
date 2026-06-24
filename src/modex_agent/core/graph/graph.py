@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Generic
+from typing import TYPE_CHECKING, Any, Callable, Generic
 
 from typing_extensions import TypeVar
 
 from .node import Node
+
+if TYPE_CHECKING:
+    from modex_agent.core.agent import AgentContext
 
 R = TypeVar("R", default=Any)
 
@@ -29,6 +32,7 @@ class Graph(Generic[R]):
         self._nodes: dict[str, Node[R]] = {}
         self._edges: dict[str, list[Edge]] = {}
         self.entry_node: str = "start"
+        self.result_extractor: Callable[[AgentContext], R | None] | None = None
 
     def add_node(self, node: Node[R]) -> None:
         self._nodes[node.name] = node

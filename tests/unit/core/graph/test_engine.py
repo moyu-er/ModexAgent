@@ -73,6 +73,9 @@ class TestGraphEngine:
             ctx.runtime.state.custom[TurnCustomKey.GRAPH_RESULT] = 42
         node = _TrackedNode("start", GraphNode.END, "done", side_effect=side)
         g.add_node(node)
+        # The engine is agnostic to where results live; concrete graphs inject
+        # an extractor that performs the read (mirrors ReActGraph's injection).
+        g.result_extractor = lambda ctx: ctx.runtime.state.custom.get(TurnCustomKey.GRAPH_RESULT)
 
         ctx = _Ctx()
         result = await GraphEngine(g).run(ctx)

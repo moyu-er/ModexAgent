@@ -7,7 +7,6 @@ from typing import Any, Generic
 from typing_extensions import TypeVar
 
 from modex_agent.core.agent import AgentContext
-from modex_agent.runtime.enums import TurnCustomKey
 
 from .constants import GraphNode
 from .graph import Graph
@@ -40,5 +39,12 @@ class GraphEngine(Generic[R]):
         return self.build_result(ctx)
 
     def build_result(self, ctx: AgentContext) -> Any:
-        """Extract final result from ctx. Override for typed returns."""
-        return ctx.runtime.state.custom.get(TurnCustomKey.GRAPH_RESULT) if ctx.runtime else None
+        """Extract the final result via the graph's injected extractor, if any.
+
+        The engine stays agnostic to where results are stored (e.g. turn state);
+        concrete graphs (ReActGraph) inject an extractor that knows the storage.
+        """
+        extractor = self.graph.result_extractor
+        if extractor is None:
+            return None
+        return extractor(ctx)
