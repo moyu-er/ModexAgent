@@ -10,7 +10,12 @@ from enum import Enum
 from typing import Any, Literal
 
 from framework.agents.react.state import get_react_state
-from framework.control.exceptions import AgentControlError
+from framework.control.exceptions import (
+    AgentCancelled,
+    AgentControlError,
+    AgentTimeout,
+    PolicyViolation,
+)
 from framework.hook import HookPayload, HookPoint
 from framework.interceptor.abc import (
     LLMStreamChunk,
@@ -91,6 +96,51 @@ def _get_turn_messages(ctx: AgentContext) -> list[dict[str, Any]]:
             for md in state.message_delta
         ]
     return []
+
+
+def _interrupt_reason_from(exc: BaseException) -> str:
+    """Map a cancel/error exception to a short, non-leaky interrupt category."""
+    if isinstance(exc, AgentCancelled):
+        return "user_stop"
+    if isinstance(exc, AgentTimeout):
+        return "timeout"
+    if isinstance(exc, PolicyViolation):
+        return "policy"
+    if isinstance(exc, asyncio.CancelledError):
+        return "cancelled"
+    return "error"
+
+
+async def _persist_interrupted_partial(ctx: AgentContext, reason: str) -> None:
+    """Persist a partially-produced assistant response as an XML-marked message.
+
+    Reads (and clears) the partial content stashed by ``_stream_with_control``
+    when an LLM stream was interrupted mid-flight. Appends an interrupted
+    assistant message to both ``ctx.history`` (memory) and ``message_delta``
+    (so ``_get_turn_messages`` mirrors it), keeping memory aligned with the
+    transcript. No-op when no partial was captured (normal completion, or an
+    interrupt that produced nothing).
+    """
+    from framework.runtime.enums import MessageDeltaSource
+    from framework.runtime.models import MessageDelta
+    from framework.utils.message_builder import build_interrupted_assistant_message
+
+    state = get_react_state(ctx)
+    if state is None:
+        return
+    partial = state.custom.pop(TurnCustomKey.INTERRUPTED_PARTIAL, None)
+    if not partial:
+        return
+    content = partial.get("content") or ""
+    tool_names = partial.get("tool_names") or []
+    if not content and not tool_names:
+        return
+    msg = build_interrupted_assistant_message(content, tool_names, reason)
+    if ctx.history is not None:
+        await ctx.history.append(msg)
+    state.message_delta.append(
+        MessageDelta(message=msg, source=MessageDeltaSource.ASSISTANT)
+    )
 
 
 class ReActAgent(Agent[ReActEvent]):
@@ -227,6 +277,7 @@ class ReActAgent(Agent[ReActEvent]):
             # (turn_end never fired) and the pool treated cancel as a dispatch
             # error. Returning a cancelled result lets the turn close cleanly.
             logger.info("ReActAgent control exit: %s", str(e) or "error")
+            await _persist_interrupted_partial(context, _interrupt_reason_from(e))
             all_new = _get_turn_messages(context)
             result = AgentResult(
                 content="",
@@ -242,6 +293,7 @@ class ReActAgent(Agent[ReActEvent]):
             # controlled stop, not a crash. Emit the terminal signal and
             # return a cancelled result so the turn closes cleanly.
             logger.warning("ReActAgent cancelled")
+            await _persist_interrupted_partial(context, "cancelled")
             all_new = _get_turn_messages(context)
             result = AgentResult(
                 content="",
@@ -254,6 +306,7 @@ class ReActAgent(Agent[ReActEvent]):
         except Exception as e:
             logger.exception("Agent execution error")
             await emitter.emit(ReActEvent.ERROR, str(e))
+            await _persist_interrupted_partial(context, "error")
             all_new = _get_turn_messages(context)
             result = AgentResult(
                 error=str(e),
@@ -414,6 +467,12 @@ class ReActAgent(Agent[ReActEvent]):
 
         accumulated_content = ""
         accumulated_reasoning = ""
+        # Partial content streamed via _on_content_delta. Unlike
+        # accumulated_content (which only fills from the final end-of-stream
+        # chunk), this tracks content live during streaming — so it holds the
+        # partial text when a cancel interrupts mid-stream (the final chunk
+        # never arrives). Used to persist an interrupted assistant message.
+        streamed_content = ""
         finish_reason = "stop"
         tool_calls_list: list[ToolCall] = []
 
@@ -422,6 +481,7 @@ class ReActAgent(Agent[ReActEvent]):
             nonlocal tool_calls_list
 
             async def _on_content_delta(delta: str) -> None:
+                nonlocal streamed_content
                 # Drain control channel between every content delta so a
                 # CANCEL_TURN arriving mid-stream interrupts the LLM
                 # immediately (inside the provider's streaming loop, before
@@ -435,6 +495,7 @@ class ReActAgent(Agent[ReActEvent]):
                         turn_uuid=context.runtime.turn_uuid,
                     )
                 if delta:
+                    streamed_content += delta
                     await emitter.emit_delta(delta)
                     await emitter.emit(ReActEvent.MODEL_OUTPUT, delta)
 
@@ -465,25 +526,41 @@ class ReActAgent(Agent[ReActEvent]):
             )
 
         interceptor_chain = context.runtime.interceptors if context.runtime else None
-        async for chunk in interceptor_chain.around_llm_stream(
-            context,
-            stream_ctx,
-            _actual_stream,
-        ):
-            if chunk.control_action == "cancel":
-                finish_reason = chunk.finish_reason or "cancelled"
-                logger.warning(
-                    "LLM stream cancelled session=%s finish_reason=%s",
-                    str(context.session),
-                    finish_reason,
-                )
-                break
-            if chunk.content_delta:
-                accumulated_content += chunk.content_delta
-            if chunk.reasoning_delta:
-                accumulated_reasoning += chunk.reasoning_delta
-            if chunk.finish_reason:
-                finish_reason = chunk.finish_reason
+        try:
+            async for chunk in interceptor_chain.around_llm_stream(
+                context,
+                stream_ctx,
+                _actual_stream,
+            ):
+                if chunk.control_action == "cancel":
+                    finish_reason = chunk.finish_reason or "cancelled"
+                    logger.warning(
+                        "LLM stream cancelled session=%s finish_reason=%s",
+                        str(context.session),
+                        finish_reason,
+                    )
+                    break
+                if chunk.content_delta:
+                    accumulated_content += chunk.content_delta
+                if chunk.reasoning_delta:
+                    accumulated_reasoning += chunk.reasoning_delta
+                if chunk.finish_reason:
+                    finish_reason = chunk.finish_reason
+        except (asyncio.CancelledError, Exception):
+            # Stream interrupted mid-flight (user /stop, pause, timeout, error).
+            # The normal assistant-message append (llm node ctx.history.append)
+            # never runs, so memory would lose this partial content. Stash the
+            # live-streamed partial (streamed_content) for the agent's
+            # cancel/error handler to persist as an XML-marked interrupted
+            # message, keeping memory aligned with the transcript.
+            if streamed_content or tool_calls_list:
+                state = get_react_state(context)
+                if state is not None:
+                    state.custom[TurnCustomKey.INTERRUPTED_PARTIAL] = {
+                        "content": streamed_content,
+                        "tool_names": [tc.tool_name for tc in tool_calls_list],
+                    }
+            raise
 
         has_tool_calls = bool(tool_calls_list)
         await emitter.emit_stream_end(resuming=has_tool_calls)

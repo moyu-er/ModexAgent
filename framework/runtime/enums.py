@@ -124,6 +124,11 @@ class TurnCustomKey(StrEnum):
     STREAM_CANCELLED = "_stream_cancelled"
     CANCEL_COMMAND_TYPE = "_cancel_cmd_type"
     CANCELLED_TOOL_RECORDS = "_cancelled_tool_records"
+    # Partial assistant content captured when an LLM stream is interrupted
+    # mid-flight (user /stop, pause, timeout, error). The agent's cancel/error
+    # handler reads it to persist an XML-marked interrupted message so memory
+    # stays aligned with the transcript. Value: {"content": str, "tool_names": list[str]}.
+    INTERRUPTED_PARTIAL = "_interrupted_partial"
     LLM_OUTPUT_RISK = "_llm_output_risk"
     CONSECUTIVE_ERRORS = "consecutive_errors"
     DYNAMIC_TOOL_ACTIVE = "_dynamic_tool_active"

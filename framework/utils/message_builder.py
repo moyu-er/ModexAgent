@@ -12,7 +12,8 @@ from typing import Any
 
 from framework.core.tool_manager import ToolResult
 from framework.core.types import ToolCall
-from framework.core.message import ChatMessage
+from framework.core.message import ChatMessage, ContentFormat
+from framework.utils.xml import xml_attr, xml_text
 
 
 def build_assistant_message(
@@ -57,6 +58,50 @@ def build_assistant_message(
         ]
 
     return ChatMessage(role="assistant", content=message_content, **extra)
+
+
+def build_interrupted_assistant_message(
+    content: str,
+    pending_tool_names: list[str],
+    reason: str,
+) -> ChatMessage:
+    """Construct an assistant ChatMessage marking a partially-produced response.
+
+    Used when an LLM stream is interrupted mid-flight (user /stop, pause,
+    timeout, error). Only the already-produced *content* (no reasoning) is
+    preserved; tool calls are discarded (no results to fill) but, if any tool
+    names are known, they are noted as pending so the agent has context on
+    resume.
+
+    The body is XML and tagged ``content_format=XML`` with
+    ``truncatable_paths=["content"]`` so the governance layer can truncate the
+    (potentially long / unfinished) partial content without breaking structure.
+
+    Args:
+        content:            Partial assistant text accumulated before the interrupt.
+        pending_tool_names: Names of tools the model intended to call (best-effort).
+        reason:             Short, non-leaky interrupt category, e.g. ``user_stop``,
+                            ``timeout``, ``error``. Becomes the ``reason`` attribute.
+
+    Returns:
+        A :class:`ChatMessage` with role ``assistant`` and XML body.
+    """
+    parts: list[str] = [f'<interrupted_response reason="{xml_attr(reason)}">']
+    if content:
+        parts.append(f"  <content>{xml_text(content)}</content>")
+    if pending_tool_names:
+        parts.append("  <pending_tools>")
+        for name in pending_tool_names:
+            parts.append(f'    <tool name="{xml_attr(name)}"/>')
+        parts.append("  </pending_tools>")
+    parts.append("</interrupted_response>")
+
+    return ChatMessage(
+        role="assistant",
+        content="\n".join(parts),
+        content_format=ContentFormat.XML,
+        truncatable_paths=["content"],
+    )
 
 
 def build_tool_message(result: ToolResult, call_id: str | None = None) -> ChatMessage:
