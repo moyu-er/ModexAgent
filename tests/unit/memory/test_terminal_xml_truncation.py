@@ -171,9 +171,17 @@ def test_terminal_result_short_is_unchanged() -> None:
     assert len(result) < 500  # fits, so unchanged
 
 
-# ── overflow XML detection via ToolResult.to_message() ──
+# ── metadata is carried by ToolResult.to_message() when declared ──
 
-def test_tool_result_to_message_detects_overflow_xml() -> None:
+def test_tool_result_to_message_carries_declared_overflow_metadata() -> None:
+    """ToolResult.to_message() emits metadata that was declared on the result.
+
+    Under ADR-0006 the ToolManager no longer sniffs terminal XML itself; tools
+    declare metadata via ``result_metadata`` and the ToolManager stores it on
+    the ToolResult. The overflow layer constructs ToolResults for
+    ``<tool_result_overflow>`` output and passes the metadata explicitly.
+    """
+    from modex_agent.core.message import ContentFormat
     from modex_agent.core.tool_manager import ToolResult
 
     xml = (
@@ -182,11 +190,31 @@ def test_tool_result_to_message_detects_overflow_xml() -> None:
         '  <chunk index="1"><![CDATA[chunk content]]></chunk>\n'
         '</tool_result_overflow>'
     )
-    result = ToolResult(tool_name="read_file", result=xml, call_id="tc_1")
+    result = ToolResult(
+        tool_name="read_file",
+        result=xml,
+        call_id="tc_1",
+        content_format=ContentFormat.XML,
+        truncatable_paths=["chunk", "instruction"],
+    )
     msg = result.to_message()
 
     assert msg.get("content_format") == "xml"
     assert msg.get("truncatable_paths") == ["chunk", "instruction"]
+
+
+def test_tool_result_to_message_no_metadata_when_undeclared() -> None:
+    """A bare ToolResult with no declared metadata attaches none (ADR-0006)."""
+    from modex_agent.core.tool_manager import ToolResult
+
+    result = ToolResult(
+        tool_name="read_file",
+        result="<command_result><output>x</output></command_result>",
+        call_id="tc_1",
+    )
+    msg = result.to_message()
+    assert "content_format" not in msg
+    assert "truncatable_paths" not in msg
 
 
 # ── edge case: empty truncatable_paths ──

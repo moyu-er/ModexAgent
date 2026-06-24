@@ -436,6 +436,12 @@ class TestBuildToolMessage:
         assert msg.content == " "
 
     def test_terminal_xml_sets_metadata(self):
+        """build_tool_message passes through metadata declared on the ToolResult.
+
+        Under ADR-0006 the ToolManager attaches content_format / truncatable_paths
+        via the tool's result_metadata hook; build_tool_message no longer sniffs
+        terminal XML itself. Terminal tool results arrive with metadata already set.
+        """
         from modex_agent.core.tool_manager import ToolResult
         from modex_agent.memory.core.message import ContentFormat
         from modex_agent.utils.message_builder import build_tool_message
@@ -447,7 +453,12 @@ class TestBuildToolMessage:
             "<status>completed</status>"
             "</command_result>"
         )
-        result = ToolResult(tool_name="bash", result=xml_content)
+        result = ToolResult(
+            tool_name="bash",
+            result=xml_content,
+            content_format=ContentFormat.XML,
+            truncatable_paths=["output", "tui_screen", "cursor_line"],
+        )
         msg = build_tool_message(result)
         assert msg.content_format == ContentFormat.XML
         assert msg.truncatable_paths == ["output", "tui_screen", "cursor_line"]

@@ -119,11 +119,20 @@ class ToolResultLimitInterceptor(ToolCallInterceptor):
         kept_call_ids.add(tool_call_id)
         self._handler.schedule_cleanup(session_id, kept_call_ids)
 
+        # The overflow chunk is <tool_result_overflow> XML. Declare its
+        # truncation metadata so the governance layer can compact it. Under
+        # ADR-0006 the ToolManager no longer sniffs terminal XML, so the
+        # producer (this interceptor) attaches metadata explicitly.
+        from modex_agent.tools.terminal.types import terminal_result_metadata
+
+        content_format, truncatable_paths = terminal_result_metadata(chunk_1_content)
         return ToolResult(
             tool_name=result.tool_name,
             result=chunk_1_content,
             call_id=result.call_id,
             overflow_processed=True,
+            content_format=content_format,
+            truncatable_paths=truncatable_paths,
         )
 
     @staticmethod

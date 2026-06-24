@@ -9,6 +9,10 @@ import sys
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from modex_agent.core.message import ContentFormat
 
 
 class Platform(StrEnum):
@@ -126,6 +130,21 @@ def get_terminal_xml_truncatable_paths(content: str) -> list[str] | None:
         if re.search(rf"<{re.escape(root_tag)}\b", content):
             return paths
     return None
+
+
+def terminal_result_metadata(result: Any) -> tuple[ContentFormat | None, list[str] | None]:
+    """Declare XML truncation metadata for a terminal tool result string.
+
+    Returns ``(ContentFormat.XML, <paths>)`` when *result* is a recognised
+    terminal XML document, else ``(None, None)`` for plain-text / non-str
+    results. Terminal tools expose this via ``Tool.result_metadata`` so the
+    ToolManager can attach governance metadata without core knowing terminal
+    formats (ADR-0006).
+    """
+    from modex_agent.core.message import ContentFormat
+
+    paths = get_terminal_xml_truncatable_paths(str(result)) if isinstance(result, str) else None
+    return (ContentFormat.XML, paths) if paths is not None else (None, None)
 
 
 def _parse_platform(name: str) -> Platform:

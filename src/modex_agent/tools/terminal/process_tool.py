@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from modex_agent.core.message import ContentFormat
 
 from modex_agent.core.tool_manager import Tool
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
@@ -221,6 +224,12 @@ class ProcessTool(Tool):
             },
             "required": ["action"],
         }
+
+    def result_metadata(self, result: Any) -> tuple["ContentFormat | None", list[str] | None]:
+        """Declare XML truncation metadata for <process_result> output."""
+        from modex_agent.tools.terminal.types import terminal_result_metadata
+
+        return terminal_result_metadata(result)
 
     # ------------------------------------------------------------------
     # execute dispatch

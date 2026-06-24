@@ -11,6 +11,10 @@ Returns structured <command_result> XML with CommandResultStatus.
 from __future__ import annotations
 
 import time
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from modex_agent.core.message import ContentFormat
 
 from modex_agent.core.tool_manager import Tool
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
@@ -115,6 +119,12 @@ class CommandTool(Tool):
             },
             "required": ["command"],
         }
+
+    def result_metadata(self, result: Any) -> tuple["ContentFormat | None", list[str] | None]:
+        """Declare XML truncation metadata for <command_result> output."""
+        from modex_agent.tools.terminal.types import terminal_result_metadata
+
+        return terminal_result_metadata(result)
 
     async def execute(
         self,

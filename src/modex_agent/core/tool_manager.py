@@ -7,9 +7,12 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.tool import DynamicSchemaProvider
+
+if TYPE_CHECKING:
+    from modex_agent.core.message import ContentFormat
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +116,14 @@ class Tool(DynamicSchemaProvider):
         """
         return self.get_schema()
 
+    def result_metadata(self, result: Any) -> tuple["ContentFormat | None", list[str] | None]:
+        """Declare content metadata for a tool result, for governance truncation.
+
+        Default: no metadata. Terminal-style tools override to return
+        ``(ContentFormat.XML, <truncatable paths>)`` for their XML output.
+        """
+        return (None, None)
+
 
 class ToolResult:
     """工具执行结果
@@ -131,6 +142,8 @@ class ToolResult:
         execution_time: float = 0.0,
         call_id: str | None = None,
         overflow_processed: bool = False,
+        content_format: "ContentFormat | None" = None,
+        truncatable_paths: list[str] | None = None,
     ) -> None:
         self.tool_name = tool_name
         self.result = result
@@ -140,6 +153,8 @@ class ToolResult:
         # Internal flag — prevents double-processing by overflow interceptors.
         # Not included in to_dict() / to_message() as it is ephemeral.
         self.overflow_processed = overflow_processed
+        self.content_format = content_format
+        self.truncatable_paths = truncatable_paths
 
     @property
     def success(self) -> bool:
@@ -162,33 +177,23 @@ class ToolResult:
         }
 
     def to_message(self) -> dict[str, Any]:
-        """转换为 LLM message 格式
+        """转换为 LLM message 格式 (OpenAI tool message).
 
-        Returns:
-            OpenAI 格式的 tool message。终端工具的 XML 格式会附加
-            content_format 和 truncatable_paths 元数据，供治理层截断。
+        Terminal-tool results carry content_format/truncatable_paths metadata
+        (declared by the tool via result_metadata) for governance truncation.
         """
         from .types import MessageRole
 
         content = self.result if self.success else f"Error: {self.error}"
-        content_str = str(content) if content is not None else ""
         msg: dict[str, Any] = {
             "role": MessageRole.TOOL.value,
             "tool_call_id": self.call_id or "",
             "name": self.tool_name,
-            "content": content_str,
+            "content": str(content) if content is not None else "",
         }
-        # Detect terminal tool XML and declare truncation metadata
-        try:
-            from modex_agent.tools.terminal.types import get_terminal_xml_truncatable_paths
-        except ImportError:
-            return msg
-        paths = get_terminal_xml_truncatable_paths(content_str)
-        if paths is not None:
-            from modex_agent.core.message import ContentFormat
-
-            msg["content_format"] = ContentFormat.XML.value
-            msg["truncatable_paths"] = paths
+        if self.content_format is not None and self.truncatable_paths is not None:
+            msg["content_format"] = self.content_format.value
+            msg["truncatable_paths"] = self.truncatable_paths
         return msg
 
 
@@ -289,17 +294,23 @@ class ToolManager(ABC):
             # that validate paths and return errors), pass it through so
             # error information reaches the model intact.
             if type(result) is ToolResult:
+                content_format, truncatable_paths = tool.result_metadata(result.result)
                 return ToolResult(
                     tool_name=result.tool_name,
                     result=result.result,
                     error=result.error,
                     execution_time=execution_time,
                     call_id=result.call_id,
+                    content_format=content_format,
+                    truncatable_paths=truncatable_paths,
                 )
+            content_format, truncatable_paths = tool.result_metadata(result)
             return ToolResult(
                 tool_name=tool_name,
                 result=result,
                 execution_time=execution_time,
+                content_format=content_format,
+                truncatable_paths=truncatable_paths,
             )
         except Exception as e:
             execution_time = asyncio.get_event_loop().time() - start_time
